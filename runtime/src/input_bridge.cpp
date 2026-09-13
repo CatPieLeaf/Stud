@@ -1098,6 +1098,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // zero, which is the wheel's business and not the pointer's.
             g_last_raw_px = ev.x;
             g_last_raw_py = ev.y;
+            if (g_drag_confined) {
+                // Per EVENT, not per poll. The camera sets its pin a frame
+                // or so after the press, and an 8ms poll can miss the whole
+                // of a short flick -- which is exactly when the cursor was
+                // still jumping: the gesture ended before Stud ever saw the
+                // pin, so it treated a rotation as a UI drag.
+                g_engine_mouse_behavior.store(static_cast<int>(stud::runtime::read_mouse_behavior()));
+            }
             if (g_drag_confined && engine_pins_cursor()) {
                 // The engine is pinning its own cursor RIGHT NOW -- it
                 // says so (MouseBehavior == LockCurrentPosition), which
@@ -1113,10 +1121,16 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // nothing was moved, so nothing has to be put back.
                 if (!g_pin_seen) {
                     g_pin_seen = true;
-                    g_pin_x = last_x;
-                    g_pin_y = last_y;
-                    g_pin_px = ev.x;
-                    g_pin_py = ev.y;
+                    // The press point, not wherever the pointer had got to
+                    // by the time this was noticed. The camera pins on the
+                    // button-down it receives, so that is where the
+                    // engine's own cursor is standing -- adopting the
+                    // current position instead puts the cursor (and the
+                    // warp at the end) a flick's worth away from it.
+                    g_pin_x = g_drag_anchor_x;
+                    g_pin_y = g_drag_anchor_y;
+                    g_pin_px = g_drag_anchor_px;
+                    g_pin_py = g_drag_anchor_py;
                     if (input_trace_enabled()) {
                         std::printf("stud: the engine pinned its cursor at (%.1f,%.1f)\n",
                                     static_cast<double>(g_pin_x), static_cast<double>(g_pin_y));
@@ -1194,6 +1208,22 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // position the engine was given never left the anchor either,
             // and the first absolute position after the unlock IS the
             // anchor. Nothing moves that should not.
+            if (input_trace_enabled() && (g_button_state != 0 || g_drag_locked.load())) {
+                // The camera's whole input while the engine has its cursor
+                // pinned. A rotation that jumps means one of these deltas
+                // is wrong, and nothing has ever looked at them.
+                static float run_x = 0.0f;
+                static float run_y = 0.0f;
+                run_x += ev.x;
+                run_y += ev.y;
+                std::printf("stud: rel d=(%.1f,%.1f) run=(%.1f,%.1f) pos=(%.1f,%.1f)%s\n",
+                            static_cast<double>(ev.x), static_cast<double>(ev.y),
+                            static_cast<double>(run_x), static_cast<double>(run_y),
+                            last_x, last_y,
+                            (std::fabs(ev.x) > 40.0f || std::fabs(ev.y) > 40.0f) ? "  <-- JUMP"
+                                                                                 : "");
+                std::fflush(stdout);
+            }
             call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, ev.x, ev.y);
             return;
         }
@@ -1302,6 +1332,28 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                         set_pointer_confined(true);
                     } else if (!held && g_drag_anchored) {
                         g_drag_anchored = false;
+                        // One last read before the engine lets go. A
+                        // gesture short enough to finish between two polls
+                        // would otherwise look like it was never pinned at
+                        // all -- the engine drops the pin on its own frame
+                        // after this button-up, so right now it still says
+                        // what it was doing.
+                        if (!g_pin_seen) {
+                            g_engine_mouse_behavior.store(
+                                static_cast<int>(stud::runtime::read_mouse_behavior()));
+                            if (engine_pins_cursor()) {
+                                g_pin_seen = true;
+                                g_pin_x = g_drag_anchor_x;
+                                g_pin_y = g_drag_anchor_y;
+                                g_pin_px = g_drag_anchor_px;
+                                g_pin_py = g_drag_anchor_py;
+                                if (input_trace_enabled()) {
+                                    std::printf("stud: the engine was pinning after all -- "
+                                                "caught at the release\n");
+                                    std::fflush(stdout);
+                                }
+                            }
+                        }
                         set_pointer_confined(false);
                         // The pointer goes back to the cursor, not the
                         // cursor to the pointer. The cursor did not move
