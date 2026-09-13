@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <dirent.h>
@@ -46,6 +47,10 @@ std::atomic<uint64_t> g_max_bytes{500ull * 1024ull * 1024ull};
 // has been added since gives a cheap trigger to check again, without
 // stat()ing the whole tree on every store.
 std::atomic<uint64_t> g_stored_since_prune{0};
+
+// Whether a prune is already running, so several stores crossing the
+// threshold together do not start several walks over the same tree.
+std::atomic<bool> g_pruning{false};
 
 void prune_once() {
     struct Entry {
@@ -245,13 +250,24 @@ void store(uint64_t key_high, uint64_t key_low, const void* src, uint64_t bytes)
         return;
     }
 
-    // Enforce the cap during the session, not only at startup. Checked
-    // once per eighth of the cap added, so the walk over the tree costs
-    // nothing next to the work the cache is saving.
+    // Enforce the cap during the session, not only at startup -- but
+    // never on the thread that is storing.
+    //
+    // Pruning walks the whole tree and stats every entry, and the caller
+    // here is a texture-decode thread the engine is waiting on. Doing it
+    // inline turns the cache into the thing it exists to prevent: a stall
+    // in the middle of loading. It runs on a thread of its own instead,
+    // one at a time, and nothing waits for it.
     const uint64_t added = g_stored_since_prune.fetch_add(bytes) + bytes;
     if (added >= g_max_bytes.load() / 8) {
         g_stored_since_prune.store(0);
-        prune_once();
+        bool expected = false;
+        if (g_pruning.compare_exchange_strong(expected, true)) {
+            std::thread([] {
+                prune_once();
+                g_pruning.store(false);
+            }).detach();
+        }
     }
 }
 
