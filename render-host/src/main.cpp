@@ -862,6 +862,9 @@ uint32_t gl_pixel_size(GLenum format, GLenum type) {
 // scope, not in the anonymous namespace below.
 namespace { struct RealWindow; }
 void pump_display(const RealWindow& window, bool fd_readable);
+// Input's own lean dispatch -- see its definition for why it is not
+// pump_display.
+void dispatch_input_queue(wl_display* display, bool fd_readable);
 
 namespace {
 uint64_t g_window_surface_handle = kNullHandle;
@@ -2908,29 +2911,37 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // instant an event lands.
             const auto deadline = std::chrono::steady_clock::now() +
                                   std::chrono::milliseconds(static_cast<int>(a[0]));
+            const bool wayland = !window.on_x11() && window.display != nullptr;
+            const int wl_fd = wayland ? wl_display_get_fd(window.display) : -1;
             for (;;) {
-                bool readable = false;
-                if (!window.on_x11() && window.display != nullptr) {
-                    pollfd wl{wl_display_get_fd(window.display), POLLIN, 0};
-                    readable = ::poll(&wl, 1, 0) > 0 && (wl.revents & POLLIN) != 0;
+                // Whatever the driver's own reads already put on the
+                // queue, first and for free.
+                if (wayland) {
+                    dispatch_input_queue(window.display, false);
+                } else {
+                    pump_display(window, false);
                 }
-                pump_display(window, readable);
                 n = stud::android_glue::native_window_drain_input_events(
                     reinterpret_cast<HostInputEvent*>(out.data()), capacity);
                 if (n > 0) break;
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= deadline) break;
-                // In slices, so a controller (which is evdev, not the
-                // compositor) is still read promptly, and so a wait can
-                // never outlive its deadline by a whole poll.
                 auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-                int slice = static_cast<int>(std::min<long long>(left.count(), 2));
-                if (slice <= 0) slice = 1;
-                if (!window.on_x11() && window.display != nullptr) {
-                    pollfd wl{wl_display_get_fd(window.display), POLLIN, 0};
-                    ::poll(&wl, 1, slice);
-                } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+                int wait_ms = static_cast<int>(left.count());
+                if (wait_ms <= 0) wait_ms = 1;
+                if (!wayland) {
+                    // X11 has no fd to wait on here; it is pumped above.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+                    continue;
+                }
+                // Asleep until the compositor actually says something --
+                // one wake, and only if there is something to read.
+                pollfd wl{wl_fd, POLLIN, 0};
+                if (::poll(&wl, 1, wait_ms) > 0 && (wl.revents & POLLIN) != 0) {
+                    dispatch_input_queue(window.display, true);
+                    n = stud::android_glue::native_window_drain_input_events(
+                        reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+                    if (n > 0) break;
                 }
                 // A controller is evdev, not the compositor, so it is not
                 // what this waits on -- it is drained below, at most one
@@ -3577,6 +3588,32 @@ void pump_display(const RealWindow& window, bool fd_readable) {
         return;
     }
     pump_wayland(window.display, fd_readable);
+}
+
+// Stud's own queue, and NOTHING else.
+//
+// pump_wayland does a great deal beside dispatching: it syncs the
+// swapchain size, repeats held keys, blinks the caret, and drains the
+// driver's default queue. All of that belongs to the main loop's
+// cadence, and doing it on every cycle of the input wait (250 times a
+// second) measured as render-host 8% -> 24% and the engine thread
+// 25% -> 145% at an idle Home screen. This is the part input actually
+// needs.
+void dispatch_input_queue(wl_display* display, bool fd_readable) {
+    if (display == nullptr) return;
+    wl_event_queue* queue = stud::android_glue::native_window_wl_queue();
+    if (queue == nullptr) return;
+    std::lock_guard<std::mutex> lock(wayland_mutex());
+    while (wl_display_prepare_read_queue(display, queue) != 0) {
+        wl_display_dispatch_queue_pending(display, queue);
+    }
+    wl_display_flush(display);
+    if (fd_readable) {
+        wl_display_read_events(display);
+    } else {
+        wl_display_cancel_read(display);
+    }
+    wl_display_dispatch_queue_pending(display, queue);
 }
 
 void pump_wayland(wl_display* display, bool fd_readable) {
