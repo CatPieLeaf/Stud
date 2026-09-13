@@ -1282,7 +1282,40 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 std::fflush(stdout);
             }
             if (fns.mouse_button == nullptr) return;
-            call_trapping_abort(fns.mouse_button, jni_env, nullptr, last_x, last_y,
+            // A RELEASE outside the view is reported at the view's edge,
+            // and nothing else is touched.
+            //
+            // While a button is held the compositor keeps delivering
+            // motion after the pointer has left the window -- that is what
+            // an implicit grab is for -- so the release can arrive at a
+            // coordinate the view does not contain. Live-captured: a
+            // right-button release at x=-95.0 on a 1728-wide surface, with
+            // the engine simply not acting on it and the button left held
+            // for ever. A real Android view never receives such an event
+            // at all, so the nearest point it CAN act on is the honest
+            // translation.
+            //
+            // Only the release, and only when it is genuinely outside:
+            // motion is left exactly as it was, because the position
+            // stream during a drag is what the engine's own cursor
+            // behaviour is built on and clamping that breaks it (tried,
+            // and it put a wall under every UI and 2D-camera drag).
+            float button_x = last_x;
+            float button_y = last_y;
+            if (ev.a == 0.0f && ev.surface_width > 0 && ev.surface_height > 0) {
+                const float w = to_density_independent(static_cast<float>(ev.surface_width));
+                const float h = to_density_independent(static_cast<float>(ev.surface_height));
+                button_x = button_x < 0.0f ? 0.0f : (button_x > w - 1.0f ? w - 1.0f : button_x);
+                button_y = button_y < 0.0f ? 0.0f : (button_y > h - 1.0f ? h - 1.0f : button_y);
+                if (input_trace_enabled() && (button_x != last_x || button_y != last_y)) {
+                    std::printf("stud: release was outside the view (%.1f,%.1f) -- reported at "
+                                "(%.1f,%.1f)\n", static_cast<double>(last_x),
+                                static_cast<double>(last_y), static_cast<double>(button_x),
+                                static_cast<double>(button_y));
+                    std::fflush(stdout);
+                }
+            }
+            call_trapping_abort(fns.mouse_button, jni_env, nullptr, button_x, button_y,
                                 static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
                                 static_cast<jint>(ev.code));
             return;
