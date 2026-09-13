@@ -1672,6 +1672,10 @@ const xdg_activation_token_v1_listener kActivationTokenListener = {
 }  // namespace
 
 void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
+    if (display_backend() == DisplayBackend::X11) {
+        x11::set_pointer_locked(locked);
+        return;
+    }
     auto& state = wayland_state();
     if (locked == g_pointer_locked.load()) return;
     if (locked) {

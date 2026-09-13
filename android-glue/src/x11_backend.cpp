@@ -47,6 +47,11 @@ struct Xlib {
     int (*DefineCursor)(Display*, Window, Cursor) = nullptr;
     int (*FreePixmap)(Display*, Pixmap) = nullptr;
     int (*FreeCursor)(Display*, Cursor) = nullptr;
+    int (*GrabPointer)(Display*, Window, Bool, unsigned int, int, int, Window, Cursor,
+                       Time) = nullptr;
+    int (*UngrabPointer)(Display*, Time) = nullptr;
+    int (*WarpPointer)(Display*, Window, Window, int, int, unsigned int, unsigned int, int,
+                       int) = nullptr;
 };
 
 Xlib& xlib() {
@@ -56,6 +61,16 @@ Xlib& xlib() {
 
 Display* g_display = nullptr;
 Window g_window = 0;
+std::atomic<bool> g_pointer_locked{false};
+// Set while a warp of our own is in flight, so the MotionNotify it
+// generates is not read as the user moving the mouse -- without this the
+// camera receives the warp back to centre as a second, opposite delta
+// and mouse look cancels itself out.
+bool g_ignore_next_motion = false;
+// The last unlocked pointer position, in window coordinates: where a
+// drag began, and where the pointer is put back when it ends.
+float g_pointer_x = 0.0f;
+float g_pointer_y = 0.0f;
 Atom g_wm_delete = 0;
 std::atomic<bool> g_close_requested{false};
 // X11's own answer to "can anybody see this": the window is either
@@ -107,6 +122,9 @@ bool load_xlib() {
     LOAD(DefineCursor, "XDefineCursor");
     LOAD(FreePixmap, "XFreePixmap");
     LOAD(FreeCursor, "XFreeCursor");
+    LOAD(GrabPointer, "XGrabPointer");
+    LOAD(UngrabPointer, "XUngrabPointer");
+    LOAD(WarpPointer, "XWarpPointer");
 #undef LOAD
     if (!ok) {
         ::dlclose(x.handle);
@@ -226,6 +244,43 @@ bool create_window(int32_t width, int32_t height) {
     return true;
 }
 
+void set_pointer_locked(bool locked) {
+    if (g_display == nullptr || g_window == 0) return;
+    if (locked == g_pointer_locked.load()) return;
+    Xlib& x = xlib();
+    if (locked) {
+        if (x.GrabPointer == nullptr || x.WarpPointer == nullptr) return;
+        // Owner-events so the window keeps receiving its own events
+        // normally; confined to the window so nothing outside sees the
+        // drag. Async modes: a synchronous grab would require replaying
+        // every event by hand.
+        const int result =
+            x.GrabPointer(g_display, g_window, True,
+                          ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
+                          GrabModeAsync, g_window, None, CurrentTime);
+        if (result != GrabSuccess) return;
+        g_pointer_locked.store(true);
+        // Start from the centre, so the first delta is measured against
+        // a known point rather than wherever the drag began.
+        g_ignore_next_motion = true;
+        x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, g_width.load() / 2,
+                      g_height.load() / 2);
+        if (x.Flush != nullptr) x.Flush(g_display);
+        return;
+    }
+    g_pointer_locked.store(false);
+    g_ignore_next_motion = false;
+    if (x.UngrabPointer != nullptr) x.UngrabPointer(g_display, CurrentTime);
+    // Put the pointer back where the drag started, which is where the
+    // engine's own cursor has stayed -- the Wayland path gets this from
+    // the compositor, which does not move a locked pointer at all.
+    if (x.WarpPointer != nullptr) {
+        x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, static_cast<int>(g_pointer_x),
+                      static_cast<int>(g_pointer_y));
+    }
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
 void* display() { return g_display; }
 
 unsigned long window() { return g_window; }
@@ -248,9 +303,6 @@ unsigned long window() { return g_window; }
 //    4/5 are a wheel notch each rather than buttons.
 namespace {
 
-float g_pointer_x = 0.0f;
-float g_pointer_y = 0.0f;
-
 void push(stud::android_glue::HostInputEvent ev) {
     ev.surface_width = static_cast<uint32_t>(g_width.load());
     ev.surface_height = static_cast<uint32_t>(g_height.load());
@@ -258,6 +310,29 @@ void push(stud::android_glue::HostInputEvent ev) {
 }
 
 void on_motion(int x_pos, int y_pos) {
+    if (g_pointer_locked.load()) {
+        if (g_ignore_next_motion) {
+            g_ignore_next_motion = false;
+            return;
+        }
+        const int centre_x = g_width.load() / 2;
+        const int centre_y = g_height.load() / 2;
+        const int dx = x_pos - centre_x;
+        const int dy = y_pos - centre_y;
+        if (dx == 0 && dy == 0) return;
+        stud::android_glue::HostInputEvent ev;
+        ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
+        ev.x = static_cast<float>(dx);
+        ev.y = static_cast<float>(dy);
+        push(ev);
+        Xlib& x = xlib();
+        if (x.WarpPointer != nullptr) {
+            g_ignore_next_motion = true;
+            x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, centre_x, centre_y);
+            if (x.Flush != nullptr) x.Flush(g_display);
+        }
+        return;
+    }
     g_pointer_x = static_cast<float>(x_pos);
     g_pointer_y = static_cast<float>(y_pos);
     stud::android_glue::HostInputEvent ev;
