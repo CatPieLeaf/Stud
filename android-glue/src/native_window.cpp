@@ -1546,6 +1546,11 @@ void* native_window_x11_display() {
     return display_backend() == DisplayBackend::X11 ? x11::display() : nullptr;
 }
 
+void x11_ensure_mapped() {
+    if (display_backend() != DisplayBackend::X11) return;
+    x11::ensure_mapped();
+}
+
 unsigned long native_window_x11_window() {
     return display_backend() == DisplayBackend::X11 ? x11::window() : 0;
 }

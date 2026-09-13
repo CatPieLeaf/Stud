@@ -62,6 +62,13 @@ std::string clipboard_get();
 // The text overlay's presentation half. The drawing is shared with the
 // Wayland path (text_overlay.cpp); only the surface differs, and on X11
 // that is an ARGB child window blitted with XPutImage.
+// Maps the window, if it is not mapped yet. Deferred until the first
+// frame is presented so the window appears WITH content, the way a
+// Wayland surface does -- a Wayland window does not exist until a buffer
+// is committed to it, while X11 would happily show an empty one for the
+// whole of the engine's bring-up.
+void ensure_mapped();
+
 void present_text_overlay(const void* argb, int width, int height, int x, int y);
 void hide_text_overlay();
 

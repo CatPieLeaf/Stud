@@ -1333,6 +1333,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return ok == EGL_TRUE;
         }
         case CallId::EglSwapBuffers: {
+            // Shown on the first frame, like the Vulkan path -- so the
+            // window never appears empty. No-op on Wayland.
+            stud::android_glue::x11_ensure_mapped();
             // Same gate as the Vulkan present path: the OpenGL render path
             // has to honour the background frame limit too.
             throttle_while_hidden();
@@ -3032,6 +3035,7 @@ void sync_vk_window_size() {
     if (w == 0 || h == 0) return;
     static uint32_t last_w = 0, last_h = 0;
     if (w == last_w && h == last_h) return;
+
     last_w = w;
     last_h = h;
     stud::render_host::vk_set_window_size(w, h);
@@ -3121,6 +3125,38 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // for Process B's connections beyond the first -- each of its stub
 // libraries (libGLESv2, libaaudio, ...) links its own copy of the client
 // and opens its own socket.
+
+// The calls that BLOCK in the driver, waiting for the GPU.
+//
+// Everything else is dispatched under one process-wide mutex, which is
+// what keeps concurrent connections from reaching the driver at once.
+// These four cannot be: each one waits on work that only finishes if the
+// rest of the process keeps running -- the main loop pumps the display
+// and the X11 event queue, and a connection thread does the presenting.
+//
+// Live-caught as a hang on X11: a drag-resize leaves presents queued
+// against an out-of-date swapchain, a connection thread enters
+// vkDeviceWaitIdle to tear it down, and the driver never returns because
+// the GPU is waiting on a present that only the blocked main loop could
+// carry forward. Both threads then wait on each other forever, and it
+// grows more likely the longer the drag -- which is exactly the reported
+// "freezes for good if I hold it too long".
+//
+// Vulkan's own rule makes this safe: these entry points require external
+// synchronisation on the queue or the fences they name, not on the whole
+// device, and each of them is already called from one thread at a time.
+bool blocks_in_the_driver(stud::render_host::CallId id) {
+    switch (id) {
+        case stud::render_host::CallId::VkDeviceWaitIdle:
+        case stud::render_host::CallId::VkWaitForFences:
+        case stud::render_host::CallId::VkAcquireNextImageKHR:
+        case stud::render_host::CallId::VkQueuePresentKHR:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
     std::vector<unsigned char> in_scratch;
     std::vector<unsigned char> out_scratch;
@@ -3134,7 +3170,9 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         out_scratch.clear();
         uint32_t out_len = 0;
         uint64_t result = 0;
-        {
+        if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
+            result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
+        } else {
             std::lock_guard<std::mutex> lock(dispatch_mutex());
             result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
         }
@@ -3625,7 +3663,12 @@ int main(int argc, char** argv) {
             g_out_scratch.clear();
             uint32_t out_len = 0;
             uint64_t result = 0;
-            {
+            // Same exemption as the connection threads: a blocking
+            // driver wait must not hold the dispatch lock, or the two
+            // wait on each other.
+            if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
+                result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
+            } else {
                 std::lock_guard<std::mutex> lock(dispatch_mutex());
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             }
