@@ -700,6 +700,10 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     }
 
     start_session_log();
+    // The first thing in every log: what machine this is, what is
+    // configured, and what hardware was found. A log that arrives
+    // without it costs a round of questions before anyone can start.
+    stud::ui::write_diagnostics();
 
     terminate_stale_processes();
     remove_stale_render_host_socket();
@@ -1237,13 +1241,6 @@ int main(int argc, char** argv) {
     // ~/.local/share tree, which is what gives its windows an icon and
     // makes roblox:// links from a browser open it. A package installs
     // its own entry system-wide and needs none of this.
-    // Everything a bug report needs, in one page of text. Reads state
-    // and prints it -- launches nothing, changes nothing, and never
-    // prints a credential.
-    if (argc > 1 && std::string(argv[1]) == "--diagnose") {
-        return stud::ui::run_diagnose();
-    }
-
     if (argc > 1 && std::string(argv[1]) == "--install-desktop-entry") {
         return stud::ui::install_desktop_entry();
     }
