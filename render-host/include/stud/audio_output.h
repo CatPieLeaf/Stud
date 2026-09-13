@@ -32,4 +32,22 @@ uint64_t audio_write_frames(uint64_t stream, const void* data, size_t bytes);
 
 void audio_close_stream(uint64_t stream);
 
+// Capture, for voice chat. Opened only when the engine actually asks for
+// an input stream -- never at startup, unlike output: holding a
+// microphone open on the chance it might be wanted is not something to
+// do quietly. Every transition is logged.
+//
+// Returns 1 when the microphone is open, 0 when the host has none or the
+// audio server refused, which the caller must treat as "no microphone"
+// rather than an error.
+uint64_t audio_open_input_stream(int sample_rate, int channels);
+
+// Copies up to `bytes` of captured interleaved 32-bit float PCM and
+// returns how many bytes were actually available. Never blocks: a
+// capture stream that has nothing yet returns 0, which is what a real
+// AAudio read with a zero timeout does too.
+uint64_t audio_read_frames(void* out, size_t bytes);
+
+void audio_close_input_stream();
+
 }  // namespace stud::render_host
