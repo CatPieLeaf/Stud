@@ -351,10 +351,22 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
                   : static_cast<uint64_t>(height) * row_bytes;
     uint64_t key_high = 0;
     uint64_t key_low = 0;
-    const bool cacheable = stud::texture_cache::enabled() && output_bytes > 0 &&
-                           // Small levels are not worth a file: hashing
-                           // and opening cost more than encoding them.
-                           output_bytes >= 16u * 1024u;
+    // Only levels where the encode genuinely dominates.
+    //
+    // The cache is not free: every decode that consults it pays a hash of
+    // the source bytes, and every miss pays a file write. For an image
+    // that will never be asked for again that is pure loss -- and Home is
+    // full of them, because each thumbnail is unique. Measured directly:
+    // with the cache off, scrolling Home holds a higher frame rate.
+    //
+    // A 256x256 level is 64KB of BC7 and encodes in about a millisecond;
+    // hashing and writing it costs more than it will ever save. A
+    // 1024x1024 level is 1MB and tens of milliseconds, and those are the
+    // ones that come back on the next visit. The floor is set between
+    // them, so one-shot images skip the cache entirely -- no hash, no
+    // write -- and the textures behind the loading spikes still get it.
+    constexpr uint64_t kMinCacheableOutput = 512u * 1024u;
+    const bool cacheable = stud::texture_cache::enabled() && output_bytes >= kMinCacheableOutput;
     if (cacheable) {
         stud::texture_cache::key_for(in, source_bytes, static_cast<uint32_t>(format),
                                      static_cast<uint32_t>(transcode ? target.format : 0), width,
