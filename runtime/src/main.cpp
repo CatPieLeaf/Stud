@@ -655,15 +655,38 @@ int main(int argc, char** argv) {
                 std::error_code ec;
                 if (!previous.empty()) {
                     std::printf("stud: configured APK changed -- clearing extracted assets and "
-                                "engine caches\n");
+                                "engine caches, keeping your Roblox settings\n");
                     std::fflush(stdout);
                 }
                 std::filesystem::remove_all(asset_dir, ec);
                 std::filesystem::remove_all(cache_subdir("cache"), ec);
-                // files/ holds the previous build's provisioned CA bundle
-                // and preferences; android_id/ deliberately survives, since
-                // the device identity is Stud's, not the APK's.
-                std::filesystem::remove_all(stud::paths::engine_files_dir(), ec);
+                std::filesystem::remove_all(stud::paths::engine_cache_overflow_dir(), ec);
+                // Only what the previous BUILD wrote, not what the user
+                // did.
+                //
+                // This used to delete files/ whole, which took the real
+                // Roblox preferences with it -- graphics quality, volume,
+                // the signed-in account -- every time a new APK was
+                // saved. Live-reported, and the reason those files are
+                // kept under ~/.local/share rather than in the cache in
+                // the first place.
+                //
+                // What is listed here is state keyed to the build that
+                // wrote it: the fetched flag cache, the asset store and
+                // its index, and the CA bundle this launch re-provisions
+                // anyway. Everything else in appData -- the settings
+                // XMLs, LocalStorage, frm.cfg -- is the user's and stays.
+                {
+                    const std::string files = stud::paths::engine_files_dir();
+                    const std::string app_data = files + "/appData";
+                    for (const std::string& entry :
+                         {app_data + "/ClientSettings", app_data + "/rbx-storage.db",
+                          app_data + "/rbx-storage.db-shm", app_data + "/rbx-storage.db-wal",
+                          app_data + "/rbx-storage.id", app_data + "/rbx-storage-sc",
+                          files + "/exe"}) {
+                        std::filesystem::remove_all(entry, ec);
+                    }
+                }
                 std::ofstream out{stamp_path, std::ios::trunc};
                 out << fingerprint << "\n";
             }
