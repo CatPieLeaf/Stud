@@ -1,0 +1,3389 @@
+// stud-render-host: a real, ordinary glibc process hosting ANGLE, the
+// real Wayland window, and the real Vulkan loader -- everything render/
+// vulkan-wsi/android-glue's native_window.cpp already do, unmodified,
+// just running in its own process instead of linked into the main
+// runtime.
+//
+// Why a separate process rather than hand-loading ANGLE's glibc .so
+// into bionic Process B directly (this session's original plan):
+// confirmed, while starting this work, that "load ANGLE via Stud's own
+// loader" would also require hand-loading real glibc's OWN libc.so.6/
+// libstdc++.so.6 (IFUNC resolvers selected by CPUID, GNU symbol
+// versioning, glibc's own TLS models) to satisfy ANGLE's transitive
+// imports -- dramatically harder and more fragile than anything
+// hand-loaded so far in this project. A real, separate glibc process
+// for ANGLE sidesteps that entirely: ANGLE loads via plain, ordinary,
+// fully-robust glibc dlopen(), zero hand-parsing needed. Same pattern
+// Chrome's own GPU process uses in production. User-approved pivot from
+// the original single-process plan text, proven end-to-end (real
+// bionic client, inside the real sandbox, driving real ANGLE->Vulkan->
+// the real NVIDIA driver->a real Wayland window over this exact IPC
+// mechanism) before this full symbol buildout was attempted.
+//
+// Covers the full real GL/EGL symbol surface libroblox.so's own dynamic
+// symbol table imports (85 entries, confirmed via `the ELF headers --dyn-syms`,
+// not guessed). Vulkan gets a deliberately narrower treatment -- see
+// render_host_protocol.h's own doc comment for why.
+
+#include "stud/session_log.h"
+#include "stud/android_glue.h"
+#include "stud/text_overlay.h"
+#include "stud/clipboard.h"
+#include "stud/ndk_types.h"
+#include <optional>
+
+#include "stud/render.h"
+#include "stud/audio_output.h"
+#include "stud/render_host_protocol.h"
+#include "stud/discord_rpc.h"
+#include "stud/vulkan_host.h"
+#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
+#include "stud/dev_backend_config.h"
+#include "stud/settings.h"
+#endif
+
+#include <wayland-client.h>
+
+#define VK_NO_PROTOTYPES
+#define VK_USE_PLATFORM_WAYLAND_KHR
+#include <vulkan/vulkan.h>
+
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
+#include <wayland-egl.h>
+#include <wayland-egl-backend.h>
+
+#include <chrono>
+#include <deque>
+#include <mutex>
+#include <sys/wait.h>
+#include <thread>
+#include <cstdio>
+#include <ctime>
+#include <cstdlib>
+#include <cctype>
+#include <cstring>
+#include <unordered_map>
+#include <algorithm>
+#include <csignal>
+#include <vector>
+
+#include <dlfcn.h>
+#include <sys/ioctl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
+namespace {
+
+// Roblox's own font table, read from the assets the app itself reads it
+// from: `android/fonts/font-mappings.json` maps a Roblox Font enum to a
+// file under `content/fonts/` and the ratio that turns a Roblox font size
+// into a pixel height. Anything not in the table falls back exactly the
+// way the real app does (RbxKeyboard.m): 4 -> Bold, 5 -> Light, otherwise
+// Regular, at 0.795 -- and bold carries the real 0.04em letter spacing.
+struct RobloxFont {
+    std::string path;
+    float ratio = 0.795f;
+    float letter_spacing = 0.0f;
+};
+
+std::string& assets_dir() {
+    static std::string dir;
+    return dir;
+}
+
+const std::unordered_map<int32_t, RobloxFont>& font_table() {
+    static const std::unordered_map<int32_t, RobloxFont> table = [] {
+        std::unordered_map<int32_t, RobloxFont> t;
+        if (assets_dir().empty()) return t;
+        const std::string path = assets_dir() + "/android/fonts/font-mappings.json";
+        std::FILE* fp = std::fopen(path.c_str(), "rb");
+        if (fp == nullptr) {
+            std::printf("stud-render-host: no font mapping at %s -- the text overlay will use "
+                        "the Source Sans fallback\n", path.c_str());
+            std::fflush(stdout);
+            return t;
+        }
+        std::string json;
+        char buf[4096];
+        size_t n = 0;
+        while ((n = std::fread(buf, 1, sizeof(buf), fp)) > 0) json.append(buf, n);
+        std::fclose(fp);
+        // Small, fixed shape ({"enum":N,"font":"X","fromRbxFontRatio":F}
+        // repeated), so it is scanned directly rather than pulling a JSON
+        // library into this process for one file.
+        size_t pos = 0;
+        while ((pos = json.find("\"enum\"", pos)) != std::string::npos) {
+            const size_t colon = json.find(':', pos);
+            if (colon == std::string::npos) break;
+            const int32_t id = std::atoi(json.c_str() + colon + 1);
+            const size_t font_key = json.find("\"font\"", colon);
+            if (font_key == std::string::npos) break;
+            const size_t q1 = json.find('"', json.find(':', font_key));
+            const size_t q2 = json.find('"', q1 + 1);
+            if (q1 == std::string::npos || q2 == std::string::npos) break;
+            RobloxFont f;
+            f.path = assets_dir() + "/content/fonts/" + json.substr(q1 + 1, q2 - q1 - 1);
+            const size_t ratio_key = json.find("\"fromRbxFontRatio\"", q2);
+            const size_t next_enum = json.find("\"enum\"", q2);
+            if (ratio_key != std::string::npos &&
+                (next_enum == std::string::npos || ratio_key < next_enum)) {
+                f.ratio = static_cast<float>(std::atof(json.c_str() + json.find(':', ratio_key) + 1));
+            }
+            t[id] = f;
+            pos = q2;
+        }
+        std::printf("stud-render-host: text overlay font table: %zu entries\n", t.size());
+        std::fflush(stdout);
+        return t;
+    }();
+    return table;
+}
+
+RobloxFont roblox_font_for(int32_t font_enum) {
+    const auto& table = font_table();
+    const auto it = table.find(font_enum);
+    if (it != table.end()) {
+        // The mapping only names a file; whether it is really there is a
+        // separate question, and the fallback below is the honest answer
+        // when it is not.
+        if (::access(it->second.path.c_str(), R_OK) == 0) return it->second;
+    }
+    RobloxFont f;
+    f.ratio = 0.795f;
+    if (font_enum == 4) {
+        f.path = assets_dir() + "/fonts/SourceSansPro-Bold.ttf";
+        f.letter_spacing = 0.04f;
+    } else if (font_enum == 5) {
+        f.path = assets_dir() + "/fonts/SourceSansPro-Light.ttf";
+    } else {
+        f.path = assets_dir() + "/fonts/SourceSansPro-Regular.ttf";
+    }
+    return f;
+}
+
+
+using namespace stud::render_host;
+
+// ---- real function pointer types -----------------------------------
+
+using PFN_eglGetDisplay = EGLDisplay (*)(EGLNativeDisplayType);
+using PFN_eglInitialize = EGLBoolean (*)(EGLDisplay, EGLint*, EGLint*);
+using PFN_eglBindAPI = EGLBoolean (*)(EGLenum);
+using PFN_eglChooseConfig = EGLBoolean (*)(EGLDisplay, const EGLint*, EGLConfig*, EGLint, EGLint*);
+using PFN_eglCreateWindowSurface = EGLSurface (*)(EGLDisplay, EGLConfig, EGLNativeWindowType,
+                                                   const EGLint*);
+using PFN_eglCreatePbufferSurface = EGLSurface (*)(EGLDisplay, EGLConfig, const EGLint*);
+using PFN_eglCreateContext = EGLContext (*)(EGLDisplay, EGLConfig, EGLContext, const EGLint*);
+using PFN_eglMakeCurrent = EGLBoolean (*)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+using PFN_eglSwapBuffers = EGLBoolean (*)(EGLDisplay, EGLSurface);
+using PFN_eglGetError = EGLint (*)(void);
+using PFN_eglQueryString = const char* (*)(EGLDisplay, EGLint);
+using PFN_eglDestroyContext = EGLBoolean (*)(EGLDisplay, EGLContext);
+using PFN_eglDestroySurface = EGLBoolean (*)(EGLDisplay, EGLSurface);
+using PFN_eglGetConfigAttrib = EGLBoolean (*)(EGLDisplay, EGLConfig, EGLint, EGLint*);
+using PFN_eglGetCurrentContext = EGLContext (*)(void);
+using PFN_eglQuerySurface = EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint, EGLint*);
+using PFN_eglSwapInterval = EGLBoolean (*)(EGLDisplay, EGLint);
+using PFN_eglTerminate = EGLBoolean (*)(EGLDisplay);
+using PFN_eglGetProcAddress = void* (*)(const char*);
+
+using PFN_glActiveTexture = void (*)(GLenum);
+using PFN_glAttachShader = void (*)(GLuint, GLuint);
+using PFN_glBindBuffer = void (*)(GLenum, GLuint);
+using PFN_glBindFramebuffer = void (*)(GLenum, GLuint);
+using PFN_glBindRenderbuffer = void (*)(GLenum, GLuint);
+using PFN_glBindTexture = void (*)(GLenum, GLuint);
+using PFN_glBlendFunc = void (*)(GLenum, GLenum);
+using PFN_glBlendFuncSeparate = void (*)(GLenum, GLenum, GLenum, GLenum);
+using PFN_glCheckFramebufferStatus = GLenum (*)(GLenum);
+using PFN_glClear = void (*)(GLbitfield);
+using PFN_glClearColor = void (*)(GLfloat, GLfloat, GLfloat, GLfloat);
+using PFN_glClearDepthf = void (*)(GLfloat);
+using PFN_glClearStencil = void (*)(GLint);
+using PFN_glColorMask = void (*)(GLboolean, GLboolean, GLboolean, GLboolean);
+using PFN_glCompileShader = void (*)(GLuint);
+using PFN_glCopyTexSubImage2D = void (*)(GLenum, GLint, GLint, GLint, GLint, GLint, GLsizei, GLsizei);
+using PFN_glCreateProgram = GLuint (*)(void);
+using PFN_glCreateShader = GLuint (*)(GLenum);
+using PFN_glCullFace = void (*)(GLenum);
+using PFN_glDeleteProgram = void (*)(GLuint);
+using PFN_glDeleteShader = void (*)(GLuint);
+using PFN_glDepthFunc = void (*)(GLenum);
+using PFN_glDepthMask = void (*)(GLboolean);
+using PFN_glDisable = void (*)(GLenum);
+using PFN_glDisableVertexAttribArray = void (*)(GLuint);
+using PFN_glDrawArrays = void (*)(GLenum, GLint, GLsizei);
+using PFN_glDrawElements = void (*)(GLenum, GLsizei, GLenum, const void*);
+using PFN_glEnable = void (*)(GLenum);
+using PFN_glEnableVertexAttribArray = void (*)(GLuint);
+using PFN_glFramebufferRenderbuffer = void (*)(GLenum, GLenum, GLenum, GLuint);
+using PFN_glFramebufferTexture2D = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
+using PFN_glGenerateMipmap = void (*)(GLenum);
+using PFN_glGetError = GLenum (*)(void);
+using PFN_glLinkProgram = void (*)(GLuint);
+using PFN_glPixelStorei = void (*)(GLenum, GLint);
+using PFN_glPolygonOffset = void (*)(GLfloat, GLfloat);
+using PFN_glReleaseShaderCompiler = void (*)(void);
+using PFN_glRenderbufferStorage = void (*)(GLenum, GLenum, GLsizei, GLsizei);
+using PFN_glScissor = void (*)(GLint, GLint, GLsizei, GLsizei);
+using PFN_glStencilFunc = void (*)(GLenum, GLint, GLuint);
+using PFN_glStencilMask = void (*)(GLuint);
+using PFN_glStencilOp = void (*)(GLenum, GLenum, GLenum);
+using PFN_glTexParameterf = void (*)(GLenum, GLenum, GLfloat);
+using PFN_glTexParameteri = void (*)(GLenum, GLenum, GLint);
+using PFN_glUniform1i = void (*)(GLint, GLint);
+using PFN_glUseProgram = void (*)(GLuint);
+using PFN_glViewport = void (*)(GLint, GLint, GLsizei, GLsizei);
+using PFN_glVertexAttribPointer = void (*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
+using PFN_glGetString = const GLubyte* (*)(GLenum);
+using PFN_glGetUniformLocation = GLint (*)(GLuint, const GLchar*);
+using PFN_glBindAttribLocation = void (*)(GLuint, GLuint, const GLchar*);
+using PFN_glShaderSource = void (*)(GLuint, GLsizei, const GLchar* const*, const GLint*);
+using PFN_glGetProgramInfoLog = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
+using PFN_glGetShaderInfoLog = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
+using PFN_glGetActiveUniform = void (*)(GLuint, GLuint, GLsizei, GLsizei*, GLint*, GLenum*, GLchar*);
+using PFN_glDeleteBuffers = void (*)(GLsizei, const GLuint*);
+using PFN_glDeleteFramebuffers = void (*)(GLsizei, const GLuint*);
+using PFN_glDeleteRenderbuffers = void (*)(GLsizei, const GLuint*);
+using PFN_glDeleteTextures = void (*)(GLsizei, const GLuint*);
+using PFN_glGenBuffers = void (*)(GLsizei, GLuint*);
+using PFN_glGenVertexArrays = void (*)(GLsizei, GLuint*);
+using PFN_glBindBufferRange = void (*)(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr);
+using PFN_glBindBufferBase = void (*)(GLenum, GLuint, GLuint);
+using PFN_glClearBufferfv = void (*)(GLenum, GLint, const GLfloat*);
+// EGL_ANGLE_platform_angle's own enum values. The system eglext.h does not
+// carry them (they are ANGLE's extension, not a Khronos one), and copying
+// the numbers from ANGLE's own eglext_angle.h is the honest alternative to
+// adding its headers to this build for six defines.
+#ifndef EGL_PLATFORM_ANGLE_ANGLE
+#define EGL_PLATFORM_ANGLE_ANGLE 0x3202
+#endif
+#ifndef EGL_PLATFORM_ANGLE_TYPE_ANGLE
+#define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
+#endif
+#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE
+#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE 0x3209
+#endif
+#ifndef EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE
+#define EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE 0x320D
+#endif
+#ifndef EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE
+#define EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE 0x320E
+#endif
+#ifndef EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE
+#define EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE 0x3450
+#endif
+#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE
+#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE 0x3487
+#endif
+
+using PFN_eglGetPlatformDisplayEXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
+using PFN_glDrawBuffers = void (*)(GLsizei, const GLenum*);
+using PFN_glRenderbufferStorageMultisample = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using PFN_glInvalidateFramebuffer = void (*)(GLenum, GLsizei, const GLenum*);
+using PFN_glBlitFramebuffer = void (*)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
+using PFN_glDrawArraysInstanced = void (*)(GLenum, GLint, GLsizei, GLsizei);
+using PFN_glDrawElementsInstanced = void (*)(GLenum, GLsizei, GLenum, const void*, GLsizei);
+using PFN_glVertexAttribDivisor = void (*)(GLuint, GLuint);
+using PFN_glVertexAttribIPointer = void (*)(GLuint, GLint, GLenum, GLsizei, const void*);
+using PFN_glTexStorage2D = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using PFN_glTexStorage3D = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLsizei);
+using PFN_glTexSubImage3D = void (*)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*);
+using PFN_glProgramParameteri = void (*)(GLuint, GLenum, GLint);
+using PFN_glGetUniformBlockIndex = GLuint (*)(GLuint, const GLchar*);
+using PFN_glUniformBlockBinding = void (*)(GLuint, GLuint, GLuint);
+using PFN_glGetActiveUniformBlockiv = void (*)(GLuint, GLuint, GLenum, GLint*);
+using PFN_glFenceSync = GLsync (*)(GLenum, GLbitfield);
+using PFN_glClientWaitSync = GLenum (*)(GLsync, GLbitfield, GLuint64);
+using PFN_glWaitSync = void (*)(GLsync, GLbitfield, GLuint64);
+using PFN_glDeleteSync = void (*)(GLsync);
+using PFN_glIsSync = GLboolean (*)(GLsync);
+using PFN_glGetSynciv = void (*)(GLsync, GLenum, GLsizei, GLsizei*, GLint*);
+using PFN_glCopyImageSubData = void (*)(GLuint, GLenum, GLint, GLint, GLint, GLint, GLuint, GLenum,
+                                        GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei);
+using PFN_glBindVertexArray = void (*)(GLuint);
+using PFN_glDeleteVertexArrays = void (*)(GLsizei, const GLuint*);
+using PFN_glGenFramebuffers = void (*)(GLsizei, GLuint*);
+using PFN_glGenRenderbuffers = void (*)(GLsizei, GLuint*);
+using PFN_glGenTextures = void (*)(GLsizei, GLuint*);
+using PFN_glIsEnabled = GLboolean (*)(GLenum);
+using PFN_glGetIntegerv = void (*)(GLenum, GLint*);
+using PFN_glTexParameterfv = void (*)(GLenum, GLenum, const GLfloat*);
+using PFN_glGetProgramiv = void (*)(GLuint, GLenum, GLint*);
+using PFN_glGetShaderiv = void (*)(GLuint, GLenum, GLint*);
+using PFN_glGetShaderSource = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
+using PFN_glBufferData = void (*)(GLenum, GLsizeiptr, const void*, GLenum);
+using PFN_glBufferSubData = void (*)(GLenum, GLintptr, GLsizeiptr, const void*);
+using PFN_glMapBufferRange = void* (*)(GLenum, GLintptr, GLsizeiptr, GLbitfield);
+using PFN_glGetVertexAttribiv = void (*)(GLuint, GLenum, GLint*);
+using PFN_glGetVertexAttribPointerv = void (*)(GLuint, GLenum, void**);
+using PFN_glUnmapBuffer = GLboolean (*)(GLenum);
+using PFN_glTexImage2D = void (*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum,
+                                   const void*);
+using PFN_glTexSubImage2D = void (*)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum,
+                                      const void*);
+using PFN_glCompressedTexImage2D = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei,
+                                             const void*);
+using PFN_glCompressedTexSubImage2D = void (*)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum,
+                                                GLsizei, const void*);
+using PFN_glReadPixels = void (*)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
+
+float unpack_float(uint64_t arg) {
+    uint32_t bits = static_cast<uint32_t>(arg);
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+uint64_t pack_float(float f) {
+    uint32_t bits;
+    std::memcpy(&bits, &f, sizeof(bits));
+    return bits;
+}
+
+// ---- server-side opaque handle tables --------------------------------
+
+uint64_t g_next_handle = 1;
+std::unordered_map<uint64_t, EGLDisplay> g_displays;
+std::unordered_map<uint64_t, EGLConfig> g_configs;
+std::unordered_map<uint64_t, EGLSurface> g_surfaces;
+std::unordered_map<uint64_t, EGLContext> g_contexts;
+int g_window_surface_create_count = 0;  // temporary diagnostic
+
+uint64_t store_handle(std::unordered_map<uint64_t, void*>&, void*);  // unused generic placeholder
+
+template <typename Map, typename T>
+uint64_t store(Map& map, T value) {
+    uint64_t h = g_next_handle++;
+    map[h] = value;
+    return h;
+}
+
+struct RealFns {
+#define FN(name) PFN_##name name##_
+    FN(eglGetDisplay);
+    FN(eglInitialize);
+    FN(eglBindAPI);
+    FN(eglChooseConfig);
+    FN(eglCreateWindowSurface);
+    FN(eglCreatePbufferSurface);
+    FN(eglCreateContext);
+    FN(eglMakeCurrent);
+    FN(eglSwapBuffers);
+    FN(eglGetError);
+    FN(eglQueryString);
+    FN(eglDestroyContext);
+    FN(eglDestroySurface);
+    FN(eglGetConfigAttrib);
+    FN(eglGetCurrentContext);
+    FN(eglQuerySurface);
+    FN(eglSwapInterval);
+    FN(eglTerminate);
+    FN(eglGetProcAddress);
+
+    FN(glActiveTexture);
+    FN(glAttachShader);
+    FN(glBindBuffer);
+    FN(glBindFramebuffer);
+    FN(glBindRenderbuffer);
+    FN(glBindTexture);
+    FN(glBlendFunc);
+    FN(glBlendFuncSeparate);
+    FN(glCheckFramebufferStatus);
+    FN(glClear);
+    FN(glClearColor);
+    FN(glClearDepthf);
+    FN(glClearStencil);
+    FN(glColorMask);
+    FN(glCompileShader);
+    FN(glCopyTexSubImage2D);
+    FN(glCreateProgram);
+    FN(glCreateShader);
+    FN(glCullFace);
+    FN(glDeleteProgram);
+    FN(glDeleteShader);
+    FN(glDepthFunc);
+    FN(glDepthMask);
+    FN(glDisable);
+    FN(glDisableVertexAttribArray);
+    FN(glDrawArrays);
+    FN(glDrawElements);
+    FN(glEnable);
+    FN(glEnableVertexAttribArray);
+    FN(glFramebufferRenderbuffer);
+    FN(glFramebufferTexture2D);
+    FN(glGenerateMipmap);
+    FN(glGetError);
+    FN(glLinkProgram);
+    FN(glPixelStorei);
+    FN(glPolygonOffset);
+    FN(glReleaseShaderCompiler);
+    FN(glRenderbufferStorage);
+    FN(glScissor);
+    FN(glStencilFunc);
+    FN(glStencilMask);
+    FN(glStencilOp);
+    FN(glTexParameterf);
+    FN(glTexParameteri);
+    FN(glUniform1i);
+    FN(glUseProgram);
+    FN(glViewport);
+    FN(glVertexAttribPointer);
+    FN(glGetString);
+    FN(glGetUniformLocation);
+    FN(glBindAttribLocation);
+    FN(glShaderSource);
+    FN(glGetProgramInfoLog);
+    FN(glGetShaderInfoLog);
+    FN(glGetActiveUniform);
+    FN(glDeleteBuffers);
+    FN(glDeleteFramebuffers);
+    FN(glDeleteRenderbuffers);
+    FN(glDeleteTextures);
+    FN(glGenBuffers);
+    FN(glGenVertexArrays);
+    FN(glBindBufferRange);
+    FN(glBindBufferBase);
+    FN(glClearBufferfv);
+    FN(eglGetPlatformDisplayEXT);
+    FN(glDrawBuffers);
+    FN(glRenderbufferStorageMultisample);
+    FN(glInvalidateFramebuffer);
+    FN(glBlitFramebuffer);
+    FN(glDrawArraysInstanced);
+    FN(glDrawElementsInstanced);
+    FN(glVertexAttribDivisor);
+    FN(glVertexAttribIPointer);
+    FN(glTexStorage2D);
+    FN(glTexStorage3D);
+    FN(glTexSubImage3D);
+    FN(glProgramParameteri);
+    FN(glGetUniformBlockIndex);
+    FN(glUniformBlockBinding);
+    FN(glGetActiveUniformBlockiv);
+    FN(glFenceSync);
+    FN(glClientWaitSync);
+    FN(glWaitSync);
+    FN(glDeleteSync);
+    FN(glIsSync);
+    FN(glGetSynciv);
+    FN(glCopyImageSubData);
+    FN(glBindVertexArray);
+    FN(glDeleteVertexArrays);
+    FN(glGenFramebuffers);
+    FN(glGenRenderbuffers);
+    FN(glGenTextures);
+    FN(glGetIntegerv);
+    FN(glIsEnabled);
+    FN(glTexParameterfv);
+    FN(glGetProgramiv);
+    FN(glGetShaderiv);
+    FN(glGetShaderSource);
+    FN(glBufferData);
+    FN(glBufferSubData);
+    FN(glMapBufferRange);
+    FN(glGetVertexAttribiv);
+    FN(glGetVertexAttribPointerv);
+    FN(glUnmapBuffer);
+    FN(glTexImage2D);
+    FN(glTexSubImage2D);
+    FN(glCompressedTexImage2D);
+    FN(glCompressedTexSubImage2D);
+    FN(glReadPixels);
+#undef FN
+};
+
+template <typename Fn>
+Fn must_resolve(const char* name) {
+    void* addr = stud::render::resolve(name);
+    if (addr == nullptr) {
+        std::fprintf(stderr, "stud-render-host: could not resolve required symbol '%s'\n", name);
+        std::exit(1);
+    }
+    return reinterpret_cast<Fn>(addr);
+}
+
+struct RealWindow {
+    wl_display* display;
+    wl_egl_window* egl_window;
+    wl_surface* surface;
+};
+
+// Real Vulkan loader, for the one narrow interposition this module
+// handles: redirecting Roblox's vkCreateAndroidSurfaceKHR (an
+// Android-only extension with no Linux equivalent) to the real
+// vkCreateWaylandSurfaceKHR, using the SAME Wayland display/surface
+// android-glue's native_window.cpp already owns here. See
+// render_host_protocol.h's own doc comment for why this is deliberately
+// not a full Vulkan struct marshaller.
+void* g_vulkan_handle = nullptr;
+PFN_vkGetInstanceProcAddr g_real_vk_get_instance_proc_addr = nullptr;
+
+// The one real window, captured once at startup. Anything needing it
+// reads this rather than re-deriving it -- re-deriving is what created a
+// window per call and put a hundred of them on screen.
+ANativeWindow* g_real_window = nullptr;
+
+// Viewer windows that have exited and not yet been reported to
+// Process B, which is what tells the app its web view is gone.
+std::atomic<uint32_t> g_webview_closed{0};
+
+// Messages a web view's page sent through its JavaScript bridge, waiting
+// for Process B to collect them. A login challenge (an OTP, a captcha)
+// reports that it is finished this way, so dropping these means the page
+// completes and the login never does.
+std::mutex g_webview_message_mutex;
+std::deque<std::string> g_webview_messages;
+
+void queue_web_view_message(std::string message) {
+    std::lock_guard<std::mutex> lock(g_webview_message_mutex);
+    // A page that talks endlessly must not grow this without bound; the
+    // engine only ever wants the latest exchange anyway.
+    if (g_webview_messages.size() >= 64) g_webview_messages.pop_front();
+    g_webview_messages.push_back(std::move(message));
+}
+
+// Reads the viewer's own stdout, forwarding the lines its bridge writes
+// and passing everything else through so the viewer's logging still
+// reaches the same place it always did.
+void read_web_view_output(int fd) {
+    std::string pending;
+    char buffer[4096];
+    for (;;) {
+        const ssize_t got = ::read(fd, buffer, sizeof(buffer));
+        if (got <= 0) break;
+        pending.append(buffer, static_cast<size_t>(got));
+        for (;;) {
+            const auto newline = pending.find('\n');
+            if (newline == std::string::npos) break;
+            std::string line = pending.substr(0, newline);
+            pending.erase(0, newline + 1);
+            static constexpr char kPrefix[] = "hybrid ";
+            if (line.rfind(kPrefix, 0) == 0) {
+                queue_web_view_message(line.substr(sizeof(kPrefix) - 1));
+                std::printf("stud-render-host: web view sent a bridge message (%zu bytes)\n",
+                            line.size() - (sizeof(kPrefix) - 1));
+            } else {
+                std::printf("%s\n", line.c_str());
+            }
+            std::fflush(stdout);
+        }
+    }
+    ::close(fd);
+}
+
+// Web-view viewers spawned by this process. They are session leaders of
+// their own (setsid, so the compositor treats the window as the viewer's
+// rather than a stray child of the game window), which means nothing
+// tears them down on their own when Stud exits -- live-reported as a
+// panel left on screen after the game window closed. Tracked so shutdown
+// can close them.
+//
+// A fixed table of atomics rather than a vector behind a mutex, because
+// this is also read from a signal handler: taking a lock there can
+// deadlock outright if the signal arrives while the same thread holds it.
+// Nothing here allocates, and every operation is a single atomic.
+constexpr size_t kMaxWebViews = 16;
+std::atomic<pid_t> g_webview_pids[kMaxWebViews];
+
+void track_web_view(pid_t pid) {
+    for (auto& slot : g_webview_pids) {
+        pid_t empty = 0;
+        if (slot.compare_exchange_strong(empty, pid)) return;
+    }
+    // Table full: the viewer still works, it just will not be closed
+    // automatically. Not silent, since that is a real (if unlikely) gap.
+    std::printf("stud-render-host: too many web views to track; this one will not be "
+                "closed automatically\n");
+    std::fflush(stdout);
+}
+
+void forget_web_view(pid_t pid) {
+    for (auto& slot : g_webview_pids) {
+        pid_t expected = pid;
+        if (slot.compare_exchange_strong(expected, 0)) return;
+    }
+}
+
+// Async-signal-safe: only atomic loads and kill().
+//
+// Waits briefly afterwards so the viewer is really gone before this
+// process exits. Without it, shutdown raced the reaper thread that is
+// still blocked in waitpid() -- live-caught as `terminate called without
+// an active exception`, the runtime destroying a joinable thread while
+// it ran. `wait` is not signal-safe, so only the kill half runs from a
+// handler; the ordinary shutdown paths ask for the wait.
+void close_open_web_views(bool wait_for_exit = false);
+
+void close_open_web_views(bool wait_for_exit) {
+    for (auto& slot : g_webview_pids) {
+        const pid_t pid = slot.exchange(0);
+        // SIGTERM, not SIGKILL: the viewer is a Qt application and gets to
+        // shut its own web engine down cleanly, the same as a window
+        // manager asking it to close.
+        if (pid > 0) {
+            ::kill(pid, SIGTERM);
+            if (wait_for_exit) {
+                // The reaper thread owns the real waitpid(); this only
+                // needs the process to be on its way out, and must never
+                // block shutdown if the viewer ignores SIGTERM.
+                for (int i = 0; i < 100 && ::kill(pid, 0) == 0; ++i) {
+                    ::usleep(10 * 1000);
+                }
+            }
+        }
+    }
+}
+
+// A per-message scratch buffer, reused across calls -- avoids a fresh
+// heap allocation for every single GL call (many of which have no
+// buffer payload at all).
+std::vector<uint8_t> g_in_scratch;
+std::vector<uint8_t> g_out_scratch;
+
+bool read_all(int fd, void* data, uint32_t len) {
+    char* p = static_cast<char*>(data);
+    uint32_t remaining = len;
+    while (remaining > 0) {
+        ssize_t n = ::read(fd, p, remaining);
+        if (n < 0 && errno == EINTR) continue;  // EINTR is not a disconnect
+        if (n <= 0) return false;
+        p += n;
+        remaining -= static_cast<uint32_t>(n);
+    }
+    return true;
+}
+bool write_all(int fd, const void* data, uint32_t len) {
+    const char* p = static_cast<const char*>(data);
+    uint32_t remaining = len;
+    while (remaining > 0) {
+        ssize_t n = ::write(fd, p, remaining);
+        if (n < 0 && errno == EINTR) continue;  // EINTR is not a disconnect
+        if (n <= 0) return false;
+        p += n;
+        remaining -= static_cast<uint32_t>(n);
+    }
+    return true;
+}
+
+// Real GLES3 bytes-per-texel. The old version assumed 4 components for
+// anything it did not recognise, which silently over-read the caller's
+// buffer by 4x for a real GL_RED upload -- live-caught as a fatal
+// EFAULT on the render socket (the engine uploads 128x2048 GL_RED
+// glyph/mask atlases during real UI bring-up), which killed the render
+// connection permanently and froze the window mid-frame.
+uint32_t gl_pixel_size(GLenum format, GLenum type) {
+    uint32_t components = 4;
+    switch (format) {
+        case GL_RED:
+        case GL_RED_INTEGER:
+        case GL_ALPHA:
+        case GL_LUMINANCE:
+        case GL_DEPTH_COMPONENT:
+        case GL_STENCIL_INDEX8:
+            components = 1;
+            break;
+        case GL_RG:
+        case GL_RG_INTEGER:
+        case GL_LUMINANCE_ALPHA:
+        case GL_DEPTH_STENCIL:
+            components = 2;
+            break;
+        case GL_RGB:
+        case GL_RGB_INTEGER:
+            components = 3;
+            break;
+        case GL_RGBA:
+        case GL_RGBA_INTEGER:
+        default:
+            components = 4;
+            break;
+    }
+    switch (type) {
+        // Packed types carry the whole texel in one unit.
+        case GL_UNSIGNED_SHORT_5_6_5:
+        case GL_UNSIGNED_SHORT_4_4_4_4:
+        case GL_UNSIGNED_SHORT_5_5_5_1:
+            return 2;
+        case GL_UNSIGNED_INT_2_10_10_10_REV:
+        case GL_UNSIGNED_INT_10F_11F_11F_REV:
+        case GL_UNSIGNED_INT_5_9_9_9_REV:
+        case GL_UNSIGNED_INT_24_8:
+            return 4;
+        case GL_FLOAT_32_UNSIGNED_INT_24_8_REV:
+            return 8;
+        // Unpacked types: one unit per component.
+        case GL_BYTE:
+        case GL_UNSIGNED_BYTE:
+            return components;
+        case GL_SHORT:
+        case GL_UNSIGNED_SHORT:
+        case GL_HALF_FLOAT:
+            return components * 2u;
+        case GL_INT:
+        case GL_UNSIGNED_INT:
+        case GL_FLOAT:
+            return components * 4u;
+        default:
+            return components;
+    }
+}
+
+}  // namespace
+
+namespace {
+
+uint64_t g_window_surface_handle = kNullHandle;
+bool g_prefer_vulkan = true;
+// Which backend ANGLE should translate GLES to. Empty means ANGLE's own
+// default, which is Vulkan on this platform.
+std::string g_angle_backend;
+bool g_hidpi_enabled = true;
+bool g_discord_enabled = false;
+bool g_discord_join_button = false;
+
+// STUD_TRACE_CURSOR=1: the experiment that separates "the engine never draws
+// its own cursor" from "it draws it and the pixels never reach the screen".
+// Roblox's cursor art is a 64x64 texture and belongs topmost, so record the
+// bound texture (and its real dimensions) at every draw and report, per
+// frame, how many draws used a 64x64 texture plus the full GL state and
+// buffer bindings of the last such draw. Off by default; it only reads state
+// and binds nothing -- unlike the read-back that once blacked out the window.
+bool cursor_trace_enabled() {
+    static const bool on = std::getenv("STUD_TRACE_CURSOR") != nullptr;
+    return on;
+}
+std::unordered_map<GLuint, std::pair<int, int>> g_tex_dims;
+GLuint g_bound_texture_2d = 0;
+uint64_t g_frame_draws = 0;
+uint64_t g_frame_cursor_draws = 0;
+GLuint g_last_cursor_tex = 0;
+uint64_t g_cursor_trace_frames = 0;
+std::string g_last_cursor_state;
+
+template <typename Fns>
+void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_type = 0,
+                                uintptr_t index_offset = 0, GLint first = 0) {
+    if (!cursor_trace_enabled()) return;
+    ++g_frame_draws;
+    auto it = g_tex_dims.find(g_bound_texture_2d);
+    if (it == g_tex_dims.end() || it->second.first != 64 || it->second.second != 64) return;
+    ++g_frame_cursor_draws;
+    g_last_cursor_tex = g_bound_texture_2d;
+    GLint vp[4] = {0, 0, 0, 0};
+    GLint sc[4] = {0, 0, 0, 0};
+    GLint prog = 0, fbo = 0, arr = 0, elem = 0, vao = 0, blend_on = 0, depth_on = 0;
+    GLint src_rgb = 0, dst_rgb = 0;
+    fns.glGetIntegerv_(GL_VIEWPORT, vp);
+    fns.glGetIntegerv_(GL_SCISSOR_BOX, sc);
+    fns.glGetIntegerv_(GL_CURRENT_PROGRAM, &prog);
+    fns.glGetIntegerv_(GL_FRAMEBUFFER_BINDING, &fbo);
+    fns.glGetIntegerv_(GL_ARRAY_BUFFER_BINDING, &arr);
+    fns.glGetIntegerv_(GL_ELEMENT_ARRAY_BUFFER_BINDING, &elem);
+    fns.glGetIntegerv_(GL_VERTEX_ARRAY_BINDING, &vao);
+    fns.glGetIntegerv_(GL_BLEND, &blend_on);
+    fns.glGetIntegerv_(GL_DEPTH_TEST, &depth_on);
+    fns.glGetIntegerv_(GL_BLEND_SRC_RGB, &src_rgb);
+    fns.glGetIntegerv_(GL_BLEND_DST_RGB, &dst_rgb);
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+                  "tex=%u prog=%d fbo=%d vp=[%d,%d,%d,%d] scissor=[%d,%d,%d,%d] blend=%d(%x/%x) "
+                  "depthTest=%d arrayBuf=%d elemBuf=%d vao=%d",
+                  g_bound_texture_2d, prog, fbo, vp[0], vp[1], vp[2], vp[3], sc[0], sc[1], sc[2],
+                  sc[3], blend_on, src_rgb, dst_rgb, depth_on, arr, elem, vao);
+    g_last_cursor_state = buf;
+
+    // One-shot, and only under the trace: read the real geometry the cursor
+    // draw is about to use. Every piece of surrounding state has repeatedly
+    // measured healthy, so the vertex data itself is the remaining suspect --
+    // and guessing at it from the client side is what has stalled this
+    // investigation for several sessions.
+    // Only sample well after start-up: the first 64x64 draws in a process are
+    // boot-time UI, not the cursor, and dumping those wasted a whole pass.
+    static int dumped = 0;
+    if (g_cursor_trace_frames < 400 || dumped >= 6 || arr == 0) return;
+    ++dumped;
+    std::printf("stud-render-host: CURSORTRACE draw count=%d first=%d indexType=0x%x indexOffset=%zu\n",
+                static_cast<int>(count), static_cast<int>(first), index_type,
+                static_cast<size_t>(index_offset));
+    // Read exactly the indices this draw consumes, then exactly the vertices
+    // they name, using attribute 0's real stride and offset. Everything else
+    // about this draw has measured healthy for several sessions; the data is
+    // the only thing left, and it has never actually been looked at.
+    GLint stride = 0, attrib_size = 0, attrib_type = 0;
+    void* attrib_ptr = nullptr;
+    fns.glGetVertexAttribiv_(0, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &stride);
+    fns.glGetVertexAttribiv_(0, GL_VERTEX_ATTRIB_ARRAY_SIZE, &attrib_size);
+    fns.glGetVertexAttribiv_(0, GL_VERTEX_ATTRIB_ARRAY_TYPE, &attrib_type);
+    fns.glGetVertexAttribPointerv_(0, GL_VERTEX_ATTRIB_ARRAY_POINTER, &attrib_ptr);
+    const size_t attrib_base = reinterpret_cast<uintptr_t>(attrib_ptr);
+    std::printf("stud-render-host: CURSORTRACE attrib0 size=%d type=0x%x stride=%d offset=%zu\n",
+                attrib_size, attrib_type, stride, attrib_base);
+    if (elem != 0 && count > 0 && index_type == GL_UNSIGNED_SHORT) {
+        const GLsizeiptr bytes = static_cast<GLsizeiptr>(count) * 2;
+        if (void* ix = fns.glMapBufferRange_(GL_ELEMENT_ARRAY_BUFFER,
+                                              static_cast<GLintptr>(index_offset), bytes,
+                                              GL_MAP_READ_BIT)) {
+            const unsigned short* u = static_cast<const unsigned short*>(ix);
+            std::vector<unsigned short> idx(u, u + count);
+            fns.glUnmapBuffer_(GL_ELEMENT_ARRAY_BUFFER);
+            std::printf("stud-render-host: CURSORTRACE indices:");
+            for (GLsizei i = 0; i < count && i < 12; ++i) std::printf(" %u", static_cast<unsigned>(idx[i]));
+            std::printf("\n");
+            unsigned short lo = idx[0], hi = idx[0];
+            for (unsigned short v : idx) { lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
+            if (stride > 0) {
+                const GLintptr off = static_cast<GLintptr>(attrib_base + static_cast<size_t>(lo) * stride);
+                const GLsizeiptr len = static_cast<GLsizeiptr>(hi - lo + 1) * stride;
+                if (void* vb = fns.glMapBufferRange_(GL_ARRAY_BUFFER, off, len, GL_MAP_READ_BIT)) {
+                    std::printf("stud-render-host: CURSORTRACE verts[%u..%u] attrib0:", lo, hi);
+                    for (unsigned short v = lo; v <= hi && v < lo + 8; ++v) {
+                        const float* f = reinterpret_cast<const float*>(
+                            static_cast<const unsigned char*>(vb) + (v - lo) * stride);
+                        std::printf(" (%.2f,%.2f)", static_cast<double>(f[0]), static_cast<double>(f[1]));
+                    }
+                    std::printf("\n");
+                    fns.glUnmapBuffer_(GL_ARRAY_BUFFER);
+                }
+            }
+        }
+    }
+    std::fflush(stdout);
+}
+
+// Makes SPIRV-Cross's array-index arithmetic compile under ANGLE.
+//
+// Roblox's GLES shader pack contains index expressions like
+//
+//     CB12[((uint(POSITION.w) >> 8u) & 255u) * 1 + 0].xyz
+//
+// The `1` and `0` are `const int` while the left operand is `uint`.
+// ESSL 3.00 has no implicit int->uint conversion, so ANGLE, which
+// implements the spec strictly, rejects it:
+//
+//     ERROR: '*' : wrong operand types ... 'highp uint' and 'const int'
+//
+// Real Android GL drivers accept it, which is why the pack ships this
+// way and works on a device. 35 shaders fail here without this -- the
+// terrain (SmoothCluster*) and part (DefaultUnified*) shaders, i.e.
+// most of what a game looks like.
+//
+// The rewrite is deliberately narrow: ONLY inside `[...]`, and only
+// where the arithmetic follows an unsigned literal's closing paren
+// (`...255u) * 1 + 0`). A broader "suffix any int after a uint" pass was
+// tried and made things far worse -- 35 failures became 795 -- because
+// it also rewrote signed contexts where the int was correct. Matching
+// the generated shape exactly is what keeps it safe; anything that does
+// not match is left for ANGLE to judge.
+std::string fix_uint_index_arithmetic(const std::string& src) {
+    static const std::string kMarker = "u) * ";
+    if (src.find(kMarker) == std::string::npos) return src;
+
+    std::string out;
+    out.reserve(src.size() + 64);
+    size_t i = 0;
+    while (i < src.size()) {
+        // Only rewrite between '[' and the matching ']', so ordinary
+        // arithmetic elsewhere in the shader is never touched.
+        if (src[i] != '[') {
+            out.push_back(src[i++]);
+            continue;
+        }
+        const size_t close = src.find(']', i);
+        if (close == std::string::npos) {
+            out.append(src, i, std::string::npos);
+            break;
+        }
+        std::string index = src.substr(i, close - i + 1);
+        if (index.find(kMarker) != std::string::npos) {
+            std::string fixed;
+            fixed.reserve(index.size() + 8);
+            for (size_t j = 0; j < index.size(); ++j) {
+                fixed.push_back(index[j]);
+                if (index[j] != '*' && index[j] != '+') continue;
+                // Copy the spaces, then suffix the bare integer that
+                // follows so it is unsigned like the left operand.
+                size_t k = j + 1;
+                while (k < index.size() && index[k] == ' ') fixed.push_back(index[k++]);
+                const size_t digits = k;
+                while (k < index.size() && std::isdigit(static_cast<unsigned char>(index[k]))) {
+                    fixed.push_back(index[k++]);
+                }
+                if (k > digits && (k >= index.size() || (index[k] != 'u' && index[k] != '.' &&
+                                                          index[k] != 'f'))) {
+                    fixed.push_back('u');
+                }
+                j = k - 1;
+            }
+            index = std::move(fixed);
+        }
+        out.append(index);
+        i = close + 1;
+    }
+    return out;
+}
+
+// Runs stud-ui in a one-shot secret mode, writing `input` to its stdin
+// and, when `capture` is non-null, collecting its stdout into it.
+//
+// Stud's safe storage lives behind the Secret Service, which only this
+// process can reach (Process B is sandboxed, Process A has exited).
+// Secrets go over pipes rather than argv or the environment, because
+// /proc/<pid>/cmdline and /proc/<pid>/environ are readable by anything
+// running as this user. Only the secret's NAME is ever an argument.
+// Runs stud-ui one-shot and does not wait for it. Same discovery of the
+// sibling binary as the keyring helper below; nothing is read back, so
+// there are no pipes and no reaping beyond the double fork.
+void run_ui_helper_detached(const char* mode, const std::string& argument) {
+    const pid_t pid = ::fork();
+    if (pid != 0) {
+        if (pid > 0) ::waitpid(pid, nullptr, 0);  // the intermediate exits at once
+        return;
+    }
+    // Child: fork again so the grandchild is reparented to init and this
+    // process never has to reap it.
+    if (::fork() != 0) ::_exit(0);
+    ::setsid();
+    std::string own_dir;
+    {
+        char buf[4096];
+        const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            const std::string exe(buf);
+            const auto slash = exe.find_last_of('/');
+            if (slash != std::string::npos) own_dir = exe.substr(0, slash);
+        }
+    }
+    const std::string candidates[] = {own_dir + "/../ui/stud-ui", own_dir + "/stud-ui",
+                                      "stud-ui"};
+    for (const std::string& path : candidates) {
+        ::execl(path.c_str(), "stud-ui", mode, argument.c_str(), nullptr);
+    }
+    ::_exit(127);
+}
+
+bool run_ui_secret_helper(const char* mode, const std::string& name, const std::string& input,
+                           std::string* capture) {
+    int to_child[2] = {-1, -1};
+    int from_child[2] = {-1, -1};
+    if (::pipe(to_child) != 0) return false;
+    if (capture != nullptr && ::pipe(from_child) != 0) {
+        ::close(to_child[0]);
+        ::close(to_child[1]);
+        return false;
+    }
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::close(to_child[1]);
+        ::dup2(to_child[0], STDIN_FILENO);
+        ::close(to_child[0]);
+        if (capture != nullptr) {
+            ::close(from_child[0]);
+            ::dup2(from_child[1], STDOUT_FILENO);
+            ::close(from_child[1]);
+        }
+        ::setsid();
+        std::string own_dir;
+        {
+            char buf[4096];
+            const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+            if (n > 0) {
+                buf[n] = '\0';
+                const std::string exe(buf);
+                const auto slash = exe.find_last_of('/');
+                if (slash != std::string::npos) own_dir = exe.substr(0, slash);
+            }
+        }
+        if (!own_dir.empty()) {
+            const std::string sibling = own_dir + "/../ui/stud-ui";
+            ::execl(sibling.c_str(), "stud-ui", mode, name.c_str(), nullptr);
+        }
+        ::execlp("stud-ui", "stud-ui", mode, name.c_str(), nullptr);
+        ::_exit(127);
+    }
+    ::close(to_child[0]);
+    if (capture != nullptr) ::close(from_child[1]);
+    if (pid < 0) {
+        ::close(to_child[1]);
+        if (capture != nullptr) ::close(from_child[0]);
+        return false;
+    }
+    {
+        const char* bytes = input.data();
+        size_t left = input.size();
+        while (left > 0) {
+            const ssize_t written = ::write(to_child[1], bytes, left);
+            if (written <= 0) break;
+            bytes += written;
+            left -= static_cast<size_t>(written);
+        }
+    }
+    ::close(to_child[1]);
+    if (capture == nullptr) {
+        // Nothing to read back, so do not make the render loop wait on
+        // the keyring: reap in the background.
+        std::thread([pid] { int status = 0; ::waitpid(pid, &status, 0); }).detach();
+        return true;
+    }
+    char buf[4096];
+    while (true) {
+        const ssize_t n = ::read(from_child[0], buf, sizeof(buf));
+        if (n <= 0) break;
+        capture->append(buf, static_cast<size_t>(n));
+    }
+    ::close(from_child[0]);
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+// Dispatches one request. `in` is exactly `hdr.in_buffer_len` bytes
+// (already read); `out` must be filled with up to `hdr.out_buffer_len`
+// bytes, `*out_len` set to how many real bytes were written (may be 0).
+// Leave without running static destructors or atexit handlers. Every
+// shutdown path here uses it: the window closing, the engine
+// disconnecting, and CallId::EndSession, which exits from inside
+// dispatch() and so needs this declared above it rather than beside the
+// accept loop where it used to live.
+[[noreturn]] void exit_now(int status) {
+    std::fflush(nullptr);
+    ::_exit(status);
+}
+
+uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
+                   const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
+    const uint64_t* a = hdr.args;
+    *out_len = 0;
+    // Real pixel-source resolution: when a real GL_PIXEL_UNPACK_BUFFER is
+    // bound on the client, `pixels` is a byte offset into it, and the client
+    // sends no pixel bytes at all -- see Header's own doc comment.
+    auto pixels_ptr = [&]() -> const void* {
+        if (hdr.pixel_buffer_offset_plus_one != 0) {
+            return reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1);
+        }
+        return in.empty() ? nullptr : in.data();
+    };
+    // Real, temporary diagnostic answering a real, concrete question: does
+    // the engine ever issue a single real draw/clear call, or does it only
+    // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
+    // EglSwapBuffers alone (see that case below) -- extended here to the
+    // three calls that actually put pixels in a frame, since "the swap
+    // loop runs" and "something real gets drawn" are two different real
+    // facts and this project had only ever confirmed the first one.
+    static const bool draw_trace = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+    if (draw_trace && (hdr.call_id == CallId::GlClear || hdr.call_id == CallId::GlDrawArrays ||
+                        hdr.call_id == CallId::GlDrawElements)) {
+        std::printf("stud-render-host: real draw/clear call id=%d\n", static_cast<int>(hdr.call_id));
+    }
+    switch (hdr.call_id) {
+        // ---- EGL ----
+        case CallId::EglGetDisplay: {
+            // Plain eglGetDisplay is the default and the path that has
+            // rendered for this project's whole history. STUD_ANGLE_BACKEND
+            // opts into asking ANGLE for a specific backend instead, which
+            // needs eglGetPlatformDisplayEXT because the platform type is an
+            // attribute of display creation and nothing else can express it
+            // -- ANGLE_DEFAULT_PLATFORM was tried first and measured to have
+            // no effect here, and "gl" does not mean desktop GL to it
+            // anyway (it maps to native GLES).
+            //
+            // This was tried once before and reverted for producing a
+            // display that initialised, reported success and rendered
+            // nothing. That measurement was taken while the window-size
+            // mismatch was making the engine rebuild its surface every
+            // frame, so it is worth re-measuring -- but only behind an
+            // opt-in, and only trusting a frame dump, never a log line.
+            EGLDisplay d = EGL_NO_DISPLAY;
+            if (!g_angle_backend.empty() && fns.eglGetPlatformDisplayEXT_ != nullptr) {
+                const std::string_view want(g_angle_backend);
+                EGLint type = 0;
+                EGLint device = 0;
+                if (want == "gl") {
+                    type = EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE;
+                } else if (want == "gles") {
+                    type = EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE;
+                } else if (want == "vulkan") {
+                    type = EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
+                } else if (want == "swiftshader") {
+                    type = EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
+                    device = EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE;
+                }
+                if (type != 0) {
+                    std::vector<EGLint> attribs{EGL_PLATFORM_ANGLE_TYPE_ANGLE, type};
+                    if (device != 0) {
+                        attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
+                        attribs.push_back(device);
+                    }
+                    attribs.push_back(EGL_NONE);
+                    d = fns.eglGetPlatformDisplayEXT_(EGL_PLATFORM_ANGLE_ANGLE,
+                                                       static_cast<void*>(window.display),
+                                                       attribs.data());
+                    std::printf("stud-render-host: ANGLE backend \"%s\" -> %s\n",
+                                g_angle_backend.c_str(),
+                                d == EGL_NO_DISPLAY ? "refused, falling back" : "granted");
+                    std::fflush(stdout);
+                }
+            }
+            if (d == EGL_NO_DISPLAY) {
+                d = fns.eglGetDisplay_(reinterpret_cast<EGLNativeDisplayType>(window.display));
+            }
+            return d == EGL_NO_DISPLAY ? kNullHandle : store(g_displays, d);
+        }
+        case CallId::EglInitialize: {
+            EGLint major = 0, minor = 0;
+            return fns.eglInitialize_(g_displays.at(a[0]), &major, &minor) == EGL_TRUE;
+        }
+        case CallId::EglBindApi:
+            return fns.eglBindAPI_(static_cast<EGLenum>(a[0])) == EGL_TRUE;
+        case CallId::EglChooseConfig: {
+            const EGLint config_attribs[] = {EGL_SURFACE_TYPE,
+                                              EGL_WINDOW_BIT,
+                                              EGL_RENDERABLE_TYPE,
+                                              EGL_OPENGL_ES2_BIT,
+                                              EGL_RED_SIZE,
+                                              8,
+                                              EGL_GREEN_SIZE,
+                                              8,
+                                              EGL_BLUE_SIZE,
+                                              8,
+                                              EGL_ALPHA_SIZE,
+                                              8,
+                                              EGL_NONE};
+            EGLConfig config;
+            EGLint num_configs = 0;
+            if (fns.eglChooseConfig_(g_displays.at(a[0]), config_attribs, &config, 1, &num_configs) !=
+                    EGL_TRUE ||
+                num_configs == 0) {
+                std::fprintf(stderr, "stud-render-host: DIAG eglChooseConfig failed, error=0x%x\n",
+                              fns.eglGetError_());
+                return kNullHandle;
+            }
+            {
+                EGLint config_id = -1, surface_type = -1, native_visual_id = -1;
+                fns.eglGetConfigAttrib_(g_displays.at(a[0]), config, EGL_CONFIG_ID, &config_id);
+                fns.eglGetConfigAttrib_(g_displays.at(a[0]), config, EGL_SURFACE_TYPE, &surface_type);
+                fns.eglGetConfigAttrib_(g_displays.at(a[0]), config, EGL_NATIVE_VISUAL_ID,
+                                          &native_visual_id);
+                std::fprintf(stderr,
+                              "stud-render-host: DIAG chosen config id=%d surface_type=0x%x "
+                              "native_visual_id=%d egl_window=%p wl_surface=%p\n",
+                              config_id, surface_type, native_visual_id,
+                              static_cast<void*>(window.egl_window),
+                              static_cast<void*>(window.surface));
+            }
+            return store(g_configs, config);
+        }
+        case CallId::EglCreateWindowSurface: {
+            if (window.egl_window != nullptr) {
+                std::fprintf(stderr,
+                              "stud-render-host: DIAG egl_window real size before create: "
+                              "width=%d height=%d attached_width=%d attached_height=%d\n",
+                              window.egl_window->width, window.egl_window->height,
+                              window.egl_window->attached_width, window.egl_window->attached_height);
+            }
+            // Real, testable hypothesis (the engineering notes, "no kde window
+            // at all" investigation): stud_try_render_window (a standalone
+            // tool doing the exact same real window+EGL setup sequence)
+            // succeeds immediately at startup, while this same sequence in
+            // stud-render-host only runs many real seconds later, after
+            // Process B works through a long chain of 8s-bounded blocking
+            // calls, during which this process's own Wayland connection
+            // may sit without a fresh dispatch/roundtrip. A stale client-
+            // side view of the connection (a compositor-sent event never
+            // processed) is a real, plausible reason eglCreateWindowSurface
+            // -> vkCreateWaylandSurfaceKHR could fail where the standalone
+            // tool doesn't. Cheap, safe to always do regardless of outcome.
+            wl_display_roundtrip(window.display);
+            EGLSurface s = fns.eglCreateWindowSurface_(
+                g_displays.at(a[0]), g_configs.at(a[1]),
+                reinterpret_cast<EGLNativeWindowType>(window.egl_window), nullptr);
+            if (s == EGL_NO_SURFACE) {
+                std::fprintf(stderr,
+                              "stud-render-host: DIAG eglCreateWindowSurface failed dpy=%p "
+                              "config_handle=%llu egl_window=%p error=0x%x\n",
+                              static_cast<void*>(g_displays.at(a[0])),
+                              static_cast<unsigned long long>(a[1]),
+                              static_cast<void*>(window.egl_window), fns.eglGetError_());
+            } else {
+                std::fprintf(stderr,
+                              "stud-render-host: DIAG eglCreateWindowSurface SUCCEEDED s=%p "
+                              "egl_window=%p (call #%d)\n",
+                              static_cast<void*>(s), static_cast<void*>(window.egl_window),
+                              ++g_window_surface_create_count);
+            }
+            if (s == EGL_NO_SURFACE) return kNullHandle;
+            // ANGLE can hand back the *same* EGLSurface for repeated creates
+            // against the one native window this process owns (confirmed
+            // live: both calls returned 0x1). Minting a fresh handle each
+            // time would alias several handles onto one surface -- the engine
+            // then destroys an older handle, the shared surface dies, and
+            // every later swap fails with EGL_BAD_SURFACE (0x300d) while the
+            // engine keeps drawing into nothing. Deduplicate on the real
+            // EGLSurface instead, which keeps destroy honest (see
+            // EglDestroySurface below) rather than pinning one handle for the
+            // life of the process.
+            for (const auto& kv : g_surfaces) {
+                if (kv.second == s) return kv.first;
+            }
+            uint64_t h = store(g_surfaces, s);
+            g_window_surface_handle = h;
+            return h;
+        }
+        case CallId::EglCreatePbufferSurface: {
+            const EGLint attribs[] = {EGL_WIDTH, static_cast<EGLint>(a[1]), EGL_HEIGHT,
+                                       static_cast<EGLint>(a[2]), EGL_NONE};
+            EGLSurface s = fns.eglCreatePbufferSurface_(g_displays.at(a[0]), g_configs.at(a[1]),
+                                                          attribs);
+            return s == EGL_NO_SURFACE ? kNullHandle : store(g_surfaces, s);
+        }
+        case CallId::EglCreateContext: {
+            const EGLint context_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+            EGLContext ctx = fns.eglCreateContext_(g_displays.at(a[0]), g_configs.at(a[1]),
+                                                     EGL_NO_CONTEXT, context_attribs);
+            return ctx == EGL_NO_CONTEXT ? kNullHandle : store(g_contexts, ctx);
+        }
+        case CallId::EglMakeCurrent: {
+            EGLSurface s = a[1] == kNullHandle ? EGL_NO_SURFACE : g_surfaces.at(a[1]);
+            EGLContext c = a[2] == kNullHandle ? EGL_NO_CONTEXT : g_contexts.at(a[2]);
+            EGLBoolean ok = fns.eglMakeCurrent_(g_displays.at(a[0]), s, s, c);
+            if (ok != EGL_TRUE) {
+                std::printf("stud-render-host: DIAG eglMakeCurrent FAILED dpy=%llu surf=%llu ctx=%llu "
+                            "egl_error=0x%x\n",
+                            static_cast<unsigned long long>(a[0]),
+                            static_cast<unsigned long long>(a[1]),
+                            static_cast<unsigned long long>(a[2]),
+                            fns.eglGetError_());
+            }
+            return ok == EGL_TRUE;
+        }
+        case CallId::EglSwapBuffers: {
+            // Real frame-rate measurement, env-gated (STUD_FPS=1, or
+            // STUD_FPS=<seconds> for a different window). Counts swaps and
+            // reports once per window -- per-swap tracing
+            // (STUD_RENDER_CALL_TRACE) is far too heavy to measure a real
+            // in-game session with, since it prints for every draw call as
+            // well and changes the thing being measured.
+            {
+                static const char* fps_env = std::getenv("STUD_FPS");
+                if (fps_env != nullptr) {
+                    static const double window_s =
+                        std::atof(fps_env) > 0.0 ? std::atof(fps_env) : 5.0;
+                    static auto window_start = std::chrono::steady_clock::now();
+                    static uint64_t window_swaps = 0;
+                    ++window_swaps;
+                    const auto now = std::chrono::steady_clock::now();
+                    const double elapsed =
+                        std::chrono::duration<double>(now - window_start).count();
+                    if (elapsed >= window_s) {
+                        std::printf("stud-render-host: FPS %.1f (%llu swaps in %.1fs)\n",
+                                    static_cast<double>(window_swaps) / elapsed,
+                                    static_cast<unsigned long long>(window_swaps), elapsed);
+                        std::fflush(stdout);
+                        window_start = now;
+                        window_swaps = 0;
+                    }
+                }
+            }
+            // Honest pixel check, env-gated and off by default: read the
+            // default framebuffer back BEFORE the swap (after it the back
+            // buffer is undefined). Draw counters and "the app reached Home"
+            // both look healthy while the screen is black -- this is the only
+            // check that answers "did anything actually get drawn". It binds
+            // nothing and changes no state; the read-back that once blacked
+            // out the window bound an FBO, which this deliberately does not.
+            {
+                static const char* dump_every_env = std::getenv("STUD_DUMP_FRAME");
+                static const int dump_every = dump_every_env ? std::atoi(dump_every_env) : 0;
+                static uint64_t swap_seen = 0;
+                if (dump_every > 0 && (++swap_seen % static_cast<uint64_t>(dump_every)) == 0) {
+                    const int w = ANativeWindow_getWidth(nullptr);
+                    const int h = ANativeWindow_getHeight(nullptr);
+                    GLint fb_binding = -1, read_fb = -1, read_buf = -1;
+                    // Must go through the resolved ANGLE entry points: the
+                    // plain glXxx symbols this process links against are a
+                    // different libGLESv2 with no context, so they silently
+                    // do nothing (live-caught: every value stayed at its -1
+                    // sentinel and glGetError() read 0).
+                    fns.glGetIntegerv_(GL_FRAMEBUFFER_BINDING, &fb_binding);
+                    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
+                    fns.glGetIntegerv_(GL_READ_BUFFER, &read_buf);
+                    std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
+                    fns.glReadPixels_(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                    const char* path = std::getenv("STUD_DUMP_FRAME_PATH");
+                    if (path == nullptr) path = "/tmp/stud_frame.ppm";
+                    size_t nonblack = 0;
+                    size_t white = 0;
+                    for (size_t i = 0; i + 3 < px.size(); i += 4) {
+                        if (px[i] || px[i + 1] || px[i + 2]) ++nonblack;
+                        if (px[i] == 255 && px[i + 1] == 255 && px[i + 2] == 255) ++white;
+                    }
+                    if (FILE* f = std::fopen(path, "wb")) {
+                        std::fprintf(f, "P6\n%d %d\n255\n", w, h);
+                        // glReadPixels' origin is bottom-left; PPM is top-down.
+                        for (int y = h - 1; y >= 0; --y) {
+                            for (int x = 0; x < w; ++x) {
+                                const unsigned char* p = &px[(static_cast<size_t>(y) * w + x) * 4];
+                                std::fwrite(p, 1, 3, f);
+                            }
+                        }
+                        std::fclose(f);
+                    }
+                    std::printf("stud-render-host: DUMP frame #%llu %dx%d non-black=%zu of %zu "
+                                "white=%zu drawFbo=%d readFbo=%d readBuf=0x%x glErr=0x%x -> %s\n",
+                                static_cast<unsigned long long>(swap_seen), w, h, nonblack,
+                                px.size() / 4, white, fb_binding, read_fb, read_buf,
+                                fns.glGetError_(), path);
+                    std::fflush(stdout);
+                }
+            }
+            if (cursor_trace_enabled()) {
+                std::printf("stud-render-host: CURSORTRACE frame draws=%llu 64x64draws=%llu %s\n",
+                            static_cast<unsigned long long>(g_frame_draws),
+                            static_cast<unsigned long long>(g_frame_cursor_draws),
+                            g_frame_cursor_draws > 0 ? g_last_cursor_state.c_str() : "(no 64x64 draw)");
+                std::fflush(stdout);
+                ++g_cursor_trace_frames;
+                g_frame_draws = 0;
+                g_frame_cursor_draws = 0;
+            }
+            // Says whether the real EGL surface actually followed a window
+            // resize. Distinguishes "ANGLE never resized the swapchain" from
+            // "it did and the engine is still drawing at the old size", which
+            // look identical on screen (a larger frame with the old image in
+            // one corner and uncleared garbage in the rest).
+            {
+                static EGLint last_w = 0, last_h = 0;
+                EGLint sw = 0, sh = 0;
+                fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]), EGL_WIDTH, &sw);
+                fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]), EGL_HEIGHT, &sh);
+                if (sw != last_w || sh != last_h) {
+                    last_w = sw;
+                    last_h = sh;
+                    std::printf("stud-render-host: EGL surface size now %dx%d (window %dx%d)\n", sw,
+                                sh, ANativeWindow_getWidth(nullptr), ANativeWindow_getHeight(nullptr));
+                    std::fflush(stdout);
+                }
+            }
+            static const bool time_swap = std::getenv("STUD_TIME_SWAP") != nullptr;
+            auto t_swap_start = std::chrono::steady_clock::now();
+            uint64_t r = fns.eglSwapBuffers_(g_displays.at(a[0]), g_surfaces.at(a[1])) == EGL_TRUE;
+            auto t_after_swap = std::chrono::steady_clock::now();
+            if (r == 0) {
+                // A failing swap presents nothing: the engine draws a full
+                // frame and the window stays black. Report the real EGL error
+                // once -- it is the difference between "context lost" and a
+                // plain bad-surface/bad-match.
+                static bool told = false;
+                if (!told) {
+                    told = true;
+                    std::printf("stud-render-host: eglSwapBuffers FAILED egl_error=0x%x dpy=%llu "
+                                "surf=%llu\n",
+                                fns.eglGetError_(), (unsigned long long)a[0],
+                                (unsigned long long)a[1]);
+                    std::fflush(stdout);
+                }
+            }
+            wl_display_roundtrip(window.display);
+            if (time_swap) {
+                static auto last_frame = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                auto ms = [](auto d) {
+                    return std::chrono::duration_cast<std::chrono::microseconds>(d).count() / 1000.0;
+                };
+                std::printf("stud-render-host: SWAPTIME egl=%.2fms roundtrip=%.2fms frame=%.2fms\n",
+                            ms(t_after_swap - t_swap_start), ms(now - t_after_swap),
+                            ms(now - last_frame));
+                std::fflush(stdout);
+                last_frame = now;
+            }
+            // Real, evidence-based confirmation of the first actual
+            // rendered frame (~Stud plan, "Phase 5" verification: "confirm
+            // the first frame via render-host's own dispatch log on
+            // EglSwapBuffers"), not just a stdout claim from the bionic
+            // side. Env-gated (same convention as
+            // STUD_VULKAN_CALL_TRACE) since every real frame would
+            // otherwise spam this.
+            static const bool trace = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+            static uint64_t frame_count = 0;
+            if (trace) {
+                ++frame_count;
+                std::printf("stud-render-host: real EglSwapBuffers dispatched (frame #%llu, ok=%llu)\n",
+                            static_cast<unsigned long long>(frame_count),
+                            static_cast<unsigned long long>(r));
+                std::fflush(stdout);
+            }
+            return r;
+        }
+        case CallId::EglGetError:
+            return static_cast<uint64_t>(fns.eglGetError_());
+        case CallId::EglQueryString: {
+            const char* s = fns.eglQueryString_(g_displays.at(a[0]), static_cast<EGLint>(a[1]));
+            if (s != nullptr) {
+                size_t len = std::strlen(s);
+                out.assign(s, s + len);
+                *out_len = static_cast<uint32_t>(len);
+            }
+            return 1;
+        }
+        case CallId::EglDestroyContext:
+            return fns.eglDestroyContext_(g_displays.at(a[0]), g_contexts.at(a[1])) == EGL_TRUE;
+        case CallId::EglDestroySurface: {
+            // Honour the destroy. The engine legitimately destroys and
+            // recreates its window surface (a resize, a RenderView rebuild);
+            // refusing meant the next create hit EGL_BAD_ALLOC because the
+            // old surface still held the native window, and the engine
+            // abandoned the frame. Create dedupes on the real EGLSurface, so
+            // one handle only ever names one live surface.
+            auto it = g_surfaces.find(a[1]);
+            if (it == g_surfaces.end()) return EGL_TRUE;
+            EGLBoolean ok = fns.eglDestroySurface_(g_displays.at(a[0]), it->second);
+            g_surfaces.erase(it);
+            if (a[1] == g_window_surface_handle) g_window_surface_handle = kNullHandle;
+            return ok == EGL_TRUE;
+        }
+        case CallId::EglGetConfigAttrib: {
+            EGLint value = 0;
+            EGLBoolean ok = fns.eglGetConfigAttrib_(g_displays.at(a[0]), g_configs.at(a[1]),
+                                                      static_cast<EGLint>(a[2]), &value);
+            out.resize(sizeof(EGLint));
+            std::memcpy(out.data(), &value, sizeof(EGLint));
+            *out_len = sizeof(EGLint);
+            return ok == EGL_TRUE;
+        }
+        case CallId::EglGetCurrentContext: {
+            EGLContext c = fns.eglGetCurrentContext_();
+            for (auto& [h, ctx] : g_contexts) {
+                if (ctx == c) return h;
+            }
+            return kNullHandle;
+        }
+        case CallId::EglQuerySurface: {
+            EGLint value = 0;
+            EGLBoolean ok = fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]),
+                                                   static_cast<EGLint>(a[2]), &value);
+            out.resize(sizeof(EGLint));
+            std::memcpy(out.data(), &value, sizeof(EGLint));
+            *out_len = sizeof(EGLint);
+            return ok == EGL_TRUE;
+        }
+        case CallId::EglSwapInterval:
+            return fns.eglSwapInterval_(g_displays.at(a[0]), static_cast<EGLint>(a[1])) == EGL_TRUE;
+        case CallId::EglTerminate:
+            return fns.eglTerminate_(g_displays.at(a[0])) == EGL_TRUE;
+        case CallId::EglGetProcAddress: {
+            // Real pointer, meaningful only to Process C itself --
+            // Process B's own eglGetProcAddress stub does NOT hand this
+            // raw value back to Roblox (a foreign-process function
+            // pointer would be nonsense to call directly); it maps the
+            // queried name to one of its own local generic forwarding
+            // trampolines instead. This response exists only so Process
+            // B's stub can confirm "yes, this name is real" (nonzero)
+            // vs "not found" (zero).
+            void* p = fns.eglGetProcAddress_(in.empty() ? "" : reinterpret_cast<const char*>(in.data()));
+            return p != nullptr ? 1 : 0;
+        }
+
+        // ---- GLES2: scalar state ----
+        case CallId::GlActiveTexture: fns.glActiveTexture_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlAttachShader: fns.glAttachShader_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1])); return 0;
+        case CallId::GlBindBuffer: fns.glBindBuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
+        case CallId::GlBindFramebuffer: fns.glBindFramebuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
+        case CallId::GlBindRenderbuffer: fns.glBindRenderbuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
+        case CallId::GlBindTexture:
+            if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D) g_bound_texture_2d = static_cast<GLuint>(a[1]);
+            fns.glBindTexture_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]));
+            return 0;
+        case CallId::GlBlendFunc: fns.glBlendFunc_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1])); return 0;
+        case CallId::GlBlendFuncSeparate: fns.glBlendFuncSeparate_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLenum>(a[3])); return 0;
+                case CallId::GlCheckFramebufferStatus: return fns.glCheckFramebufferStatus_(static_cast<GLenum>(a[0]));
+        case CallId::GlClear: fns.glClear_(static_cast<GLbitfield>(a[0])); return 0;
+        case CallId::GlClearColor: fns.glClearColor_(unpack_float(a[0]), unpack_float(a[1]), unpack_float(a[2]), unpack_float(a[3])); return 0;
+        case CallId::GlClearDepthf: fns.glClearDepthf_(unpack_float(a[0])); return 0;
+        case CallId::GlClearStencil: fns.glClearStencil_(static_cast<GLint>(a[0])); return 0;
+        case CallId::GlColorMask: fns.glColorMask_(static_cast<GLboolean>(a[0]), static_cast<GLboolean>(a[1]), static_cast<GLboolean>(a[2]), static_cast<GLboolean>(a[3])); return 0;
+        case CallId::GlCompileShader: {
+            GLuint sh = static_cast<GLuint>(a[0]);
+            fns.glCompileShader_(sh);
+            // STUD_DUMP_BAD_SHADERS=<dir>: write the source of any shader
+            // that fails to compile, plus its info log. The engine's own
+            // log only reports the name and the error line, which is not
+            // enough to tell a genuinely invalid shader from one ANGLE is
+            // rejecting more strictly than the drivers Roblox ships
+            // against. Off unless the env var is set; writes nothing on
+            // success.
+            static const char* dump_dir = std::getenv("STUD_DUMP_BAD_SHADERS");
+            if (dump_dir != nullptr) {
+                GLint ok = GL_TRUE;
+                fns.glGetShaderiv_(sh, GL_COMPILE_STATUS, &ok);
+                if (ok == GL_FALSE) {
+                    static int seq = 0;
+                    char path[512];
+                    std::snprintf(path, sizeof(path), "%s/bad_shader_%d.txt", dump_dir, seq++);
+                    if (FILE* f = std::fopen(path, "w")) {
+                        GLint srclen = 0;
+                        fns.glGetShaderiv_(sh, GL_SHADER_SOURCE_LENGTH, &srclen);
+                        if (srclen > 0) {
+                            std::vector<char> buf(static_cast<size_t>(srclen));
+                            GLsizei got = 0;
+                            fns.glGetShaderSource_(sh, srclen, &got, buf.data());
+                            std::fwrite(buf.data(), 1, static_cast<size_t>(got), f);
+                        }
+                        GLint loglen = 0;
+                        fns.glGetShaderiv_(sh, GL_INFO_LOG_LENGTH, &loglen);
+                        if (loglen > 0) {
+                            std::vector<char> log(static_cast<size_t>(loglen));
+                            GLsizei got = 0;
+                            fns.glGetShaderInfoLog_(sh, loglen, &got, log.data());
+                            std::fprintf(f, "\n\n===== INFO LOG =====\n");
+                            std::fwrite(log.data(), 1, static_cast<size_t>(got), f);
+                        }
+                        std::fclose(f);
+                        std::printf("stud-render-host: dumped failing shader to %s\n", path);
+                        std::fflush(stdout);
+                    }
+                }
+            }
+            return 0;
+        }
+        case CallId::GlCopyTexSubImage2D: fns.glCopyTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]), static_cast<GLint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLint>(a[5]), 0, 0); return 0;
+        case CallId::GlCreateProgram: return fns.glCreateProgram_();
+        case CallId::GlCreateShader: return fns.glCreateShader_(static_cast<GLenum>(a[0]));
+        case CallId::GlCullFace: fns.glCullFace_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlDeleteProgram: fns.glDeleteProgram_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlDeleteShader: fns.glDeleteShader_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlDepthFunc: fns.glDepthFunc_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlDepthMask: fns.glDepthMask_(static_cast<GLboolean>(a[0])); return 0;
+        case CallId::GlDisable: fns.glDisable_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlDisableVertexAttribArray: fns.glDisableVertexAttribArray_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlDrawArrays:
+            note_draw_for_cursor_trace(fns, static_cast<GLsizei>(a[2]), 0, 0, static_cast<GLint>(a[1]));
+            fns.glDrawArrays_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]));
+            return 0;
+        case CallId::GlDrawElements:
+            // `indices` (a[3]) is a real VBO-relative byte OFFSET here,
+            // not a client-side pointer -- see glVertexAttribPointer's
+            // own handling below for why that's the real, common case
+            // this forwards correctly, and the documented limitation for
+            // genuine client-side index arrays.
+            note_draw_for_cursor_trace(fns, static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
+                                       static_cast<uintptr_t>(a[3]));
+            fns.glDrawElements_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]), reinterpret_cast<const void*>(a[3]));
+            return 0;
+        case CallId::GlEnable: fns.glEnable_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlEnableVertexAttribArray: fns.glEnableVertexAttribArray_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlFramebufferRenderbuffer: fns.glFramebufferRenderbuffer_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLuint>(a[3])); return 0;
+        case CallId::GlFramebufferTexture2D: fns.glFramebufferTexture2D_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLuint>(a[3]), static_cast<GLint>(a[4])); return 0;
+        case CallId::GlGenerateMipmap: fns.glGenerateMipmap_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlGetError: return fns.glGetError_();
+        case CallId::GlLinkProgram: {
+            fns.glLinkProgram_(static_cast<GLuint>(a[0]));
+            // Real diagnostic, env-gated: libroblox's own FLog reports
+            // "failed to link shader program X,Y," with no reason. The
+            // real reason only exists here, in ANGLE's own info log.
+            static const bool trace = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+            if (trace) {
+                GLint status = 0;
+                fns.glGetProgramiv_(static_cast<GLuint>(a[0]), GL_LINK_STATUS, &status);
+                if (status != GL_TRUE) {
+                    char log[2048];
+                    GLsizei len = 0;
+                    fns.glGetProgramInfoLog_(static_cast<GLuint>(a[0]), sizeof(log), &len, log);
+                    log[len < static_cast<GLsizei>(sizeof(log)) ? len : sizeof(log) - 1] = '\0';
+                    std::printf("stud-render-host: DIAG link FAILED program=%llu log=%s\n",
+                                static_cast<unsigned long long>(a[0]), log);
+                }
+            }
+            return 0;
+        }
+        case CallId::GlPixelStorei: fns.glPixelStorei_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1])); return 0;
+        case CallId::GlPolygonOffset: fns.glPolygonOffset_(unpack_float(a[0]), unpack_float(a[1])); return 0;
+        case CallId::GlReleaseShaderCompiler: fns.glReleaseShaderCompiler_(); return 0;
+        case CallId::GlRenderbufferStorage: fns.glRenderbufferStorage_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
+        case CallId::GlScissor: fns.glScissor_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
+        case CallId::GlStencilFunc: fns.glStencilFunc_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLuint>(a[2])); return 0;
+        case CallId::GlStencilMask: fns.glStencilMask_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlStencilOp: fns.glStencilOp_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2])); return 0;
+        case CallId::GlTexParameterf: fns.glTexParameterf_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), unpack_float(a[2])); return 0;
+        case CallId::GlTexParameteri: fns.glTexParameteri_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLint>(a[2])); return 0;
+        case CallId::GlUniform1i: fns.glUniform1i_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1])); return 0;
+        case CallId::GlUseProgram: fns.glUseProgram_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlViewport: fns.glViewport_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
+        case CallId::GlVertexAttribPointer:
+            // `pointer` (a[5]) is a VBO-relative byte offset -- correct
+            // and sufficient for the overwhelmingly common real-world
+            // case (a GL_ARRAY_BUFFER bound via glBindBuffer before this
+            // call, per modern GLES usage). Genuine client-side vertex
+            // arrays (a real CPU pointer, no VBO bound) are NOT
+            // supported by this forwarding -- would need the pointed-to
+            // data copied into the outgoing buffer at every draw call
+            // using it, not yet implemented since nothing has confirmed
+            // Roblox actually relies on that (rare in modern engines;
+            // flagged, not guessed at).
+            fns.glVertexAttribPointer_(static_cast<GLuint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLboolean>(a[3]), static_cast<GLsizei>(a[4]), reinterpret_cast<const void*>(a[5]));
+            return 0;
+
+        // ---- GLES2: string in/out ----
+        case CallId::GlGetString: {
+            const GLubyte* s = fns.glGetString_(static_cast<GLenum>(a[0]));
+            if (s != nullptr) {
+                size_t len = std::strlen(reinterpret_cast<const char*>(s));
+                out.assign(s, s + len);
+                *out_len = static_cast<uint32_t>(len);
+            }
+            return 1;
+        }
+        case CallId::GlGetUniformLocation: {
+            std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            return static_cast<uint64_t>(static_cast<uint32_t>(fns.glGetUniformLocation_(static_cast<GLuint>(a[0]), name.c_str())));
+        }
+        case CallId::GlBindAttribLocation: {
+            std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            fns.glBindAttribLocation_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]), name.c_str());
+            return 0;
+        }
+        case CallId::GlShaderSource: {
+            // in-buffer shape: one NUL-terminated source string
+            // (Roblox's real shader-compile call sites always pass a
+            // single concatenated source, count=1 -- the real GLES2 API
+            // allows a `count`-way array, but nothing has shown Roblox
+            // using more than one; grown against real evidence if that
+            // changes).
+            std::string src(reinterpret_cast<const char*>(in.data()), in.size());
+            src = fix_uint_index_arithmetic(src);
+            const char* src_ptr = src.c_str();
+            fns.glShaderSource_(static_cast<GLuint>(a[0]), 1, &src_ptr, nullptr);
+            return 0;
+        }
+        case CallId::GlGetProgramInfoLog: {
+            GLsizei length = 0;
+            out.resize(hdr.out_buffer_len > 0 ? hdr.out_buffer_len : 1);
+            fns.glGetProgramInfoLog_(static_cast<GLuint>(a[0]), static_cast<GLsizei>(out.size()), &length,
+                                      reinterpret_cast<GLchar*>(out.data()));
+            *out_len = static_cast<uint32_t>(length > 0 ? length : 0);
+            return 1;
+        }
+        case CallId::GlGetShaderInfoLog: {
+            GLsizei length = 0;
+            out.resize(hdr.out_buffer_len > 0 ? hdr.out_buffer_len : 1);
+            fns.glGetShaderInfoLog_(static_cast<GLuint>(a[0]), static_cast<GLsizei>(out.size()), &length,
+                                     reinterpret_cast<GLchar*>(out.data()));
+            *out_len = static_cast<uint32_t>(length > 0 ? length : 0);
+            return 1;
+        }
+        case CallId::GlGetActiveUniform: {
+            GLsizei length = 0;
+            GLint size = 0;
+            GLenum type = 0;
+            std::vector<char> name_buf(hdr.out_buffer_len > 0 ? hdr.out_buffer_len : 1);
+            fns.glGetActiveUniform_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]),
+                                     static_cast<GLsizei>(name_buf.size()), &length, &size, &type,
+                                     name_buf.data());
+            // out layout: [GLint size][GLenum type][name bytes...]
+            out.resize(sizeof(GLint) + sizeof(GLenum) + static_cast<size_t>(length > 0 ? length : 0));
+            std::memcpy(out.data(), &size, sizeof(GLint));
+            std::memcpy(out.data() + sizeof(GLint), &type, sizeof(GLenum));
+            if (length > 0) {
+                std::memcpy(out.data() + sizeof(GLint) + sizeof(GLenum), name_buf.data(),
+                            static_cast<size_t>(length));
+            }
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+
+        // ---- GLES2: fixed-count-N id arrays ----
+        case CallId::GlDeleteBuffers: fns.glDeleteBuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
+        case CallId::GlDeleteFramebuffers: fns.glDeleteFramebuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
+        case CallId::GlDeleteRenderbuffers: fns.glDeleteRenderbuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
+        case CallId::GlDeleteTextures: fns.glDeleteTextures_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
+        // Real GLES3 sync objects. The host's own real GLsync pointer
+        // is the handle the client carries; it never dereferences it.
+        // GLES3 sync objects are DELIBERATELY INERT. Implementing them for
+        // real (this session) hung the GPU: the kernel reported
+        //     nouveau: stud-render-hos: job timeout, channel 10 killed!
+        //     nouveau: gsp: rc ... fault_addr:0 fault_type:0
+        //     nouveau: fifo: errored - disabling channel
+        // i.e. a submitted job that never completes -- not a page fault. That
+        // kills the EGL context (eglSwapBuffers -> EGL_CONTEXT_LOST 0x300e),
+        // after which glCheckFramebufferStatus returns 0 and the engine aborts
+        // with "Unsupported framebuffer configuration" / RBXCRASH:
+        // OutOfMemoryGraphics. The window goes black.
+        //
+        // Measured, same build, only this changed:
+        //     sync real  -> 145 draws,  OOM=2, context lost at frame #2
+        //     sync inert -> 11223 draws, OOM=0, app renders and is clickable
+        //
+        // Why it hangs is not yet established. The likely mechanism is
+        // glWaitSync inserting a GPU-side wait on a sync object whose handle
+        // does not survive the client/host round-trip, so the GPU waits on
+        // something that never signals. A correct implementation must prove
+        // the handle round-trip AND that the engine's fences actually signal
+        // before being switched back on. Reporting "no sync support" is a
+        // valid GLES answer; hanging the GPU is not.
+        case CallId::GlFenceSync:
+            return 0;
+        case CallId::GlClientWaitSync:
+            return 0x911A;  // GL_ALREADY_SIGNALED
+        case CallId::GlWaitSync:
+            return 0;
+        case CallId::GlDeleteSync:
+            return 0;
+        // Consistent with the inert sync objects above: handles are always 0,
+        // so never dereference one.
+        case CallId::GlIsSync:
+            return 0;
+        case CallId::GlGetSynciv:
+            return 0;
+        case CallId::GlCopyImageSubData: {
+            if (in.size() < 15 * sizeof(int32_t)) return 0;
+            const auto* p = reinterpret_cast<const int32_t*>(in.data());
+            fns.glCopyImageSubData_(static_cast<GLuint>(p[0]), static_cast<GLenum>(p[1]), p[2], p[3],
+                                    p[4], p[5], static_cast<GLuint>(p[6]),
+                                    static_cast<GLenum>(p[7]), p[8], p[9], p[10], p[11], p[12],
+                                    p[13], p[14]);
+            return 0;
+        }
+        case CallId::GetWindowSize: {
+            uint64_t w = static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
+            uint64_t h = static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
+            return (w << 32) | (h & 0xffffffffu);
+        }
+        case CallId::AudioOpenStream:
+            return stud::render_host::audio_open_stream(static_cast<int>(a[0]),
+                                                        static_cast<int>(a[1]),
+                                                        static_cast<int>(a[2]));
+        case CallId::AudioWriteFrames:
+            return stud::render_host::audio_write_frames(a[0], in.data(), in.size());
+        case CallId::AudioCloseStream:
+            stud::render_host::audio_close_stream(a[0]);
+            return 1;
+
+        // Vulkan, instance level. The real driver lives only here.
+        case CallId::VkEnumerateInstanceVersion:
+            return stud::render_host::vk_enumerate_instance_version(out, out_len);
+        case CallId::VkEnumerateInstanceExtensionProperties:
+            return stud::render_host::vk_enumerate_instance_extension_properties(
+                in, static_cast<uint32_t>(a[0]), out, out_len);
+        case CallId::VkEnumerateInstanceLayerProperties:
+            return stud::render_host::vk_enumerate_instance_layer_properties(
+                static_cast<uint32_t>(a[0]), out, out_len);
+        case CallId::VkCreateInstance:
+            return stud::render_host::vk_create_instance(in, out, out_len);
+        case CallId::VkEnumeratePhysicalDevices:
+            return stud::render_host::vk_enumerate_physical_devices(static_cast<uint32_t>(a[0]),
+                                                                     out, out_len);
+        case CallId::VkGetPhysicalDeviceProperties:
+            return stud::render_host::vk_get_physical_device_properties(a[0], out, out_len);
+        case CallId::VkGetPhysicalDeviceFeatures:
+            return stud::render_host::vk_get_physical_device_features(a[0], out, out_len);
+        case CallId::VkGetPhysicalDeviceMemoryProperties:
+            return stud::render_host::vk_get_physical_device_memory_properties(a[0], out, out_len);
+        case CallId::VkGetPhysicalDeviceQueueFamilyProperties:
+            return stud::render_host::vk_get_physical_device_queue_family_properties(
+                a[0], static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkEnumerateDeviceExtensionProperties:
+            return stud::render_host::vk_enumerate_device_extension_properties(
+                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkGetPhysicalDeviceFeatures2:
+            return stud::render_host::vk_get_physical_device_features2(
+                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkCreateDevice:
+            return stud::render_host::vk_create_device(a[0], in, out, out_len);
+        case CallId::VkGetPhysicalDeviceFormatProperties:
+            return stud::render_host::vk_get_physical_device_format_properties(
+                a[0], static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkGetPhysicalDeviceImageFormatProperties:
+            return stud::render_host::vk_get_physical_device_image_format_properties(
+                a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]),
+                static_cast<uint32_t>(a[5]), out, out_len);
+        case CallId::VkGetDeviceQueue:
+            return stud::render_host::vk_get_device_queue(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkCreateCommandPool:
+            return stud::render_host::vk_create_command_pool(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkCreateSemaphore:
+            return stud::render_host::vk_create_semaphore(static_cast<uint32_t>(a[1]), out,
+                                                           out_len);
+        case CallId::VkCreateFence:
+            return stud::render_host::vk_create_fence(static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkCreateQueryPool:
+            return stud::render_host::vk_create_query_pool(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]), out, out_len);
+        case CallId::VkCreatePipelineCache:
+            return stud::render_host::vk_create_pipeline_cache(static_cast<uint32_t>(a[1]), in,
+                                                                out, out_len);
+        case CallId::VkGetPipelineCacheData:
+            return stud::render_host::vk_get_pipeline_cache_data(
+                a[1], static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkDestroyPipelineCache:
+            return stud::render_host::vk_destroy_pipeline_cache(a[1]);
+        case CallId::VkCreateImage:
+            return stud::render_host::vk_create_image(in, out, out_len);
+        case CallId::VkGetImageMemoryRequirements:
+            return stud::render_host::vk_get_image_memory_requirements(a[1], out, out_len);
+        case CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
+            return stud::render_host::vk_get_physical_device_surface_capabilities(a[0], a[1], out,
+                                                                                   out_len);
+        case CallId::VkCreateBuffer:
+            return stud::render_host::vk_create_buffer(
+                static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
+                static_cast<uint32_t>(a[4]), out, out_len);
+        case CallId::VkGetBufferMemoryRequirements:
+            return stud::render_host::vk_get_buffer_memory_requirements(a[1], out, out_len);
+        case CallId::VkBindBufferMemory:
+            return stud::render_host::vk_bind_buffer_memory(a[1], a[2], a[3]);
+        case CallId::VkCreateImageView:
+            return stud::render_host::vk_create_image_view(in, out, out_len);
+        case CallId::VkCreateShaderModule:
+            return stud::render_host::vk_create_shader_module(in, out, out_len);
+        case CallId::VkDestroyHandle:
+            return stud::render_host::vk_destroy_handle(static_cast<uint32_t>(a[1]), a[2]);
+        case CallId::VkCreateRenderPass:
+            return stud::render_host::vk_create_render_pass(in, out, out_len);
+        case CallId::VkCreateFramebuffer:
+            return stud::render_host::vk_create_framebuffer(in, out, out_len);
+        case CallId::VkCreateSampler:
+            return stud::render_host::vk_create_sampler(in, out, out_len);
+        case CallId::VkCreatePipelineLayout:
+            return stud::render_host::vk_create_pipeline_layout(in, out, out_len);
+        case CallId::VkCreateDescriptorSetLayout:
+            return stud::render_host::vk_create_descriptor_set_layout(in, out, out_len);
+        case CallId::VkCreateDescriptorPool:
+            return stud::render_host::vk_create_descriptor_pool(in, out, out_len);
+        case CallId::VkAllocateDescriptorSets:
+            return stud::render_host::vk_allocate_descriptor_sets(in, out, out_len);
+        case CallId::VkResetDescriptorPool:
+            return stud::render_host::vk_reset_descriptor_pool(a[1],
+                                                                static_cast<uint32_t>(a[2]));
+        case CallId::VkCreateDescriptorUpdateTemplate:
+            return stud::render_host::vk_create_descriptor_update_template(in, out, out_len);
+        case CallId::VkUpdateDescriptorSetWithTemplate:
+            return stud::render_host::vk_update_descriptor_set_with_template(a[1], a[2], in);
+        case CallId::VkCreateGraphicsPipelines:
+            return stud::render_host::vk_create_graphics_pipelines(in, out, out_len);
+        case CallId::VkCreateComputePipelines:
+            return stud::render_host::vk_create_compute_pipelines(in, out, out_len);
+        case CallId::VkAllocateCommandBuffers:
+            return stud::render_host::vk_allocate_command_buffers(
+                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]), out, out_len);
+        case CallId::VkBeginCommandBuffer:
+            return stud::render_host::vk_begin_command_buffer(a[0],
+                                                               static_cast<uint32_t>(a[1]));
+        case CallId::VkEndCommandBuffer:
+            return stud::render_host::vk_end_command_buffer(a[0]);
+        case CallId::VkResetCommandPool:
+            return stud::render_host::vk_reset_command_pool(a[1], static_cast<uint32_t>(a[2]));
+        case CallId::VkQueueSubmit:
+            return stud::render_host::vk_queue_submit(a[0], a[1], in);
+        case CallId::VkWaitForFences:
+            return stud::render_host::vk_wait_for_fences(in, static_cast<uint32_t>(a[1]), a[2]);
+        case CallId::VkResetFences:
+            return stud::render_host::vk_reset_fences(in);
+        case CallId::VkAcquireNextImageKHR:
+            return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
+        case CallId::VkQueuePresentKHR:
+            return stud::render_host::vk_queue_present(a[0], in);
+        case CallId::VkGetQueryPoolResults:
+            return stud::render_host::vk_get_query_pool_results(
+                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]),
+                static_cast<uint32_t>(a[4]), static_cast<uint32_t>(a[5]), out, out_len);
+        case CallId::VkCmdRecord:
+            return stud::render_host::vk_cmd_record(a[0], static_cast<uint32_t>(a[1]), in);
+        case CallId::VkCmdRecordBatch: {
+            // [u64 command buffer][u32 kind][u32 length][payload] repeated.
+            // Executed strictly in order, which is what makes a batch
+            // identical to the same commands sent one at a time.
+            size_t off = 0;
+            std::vector<uint8_t> payload;
+            while (off + 16 <= in.size()) {
+                uint64_t cb = 0;
+                uint32_t kind = 0;
+                uint32_t len = 0;
+                std::memcpy(&cb, in.data() + off, sizeof(cb));
+                std::memcpy(&kind, in.data() + off + 8, sizeof(kind));
+                std::memcpy(&len, in.data() + off + 12, sizeof(len));
+                off += 16;
+                if (off + len > in.size()) break;
+                payload.assign(in.begin() + static_cast<long>(off),
+                               in.begin() + static_cast<long>(off + len));
+                off += len;
+                stud::render_host::vk_cmd_record(cb, kind, payload);
+            }
+            return 0;
+        }
+        case CallId::VkHostHasProc:
+            return stud::render_host::vk_host_has_proc(in);
+        case CallId::VkDeviceWaitIdle:
+            return stud::render_host::vk_device_wait_idle();
+        case CallId::VkAllocateMemory: {
+            // a[4] non-zero: the client mapped a file for this allocation
+            // and wants it shared rather than copied. The name is derived
+            // from the id so nothing has to travel in the buffer, which
+            // still carries the pNext chain.
+            std::string shared;
+            if (a[4] != 0) {
+                shared = stud::render_host::shared_memory_path(a[4]);
+            }
+            return stud::render_host::vk_allocate_memory(a[1], static_cast<uint32_t>(a[2]), in,
+                                                          static_cast<uint32_t>(a[3]), out, out_len,
+                                                          shared);
+        }
+        case CallId::VkBindImageMemory:
+            return stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
+        case CallId::VkFreeMemory:
+            return stud::render_host::vk_free_memory(a[1]);
+        case CallId::VkMapMemory:
+            return stud::render_host::vk_map_memory(a[1], a[2], a[3],
+                                                     static_cast<uint32_t>(a[4]));
+        case CallId::VkWriteMappedMemory:
+            return stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
+        case CallId::VkUnmapMemory:
+            return stud::render_host::vk_unmap_memory(a[1]);
+        case CallId::VkFlushMappedMemoryRanges:
+            return stud::render_host::vk_flush_mapped_memory_ranges(a[1], a[2], a[3]);
+        case CallId::VkGetPhysicalDeviceSurfaceFormatsKHR:
+            return stud::render_host::vk_get_surface_formats(a[0], a[1],
+                                                              static_cast<uint32_t>(a[2]), out,
+                                                              out_len);
+        case CallId::VkGetPhysicalDeviceSurfacePresentModesKHR:
+            return stud::render_host::vk_get_surface_present_modes(
+                a[0], a[1], static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkGetPhysicalDeviceSurfaceSupportKHR:
+            return stud::render_host::vk_get_surface_support(a[0], static_cast<uint32_t>(a[1]),
+                                                              a[2], out, out_len);
+        case CallId::VkCreateSwapchainKHR:
+            return stud::render_host::vk_create_swapchain(in, out, out_len);
+        case CallId::VkGetSwapchainImagesKHR:
+            return stud::render_host::vk_get_swapchain_images(a[1], static_cast<uint32_t>(a[2]),
+                                                               out, out_len);
+        case CallId::VkGetPhysicalDeviceImageFormatProperties2:
+            return stud::render_host::vk_get_image_format_properties2(
+                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::StoreSecret: {
+            // "<name>\n<value>". The name is a plain slug; the value is
+            // a real credential and is never logged, not even a prefix.
+            const std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
+            const auto newline = payload.find('\n');
+            if (newline == std::string::npos) return 0;
+            const std::string name = payload.substr(0, newline);
+            std::string value = payload.substr(newline + 1);
+            if (name.empty() || value.empty()) return 0;
+            const size_t value_bytes = value.size();
+            value.push_back('\n');
+            const bool ok = run_ui_secret_helper("--store-secret", name, value, nullptr);
+            std::printf("stud-render-host: handed secret \"%s\" to the keyring helper "
+                        "(%zu bytes)%s\n",
+                        name.c_str(), value_bytes, ok ? "" : " -- could not start it");
+            std::fflush(stdout);
+            return ok ? 1 : 0;
+        }
+        case CallId::LoadSecret: {
+            const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            if (name.empty()) return 0;
+            std::string value;
+            const bool ok = run_ui_secret_helper("--load-secret", name, std::string(), &value);
+            while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
+                value.pop_back();
+            }
+            std::printf("stud-render-host: read secret \"%s\" from safe storage: %s (%zu bytes, "
+                        "helper ok=%d)\n",
+                        name.c_str(), value.empty() ? "absent" : "present", value.size(),
+                        static_cast<int>(ok));
+            std::fflush(stdout);
+            if (value.empty()) return 0;
+            const uint32_t n =
+                static_cast<uint32_t>(std::min<size_t>(value.size(), hdr.out_buffer_len));
+            out.resize(n);
+            std::memcpy(out.data(), value.data(), n);
+            *out_len = n;
+            return 1;
+        }
+        case CallId::OpenWebView: {
+            // Payload: url \n title \n cookie... -- handed to the viewer
+            // on its stdin so no credential is ever visible in a command
+            // line or an environment block.
+            std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
+            const auto first_newline = payload.find('\n');
+            const std::string url = payload.substr(0, first_newline);
+
+            // args[0] != 0 means the caller already knows this belongs to
+            // the desktop, not the viewer: it came from the LINKING
+            // protocol (GuiService:OpenBrowserWindow), not the web-view
+            // one. Stud does not have to guess from the URL -- and must
+            // not, since blog.roblox.com is a panel while a corp.roblox.com
+            // careers page is not.
+            if (a[0] != 0) {
+                const bool studio = url.rfind("roblox-studio:", 0) == 0;
+                const bool http = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+                if (!http && !studio) {
+                    std::printf("stud-render-host: refusing to open a URL with an unexpected "
+                                "scheme\n");
+                    std::fflush(stdout);
+                    return 0;
+                }
+                // Passed as one argv entry, never through a shell: a URL
+                // from the engine is data, not a command line.
+                //
+                // NO setsid() here, deliberately. Detaching the child from
+                // this session makes the compositor treat the browser as
+                // an unrelated background launch, so the window opens
+                // behind Stud instead of coming to the front -- exactly
+                // what the user saw. Keeping the session lets the
+                // activation token propagate and the browser raise itself.
+                // Ask the compositor for an activation token first. A
+                // Wayland compositor will not let a process raise its own
+                // window unencouraged -- that is focus-stealing
+                // prevention -- so a browser launched without one opens
+                // BEHIND Stud. The token, minted against Stud's own
+                // surface, is how a launcher says the user asked for
+                // this. Both variable names are set because which one a
+                // program reads depends on its toolkit.
+                const std::string token =
+                    stud::android_glue::native_window_activation_token(g_real_window);
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    // Prefer the desktop portal, which takes the
+                    // activation token as an explicit ARGUMENT.
+                    //
+                    // Setting XDG_ACTIVATION_TOKEN in the environment and
+                    // calling xdg-open was tried and does not work: the
+                    // token really is minted (logged), but xdg-open hands
+                    // the URL on through a .desktop entry or D-Bus and
+                    // the environment does not survive that hop, so the
+                    // browser never sees it and opens unfocused.
+                    //
+                    // The URL is still a separate argv entry, never
+                    // interpolated into a shell command.
+                    if (!token.empty()) {
+                        ::setenv("XDG_ACTIVATION_TOKEN", token.c_str(), 1);
+                        ::setenv("DESKTOP_STARTUP_ID", token.c_str(), 1);
+                        const std::string options =
+                            "{'activation_token': <'" + token + "'>}";
+                        ::execlp("gdbus", "gdbus", "call", "--session", "--dest",
+                                 "org.freedesktop.portal.Desktop", "--object-path",
+                                 "/org/freedesktop/portal/desktop", "--method",
+                                 "org.freedesktop.portal.OpenURI.OpenURI", "", url.c_str(),
+                                 options.c_str(), nullptr);
+                        // Only reached if gdbus is missing entirely.
+                    }
+                    ::execlp("xdg-open", "xdg-open", url.c_str(), nullptr);
+                    ::_exit(127);
+                }
+                if (pid > 0) {
+                    std::thread([pid] { int st = 0; ::waitpid(pid, &st, 0); }).detach();
+                }
+                std::printf("stud-render-host: handed %s link to the desktop (activation token: "
+                            "%s)\n",
+                            studio ? "a Roblox Studio" : "an external",
+                            token.empty() ? "none -- it will open unfocused" : "yes");
+                std::fflush(stdout);
+                return 1;
+            }
+
+            // Everything the WebView protocol asks for opens in the
+            // viewer, including blog.roblox.com -- user-confirmed as the
+            // right behaviour, and it is what a device does too.
+            //
+            // A domain test was tried and removed: it classified the
+            // Newsroom as external because blog.roblox.com is not the
+            // main site, which was wrong. The app's own `windowType`
+            // field cannot decide it either -- live-captured as EMPTY for
+            // both an in-app panel (Messages) and the blog. So this
+            // protocol carries no signal saying "hand this to the
+            // system", and anything that really needs a browser must
+            // arrive by some other route.
+            //
+            // Non-http URLs are still refused: this path spawns a viewer
+            // holding real session cookies, and a scheme it cannot render
+            // has no business here.
+            if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
+                std::printf("stud-render-host: refusing a non-http web-view URL\n");
+                std::fflush(stdout);
+                return 0;
+            }
+            int pipe_fds[2] = {-1, -1};
+            if (::pipe(pipe_fds) != 0) return 0;
+            // A second pipe, the other way: the page's JavaScript bridge
+            // answers through the viewer's stdout (see
+            // read_web_view_output), which is how a login challenge
+            // reports that it is done.
+            int out_fds[2] = {-1, -1};
+            if (::pipe(out_fds) != 0) {
+                ::close(pipe_fds[0]);
+                ::close(pipe_fds[1]);
+                return 0;
+            }
+            const pid_t pid = ::fork();
+            if (pid == 0) {
+                ::close(pipe_fds[1]);
+                ::close(out_fds[0]);
+                ::dup2(pipe_fds[0], STDIN_FILENO);
+                ::dup2(out_fds[1], STDOUT_FILENO);
+                // The viewer's stderr goes the same way as its stdout, so
+                // whatever the page reports lands in Stud's own session
+                // log. Qt otherwise routes its logging through journald
+                // on this desktop, where a failing challenge page was
+                // invisible in the one file a user can be asked for.
+                ::dup2(out_fds[1], STDERR_FILENO);
+                ::setenv("QT_FORCE_STDERR_LOGGING", "1", 1);
+                // MangoHud belongs to the game window, never to a web
+                // view. This process carries its environment (the layer,
+                // and on the OpenGL paths its dlopen/dlsym shim on
+                // LD_PRELOAD), and a child inherits all of it -- which
+                // put MangoHud inside QtWebEngine, where it crashes the
+                // viewer. Live-reported: a panel that dies on open with
+                // the overlay enabled.
+                //
+                // Stripped rather than worked around: an overlay on a
+                // message list is not a thing anyone asked for, so there
+                // is nothing here to preserve.
+                ::unsetenv("MANGOHUD");
+                ::unsetenv("MANGOHUD_CONFIG");
+                ::unsetenv("MANGOHUD_CONFIGFILE");
+                ::unsetenv("MANGOHUD_DLSYM");
+                if (const char* preload = ::getenv("LD_PRELOAD");
+                    preload != nullptr && *preload != '\0') {
+                    // Keep whatever else the user preloads; drop only
+                    // MangoHud's own libraries. The separator is a colon
+                    // or a space, both of which the loader accepts.
+                    std::string kept;
+                    const std::string value(preload);
+                    size_t start = 0;
+                    while (start <= value.size()) {
+                        const size_t end = value.find_first_of(": ", start);
+                        const std::string entry =
+                            value.substr(start, end == std::string::npos ? std::string::npos
+                                                                         : end - start);
+                        if (!entry.empty() && entry.find("angoHud") == std::string::npos &&
+                            entry.find("angohud") == std::string::npos) {
+                            if (!kept.empty()) kept += ':';
+                            kept += entry;
+                        }
+                        if (end == std::string::npos) break;
+                        start = end + 1;
+                    }
+                    if (kept.empty()) {
+                        ::unsetenv("LD_PRELOAD");
+                    } else {
+                        ::setenv("LD_PRELOAD", kept.c_str(), 1);
+                    }
+                }
+                // And the Vulkan layer, for a viewer that reaches a real
+                // driver through QtWebEngine's own GPU process.
+                ::setenv("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_MANGOHUD_overlay_*", 1);
+                ::close(pipe_fds[0]);
+                ::close(out_fds[1]);
+                ::setsid();
+                // Next to this binary first, so a build tree runs its own
+                // viewer rather than one that happens to be installed.
+                std::string own_dir;
+                {
+                    char buf[4096];
+                    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+                    if (n > 0) {
+                        buf[n] = '\0';
+                        const std::string exe(buf);
+                        const auto slash = exe.find_last_of('/');
+                        if (slash != std::string::npos) own_dir = exe.substr(0, slash);
+                    }
+                }
+                if (!own_dir.empty()) {
+                    // Build tree first, then an install tree, where the
+                    // viewer is this binary's own neighbour.
+                    const std::string sibling = own_dir + "/../webview/stud-webview";
+                    ::execl(sibling.c_str(), "stud-webview", nullptr);
+                    const std::string installed = own_dir + "/stud-webview";
+                    ::execl(installed.c_str(), "stud-webview", nullptr);
+                }
+                ::execlp("stud-webview", "stud-webview", nullptr);
+                ::_exit(127);
+            }
+            ::close(pipe_fds[0]);
+            ::close(out_fds[1]);
+            if (pid < 0) {
+                ::close(pipe_fds[1]);
+                ::close(out_fds[0]);
+                return 0;
+            }
+            std::thread(read_web_view_output, out_fds[0]).detach();
+            const char* bytes = payload.data();
+            size_t left = payload.size();
+            while (left > 0) {
+                const ssize_t written = ::write(pipe_fds[1], bytes, left);
+                if (written <= 0) break;
+                bytes += written;
+                left -= static_cast<size_t>(written);
+            }
+            ::close(pipe_fds[1]);
+            track_web_view(pid);
+            std::thread([pid] {
+                int status = 0;
+                ::waitpid(pid, &status, 0);
+                // Reaped, so it is no longer ours to kill -- and the pid
+                // must not be signalled again once the kernel is free to
+                // reuse it.
+                forget_web_view(pid);
+                g_webview_closed.fetch_add(1, std::memory_order_relaxed);
+                std::printf("stud-render-host: web-view window closed\n");
+                std::fflush(stdout);
+            }).detach();
+            std::printf("stud-render-host: opened the web-view panel\n");
+            std::fflush(stdout);
+            return 1;
+        }
+        case CallId::PollWebViewMessage: {
+            std::string message;
+            {
+                std::lock_guard<std::mutex> lock(g_webview_message_mutex);
+                if (g_webview_messages.empty()) return 0;
+                message = std::move(g_webview_messages.front());
+                g_webview_messages.pop_front();
+            }
+            // The out-buffer is the handler's to size, same as every
+            // other call that answers with bytes.
+            out.assign(message.begin(), message.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::CloseWebView: {
+            // The app asked, so the viewer's exit is not a user closing
+            // the panel -- but reporting it either way is what a real
+            // device does (its own activity publishes windowClosed from
+            // onDestroy however it was closed), and the app ignores the
+            // echo of a close it requested itself.
+            close_open_web_views();
+            return 1;
+        }
+        case CallId::PollWebViewClosed: {
+            uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
+            return pending;
+        }
+        case CallId::GetDisplayRefreshRate:
+            return static_cast<uint64_t>(stud::android_glue::display_refresh_mhz());
+        case CallId::GetSupportedRefreshRates: {
+            const auto rates = stud::android_glue::display_supported_refresh_mhz();
+            out.resize(rates.size() * sizeof(uint32_t));
+            for (std::size_t i = 0; i < rates.size(); ++i) {
+                const auto value = static_cast<uint32_t>(rates[i]);
+                std::memcpy(out.data() + i * sizeof(uint32_t), &value, sizeof(value));
+            }
+            *out_len = static_cast<uint32_t>(out.size());
+            return rates.size();
+        }
+        case CallId::SetTextOverlay: {
+            // The engine's own TextBox, standing in for the Android
+            // EditText a real device would lay over the GL view. See
+            // stud/text_overlay.h.
+            stud::android_glue::TextOverlaySpec spec;
+            spec.visible = (a[0] & 1u) != 0;
+            spec.password = (a[0] & 2u) != 0;
+            auto unpack_float = [](uint64_t word, int half) {
+                const auto bits = static_cast<uint32_t>(half == 0 ? (word & 0xffffffffu)
+                                                                  : (word >> 32));
+                float value = 0.0f;
+                std::memcpy(&value, &bits, sizeof(value));
+                return value;
+            };
+            spec.x = unpack_float(a[1], 0);
+            spec.y = unpack_float(a[1], 1);
+            spec.width = unpack_float(a[2], 0);
+            spec.height = unpack_float(a[2], 1);
+            float font_size = 0.0f;
+            const auto font_bits = static_cast<uint32_t>(a[3] & 0xffffffffu);
+            std::memcpy(&font_size, &font_bits, sizeof(font_size));
+            const auto font_enum = static_cast<int32_t>(a[3] >> 32);
+            spec.argb = static_cast<uint32_t>(a[4] & 0xffffffffu);
+            spec.caret = static_cast<int32_t>(a[4] >> 32);
+            spec.x_alignment = static_cast<int32_t>(a[5] & 0xffffffffu);
+            spec.y_alignment = static_cast<int32_t>(a[5] >> 32);
+            spec.selection_begin = static_cast<int32_t>(a[6] & 0xffffffffu);
+            spec.selection_end = static_cast<int32_t>(a[6] >> 32);
+            spec.text.assign(reinterpret_cast<const char*>(in.data()), in.size());
+            const RobloxFont font = roblox_font_for(font_enum);
+            spec.font_path = font.path;
+            spec.pixel_size = font_size * font.ratio;
+            spec.letter_spacing = font.letter_spacing;
+            stud::android_glue::set_text_overlay(spec);
+            return 1;
+        }
+        case CallId::SetClipboardText: {
+            stud::android_glue::clipboard_set_text(
+                std::string(reinterpret_cast<const char*>(in.data()), in.size()));
+            return 1;
+        }
+        case CallId::GetClipboardText: {
+            const std::string text = stud::android_glue::clipboard_get_text();
+            out.assign(text.begin(), text.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::TextOverlayOffsetAtX:
+            return static_cast<uint64_t>(
+                stud::android_glue::text_overlay_offset_at_x(static_cast<float>(
+                    static_cast<int32_t>(a[0]))));
+        case CallId::GetWindowBufferScale:
+            // Waits for the compositor's real fractional scale rather
+            // than answering with the integer fallback. Process B asks
+            // once, before the engine starts, and keeps the answer for
+            // the whole session -- so a wrong answer here is wrong
+            // everywhere, permanently.
+            return static_cast<uint64_t>(
+                stud::android_glue::native_window_wait_for_display_scale_120());
+        case CallId::GetDisplayOutputGeometry: {
+            int32_t px_w = 0, px_h = 0, mm_w = 0, mm_h = 0;
+            stud::android_glue::display_output_geometry(&px_w, &px_h, &mm_w, &mm_h);
+            auto pack = [](int32_t v) -> uint64_t {
+                if (v < 0) return 0;
+                return static_cast<uint64_t>(v > 0xffff ? 0xffff : v);
+            };
+            return (pack(px_w) << 48) | (pack(px_h) << 32) | (pack(mm_w) << 16) | pack(mm_h);
+        }
+        case CallId::EndSession: {
+            // Exits inside the handler, so nothing is written back. The
+            // caller is quitting anyway and wants the window gone before
+            // it starts its own teardown -- see the CallId's own comment.
+            std::printf("stud-render-host: the session ended, shutting down\n");
+            close_open_web_views(/*wait_for_exit=*/true);
+            exit_now(0);
+        }
+        case CallId::SetGamePresence: {
+            // "<placeId> <jobId>", or empty for the app shell. The
+            // metadata lookup (name, creator, thumbnail) needs HTTPS and
+            // JSON, so it runs in stud-ui one-shot -- the same helper
+            // shape as the keyring and the region lookup.
+            std::string body(reinterpret_cast<const char*>(in.data()), in.size());
+            // The tray offers "copy server invite link" and is a separate
+            // process, so the link is left where it can read it. Its
+            // absence is what "not in a game" looks like from there.
+            const std::string invite_path = []() {
+                const char* xdg = std::getenv("XDG_RUNTIME_DIR");
+                return std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/invite";
+            }();
+            if (body.empty()) {
+                std::printf("stud-render-host: Discord presence: the app shell\n");
+                std::fflush(stdout);
+                ::unlink(invite_path.c_str());
+                stud::render_host::discord_rpc_set_game({});
+                return 0;
+            }
+            std::string info;
+            if (!run_ui_secret_helper("--game-info", body, std::string(), &info) || info.empty()) {
+                return 0;
+            }
+            // One field per line, in a fixed order, so no JSON parser is
+            // needed on this side: name, creator, thumbnail, join url.
+            stud::render_host::GamePresence presence;
+            std::string* fields[] = {&presence.universe_name, &presence.creator_name,
+                                      &presence.thumbnail_url, &presence.join_url};
+            size_t start = 0;
+            for (size_t i = 0; i < 4 && start <= info.size(); ++i) {
+                const size_t nl = info.find('\n', start);
+                const size_t end = nl == std::string::npos ? info.size() : nl;
+                *fields[i] = info.substr(start, end - start);
+                if (nl == std::string::npos) break;
+                start = nl + 1;
+            }
+            // Written before the join-button setting is applied: the tray
+            // entry is the user asking for the link explicitly, which is a
+            // different question from putting it on a public presence.
+            if (!presence.join_url.empty()) {
+                if (FILE* f = std::fopen(invite_path.c_str(), "w")) {
+                    std::fputs(presence.join_url.c_str(), f);
+                    std::fclose(f);
+                }
+            }
+            if (!g_discord_join_button) presence.join_url.clear();
+            std::printf("stud-render-host: Discord presence: %s by %s%s\n",
+                        presence.universe_name.c_str(), presence.creator_name.c_str(),
+                        presence.join_url.empty() ? "" : " (with a join button)");
+            std::fflush(stdout);
+            presence.started_at = static_cast<int64_t>(::time(nullptr));
+            stud::render_host::discord_rpc_set_game(presence);
+            return 0;
+        }
+        case CallId::NotifyServerRegion: {
+            // Fire and forget: a join must never wait on a lookup, and a
+            // failed one simply produces no notification.
+            std::string ip(reinterpret_cast<const char*>(in.data()), in.size());
+            if (ip.empty()) return 0;
+            std::printf("stud-render-host: looking up the region for the game server\n");
+            std::fflush(stdout);
+            run_ui_helper_detached("--notify-region", ip);
+            return 0;
+        }
+        case CallId::SetPointerLocked:
+            stud::android_glue::native_window_set_pointer_locked(g_real_window, a[0] != 0);
+            return 0;
+        case CallId::PollInputEvents: {
+            // Real seat events queued by android-glue's own Wayland
+            // listeners (this process already dispatches that fd in its
+            // main poll loop). Reply with as many as the client's buffer
+            // can hold; the rest stay queued for the next poll.
+            using stud::android_glue::HostInputEvent;
+            size_t capacity = hdr.out_buffer_len / sizeof(HostInputEvent);
+            if (capacity == 0) return 0;
+            out.resize(capacity * sizeof(HostInputEvent));
+            size_t n = stud::android_glue::native_window_drain_input_events(
+                reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+            out.resize(n * sizeof(HostInputEvent));
+            *out_len = static_cast<uint32_t>(out.size());
+            return n;
+        }
+        case CallId::GlTexStorage2D:
+            if (cursor_trace_enabled()) {
+                g_tex_dims[g_bound_texture_2d] = {static_cast<int>(a[3]), static_cast<int>(a[4])};
+            }
+            fns.glTexStorage2D_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
+                                static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
+                                static_cast<GLsizei>(a[4]));
+            return 0;
+        case CallId::GlTexStorage3D:
+            fns.glTexStorage3D_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
+                                static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
+                                static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]));
+            return 0;
+        case CallId::GlTexSubImage3D: {
+            // 10 real int args exceed the 8 header slots, so `format`
+            // and `type` ride at the front of the in-buffer, ahead of
+            // the real pixel data (see the client side's own comment).
+            if (in.size() < 2 * sizeof(uint64_t)) return 0;
+            const auto* extra = reinterpret_cast<const uint64_t*>(in.data());
+            auto format = static_cast<GLenum>(extra[0]);
+            auto type = static_cast<GLenum>(extra[1]);
+            const void* pixels =
+                hdr.pixel_buffer_offset_plus_one != 0
+                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
+                    : (in.size() > 2 * sizeof(uint64_t)
+                           ? static_cast<const void*>(in.data() + 2 * sizeof(uint64_t))
+                           : nullptr);
+            fns.glTexSubImage3D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                 static_cast<GLint>(a[2]), static_cast<GLint>(a[3]),
+                                 static_cast<GLint>(a[4]), static_cast<GLsizei>(a[5]),
+                                 static_cast<GLsizei>(a[6]), static_cast<GLsizei>(a[7]), format,
+                                 type, pixels);
+            return 0;
+        }
+        case CallId::GlProgramParameteri:
+            fns.glProgramParameteri_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
+                                     static_cast<GLint>(a[2]));
+            return 0;
+        case CallId::GlUniformBlockBinding:
+            fns.glUniformBlockBinding_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]),
+                                       static_cast<GLuint>(a[2]));
+            return 0;
+        case CallId::GlGetUniformBlockIndex: {
+            // Real, NUL-terminated block name arrives in the in-buffer.
+            std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            if (!name.empty() && name.back() == '\0') name.pop_back();
+            return fns.glGetUniformBlockIndex_(static_cast<GLuint>(a[0]), name.c_str());
+        }
+        case CallId::GlGetActiveUniformBlockiv: {
+            auto program = static_cast<GLuint>(a[0]);
+            auto index = static_cast<GLuint>(a[1]);
+            auto pname = static_cast<GLenum>(a[2]);
+            // Most pnames write a single int; ACTIVE_UNIFORM_INDICES
+            // writes one per active uniform in the block, so size it
+            // from the real count rather than guessing.
+            GLint count = 1;
+            if (pname == GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES) {
+                fns.glGetActiveUniformBlockiv_(program, index, GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS,
+                                               &count);
+                if (count < 0) count = 0;
+            }
+            out.resize(static_cast<size_t>(count) * sizeof(GLint));
+            if (count > 0) {
+                fns.glGetActiveUniformBlockiv_(program, index, pname,
+                                               reinterpret_cast<GLint*>(out.data()));
+            }
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlBindBufferBase:
+            fns.glBindBufferBase_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]),
+                                  static_cast<GLuint>(a[2]));
+            return 0;
+        case CallId::GlBindBufferRange:
+            fns.glBindBufferRange_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]),
+                                   static_cast<GLuint>(a[2]), static_cast<GLintptr>(a[3]),
+                                   static_cast<GLsizeiptr>(a[4]));
+            return 0;
+        case CallId::GlClearBufferfv:
+            fns.glClearBufferfv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                 reinterpret_cast<const GLfloat*>(in.data()));
+            return 0;
+        case CallId::GlDrawBuffers:
+            fns.glDrawBuffers_(static_cast<GLsizei>(a[0]),
+                               reinterpret_cast<const GLenum*>(in.data()));
+            return 0;
+        case CallId::GlRenderbufferStorageMultisample:
+            fns.glRenderbufferStorageMultisample_(
+                static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
+                static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]));
+            return 0;
+        case CallId::GlDrawArraysInstanced:
+            fns.glDrawArraysInstanced_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                        static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3]));
+            return 0;
+        case CallId::GlDrawElementsInstanced:
+            fns.glDrawElementsInstanced_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
+                                          static_cast<GLenum>(a[2]),
+                                          reinterpret_cast<const void*>(a[3]),
+                                          static_cast<GLsizei>(a[4]));
+            return 0;
+        case CallId::GlVertexAttribDivisor:
+            fns.glVertexAttribDivisor_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]));
+            return 0;
+        case CallId::GlVertexAttribIPointer:
+            fns.glVertexAttribIPointer_(static_cast<GLuint>(a[0]), static_cast<GLint>(a[1]),
+                                         static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
+                                         reinterpret_cast<const void*>(a[4]));
+            return 0;
+        case CallId::GlBlitFramebuffer: {
+            uint32_t tail[2] = {0, 0};
+            if (in.size() >= sizeof(tail)) std::memcpy(tail, in.data(), sizeof(tail));
+            fns.glBlitFramebuffer_(
+                static_cast<GLint>(static_cast<int64_t>(a[0])), static_cast<GLint>(static_cast<int64_t>(a[1])),
+                static_cast<GLint>(static_cast<int64_t>(a[2])), static_cast<GLint>(static_cast<int64_t>(a[3])),
+                static_cast<GLint>(static_cast<int64_t>(a[4])), static_cast<GLint>(static_cast<int64_t>(a[5])),
+                static_cast<GLint>(static_cast<int64_t>(a[6])), static_cast<GLint>(static_cast<int64_t>(a[7])),
+                static_cast<GLbitfield>(tail[0]), static_cast<GLenum>(tail[1]));
+            return 0;
+        }
+        case CallId::GlInvalidateFramebuffer:
+            fns.glInvalidateFramebuffer_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
+                                          reinterpret_cast<const GLenum*>(in.data()));
+            return 0;
+        case CallId::GlBindVertexArray: fns.glBindVertexArray_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlDeleteVertexArrays: fns.glDeleteVertexArrays_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
+        case CallId::GlGenVertexArrays: {
+            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
+            fns.glGenVertexArrays_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlGenBuffers: {
+            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
+            fns.glGenBuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlGenFramebuffers: {
+            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
+            fns.glGenFramebuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlGenRenderbuffers: {
+            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
+            fns.glGenRenderbuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlGenTextures: {
+            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
+            fns.glGenTextures_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+
+        // ---- GLES2: small out-param arrays ----
+        case CallId::GlGetIntegerv: {
+            // Real, generous fixed count (16) covers every real
+            // GLES2 pname's true count (the largest, GL_ALIASED_*_RANGE/
+            // viewport-shaped queries, need at most 4) -- always reading
+            // a few extra, harmless ints past what a given pname truly
+            // uses is safe (the real driver only ever writes the pname's
+            // own true count; the rest of the buffer is simply unused,
+            // not read).
+            GLint values[16] = {};
+            fns.glGetIntegerv_(static_cast<GLenum>(a[0]), values);
+            // Report ZERO program-binary formats. Stud's GL forwarding
+            // implements glGetProgramBinary but NOT glProgramBinary (a no-op
+            // stub), so with binaries "supported" the engine saves a real
+            // binary, later believes it reloaded a program that was never
+            // actually loaded, and draws with it -- which hangs the GPU
+            // (nouveau: "job timeout, channel killed") and loses the EGL
+            // context, blacking out the window. Advertising no binary formats
+            // is a truthful answer for this transport and makes the engine
+            // compile its shaders normally.
+            if (static_cast<GLenum>(a[0]) == 0x87FE /*GL_NUM_PROGRAM_BINARY_FORMATS*/) {
+                values[0] = 0;
+            }
+            out.resize(sizeof(values));
+            std::memcpy(out.data(), values, sizeof(values));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlTexParameterfv: {
+            GLfloat values[4] = {unpack_float(a[2]), 0, 0, 0};
+            fns.glTexParameterfv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), values);
+            return 0;
+        }
+        case CallId::GlGetProgramiv: {
+            GLint value = 0;
+            fns.glGetProgramiv_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]), &value);
+            out.resize(sizeof(GLint));
+            std::memcpy(out.data(), &value, sizeof(GLint));
+            *out_len = sizeof(GLint);
+            return 1;
+        }
+        case CallId::GlGetShaderiv: {
+            GLint value = 0;
+            fns.glGetShaderiv_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]), &value);
+            out.resize(sizeof(GLint));
+            std::memcpy(out.data(), &value, sizeof(GLint));
+            *out_len = sizeof(GLint);
+            return 1;
+        }
+
+        // ---- GLES2: bulk buffer transfer ----
+        case CallId::GlBufferData:
+            // Real, live-caught bug: `usage` rides in a[3] (the client
+            // leaves a[2] as a zero placeholder for the data pointer it
+            // cannot send), but this read a[2] -- so every single
+            // glBufferData call in this project's history passed usage=0,
+            // an invalid enum, and the driver allocated no storage at
+            // all. Caught by a real stud-render-host SIGSEGV inside
+            // ANGLE's own rx::vk::DescriptorSetDescBuilder::
+            // updateOneUniformBuffer during the engine's first real
+            // glDrawArrays: a uniform buffer that was never actually
+            // allocated has no BufferHelper behind it.
+            fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
+                               in.empty() ? nullptr : in.data(), static_cast<GLenum>(a[3]));
+            return 0;
+        case CallId::GlBufferSubData:
+            fns.glBufferSubData_(static_cast<GLenum>(a[0]), static_cast<GLintptr>(a[1]),
+                                  static_cast<GLsizeiptr>(a[2]), in.data());
+            return 0;
+        case CallId::GlGetBufferSubData: {
+            // a: target, offset, length. GLES has no glGetBufferSubData, so
+            // read the range back through a real read mapping -- the client
+            // needs the buffer's current bytes to honour a non-invalidating
+            // write map (see the CallId's own comment in the protocol header).
+            const GLenum target = static_cast<GLenum>(a[0]);
+            const GLsizeiptr length = static_cast<GLsizeiptr>(a[2]);
+            if (length <= 0) return 0;
+            void* p = fns.glMapBufferRange_(target, static_cast<GLintptr>(a[1]), length,
+                                             GL_MAP_READ_BIT);
+            if (p == nullptr) return 0;
+            out.assign(static_cast<const unsigned char*>(p),
+                       static_cast<const unsigned char*>(p) + length);
+            fns.glUnmapBuffer_(target);
+            *out_len = static_cast<uint32_t>(length);
+            return 1;
+        }
+        case CallId::GlTexImage2D:
+            // a: target,level,internalformat,width,height,border,format,type
+            if (cursor_trace_enabled() && static_cast<GLint>(a[1]) == 0) {
+                g_tex_dims[g_bound_texture_2d] = {static_cast<int>(a[3]), static_cast<int>(a[4])};
+            }
+            fns.glTexImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]),
+                               static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]), static_cast<GLint>(a[5]),
+                               static_cast<GLenum>(a[6]), static_cast<GLenum>(a[7]), pixels_ptr());
+            return 0;
+        case CallId::GlTexSubImage2D:
+            // a: target,level,xoffset,yoffset,width,height,format,type
+            fns.glTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]),
+                                  static_cast<GLint>(a[3]), static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
+                                  static_cast<GLenum>(a[6]), static_cast<GLenum>(a[7]), pixels_ptr());
+            return 0;
+        case CallId::GlCompressedTexImage2D:
+            // a[6] is the real imageSize -- it cannot be derived from the
+            // in-buffer size when the pixels come from a real PBO instead.
+            fns.glCompressedTexImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                         static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
+                                         static_cast<GLsizei>(a[4]), static_cast<GLint>(a[5]),
+                                         static_cast<GLsizei>(a[6]), pixels_ptr());
+            return 0;
+        case CallId::GlCompressedTexSubImage2D:
+            fns.glCompressedTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                            static_cast<GLint>(a[2]), static_cast<GLint>(a[3]),
+                                            static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
+                                            static_cast<GLenum>(a[6]), static_cast<GLsizei>(a[7]),
+                                            pixels_ptr());
+            return 0;
+        case CallId::GlReadPixels: {
+            GLenum format = static_cast<GLenum>(a[4]);
+            GLenum type = static_cast<GLenum>(a[5]);
+            uint32_t bytes = static_cast<uint32_t>(a[2]) * static_cast<uint32_t>(a[3]) * gl_pixel_size(format, type);
+            out.resize(bytes);
+            fns.glReadPixels_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]),
+                               static_cast<GLsizei>(a[3]), format, type, out.data());
+            *out_len = bytes;
+            return 1;
+        }
+
+        case CallId::VkCreateWaylandSurfaceForAndroidSurface: {
+            if (g_real_vk_get_instance_proc_addr == nullptr) return kNullHandle;
+            auto create_wayland = reinterpret_cast<PFN_vkCreateWaylandSurfaceKHR>(
+                g_real_vk_get_instance_proc_addr(reinterpret_cast<VkInstance>(a[0]),
+                                                   "vkCreateWaylandSurfaceKHR"));
+            if (create_wayland == nullptr) return kNullHandle;
+            VkWaylandSurfaceCreateInfoKHR info{};
+            info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+            info.display = window.display;
+            info.surface = window.surface;
+            VkSurfaceKHR surface = VK_NULL_HANDLE;
+            VkResult r = create_wayland(reinterpret_cast<VkInstance>(a[0]), &info, nullptr, &surface);
+            if (r != VK_SUCCESS) return kNullHandle;
+            // Vulkan attaches its own buffers without ever going through
+            // wl_egl_window_create, which is where the EGL path applies
+            // the surface's logical-size/scale state. Do it here so the
+            // surface is configured the same way on both paths.
+            // NEVER ANativeWindow_fromSurface(nullptr, nullptr) here --
+            // that is the call that once spawned a window per invocation,
+            // and the guard added since would make it return null anyway.
+            // The window this process owns is captured at startup.
+            stud::android_glue::native_window_apply_surface_scale(g_real_window);
+            stud::android_glue::native_window_set_opaque(g_real_window);
+            return reinterpret_cast<uint64_t>(surface);
+        }
+
+        // Process C owns exactly one real window for this MVP (created
+        // once, at startup) -- a fixed sentinel handle (1) stands in for
+        // "the" ANativeWindow; acquire/release are real no-ops here
+        // since Process C's own window lifetime isn't tied to whatever
+        // refcounting Roblox's side does with it.
+        case CallId::ANativeWindowFromSurface:
+            return 1;
+        // Real, live-caught regression (the engineering notes, "Three different
+        // 'real' window sizes existed for one window"): these two returned
+        // hardcoded 800x600 while the same process sized its wl_egl_window --
+        // and answered CallId::GetWindowSize -- from android-glue's own real
+        // ANativeWindow. libroblox.so imports ANativeWindow_getWidth/getHeight
+        // directly (render-client/src/native_window_forward.cpp forwards them
+        // here), so the engine believed its window was 800x600 while its EGL
+        // surface really was 1280x720. DeviceGL then hit
+        // "updateMainFramebuffer needs to resize" on every single frame,
+        // tried to recreate the window surface, failed (only one window
+        // surface can exist), and gave up on the frame -- which is exactly
+        // the black window with a handful of draw calls per frame. One
+        // source of truth: android-glue's own real window.
+        case CallId::ANativeWindowGetWidth:
+            return static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
+        case CallId::ANativeWindowGetHeight:
+            return static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
+        case CallId::ANativeWindowAcquire:
+        case CallId::ANativeWindowRelease:
+            return 0;
+    }
+    return kNullHandle;
+}
+
+}  // namespace
+
+
+// Serialises every dispatch: the GL state and EGL context the handlers
+// touch are not thread-safe, and extra client connections are served on
+// their own threads (see the accept path).
+std::mutex& dispatch_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+// Multi-thread-safe, never-blocking Wayland pump.
+//
+// wl_display_dispatch() blocks until it can dispatch at least one event.
+// That is fine for a single-threaded client, but ANGLE's own Vulkan WSI
+// code reads the same default queue from whichever thread is inside
+// eglSwapBuffers -- so poll() can report the display fd readable and, by
+// the time this thread calls dispatch, another thread has already drained
+// it. dispatch() then waits for the *next* event, which may never come.
+//
+// Live-caught exactly that, mid game-launch: the main loop parked forever
+// in wl_display_dispatch while its own render connection had 219KB
+// unread and Process B's engine thread was blocked writing into it. The
+// engine never got its reply, so the start-game task never ran and the
+// join stalled at `stepDataModelJob: No DM yet`.
+//
+// prepare_read/read_events is libwayland's own answer to this. The
+// display fd is non-blocking, and cancel_read backs the reservation out
+// when there is nothing to read, so no path through here can block.
+// The Vulkan layer is told the window size rather than deriving one
+// (see vk_set_window_size's own comment: deriving means
+// ANativeWindow_fromSurface(nullptr, nullptr), which CREATES windows).
+// It was told once, at startup -- so after a resize the engine still got
+// the boot size back from vkGetPhysicalDeviceSurfaceCapabilitiesKHR,
+// rebuilt its swapchain at that size, and the compositor scaled the
+// result up to the real window: blurry, and stretched to the new aspect
+// ratio because the viewport's destination is the new logical size while
+// the buffer still had the old one (circles became ovals, live-reported).
+// Reading the size the compositor already gave android-glue costs
+// nothing and creates nothing, so keep it current every pump.
+void sync_vk_window_size() {
+    if (g_real_window == nullptr) return;
+    const auto w = static_cast<uint32_t>(ANativeWindow_getWidth(g_real_window));
+    const auto h = static_cast<uint32_t>(ANativeWindow_getHeight(g_real_window));
+    if (w == 0 || h == 0) return;
+    static uint32_t last_w = 0, last_h = 0;
+    if (w == last_w && h == last_h) return;
+    last_w = w;
+    last_h = h;
+    stud::render_host::vk_set_window_size(w, h);
+    std::printf("stud-render-host: window size now %ux%u (Vulkan surface extent updated)\n", w, h);
+    std::fflush(stdout);
+}
+
+void pump_wayland(wl_display* display, bool fd_readable) {
+    sync_vk_window_size();
+    // Held keys repeat from here: the compositor sends only a press and a
+    // release, so the events in between are the client's to make.
+    stud::android_glue::native_window_pump_key_repeat();
+    // Blink the text overlay's caret. Cheap and self-limiting: it does
+    // nothing at all unless a TextBox is focused.
+    {
+        static auto last = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last >= std::chrono::milliseconds(530)) {
+            last = now;
+            stud::android_glue::tick_text_overlay();
+        }
+    }
+    // Only ever Stud's OWN queue. The default queue belongs to the Vulkan
+    // driver, which dispatches it itself from inside its present path;
+    // dispatching it here consumed its wl_buffer.release events and threw
+    // them away (WAYLAND_DEBUG: "discarded wl_buffer#48.release()"), so
+    // the compositor never got a showable buffer and the window was black
+    // no matter what was drawn into it.
+    //
+    // read_events still distributes to every queue -- that part is shared
+    // and correct -- but the dispatching is per-queue and stays ours.
+    wl_event_queue* queue = stud::android_glue::native_window_wl_queue();
+    if (queue == nullptr) {
+        // No queue means no Wayland connection; nothing to pump.
+        return;
+    }
+    while (wl_display_prepare_read_queue(display, queue) != 0) {
+        wl_display_dispatch_queue_pending(display, queue);
+    }
+    wl_display_flush(display);
+    if (fd_readable) {
+        wl_display_read_events(display);
+    } else {
+        wl_display_cancel_read(display);
+    }
+    wl_display_dispatch_queue_pending(display, queue);
+
+    // The default queue still has to be drained, and by this process.
+    //
+    // The Vulkan driver puts its wl_buffer proxies on the default queue
+    // but only dispatches it from inside its own present path, which for
+    // this engine runs about once a second. Everything queued in between
+    // just accumulates -- live-caught as 46 discarded wl_buffer.release
+    // events per buffer in a WAYLAND_DEBUG trace, meaning the driver
+    // never learned its buffers came back and had none free to render
+    // into. Attaches and commits still looked perfect, and the window
+    // stayed black.
+    //
+    // Dispatching it here is safe: a proxy with no listener discards its
+    // events either way, and the driver's own dispatch remains
+    // authoritative for anything it does listen to.
+    wl_display_dispatch_pending(display);
+}
+
+// Services one client connection to completion, on its own thread. Used
+// for Process B's connections beyond the first -- each of its stub
+// libraries (libGLESv2, libaaudio, ...) links its own copy of the client
+// and opens its own socket.
+void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
+    std::vector<unsigned char> in_scratch;
+    std::vector<unsigned char> out_scratch;
+    for (;;) {
+        Header hdr{};
+        if (!read_all(conn_fd, &hdr, sizeof(hdr))) break;
+        in_scratch.resize(hdr.in_buffer_len);
+        if (hdr.in_buffer_len > 0 && !read_all(conn_fd, in_scratch.data(), hdr.in_buffer_len)) {
+            break;
+        }
+        out_scratch.clear();
+        uint32_t out_len = 0;
+        uint64_t result = 0;
+        {
+            std::lock_guard<std::mutex> lock(dispatch_mutex());
+            result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
+        }
+        // Pump Wayland here, off this thread's own back, right after the
+        // dispatch mutex is released.
+        //
+        // Presentation runs on THIS thread: the engine's Vulkan client is
+        // a secondary connection, so vkQueuePresentKHR is handled here,
+        // not on the main loop. A Wayland-backed driver needs the display
+        // dispatched to finish presenting -- and the main loop, the only
+        // thing that pumped it, spends its time blocked on the same
+        // dispatch mutex this thread just held. So buffers were attached
+        // and committed, every call returned VK_SUCCESS, and nothing was
+        // ever shown.
+        //
+        // Live-caught by printing the presenting thread id: presents ran
+        // on a secondary connection thread while the main loop sat
+        // elsewhere. The standalone stud_try_vulkan_window test, which
+        // does everything on one thread, presented 300 frames correctly
+        // on the same GPU and window -- that is what narrowed it here.
+        if (hdr.call_id == CallId::VkQueuePresentKHR) {
+            pump_wayland(real_window.display, true);
+        }
+        if ((hdr.flags & Header::kNoReply) != 0) continue;
+        ResponseHeader resp{result, out_len};
+        if (!write_all(conn_fd, &resp, sizeof(resp))) break;
+        if (out_len > 0 && !write_all(conn_fd, out_scratch.data(), out_len)) break;
+    }
+    ::close(conn_fd);
+    std::printf("stud-render-host: secondary client disconnected\n");
+    std::fflush(stdout);
+}
+
+// Accepts anything already waiting in the backlog and hands each one to
+// its own thread. Called whenever the main loop has just accepted a
+// connection, and again each time round, so a library that connects later
+// (libaaudio only connects when the engine first opens audio) is picked
+// up promptly rather than blocking forever.
+// Leaves immediately rather than returning through main().
+//
+// Static destruction here is a real hazard, not a tidiness question: the
+// audio device's destructor joins its opener thread, ANGLE tears down a
+// context this process may no longer own, and any of it can block. While
+// it blocks the Wayland connection is still open and the surface still
+// mapped, so the compositor keeps pinging a client that has stopped
+// answering -- which is exactly KDE's "Stud is not responding". The
+// window is going away; the kernel reclaims everything this process
+// holds, so there is nothing here worth the risk of hanging.
+// Holds the single-instance lock for as long as this process lives.
+//
+// The lock lives with render-host rather than with stud-ui because
+// stud-ui is designed to hand off and exit immediately -- a lock it held
+// would be released the moment the game started. render-host lives
+// exactly as long as the session does, and the kernel releases an flock
+// when the holder dies however it dies, so there is no stale state to
+// clean up after a crash or a kill.
+bool acquire_single_instance_lock() {
+    const std::string socket_path = stud::render_host::default_socket_path();
+    const auto slash = socket_path.find_last_of('/');
+    if (slash == std::string::npos) return true;
+    const std::string path = socket_path.substr(0, slash) + "/stud.lock";
+    // Deliberately never closed: the lock is held for the process's whole
+    // life, and closing any fd on this file would drop it.
+    const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return true;  // Cannot lock: do not refuse to start over it.
+    if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        ::close(fd);
+        return false;
+    }
+    return true;
+}
+
+void serve_extra_connections(int listen_fd, const RealFns& fns, RealWindow& real_window) {
+    for (;;) {
+        pollfd pfd{listen_fd, POLLIN, 0};
+        if (::poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) return;
+        int extra_fd = ::accept(listen_fd, nullptr, nullptr);
+        if (extra_fd < 0) return;
+        std::printf("stud-render-host: secondary client connected\n");
+        std::fflush(stdout);
+        std::thread(serve_connection_thread, extra_fd, std::cref(fns),
+                    std::ref(real_window)).detach();
+    }
+}
+
+
+int main(int argc, char** argv) {
+    // Tee this process's output into the session log Process A named, so
+    // one file carries all three processes' diagnostics. Nothing is taken
+    // away from the terminal or the journal (stud/session_log.h).
+    stud::logging::start_session_log_from_env();
+    stud::logging::install_crash_reporter("stud-render-host");
+
+    // A web-view viewer is a session leader of its own, so nothing takes
+    // it down with this process -- live-reported as a panel still on
+    // screen after Stud had closed. The ordinary shutdown paths close
+    // them explicitly; this covers being killed instead. Handler-safe:
+    // kill() and _exit() are both async-signal-safe, and the pid list is
+    // only appended to from the dispatch thread.
+    struct sigaction sa{};
+    sa.sa_handler = +[](int sig) {
+        close_open_web_views();
+        // Default disposition, then re-raise, so the exit status is what
+        // the signal would really have produced.
+        ::signal(sig, SIG_DFL);
+        ::raise(sig);
+    };
+    ::sigemptyset(&sa.sa_mask);
+    ::sigaction(SIGTERM, &sa, nullptr);
+    ::sigaction(SIGINT, &sa, nullptr);
+    ::sigaction(SIGHUP, &sa, nullptr);
+
+    // Real Stud-level graphics-mode selection, from Process A's Settings
+    // (never an FFlag -- see the call site in ui/src/main.cpp).
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string_view(argv[i]) == "--graphics-mode") {
+            g_prefer_vulkan = std::string_view(argv[i + 1]) != "opengl";
+        } else if (std::string_view(argv[i]) == "--assets-dir") {
+            // Roblox's own extracted assets: where the text overlay finds
+            // the engine's real fonts and their mapping table.
+            assets_dir() = argv[i + 1];
+        } else if (std::string_view(argv[i]) == "--discord-presence") {
+            g_discord_enabled = std::string_view(argv[i + 1]) == "on";
+        } else if (std::string_view(argv[i]) == "--discord-join-button") {
+            g_discord_join_button = std::string_view(argv[i + 1]) == "on";
+        } else if (std::string_view(argv[i]) == "--hidpi") {
+            g_hidpi_enabled = std::string_view(argv[i + 1]) != "off";
+        }
+    }
+    // Latch the scale before any window or surface exists, so the very
+    // first buffer is already the right size.
+    // HiDPI on: the buffer follows the display's scale (0 means exactly
+    // that). Off: the buffer is the window's logical size and the
+    // compositor upscales it. Either way the DISPLAY's own scale is left
+    // alone -- that separation is what makes the off state merely blurry
+    // instead of also wrong.
+    stud::android_glue::set_render_scale_120(g_hidpi_enabled ? 0 : 120);
+
+    // Open the audio device now, not when a sound first plays: Stud should
+    // appear in the desktop's volume mixer from launch, like any other
+    // application, so its volume can be set before anything makes noise.
+    // Opening talks to the audio server and can block, so it happens on
+    // its own thread -- never on the dispatch loop.
+    stud::render_host::audio_start_output_device();
+    // Real, live-caught diagnostic bug: this process's stdout is a
+    // redirected file (stud-ui starts it detached, inheriting stdout),
+    // so libc block-buffers it and nothing written after the first
+    // partial block ever reaches the log while the process stays alive
+    // -- which made every per-call diagnostic here look like "the call
+    // never happened" rather than "the line is still in the buffer."
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::setvbuf(stderr, nullptr, _IOLBF, 0);
+    // The user's own graphics-mode choice, honoured rather than merely
+    // recorded. Choosing OpenGL means this process does not offer Vulkan
+    // at all, so vkCreateInstance answers VK_ERROR_INCOMPATIBLE_DRIVER
+    // and the engine takes its own GLES path -- the same thing it does
+    // on a device whose driver it cannot use. Nothing here names an
+    // FFlag or depends on any Roblox build's internals.
+    if (!acquire_single_instance_lock()) {
+        std::fprintf(stderr, "stud-render-host: another instance is already running\n");
+        return 0;
+    }
+
+    // Discord rich presence, if the user enabled it. Connecting when
+    // Discord is not running is not an error -- it retries on the next
+    // presence change.
+    if (g_discord_enabled) {
+        stud::render_host::discord_rpc_start(stud::render_host::kDiscordApplicationId);
+    }
+
+    stud::render_host::vk_set_vulkan_enabled(g_prefer_vulkan);
+    std::printf("stud-render-host: graphics mode: %s\n", g_prefer_vulkan ? "vulkan" : "opengl");
+
+    // The GPU chosen in Settings, which nothing read back until now -- so
+    // picking a GPU there changed nothing on either path.
+    uint32_t preferred_gpu = 0;
+    try {
+        preferred_gpu = stud::config::load_settings(stud::config::default_config_path()).gpu.device_index;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "stud-render-host: ignoring the saved GPU choice: %s\n", e.what());
+    }
+    stud::render_host::vk_set_preferred_device_index(preferred_gpu);
+
+    std::string egl_path, gles_path;
+#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
+    // Which backend ANGLE translates GLES to. Only meaningful in OpenGL
+    // mode -- in Vulkan mode the engine makes no GLES call at all, so
+    // there is nothing for ANGLE to translate.
+    std::optional<stud::render::DevRenderBackendConfig> dev_backend;
+    try {
+        dev_backend = stud::render::load_dev_render_backend_config(stud::config::default_config_path());
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "stud-render-host: ignoring the render backend setting: %s\n", e.what());
+    }
+    if (dev_backend && !g_prefer_vulkan) {
+        switch (dev_backend->mode) {
+            case stud::render::DevRenderBackendMode::kAngleDesktopGL:
+                g_angle_backend = "gl";
+                break;
+            case stud::render::DevRenderBackendMode::kAngleSwiftShader:
+                g_angle_backend = "swiftshader";
+                break;
+            case stud::render::DevRenderBackendMode::kAngleVulkan:
+                break;
+        }
+    }
+    if (egl_path.empty()) {
+        // Looked up every launch, never read out of the config: where
+        // ANGLE is depends on how Stud was started, not on what some
+        // earlier run happened to find. See dev_backend_config.h.
+        try {
+            auto paths = stud::render::shipped_angle_paths();
+            egl_path = paths.egl_path;
+            gles_path = paths.gles_path;
+        } catch (const stud::render::ShippedAngleNotFound& e) {
+            std::fprintf(stderr, "stud-render-host: %s\n", e.what());
+            return 1;
+        }
+    }
+#else
+    std::fprintf(stderr, "stud-render-host: built without STUD_ENABLE_DEV_RENDER_TOGGLE\n");
+    return 1;
+#endif
+    // STUD_ANGLE_BACKEND still overrides, so a backend can be tried
+    // without going through the Settings window.
+    if (const char* env = std::getenv("STUD_ANGLE_BACKEND"); env != nullptr) g_angle_backend = env;
+    std::printf("stud-render-host: ANGLE backend: %s\n",
+                g_angle_backend.empty() ? "vulkan (default)" : g_angle_backend.c_str());
+    std::printf("stud-render-host: ANGLE build: %s / %s\n", egl_path.c_str(), gles_path.c_str());
+
+    try {
+        stud::render::set_angle_library_paths(egl_path, gles_path);
+    } catch (const stud::render::LoadError& e) {
+        std::fprintf(stderr, "stud-render-host: failed to load render backend: %s\n", e.what());
+        return 1;
+    }
+
+    ANativeWindow* window = ANativeWindow_fromSurface(nullptr, nullptr);
+    if (window == nullptr) {
+        std::fprintf(stderr, "stud-render-host: ANativeWindow_fromSurface returned null\n");
+        return 1;
+    }
+    // Hand the Vulkan layer this one window's size, once. It must never
+    // derive a window itself: ANativeWindow_fromSurface(nullptr, nullptr)
+    // CREATES a new Wayland window whenever the window cache is empty,
+    // and a null Surface never populates that cache -- so calling it from
+    // a query the engine repeats spawned over a hundred real windows.
+    g_real_window = window;
+    stud::render_host::vk_set_window_size(
+        static_cast<uint32_t>(ANativeWindow_getWidth(window)),
+        static_cast<uint32_t>(ANativeWindow_getHeight(window)));
+
+    wl_display* display = stud::android_glue::native_window_wl_display(window);
+    wl_surface* surface = stud::android_glue::native_window_wl_surface(window);
+    if (display == nullptr || surface == nullptr) {
+        std::fprintf(stderr, "stud-render-host: no real Wayland compositor reachable\n");
+        return 1;
+    }
+    // The window-size unification (confirmed good): render-host, Process B's
+    // lifecycle surface and DisplayMetrics all take their size from
+    // android-glue's own ANativeWindow, instead of three different literals.
+    const int32_t win_w = ANativeWindow_getWidth(window);
+    const int32_t win_h = ANativeWindow_getHeight(window);
+    // Must go through android-glue rather than calling wl_egl_window_create()
+    // directly: android-glue's xdg_toplevel configure handler resizes
+    // `window->egl_window`, and creating the wl_egl_window behind its back
+    // left that null forever. The compositor's resize requests arrived and
+    // were silently dropped -- the frame grew while the buffer stayed at its
+    // original size, showing the desktop through the rest of the window.
+    wl_egl_window* egl_window =
+        stud::android_glue::native_window_get_or_create_egl_window(window, win_w, win_h);
+    if (egl_window == nullptr) {
+        std::fprintf(stderr, "stud-render-host: wl_egl_window_create failed\n");
+        return 1;
+    }
+    RealWindow real_window{display, egl_window, surface};
+
+    RealFns fns{};
+#define RESOLVE(name) fns.name##_ = must_resolve<PFN_##name>(#name)
+    RESOLVE(eglGetDisplay); RESOLVE(eglInitialize); RESOLVE(eglBindAPI); RESOLVE(eglChooseConfig);
+    RESOLVE(eglCreateWindowSurface); RESOLVE(eglCreatePbufferSurface); RESOLVE(eglCreateContext);
+    RESOLVE(eglMakeCurrent); RESOLVE(eglSwapBuffers); RESOLVE(eglGetError); RESOLVE(eglQueryString);
+    RESOLVE(eglDestroyContext); RESOLVE(eglDestroySurface); RESOLVE(eglGetConfigAttrib);
+    RESOLVE(eglGetCurrentContext); RESOLVE(eglQuerySurface); RESOLVE(eglSwapInterval);
+    RESOLVE(eglTerminate); RESOLVE(eglGetProcAddress);
+    // Optional on purpose: only ANGLE exports it, and host Mesa (the Zink
+    // path) does not -- making it required is what killed render-host at
+    // startup the first time Zink was actually selected.
+    fns.eglGetPlatformDisplayEXT_ =
+        reinterpret_cast<PFN_eglGetPlatformDisplayEXT>(stud::render::resolve("eglGetPlatformDisplayEXT"));
+    RESOLVE(glActiveTexture); RESOLVE(glAttachShader); RESOLVE(glBindBuffer); RESOLVE(glBindFramebuffer);
+    RESOLVE(glBindRenderbuffer); RESOLVE(glBindTexture); RESOLVE(glBlendFunc); RESOLVE(glBlendFuncSeparate);
+    RESOLVE(glCheckFramebufferStatus); RESOLVE(glClear); RESOLVE(glClearColor); RESOLVE(glClearDepthf);
+    RESOLVE(glClearStencil); RESOLVE(glColorMask); RESOLVE(glCompileShader); RESOLVE(glCopyTexSubImage2D);
+    RESOLVE(glCreateProgram); RESOLVE(glCreateShader); RESOLVE(glCullFace); RESOLVE(glDeleteProgram);
+    RESOLVE(glDeleteShader); RESOLVE(glDepthFunc); RESOLVE(glDepthMask); RESOLVE(glDisable);
+    RESOLVE(glDisableVertexAttribArray); RESOLVE(glDrawArrays); RESOLVE(glDrawElements); RESOLVE(glEnable);
+    RESOLVE(glEnableVertexAttribArray); RESOLVE(glFramebufferRenderbuffer); RESOLVE(glFramebufferTexture2D);
+    RESOLVE(glGenerateMipmap); RESOLVE(glGetError); RESOLVE(glLinkProgram); RESOLVE(glPixelStorei);
+    RESOLVE(glPolygonOffset); RESOLVE(glReleaseShaderCompiler); RESOLVE(glRenderbufferStorage);
+    RESOLVE(glScissor); RESOLVE(glStencilFunc); RESOLVE(glStencilMask); RESOLVE(glStencilOp);
+    RESOLVE(glTexParameterf); RESOLVE(glTexParameteri); RESOLVE(glUniform1i); RESOLVE(glUseProgram);
+    RESOLVE(glViewport); RESOLVE(glVertexAttribPointer); RESOLVE(glGetString); RESOLVE(glGetUniformLocation);
+    RESOLVE(glBindAttribLocation); RESOLVE(glShaderSource); RESOLVE(glGetProgramInfoLog);
+    RESOLVE(glGetShaderInfoLog); RESOLVE(glGetActiveUniform); RESOLVE(glDeleteBuffers);
+    RESOLVE(glDeleteFramebuffers); RESOLVE(glDeleteRenderbuffers); RESOLVE(glDeleteTextures);
+    RESOLVE(glGenVertexArrays); RESOLVE(glBindVertexArray); RESOLVE(glDeleteVertexArrays);
+    RESOLVE(glBindBufferRange); RESOLVE(glClearBufferfv); RESOLVE(glDrawBuffers);
+    RESOLVE(glRenderbufferStorageMultisample); RESOLVE(glInvalidateFramebuffer);
+    RESOLVE(glBlitFramebuffer);
+    RESOLVE(glDrawArraysInstanced); RESOLVE(glDrawElementsInstanced);
+    RESOLVE(glVertexAttribDivisor); RESOLVE(glVertexAttribIPointer);
+    RESOLVE(glBindBufferBase);
+    RESOLVE(glFenceSync); RESOLVE(glClientWaitSync); RESOLVE(glWaitSync);
+    RESOLVE(glDeleteSync); RESOLVE(glIsSync); RESOLVE(glGetSynciv);
+    RESOLVE(glCopyImageSubData);
+    RESOLVE(glTexStorage2D); RESOLVE(glTexStorage3D); RESOLVE(glTexSubImage3D);
+    RESOLVE(glProgramParameteri); RESOLVE(glGetUniformBlockIndex);
+    RESOLVE(glUniformBlockBinding); RESOLVE(glGetActiveUniformBlockiv);
+    RESOLVE(glGenBuffers); RESOLVE(glGenFramebuffers); RESOLVE(glGenRenderbuffers); RESOLVE(glGenTextures);
+    RESOLVE(glGetIntegerv); RESOLVE(glIsEnabled); RESOLVE(glTexParameterfv); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glGetShaderSource);
+    RESOLVE(glBufferData); RESOLVE(glBufferSubData); RESOLVE(glTexImage2D); RESOLVE(glTexSubImage2D);
+    RESOLVE(glMapBufferRange); RESOLVE(glUnmapBuffer);
+    RESOLVE(glGetVertexAttribiv); RESOLVE(glGetVertexAttribPointerv);
+    RESOLVE(glCompressedTexImage2D); RESOLVE(glCompressedTexSubImage2D); RESOLVE(glReadPixels);
+#undef RESOLVE
+
+    // Real Vulkan loader, for the vkCreateAndroidSurfaceKHR redirect --
+    // same real system libvulkan.so.1 (or ANGLE's own bundled one) any
+    // native Vulkan app on this host would load.
+    g_vulkan_handle = ::dlopen("libvulkan.so.1", RTLD_NOW);
+    if (g_vulkan_handle != nullptr) {
+        g_real_vk_get_instance_proc_addr =
+            reinterpret_cast<PFN_vkGetInstanceProcAddr>(::dlsym(g_vulkan_handle, "vkGetInstanceProcAddr"));
+    }
+
+    std::string socket_path = stud::render_host::default_socket_path();
+    std::string parent = socket_path.substr(0, socket_path.find_last_of('/'));
+    ::mkdir(parent.c_str(), 0700);
+    ::unlink(socket_path.c_str());
+
+    int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd < 0) { std::perror("stud-render-host: socket"); return 1; }
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    if (::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        std::perror("stud-render-host: bind"); return 1;
+    }
+    if (::listen(listen_fd, 1) != 0) { std::perror("stud-render-host: listen"); return 1; }
+    std::printf("stud-render-host: listening on %s\n", socket_path.c_str());
+
+    // Real, user-reported bug fixed: both accept() and read_all() below
+    // used to block indefinitely with nothing servicing this window's
+    // own Wayland connection in between -- so xdg_wm_base's real ping
+    // (which MUST be answered with a pong or the compositor marks the
+    // window "not responding") went unanswered for however long Process
+    // B took to send its next request (e.g. this project's own ~8s-per-
+    // call bounded waits during real engine bring-up, well past a real
+    // compositor's own ping timeout). Fixed by polling the real Wayland
+    // display fd (wl_display_get_fd()) alongside the socket fd instead
+    // of blocking on the socket alone, dispatching real Wayland events
+    // on every tick regardless of client activity. Same poll also
+    // services xdg_toplevel's close event (see native_window.cpp's own
+    // fix -- close used to be a real no-op, so the window could never
+    // be closed at all): checked every tick, both here and in the inner
+    // per-connection loop, so a click closes the window promptly
+    // whether or not a client happens to be connected.
+    int wl_fd = wl_display_get_fd(real_window.display);
+    for (;;) {
+        if (stud::android_glue::window_close_requested()) {
+            std::printf("stud-render-host: window close requested, shutting down\n");
+            close_open_web_views(/*wait_for_exit=*/true);
+            exit_now(0);
+        }
+        pollfd pfds[2] = {{listen_fd, POLLIN, 0}, {wl_fd, POLLIN, 0}};
+        // STUD_WL_POLL_MS: how long this loop may block before pumping
+        // Wayland again. The Vulkan driver reads the display fd itself,
+        // so Stud's own queue often has events waiting while this fd
+        // never becomes readable -- meaning this timeout, not the fd, is
+        // what decides how often buffer releases get dispatched.
+        static const int wl_poll_ms = [] {
+            const char* v = std::getenv("STUD_WL_POLL_MS");
+            const int n = v != nullptr ? std::atoi(v) : 0;
+            return n > 0 ? n : 50;
+        }();
+        ::poll(pfds, 2, wl_poll_ms);
+        // Never wl_display_dispatch() here -- see pump_wayland's own
+        // comment: it can park this loop forever once ANGLE reads the
+        // same queue from a render thread.
+        pump_wayland(real_window.display, (pfds[1].revents & POLLIN) != 0);
+        if (!(pfds[0].revents & POLLIN)) continue;
+        int conn_fd = ::accept(listen_fd, nullptr, nullptr);
+        if (conn_fd < 0) { std::perror("stud-render-host: accept"); continue; }
+        std::printf("stud-render-host: client connected\n");
+        // Process B connects more than once: each of its stub libraries
+        // (libGLESv2, libaaudio, ...) links its own copy of the client and
+        // opens its own socket. This loop services one connection inline,
+        // so any further one used to sit in the accept backlog forever --
+        // live-caught as the app freezing the instant a game started,
+        // because that is when the engine's FMOD opens its audio device
+        // and libaaudio's very first call blocked waiting for a reply that
+        // could never come.
+        //
+        // Extra connections are served on their own threads, serialised
+        // against this one by a dispatch mutex (the GL state and EGL
+        // context they share are not thread-safe). The GL connection keeps
+        // running inline so it also pumps the compositor, exactly as
+        // before.
+        serve_extra_connections(listen_fd, fns, real_window);
+        for (;;) {
+            if (stud::android_glue::window_close_requested()) {
+                std::printf("stud-render-host: window close requested, shutting down\n");
+                close_open_web_views(/*wait_for_exit=*/true);
+                ::close(conn_fd);
+                ::close(listen_fd);
+                exit_now(0);
+            }
+            pollfd cpfds[2] = {{conn_fd, POLLIN, 0}, {wl_fd, POLLIN, 0}};
+            // Pipelined requests arrive in bulk, so drain what is already
+            // buffered before going back to poll(): one poll per request was
+            // itself a large share of the per-frame cost. FIONREAD is an
+            // honest "is there already a whole request waiting", not a guess.
+            serve_extra_connections(listen_fd, fns, real_window);
+            int pending = 0;
+            const bool have_buffered =
+                ::ioctl(conn_fd, FIONREAD, &pending) == 0 &&
+                static_cast<size_t>(pending) >= sizeof(Header);
+            if (!have_buffered) {
+                static const int conn_poll_ms = [] {
+                    const char* v = std::getenv("STUD_WL_POLL_MS");
+                    const int n = v != nullptr ? std::atoi(v) : 0;
+                    return n > 0 ? n : 50;
+                }();
+                ::poll(cpfds, 2, conn_poll_ms);
+                pump_wayland(real_window.display, (cpfds[1].revents & POLLIN) != 0);
+                if (!(cpfds[0].revents & POLLIN)) continue;
+            }
+            Header hdr{};
+            if (!read_all(conn_fd, &hdr, sizeof(hdr))) {
+                std::printf("stud-render-host: client disconnected\n");
+                break;
+            }
+            g_in_scratch.resize(hdr.in_buffer_len);
+            if (hdr.in_buffer_len > 0 && !read_all(conn_fd, g_in_scratch.data(), hdr.in_buffer_len)) {
+                break;
+            }
+            g_out_scratch.clear();
+            uint32_t out_len = 0;
+            uint64_t result = 0;
+            {
+                std::lock_guard<std::mutex> lock(dispatch_mutex());
+                result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
+            }
+            // A pipelined request wants no answer -- writing one would desync
+            // the stream, since the client is not going to read it.
+            if ((hdr.flags & Header::kNoReply) != 0) continue;
+            ResponseHeader resp{result, out_len};
+            if (!write_all(conn_fd, &resp, sizeof(resp))) break;
+            if (out_len > 0 && !write_all(conn_fd, g_out_scratch.data(), out_len)) break;
+        }
+        // The engine's connection is gone, so the session is over.
+        //
+        // This loop used to go back to accept(), on the reasoning that
+        // render-host should outlive one client dying. Nothing ever
+        // reconnects: Process A exits right after launching, so the only
+        // client that ever arrives is the Process B it started. Waiting
+        // for a second one left a real window on screen with no engine
+        // behind it -- live-reported as Stud freezing when the in-game
+        // leave button is used with "Close Stud when leaving a game" on,
+        // which is exactly the case where Process B exits first and the
+        // window is meant to go with it.
+        std::printf("stud-render-host: the engine disconnected, shutting down\n");
+        close_open_web_views(/*wait_for_exit=*/true);
+        ::close(conn_fd);
+        ::close(listen_fd);
+        exit_now(0);
+    }
+}

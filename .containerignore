@@ -1,0 +1,12 @@
+# Keeps a container build's context to what a build actually reads.
+#
+# third_party/ is deliberately NOT excluded: the NDK, ANGLE and bionic
+# are what Stud is built against, and an image build without them
+# silently produces no Process B.
+build/
+build-*/
+.git/
+*.AppImage
+*.rpm
+*.deb
+third_party/appimage-tools/

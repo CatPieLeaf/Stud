@@ -1,0 +1,50 @@
+# The image the AppImage is built in.
+#
+# An AppImage must be built against the oldest libraries it is meant to
+# run on: it carries its dependencies, and anything it was linked
+# against is a floor on every machine that runs it.
+#
+# That argues for the oldest base possible, and this is not it. Ubuntu
+# 25.04 is chosen for two things an older one cannot give:
+#
+#   Qt 6.8 rather than 6.4 -- the bundle carries its own Qt, so its
+#   version is Stud's version on every machine, not the host's.
+#
+#   KF6 and the real Breeze widget style. A widget style is a Qt plugin
+#   and can only load into the Qt it was built against, so the host's
+#   Breeze can never load here; the only way an AppImage looks like the
+#   desktop it is on is to carry a matching one. Ubuntu 24.04 has no KF6
+#   at all (checked, not assumed), so on that base the answer was Fusion
+#   and nothing else.
+#
+# The cost is a glibc floor of 2.41: this image will not run on Ubuntu
+# 24.04 LTS or anything older than roughly Fedora 42. That is the trade
+# being made, deliberately.
+#
+# The other reason a base is chosen carefully: linuxdeploy rewrites the
+# rpath of every library it bundles, and the patchelf it carries corrupts
+# libraries that use modern relocation sections (.relr.dyn) -- the result
+# segfaults inside its own initialiser on a plain dlopen, before any of
+# Stud's own code runs. Measured directly on Fedora 44. NO_STRIP=1 and
+# the exclude list in packaging/build-appimage.sh are what keep that away
+# from the libraries where it actually bit.
+FROM ubuntu:25.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build pkg-config git curl ca-certificates \
+        file desktop-file-utils zsync fuse3 \
+        python3 python3-venv \
+        qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
+        qt6-l10n-tools libqt6opengl6-dev qtkeychain-qt6-dev libssl-dev \
+        qt6-wayland qt6-wayland-dev qt6-xdgdesktopportal-platformtheme \
+        kde-style-breeze \
+        libwayland-dev libwayland-egl-backend-dev wayland-protocols \
+        libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
+        libxkbcommon-dev portaudio19-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# linuxdeploy needs these to inspect and bundle; the AppImage tools are
+# fetched by the build script itself and cached under third_party/.
+WORKDIR /src

@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Name=Stud
+Comment=Roblox launcher/runtime for Linux
+# Exec is filled in at configure time: the plain command for an
+# installed package, an absolute path for a build tree.
+Exec=@STUD_EXEC@ %u
+Icon=@STUD_APP_ID@
+Terminal=false
+Categories=Game;
+NoDisplay=false
+MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;
+# Both of Stud's windows report the application id as their Wayland
+# app_id: the Qt UI through QGuiApplication::setDesktopFileName(), and the
+# game window through xdg_toplevel_set_app_id(). Without a StartupWMClass
+# that matches, the compositor cannot tie either window back to this entry,
+# which is why the taskbar showed no icon even once the icon was installed.
+StartupWMClass=@STUD_APP_ID@
+Actions=Settings;
+
+[Desktop Action Settings]
+Name=Settings
+Exec=@STUD_EXEC@ --settings
+Icon=@STUD_APP_ID@

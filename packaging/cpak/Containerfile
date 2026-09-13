@@ -1,0 +1,52 @@
+# The OCI image cpak installs Stud from.
+#
+# cpak does not build anything itself: it installs an application out of
+# an OCI image and runs it in a rootless sandbox. So this image is just
+# an ordinary Fedora root filesystem with Stud installed into /usr and
+# Stud's own runtime dependencies present.
+#
+# Built in two stages so the published image carries none of the build
+# toolchain -- the compiler, the NDK and the ANGLE checkout together are
+# several gigabytes and none of it is needed to run.
+#
+# The build context must already have third_party/ populated
+# (tools/setup.sh), the same as any other build of Stud. It is not
+# fetched here: ANGLE builds from source and takes hours, which does not
+# belong inside an image build that is otherwise minutes.
+
+FROM fedora:42 AS build
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+        gcc-c++ cmake ninja-build git pkgconf-pkg-config \
+        qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
+        wayland-devel wayland-protocols-devel libxkbcommon-devel \
+        mesa-libEGL-devel mesa-libGLES-devel vulkan-loader-devel \
+        freetype-devel portaudio-devel openssl-devel \
+    && dnf clean all
+
+COPY . /src
+RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    && cmake --build /build -j"$(nproc)" \
+    && DESTDIR=/stage cmake --install /build --prefix /usr
+
+FROM fedora:42
+
+# bubblewrap is a real runtime dependency, not a packaging detail:
+# Process B is a bionic ELF that runs inside its own mount, PID and IPC
+# namespaces, and Stud creates them with bwrap. cpak's own sandbox does
+# not replace it -- the manifest grants userNamespaces so this one can
+# nest inside it.
+RUN dnf install -y --setopt=install_weak_deps=False \
+        bubblewrap \
+        qt6-qtbase-gui qt6-qtwebengine qtkeychain-qt6 \
+        vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libGLES \
+        portaudio freetype \
+        dbus-libs libnotify \
+    && dnf clean all
+
+COPY --from=build /stage/usr /usr
+
+LABEL org.opencontainers.image.title="Stud" \
+      org.opencontainers.image.description="Play Roblox on Linux" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.source="https://github.com/CatPieLeaf/Stud"
