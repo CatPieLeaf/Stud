@@ -2311,6 +2311,23 @@ int main(int argc, char** argv) {
         g_should_keep_running.store(false, std::memory_order_relaxed);
     };
 
+    // The app shell's own Exit button.
+    //
+    // Unconditional, unlike closeOnLeave above: this is the user pressing
+    // Exit, not the engine passing through its app shell, so there is
+    // nothing to disambiguate and nothing to gate it on. Same teardown as
+    // closing the window -- the window goes first, because the engine
+    // carries on rendering its shell through the seconds LeaveGame and
+    // DestroyApp take.
+    stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit = []() {
+        std::printf("stud: the app asked to exit -- shutting down\n");
+        std::fflush(stdout);
+        uint64_t end_args[8] = {};
+        stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
+                                                nullptr, 0, nullptr, 0, nullptr);
+        g_should_keep_running.store(false, std::memory_order_relaxed);
+    };
+
     // Links the engine wants another application to handle -- Roblox
     // Studio above all. render-host decides what is a Roblox page (its
     // own panel) and what belongs to the desktop.
