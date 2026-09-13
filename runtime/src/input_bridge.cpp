@@ -279,6 +279,23 @@ bool g_drag_confined = false;
 std::atomic<int> g_engine_mouse_behavior{
     static_cast<int>(stud::runtime::MouseBehavior::kUnknown)};
 
+// How long the host may wait for an event, and equally how often input is
+// asked for when it has to share the render connection.
+//
+// STUD_INPUT_POLL_MS overrides it. 4ms rather than 8: the engine paints
+// its cursor inside the frame, so every millisecond between the hand
+// moving and the engine hearing about it is a millisecond the cursor is
+// visibly behind -- there is no hardware cursor here to hide it, the way
+// there is on Windows.
+int poll_interval_ms() {
+    static const int ms = [] {
+        const char* v = std::getenv("STUD_INPUT_POLL_MS");
+        const int n = v != nullptr ? std::atoi(v) : 4;
+        return n > 0 ? n : 4;
+    }();
+    return ms;
+}
+
 bool engine_pins_cursor() {
     // Either locked mode: the engine holds its own cursor and ignores
     // every position it is given. LockCurrentPosition is a camera
@@ -2182,19 +2199,36 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         bool g_pointer_locked = false;
         std::vector<stud::android_glue::HostInputEvent> batch(64);
         while (g_running.load(std::memory_order_relaxed)) {
-            if (!stud::render_client::connection().connected()) {
+            // Input's own connection, so asking for events never queues
+            // behind a frame's worth of GL calls and never makes one wait
+            // -- and so the host can simply hold the request until an
+            // event arrives. Falls back to the shared connection if the
+            // second socket could not be opened.
+            auto& input_conn = stud::render_client::input_connection().connected()
+                                   ? stud::render_client::input_connection()
+                                   : stud::render_client::connection();
+            const bool own_connection = stud::render_client::input_connection().connected();
+            if (!input_conn.connected()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
             uint64_t a[8] = {};
+            // How long the host may wait for an event before answering
+            // empty. Only on input's own connection: waiting on the
+            // shared one would park every GL call behind it, which is
+            // what once cost a measured frame 642ms.
+            a[0] = own_connection ? static_cast<uint64_t>(poll_interval_ms()) : 0;
             uint32_t written = 0;
             uint64_t n = 0;
-            // Best-effort: skip this round rather than block the render thread
-            // behind us. See Client::try_call()'s own comment -- a blocking
-            // poll here cost one measured frame 642ms.
-            if (!stud::render_client::connection().try_call(
-                    CallId::PollInputEvents, a, batch.data(),
-                    static_cast<uint32_t>(batch.size() * sizeof(batch[0])), &written, &n)) {
+            if (own_connection) {
+                n = input_conn.call(CallId::PollInputEvents, a, nullptr, 0, batch.data(),
+                                    static_cast<uint32_t>(batch.size() * sizeof(batch[0])),
+                                    &written);
+            } else if (!input_conn.try_call(
+                           CallId::PollInputEvents, a, batch.data(),
+                           static_cast<uint32_t>(batch.size() * sizeof(batch[0])), &written, &n)) {
+                // Sharing: best-effort, skip the round rather than block
+                // the render thread behind us.
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
@@ -2472,23 +2506,12 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             }
             // ~8ms: fast enough that a real click/drag feels immediate,
             // slow enough that an idle window costs almost nothing.
-            if (n == 0) {
-                // STUD_INPUT_POLL_MS overrides this, for A/B measuring how
-                // much the poll's own round-trip costs the render thread:
-                // PollInputEvents holds the render connection's mutex for a
-                // full round-trip, so every GL call issued in that window
-                // waits behind it.
-                static const int poll_ms = [] {
-                    const char* v = std::getenv("STUD_INPUT_POLL_MS");
-                    // 4ms, not 8. The engine paints its cursor inside the
-                    // frame, so every millisecond between the hand moving
-                    // and the engine hearing about it is a millisecond the
-                    // cursor is visibly behind -- there is no hardware
-                    // cursor here to hide it, the way there is on Windows.
-                    int ms = v != nullptr ? std::atoi(v) : 4;
-                    return ms > 0 ? ms : 4;
-                }();
-                std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
+            // No sleep when input has its own connection: the host has
+            // already waited for exactly this long, on the compositor's
+            // own fd, and answered the moment something arrived. Sleeping
+            // here as well would put the interval back.
+            if (n == 0 && !own_connection) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms()));
             }
         }
     }).detach();

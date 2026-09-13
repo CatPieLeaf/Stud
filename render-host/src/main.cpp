@@ -2891,20 +2891,52 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // a twentieth of a second ahead of the queue before Process B
             // even asked. Pumping at the moment input is requested makes
             // the answer as fresh as the compositor has it.
-            {
+            using stud::android_glue::HostInputEvent;
+            size_t capacity = hdr.out_buffer_len / sizeof(HostInputEvent);
+            if (capacity == 0) return 0;
+            out.resize(capacity * sizeof(HostInputEvent));
+            size_t n = 0;
+            // Wait for one, if the caller said it may.
+            //
+            // A pointer event only enters the queue when something
+            // dispatches Wayland, and the main loop does that on a
+            // timeout (and not at all while a busy client keeps the
+            // connection saturated -- which is exactly when the mouse is
+            // moving). So the pump happens HERE, and rather than answer
+            // "nothing yet" and be asked again a few milliseconds later,
+            // the reply waits on the compositor's own fd and leaves the
+            // instant an event lands.
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(static_cast<int>(a[0]));
+            for (;;) {
                 bool readable = false;
                 if (!window.on_x11() && window.display != nullptr) {
                     pollfd wl{wl_display_get_fd(window.display), POLLIN, 0};
                     readable = ::poll(&wl, 1, 0) > 0 && (wl.revents & POLLIN) != 0;
                 }
                 pump_display(window, readable);
+                n = stud::android_glue::native_window_drain_input_events(
+                    reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+                if (n > 0) break;
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                // In slices, so a controller (which is evdev, not the
+                // compositor) is still read promptly, and so a wait can
+                // never outlive its deadline by a whole poll.
+                auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+                int slice = static_cast<int>(std::min<long long>(left.count(), 2));
+                if (slice <= 0) slice = 1;
+                if (!window.on_x11() && window.display != nullptr) {
+                    pollfd wl{wl_display_get_fd(window.display), POLLIN, 0};
+                    ::poll(&wl, 1, slice);
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+                }
+                // A controller is evdev, not the compositor, so it is not
+                // what this waits on -- it is drained below, at most one
+                // wait late, which is no worse than the timer this
+                // replaces.
             }
-            using stud::android_glue::HostInputEvent;
-            size_t capacity = hdr.out_buffer_len / sizeof(HostInputEvent);
-            if (capacity == 0) return 0;
-            out.resize(capacity * sizeof(HostInputEvent));
-            size_t n = stud::android_glue::native_window_drain_input_events(
-                reinterpret_cast<HostInputEvent*>(out.data()), capacity);
 
             // Controllers are read here rather than by android-glue: they
             // come from evdev, not from the compositor, and Process B's
@@ -3656,6 +3688,11 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         // across it makes every other connection wait on the sound card.
         case stud::render_host::CallId::AudioWriteFrames:
         case stud::render_host::CallId::AudioReadFrames:
+        // Input may WAIT for an event to arrive (see PollInputEvents in
+        // the protocol header). It holds no driver state at all, and
+        // holding the dispatch lock across that wait would stall every
+        // other connection for the length of it.
+        case stud::render_host::CallId::PollInputEvents:
             return true;
         default:
             return false;

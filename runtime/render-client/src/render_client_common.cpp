@@ -39,4 +39,20 @@ stud::render_host::Client& audio_connection() {
     return client;
 }
 
+stud::render_host::Client& input_connection() {
+    static stud::render_host::Client client;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        std::string path = stud::render_host::default_socket_path();
+        if (!client.connect_to(path)) {
+            std::fprintf(stderr,
+                         "stud: render-client: input could not open its own connection to %s -- "
+                         "sharing the render connection instead\n",
+                         path.c_str());
+        }
+    }
+    return client;
+}
+
 }  // namespace stud::render_client

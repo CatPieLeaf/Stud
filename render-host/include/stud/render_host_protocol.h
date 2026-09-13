@@ -211,8 +211,16 @@ enum class CallId : uint32_t {
     // Real host->client input transport. Process C owns the compositor
     // connection and therefore the real wl_seat; Process B owns the JNI
     // bridge into libroblox's own `NativeInputInterface`. The protocol is
-    // strictly client-initiated, so Process B polls this and the host
+    // strictly client-initiated, so Process B asks this and the host
     // replies with however many queued `HostInputEvent`s fit.
+    //
+    // a[0] is how long the host may WAIT for an event before answering
+    // empty, in milliseconds. 0 keeps the original behaviour (answer with
+    // whatever is queued right now). A wait costs nothing and removes a
+    // whole polling interval from the cursor's latency: the reply leaves
+    // the moment the compositor delivers the event, instead of on the
+    // next tick of a timer. Only ever asked on input's own connection --
+    // waiting on the shared one would park every GL call behind it.
     PollInputEvents,
 
     // Real window size, from the process that owns the actual window.

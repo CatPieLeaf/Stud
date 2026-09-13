@@ -28,4 +28,20 @@ stud::render_host::Client& connection();
 // client connection.
 stud::render_host::Client& audio_connection();
 
+// A third connection, for input, for the same reason audio has one and
+// with a sharper deadline still.
+//
+// Input is the only path a human watches directly: every millisecond
+// between the hand moving and the engine hearing about it is a
+// millisecond the engine's own painted cursor is visibly behind, and
+// there is no hardware cursor here to hide it the way there is on
+// Windows. Sharing the render connection meant input could only be
+// ASKED for between GL calls, and asking cost a round trip that every
+// GL call then queued behind -- so it was polled on a timer instead,
+// which is latency by construction.
+//
+// With its own connection the host can simply hold the request until an
+// event actually arrives, and hand it over the instant it does.
+stud::render_host::Client& input_connection();
+
 }  // namespace stud::render_client
