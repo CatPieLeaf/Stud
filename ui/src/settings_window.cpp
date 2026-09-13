@@ -77,7 +77,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     general->addWidget(new QLabel("Roblox APK or bundle"));
     auto* apkRow = new QHBoxLayout();
     apkPathEdit_ = new QLineEdit(this);
-    apkPathEdit_->setPlaceholderText("No APK selected -- required to launch");
+    apkPathEdit_->setPlaceholderText("No APK loaded");
     apkPathEdit_->setReadOnly(true);
     auto* browseButton = new QPushButton("Browse...", this);
     apkRow->addWidget(apkPathEdit_);
