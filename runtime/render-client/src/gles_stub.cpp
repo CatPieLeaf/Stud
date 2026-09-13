@@ -353,12 +353,33 @@ const GLubyte* glGetString(GLenum name) {
     // answered.
     static thread_local char buf[16384];
     static const bool full = std::getenv("STUD_GL_FULL_EXTENSIONS") != nullptr;
-    const size_t cap = full ? sizeof(buf) : 512;
     uint64_t a[8] = {name};
     uint32_t written = 0;
-    connection().call(CallId::GlGetString, a, nullptr, 0, buf, static_cast<uint32_t>(cap - 1),
-                      &written);
-    buf[written < cap ? written : cap - 1] = '\0';
+    connection().call(CallId::GlGetString, a, nullptr, 0, buf,
+                      static_cast<uint32_t>(sizeof(buf) - 1), &written);
+    if (written >= sizeof(buf) - 1) written = sizeof(buf) - 1;
+    buf[written] = '\0';
+    if (full) return reinterpret_cast<const GLubyte*>(buf);
+
+    // Capped at the length it has always had.
+    //
+    // Reporting more changes which shader permutations the engine asks
+    // its own APK-shipped pack for, and that pack does not contain them:
+    // a black window, live-confirmed twice -- once with the whole list,
+    // and again with just two extensions appended
+    // (GL_EXT_disjoint_timer_query, GL_EXT_buffer_storage). Two names
+    // were enough to move the permutation mask, so this is not about
+    // volume and there is no safe subset to sneak through.
+    //
+    // The cost is real and worth stating: the engine cannot use what it
+    // cannot see, so its GPU timing reads 0.00ms even though Stud now
+    // implements the timer queries underneath. Making that visible needs
+    // the shader-pack question answered first.
+    if (written > 511) {
+        buf[511] = '\0';
+        // Never leave a half-written name at the end.
+        if (char* space = std::strrchr(buf, ' ')) *space = '\0';
+    }
     return reinterpret_cast<const GLubyte*>(buf);
 }
 GLint glGetUniformLocation(GLuint program, const GLchar* name) {
@@ -764,6 +785,55 @@ void glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage
     connection().call_void(CallId::GlBufferData, a, data,
                            data != nullptr ? static_cast<uint32_t>(size) : 0);
 }
+// GL timer queries. The engine times the GPU with these; without them
+// its own MicroProfiler reports GPU 0.00ms and its work scheduling has
+// nothing to pace against.
+//
+// Both spellings: GLES3 has them in core, and GL_EXT_disjoint_timer_query
+// exports the same entry points with an EXT suffix. The engine resolves
+// whichever it believes in, so both are exported and do the same thing.
+void glGenQueries(GLsizei n, GLuint* ids) {
+    if (n <= 0 || ids == nullptr) return;
+    uint64_t a[8] = {static_cast<uint64_t>(n)};
+    uint32_t written = 0;
+    connection().call(CallId::GlGenQueries, a, nullptr, 0, ids,
+                      static_cast<uint32_t>(n) * sizeof(GLuint), &written);
+}
+void glDeleteQueries(GLsizei n, const GLuint* ids) {
+    if (n <= 0 || ids == nullptr) return;
+    uint64_t a[8] = {static_cast<uint64_t>(n)};
+    connection().call_void(CallId::GlDeleteQueries, a, ids,
+                           static_cast<uint32_t>(n) * sizeof(GLuint));
+}
+void glBeginQuery(GLenum target, GLuint id) { call0(CallId::GlBeginQuery, target, id); }
+void glEndQuery(GLenum target) { call0(CallId::GlEndQuery, target); }
+void glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint* params) {
+    if (params == nullptr) return;
+    uint64_t a[8] = {id, pname};
+    uint32_t written = 0;
+    connection().call(CallId::GlGetQueryObjectuiv, a, nullptr, 0, params, sizeof(GLuint),
+                      &written);
+    if (written < sizeof(GLuint)) *params = 0;
+}
+void glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64* params) {
+    if (params == nullptr) return;
+    uint64_t a[8] = {id, pname};
+    uint32_t written = 0;
+    connection().call(CallId::GlGetQueryObjectui64v, a, nullptr, 0, params, sizeof(GLuint64),
+                      &written);
+    if (written < sizeof(GLuint64)) *params = 0;
+}
+void glGenQueriesEXT(GLsizei n, GLuint* ids) { glGenQueries(n, ids); }
+void glDeleteQueriesEXT(GLsizei n, const GLuint* ids) { glDeleteQueries(n, ids); }
+void glBeginQueryEXT(GLenum target, GLuint id) { glBeginQuery(target, id); }
+void glEndQueryEXT(GLenum target) { glEndQuery(target); }
+void glGetQueryObjectuivEXT(GLuint id, GLenum pname, GLuint* params) {
+    glGetQueryObjectuiv(id, pname, params);
+}
+void glGetQueryObjectui64vEXT(GLuint id, GLenum pname, GLuint64* params) {
+    glGetQueryObjectui64v(id, pname, params);
+}
+
 void glBufferStorage(GLenum target, GLsizeiptr size, const void* data, GLbitfield flags) {
     // Immutable storage: same shape as glBufferData, plus the flags that
     // say how it may be mapped later.

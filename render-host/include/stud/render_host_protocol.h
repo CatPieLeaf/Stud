@@ -600,6 +600,19 @@ enum class CallId : uint32_t {
     // map of it crashes ANGLE. Appended last: every existing id keeps
     // its value.
     GlBufferStorage,
+    // GL timer queries (GLES3 core + GL_EXT_disjoint_timer_query).
+    //
+    // Without these the engine's own MicroProfiler reports GPU 0.00ms --
+    // every query resolved to a no-op stub and answered zero -- so the
+    // engine has no idea how long the GPU is taking and its adaptive
+    // work scheduling runs blind. Appended last: every existing id keeps
+    // its value.
+    GlGenQueries,
+    GlDeleteQueries,
+    GlBeginQuery,
+    GlEndQuery,
+    GlGetQueryObjectuiv,
+    GlGetQueryObjectui64v,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -838,9 +851,15 @@ inline const char* call_id_name(CallId id) {
         "AudioReadFrames",
         "AudioCloseInputStream",
         "GlBufferStorage",
+        "GlGenQueries",
+        "GlDeleteQueries",
+        "GlBeginQuery",
+        "GlEndQuery",
+        "GlGetQueryObjectuiv",
+        "GlGetQueryObjectui64v",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlBufferStorage) + 1,
+                      static_cast<size_t>(CallId::GlGetQueryObjectui64v) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
@@ -1209,19 +1228,30 @@ public:
         if (stats) t0 = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lock(call_mutex_);
         if (fd_ < 0) return;
-        emit_command_batch_locked();
-        Header hdr{};
-        hdr.call_id = id;
-        for (int i = 0; i < 8; ++i) hdr.args[i] = args[i];
-        hdr.pixel_buffer_offset_plus_one = pixel_buffer_offset_plus_one;
-        hdr.flags = Header::kNoReply;
-        hdr.in_buffer_len = in_len;
-        hdr.out_buffer_len = 0;
-        const auto* hdr_bytes = reinterpret_cast<const uint8_t*>(&hdr);
-        queue_.insert(queue_.end(), hdr_bytes, hdr_bytes + sizeof(hdr));
+        reserve_queue_once();
+        if (!command_batch_.empty()) emit_command_batch_locked();
+
+        // Built straight into the queue rather than on the stack and
+        // copied in.
+        //
+        // This runs about 17,700 times a frame on the OpenGL path -- the
+        // engine's own call rate -- so what it does per call is the
+        // frame budget. The old version zero-initialised a ~100-byte
+        // header (`Header hdr{}`), filled every field, then copied the
+        // whole thing into the queue through an iterator-range insert.
+        // That is two passes over the header and one redundant clear of
+        // bytes that are all about to be overwritten.
+        const size_t at = queue_.size();
+        queue_.resize(at + sizeof(Header) + (in_buffer != nullptr ? in_len : 0));
+        auto* hdr = reinterpret_cast<Header*>(queue_.data() + at);
+        hdr->call_id = id;
+        std::memcpy(hdr->args, args, sizeof(hdr->args));
+        hdr->pixel_buffer_offset_plus_one = pixel_buffer_offset_plus_one;
+        hdr->flags = Header::kNoReply;
+        hdr->in_buffer_len = in_len;
+        hdr->out_buffer_len = 0;
         if (in_len > 0 && in_buffer != nullptr) {
-            const auto* in_bytes = static_cast<const uint8_t*>(in_buffer);
-            queue_.insert(queue_.end(), in_bytes, in_bytes + in_len);
+            std::memcpy(queue_.data() + at + sizeof(Header), in_buffer, in_len);
         }
         // STUD_IPC_NO_PIPELINE=1 sends every request immediately, i.e. the
         // pre-pipelining behaviour. Kept as a one-switch A/B for exactly the
@@ -1287,8 +1317,20 @@ private:
     bool flush_locked() {
         if (queue_.empty()) return true;
         const bool ok = write_all(queue_.data(), static_cast<uint32_t>(queue_.size()));
+        // clear(), never shrink: the capacity earned on the first frame
+        // is what keeps the next one from reallocating. A frame's worth
+        // of commands is a stable size, so this settles immediately.
         queue_.clear();
         return ok;
+    }
+
+    // Sized once, for a whole flush window, so appending a command never
+    // grows the buffer. Without this the queue reallocates its way up to
+    // the flush threshold repeatedly, copying everything already queued
+    // each time -- on a path that queues 17,700 commands a frame.
+    void reserve_queue_once() {
+        if (queue_.capacity() >= kQueueFlushBytes + 64u * 1024u) return;
+        queue_.reserve(kQueueFlushBytes + 64u * 1024u);
     }
 
     std::vector<uint8_t> queue_;
