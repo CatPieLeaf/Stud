@@ -2339,6 +2339,20 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             close_open_web_views();
             return 1;
         }
+        case CallId::AudioOpenInputStream:
+            return stud::render_host::audio_open_input_stream(static_cast<int>(a[0]),
+                                                              static_cast<int>(a[1]));
+        case CallId::AudioReadFrames: {
+            out.resize(hdr.out_buffer_len);
+            const uint64_t written =
+                stud::render_host::audio_read_frames(out.data(), out.size());
+            out.resize(static_cast<size_t>(written));
+            *out_len = static_cast<uint32_t>(written);
+            return written;
+        }
+        case CallId::AudioCloseInputStream:
+            stud::render_host::audio_close_input_stream();
+            return 1;
         case CallId::SetGamepadRumble: {
             // Magnitudes arrive in 1/1000ths: the header carries ints.
             return stud::render_host::gamepad::set_rumble(

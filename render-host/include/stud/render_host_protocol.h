@@ -580,6 +580,15 @@ enum class CallId : uint32_t {
     // Returns 1 when that pad actually rumbled. Appended last: every
     // existing id keeps its value.
     SetGamepadRumble,
+    // Voice chat. The microphone is opened only when the engine asks for
+    // an input stream, never at startup -- a[0] is the sample rate and
+    // a[1] the channel count; returns 1 when it opened. Appended last:
+    // every existing id keeps its value.
+    AudioOpenInputStream,
+    // Reads what has been captured since the last call into the
+    // out-buffer, returning the number of bytes written. Never blocks.
+    AudioReadFrames,
+    AudioCloseInputStream,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -814,9 +823,12 @@ inline const char* call_id_name(CallId id) {
         "PollWebViewMessage",
         "CloseWebView",
         "SetGamepadRumble",
+        "AudioOpenInputStream",
+        "AudioReadFrames",
+        "AudioCloseInputStream",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::SetGamepadRumble) + 1,
+                      static_cast<size_t>(CallId::AudioCloseInputStream) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

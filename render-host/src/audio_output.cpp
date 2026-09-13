@@ -528,4 +528,135 @@ void audio_close_stream(uint64_t stream) {
     std::fflush(stdout);
 }
 
+// ---------------------------------------------------------------------
+// Capture, for voice chat.
+//
+// Deliberately NOT opened at startup the way output is. A microphone is
+// not something to hold open because it might be wanted later: it is
+// opened when the engine asks for an input stream, which is when a user
+// has joined voice chat, and closed when it stops asking. Everything
+// here says so in the log, because a program holding a microphone open
+// should be visible about it.
+namespace {
+
+struct Capture {
+    PaStream* pa_stream = nullptr;
+    int channels = 1;
+    int rate = 48000;
+    // Same single-producer/single-consumer ring as the output side, with
+    // the roles swapped: PortAudio's realtime thread writes, the engine's
+    // own thread reads. It must not lock or allocate, so it does not.
+    std::vector<uint8_t> ring;
+    std::atomic<size_t> ring_read{0};
+    std::atomic<size_t> ring_write{0};
+    std::atomic<uint64_t> overruns{0};
+    bool open = false;
+};
+
+Capture& capture() {
+    static Capture c;
+    return c;
+}
+
+int capture_callback(const void* input, void*, unsigned long frames,
+                     const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void* user) {
+    auto* c = static_cast<Capture*>(user);
+    if (input == nullptr || c->ring.empty()) return paContinue;
+    const size_t bytes = static_cast<size_t>(frames) * static_cast<size_t>(c->channels) * 4;
+    const size_t write = c->ring_write.load(std::memory_order_relaxed);
+    const size_t read = c->ring_read.load(std::memory_order_acquire);
+    const size_t free_space = c->ring.size() - (write - read);
+    if (bytes > free_space) {
+        // Nobody is reading fast enough. Dropping the oldest audio is the
+        // only option that keeps latency bounded, and a counter says it
+        // happened rather than leaving it silent.
+        c->overruns.fetch_add(1, std::memory_order_relaxed);
+        return paContinue;
+    }
+    const auto* src = static_cast<const uint8_t*>(input);
+    for (size_t i = 0; i < bytes; ++i) {
+        c->ring[(write + i) % c->ring.size()] = src[i];
+    }
+    c->ring_write.store(write + bytes, std::memory_order_release);
+    return paContinue;
+}
+
+}  // namespace
+
+uint64_t audio_open_input_stream(int sample_rate, int channels) {
+    Capture& c = capture();
+    if (c.open) return 1;
+    PortAudio& pa = portaudio();
+    if (pa.handle == nullptr || pa.OpenDefaultStream == nullptr) {
+        std::printf("stud-render-host: audio: no capture device available\n");
+        std::fflush(stdout);
+        return 0;
+    }
+    c.channels = channels > 0 ? channels : 1;
+    c.rate = sample_rate > 0 ? sample_rate : 48000;
+    // Half a second of headroom, the same as the output ring: enough to
+    // absorb scheduling jitter, short enough that a stall is noticed
+    // rather than accumulated.
+    c.ring.assign(static_cast<size_t>(c.rate) * static_cast<size_t>(c.channels) * 4 / 2, 0);
+    c.ring_read.store(0);
+    c.ring_write.store(0);
+
+    PaError err = pa.OpenDefaultStream(&c.pa_stream, c.channels, 0, paFloat32,
+                                       static_cast<double>(c.rate), 480, capture_callback, &c);
+    if (err != paNoError) {
+        std::printf("stud-render-host: audio: could not open the microphone (%s)\n",
+                    pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
+        std::fflush(stdout);
+        report_alsa_messages("opening the microphone");
+        c.pa_stream = nullptr;
+        return 0;
+    }
+    err = pa.StartStream(c.pa_stream);
+    if (err != paNoError) {
+        std::printf("stud-render-host: audio: could not start the microphone (%s)\n",
+                    pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
+        std::fflush(stdout);
+        pa.CloseStream(c.pa_stream);
+        c.pa_stream = nullptr;
+        return 0;
+    }
+    c.open = true;
+    std::printf("stud-render-host: audio: MICROPHONE OPEN (%d Hz, %d channel(s)) -- the engine "
+                "asked for an input stream\n",
+                c.rate, c.channels);
+    std::fflush(stdout);
+    return 1;
+}
+
+uint64_t audio_read_frames(void* out, size_t bytes) {
+    Capture& c = capture();
+    if (!c.open || out == nullptr || bytes == 0) return 0;
+    const size_t read = c.ring_read.load(std::memory_order_relaxed);
+    const size_t write = c.ring_write.load(std::memory_order_acquire);
+    size_t available = write - read;
+    if (available == 0) return 0;
+    if (available > bytes) available = bytes;
+    auto* dst = static_cast<uint8_t*>(out);
+    for (size_t i = 0; i < available; ++i) {
+        dst[i] = c.ring[(read + i) % c.ring.size()];
+    }
+    c.ring_read.store(read + available, std::memory_order_release);
+    return available;
+}
+
+void audio_close_input_stream() {
+    Capture& c = capture();
+    if (!c.open) return;
+    PortAudio& pa = portaudio();
+    if (c.pa_stream != nullptr) {
+        if (pa.StopStream != nullptr) pa.StopStream(c.pa_stream);
+        if (pa.CloseStream != nullptr) pa.CloseStream(c.pa_stream);
+    }
+    c.pa_stream = nullptr;
+    c.open = false;
+    std::printf("stud-render-host: audio: microphone closed (%llu overrun(s))\n",
+                static_cast<unsigned long long>(c.overruns.load()));
+    std::fflush(stdout);
+}
+
 }  // namespace stud::render_host

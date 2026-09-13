@@ -92,6 +92,9 @@ struct Stream {
     std::atomic<int32_t> state{AAUDIO_STREAM_STATE_OPEN};
     std::atomic<bool> running{false};
     std::thread feeder;
+    // Capture streams have no feeder: the engine reads from them.
+    bool is_input = false;
+    int32_t channels = kChannels;
 };
 
 // The engine converts to whatever the stream reports, so 16-bit is the
@@ -290,11 +293,23 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
     if (builder == nullptr || stream_out == nullptr) return AAUDIO_ERROR_NULL;
     auto* b = static_cast<Builder*>(builder);
     if (b->direction != AAUDIO_DIRECTION_OUTPUT) {
-        // Recording is genuinely not implemented; saying so is better than
-        // handing back a stream that produces nothing.
-        std::printf("stud: libaaudio: input streams are not implemented\n");
+        // Voice chat. The host opens the real microphone here and only
+        // here -- never at startup -- and says so in the log.
+        const uint64_t args[8] = {static_cast<uint64_t>(kSampleRate), 1, 0, 0, 0, 0, 0, 0};
+        if (audio_connection().call(CallId::AudioOpenInputStream, args, nullptr, 0, nullptr, 0,
+                                    nullptr) == 0) {
+            std::printf("stud: libaaudio: no microphone available\n");
+            std::fflush(stdout);
+            return AAUDIO_ERROR_INVALID_STATE;
+        }
+        auto* input = new Stream();
+        input->format = b->format;
+        input->channels = 1;
+        input->is_input = true;
+        *stream_out = input;
+        std::printf("stud: libaaudio: input stream opened\n");
         std::fflush(stdout);
-        return AAUDIO_ERROR_INVALID_STATE;
+        return AAUDIO_OK;
     }
 
     // Float frames: the host takes what the engine produces, without a
@@ -329,7 +344,9 @@ int32_t AAudioStream_requestStart(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
     s->state.store(AAUDIO_STREAM_STATE_STARTED, std::memory_order_relaxed);
-    if (!s->running.exchange(true)) {
+    // A capture stream has nothing to feed -- the engine reads from it,
+    // and the host is already capturing from the moment it opened.
+    if (!s->is_input && !s->running.exchange(true)) {
         s->feeder = std::thread(feed, s);
     }
     return AAUDIO_OK;
@@ -355,19 +372,49 @@ int32_t AAudioStream_close(void* stream) {
     s->running.store(false, std::memory_order_relaxed);
     if (s->feeder.joinable()) s->feeder.join();
     uint64_t args[8] = {s->host_handle};
+    if (s->is_input) {
+        const uint64_t none[8] = {};
+        audio_connection().call(CallId::AudioCloseInputStream, none, nullptr, 0, nullptr, 0,
+                                nullptr);
+        delete s;
+        return AAUDIO_OK;
+    }
     audio_connection().call(CallId::AudioCloseStream, args, nullptr, 0, nullptr, 0, nullptr);
     delete s;
     return AAUDIO_OK;
 }
 
-int32_t AAudioStream_read(void*, void*, int32_t, int64_t) {
-    // Input is not implemented (see openStream). Reporting 0 frames read
-    // is the honest answer for a stream that will never produce any.
-    return 0;
+int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames, int64_t timeout_ns) {
+    auto* s = static_cast<Stream*>(stream);
+    if (s == nullptr || !s->is_input || buffer == nullptr || frames <= 0) return 0;
+    const int32_t bytes_per_frame = s->channels * 4;  // float frames, as opened
+    const uint64_t args[8] = {};
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::nanoseconds(timeout_ns > 0 ? timeout_ns : 0);
+    int32_t got = 0;
+    // A real AAudio read blocks until it has the frames asked for or the
+    // timeout runs out. The host never blocks, so the waiting is done
+    // here -- and with a zero timeout this returns whatever is already
+    // captured, which is the same contract.
+    for (;;) {
+        uint32_t written = 0;
+        const uint32_t want = static_cast<uint32_t>((frames - got) * bytes_per_frame);
+        audio_connection().call(CallId::AudioReadFrames, args, nullptr, 0,
+                                static_cast<uint8_t*>(buffer) + got * bytes_per_frame, want,
+                                &written);
+        got += static_cast<int32_t>(written / bytes_per_frame);
+        if (got >= frames) break;
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return got;
 }
 
 int32_t AAudioStream_getSampleRate(void*) { return kSampleRate; }
-int32_t AAudioStream_getChannelCount(void*) { return kChannels; }
+int32_t AAudioStream_getChannelCount(void* stream) {
+    auto* s = static_cast<Stream*>(stream);
+    return s != nullptr ? s->channels : kChannels;
+}
 int32_t AAudioStream_getFormat(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     return s != nullptr ? s->format : AAUDIO_FORMAT_PCM_I16;
