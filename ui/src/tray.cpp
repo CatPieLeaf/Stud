@@ -21,6 +21,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QIcon>
 #include <QMenu>
 #include <QMessageBox>
+#include <QProcess>
 #include <QSystemTrayIcon>
 #include <QTextStream>
 #include <QTimer>
@@ -137,6 +138,39 @@ void Tray::copyServerLink() {
                             QStringLiteral("Not in a game, so there is no server to link to."),
                             QSystemTrayIcon::Information, 4000);
         return;
+    }
+    // On Wayland a clipboard offer is only accepted with the serial of a
+    // real input event on one of the application's own surfaces -- and
+    // this application has no window at all while it sits in the tray
+    // (the menu is the desktop's, over D-Bus, not a Qt surface). So
+    // QClipboard::setText was silently ignored and the entry copied
+    // nothing, which is exactly what was reported.
+    //
+    // wl-copy owns the selection in its own short-lived process, which
+    // is the normal way a windowless program copies on Wayland. Qt's own
+    // clipboard is still set as well: it is what works on X11, and it
+    // costs nothing where it does not.
+    const bool wayland = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
+    if (wayland) {
+        QProcess copier;
+        copier.setProgram(QStringLiteral("wl-copy"));
+        copier.setArguments({QStringLiteral("--type"), QStringLiteral("text/plain")});
+        copier.setStandardOutputFile(QProcess::nullDevice());
+        copier.setStandardErrorFile(QProcess::nullDevice());
+        copier.start();
+        if (copier.waitForStarted(2000)) {
+            copier.write(link.toUtf8());
+            copier.closeWriteChannel();
+            // wl-copy forks and keeps serving the selection, so this
+            // returns as soon as the text has been handed over.
+            copier.waitForFinished(2000);
+        } else {
+            icon_->showMessage(
+                QStringLiteral("Stud"),
+                QStringLiteral("Could not copy: this desktop needs wl-clipboard installed."),
+                QSystemTrayIcon::Warning, 5000);
+            return;
+        }
     }
     QApplication::clipboard()->setText(link);
     icon_->showMessage(QStringLiteral("Stud"), QStringLiteral("Server link copied."),

@@ -171,6 +171,7 @@ add_library(stud_runtime_framework STATIC
     "${FRAMEWORK_SRC}/src/linking_bridge.cpp"
     "${FRAMEWORK_SRC}/src/webview_cookies.cpp"
     "${FRAMEWORK_SRC}/src/server_address.cpp"
+    "${FRAMEWORK_SRC}/src/game_instance.cpp"
     "${FRAMEWORK_SRC}/src/game_activity_stubs.cpp"
     "${FRAMEWORK_SRC}/src/text_editor.cpp"
     "${FRAMEWORK_SRC}/src/android_framework_stubs.cpp"

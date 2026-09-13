@@ -55,6 +55,7 @@
 #include "stud/android_framework_stubs.h"
 #include "stud/protocol_platform_stubs.h"
 #include "stud/game_activity_stubs.h"
+#include "stud/game_instance.h"
 #include "stud/server_address.h"
 #include "stud/game_engine_boot.h"
 #include "stud/init_params.h"
@@ -407,6 +408,7 @@ int main(int argc, char** argv) {
                         size_t msg_len = ::strnlen(message, msg_max);
                         static const char* kPrio = "??VDIWEF";
                         char prio_char = (priority >= 0 && priority < 8) ? kPrio[priority] : '?';
+                        stud::jni_bridge::note_engine_log_line(message, msg_len);
                         std::printf("[logd:%c/%.*s] %.*s\n", prio_char, static_cast<int>(tag_len),
                                     tag, static_cast<int>(msg_len), message);
                         std::fflush(stdout);
@@ -2311,6 +2313,7 @@ int main(int argc, char** argv) {
     // every 250ms loop iteration.
     const bool discord_presence_enabled = find_named_arg(argc, argv, "--discord-presence") == "on";
     long long reported_place_id = -1;
+    std::string reported_instance_id;
 
     std::printf("stud: entering the real event loop (Ctrl+C to stop) ...\n");
     std::fflush(stdout);
@@ -2348,9 +2351,25 @@ int main(int argc, char** argv) {
             const long long place = in_experience
                                         ? stud::jni_bridge::NativeHelperStub::last_place_id()
                                         : 0;
-            if (place != reported_place_id) {
+            // The server too, not just the experience: a link with no
+            // instance id joins whichever server the backend picks,
+            // which is not the one the person sharing it is in.
+            const std::string instance =
+                place > 0 ? stud::jni_bridge::current_game_instance_id() : std::string();
+            if (place != reported_place_id || instance != reported_instance_id) {
                 reported_place_id = place;
-                const std::string body = place > 0 ? std::to_string(place) : std::string();
+                reported_instance_id = instance;
+                if (place <= 0) stud::jni_bridge::clear_game_instance_id();
+                std::string body = place > 0 ? std::to_string(place) : std::string();
+                if (!body.empty() && !instance.empty()) body += " " + instance;
+                if (place > 0 && instance.empty()) {
+                    // Says so rather than quietly linking to the
+                    // experience: the instance comes from the engine's
+                    // own join line, and not having it is the one way
+                    // this produces a link to the wrong server.
+                    std::printf("stud: presence: no instance id yet for place %lld\n", place);
+                    std::fflush(stdout);
+                }
                 uint64_t presence_args[8] = {};
                 stud::render_client::connection().call(
                     stud::render_host::CallId::SetGamePresence, presence_args,
