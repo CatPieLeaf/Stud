@@ -298,6 +298,26 @@ float g_pin_py = 0.0f;
 float g_last_raw_px = 0.0f;
 float g_last_raw_py = 0.0f;
 
+// A warp in flight, and everything it will stir up.
+//
+// Moving the pointer produces motion events like any other movement, and
+// the compositor may still have one or two of the HAND's own events in
+// flight when the warp is asked for. A single "take the next event as-is"
+// flag is not enough: the stale event eats it, and then the warp's own
+// arrival is read as real movement -- live-caught as the cursor jumping
+// back to where the hand had been and a -390 unit delta reaching the
+// camera in one step, which is exactly the spin teleporting.
+//
+// So a warp is pending until the pointer is actually SEEN at the place it
+// was sent to. Everything up to that point is the warp's business and
+// none of the engine's: the position stays where the engine's cursor is
+// and no movement is reported at all.
+bool g_warp_pending = false;
+float g_warp_target_px = 0.0f;
+float g_warp_target_py = 0.0f;
+int g_warp_events_left = 0;
+
+
 // Whether the compositor can move the pointer at all (wp_pointer_warp_v1,
 // or X11's own warp). Asked once. Without it the pointer cannot be put
 // back on the cursor when a drag ends, and the cursor goes to the pointer
@@ -330,6 +350,18 @@ void set_pointer_confined(bool confined) {
                     confined ? "confined to" : "released from");
         std::fflush(stdout);
     }
+}
+
+void begin_warp(float target_px, float target_py) {
+    if (!pointer_warp_available()) return;
+    warp_pointer_to(target_px, target_py);
+    g_warp_pending = true;
+    g_warp_target_px = target_px;
+    g_warp_target_py = target_py;
+    // A bound, so a warp the compositor quietly drops cannot swallow the
+    // pointer for the rest of the session. Generous: a fast hand produces
+    // a handful of events in the time a round-trip takes.
+    g_warp_events_left = 32;
 }
 
 void set_pointer_locked(bool locked) {
@@ -1096,6 +1128,30 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // No clamp either. The client bounds nothing here; only its
             // ACTION_SCROLL branch floors the position it reports at
             // zero, which is the wheel's business and not the pointer's.
+            if (g_warp_pending) {
+                // Nothing here is the hand: either an event that was
+                // already on its way when the warp was asked for, or the
+                // warp itself arriving. Keep the engine's cursor where it
+                // is, report no movement, and measure the next real
+                // movement from wherever the pointer actually is now.
+                const bool landed = std::fabs(ev.x - g_warp_target_px) < 3.0f &&
+                                    std::fabs(ev.y - g_warp_target_py) < 3.0f;
+                g_prev_raw_x = x;
+                g_prev_raw_y = y;
+                g_have_prev_raw = true;
+                g_last_raw_px = ev.x;
+                g_last_raw_py = ev.y;
+                if (landed || --g_warp_events_left <= 0) {
+                    g_warp_pending = false;
+                    if (input_trace_enabled()) {
+                        std::printf("stud: warp %s at (%.1f,%.1f)\n",
+                                    landed ? "landed" : "gave up",
+                                    static_cast<double>(ev.x), static_cast<double>(ev.y));
+                        std::fflush(stdout);
+                    }
+                }
+                return;
+            }
             g_last_raw_px = ev.x;
             g_last_raw_py = ev.y;
             if (g_drag_confined) {
@@ -1374,12 +1430,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                             // else by now. Put the pointer back ON the
                             // cursor rather than moving the cursor to the
                             // pointer -- that direction is the teleport.
-                            if (pointer_warp_available()) {
-                                warp_pointer_to(g_pin_px, g_pin_py);
-                            }
-                            g_prev_raw_x = g_pin_x;
-                            g_prev_raw_y = g_pin_y;
-                            g_resync_after_unlock.store(true);
+                            begin_warp(g_pin_px, g_pin_py);
                             last_x = g_pin_x;
                             last_y = g_pin_y;
                         }
@@ -1905,6 +1956,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 g_lock_from_drag = false;
                 apply_pointer_lock();
                 g_drag_anchored = false;
+                g_warp_pending = false;
                 set_pointer_confined(false);
                 if (input_trace_enabled()) {
                     std::printf("stud: pointer left the surface -- released every held button\n");
