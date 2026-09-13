@@ -77,6 +77,7 @@ private:
     // nothing but stretch the window; those are separate values now.
     QCheckBox* hidpiCheck_;
     QCheckBox* followDpiCheck_;
+    QComboBox* renderScaleCombo_;
     QCheckBox* smoothZoomCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;

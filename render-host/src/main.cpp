@@ -897,6 +897,9 @@ bool g_prefer_vulkan = true;
 // default, which is Vulkan on this platform.
 std::string g_angle_backend;
 bool g_hidpi_enabled = true;
+// How many pixels the engine draws, as a percentage of the buffer it
+// draws into. 100 is every pixel, which is what Stud has always done.
+int g_render_scale_percent = 100;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
@@ -3952,6 +3955,9 @@ int main(int argc, char** argv) {
             g_discord_join_button = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--hidpi") {
             g_hidpi_enabled = std::string_view(argv[i + 1]) != "off";
+        } else if (std::string_view(argv[i]) == "--render-scale") {
+            const int percent = std::atoi(argv[i + 1]);
+            if (percent >= 50 && percent <= 100) g_render_scale_percent = percent;
         }
     }
     // Latch the scale before any window or surface exists, so the very
@@ -3961,7 +3967,35 @@ int main(int argc, char** argv) {
     // compositor upscales it. Either way the DISPLAY's own scale is left
     // alone -- that separation is what makes the off state merely blurry
     // instead of also wrong.
-    stud::android_glue::set_render_scale_120(g_hidpi_enabled ? 0 : 120);
+    //
+    // The render scale is the INPUT end of the same pipeline: it divides
+    // the buffer the engine is given, while the window keeps its size
+    // (the viewport's destination is the window's logical size whatever
+    // the buffer is, so a smaller buffer is stretched to fill it). One
+    // number carries it, which is why this composes instead of fighting:
+    // the same scale sizes the buffer, answers the Vulkan surface
+    // capabilities the engine builds its swapchain from, converts pointer
+    // coordinates, and places the text overlay.
+    //
+    // Only with HiDPI on. With it off the buffer is already the window's
+    // logical size and the compositor is already stretching it, so
+    // scaling down here would simply be resampled twice.
+    int32_t scale_120 = g_hidpi_enabled ? 0 : 120;
+    if (g_hidpi_enabled && g_render_scale_percent < 100) {
+        // 0 means "follow the display", which has to be resolved to a
+        // real number before it can be scaled. Ask for the display's own
+        // scale first, then take the requested fraction of it.
+        stud::android_glue::set_render_scale_120(0);
+        const int32_t display_120 = stud::android_glue::native_window_wait_for_display_scale_120();
+        scale_120 = static_cast<int32_t>(static_cast<int64_t>(display_120) *
+                                          g_render_scale_percent / 100);
+        if (scale_120 < 1) scale_120 = 1;
+        std::printf("stud-render-host: render scale %d%% -- the engine draws at %d/120 of the "
+                    "window where the display is %d/120\n",
+                    g_render_scale_percent, scale_120, display_120);
+        std::fflush(stdout);
+    }
+    stud::android_glue::set_render_scale_120(scale_120);
 
     // Open the audio device now, not when a sound first plays: Stud should
     // appear in the desktop's volume mixer from launch, like any other
