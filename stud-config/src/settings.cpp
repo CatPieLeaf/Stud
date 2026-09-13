@@ -104,18 +104,6 @@ StudSettings load_settings(const std::string& path) {
         // is upscaling nothing.
         result.upscale_quality_percent = percent < 33 ? 33 : (percent > 100 ? 100 : percent);
     }
-    if (doc.contains("upscaleTargetPercent")) {
-        if (!doc.at("upscaleTargetPercent").is_number_integer()) {
-            throw SettingsError("stud: config '" + path +
-                                "' has a non-integer \"upscaleTargetPercent\"");
-        }
-        const int percent = doc.at("upscaleTargetPercent").get<int>();
-        // 100 is the screen; below it the upscaler would write less than
-        // it presents, which is a downscale wearing the wrong name. 200 is
-        // four times the fill rate, which is where this stops being worth
-        // it on any GPU.
-        result.upscale_target_percent = percent < 100 ? 100 : (percent > 200 ? 200 : percent);
-    }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
@@ -242,7 +230,6 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["upscaling"] = settings.upscaling;
     doc.erase("upscaleOutputPercent");
     doc["upscaleQualityPercent"] = settings.upscale_quality_percent;
-    doc["upscaleTargetPercent"] = settings.upscale_target_percent;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;

@@ -902,11 +902,6 @@ bool g_hidpi_enabled = true;
 // always the window's size in the display's own pixels.
 bool g_upscaling_enabled = false;
 int g_upscale_quality_percent = 80;
-// What the upscaler writes, as a percentage of the screen. Above 100 the
-// frame is built larger than the screen and scaled down when shown, which
-// is supersampling -- and the engine's own render size is a fraction of
-// THIS, so raising it costs the engine too.
-int g_upscale_target_percent = 100;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
@@ -3626,15 +3621,8 @@ void sync_vk_window_size() {
         int32_t real_h = 0;
         stud::android_glue::native_window_display_pixel_size(&real_w, &real_h);
         if (real_w > 0 && real_h > 0) {
-            // The screen, times the target. At 100% this is the screen
-            // itself and the frame is shown 1:1; above it the compositor
-            // scales the larger frame down, which is the supersampling
-            // being asked for.
-            const auto scaled_w = static_cast<uint32_t>(
-                static_cast<int64_t>(real_w) * g_upscale_target_percent / 100);
-            const auto scaled_h = static_cast<uint32_t>(
-                static_cast<int64_t>(real_h) * g_upscale_target_percent / 100);
-            stud::render_host::vk_set_upscale_output_size(scaled_w, scaled_h);
+            stud::render_host::vk_set_upscale_output_size(static_cast<uint32_t>(real_w),
+                                                           static_cast<uint32_t>(real_h));
         }
     }
     std::printf("stud-render-host: window size now %ux%u (Vulkan surface extent updated)\n", w, h);
@@ -3987,9 +3975,6 @@ int main(int argc, char** argv) {
         } else if (std::string_view(argv[i]) == "--upscale-quality") {
             const int percent = std::atoi(argv[i + 1]);
             if (percent >= 33 && percent <= 100) g_upscale_quality_percent = percent;
-        } else if (std::string_view(argv[i]) == "--upscale-target") {
-            const int percent = std::atoi(argv[i + 1]);
-            if (percent >= 100 && percent <= 200) g_upscale_target_percent = percent;
         }
     }
     // Latch the scale before any window or surface exists, so the very
@@ -4014,18 +3999,14 @@ int main(int argc, char** argv) {
     // display's own pixels, pushed on every resize by sync_vk_window_size.
     if (g_upscaling_enabled) {
         const int32_t display_120 = stud::android_glue::native_window_wait_for_display_scale_120();
-        // The engine renders a fraction of the TARGET, which is itself a
-        // multiple of the screen -- so a target above 100% raises both the
-        // upscaler's output and the engine's own render size, exactly as
-        // DLSS layered on DLDSR does.
-        const int32_t engine_scale_120 = static_cast<int32_t>(
-            static_cast<int64_t>(display_120) * g_upscale_target_percent *
-            g_upscale_quality_percent / 10000);
+        const int32_t engine_scale_120 =
+            static_cast<int32_t>(static_cast<int64_t>(display_120) * g_upscale_quality_percent /
+                                  100);
         stud::android_glue::set_render_scale_120(engine_scale_120 > 1 ? engine_scale_120 : 1);
-        std::printf("stud-render-host: upscaling: target %d%% of the screen, engine renders %d%% "
-                    "of that (scale %d/120, display %d/120)\n",
-                    g_upscale_target_percent, g_upscale_quality_percent, engine_scale_120,
-                    display_120);
+        std::printf("stud-render-host: upscaling: the engine renders at %d%% of the screen "
+                    "(scale %d/120, display %d/120) and Stud writes the screen's own "
+                    "resolution\n",
+                    g_upscale_quality_percent, engine_scale_120, display_120);
         std::fflush(stdout);
     }
 
