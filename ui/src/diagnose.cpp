@@ -135,6 +135,22 @@ void report_cpu() {
     line("cpu", model);
     const long threads = ::sysconf(_SC_NPROCESSORS_ONLN);
     line("cpu threads", threads > 0 ? std::to_string(threads) : std::string());
+    // Only the sets that decide whether a build can run at all or take
+    // a wider path -- the raw flag line is over 200 entries and says
+    // nothing useful in a report.
+    {
+        const std::string flags = " " + proc_field("/proc/cpuinfo", "flags") + " ";
+        static const char* const kInteresting[] = {"sse4_2", "avx",  "avx2",     "avx512f",
+                                                   "fma",    "aes",  "pclmulqdq", "bmi2",
+                                                   "f16c",   "sha_ni"};
+        std::string present;
+        for (const char* name : kInteresting) {
+            if (flags.find(std::string(" ") + name + " ") == std::string::npos) continue;
+            if (!present.empty()) present += " ";
+            present += name;
+        }
+        line("cpu instructions", present);
+    }
     const std::string mem = proc_field("/proc/meminfo", "MemTotal");
     if (!mem.empty()) {
         // Reported in kB; megabytes is what every other memory number
@@ -153,13 +169,30 @@ void report_cpu() {
 void report_gpus(const stud::config::StudSettings& settings) {
     const auto gpus = stud::ui::enumerate_gpus();
     if (gpus.empty()) {
-        line("vulkan gpus", "none (no Vulkan-capable device or loader)");
-    }
-    for (const auto& gpu : gpus) {
-        const bool selected = gpu.device_index == settings.gpu.device_index;
-        std::printf("  %-22s [%u] %s%s\n", gpu.device_index == gpus.front().device_index
-                                                ? "vulkan gpus" : "",
-                    gpu.device_index, gpu.name.c_str(), selected ? "  <- selected" : "");
+        line("gpu in use", "none (no Vulkan-capable device or loader)");
+    } else {
+        // What Stud is actually running on, first and by itself. The
+        // index is what the setting stores, so a saved choice that no
+        // longer exists shows up as a mismatch rather than silently
+        // becoming device 0.
+        const stud::ui::GpuInfo* chosen = nullptr;
+        for (const auto& gpu : gpus) {
+            if (gpu.device_index == settings.gpu.device_index) chosen = &gpu;
+        }
+        if (chosen != nullptr) {
+            line("gpu in use", "[" + std::to_string(chosen->device_index) + "] " + chosen->name);
+        } else {
+            line("gpu in use", "[" + std::to_string(settings.gpu.device_index) + "] " +
+                                   settings.gpu.device_name +
+                                   " -- NOT FOUND now; the loader reports " +
+                                   std::to_string(gpus.size()) + " device(s)");
+        }
+        bool first = true;
+        for (const auto& gpu : gpus) {
+            std::printf("  %-22s [%u] %s\n", first ? "also present" : "", gpu.device_index,
+                        gpu.name.c_str());
+            first = false;
+        }
     }
     // The kernel's own view, which is what says whether a driver is
     // even loaded for a device Vulkan did not report.
