@@ -149,8 +149,13 @@ struct InputFns {
 // Holding the pointer for the duration of any button hold is what the real
 // desktop client does, and it needs no signal the engine does not give.
 // STUD_NO_MOUSE_LOCK=1 turns it off.
-// Real MotionEvent button bit for the secondary (right) button.
+// Real MotionEvent button bits. The camera is dragged with either the
+// right button or the middle one -- the middle is what a mouse with no
+// usable right button (or a player who binds it that way) turns the view
+// with, and every desktop client treats the two the same here.
 constexpr jint kButtonSecondary = 2;
+constexpr jint kButtonTertiary = 4;
+constexpr jint kCameraButtons = kButtonSecondary | kButtonTertiary;
 std::atomic<bool> g_drag_locked{false};
 bool mouse_lock_enabled() {
     static const bool enabled = std::getenv("STUD_NO_MOUSE_LOCK") == nullptr;
@@ -196,6 +201,16 @@ bool g_have_prev_raw = false;
 // effect at all.
 bool g_lock_from_engine = false;
 bool g_lock_from_drag = false;
+// Escape lets go of the lock without letting go of the button.
+//
+// A camera drag holds the pointer for as long as the button is down, so a
+// drag that starts over something it should not have -- or simply a hand
+// that wants the desktop back -- has no way out but releasing. Escape is
+// what a player already presses (it opens Roblox's own menu), so it ends
+// the lock too, and the latch keeps it ended: re-locking would be
+// immediate otherwise, since the button is still held. Cleared the first
+// moment nothing is asking for the lock, so the next drag re-arms it.
+bool g_lock_suppressed = false;
 
 void set_pointer_locked(bool locked) {
     if (locked == g_drag_locked.load()) return;
@@ -211,10 +226,21 @@ void set_pointer_locked(bool locked) {
                                            nullptr);
 }
 
-// The lock is held while EITHER reason holds it.
+// The lock is held while EITHER reason holds it -- unless the player is
+// typing, or Escape has just let go of it.
+//
+// Typing: a focused Lua TextBox means the mouse is not steering a camera,
+// and pinning the pointer while someone types into chat is only ever in
+// the way. The engine's own LockCenter still wins -- Roblox can keep
+// shift-lock on with chat focused, and that is its decision to make, not
+// a drag Stud inferred.
 void apply_pointer_lock() {
     if (!mouse_lock_enabled()) return;
-    set_pointer_locked(g_lock_from_engine || g_lock_from_drag);
+    const bool typing = NativeGLJavaInterfaceStub::active_text_box() != 0;
+    const bool dragging = g_lock_from_drag && !typing;
+    const bool asked = g_lock_from_engine || dragging;
+    if (!asked) g_lock_suppressed = false;
+    set_pointer_locked(asked && !g_lock_suppressed);
 }
 
 // Real evdev scan code -> the character it produces, unshifted and
@@ -1094,9 +1120,12 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // here, where it must be doing so for Sober, and the cause
                 // is something Stud tells the engine about itself rather
                 // than anything on this path.
-                if (bit == kButtonSecondary &&
+                if ((bit & kCameraButtons) != 0 &&
                     stud::jni_bridge::NativeHelperStub::experience_is_loaded()) {
-                    g_lock_from_drag = down;
+                    // From the live button state, not from this one edge:
+                    // releasing the right button while the middle is still
+                    // held is still a drag.
+                    g_lock_from_drag = (g_button_state & kCameraButtons) != 0;
                     apply_pointer_lock();
                 }
                 if (down && before == 0) {
@@ -1236,6 +1265,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 g_meta_state = down ? (g_meta_state | 0x02) : (g_meta_state & ~0x02);
             } else if (ev.code == 29 || ev.code == 97) {  // LEFTCTRL / RIGHTCTRL
                 g_meta_state = down ? (g_meta_state | 0x1000) : (g_meta_state & ~0x1000);
+            }
+            // Escape gives the pointer back, whatever is holding it -- see
+            // g_lock_suppressed. The key still reaches the engine as
+            // normal; this only lets go of the lock alongside it.
+            if (down && !is_repeat && ev.code == 1) {  // KEY_ESC
+                if (g_drag_locked.load()) g_lock_suppressed = true;
+                apply_pointer_lock();
             }
             char typed = 0;
             jint unicode_char = char_for_scan_code(ev.code, shift_down, &typed)
