@@ -144,9 +144,6 @@ END_NATIVE_DESCRIPTOR
 
 
 
-BEGIN_NATIVE_DESCRIPTOR(FmodMediaCodecStub)
-END_NATIVE_DESCRIPTOR
-
 namespace {
 constexpr int kStaticPublicField = FakeJni::JFieldID::PUBLIC | FakeJni::JFieldID::STATIC;
 }  // namespace
@@ -887,6 +884,28 @@ void AppRtcDeviceWrapperStub::wrapStopCommunication() {
     std::printf("stud: audio: engine stopped voice communication\n");
     std::fflush(stdout);
 }
+
+// Every answer is the refusal: no hardware codec, so nothing to describe
+// and nothing to read. FMOD checks init() first and takes its software
+// path when it fails.
+FakeJni::JBoolean FmodMediaCodecStub::init(FakeJni::JLong) { return false; }
+FakeJni::JInt FmodMediaCodecStub::getChannelCount() { return 0; }
+FakeJni::JInt FmodMediaCodecStub::getSampleRate() { return 0; }
+FakeJni::JLong FmodMediaCodecStub::getLength() { return 0; }
+FakeJni::JInt FmodMediaCodecStub::read(std::shared_ptr<FakeJni::JByteArray>, FakeJni::JInt) {
+    return 0;
+}
+void FmodMediaCodecStub::release() {}
+
+BEGIN_NATIVE_DESCRIPTOR(FmodMediaCodecStub)
+{ FakeJni::Constructor<FmodMediaCodecStub>{} },
+{ FakeJni::Function<&FmodMediaCodecStub::init>{}, "init" },
+{ FakeJni::Function<&FmodMediaCodecStub::getChannelCount>{}, "getChannelCount" },
+{ FakeJni::Function<&FmodMediaCodecStub::getSampleRate>{}, "getSampleRate" },
+{ FakeJni::Function<&FmodMediaCodecStub::getLength>{}, "getLength" },
+{ FakeJni::Function<&FmodMediaCodecStub::read>{}, "read" },
+{ FakeJni::Function<&FmodMediaCodecStub::release>{}, "release" },
+END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(AppRtcDeviceWrapperStub)
 { FakeJni::Constructor<AppRtcDeviceWrapperStub>{} },
