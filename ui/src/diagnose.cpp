@@ -8,12 +8,13 @@
 #include <array>
 #include <cstdio>
 #include <fstream>
+#include <initializer_list>
+#include <utility>
 #include <string>
 #include <vector>
 
 #include <dirent.h>
 #include <cstdlib>
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <gnu/libc-version.h>
 #include <linux/input.h>
@@ -189,6 +190,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
         }
         bool first = true;
         for (const auto& gpu : gpus) {
+            if (gpu.device_index == settings.gpu.device_index) continue;  // named above
             std::printf("  %-22s [%u] %s\n", first ? "also present" : "", gpu.device_index,
                         gpu.name.c_str());
             first = false;
@@ -209,73 +211,50 @@ void report_gpus(const stud::config::StudSettings& settings) {
     line("drm nodes", nodes);
 }
 
-// Hardware video decoders, asked of VA-API directly.
+// Which compressed texture formats this GPU can sample, and what that
+// costs when it cannot.
 //
-// libva is dlopen'd rather than linked: a machine without it is a
-// machine with no VA-API, which is a fact worth reporting rather than a
-// reason for Stud not to start. Reported because Stud has no MediaCodec
-// and honestly tells the engine so -- when a video in an experience
-// fails to load, what the GPU can actually decode is the first thing
-// anyone asks.
-void report_decoders() {
-    // libva prints its own driver-probing chatter to stderr, which
-    // lands in the middle of this report. Silenced for the query.
-    ::setenv("LIBVA_MESSAGING_LEVEL", "0", 1);
-    void* va = ::dlopen("libva.so.2", RTLD_LAZY);
-    void* va_drm = ::dlopen("libva-drm.so.2", RTLD_LAZY);
-    if (va == nullptr || va_drm == nullptr) {
-        line("hw decoders", "VA-API not installed");
-        if (va != nullptr) ::dlclose(va);
-        if (va_drm != nullptr) ::dlclose(va_drm);
+// Roblox ships its Android content in ETC2/EAC, which no desktop GPU can
+// sample. Stud decodes those blocks on the CPU (detex) and re-encodes
+// them into a BC format the device does support, so this line explains
+// both a chunk of CPU use and any complaint about texture quality --
+// BC7 keeps normal maps clean where BC1 turns them blocky.
+void report_texture_formats(const stud::config::StudSettings& settings) {
+    const auto support = stud::ui::query_texture_formats(settings.gpu.device_index);
+    if (!support.queried) {
+        line("texture formats", "could not query the selected device");
         return;
     }
-    using GetDisplayDrmFn = void* (*)(int);
-    using InitializeFn = int (*)(void*, int*, int*);
-    using MaxProfilesFn = int (*)(void*);
-    using QueryProfilesFn = int (*)(void*, int*, int*);
-    using ProfileStrFn = const char* (*)(int);
-    using TerminateFn = int (*)(void*);
-    auto get_display = reinterpret_cast<GetDisplayDrmFn>(::dlsym(va_drm, "vaGetDisplayDRM"));
-    auto initialize = reinterpret_cast<InitializeFn>(::dlsym(va, "vaInitialize"));
-    auto max_profiles = reinterpret_cast<MaxProfilesFn>(::dlsym(va, "vaMaxNumProfiles"));
-    auto query_profiles = reinterpret_cast<QueryProfilesFn>(::dlsym(va, "vaQueryConfigProfiles"));
-    auto profile_str = reinterpret_cast<ProfileStrFn>(::dlsym(va, "vaProfileStr"));
-    auto terminate = reinterpret_cast<TerminateFn>(::dlsym(va, "vaTerminate"));
-    if (get_display == nullptr || initialize == nullptr || query_profiles == nullptr) {
-        line("hw decoders", "VA-API present but incomplete");
-        ::dlclose(va);
-        ::dlclose(va_drm);
-        return;
-    }
-
-    std::string reported;
-    for (int index = 128; index < 132 && reported.empty(); ++index) {
-        const std::string node = "/dev/dri/renderD" + std::to_string(index);
-        const int fd = ::open(node.c_str(), O_RDWR | O_CLOEXEC);
-        if (fd < 0) continue;
-        void* display = get_display(fd);
-        int major = 0;
-        int minor = 0;
-        if (display != nullptr && initialize(display, &major, &minor) == 0) {
-            const int capacity = max_profiles != nullptr ? max_profiles(display) : 64;
-            std::vector<int> profiles(static_cast<size_t>(capacity > 0 ? capacity : 64));
-            int count = 0;
-            if (query_profiles(display, profiles.data(), &count) == 0) {
-                for (int i = 0; i < count; ++i) {
-                    const char* name = profile_str != nullptr ? profile_str(profiles[i]) : nullptr;
-                    if (name == nullptr) continue;
-                    if (!reported.empty()) reported += ", ";
-                    reported += name;
-                }
-            }
-            std::printf("  %-22s %s (libva %d.%d)\n", "vaapi", node.c_str(), major, minor);
-            if (terminate != nullptr) terminate(display);
+    const auto join = [](std::initializer_list<std::pair<const char*, bool>> items, bool want) {
+        std::string out;
+        for (const auto& [name, present] : items) {
+            if (present != want) continue;
+            if (!out.empty()) out += " ";
+            out += name;
         }
-        ::close(fd);
+        return out;
+    };
+    const std::initializer_list<std::pair<const char*, bool>> all = {
+        {"ETC2", support.etc2},   {"EAC", support.eac},   {"ASTC", support.astc_ldr},
+        {"PVRTC", support.pvrtc}, {"BC1", support.bc1},   {"BC3", support.bc3},
+        {"BC4/BC5", support.bc4_bc5}, {"BC7", support.bc7}};
+    line("gpu texture formats", join(all, true));
+    line("not supported", join(all, false));
+    // What Stud actually does about it, which is the part worth reading.
+    const bool content_native = support.etc2 && support.eac;
+    if (content_native) {
+        line("texture handling", "the APK's own ETC2/EAC formats upload directly");
+    } else if (support.bc7) {
+        line("texture handling",
+             "ETC2/EAC decoded on the CPU, re-encoded to BC7 (colour) and BC4/BC5");
+    } else if (support.bc1) {
+        line("texture handling",
+             "ETC2/EAC decoded on the CPU, re-encoded to BC1/BC3 -- no BC7 on this device");
+    } else {
+        line("texture handling",
+             "ETC2/EAC decoded on the CPU and stored UNCOMPRESSED -- no BC support, expect "
+             "high texture memory use");
     }
-    line("hw decoders", reported.empty() ? "none reported" : reported);
-    ::dlclose(va);
-    ::dlclose(va_drm);
 }
 
 }  // namespace
@@ -349,7 +328,7 @@ void write_diagnostics() {
 
     std::printf("graphics\n");
     report_gpus(settings);
-    report_decoders();
+    report_texture_formats(settings);
     std::printf("\n");
 
     std::printf("engine\n");
