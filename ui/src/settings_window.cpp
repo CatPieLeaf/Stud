@@ -13,6 +13,7 @@
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSlider>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -74,6 +75,32 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     general->addWidget(serverRegionCheck_);
     smoothZoomCheck_ = new QCheckBox("Smooth zoom", this);
     general->addWidget(smoothZoomCheck_);
+
+    // Frame rate while Stud is in the background.
+    //
+    // Background means both halves of it: hidden (minimised, another
+    // workspace, covered) and merely unfocused. A slider rather than a
+    // checkbox because the useful answer is a number: a few frames a
+    // second keeps the game alive and costs almost nothing, while someone
+    // recording, waiting on a download, or watching it on a second
+    // monitor wants it left alone. One step past the top reads as
+    // Unlimited, so "do not throttle" is a position on the same control
+    // rather than a second one.
+    backgroundFpsLabel_ = new QLabel(this);
+    general->addWidget(backgroundFpsLabel_);
+    backgroundFpsSlider_ = new QSlider(Qt::Horizontal, this);
+    backgroundFpsSlider_->setRange(1, stud::config::kBackgroundFpsUnlimited + 1);
+    backgroundFpsSlider_->setSingleStep(1);
+    backgroundFpsSlider_->setPageStep(10);
+    backgroundFpsSlider_->setToolTip(
+        "Frames per second while Stud is not the window you are using -- minimised,\n"
+        "on another workspace, covered, or simply alt-tabbed away. Rendering a game\n"
+        "at full rate for a window nobody is looking at wastes GPU and CPU.\n"
+        "All the way right is Unlimited.");
+    general->addWidget(backgroundFpsSlider_);
+    connect(backgroundFpsSlider_, &QSlider::valueChanged, this,
+            &SettingsWindow::onBackgroundFpsChanged);
+
     general->addStretch();
 
     // ---- Graphics ------------------------------------------------------
@@ -197,6 +224,8 @@ void SettingsWindow::loadFromDisk() {
     followDpiCheck_->setChecked(settings.follow_dpi);
     followDpiCheck_->setEnabled(settings.hidpi);
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
+    backgroundFpsSlider_->setValue(settings.background_fps);
+    onBackgroundFpsChanged(settings.background_fps);
     mangohudCheck_->setChecked(settings.mangohud);
     closeOnLeaveCheck_->setChecked(settings.close_on_leave);
     trayCheck_->setChecked(settings.system_tray);
@@ -273,6 +302,13 @@ void SettingsWindow::onRenderPathChanged(int index) {
 
 void SettingsWindow::onMangohudToggled(bool checked) { mangohudWanted_ = checked; }
 
+void SettingsWindow::onBackgroundFpsChanged(int value) {
+    backgroundFpsLabel_->setText(
+        value > stud::config::kBackgroundFpsUnlimited
+            ? QStringLiteral("Background frame rate: Unlimited")
+            : QStringLiteral("Background frame rate: %1 FPS").arg(value));
+}
+
 void SettingsWindow::onBrowseApkClicked() {
     // Bundles too: Google Play ships Roblox as a split-APK bundle, so an
     // .apkm (APKMirror) or .apks (SAI) is easier to obtain than a merged
@@ -280,7 +316,8 @@ void SettingsWindow::onBrowseApkClicked() {
     // it was given by content, not extension.
     QString path = QFileDialog::getOpenFileName(
         this, "Select Roblox APK or bundle", QString(),
-        "Roblox APK or bundle (*.apk *.apkm *.apks);;APK files (*.apk);;Split-APK bundles (*.apkm *.apks)");
+        "Roblox APK or bundle (*.apk *.apkm *.apks *.xapk);;APK files (*.apk);;"
+        "Split-APK bundles (*.apkm *.apks *.xapk)");
     if (!path.isEmpty()) {
         apkPathEdit_->setText(path);
     }
@@ -293,6 +330,7 @@ void SettingsWindow::onSaveClicked() {
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
+    settings.background_fps = backgroundFpsSlider_->value();
     settings.mangohud = mangohudCheck_->isChecked();
     settings.close_on_leave = closeOnLeaveCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();

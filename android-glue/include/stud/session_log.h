@@ -2,6 +2,13 @@
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
+// execinfo.h is glibc's. bionic has no backtrace(), and Process B
+// does not use this reporter anyway -- it has trap_recovery, which
+// recovers rather than reports.
+#if defined(__GLIBC__)
+#include <execinfo.h>
+#endif
 #include <unistd.h>
 
 #include <cerrno>
@@ -155,7 +162,20 @@ inline const char*& crash_process_name() {
 // printf. Anything else here would be a second crash inside the handler
 // for the first one -- a mistake this project has already made once, in
 // its own backtrace walker.
-inline void crash_handler(int sig) {
+inline void write_hex(unsigned long long value) {
+    char buf[19] = {'0', 'x'};
+    int at = 2;
+    bool started = false;
+    for (int shift = 60; shift >= 0; shift -= 4) {
+        const int nibble = static_cast<int>((value >> shift) & 0xf);
+        if (nibble == 0 && !started && shift != 0) continue;
+        started = true;
+        buf[at++] = static_cast<char>(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
+    }
+    ::write(STDERR_FILENO, buf, static_cast<size_t>(at));
+}
+
+inline void crash_handler(int sig, siginfo_t* info, void*) {
     const char* name = crash_process_name();
     char digits[3] = {static_cast<char>('0' + (sig / 10) % 10),
                       static_cast<char>('0' + sig % 10), '\n'};
@@ -165,6 +185,34 @@ inline void crash_handler(int sig) {
     ::write(STDERR_FILENO, name, ::strlen(name));
     ::write(STDERR_FILENO, middle, ::strlen(middle));
     ::write(STDERR_FILENO, digits, sizeof(digits));
+
+    // Where, not just that.
+    //
+    // A report that says only "signal 11" costs a round trip to the person
+    // who hit it, and they may not be able to reproduce it on demand. The
+    // faulting address and the stack are what turn a crash log into a
+    // diagnosis, and they are cheap enough to always print.
+    if (info != nullptr) {
+        const char* at = "stud: fault address ";
+        ::write(STDERR_FILENO, at, ::strlen(at));
+        write_hex(reinterpret_cast<unsigned long long>(info->si_addr));
+        ::write(STDERR_FILENO, "\n", 1);
+    }
+
+    // backtrace() can allocate the first time it runs, which is not
+    // allowed here -- install_crash_reporter() calls it once up front so
+    // that by now it cannot. backtrace_symbols_fd writes with write(2)
+    // and allocates nothing, unlike backtrace_symbols.
+#if defined(__GLIBC__)
+    void* frames[32];
+    const int count = ::backtrace(frames, 32);
+    if (count > 0) {
+        const char* header = "stud: backtrace:\n";
+        ::write(STDERR_FILENO, header, ::strlen(header));
+        ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    }
+#endif
+
     // The real disposition, then re-raise, so the exit status and any
     // core dump are exactly what the signal would have produced.
     ::signal(sig, SIG_DFL);
@@ -180,8 +228,20 @@ inline void crash_handler(int sig) {
 // at all and the window simply vanished.
 inline void install_crash_reporter(const char* process_name) {
     detail::crash_process_name() = process_name;
+    // Warm backtrace() up now, while allocating is still allowed: its
+    // first call resolves and may allocate, and doing that inside a
+    // signal handler is how a crash reporter becomes a second crash.
+#if defined(__GLIBC__)
+    void* warmup[4];
+    (void)::backtrace(warmup, 4);
+#endif
+
+    struct sigaction sa {};
+    sa.sa_sigaction = detail::crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    ::sigemptyset(&sa.sa_mask);
     for (int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT}) {
-        ::signal(sig, detail::crash_handler);
+        ::sigaction(sig, &sa, nullptr);
     }
 }
 

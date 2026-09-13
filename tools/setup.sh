@@ -157,6 +157,27 @@ setup_angle() {
         git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git \
             "$DEPOT_TOOLS_DIR"
     fi
+
+    # depot_tools ships its own Python and CIPD packages, and unpacks them
+    # the first time one of its commands runs. DEPOT_TOOLS_UPDATE=0 below
+    # switches that off -- which is what we want for the self-update, and
+    # not what we want for the very first unpack. On a machine where
+    # depot_tools had been used before, this had already happened and the
+    # difference never showed; on a clean checkout it fails outright:
+    #
+    #   python3_bin_reldir.txt not found. need to initialize depot_tools
+    #   by running gclient, update_depot_tools or ensure_bootstrap.
+    #
+    # Caught by a CI run, which is a clean checkout every time.
+    # ensure_bootstrap is depot_tools' own answer, and it is idempotent.
+    if [ ! -f "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt" ]; then
+        say "bootstrapping depot_tools"
+        (cd "$DEPOT_TOOLS_DIR" && ./ensure_bootstrap) ||
+            warn "depot_tools bootstrap reported an error -- continuing, since it may still have done enough"
+        [ -f "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt" ] ||
+            die "depot_tools did not bootstrap; ANGLE cannot be built from source here"
+    fi
+
     export PATH="$DEPOT_TOOLS_DIR:$PATH"
     export DEPOT_TOOLS_UPDATE=0
 

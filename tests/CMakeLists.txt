@@ -20,6 +20,8 @@ add_test(NAME bionic_runtime_sandbox_test COMMAND stud_bionic_runtime_sandbox_te
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/toy_apk.apk
+           ${CMAKE_CURRENT_BINARY_DIR}/toy_bundle.apkm
+           ${CMAKE_CURRENT_BINARY_DIR}/toy_bundle.xapk
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/make_toy_apk.py
             ${CMAKE_CURRENT_BINARY_DIR}/toy_apk.apk
     DEPENDS fixtures/make_toy_apk.py

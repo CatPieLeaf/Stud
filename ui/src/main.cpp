@@ -713,13 +713,25 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // the real render context (real native Vulkan, or GLES) -- matching this
     // project's own "ANGLE for both paths" constraint.
     QStringList render_host_args;
-    render_host_args << "--graphics-mode"
-                     << (settings.graphics_mode == stud::config::GraphicsMode::kVulkan ? "vulkan"
-                                                                                        : "opengl");
+    // STUD_GRAPHICS_MODE overrides the saved choice for one run.
+    //
+    // Which renderer the engine uses changes which half of the render
+    // client is even reachable -- the GL forwarding layer is untouched in
+    // Vulkan mode -- so comparing the two is a routine part of chasing a
+    // rendering bug, and editing Settings between every run is a way to
+    // leave the wrong value saved.
+    {
+        const QString forced = qEnvironmentVariable("STUD_GRAPHICS_MODE");
+        const bool vulkan = forced.isEmpty()
+                                ? settings.graphics_mode == stud::config::GraphicsMode::kVulkan
+                                : forced != QStringLiteral("opengl");
+        render_host_args << "--graphics-mode" << (vulkan ? "vulkan" : "opengl");
+    }
     // Real HiDPI selection. Process C owns the window, so it is the only
     // process that can honour the compositor's scale -- this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
+    render_host_args << "--background-fps" << QString::number(settings.background_fps);
     render_host_args << "--discord-presence" << (settings.discord_rich_presence ? "on" : "off");
     render_host_args << "--discord-join-button" << (settings.discord_join_button ? "on" : "off");
     // Where Roblox's own assets were extracted. Process C draws the text

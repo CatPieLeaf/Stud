@@ -146,6 +146,42 @@ std::string default_assets_cache_dir();
 // whatever the real backing wl_surface's actual size ends up being.
 void set_native_window_size(int32_t width, int32_t height);
 
+// Which display server the one real window is on.
+//
+// Wayland is the primary backend; X11 exists so that a session with no
+// compositor is not simply unusable. Decided once, at startup, from what
+// actually answers -- see display_backend() in native_window.cpp, and
+// STUD_DISPLAY_BACKEND to force one.
+enum class DisplayBackend { Unknown, Wayland, X11 };
+DisplayBackend display_backend();
+
+// The real X display and window, for EGL and Vulkan's WSI on the X11
+// backend -- the exact counterparts of native_window_wl_display() and
+// native_window_wl_surface() below. Null/0 on Wayland, and before the
+// window exists.
+void* native_window_x11_display();
+unsigned long native_window_x11_window();
+
+// The X connection's socket, for the render host's own poll loop.
+// -1 on Wayland.
+int native_window_x11_fd();
+
+// Whether anybody can currently see the window.
+//
+// Visibility, deliberately, not focus: a window on a second monitor
+// while the user types in another one is unfocused and being watched.
+// Wayland answers it with xdg_toplevel's `suspended` state; X11 with
+// map/unmap and VisibilityNotify.
+bool native_window_is_visible();
+
+// Whether the window is the one being used: visible AND focused.
+//
+// This is what the background frame limit is paced against. Both
+// halves matter and they are different questions -- a window can be
+// fully visible on a second monitor while somebody works in another
+// one, which is the ordinary meaning of "in the background".
+bool native_window_is_foreground();
+
 // True once the compositor has sent a real xdg_toplevel.close event
 // (the user clicked the window's own close button/gesture) -- real,
 // user-reported bug fixed: the close listener used to be an empty
@@ -334,6 +370,27 @@ struct HostInputEvent {
         // the delta, not a position. Only ever sent while locked, so it
         // never competes with kPointerMotion.
         kPointerRelative = 7,
+        // Game controllers. They do not come from the compositor at all --
+        // render-host reads them from evdev, since Process B's sandbox has
+        // a synthetic /dev by design -- but they ride the same queue, so
+        // there is one path in and one place that drains it.
+        //
+        // code carries the Android keycode or axis id; `a` the value;
+        // `b` the device id, so several pads stay distinct.
+        kGamepadConnect = 8,     // a = the engine's gamepad type
+        kGamepadDisconnect = 9,
+        kGamepadButton = 10,     // code = Android keycode; a != 0 => pressed
+        // code = Android axis id; x, y, a are the three floats the
+        // engine's own entry point takes -- it is a vector, not a scalar.
+        // A stick sends both components in x and y (vertical negated) on
+        // both of its axis ids; a trigger or hat sends its one value in
+        // `a` with x and y zero. See render-host/src/gamepad.cpp.
+        kGamepadAxis = 11,
+        // What a pad can do, sent just before kGamepadConnect the way a
+        // real device registers it. code = keycode / axis id, a != 0 =>
+        // the pad really has it.
+        kGamepadSupportedKey = 12,
+        kGamepadSupportedAxis = 13,
     };
     uint32_t type = 0;
     uint32_t code = 0;
@@ -362,5 +419,8 @@ size_t native_window_drain_input_events(HostInputEvent* out, size_t max);
 // delay the compositor reports (wl_keyboard.repeat_info). Call from
 // whoever pumps Wayland; does nothing unless a key is actually held.
 void native_window_pump_key_repeat();
+
+// Drains the X server's events on the X11 backend; a no-op on Wayland.
+void native_window_pump_x11();
 
 }  // namespace stud::android_glue

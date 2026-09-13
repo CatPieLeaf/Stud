@@ -34,6 +34,7 @@
 
 #include "stud/render.h"
 #include "stud/audio_output.h"
+#include "stud/gamepad.h"
 #include "stud/render_host_protocol.h"
 #include "stud/discord_rpc.h"
 #include "stud/vulkan_host.h"
@@ -46,6 +47,9 @@
 
 #define VK_NO_PROTOTYPES
 #define VK_USE_PLATFORM_WAYLAND_KHR
+// The X11 window backend needs the Xlib WSI structs; Xlib itself is still
+// only ever reached through android-glue, which dlopens it.
+#define VK_USE_PLATFORM_XLIB_KHR
 #include <vulkan/vulkan.h>
 
 #include <EGL/egl.h>
@@ -78,6 +82,50 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+
+// Guards every read of and dispatch on the Wayland connection --
+// defined further down, next to dispatch_mutex(), where its reasoning
+// lives. Declared here because the roundtrips inside dispatch() need
+// it long before that point in the file.
+std::mutex& wayland_mutex();
+
+// Holds the frame back while Stud is not the window being used.
+//
+// Two cases, and both are ordinary: the window is hidden (minimised, on
+// another workspace, fully covered), or it is visible but somebody is
+// working in another window -- alt-tabbed away. Rendering a game at full
+// rate for either is pure waste, and on a laptop it is the difference
+// between a warm machine and a hot one. The engine has no idea any of
+// that is true, so the frame is paced here instead, in the one place
+// every frame has to pass through.
+//
+// The cost of pacing on focus rather than only on visibility: a window
+// deliberately watched on a second monitor while working in another one
+// is throttled too. That is what the slider is for -- set it high, or
+// past the top for Unlimited, and this does nothing.
+//
+// Sleeping in the present call rather than skipping the frame on purpose:
+// a dropped frame leaves the engine's own pacing and its swapchain
+// bookkeeping to guess what happened, while a late one is something every
+// renderer already copes with. The setting is frames per second; above
+// the top of the slider's range it does nothing at all.
+void throttle_while_hidden() {
+    static const int background_fps = [] {
+        const char* v = std::getenv("STUD_BACKGROUND_FPS");
+        return v != nullptr ? std::atoi(v) : 30;
+    }();
+    if (background_fps > 240 || background_fps < 1) return;
+    if (stud::android_glue::native_window_is_foreground()) return;
+
+    const auto interval = std::chrono::microseconds(1000000 / background_fps);
+    static auto last = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (last.time_since_epoch().count() != 0) {
+        const auto since = now - last;
+        if (since < interval) std::this_thread::sleep_for(interval - since);
+    }
+    last = std::chrono::steady_clock::now();
+}
 
 namespace {
 
@@ -510,9 +558,27 @@ Fn must_resolve(const char* name) {
 }
 
 struct RealWindow {
+    // Wayland: the compositor connection, the EGL window and the surface.
+    // X11: display is null, and the EGL native window is the X window id.
+    // Which one is live is settled once by android-glue's own
+    // display_backend(); nothing here decides it a second time.
     wl_display* display;
     wl_egl_window* egl_window;
     wl_surface* surface;
+    void* x11_display = nullptr;
+    unsigned long x11_window = 0;
+
+    bool on_x11() const { return x11_display != nullptr; }
+    // What EGL is handed: eglGetDisplay takes the X Display on X11 and
+    // the wl_display on Wayland; eglCreateWindowSurface takes the X
+    // window id or the wl_egl_window.
+    void* egl_native_display() const {
+        return on_x11() ? x11_display : static_cast<void*>(display);
+    }
+    EGLNativeWindowType egl_native_window() const {
+        return on_x11() ? static_cast<EGLNativeWindowType>(x11_window)
+                        : reinterpret_cast<EGLNativeWindowType>(egl_window);
+    }
 };
 
 // Real Vulkan loader, for the one narrow interposition this module
@@ -738,7 +804,6 @@ uint32_t gl_pixel_size(GLenum format, GLenum type) {
 }  // namespace
 
 namespace {
-
 uint64_t g_window_surface_handle = kNullHandle;
 bool g_prefer_vulkan = true;
 // Which backend ANGLE should translate GLES to. Empty means ANGLE's own
@@ -1132,7 +1197,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 }
             }
             if (d == EGL_NO_DISPLAY) {
-                d = fns.eglGetDisplay_(reinterpret_cast<EGLNativeDisplayType>(window.display));
+                d = fns.eglGetDisplay_(
+                    reinterpret_cast<EGLNativeDisplayType>(window.egl_native_display()));
             }
             return d == EGL_NO_DISPLAY ? kNullHandle : store(g_displays, d);
         }
@@ -1200,10 +1266,13 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // processed) is a real, plausible reason eglCreateWindowSurface
             // -> vkCreateWaylandSurfaceKHR could fail where the standalone
             // tool doesn't. Cheap, safe to always do regardless of outcome.
-            wl_display_roundtrip(window.display);
+            {
+                std::lock_guard<std::mutex> wl_lock(wayland_mutex());
+                wl_display_roundtrip(window.display);
+            }
             EGLSurface s = fns.eglCreateWindowSurface_(
                 g_displays.at(a[0]), g_configs.at(a[1]),
-                reinterpret_cast<EGLNativeWindowType>(window.egl_window), nullptr);
+                window.egl_native_window(), nullptr);
             if (s == EGL_NO_SURFACE) {
                 std::fprintf(stderr,
                               "stud-render-host: DIAG eglCreateWindowSurface failed dpy=%p "
@@ -1264,6 +1333,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return ok == EGL_TRUE;
         }
         case CallId::EglSwapBuffers: {
+            // Same gate as the Vulkan present path: the OpenGL render path
+            // has to honour the background frame limit too.
+            throttle_while_hidden();
             // Real frame-rate measurement, env-gated (STUD_FPS=1, or
             // STUD_FPS=<seconds> for a different window). Counts swaps and
             // reports once per window -- per-swap tracing
@@ -1390,7 +1462,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     std::fflush(stdout);
                 }
             }
-            wl_display_roundtrip(window.display);
+            {
+                std::lock_guard<std::mutex> wl_lock(wayland_mutex());
+                wl_display_roundtrip(window.display);
+            }
             if (time_swap) {
                 static auto last_frame = std::chrono::steady_clock::now();
                 auto now = std::chrono::steady_clock::now();
@@ -1891,6 +1966,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::VkAcquireNextImageKHR:
             return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
         case CallId::VkQueuePresentKHR:
+            throttle_while_hidden();
             return stud::render_host::vk_queue_present(a[0], in);
         case CallId::VkGetQueryPoolResults:
             return stud::render_host::vk_get_query_pool_results(
@@ -2434,6 +2510,50 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             out.resize(capacity * sizeof(HostInputEvent));
             size_t n = stud::android_glue::native_window_drain_input_events(
                 reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+
+            // Controllers are read here rather than by android-glue: they
+            // come from evdev, not from the compositor, and Process B's
+            // sandbox has a synthetic /dev by design. They ride the same
+            // queue so there is one path in and one drain.
+            if (n < capacity) {
+                static std::vector<stud::render_host::gamepad::Event> pad_events;
+                pad_events.clear();
+                stud::render_host::gamepad::poll(pad_events);
+                auto* slots = reinterpret_cast<HostInputEvent*>(out.data());
+                for (const auto& pad : pad_events) {
+                    if (n >= capacity) break;  // the rest arrive next poll
+                    HostInputEvent& slot = slots[n++];
+                    slot = HostInputEvent{};
+                    switch (pad.type) {
+                        case stud::render_host::gamepad::Event::kConnect:
+                            slot.type = HostInputEvent::kGamepadConnect;
+                            break;
+                        case stud::render_host::gamepad::Event::kDisconnect:
+                            slot.type = HostInputEvent::kGamepadDisconnect;
+                            break;
+                        case stud::render_host::gamepad::Event::kButton:
+                            slot.type = HostInputEvent::kGamepadButton;
+                            break;
+                        case stud::render_host::gamepad::Event::kSupportedKey:
+                            slot.type = HostInputEvent::kGamepadSupportedKey;
+                            break;
+                        case stud::render_host::gamepad::Event::kSupportedAxis:
+                            slot.type = HostInputEvent::kGamepadSupportedAxis;
+                            break;
+                        default:
+                            slot.type = HostInputEvent::kGamepadAxis;
+                            break;
+                    }
+                    slot.code = static_cast<uint32_t>(pad.code);
+                    // An axis is a vector: all three floats travel. Every
+                    // other kind uses the first one only.
+                    slot.x = pad.v0;
+                    slot.y = pad.v1;
+                    slot.a = pad.type == stud::render_host::gamepad::Event::kAxis ? pad.v2
+                                                                                  : pad.v0;
+                    slot.b = static_cast<float>(pad.device_id);
+                }
+            }
             out.resize(n * sizeof(HostInputEvent));
             *out_len = static_cast<uint32_t>(out.size());
             return n;
@@ -2724,6 +2844,41 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
 
         case CallId::VkCreateWaylandSurfaceForAndroidSurface: {
             if (g_real_vk_get_instance_proc_addr == nullptr) return kNullHandle;
+            // X11 answers the same request with an Xlib surface.
+            //
+            // The call id still says Wayland because it is the engine's
+            // vkCreateAndroidSurfaceKHR being redirected, and which WSI
+            // sits underneath is this process's business alone. Handing a
+            // Wayland surface to a driver on an X11 session is not a
+            // graceful failure either: live-caught as a SIGSEGV inside
+            // the NVIDIA driver at wl_proxy_create_wrapper, reached from
+            // vkGetPhysicalDeviceSurfaceSupportKHR.
+            if (window.on_x11()) {
+                auto create_xlib = reinterpret_cast<PFN_vkCreateXlibSurfaceKHR>(
+                    g_real_vk_get_instance_proc_addr(reinterpret_cast<VkInstance>(a[0]),
+                                                       "vkCreateXlibSurfaceKHR"));
+                if (create_xlib == nullptr) {
+                    std::fprintf(stderr,
+                                  "stud-render-host: the Vulkan driver has no "
+                                  "vkCreateXlibSurfaceKHR -- use the OpenGL render path on X11\n");
+                    std::fflush(stderr);
+                    return kNullHandle;
+                }
+                VkXlibSurfaceCreateInfoKHR xinfo{};
+                xinfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+                xinfo.dpy = static_cast<Display*>(window.x11_display);
+                xinfo.window = static_cast<::Window>(window.x11_window);
+                VkSurfaceKHR xsurface = VK_NULL_HANDLE;
+                VkResult xr = create_xlib(reinterpret_cast<VkInstance>(a[0]), &xinfo, nullptr,
+                                           &xsurface);
+                if (xr != VK_SUCCESS) {
+                    std::fprintf(stderr, "stud-render-host: vkCreateXlibSurfaceKHR -> %d\n",
+                                  static_cast<int>(xr));
+                    std::fflush(stderr);
+                    return kNullHandle;
+                }
+                return reinterpret_cast<uint64_t>(xsurface);
+            }
             auto create_wayland = reinterpret_cast<PFN_vkCreateWaylandSurfaceKHR>(
                 g_real_vk_get_instance_proc_addr(reinterpret_cast<VkInstance>(a[0]),
                                                    "vkCreateWaylandSurfaceKHR"));
@@ -2790,6 +2945,35 @@ std::mutex& dispatch_mutex() {
     return m;
 }
 
+// Everything that reads or dispatches the Wayland connection takes this.
+//
+// Three different threads touch that one connection: the accept loop, the
+// primary client's own loop, and every secondary-connection thread right
+// after it presents -- and, inside dispatch(), the roundtrips around
+// eglCreateWindowSurface and eglSwapBuffers. Only the last of those is
+// serialised by dispatch_mutex, so the pumps were free to run against a
+// roundtrip, and against each other.
+//
+// libwayland is thread-safe only per queue and only when one thread at a
+// time is inside the prepare_read/read_events dance. Two threads
+// dispatching the same default queue can hand the same event to two
+// listeners, and android-glue's listeners keep ordinary non-atomic state
+// (the window size, the key-repeat timer, the resize bookkeeping). The
+// reported symptom was a SIGSEGV in stud-render-host three seconds into a
+// launch on a machine whose compositor resized the window at startup --
+// the one configuration that puts compositor events and presents in the
+// same instant.
+//
+// Lock order is dispatch_mutex -> wayland_mutex, and nothing ever takes
+// them the other way round, so the pair cannot deadlock. Nothing here
+// blocks indefinitely either: the pump only reads when poll() has already
+// said the fd is readable, and a roundtrip waits on a reply the
+// compositor owes it.
+std::mutex& wayland_mutex() {
+    static std::mutex m;
+    return m;
+}
+
 // Multi-thread-safe, never-blocking Wayland pump.
 //
 // wl_display_dispatch() blocks until it can dispatch at least one event.
@@ -2833,7 +3017,28 @@ void sync_vk_window_size() {
     std::fflush(stdout);
 }
 
+void pump_wayland(wl_display* display, bool fd_readable);
+
+// Drains whichever display server is in use.
+//
+// The Wayland path is unchanged and still does the prepare_read/
+// read_events dance under wayland_mutex. X11 has no such queue
+// discipline to get wrong -- Xlib is drained from one place here -- but
+// it takes the same lock, because the lock is what keeps two threads out
+// of the display connection at once and that is just as true of Xlib.
+void pump_display(const RealWindow& window, bool fd_readable) {
+    if (window.on_x11()) {
+        std::lock_guard<std::mutex> lock(wayland_mutex());
+        sync_vk_window_size();
+        stud::android_glue::native_window_pump_x11();
+        stud::android_glue::native_window_pump_key_repeat();
+        return;
+    }
+    pump_wayland(window.display, fd_readable);
+}
+
 void pump_wayland(wl_display* display, bool fd_readable) {
+    std::lock_guard<std::mutex> lock(wayland_mutex());
     sync_vk_window_size();
     // Held keys repeat from here: the compositor sends only a press and a
     // release, so the events in between are the client's to make.
@@ -2929,7 +3134,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         // does everything on one thread, presented 300 frames correctly
         // on the same GPU and window -- that is what narrowed it here.
         if (hdr.call_id == CallId::VkQueuePresentKHR) {
-            pump_wayland(real_window.display, true);
+            pump_display(real_window, true);
         }
         if ((hdr.flags & Header::kNoReply) != 0) continue;
         ResponseHeader resp{result, out_len};
@@ -3023,6 +3228,13 @@ int main(int argc, char** argv) {
     // Real Stud-level graphics-mode selection, from Process A's Settings
     // (never an FFlag -- see the call site in ui/src/main.cpp).
     for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string_view(argv[i]) == "--background-fps" && i + 1 < argc) {
+            // Settings' own slider. STUD_BACKGROUND_FPS still wins, since
+            // that is what a measurement run sets.
+            if (std::getenv("STUD_BACKGROUND_FPS") == nullptr) {
+                ::setenv("STUD_BACKGROUND_FPS", argv[i + 1], 0);
+            }
+        }
         if (std::string_view(argv[i]) == "--graphics-mode") {
             g_prefer_vulkan = std::string_view(argv[i + 1]) != "opengl";
         } else if (std::string_view(argv[i]) == "--assets-dir") {
@@ -3156,15 +3368,38 @@ int main(int argc, char** argv) {
     // and a null Surface never populates that cache -- so calling it from
     // a query the engine repeats spawned over a hundred real windows.
     g_real_window = window;
+
+    // Controllers, if any are plugged in and readable.
+    stud::render_host::gamepad::init();
     stud::render_host::vk_set_window_size(
         static_cast<uint32_t>(ANativeWindow_getWidth(window)),
         static_cast<uint32_t>(ANativeWindow_getHeight(window)));
 
-    wl_display* display = stud::android_glue::native_window_wl_display(window);
-    wl_surface* surface = stud::android_glue::native_window_wl_surface(window);
-    if (display == nullptr || surface == nullptr) {
-        std::fprintf(stderr, "stud-render-host: no real Wayland compositor reachable\n");
-        return 1;
+    const bool on_x11 =
+        stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11;
+    wl_display* display = nullptr;
+    wl_surface* surface = nullptr;
+    void* x11_display = nullptr;
+    unsigned long x11_window = 0;
+    if (on_x11) {
+        x11_display = stud::android_glue::native_window_x11_display();
+        x11_window = stud::android_glue::native_window_x11_window();
+        if (x11_display == nullptr || x11_window == 0) {
+            std::fprintf(stderr, "stud-render-host: the X11 backend has no window\n");
+            return 1;
+        }
+        stud::render_host::vk_set_on_x11(true);
+        std::printf("stud-render-host: display backend: X11\n");
+        std::fflush(stdout);
+    } else {
+        display = stud::android_glue::native_window_wl_display(window);
+        surface = stud::android_glue::native_window_wl_surface(window);
+        if (display == nullptr || surface == nullptr) {
+            std::fprintf(stderr,
+                         "stud-render-host: no display server reachable -- neither a Wayland "
+                         "compositor nor an X server answered\n");
+            return 1;
+        }
     }
     // The window-size unification (confirmed good): render-host, Process B's
     // lifecycle surface and DisplayMetrics all take their size from
@@ -3177,13 +3412,19 @@ int main(int argc, char** argv) {
     // left that null forever. The compositor's resize requests arrived and
     // were silently dropped -- the frame grew while the buffer stayed at its
     // original size, showing the desktop through the rest of the window.
-    wl_egl_window* egl_window =
-        stud::android_glue::native_window_get_or_create_egl_window(window, win_w, win_h);
-    if (egl_window == nullptr) {
-        std::fprintf(stderr, "stud-render-host: wl_egl_window_create failed\n");
-        return 1;
+    // X11 has no wl_egl_window: EGL takes the X window id directly, so
+    // there is nothing to create and nothing to resize behind the
+    // server's back.
+    wl_egl_window* egl_window = nullptr;
+    if (!on_x11) {
+        egl_window =
+            stud::android_glue::native_window_get_or_create_egl_window(window, win_w, win_h);
+        if (egl_window == nullptr) {
+            std::fprintf(stderr, "stud-render-host: wl_egl_window_create failed\n");
+            return 1;
+        }
     }
-    RealWindow real_window{display, egl_window, surface};
+    RealWindow real_window{display, egl_window, surface, x11_display, x11_window};
 
     RealFns fns{};
 #define RESOLVE(name) fns.name##_ = must_resolve<PFN_##name>(#name)
@@ -3276,7 +3517,11 @@ int main(int argc, char** argv) {
     // be closed at all): checked every tick, both here and in the inner
     // per-connection loop, so a click closes the window promptly
     // whether or not a client happens to be connected.
-    int wl_fd = wl_display_get_fd(real_window.display);
+    // The display server's own socket, whichever it is: poll()ing it is
+    // what lets the loop sleep instead of spinning, and it is the same
+    // idea either way.
+    int wl_fd = real_window.on_x11() ? stud::android_glue::native_window_x11_fd()
+                                      : wl_display_get_fd(real_window.display);
     for (;;) {
         if (stud::android_glue::window_close_requested()) {
             std::printf("stud-render-host: window close requested, shutting down\n");
@@ -3298,7 +3543,7 @@ int main(int argc, char** argv) {
         // Never wl_display_dispatch() here -- see pump_wayland's own
         // comment: it can park this loop forever once ANGLE reads the
         // same queue from a render thread.
-        pump_wayland(real_window.display, (pfds[1].revents & POLLIN) != 0);
+        pump_display(real_window, (pfds[1].revents & POLLIN) != 0);
         if (!(pfds[0].revents & POLLIN)) continue;
         int conn_fd = ::accept(listen_fd, nullptr, nullptr);
         if (conn_fd < 0) { std::perror("stud-render-host: accept"); continue; }
@@ -3343,7 +3588,7 @@ int main(int argc, char** argv) {
                     return n > 0 ? n : 50;
                 }();
                 ::poll(cpfds, 2, conn_poll_ms);
-                pump_wayland(real_window.display, (cpfds[1].revents & POLLIN) != 0);
+                pump_display(real_window, (cpfds[1].revents & POLLIN) != 0);
                 if (!(cpfds[0].revents & POLLIN)) continue;
             }
             Header hdr{};

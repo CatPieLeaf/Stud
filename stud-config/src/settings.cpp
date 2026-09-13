@@ -92,6 +92,19 @@ StudSettings load_settings(const std::string& path) {
         }
         result.smooth_zoom = doc.at("smoothZoom").get<bool>();
     }
+    if (doc.contains("backgroundFps")) {
+        if (!doc.at("backgroundFps").is_number_integer()) {
+            throw SettingsError("stud: config '" + path +
+                                "' has a non-integer \"backgroundFps\"");
+        }
+        // Clamped rather than rejected: a hand-edited file is allowed to
+        // be out of range, and the honest reading of 5000 is "unlimited"
+        // rather than an error that stops Stud starting.
+        const int value = doc.at("backgroundFps").get<int>();
+        result.background_fps = value < 1 ? 1 : (value > kBackgroundFpsUnlimited + 1
+                                                     ? kBackgroundFpsUnlimited + 1
+                                                     : value);
+    }
     if (doc.contains("mangohud")) {
         if (!doc.at("mangohud").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"mangohud\"");
@@ -185,6 +198,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     // to be hand-editable, and "1.25" is what a person means.
     doc.erase("renderScale");
     doc["smoothZoom"] = settings.smooth_zoom;
+    doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
     doc["discordRichPresence"] = settings.discord_rich_presence;
     doc["discordJoinButton"] = settings.discord_join_button;

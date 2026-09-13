@@ -74,6 +74,21 @@ using ReturnPressedFn = void (*)(JNIEnv*, jclass, jlong);
 // discarded. Takes no TextBox handle -- the engine applies it to whatever it
 // currently considers focused.
 using SyncTextFn = void (*)(JNIEnv*, jclass, jstring, jint);
+
+// Game controllers. Signatures read off the real exported symbols; the
+// engine takes Android's own keycodes and axis ids, which is exactly what
+// render-host already produces from evdev.
+using GamepadConnectFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*type*/);
+using GamepadDisconnectFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/);
+using GamepadButtonFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*keyCode*/,
+                                  jint /*action*/);
+using GamepadAxisFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*axis*/, jfloat,
+                                jfloat, jfloat);
+using GamepadSupportedKeyFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*keyCode*/,
+                                        jboolean /*supported*/, jint /*type*/);
+using GamepadSupportedMotionFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*axis*/,
+                                           jint /*direction*/, jboolean /*supported*/,
+                                           jint /*type*/);
 // NativeGLInterface.updateKeyboardSize(boolean visible, int x, int y, int w, int h)
 // and nativeGetTextBoxInfo(): the rest of the handshake a real device performs
 // when its IME actually opens over the GL view. Under test because
@@ -104,6 +119,12 @@ struct InputFns {
     UpdateKeyboardSizeFn update_keyboard_size = nullptr;
     GetTextBoxInfoFn get_text_box_info = nullptr;
     IsMouseLockedFn is_mouse_locked = nullptr;
+    GamepadConnectFn gamepad_connect = nullptr;
+    GamepadDisconnectFn gamepad_disconnect = nullptr;
+    GamepadButtonFn gamepad_button = nullptr;
+    GamepadAxisFn gamepad_axis = nullptr;
+    GamepadSupportedKeyFn gamepad_supported_key = nullptr;
+    GamepadSupportedMotionFn gamepad_supported_motion = nullptr;
 };
 
 // Mouse look. Roblox's own camera puts the mouse into
@@ -1531,6 +1552,113 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     std::fflush(stdout);
                 }
             }
+            // Explicit, and load-bearing: this case used to fall through
+            // to `default: return`, which was harmless only while nothing
+            // sat between the two. The gamepad cases below now do, and
+            // without this every pointer enter and leave was handled as a
+            // controller being plugged in.
+            return;
+        }
+        // Game controllers.
+        //
+        // render-host has already done the hard part: these arrive as
+        // Android keycodes and axis ids, so there is no mapping left to
+        // get wrong here. `b` carries the device id, which the engine
+        // uses to keep several pads apart.
+        case Ev::kGamepadConnect: {
+            if (fns.gamepad_connect == nullptr) return;
+            const jint device_id = static_cast<jint>(ev.b);
+            const jint type = static_cast<jint>(ev.a);
+            call_trapping_abort(fns.gamepad_connect, jni_env, nullptr, device_id, type);
+            std::printf("stud: gamepad %d connected to the engine (type %d)\n",
+                        static_cast<int>(device_id), static_cast<int>(type));
+            std::fflush(stdout);
+            return;
+        }
+        // What the pad can do, announced BEFORE it is said to have
+        // arrived -- the real app does the same (`E(deviceId, type)` runs
+        // immediately before the connect call). A pad that reports no
+        // keys is a pad with no bindings, which looks exactly like a
+        // controller that does nothing.
+        //
+        // These arrive before the connect event, so they carry the
+        // gamepad type themselves rather than waiting for it.
+        case Ev::kGamepadSupportedKey: {
+            if (fns.gamepad_supported_key == nullptr) return;
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d supports key %u = %d\n", static_cast<int>(ev.b),
+                            ev.code, ev.a != 0.0f ? 1 : 0);
+            }
+            call_trapping_abort(fns.gamepad_supported_key, jni_env, nullptr,
+                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
+                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
+                                static_cast<jint>(ev.y));
+            return;
+        }
+        case Ev::kGamepadSupportedAxis: {
+            if (fns.gamepad_supported_motion == nullptr) return;
+            const jint device_id = static_cast<jint>(ev.b);
+            const jint axis = static_cast<jint>(ev.code);
+            const jboolean present =
+                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE);
+            const jint type = static_cast<jint>(ev.y);
+            // Direction -1 for every axis, and additionally +1 for the
+            // two hat axes -- exactly what the real caller registers
+            // (jadx, `kl/e.java`'s own `E()`), not both directions for
+            // everything.
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d supports axis %d = %d\n", static_cast<int>(device_id),
+                            static_cast<int>(axis), present != 0 ? 1 : 0);
+            }
+            call_trapping_abort(fns.gamepad_supported_motion, jni_env, nullptr, device_id, axis,
+                                -1, present, type);
+            if (axis == 15 || axis == 16) {
+                call_trapping_abort(fns.gamepad_supported_motion, jni_env, nullptr, device_id,
+                                    axis, 1, present, type);
+            }
+            return;
+        }
+        case Ev::kGamepadDisconnect: {
+            if (fns.gamepad_disconnect == nullptr) return;
+            call_trapping_abort(fns.gamepad_disconnect, jni_env, nullptr,
+                                static_cast<jint>(ev.b));
+            return;
+        }
+        case Ev::kGamepadButton: {
+            if (fns.gamepad_button == nullptr) return;
+            // 1 is pressed, 0 is released -- NOT Android's ACTION_DOWN/UP
+            // constants, which are the other way round. The real caller
+            // converts explicitly (jadx, the app's own key listener:
+            // `i11 = keyEvent.getAction() == 0 ? 1 : 0`), so sending the
+            // raw action inverts every edge: a press arrives as a release
+            // and the release that follows arrives as a press, leaving the
+            // button latched down forever. Live symptom: one tap and the
+            // character jumps continuously.
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d key %u %s\n", static_cast<int>(ev.b), ev.code,
+                            ev.a != 0.0f ? "down" : "up");
+                std::fflush(stdout);
+            }
+            call_trapping_abort(fns.gamepad_button, jni_env, nullptr,
+                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
+                                ev.a != 0.0f ? 1 : 0);
+            return;
+        }
+        case Ev::kGamepadAxis: {
+            if (fns.gamepad_axis == nullptr) return;
+            // The entry point takes a VECTOR, not a scalar: render-host
+            // has already built the exact triple the real caller sends
+            // (a stick's two components on both of its axis ids, a
+            // trigger or hat value in the third float).
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d axis %u = (%.3f, %.3f, %.3f)\n",
+                            static_cast<int>(ev.b), ev.code, ev.x, ev.y, ev.a);
+                std::fflush(stdout);
+            }
+            call_trapping_abort(fns.gamepad_axis, jni_env, nullptr,
+                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
+                                ev.x, ev.y, ev.a);
+            return;
         }
         default:
             return;
@@ -1571,6 +1699,18 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_nativeGetTextBoxInfo"));
     fns.is_mouse_locked = reinterpret_cast<IsMouseLockedFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeGetMainWindowIsMouseLockedCenter"));
+    fns.gamepad_connect = reinterpret_cast<GamepadConnectFn>(lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadConnectEventWithGamepadType"));
+    fns.gamepad_disconnect = reinterpret_cast<GamepadDisconnectFn>(lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadDisconnectEvent"));
+    fns.gamepad_button = reinterpret_cast<GamepadButtonFn>(lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadButtonEvent"));
+    fns.gamepad_axis = reinterpret_cast<GamepadAxisFn>(lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadAxisEvent"));
+    fns.gamepad_supported_key = reinterpret_cast<GamepadSupportedKeyFn>(lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedKeyWithGamepadType"));
+    fns.gamepad_supported_motion = reinterpret_cast<GamepadSupportedMotionFn>(lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedMotionWithGamepadType"));
     g_jvm = &jvm;
     g_agdk.activity = std::move(activity);
     g_agdk.handle = static_cast<jlong>(activity_handle);
@@ -1623,18 +1763,19 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 // reaching this process -- silent afterwards.
                 // Temporary, low-rate diagnostic: which real event types
                 // actually reach the engine, once per second at most.
-                static unsigned counts[8] = {};
+                static unsigned counts[14] = {};
                 static auto last_report = std::chrono::steady_clock::now();
                 for (size_t i = 0; i < count; ++i) {
-                    if (batch[i].type < 8) ++counts[batch[i].type];
+                    if (batch[i].type < 14) ++counts[batch[i].type];
                 }
                 static const bool input_trace = std::getenv("STUD_INPUT_TRACE") != nullptr;
                 auto now = std::chrono::steady_clock::now();
                 if (input_trace && now - last_report > std::chrono::seconds(2)) {
                     last_report = now;
                     std::printf("stud: input bridge: motion=%u button=%u axis=%u key=%u "
-                                "last=(%.1f,%.1f)\n",
-                                counts[1], counts[2], counts[3], counts[4], batch[0].x, batch[0].y);
+                                "pad(connect=%u button=%u axis=%u) last=(%.1f,%.1f)\n",
+                                counts[1], counts[2], counts[3], counts[4], counts[8],
+                                counts[10], counts[11], batch[0].x, batch[0].y);
                     std::fflush(stdout);
                 }
                 FakeJni::LocalFrame frame(jvm);

@@ -1,4 +1,6 @@
 #include "stud/android_glue.h"
+
+#include "x11_backend.h"
 #include "stud/ndk_types.h"
 
 #include <wayland-client.h>
@@ -866,7 +868,17 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
             wl_output_add_listener(state->output, &kOutputListener, state);
         }
     } else if (std::string_view(interface) == xdg_wm_base_interface.name) {
-        uint32_t bind_version = version < 1 ? version : 1;
+        // Up to version 6, for xdg_toplevel's `suspended` state.
+        //
+        // That state is the compositor saying this surface's content is
+        // not visible to anyone -- minimised, on another workspace, or
+        // fully covered -- and it is the only honest answer to "is
+        // anybody looking at this", which is what the background frame
+        // limit needs. Bound at 1 before, so the state was never sent.
+        // The two events versions 4 and 5 add (configure_bounds,
+        // wm_capabilities) are handled below; a listener with null
+        // members would crash the moment a compositor sent one.
+        uint32_t bind_version = version < 6 ? version : 6;
         state->wm_base = static_cast<xdg_wm_base*>(
             wl_registry_bind(registry, name, &xdg_wm_base_interface, bind_version));
         xdg_wm_base_add_listener(state->wm_base, &kWmBaseListener, state);
@@ -930,6 +942,57 @@ const wl_registry_listener kRegistryListener = {
 // reachable (e.g. a headless test/CI environment) -- logs once and
 // leaves display/compositor/wm_base null; callers (ANativeWindow_
 // fromSurface below) check for null rather than assuming success.
+// Which display server Stud is actually running on.
+//
+// Decided once, by what the session offers rather than by what the user
+// asked for: a Wayland compositor if one answers, otherwise an X server.
+// Wayland stays the preferred backend -- everything in this file, and
+// every measurement behind it, was built against it -- and X11 is what
+// keeps Stud usable on a session that has no compositor at all.
+//
+// STUD_DISPLAY_BACKEND=x11|wayland forces one, which is how the X11 path
+// gets tested on a Wayland machine (XWayland answers DISPLAY there).
+stud::android_glue::DisplayBackend& backend_storage() {
+    using stud::android_glue::DisplayBackend;
+    static DisplayBackend backend = DisplayBackend::Unknown;
+    return backend;
+}
+
+void ensure_wayland_connection();
+
+stud::android_glue::DisplayBackend display_backend_impl() {
+    using stud::android_glue::DisplayBackend;
+    DisplayBackend& backend = backend_storage();
+    if (backend != DisplayBackend::Unknown) return backend;
+
+    const char* forced = std::getenv("STUD_DISPLAY_BACKEND");
+    if (forced != nullptr && std::string_view(forced) == "x11") {
+        backend = stud::android_glue::x11::available() ? DisplayBackend::X11 : DisplayBackend::Wayland;
+        if (backend != DisplayBackend::X11) {
+            std::fprintf(stderr,
+                         "stud: android-glue: STUD_DISPLAY_BACKEND=x11 but no X server answered "
+                         "-- falling back to Wayland\n");
+        }
+        return backend;
+    }
+    if (forced != nullptr && std::string_view(forced) == "wayland") {
+        backend = DisplayBackend::Wayland;
+        return backend;
+    }
+
+    ensure_wayland_connection();
+    if (wayland_state().display != nullptr) {
+        backend = DisplayBackend::Wayland;
+    } else if (stud::android_glue::x11::available()) {
+        std::printf("stud: android-glue: no Wayland compositor -- using X11\n");
+        std::fflush(stdout);
+        backend = DisplayBackend::X11;
+    } else {
+        backend = DisplayBackend::Wayland;  // nothing reachable; report as before
+    }
+    return backend;
+}
+
 void ensure_wayland_connection() {
     auto& state = wayland_state();
     if (state.attempted) {
@@ -1141,7 +1204,48 @@ const wp_fractional_scale_v1_listener kFractionalScaleListener = {
     .preferred_scale = fractional_scale_preferred,
 };
 
-void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t height, wl_array*) {
+// Whether anybody can currently see the window.
+//
+// Wayland answers this directly and Stud does not have to guess: the
+// compositor lists `suspended` among the toplevel's states when the
+// surface's content is not visible. Deliberately NOT focus: a window on a
+// second monitor while you type in another one is unfocused and being
+// watched, and throttling that would be worse than the waste it saves.
+std::atomic<bool> g_window_visible{true};
+
+// Whether this window is the one being used.
+//
+// `activated` is the compositor's own answer to "is this the focused
+// window", sent in the same states array as `suspended`. Both matter and
+// they are not the same question: a window can be fully visible on a
+// second monitor while somebody types in another one (activated false,
+// suspended false), and that is the case the background frame limit is
+// really for -- alt-tabbing away.
+std::atomic<bool> g_window_activated{true};
+
+void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t height,
+                             wl_array* states) {
+    if (states != nullptr) {
+        bool suspended = false;
+        bool activated = false;
+        const auto* first = static_cast<const uint32_t*>(states->data);
+        const size_t count = states->size / sizeof(uint32_t);
+        for (size_t i = 0; i < count; ++i) {
+            if (first[i] == XDG_TOPLEVEL_STATE_SUSPENDED) suspended = true;
+            if (first[i] == XDG_TOPLEVEL_STATE_ACTIVATED) activated = true;
+        }
+        const bool visible = !suspended;
+        if (visible != g_window_visible.exchange(visible)) {
+            std::printf("stud: android-glue: window %s\n",
+                         visible ? "visible again" : "no longer visible (suspended)");
+            std::fflush(stdout);
+        }
+        if (activated != g_window_activated.exchange(activated)) {
+            std::printf("stud: android-glue: window %s\n",
+                         activated ? "focused" : "in the background");
+            std::fflush(stdout);
+        }
+    }
     if (width <= 0 || height <= 0) {
         return;
     }
@@ -1150,12 +1254,19 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
     window->logical_height.store(height);
     apply_window_geometry(window, "resized");
 }
+
+// Versions 4 and 5 of xdg_toplevel send these; nothing here acts on them,
+// but the listener must carry them or libwayland calls through a null.
+void xdg_toplevel_configure_bounds(void*, xdg_toplevel*, int32_t, int32_t) {}
+void xdg_toplevel_wm_capabilities(void*, xdg_toplevel*, wl_array*) {}
 std::atomic<bool> g_window_close_requested{false};
 void xdg_toplevel_close(void*, xdg_toplevel*) { g_window_close_requested.store(true); }
 
 const xdg_toplevel_listener kToplevelListener = {
     .configure = xdg_toplevel_configure,
     .close = xdg_toplevel_close,
+    .configure_bounds = xdg_toplevel_configure_bounds,
+    .wm_capabilities = xdg_toplevel_wm_capabilities,
 };
 }  // namespace
 
@@ -1214,8 +1325,6 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
         created_null_surface_window = true;
     }
 
-    ensure_wayland_connection();
-
     // Hard cap, by construction rather than by correct logic.
     //
     // Stud maps exactly one real window. Every mechanism that is supposed
@@ -1245,6 +1354,31 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     ++windows_created;
 
     auto* window = new ANativeWindow();
+
+    // X11 takes the whole of the rest of this function: it has no
+    // compositor, no xdg_surface roles and no fractional-scale protocol,
+    // so none of the Wayland setup below applies to it. The window it
+    // maps is reported through the same ANativeWindow the engine already
+    // holds, and through native_window_x11_display()/_window() for EGL.
+    if (stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11) {
+        const int32_t w = g_default_logical_width.load();
+        const int32_t h = g_default_logical_height.load();
+        if (!stud::android_glue::x11::create_window(w, h)) {
+            delete window;
+            return nullptr;
+        }
+        window->logical_width.store(w);
+        window->logical_height.store(h);
+        g_window_width.store(w);
+        g_window_height.store(h);
+        if (surface != nullptr) {
+            window->surface_key = surface;
+            window_cache()[surface] = window;
+        }
+        return window;
+    }
+
+    ensure_wayland_connection();
     auto& state = wayland_state();
     if (state.compositor != nullptr) {
         window->surface = wl_compositor_create_surface(state.compositor);
@@ -1335,6 +1469,31 @@ void ANativeWindow_release(ANativeWindow* window) {
 }  // extern "C"
 
 namespace stud::android_glue {
+
+DisplayBackend display_backend() { return display_backend_impl(); }
+
+void* native_window_x11_display() {
+    return display_backend() == DisplayBackend::X11 ? x11::display() : nullptr;
+}
+
+unsigned long native_window_x11_window() {
+    return display_backend() == DisplayBackend::X11 ? x11::window() : 0;
+}
+
+bool native_window_is_visible() {
+    if (display_backend() == DisplayBackend::X11) return x11::visible();
+    return g_window_visible.load();
+}
+
+bool native_window_is_foreground() {
+    if (display_backend() == DisplayBackend::X11) return x11::visible() && x11::focused();
+    return g_window_visible.load() && g_window_activated.load();
+}
+
+int native_window_x11_fd() {
+    return display_backend() == DisplayBackend::X11 ? x11::connection_fd() : -1;
+}
+
 ::wl_display* native_window_wl_display(::ANativeWindow* window) {
     if (window == nullptr || window->surface == nullptr) {
         return nullptr;
@@ -1702,7 +1861,31 @@ WaylandOverlayDeps overlay_deps() {
 
 uint32_t last_input_serial() { return g_last_input_serial.load(); }
 
-bool window_close_requested() { return g_window_close_requested.load(); }
+bool window_close_requested() {
+    // X11 reports the window manager's close request through its own
+    // event queue, not through the Wayland flag.
+    if (display_backend() == DisplayBackend::X11) return x11::close_requested();
+    return g_window_close_requested.load();
+}
+
+// Drains the X server's event queue, when that is the backend in use.
+//
+// Called from render-host's own display pump, beside the Wayland one --
+// a resize arrives here as ConfigureNotify and has to reach the size
+// ANativeWindow_getWidth/getHeight report, which is what the engine, the
+// swapchain and DisplayMetrics all read.
+void native_window_pump_x11() {
+    if (display_backend() != DisplayBackend::X11) return;
+    x11::pump();
+    const int32_t w = x11::width();
+    const int32_t h = x11::height();
+    if (w > 0 && h > 0 && (w != g_window_width.load() || h != g_window_height.load())) {
+        g_window_width.store(w);
+        g_window_height.store(h);
+        std::printf("stud: android-glue: X11 window resized: %dx%d\n", w, h);
+        std::fflush(stdout);
+    }
+}
 
 void native_window_pump_key_repeat() {
     auto& r = key_repeat();

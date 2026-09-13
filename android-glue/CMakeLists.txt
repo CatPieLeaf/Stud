@@ -189,6 +189,7 @@ add_library(stud_android_glue STATIC
     src/configuration.cpp
     src/looper.cpp
     src/native_window.cpp
+    src/x11_backend.cpp
     src/text_overlay.cpp
     src/clipboard.cpp
     src/media_codec.cpp
@@ -212,6 +213,23 @@ add_library(stud_android_glue STATIC
 )
 target_include_directories(stud_android_glue PUBLIC "${XdgShellGeneratedDir}")
 target_include_directories(stud_android_glue PUBLIC include)
+
+# X11 headers, for types only.
+#
+# The X11 backend (src/x11_backend.cpp) resolves every Xlib entry point
+# with dlopen/dlsym at runtime, exactly as the Wayland side treats
+# optional protocols -- so nothing here links libX11 and a machine
+# without it still runs Stud on Wayland. The headers are a build
+# dependency (libX11-devel / libx11-dev) and nothing more: XEvent is a
+# large union and hand-declaring it would be a real ABI risk for no gain.
+find_path(StudX11IncludeDir NAMES X11/Xlib.h)
+if(NOT StudX11IncludeDir)
+    message(FATAL_ERROR
+            "Stud: X11 headers not found (X11/Xlib.h). Install libX11-devel "
+            "(Fedora) or libx11-dev (Debian/Ubuntu) -- they are needed to "
+            "build the X11 window backend, which is loaded at runtime only.")
+endif()
+target_include_directories(stud_android_glue PRIVATE "${StudX11IncludeDir}")
 # For jni.h (JNIEnv/jobject types used by AAssetManager_fromJava/
 # ANativeWindow_fromSurface's signatures) -- jnivm is already fetched by
 # jni-bridge's CMakeLists.txt, which must run before this one (see the
