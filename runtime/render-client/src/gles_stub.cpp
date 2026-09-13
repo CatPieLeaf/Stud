@@ -317,11 +317,48 @@ void glVertexAttribPointer(GLuint i, GLint s, GLenum t, GLboolean n, GLsizei st,
 }
 
 const GLubyte* glGetString(GLenum name) {
-    static thread_local char buf[512];
+    // Big enough for the whole GL_EXTENSIONS string.
+    //
+    // This was 512 bytes, and ANGLE's extension list is several kilobytes
+    // -- so the engine received the first 511 characters of it and nothing
+    // else. Alphabetically that is the GL_AMD_* and GL_ANGLE_* entries and
+    // stops there, which cut off every GL_EXT_texture_compression_*
+    // (s3tc, dxt1, rgtc, bptc) the driver really does support.
+    //
+    // The engine believed the GPU had no block compression at all (its own
+    // capability line read `Caps: Texture: DXT 0`), so textures with alpha
+    // were stored uncompressed against its 64MB video-memory budget and
+    // its streamer kept them at a low mip -- transparent textures staying
+    // blurry while opaque ones, which still had ETC2, were sharp.
+    //
+    // Truncation is still possible in principle, so it is reported rather
+    // than left to be discovered the same way twice.
+    // ... and yet the FULL list is not what gets reported, by default.
+    //
+    // Handing the engine everything ANGLE exposes changes which shader
+    // permutations it asks its own pack for, and the pack shipped in the
+    // APK is an Android GLES one that does not contain them -- measured
+    // as `Error: shader DefaultUnifiedFlatOpaqueVS80000006 is not
+    // available` for every shader, and a black window. It also made the
+    // engine start calling entry points it had never used (glBufferStorage
+    // sits past the old cutoff), which is real and is now implemented,
+    // but the shader pack is not something Stud can supply.
+    //
+    // So the reported list is capped at the length it has always had.
+    // That is not a fix, it is the status quo held deliberately: the
+    // engine gets exactly the capabilities it got before, and nothing it
+    // has no shaders for. STUD_GL_FULL_EXTENSIONS=1 reports the whole
+    // string for anyone investigating what the extra capabilities would
+    // buy -- expect a black window until the shader-pack question is
+    // answered.
+    static thread_local char buf[16384];
+    static const bool full = std::getenv("STUD_GL_FULL_EXTENSIONS") != nullptr;
+    const size_t cap = full ? sizeof(buf) : 512;
     uint64_t a[8] = {name};
     uint32_t written = 0;
-    connection().call(CallId::GlGetString, a, nullptr, 0, buf, sizeof(buf) - 1, &written);
-    buf[written < sizeof(buf) ? written : sizeof(buf) - 1] = '\0';
+    connection().call(CallId::GlGetString, a, nullptr, 0, buf, static_cast<uint32_t>(cap - 1),
+                      &written);
+    buf[written < cap ? written : cap - 1] = '\0';
     return reinterpret_cast<const GLubyte*>(buf);
 }
 GLint glGetUniformLocation(GLuint program, const GLchar* name) {
@@ -726,6 +763,20 @@ void glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage
     uint64_t a[8] = {target, static_cast<uint64_t>(size), 0, usage};
     connection().call_void(CallId::GlBufferData, a, data,
                            data != nullptr ? static_cast<uint32_t>(size) : 0);
+}
+void glBufferStorage(GLenum target, GLsizeiptr size, const void* data, GLbitfield flags) {
+    // Immutable storage: same shape as glBufferData, plus the flags that
+    // say how it may be mapped later.
+    if (target == GL_PIXEL_UNPACK_BUFFER || target == GL_PIXEL_PACK_BUFFER) {
+        // Nothing special to track here -- the bound-buffer shadow that
+        // the pixel paths read is maintained by glBindBuffer.
+    }
+    uint64_t a[8] = {target, static_cast<uint64_t>(size), flags};
+    connection().call_void(CallId::GlBufferStorage, a, data,
+                           data != nullptr ? static_cast<uint32_t>(size) : 0);
+}
+void glBufferStorageEXT(GLenum target, GLsizeiptr size, const void* data, GLbitfield flags) {
+    glBufferStorage(target, size, data, flags);
 }
 void glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
     uint64_t a[8] = {target, static_cast<uint64_t>(offset), static_cast<uint64_t>(size)};

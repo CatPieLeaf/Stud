@@ -276,6 +276,20 @@ std::string client_settings_key(const std::string& name, const std::string& valu
     return "FString" + name;
 }
 
+// Stud's own engine defaults, as already-serialised ClientSettings
+// values. Merged BEFORE the user's hand-edited file, so anything they
+// set by hand still wins -- the same rule as the renderer flags below.
+std::map<std::string, std::string> stud_default_flags() {
+    return {
+        // Highest texture quality, always. The engine's own quality
+        // control is tuned for a phone's memory budget, and Stud is not
+        // running on one -- a desktop GPU has no reason to be served
+        // reduced textures. 4 is the top of the range.
+        {"TextureQualityOverride", "4"},
+        {"DFFlagTextureQualityOverrideEnabled", "True"},
+    };
+}
+
 std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
     if (mode == "opengl") {
         return {{"DebugGraphicsPreferOpenGL", true},
@@ -1284,13 +1298,16 @@ int main(int argc, char** argv) {
 
         const std::map<std::string, bool> renderer_flags =
             renderer_flags_for_mode(graphics_mode);
-        if ((overrides.size() > 0 || !renderer_flags.empty()) && !client_settings_body.empty()) {
+        if (!client_settings_body.empty()) {
             try {
                 auto doc = nlohmann::json::parse(client_settings_body);
                 auto& app = doc["applicationSettings"];
                 if (!app.is_object()) app = nlohmann::json::object();
-                // Stud's own renderer choice first, so a hand-edited
-                // override of the same flag below replaces it.
+                // Stud's own defaults first, so a hand-edited override
+                // of the same flag below replaces any of them.
+                for (const auto& [name, value] : stud_default_flags()) {
+                    app[client_settings_key(name, value)] = value;
+                }
                 for (const auto& [name, value] : renderer_flags) {
                     const std::string text = value ? "True" : "False";
                     app[client_settings_key(name, text)] = text;

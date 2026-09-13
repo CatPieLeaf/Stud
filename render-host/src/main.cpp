@@ -30,6 +30,9 @@
 #include "stud/text_overlay.h"
 #include "stud/clipboard.h"
 #include "stud/ndk_types.h"
+#include <set>
+#include <string>
+#include <utility>
 #include <optional>
 
 #include "stud/render.h"
@@ -368,6 +371,7 @@ using PFN_glGetProgramiv = void (*)(GLuint, GLenum, GLint*);
 using PFN_glGetShaderiv = void (*)(GLuint, GLenum, GLint*);
 using PFN_glGetShaderSource = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
 using PFN_glBufferData = void (*)(GLenum, GLsizeiptr, const void*, GLenum);
+using PFN_glBufferStorage = void (*)(GLenum, GLsizeiptr, const void*, GLbitfield);
 using PFN_glBufferSubData = void (*)(GLenum, GLintptr, GLsizeiptr, const void*);
 using PFN_glMapBufferRange = void* (*)(GLenum, GLintptr, GLsizeiptr, GLbitfield);
 using PFN_glGetVertexAttribiv = void (*)(GLuint, GLenum, GLint*);
@@ -534,6 +538,7 @@ struct RealFns {
     FN(glGetShaderiv);
     FN(glGetShaderSource);
     FN(glBufferData);
+    FN(glBufferStorage);
     FN(glBufferSubData);
     FN(glMapBufferRange);
     FN(glGetVertexAttribiv);
@@ -546,6 +551,14 @@ struct RealFns {
     FN(glReadPixels);
 #undef FN
 };
+
+// Optional: an entry point the driver may genuinely not have. The
+// caller must handle a null, and does -- see GlBufferStorage, which
+// falls back to an ordinary mutable allocation.
+template <typename Fn>
+Fn may_resolve(const char* name) {
+    return reinterpret_cast<Fn>(stud::render::resolve(name));
+}
 
 template <typename Fn>
 Fn must_resolve(const char* name) {
@@ -1122,6 +1135,159 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
     ::_exit(status);
 }
 
+// STUD_GL_TRACE_TEX=1: what actually reaches each texture.
+//
+// A texture that samples as though it only has its small mips is either
+// missing its big ones or being told not to use them, and those are
+// different bugs. This records, per texture name, which levels were
+// uploaded and every sampler parameter that can pin the level -- base,
+// max, min/max LOD and the min filter -- and prints one line per texture
+// the first time it is drawn with.
+void trace_texture_upload(const char* what, GLuint texture, GLint level, GLsizei w, GLsizei h,
+                          GLenum format, size_t bytes = 0, uint64_t pbo_offset_plus_one = 0,
+                          size_t received = 0) {
+    static const bool on = std::getenv("STUD_GL_TRACE_TEX") != nullptr;
+    if (!on) return;
+    // `bytes` is the imageSize the caller declared; `received` is how
+    // much actually arrived over the wire. They must match, or the
+    // driver reads whatever follows the buffer.
+    std::printf("stud-render-host: TEX %s tex=%u level=%d %dx%d fmt=0x%x declared=%zu got=%zu "
+                "pbo=%lld%s\n",
+                what, texture, level, static_cast<int>(w), static_cast<int>(h), format, bytes,
+                received,
+                pbo_offset_plus_one == 0 ? -1LL
+                                         : static_cast<long long>(pbo_offset_plus_one - 1),
+                (pbo_offset_plus_one == 0 && bytes != received) ? "  <-- SHORT" : "");
+    std::fflush(stdout);
+}
+
+void trace_texture_parameter(GLenum target, GLenum pname, GLint value) {
+    static const bool on = std::getenv("STUD_GL_TRACE_TEX") != nullptr;
+    if (!on) return;
+    // Only the ones that decide which level is sampled.
+    switch (pname) {
+        case GL_TEXTURE_BASE_LEVEL:
+        case GL_TEXTURE_MAX_LEVEL:
+        case GL_TEXTURE_MIN_LOD:
+        case GL_TEXTURE_MAX_LOD:
+        case GL_TEXTURE_MIN_FILTER:
+            break;
+        default:
+            return;
+    }
+    std::printf("stud-render-host: TEX param target=0x%x pname=0x%x value=%d\n", target, pname,
+                value);
+    std::fflush(stdout);
+}
+
+
+// STUD_FRAME_PACING=1: the distribution of frame intervals, not their
+// average.
+//
+// A steady 60fps and a 60fps made of alternating 8ms and 40ms frames
+// produce the same number in a counter and feel completely different.
+// Every frame-rate measurement in this project so far has been an
+// average over seconds, which cannot tell those apart -- so a report of
+// "the frame rate is fine but it feels bad" had nothing to answer it.
+void note_frame_pacing() {
+    static const bool on = std::getenv("STUD_FRAME_PACING") != nullptr;
+    if (!on) return;
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last{};
+    static std::vector<double> intervals;
+    const auto now = clock::now();
+    if (last.time_since_epoch().count() != 0) {
+        intervals.push_back(std::chrono::duration<double, std::milli>(now - last).count());
+    }
+    last = now;
+    if (intervals.size() < 240) return;
+
+    std::vector<double> sorted = intervals;
+    std::sort(sorted.begin(), sorted.end());
+    const auto at = [&sorted](double q) {
+        return sorted[static_cast<size_t>(q * static_cast<double>(sorted.size() - 1))];
+    };
+    double total = 0.0;
+    for (double v : sorted) total += v;
+    const double mean = total / static_cast<double>(sorted.size());
+    // Frames that took more than twice the median are what a player
+    // notices; counting them says whether this is a hitch problem.
+    const double median = at(0.5);
+    size_t spikes = 0;
+    for (double v : sorted) {
+        if (v > median * 2.0) ++spikes;
+    }
+    std::printf("stud-render-host: PACING over %zu frames: mean %.1fms (%.0f fps) | p50 %.1f "
+                "p90 %.1f p99 %.1f max %.1f | %zu frames over 2x median\n",
+                sorted.size(), mean, 1000.0 / mean, median, at(0.9), at(0.99), sorted.back(),
+                spikes);
+    std::fflush(stdout);
+    intervals.clear();
+}
+
+
+// Turn on the ANGLE extensions that are available but not advertised.
+//
+// ANGLE keeps a set of extensions "requestable": the driver underneath
+// supports them, but glGetString(GL_EXTENSIONS) does not list them until
+// the application asks for each by name (GL_ANGLE_request_extension).
+// Nothing asked, so the engine saw no block compression at all --
+// measured from its own capability line, `Caps: Texture: DXT 0 PVR 0
+// ETC1 0 ETC2 1`.
+//
+// That costs real quality, not just memory. Opaque textures still arrive
+// as ETC2, which ANGLE emulates, but textures WITH ALPHA end up stored
+// uncompressed -- four to eight times the size -- against the engine's
+// compiled-in 64MB video-memory budget. Its streamer then holds some of
+// them at a low mip forever, which shows up as transparent textures
+// staying blurry while everything else is sharp.
+//
+// Requested once per context, and quietly: an extension that is not
+// requestable on this driver simply is not asked for.
+void enable_requestable_extensions(const RealFns& fns) {
+    static bool done = false;
+    if (done || fns.glGetString_ == nullptr) return;
+    done = true;
+
+    using RequestExtensionFn = void (*)(const GLchar*);
+    auto request = reinterpret_cast<RequestExtensionFn>(
+        fns.eglGetProcAddress_ != nullptr
+            ? reinterpret_cast<void*>(fns.eglGetProcAddress_("glRequestExtensionANGLE"))
+            : nullptr);
+    if (request == nullptr) return;
+
+    // GL_REQUESTABLE_EXTENSIONS_ANGLE, from ANGLE's own gl2ext_angle.h.
+    constexpr GLenum kRequestableExtensions = 0x93A8;
+    const auto* available =
+        reinterpret_cast<const char*>(fns.glGetString_(kRequestableExtensions));
+    if (available == nullptr) return;
+    const std::string requestable(available);
+
+    // Block compression, in the order the engine prefers it. BPTC is
+    // BC6H/BC7, RGTC is BC4/BC5, S3TC is BC1/BC2/BC3 -- between them they
+    // cover every format the engine asks about.
+    static const char* const kWanted[] = {
+        "GL_EXT_texture_compression_s3tc",     "GL_EXT_texture_compression_dxt1",
+        "GL_ANGLE_texture_compression_dxt3",   "GL_ANGLE_texture_compression_dxt5",
+        "GL_EXT_texture_compression_rgtc",     "GL_EXT_texture_compression_bptc",
+        "GL_EXT_texture_compression_s3tc_srgb",
+    };
+    std::string granted;
+    for (const char* name : kWanted) {
+        if (requestable.find(name) == std::string::npos) continue;
+        request(name);
+        if (!granted.empty()) granted += " ";
+        granted += name;
+    }
+    if (granted.empty()) {
+        std::printf("stud-render-host: no requestable texture-compression extensions\n");
+    } else {
+        std::printf("stud-render-host: enabled %s\n", granted.c_str());
+    }
+    std::fflush(stdout);
+}
+
+
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
@@ -1322,6 +1488,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             EGLSurface s = a[1] == kNullHandle ? EGL_NO_SURFACE : g_surfaces.at(a[1]);
             EGLContext c = a[2] == kNullHandle ? EGL_NO_CONTEXT : g_contexts.at(a[2]);
             EGLBoolean ok = fns.eglMakeCurrent_(g_displays.at(a[0]), s, s, c);
+            if (ok == EGL_TRUE && c != EGL_NO_CONTEXT) enable_requestable_extensions(fns);
             if (ok != EGL_TRUE) {
                 std::printf("stud-render-host: DIAG eglMakeCurrent FAILED dpy=%llu surf=%llu ctx=%llu "
                             "egl_error=0x%x\n",
@@ -1333,6 +1500,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return ok == EGL_TRUE;
         }
         case CallId::EglSwapBuffers: {
+            note_frame_pacing();
             // Shown on the first frame, like the Vulkan path -- so the
             // window never appears empty. No-op on Wayland.
             stud::android_glue::x11_ensure_mapped();
@@ -1688,7 +1856,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlStencilMask: fns.glStencilMask_(static_cast<GLuint>(a[0])); return 0;
         case CallId::GlStencilOp: fns.glStencilOp_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2])); return 0;
         case CallId::GlTexParameterf: fns.glTexParameterf_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), unpack_float(a[2])); return 0;
-        case CallId::GlTexParameteri: fns.glTexParameteri_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLint>(a[2])); return 0;
+        case CallId::GlTexParameteri:
+            trace_texture_parameter(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
+                                    static_cast<GLint>(a[2]));
+            fns.glTexParameteri_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLint>(a[2])); return 0;
         case CallId::GlUniform1i: fns.glUniform1i_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1])); return 0;
         case CallId::GlUseProgram: fns.glUseProgram_(static_cast<GLuint>(a[0])); return 0;
         case CallId::GlViewport: fns.glViewport_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
@@ -1968,6 +2139,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::VkAcquireNextImageKHR:
             return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
         case CallId::VkQueuePresentKHR:
+            note_frame_pacing();
             // The throttle happens BEFORE the dispatch lock is taken --
             // see throttle_before_dispatch().
             return stud::render_host::vk_queue_present(a[0], in);
@@ -2584,6 +2756,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return n;
         }
         case CallId::GlTexStorage2D:
+            trace_texture_upload("storage", g_bound_texture_2d, static_cast<GLint>(a[1]),
+                                 static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
+                                 static_cast<GLenum>(a[2]));
             if (cursor_trace_enabled()) {
                 g_tex_dims[g_bound_texture_2d] = {static_cast<int>(a[3]), static_cast<int>(a[4])};
             }
@@ -2805,6 +2980,19 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
                                in.empty() ? nullptr : in.data(), static_cast<GLenum>(a[3]));
             return 0;
+        case CallId::GlBufferStorage:
+            if (fns.glBufferStorage_ == nullptr) {
+                // No immutable storage on this driver: an ordinary
+                // mutable allocation of the same size is a correct
+                // substitute for everything the engine does with it.
+                fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
+                                  in.empty() ? nullptr : in.data(), GL_DYNAMIC_DRAW);
+                return 0;
+            }
+            fns.glBufferStorage_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
+                                 in.empty() ? nullptr : in.data(),
+                                 static_cast<GLbitfield>(a[2]));
+            return 0;
         case CallId::GlBufferSubData:
             fns.glBufferSubData_(static_cast<GLenum>(a[0]), static_cast<GLintptr>(a[1]),
                                   static_cast<GLsizeiptr>(a[2]), in.data());
@@ -2842,6 +3030,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                   static_cast<GLenum>(a[6]), static_cast<GLenum>(a[7]), pixels_ptr());
             return 0;
         case CallId::GlCompressedTexImage2D:
+            trace_texture_upload("compressed", g_bound_texture_2d, static_cast<GLint>(a[1]),
+                                 static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
+                                 static_cast<GLenum>(a[2]));
             // a[6] is the real imageSize -- it cannot be derived from the
             // in-buffer size when the pixels come from a real PBO instead.
             fns.glCompressedTexImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
@@ -2850,6 +3041,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                          static_cast<GLsizei>(a[6]), pixels_ptr());
             return 0;
         case CallId::GlCompressedTexSubImage2D:
+            trace_texture_upload("compressed-sub", g_bound_texture_2d, static_cast<GLint>(a[1]),
+                                 static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
+                                 static_cast<GLenum>(a[6]), static_cast<size_t>(a[7]),
+                                 hdr.pixel_buffer_offset_plus_one, in.size());
             fns.glCompressedTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
                                             static_cast<GLint>(a[2]), static_cast<GLint>(a[3]),
                                             static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
@@ -3177,6 +3372,30 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
             return false;
     }
 }
+
+// STUD_GL_TRACE_ERRORS=1: ask the real GL for its error after every
+// forwarded GL call and name the first call that produced each one.
+//
+// The client answers glGetError from a cache refreshed once a frame, so
+// the engine's own error checks no longer say WHICH call failed. When
+// something uploads and does not appear -- a texture stuck at its
+// smallest mip, say -- that is the one thing worth knowing, and it is
+// too expensive to leave on.
+void trace_gl_error_after(stud::render_host::CallId id, const RealFns& fns) {
+    static const bool on = std::getenv("STUD_GL_TRACE_ERRORS") != nullptr;
+    if (!on || fns.glGetError_ == nullptr) return;
+    const char* name = stud::render_host::call_id_name(id);
+    if (name == nullptr || name[0] != 'G' || name[1] != 'l') return;  // GL calls only
+    const GLenum err = fns.glGetError_();
+    if (err == GL_NO_ERROR) return;
+    // Once per call/error pair: a failing call usually fails every frame,
+    // and the interesting fact is which ones, not how many times.
+    static std::set<std::pair<std::string, unsigned>> seen;
+    if (!seen.insert({name, err}).second) return;
+    std::printf("stud-render-host: GL ERROR 0x%x after %s\n", err, name);
+    std::fflush(stdout);
+}
+
 
 void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
     std::vector<unsigned char> in_scratch;
@@ -3510,6 +3729,7 @@ int main(int argc, char** argv) {
 
     RealFns fns{};
 #define RESOLVE(name) fns.name##_ = must_resolve<PFN_##name>(#name)
+#define RESOLVE_OPTIONAL(name) fns.name##_ = may_resolve<PFN_##name>(#name)
     RESOLVE(eglGetDisplay); RESOLVE(eglInitialize); RESOLVE(eglBindAPI); RESOLVE(eglChooseConfig);
     RESOLVE(eglCreateWindowSurface); RESOLVE(eglCreatePbufferSurface); RESOLVE(eglCreateContext);
     RESOLVE(eglMakeCurrent); RESOLVE(eglSwapBuffers); RESOLVE(eglGetError); RESOLVE(eglQueryString);
@@ -3552,7 +3772,7 @@ int main(int argc, char** argv) {
     RESOLVE(glUniformBlockBinding); RESOLVE(glGetActiveUniformBlockiv);
     RESOLVE(glGenBuffers); RESOLVE(glGenFramebuffers); RESOLVE(glGenRenderbuffers); RESOLVE(glGenTextures);
     RESOLVE(glGetIntegerv); RESOLVE(glIsEnabled); RESOLVE(glTexParameterfv); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glGetShaderSource);
-    RESOLVE(glBufferData); RESOLVE(glBufferSubData); RESOLVE(glTexImage2D); RESOLVE(glTexSubImage2D);
+    RESOLVE(glBufferData); RESOLVE_OPTIONAL(glBufferStorage); RESOLVE(glBufferSubData); RESOLVE(glTexImage2D); RESOLVE(glTexSubImage2D);
     RESOLVE(glMapBufferRange); RESOLVE(glUnmapBuffer);
     RESOLVE(glGetVertexAttribiv); RESOLVE(glGetVertexAttribPointerv);
     RESOLVE(glCompressedTexImage2D); RESOLVE(glCompressedTexSubImage2D); RESOLVE(glReadPixels);
@@ -3695,6 +3915,7 @@ int main(int argc, char** argv) {
                 std::lock_guard<std::mutex> lock(dispatch_mutex());
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             }
+            trace_gl_error_after(static_cast<stud::render_host::CallId>(hdr.call_id), fns);
             // A pipelined request wants no answer -- writing one would desync
             // the stream, since the client is not going to read it.
             if ((hdr.flags & Header::kNoReply) != 0) continue;

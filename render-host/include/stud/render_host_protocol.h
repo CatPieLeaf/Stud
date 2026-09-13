@@ -589,6 +589,17 @@ enum class CallId : uint32_t {
     // out-buffer, returning the number of bytes written. Never blocks.
     AudioReadFrames,
     AudioCloseInputStream,
+    // Immutable buffer storage (GL_EXT_buffer_storage). a: target, size,
+    // flags; the in-buffer carries the initial contents when there are
+    // any.
+    //
+    // The engine only started calling this once Stud stopped truncating
+    // the extension string at 511 bytes -- GL_EXT_buffer_storage sits
+    // past that cutoff, so it had never been offered before. Without a
+    // real implementation the buffer is never allocated and the first
+    // map of it crashes ANGLE. Appended last: every existing id keeps
+    // its value.
+    GlBufferStorage,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -826,9 +837,10 @@ inline const char* call_id_name(CallId id) {
         "AudioOpenInputStream",
         "AudioReadFrames",
         "AudioCloseInputStream",
+        "GlBufferStorage",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::AudioCloseInputStream) + 1,
+                      static_cast<size_t>(CallId::GlBufferStorage) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
