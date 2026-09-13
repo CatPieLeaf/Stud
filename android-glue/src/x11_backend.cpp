@@ -322,6 +322,16 @@ bool create_window(int32_t width, int32_t height) {
     return true;
 }
 
+void warp_pointer(int x, int y) {
+    if (g_display == nullptr || g_window == 0) return;
+    Xlib& x11 = xlib();
+    if (x11.WarpPointer == nullptr) return;
+    x11.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, x, y);
+    if (x11.Flush != nullptr) x11.Flush(g_display);
+    g_pointer_x = static_cast<float>(x);
+    g_pointer_y = static_cast<float>(y);
+}
+
 void set_pointer_confined(bool confined) {
     if (g_display == nullptr || g_window == 0) return;
     Xlib& x11 = xlib();

@@ -656,6 +656,15 @@ enum class CallId : uint32_t {
     // boundary so a spin does not stop there. Appended last: every
     // existing id keeps its value.
     SetPointerConfined,
+    // Put the pointer at a point in the window, a[0]/a[1] in surface
+    // pixels as 8.8 fixed point. Used once per camera drag, at the end:
+    // the engine's cursor did not move for the gesture, so the pointer is
+    // returned to it. Appended last: every existing id keeps its value.
+    WarpPointer,
+    // Whether WarpPointer can do anything: 1 when the compositor supports
+    // it (X11 always does), 0 otherwise. Appended last: every existing id
+    // keeps its value.
+    CanWarpPointer,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -905,9 +914,11 @@ inline const char* call_id_name(CallId id) {
         "WebViewLoadUrl",
         "CopyToClipboard",
         "SetPointerConfined",
+        "WarpPointer",
+        "CanWarpPointer",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::SetPointerConfined) + 1,
+                      static_cast<size_t>(CallId::CanWarpPointer) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

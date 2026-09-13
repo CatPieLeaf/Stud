@@ -52,6 +52,8 @@ int connection_fd();
 // coming. Reports relative motion instead of positions while held, the
 // same as the Wayland path.
 void set_pointer_locked(bool locked);
+// Put the pointer at a point in the window, in window pixels.
+void warp_pointer(int x, int y);
 // Keep the pointer inside the window, without the recentring a mouse-look
 // grab does.
 void set_pointer_confined(bool confined);
