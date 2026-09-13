@@ -2856,6 +2856,13 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             run_ui_helper_detached("--notify-region", ip);
             return 0;
         }
+        case CallId::CanWarpPointer:
+            return stud::android_glue::native_window_can_warp_pointer() ? 1 : 0;
+        case CallId::WarpPointer:
+            stud::android_glue::native_window_warp_pointer(
+                g_real_window, static_cast<float>(a[0]) / 256.0f,
+                static_cast<float>(a[1]) / 256.0f);
+            return 0;
         case CallId::SetPointerLocked:
             stud::android_glue::native_window_set_pointer_locked(g_real_window, a[0] != 0);
             return 0;
