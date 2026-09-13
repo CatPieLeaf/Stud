@@ -157,6 +157,21 @@ constexpr jint kButtonSecondary = 2;
 constexpr jint kButtonTertiary = 4;
 constexpr jint kCameraButtons = kButtonSecondary | kButtonTertiary;
 std::atomic<bool> g_drag_locked{false};
+// Taking the physical pointer away for a camera drag, off by default.
+//
+// It was how the cursor was kept still through an orbit, and it is no
+// longer needed: the engine pins its own cursor, and the position Stud
+// reports now carries on from that point when the drag ends (see
+// g_pos_offset_x). Holding the pointer as well is what made a right-drag
+// on an in-game UI overlay unusable -- the cursor could not move over the
+// thing the press had just opened. STUD_DRAG_LOCK=1 brings it back.
+//
+// The engine's OWN request (LockCenter: first person, shift lock) is a
+// different thing entirely and is still honoured.
+bool drag_lock_enabled() {
+    static const bool enabled = std::getenv("STUD_DRAG_LOCK") != nullptr;
+    return enabled;
+}
 bool mouse_lock_enabled() {
     static const bool enabled = std::getenv("STUD_NO_MOUSE_LOCK") == nullptr;
     return enabled;
@@ -211,6 +226,35 @@ bool g_lock_from_drag = false;
 // immediate otherwise, since the button is still held. Cleared the first
 // moment nothing is asking for the lock, so the next drag re-arms it.
 bool g_lock_suppressed = false;
+
+// The cursor stays where the engine left it when a camera drag ends.
+//
+// The engine pins its OWN cursor for the whole of a camera rotation
+// (MouseBehavior.LockCurrentPosition) and steers from the deltas -- with
+// or without any pointer lock, live-observed with locking off entirely.
+// It ignores the position it is given for the duration and picks it up
+// again on release, so a slow orbit that walked the hand 224 units left
+// ends with the cursor jumping exactly that far:
+//
+//   press    pos=(525.5,559.2)          <- where the engine pins its cursor
+//   ...1365 moves, hand travels left...
+//   release  pos=(301.8,616.0)          <- adopted, and the cursor jumps
+//
+// So the gesture's starting point is remembered, and from the release
+// onwards every position is reported shifted by the distance between it
+// and where the hand ended. The cursor carries on from where it visibly
+// is, which is the whole of what was missing -- no lock, no warp, nothing
+// put back.
+//
+// This is NOT integration: each position is still the pointer's own plus
+// one constant, fixed once per gesture, so nothing accumulates while the
+// mouse moves. The position is also NOT frozen during the drag -- tried,
+// and it made the rotation itself wrong.
+bool g_drag_anchored = false;
+float g_drag_anchor_x = 0.0f;
+float g_drag_anchor_y = 0.0f;
+float g_pos_offset_x = 0.0f;
+float g_pos_offset_y = 0.0f;
 
 void set_pointer_locked(bool locked) {
     if (locked == g_drag_locked.load()) return;
@@ -976,8 +1020,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // No clamp either. The client bounds nothing here; only its
             // ACTION_SCROLL branch floors the position it reports at
             // zero, which is the wheel's business and not the pointer's.
-            last_x = x;
-            last_y = y;
+            last_x = x + g_pos_offset_x;
+            last_y = y + g_pos_offset_y;
             call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
             return;
         }
@@ -1125,7 +1169,28 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     // From the live button state, not from this one edge:
                     // releasing the right button while the middle is still
                     // held is still a drag.
-                    g_lock_from_drag = (g_button_state & kCameraButtons) != 0;
+                    const bool held = (g_button_state & kCameraButtons) != 0;
+                    if (held && !g_drag_anchored) {
+                        g_drag_anchored = true;
+                        g_drag_anchor_x = to_density_independent(ev.x) + g_pos_offset_x;
+                        g_drag_anchor_y = to_density_independent(ev.y) + g_pos_offset_y;
+                    } else if (!held && g_drag_anchored) {
+                        g_drag_anchored = false;
+                        // Where the engine's cursor is, minus where the hand
+                        // ended: every position from here on carries that
+                        // difference, so the cursor resumes from the anchor.
+                        g_pos_offset_x = g_drag_anchor_x - to_density_independent(ev.x);
+                        g_pos_offset_y = g_drag_anchor_y - to_density_independent(ev.y);
+                        if (input_trace_enabled()) {
+                            std::printf("stud: drag ended at anchor (%.1f,%.1f); offset now "
+                                        "(%.1f,%.1f)\n", static_cast<double>(g_drag_anchor_x),
+                                        static_cast<double>(g_drag_anchor_y),
+                                        static_cast<double>(g_pos_offset_x),
+                                        static_cast<double>(g_pos_offset_y));
+                            std::fflush(stdout);
+                        }
+                    }
+                    g_lock_from_drag = held && drag_lock_enabled();
                     apply_pointer_lock();
                 }
                 if (down && before == 0) {
@@ -1555,12 +1620,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // the moment it came back in. Re-basing here is what makes
                 // entering seamless: the pointer really is at this point,
                 // so this is the one place adopting it is correct.
-                last_x = x;
-                last_y = y;
+                // Carrying whatever shift a camera drag left behind, so
+                // re-entering does not undo it -- see g_pos_offset_x.
+                last_x = x + g_pos_offset_x;
+                last_y = y + g_pos_offset_y;
                 g_prev_raw_x = x;
                 g_prev_raw_y = y;
                 g_have_prev_raw = true;
-                call_trapping_abort(fns.mouse_move, jni_env, nullptr, x, y, 0.0f, 0.0f);
+                call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, 0.0f, 0.0f);
             }
             if (ev.type == Ev::kPointerLeave && g_button_state != 0) {
                 // Release whatever is still held.
