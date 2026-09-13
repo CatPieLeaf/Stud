@@ -15,6 +15,9 @@
 
 #include "wayland_overlay_deps.h"
 
+#include "stud/android_glue.h"
+#include "x11_backend.h"
+
 // See stud/text_overlay.h for why this exists at all. In short: a focused
 // TextBox stops drawing its own text on Android, because the platform is
 // expected to put a real text widget over it. This is that widget.
@@ -104,6 +107,9 @@ struct Overlay {
     int width = 0;
     int height = 0;
     bool mapped_visible = false;
+    // The X11 path has no shm buffer: the pixels are ordinary memory
+    // that XPutImage reads from. Everything above this line is Wayland's.
+    std::vector<uint8_t> cpu_pixels;
     // The last layout drawn, so a click can be turned into a caret
     // position without re-deriving where every glyph landed.
     std::vector<std::pair<size_t, int>> pen;  // byte offset -> pen x, 26.6
@@ -394,7 +400,40 @@ int32_t to_logical(int32_t buffer_px, int32_t scale_120) {
                                 scale_120);
 }
 
+// X11's half. The drawing below is shared -- only where the pixels end
+// up differs -- so this is the same sequence with the Wayland surface
+// work replaced by a child window, and without the logical-unit rounding
+// (an X11 window is placed in real pixels, so there is no residual).
+void apply_locked_x11(const TextOverlaySpec& spec) {
+    Overlay& o = overlay();
+    if (!spec.visible || spec.width <= 0.0f || spec.height <= 0.0f) {
+        if (o.mapped_visible) {
+            x11::hide_text_overlay();
+            o.mapped_visible = false;
+        }
+        return;
+    }
+    const int buf_w = static_cast<int>(std::ceil(spec.width));
+    const int buf_h = static_cast<int>(std::ceil(spec.height));
+    if (buf_w <= 0 || buf_h <= 0) return;
+    o.cpu_pixels.assign(static_cast<size_t>(buf_w) * static_cast<size_t>(buf_h) * 4, 0);
+    o.pixels = o.cpu_pixels.data();
+    o.width = buf_w;
+    o.height = buf_h;
+    TextOverlaySpec drawn = spec;
+    drawn.residual_x = 0.0f;
+    drawn.residual_y = 0.0f;
+    draw(drawn, o, WaylandOverlayDeps{});
+    x11::present_text_overlay(o.pixels, o.width, o.height, static_cast<int>(spec.x),
+                              static_cast<int>(spec.y));
+    o.mapped_visible = true;
+}
+
 void apply_locked(const TextOverlaySpec& spec) {
+    if (display_backend() == DisplayBackend::X11) {
+        apply_locked_x11(spec);
+        return;
+    }
     Overlay& o = overlay();
     const WaylandOverlayDeps deps = overlay_deps();
     if (deps.compositor == nullptr || deps.subcompositor == nullptr || deps.shm == nullptr ||

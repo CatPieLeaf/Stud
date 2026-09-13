@@ -1,6 +1,12 @@
 #include "x11_backend.h"
 
 #include "stud/android_glue.h"
+
+#include <chrono>
+#include <string>
+#include <thread>
+
+#include <X11/Xatom.h>
 #include "stud_window_icon.h"
 
 #include <X11/Xlib.h>
@@ -52,6 +58,30 @@ struct Xlib {
     int (*UngrabPointer)(Display*, Time) = nullptr;
     int (*WarpPointer)(Display*, Window, Window, int, int, unsigned int, unsigned int, int,
                        int) = nullptr;
+    int (*SetSelectionOwner)(Display*, Atom, Window, Time) = nullptr;
+    Window (*GetSelectionOwner)(Display*, Atom) = nullptr;
+    int (*ConvertSelection)(Display*, Atom, Atom, Atom, Window, Time) = nullptr;
+    int (*GetWindowProperty)(Display*, Window, Atom, long, long, Bool, Atom, Atom*, int*,
+                             unsigned long*, unsigned long*, unsigned char**) = nullptr;
+    int (*DeleteProperty)(Display*, Window, Atom) = nullptr;
+    Status (*SendEvent)(Display*, Window, Bool, long, XEvent*) = nullptr;
+    int (*Free)(void*) = nullptr;
+    Status (*MatchVisualInfo)(Display*, int, int, int, XVisualInfo*) = nullptr;
+    Colormap (*CreateColormap)(Display*, Window, Visual*, int) = nullptr;
+    Window (*CreateWindow)(Display*, Window, int, int, unsigned int, unsigned int, unsigned int,
+                           int, unsigned int, Visual*, unsigned long,
+                           XSetWindowAttributes*) = nullptr;
+    GC (*CreateGC)(Display*, Drawable, unsigned long, XGCValues*) = nullptr;
+    int (*FreeGC)(Display*, GC) = nullptr;
+    XImage* (*CreateImage)(Display*, Visual*, unsigned int, int, int, char*, unsigned int,
+                           unsigned int, int, int) = nullptr;
+    int (*PutImage)(Display*, Drawable, GC, XImage*, int, int, int, int, unsigned int,
+                    unsigned int) = nullptr;
+    int (*MoveResizeWindow)(Display*, Window, int, int, unsigned int, unsigned int) = nullptr;
+    int (*UnmapWindow)(Display*, Window) = nullptr;
+    Bool (*TranslateCoordinates)(Display*, Window, Window, int, int, int*, int*,
+                                 Window*) = nullptr;
+    int (*RaiseWindow)(Display*, Window) = nullptr;
 };
 
 Xlib& xlib() {
@@ -67,6 +97,8 @@ std::atomic<bool> g_pointer_locked{false};
 // camera receives the warp back to centre as a second, opposite delta
 // and mouse look cancels itself out.
 bool g_ignore_next_motion = false;
+// The empty cursor, shared by the game window and the text overlay.
+Cursor g_blank_cursor = 0;
 // The last unlocked pointer position, in window coordinates: where a
 // drag began, what every event reports while the drag lasts, and where
 // the pointer is put back when it ends.
@@ -131,6 +163,24 @@ bool load_xlib() {
     LOAD(GrabPointer, "XGrabPointer");
     LOAD(UngrabPointer, "XUngrabPointer");
     LOAD(WarpPointer, "XWarpPointer");
+    LOAD(SetSelectionOwner, "XSetSelectionOwner");
+    LOAD(GetSelectionOwner, "XGetSelectionOwner");
+    LOAD(ConvertSelection, "XConvertSelection");
+    LOAD(GetWindowProperty, "XGetWindowProperty");
+    LOAD(DeleteProperty, "XDeleteProperty");
+    LOAD(SendEvent, "XSendEvent");
+    LOAD(Free, "XFree");
+    LOAD(MatchVisualInfo, "XMatchVisualInfo");
+    LOAD(CreateColormap, "XCreateColormap");
+    LOAD(CreateWindow, "XCreateWindow");
+    LOAD(CreateGC, "XCreateGC");
+    LOAD(FreeGC, "XFreeGC");
+    LOAD(CreateImage, "XCreateImage");
+    LOAD(PutImage, "XPutImage");
+    LOAD(MoveResizeWindow, "XMoveResizeWindow");
+    LOAD(UnmapWindow, "XUnmapWindow");
+    LOAD(TranslateCoordinates, "XTranslateCoordinates");
+    LOAD(RaiseWindow, "XRaiseWindow");
 #undef LOAD
     if (!ok) {
         ::dlclose(x.handle);
@@ -216,11 +266,11 @@ bool create_window(int32_t width, int32_t height) {
         Pixmap bitmap = x.CreateBitmapFromData(g_display, g_window, empty, 1, 1);
         if (bitmap != 0) {
             XColor black{};
-            Cursor blank = x.CreatePixmapCursor(g_display, bitmap, bitmap, &black, &black, 0, 0);
-            if (blank != 0) {
-                x.DefineCursor(g_display, g_window, blank);
-                if (x.FreeCursor != nullptr) x.FreeCursor(g_display, blank);
-            }
+            // Kept, not freed: the text overlay is its own top-level
+            // window and needs the same blank cursor, or the desktop's
+            // arrow reappears the moment the pointer crosses onto it.
+            g_blank_cursor = x.CreatePixmapCursor(g_display, bitmap, bitmap, &black, &black, 0, 0);
+            if (g_blank_cursor != 0) x.DefineCursor(g_display, g_window, g_blank_cursor);
             if (x.FreePixmap != nullptr) x.FreePixmap(g_display, bitmap);
         }
     }
@@ -309,6 +359,90 @@ unsigned long window() { return g_window; }
 //    Wayland path does (PRIMARY-1=0, SECONDARY-1=1, TERTIARY-1=3), and
 //    4/5 are a wheel notch each rather than buttons.
 namespace {
+
+// The clipboard, X11-style: a selection belongs to a WINDOW, and its
+// owner is asked for the bytes every time somebody pastes. So "copy"
+// means claiming ownership and keeping the text, and answering
+// SelectionRequest for as long as Stud holds it; "paste" means asking
+// the current owner and waiting for the reply to land on a property of
+// our own window.
+std::string g_clipboard_owned;      // what Stud last copied
+std::string g_clipboard_received;   // the most recent paste, once it arrives
+bool g_clipboard_reply_pending = false;
+Atom g_atom_clipboard = 0;
+Atom g_atom_utf8 = 0;
+Atom g_atom_targets = 0;
+Atom g_atom_stud_selection = 0;
+
+void intern_clipboard_atoms() {
+    Xlib& x = xlib();
+    if (g_atom_clipboard != 0 || x.InternAtom == nullptr || g_display == nullptr) return;
+    g_atom_clipboard = x.InternAtom(g_display, "CLIPBOARD", False);
+    g_atom_utf8 = x.InternAtom(g_display, "UTF8_STRING", False);
+    g_atom_targets = x.InternAtom(g_display, "TARGETS", False);
+    // Our own property, which a paste reply is written to. Named rather
+    // than reusing a standard one so nothing else can collide with it.
+    g_atom_stud_selection = x.InternAtom(g_display, "STUD_SELECTION", False);
+}
+
+// Somebody is pasting from Stud. Hand over the text, or the list of
+// formats it is available in.
+void answer_selection_request(const XSelectionRequestEvent& request) {
+    Xlib& x = xlib();
+    XEvent reply{};
+    reply.xselection.type = SelectionNotify;
+    reply.xselection.display = request.display;
+    reply.xselection.requestor = request.requestor;
+    reply.xselection.selection = request.selection;
+    reply.xselection.target = request.target;
+    reply.xselection.time = request.time;
+    reply.xselection.property = None;  // refused, unless the target is one we have
+
+    // A requestor that sets no property is using the obsolete protocol;
+    // ICCCM says to answer on the target atom instead.
+    const Atom property = request.property != None ? request.property : request.target;
+
+    if (request.target == g_atom_targets) {
+        const Atom offered[] = {g_atom_targets, g_atom_utf8, XA_STRING};
+        x.ChangeProperty(g_display, request.requestor, property, XA_ATOM, 32, PropModeReplace,
+                         reinterpret_cast<const unsigned char*>(offered),
+                         static_cast<int>(sizeof(offered) / sizeof(offered[0])));
+        reply.xselection.property = property;
+    } else if (request.target == g_atom_utf8 || request.target == XA_STRING) {
+        x.ChangeProperty(g_display, request.requestor, property, request.target, 8,
+                         PropModeReplace,
+                         reinterpret_cast<const unsigned char*>(g_clipboard_owned.data()),
+                         static_cast<int>(g_clipboard_owned.size()));
+        reply.xselection.property = property;
+    }
+    if (x.SendEvent != nullptr) {
+        x.SendEvent(g_display, request.requestor, False, 0, &reply);
+    }
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
+// The answer to a paste Stud asked for has landed on our own window.
+void read_selection_reply(const XSelectionEvent& notify) {
+    g_clipboard_reply_pending = false;
+    g_clipboard_received.clear();
+    Xlib& x = xlib();
+    if (notify.property == None || x.GetWindowProperty == nullptr) return;
+    Atom actual_type = 0;
+    int actual_format = 0;
+    unsigned long count = 0;
+    unsigned long remaining = 0;
+    unsigned char* data = nullptr;
+    // Read it whole: a clipboard large enough to need INCR is a
+    // clipboard no text box here is going to receive.
+    if (x.GetWindowProperty(g_display, g_window, notify.property, 0, 1 << 20, True, AnyPropertyType,
+                            &actual_type, &actual_format, &count, &remaining, &data) == Success &&
+        data != nullptr) {
+        if (actual_format == 8) {
+            g_clipboard_received.assign(reinterpret_cast<const char*>(data), count);
+        }
+        if (x.Free != nullptr) x.Free(data);
+    }
+}
 
 void push(stud::android_glue::HostInputEvent ev) {
     ev.surface_width = static_cast<uint32_t>(g_width.load());
@@ -481,6 +615,17 @@ void pump() {
             case KeyRelease:
                 on_key(event.xkey.keycode, false);
                 break;
+            case SelectionRequest:
+                answer_selection_request(event.xselectionrequest);
+                break;
+            case SelectionNotify:
+                read_selection_reply(event.xselection);
+                break;
+            case SelectionClear:
+                // Another application took the clipboard; Stud is no
+                // longer the owner and must stop answering for it.
+                g_clipboard_owned.clear();
+                break;
             case MapNotify:
                 if (!g_visible.exchange(true)) {
                     std::printf("stud: android-glue: window visible again\n");
@@ -508,6 +653,193 @@ void pump() {
                 break;
         }
     }
+}
+
+namespace {
+// The text overlay's own window.
+//
+// The drawing is shared with the Wayland path; what differs is where the
+// pixels go. Two things about X11 decide the shape of this:
+//
+//  - Alpha needs a 32-bit TrueColor visual with its own colormap. That
+//    part is standard.
+//  - A compositing manager only blends TOP-LEVEL windows. A child window
+//    with an ARGB visual is simply drawn into its parent with the alpha
+//    ignored, which is a black box behind the text -- exactly what this
+//    first did. So the overlay is an override-redirect top-level,
+//    positioned in root coordinates over the game window, which is what
+//    every tooltip and IME candidate window on X11 already is.
+//
+// Without a compositor running the server ignores the alpha and the box
+// is opaque. That is a degradation rather than a failure, and is why
+// this does not refuse to run without one.
+Window g_overlay_window = 0;
+GC g_overlay_gc = nullptr;
+XImage* g_overlay_image = nullptr;
+int g_overlay_w = 0;
+int g_overlay_h = 0;
+Visual* g_overlay_visual = nullptr;
+int g_overlay_depth = 0;
+
+bool ensure_overlay_window() {
+    if (g_overlay_window != 0) return true;
+    Xlib& x = xlib();
+    if (x.CreateWindow == nullptr || x.CreateGC == nullptr || x.MatchVisualInfo == nullptr ||
+        x.CreateColormap == nullptr) {
+        return false;
+    }
+    const int screen = DefaultScreen(g_display);
+    XVisualInfo vi{};
+    if (x.MatchVisualInfo(g_display, screen, 32, TrueColor, &vi) == 0) {
+        // No ARGB visual: fall back to the parent's, which means an
+        // opaque text box rather than none at all.
+        vi.visual = DefaultVisual(g_display, screen);
+        vi.depth = DefaultDepth(g_display, screen);
+    }
+    g_overlay_visual = vi.visual;
+    g_overlay_depth = vi.depth;
+
+    const Window root = RootWindow(g_display, screen);
+    XSetWindowAttributes attributes{};
+    attributes.colormap = x.CreateColormap(g_display, root, vi.visual, AllocNone);
+    attributes.border_pixel = 0;
+    attributes.background_pixel = 0;
+    // Override-redirect: no window manager decoration, no focus stealing,
+    // no placement of its own -- it goes exactly where it is put, which
+    // is over the text box.
+    attributes.override_redirect = True;
+    // No input: a click inside the text box belongs to the engine
+    // underneath, which is what decides where the caret goes.
+    attributes.event_mask = 0;
+    g_overlay_window = x.CreateWindow(g_display, root, 0, 0, 1, 1, 0, vi.depth, InputOutput,
+                                      vi.visual,
+                                      CWColormap | CWBorderPixel | CWBackPixel | CWEventMask |
+                                          CWOverrideRedirect,
+                                      &attributes);
+    if (g_overlay_window == 0) return false;
+    if (g_blank_cursor != 0 && x.DefineCursor != nullptr) {
+        x.DefineCursor(g_display, g_overlay_window, g_blank_cursor);
+    }
+    // Input-transparent: an override-redirect window would otherwise
+    // swallow every click landing on the text box, and clicking a text
+    // box is how the caret is placed. An empty INPUT shape makes the
+    // server treat the window as not being there for pointer purposes
+    // while still drawing it. XShape lives in libXext, loaded the same
+    // optional way as everything else here -- without it the overlay
+    // still draws, it just eats clicks, so this is not fatal.
+    if (void* xext = ::dlopen("libXext.so.6", RTLD_NOW | RTLD_LOCAL); xext != nullptr) {
+        using CombineRectanglesFn = void (*)(Display*, Window, int, int, int, XRectangle*, int,
+                                             int, int);
+        auto combine =
+            reinterpret_cast<CombineRectanglesFn>(::dlsym(xext, "XShapeCombineRectangles"));
+        if (combine != nullptr) {
+            // ShapeInput is 2 and ShapeSet is 0; named here rather than
+            // pulling in <X11/extensions/shape.h> for two constants.
+            constexpr int kShapeInput = 2;
+            constexpr int kShapeSet = 0;
+            combine(g_display, g_overlay_window, kShapeInput, 0, 0, nullptr, 0, kShapeSet,
+                    Unsorted);
+        }
+    }
+    XGCValues values{};
+    g_overlay_gc = x.CreateGC(g_display, g_overlay_window, 0, &values);
+    return g_overlay_gc != nullptr;
+}
+
+}  // namespace
+
+void present_text_overlay(const void* argb, int width, int height, int x_pos, int y_pos) {
+    if (g_display == nullptr || g_window == 0 || argb == nullptr || width <= 0 || height <= 0) {
+        return;
+    }
+    Xlib& x = xlib();
+    if (!ensure_overlay_window()) return;
+    if (x.CreateImage == nullptr || x.PutImage == nullptr) return;
+
+    if (g_overlay_image == nullptr || g_overlay_w != width || g_overlay_h != height) {
+        if (g_overlay_image != nullptr) {
+            // Created with XCreateImage over a buffer this code does not
+            // own, so only the header is freed -- XDestroyImage would
+            // free the caller's pixels too.
+            if (x.Free != nullptr) x.Free(g_overlay_image);
+            g_overlay_image = nullptr;
+        }
+        g_overlay_image =
+            x.CreateImage(g_display, g_overlay_visual, static_cast<unsigned int>(g_overlay_depth),
+                          ZPixmap, 0, const_cast<char*>(static_cast<const char*>(argb)),
+                          static_cast<unsigned int>(width), static_cast<unsigned int>(height), 32,
+                          0);
+        if (g_overlay_image == nullptr) return;
+        g_overlay_w = width;
+        g_overlay_h = height;
+    }
+    g_overlay_image->data = const_cast<char*>(static_cast<const char*>(argb));
+
+    // A top-level window is placed in ROOT coordinates, so where the box
+    // is inside the game window has to be translated first -- and again
+    // on every update, because the game window can be moved or resized
+    // under it.
+    int root_x = x_pos;
+    int root_y = y_pos;
+    if (x.TranslateCoordinates != nullptr) {
+        Window child = 0;
+        x.TranslateCoordinates(g_display, g_window, RootWindow(g_display, DefaultScreen(g_display)),
+                               x_pos, y_pos, &root_x, &root_y, &child);
+    }
+    if (x.MoveResizeWindow != nullptr) {
+        x.MoveResizeWindow(g_display, g_overlay_window, root_x, root_y,
+                           static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+    }
+    x.MapWindow(g_display, g_overlay_window);
+    if (x.RaiseWindow != nullptr) x.RaiseWindow(g_display, g_overlay_window);
+    x.PutImage(g_display, g_overlay_window, g_overlay_gc, g_overlay_image, 0, 0, 0, 0,
+               static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
+void hide_text_overlay() {
+    if (g_display == nullptr || g_overlay_window == 0) return;
+    Xlib& x = xlib();
+    if (x.UnmapWindow != nullptr) x.UnmapWindow(g_display, g_overlay_window);
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
+
+void clipboard_set(const std::string& text) {
+    if (g_display == nullptr || g_window == 0) return;
+    Xlib& x = xlib();
+    if (x.SetSelectionOwner == nullptr) return;
+    intern_clipboard_atoms();
+    g_clipboard_owned = text;
+    x.SetSelectionOwner(g_display, g_atom_clipboard, g_window, CurrentTime);
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
+std::string clipboard_get() {
+    if (g_display == nullptr || g_window == 0) return {};
+    Xlib& x = xlib();
+    if (x.ConvertSelection == nullptr || x.GetSelectionOwner == nullptr) return {};
+    intern_clipboard_atoms();
+    // Stud's own copy needs no round trip, and asking oneself through
+    // the server would deadlock this thread against its own pump.
+    if (x.GetSelectionOwner(g_display, g_atom_clipboard) == g_window) return g_clipboard_owned;
+
+    g_clipboard_received.clear();
+    g_clipboard_reply_pending = true;
+    x.ConvertSelection(g_display, g_atom_clipboard, g_atom_utf8, g_atom_stud_selection, g_window,
+                       CurrentTime);
+    if (x.Flush != nullptr) x.Flush(g_display);
+    // The reply arrives as an event, so this has to pump for it. Bounded
+    // rather than blocking: an owner that never answers is a real case
+    // (a dead application still holding the selection), and an empty
+    // paste is better than a frozen window.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    while (g_clipboard_reply_pending && std::chrono::steady_clock::now() < deadline) {
+        pump();
+        if (g_clipboard_reply_pending) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    g_clipboard_reply_pending = false;
+    return g_clipboard_received;
 }
 
 bool close_requested() { return g_close_requested.load(); }

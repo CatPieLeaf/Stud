@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // Stud's X11 window, for sessions with no Wayland compositor.
 //
@@ -51,6 +52,18 @@ int connection_fd();
 // coming. Reports relative motion instead of positions while held, the
 // same as the Wayland path.
 void set_pointer_locked(bool locked);
+
+// The system clipboard, X11's way: a selection is owned by a window, and
+// the owner hands the bytes over on request. Both calls are no-ops (and
+// an empty string) when this backend is not the active one.
+void clipboard_set(const std::string& text);
+std::string clipboard_get();
+
+// The text overlay's presentation half. The drawing is shared with the
+// Wayland path (text_overlay.cpp); only the surface differs, and on X11
+// that is an ARGB child window blitted with XPutImage.
+void present_text_overlay(const void* argb, int width, int height, int x, int y);
+void hide_text_overlay();
 
 int32_t width();
 int32_t height();
