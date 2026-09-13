@@ -28,4 +28,28 @@ struct GpuInfo {
 // honest-degradation pattern.
 std::vector<GpuInfo> enumerate_gpus();
 
+// Which compressed texture formats a device can sample natively.
+//
+// This is the question that decides how much CPU a session spends on
+// textures. Roblox ships its Android content in ETC2/EAC (and PVRTC for
+// older hardware), which no desktop GPU can sample -- so Stud decodes
+// those blocks on the CPU and re-encodes them to a BC format the device
+// does support. Whether BC7 is available decides the quality of that
+// re-encode; whether BC is available at all decides whether textures are
+// stored compressed or uncompressed.
+struct TextureFormatSupport {
+    bool queried = false;   // false when no device could be opened at all
+    bool etc2 = false;      // what the APK actually ships
+    bool eac = false;
+    bool astc_ldr = false;
+    bool pvrtc = false;
+    bool bc1 = false;       // the transcode targets
+    bool bc3 = false;
+    bool bc4_bc5 = false;
+    bool bc7 = false;
+};
+
+// Asks one device, by the same index enumerate_gpus() reports.
+TextureFormatSupport query_texture_formats(uint32_t device_index);
+
 }  // namespace stud::ui
