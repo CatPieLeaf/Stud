@@ -71,6 +71,8 @@
  - Smooth zoom in/out just like Windows client
  - Your login lives in the system keyring — never in Stud's config, cache or logs
  - `roblox://` links from a browser open straight into the experience
+ - In-app web panels — Messages, account pages, login challenges — and private servers joined from the server list
+ - Copy Link in an experience puts the real invite link on your clipboard
  - Discord Rich Presence, with a join button
  - Tells you which country the game server is in when you join
  - MangoHud overlay toggle, HiDPI and UI scaling, GPU picker, system tray
@@ -116,7 +118,7 @@ Three processes, talking over a Unix socket:
 |---|---|---|
 | `stud-ui` | glibc, Qt6 | settings, deep links, starting the other two — then gets out of the way |
 | `stud-runtime-bionic` | real bionic, inside `bwrap` | the engine, the JNI bridge, the Android framework stand-in |
-| `stud-render-host` | glibc | Wayland, ANGLE, the real Vulkan surface, audio |
+| `stud-render-host` | glibc | Wayland or X11, ANGLE, the real Vulkan surface, audio |
 
 Every GL and Vulkan call the engine makes is forwarded from the bionic process to the render host over that socket. It is the only place the two worlds meet, and it is Stud's own code on both sides.
 
@@ -132,13 +134,13 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 
 ### 1 - Install the system packages
 
-Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, EGL/GLESv2 headers, the Vulkan loader and headers, PortAudio, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler.
+Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, EGL/GLESv2 headers, the Vulkan loader and headers, PortAudio, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
 
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-devel \
   qtkeychain-qt6-devel wayland-devel wayland-protocols-devel libxkbcommon-devel \
   libglvnd-devel vulkan-loader-devel vulkan-headers freetype-devel \
-  portaudio-devel openssl-devel bubblewrap
+  portaudio-devel openssl-devel bubblewrap wl-clipboard
 ```
 
 <details>
@@ -148,7 +150,7 @@ sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-deve
 sudo apt install cmake ninja-build build-essential qt6-base-dev qt6-webengine-dev \
   qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
   libxkbcommon-dev libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev \
-  portaudio19-dev libssl-dev bubblewrap
+  portaudio19-dev libssl-dev bubblewrap wl-clipboard
 ```
 </details>
 
