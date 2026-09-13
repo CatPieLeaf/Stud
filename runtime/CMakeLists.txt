@@ -304,7 +304,7 @@ add_library(stud_runtime_ipc STATIC
 target_include_directories(stud_runtime_ipc PUBLIC "${STUD_IPC_SRC}/include")
 target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 
-add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp
+add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp
                                     src/pthread_create_interpose.cpp
                                     src/android_log_interpose.cpp src/pthread_tls_interpose.cpp)
 target_include_directories(stud-runtime-bionic PRIVATE
