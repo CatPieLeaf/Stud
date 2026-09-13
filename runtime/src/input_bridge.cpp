@@ -1,5 +1,8 @@
 #include "stud/input_bridge.h"
 
+#include "stud/haptics_bridge.h"
+
+#include <functional>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -810,6 +813,14 @@ float to_density_independent(float pixels) {
     return density > 0.0f ? pixels / density : pixels;
 }
 
+// Told when a pad appears or goes away, so the haptics bridge can
+// answer the engine truthfully. Set by start_input_bridge(), which is
+// the only place that has the Jvm and the library to hand.
+std::function<void(int device_id, bool can_rumble)>& gamepad_presence_hook() {
+    static std::function<void(int, bool)> hook;
+    return hook;
+}
+
 void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, JNIEnv* jni_env,
                     float& last_x, float& last_y) {
     using Ev = stud::android_glue::HostInputEvent;
@@ -1573,6 +1584,11 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             std::printf("stud: gamepad %d connected to the engine (type %d)\n",
                         static_cast<int>(device_id), static_cast<int>(type));
             std::fflush(stdout);
+            // v1 of the connect event says whether this pad has force
+            // feedback -- see render-host/src/gamepad.cpp.
+            if (gamepad_presence_hook()) {
+                gamepad_presence_hook()(static_cast<int>(device_id), ev.y != 0.0f);
+            }
             return;
         }
         // What the pad can do, announced BEFORE it is said to have
@@ -1619,6 +1635,9 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             return;
         }
         case Ev::kGamepadDisconnect: {
+            if (gamepad_presence_hook()) {
+                gamepad_presence_hook()(static_cast<int>(ev.b), false);
+            }
             if (fns.gamepad_disconnect == nullptr) return;
             call_trapping_abort(fns.gamepad_disconnect, jni_env, nullptr,
                                 static_cast<jint>(ev.b));
@@ -1714,6 +1733,31 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
     g_jvm = &jvm;
     g_agdk.activity = std::move(activity);
     g_agdk.handle = static_cast<jlong>(activity_handle);
+
+    // Controller rumble. Registered here rather than at bring-up because
+    // this is where a pad's arrival and departure are already known, and
+    // the engine has to be told the truth at both moments -- a pad
+    // plugged in while Stud is running is the ordinary case, and one
+    // that was never there must not be advertised.
+    {
+        auto* jvm_ptr = &jvm;
+        const auto* lib_ptr = &lib;
+        stud::jni_bridge::run_haptics_bridge(
+            jvm, lib, [](int device_id, float strong, float weak, int duration_ms) {
+                if (!stud::render_client::connection().connected()) return false;
+                const uint64_t a[8] = {static_cast<uint64_t>(device_id),
+                                       static_cast<uint64_t>(strong * 1000.0f),
+                                       static_cast<uint64_t>(weak * 1000.0f),
+                                       static_cast<uint64_t>(duration_ms),
+                                       0, 0, 0, 0};
+                return stud::render_client::connection().call(
+                           stud::render_host::CallId::SetGamepadRumble, a, nullptr, 0, nullptr, 0,
+                           nullptr) != 0;
+            });
+        gamepad_presence_hook() = [jvm_ptr, lib_ptr](int device_id, bool can_rumble) {
+            stud::jni_bridge::set_haptics_device(*jvm_ptr, *lib_ptr, device_id, can_rumble);
+        };
+    }
 
     if (fns.mouse_move == nullptr && fns.mouse_button == nullptr && fns.key_event == nullptr) {
         std::fprintf(stderr,

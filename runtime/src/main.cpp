@@ -79,6 +79,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -232,6 +233,65 @@ std::optional<RealRenderContext> create_real_render_context(ANativeWindow* windo
 }
 
 }  // namespace
+
+
+// The engine's own renderer preference, as the real flags that decide it.
+//
+// All four names are present in this build (checked with `strings`), and
+// they are what every other launcher uses for the same purpose. Stud
+// sends them through ClientSettings rather than the preload path,
+// because that is the channel the engine genuinely applies -- the same
+// reasoning as the hand-edited overrides below.
+//
+// This does NOT weaken flag_overrides.h's locked decision. That rule is
+// about the user's own FFlag file staying hand-edited and never
+// generated from a toggle: these are Stud's own defaults for a setting
+// that has no other way to be honoured, and the user's file is merged
+// AFTER them, so anything they set by hand still wins.
+
+// ClientSettings names a flag with its TYPE PREFIX -- a real response
+// from clientsettingscdn spells them `FFlagX`, `DFFlagX`, `FIntX`,
+// `DFIntX`, `FStringX`, `FLogX`, ... (checked against a live response:
+// 22392 keys, every one prefixed). The engine's own getter takes the
+// BARE name, which is why Stud's override file uses bare names -- but
+// the merge wrote those bare names straight into applicationSettings,
+// where nothing ever looked for them. That is why every flag merged
+// this way has read back as unchanged.
+//
+// A name the user already prefixed is left alone; otherwise the prefix
+// is taken from the value's type, which is the same rule the published
+// flag lists follow.
+std::string client_settings_key(const std::string& name, const std::string& value) {
+    static const char* const kPrefixes[] = {"DFFlag", "FFlag",  "DFInt", "FInt",
+                                            "DFString", "FString", "DFLog", "FLog", "SFFlag"};
+    for (const char* prefix : kPrefixes) {
+        if (name.rfind(prefix, 0) == 0) return name;
+    }
+    // Everything crosses the wire as a string, so the type is read off
+    // the value the same way the engine's own settings parser has to.
+    if (value == "True" || value == "False") return "FFlag" + name;
+    const bool numeric = !value.empty() &&
+                         value.find_first_not_of("-0123456789") == std::string::npos;
+    if (numeric) return "FInt" + name;
+    return "FString" + name;
+}
+
+std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
+    if (mode == "opengl") {
+        return {{"DebugGraphicsPreferOpenGL", true},
+                {"DebugGraphicsPreferVulkan", false},
+                {"DebugGraphicsDisableVulkan", true},
+                {"DebugGraphicsDisableOpenGL", false}};
+    }
+    if (mode == "vulkan") {
+        return {{"DebugGraphicsPreferVulkan", true},
+                {"DebugGraphicsPreferOpenGL", false},
+                {"DebugGraphicsDisableVulkan", false},
+                {"DebugGraphicsDisableOpenGL", false}};
+    }
+    return {};  // nothing asked for: leave the engine's own default alone
+}
+
 
 int main(int argc, char** argv) {
     // Before anything else prints: the session log Process A named, so
@@ -393,6 +453,12 @@ int main(int argc, char** argv) {
     // the cost of the engine's full render path. See where the scale is
     // decided, below, for what that costs and why it is off by default.
     const bool follow_dpi = find_named_arg(argc, argv, "--follow-dpi") == "on";
+    // Which renderer the ENGINE should pick, which is a different
+    // question from which backend render-host hands it. Settings' own
+    // "Render path" used to answer only the second half: the engine
+    // still chose Vulkan on its own, so picking OpenGL changed nothing
+    // it actually did. See renderer_flags_for_mode() below.
+    const std::string graphics_mode = find_named_arg(argc, argv, "--graphics-mode");
     const bool smooth_zoom_setting = find_named_arg(argc, argv, "--smooth-zoom") != "off";
     stud::jni_bridge::set_smooth_zoom_enabled(smooth_zoom_setting);
     std::printf("stud: smooth zoom %s\n", smooth_zoom_setting ? "on" : "off (per-notch, as Sober)");
@@ -1216,11 +1282,24 @@ int main(int argc, char** argv) {
         // only how they reach the engine changes.
         std::string client_settings_body = launch_payload->client_settings_body;
 
-        if (overrides.size() > 0 && !client_settings_body.empty()) {
+        const std::map<std::string, bool> renderer_flags =
+            renderer_flags_for_mode(graphics_mode);
+        if ((overrides.size() > 0 || !renderer_flags.empty()) && !client_settings_body.empty()) {
             try {
                 auto doc = nlohmann::json::parse(client_settings_body);
                 auto& app = doc["applicationSettings"];
                 if (!app.is_object()) app = nlohmann::json::object();
+                // Stud's own renderer choice first, so a hand-edited
+                // override of the same flag below replaces it.
+                for (const auto& [name, value] : renderer_flags) {
+                    const std::string text = value ? "True" : "False";
+                    app[client_settings_key(name, text)] = text;
+                }
+                if (!renderer_flags.empty()) {
+                    std::printf("stud: render path \"%s\": asked the engine for %zu renderer "
+                                "flag(s)\n",
+                                graphics_mode.c_str(), renderer_flags.size());
+                }
                 auto wire = nlohmann::json::parse(overrides.to_wire_format());
                 size_t merged = 0;
                 for (auto it = wire.begin(); it != wire.end(); ++it) {
@@ -1230,13 +1309,10 @@ int main(int argc, char** argv) {
                     // exactly "True"/"False". Stud used to write "true"/
                     // "false", which is a different string to any parser
                     // that compares them literally.
-                    if (it.value().is_boolean()) {
-                        app[it.key()] = it.value().get<bool>() ? "True" : "False";
-                    } else if (it.value().is_string()) {
-                        app[it.key()] = it.value().get<std::string>();
-                    } else {
-                        app[it.key()] = it.value().dump();
-                    }
+                    const std::string text = it.value().is_string()
+                                                 ? it.value().get<std::string>()
+                                                 : it.value().dump();
+                    app[client_settings_key(it.key(), text)] = text;
                     ++merged;
                 }
                 client_settings_body = doc.dump();

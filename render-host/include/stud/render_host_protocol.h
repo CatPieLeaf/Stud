@@ -573,6 +573,13 @@ enum class CallId : uint32_t {
     // OTP, with the app already signed in behind it. Appended last: every
     // existing id keeps its value.
     CloseWebView,
+    // Rumble one pad. a[0] is the device id, a[1]/a[2] the heavy and
+    // light magnitudes in 1/1000ths (the header carries ints, and a
+    // float would not survive it), a[3] the duration in milliseconds
+    // (0 = until told otherwise). Both magnitudes zero stops it.
+    // Returns 1 when that pad actually rumbled. Appended last: every
+    // existing id keeps its value.
+    SetGamepadRumble,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -806,9 +813,10 @@ inline const char* call_id_name(CallId id) {
         "EndSession",
         "PollWebViewMessage",
         "CloseWebView",
+        "SetGamepadRumble",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::CloseWebView) + 1,
+                      static_cast<size_t>(CallId::SetGamepadRumble) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

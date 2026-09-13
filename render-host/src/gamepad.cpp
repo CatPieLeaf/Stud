@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -149,6 +150,11 @@ struct Device {
     // Whether each trigger is currently held, for the synthesised
     // BUTTON_L2/BUTTON_R2 presses -- see flush_axes().
     bool trigger_held[2] = {false, false};
+    // Force feedback: the id the kernel gave the uploaded rumble effect,
+    // -1 when this pad has none or the fd is read-only.
+    int rumble_effect = -1;
+    bool can_rumble = false;
+    int death_errno = 0;
 };
 
 std::map<std::string, Device>& devices() {
@@ -201,23 +207,27 @@ float normalise(const Axis& axis, uint16_t code, int32_t raw) {
     return ((static_cast<float>(raw) - minimum) / (maximum - minimum)) * 2.0f - 1.0f;
 }
 
-bool g_permission_reported = false;
+int g_unreadable_nodes = 0;
 
 void open_device(const std::string& path, std::vector<Event>& out) {
-    const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    // Read-write first: rumble is an ioctl plus a write on the SAME fd,
+    // so a read-only open silently costs force feedback. Falls back to
+    // read-only rather than giving up, since input matters more.
+    int fd = ::open(path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    bool writable = fd >= 0;
+    if (fd < 0) {
+        fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        writable = false;
+    }
     if (fd < 0) {
         // Not being allowed to read input devices is the ordinary case on
         // a distribution that does not put desktop users in the `input`
         // group. Said once, with the fix, rather than per device per scan.
-        if (errno == EACCES && !g_permission_reported) {
-            g_permission_reported = true;
-            std::fprintf(stderr,
-                          "stud-render-host: cannot read %s -- no permission. Controllers will "
-                          "not work until this user can read /dev/input (usually: add them to "
-                          "the `input` group, then log out and back in).\n",
-                          path.c_str());
-            std::fflush(stderr);
-        }
+        // Most /dev/input nodes are unreadable to an ordinary user by
+        // design, so this is not news on its own -- it is only worth
+        // saying if no controller turned up at all. Counted here,
+        // reported (once) by init().
+        if (errno == EACCES) ++g_unreadable_nodes;
         return;
     }
     if (!looks_like_a_gamepad(fd)) {
@@ -232,6 +242,14 @@ void open_device(const std::string& path, std::vector<Event>& out) {
     if (::ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name) >= 0) device.name = name;
     device.type = gamepad_type_for_name(device.name);
 
+    // Force feedback, if the pad has it and the fd can be written to.
+    if (writable) {
+        unsigned long ff[(FF_MAX / (8 * sizeof(unsigned long))) + 1]{};
+        if (::ioctl(fd, EVIOCGBIT(EV_FF, sizeof(ff)), ff) >= 0 && bit_set(ff, FF_RUMBLE)) {
+            device.can_rumble = true;
+        }
+    }
+
     for (uint16_t code : {ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ, ABS_HAT0X, ABS_HAT0Y}) {
         input_absinfo info{};
         if (::ioctl(fd, EVIOCGABS(code), &info) < 0) continue;
@@ -241,9 +259,9 @@ void open_device(const std::string& path, std::vector<Event>& out) {
         if (slot >= 0) device.slot[slot] = normalise(device.axes[code], code, info.value);
     }
 
-    std::printf("stud-render-host: gamepad connected: %s (id %d, type %d, %zu axes)\n",
+    std::printf("stud-render-host: gamepad connected: %s (id %d, type %d, %zu axes, rumble %s)\n",
                 device.name.empty() ? "unnamed" : device.name.c_str(), device.id, device.type,
-                device.axes.size());
+                device.axes.size(), device.can_rumble ? "yes" : "no");
     std::fflush(stdout);
 
     // What this pad really has, before it is announced -- the same order
@@ -293,8 +311,10 @@ void open_device(const std::string& path, std::vector<Event>& out) {
                             present ? 1.0f : 0.0f, static_cast<float>(device.type)});
     }
 
-    out.push_back(
-        Event{Event::kConnect, device.id, 0, static_cast<float>(device.type)});
+    // v1 carries whether this pad can rumble, so Process B can answer
+    // the engine's haptics question without another round trip.
+    out.push_back(Event{Event::kConnect, device.id, 0, static_cast<float>(device.type),
+                        device.can_rumble ? 1.0f : 0.0f});
     devices()[path] = std::move(device);
 }
 
@@ -395,7 +415,10 @@ void read_device(Device& device, std::vector<Event>& out, bool& died) {
         const ssize_t n = ::read(device.fd, events, sizeof(events));
         if (n <= 0) {
             // ENODEV is the pad being unplugged mid-read.
-            if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) died = true;
+            if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                died = true;
+                device.death_errno = errno;
+            }
             // Anything read but not yet reported still has to go out --
             // a batch can end on a report boundary the loop never sees.
             flush_axes(device, out);
@@ -458,10 +481,67 @@ std::vector<Event>& pending() {
 
 void init() {
     scan(pending());
-    if (devices().empty() && !g_permission_reported) {
+    if (!devices().empty()) return;
+    if (g_unreadable_nodes > 0) {
+        std::printf("stud-render-host: no game controllers found (%d input device(s) could not "
+                    "be read -- if a controller is connected, this user needs read access to "
+                    "/dev/input, usually via the `input` group)\n",
+                    g_unreadable_nodes);
+    } else {
         std::printf("stud-render-host: no game controllers found\n");
-        std::fflush(stdout);
     }
+    std::fflush(stdout);
+}
+
+// Plays a rumble on one pad, or stops it when both magnitudes are zero.
+//
+// The kernel's own rumble effect takes two magnitudes -- the heavy and
+// light motors a real pad has -- so an effect is uploaded once per pad
+// and re-uploaded (same id) whenever the strength changes, which is what
+// the API is for. Playing it is an ordinary write of an EV_FF event.
+bool set_rumble(int device_id, float strong, float weak, int duration_ms) {
+    Device* found = nullptr;
+    for (auto& [path, candidate] : devices()) {
+        (void)path;
+        if (candidate.id == device_id) found = &candidate;
+    }
+    if (found == nullptr) return false;
+    Device& device = *found;
+    if (!device.can_rumble) return false;
+    const auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    strong = clamp01(strong);
+    weak = clamp01(weak);
+
+    if (strong <= 0.0f && weak <= 0.0f) {
+        if (device.rumble_effect >= 0) {
+            input_event stop{};
+            stop.type = EV_FF;
+            stop.code = static_cast<uint16_t>(device.rumble_effect);
+            stop.value = 0;
+            (void)::write(device.fd, &stop, sizeof(stop));
+        }
+        return true;
+    }
+
+    ff_effect effect{};
+    effect.type = FF_RUMBLE;
+    effect.id = static_cast<int16_t>(device.rumble_effect);  // -1 uploads a new one
+    effect.replay.length = static_cast<uint16_t>(duration_ms > 0 ? duration_ms : 0);
+    effect.u.rumble.strong_magnitude = static_cast<uint16_t>(strong * 65535.0f);
+    effect.u.rumble.weak_magnitude = static_cast<uint16_t>(weak * 65535.0f);
+    if (::ioctl(device.fd, EVIOCSFF, &effect) < 0) {
+        // A re-upload can fail if the pad went away between calls; drop
+        // the id so the next attempt uploads a fresh effect.
+        device.rumble_effect = -1;
+        return false;
+    }
+    device.rumble_effect = effect.id;
+
+    input_event play{};
+    play.type = EV_FF;
+    play.code = static_cast<uint16_t>(effect.id);
+    play.value = 1;
+    return ::write(device.fd, &play, sizeof(play)) == sizeof(play);
 }
 
 void poll(std::vector<Event>& out) {
@@ -482,9 +562,9 @@ void poll(std::vector<Event>& out) {
         bool died = false;
         read_device(it->second, out, died);
         if (died) {
-            std::printf("stud-render-host: gamepad disconnected: %s (id %d)\n",
+            std::printf("stud-render-host: gamepad disconnected: %s (id %d, %s)\n",
                         it->second.name.empty() ? "unnamed" : it->second.name.c_str(),
-                        it->second.id);
+                        it->second.id, std::strerror(it->second.death_errno));
             std::fflush(stdout);
             out.push_back(Event{Event::kDisconnect, it->second.id, 0, 0.0f});
             ::close(it->second.fd);
@@ -493,6 +573,14 @@ void poll(std::vector<Event>& out) {
             ++it;
         }
     }
+}
+
+bool any_rumble_capable() {
+    for (const auto& [path, device] : devices()) {
+        (void)path;
+        if (device.can_rumble) return true;
+    }
+    return false;
 }
 
 int device_count() { return static_cast<int>(devices().size()); }

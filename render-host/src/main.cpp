@@ -2339,6 +2339,14 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             close_open_web_views();
             return 1;
         }
+        case CallId::SetGamepadRumble: {
+            // Magnitudes arrive in 1/1000ths: the header carries ints.
+            return stud::render_host::gamepad::set_rumble(
+                       static_cast<int>(a[0]), static_cast<float>(a[1]) / 1000.0f,
+                       static_cast<float>(a[2]) / 1000.0f, static_cast<int>(a[3]))
+                       ? 1
+                       : 0;
+        }
         case CallId::PollWebViewClosed: {
             uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
             return pending;

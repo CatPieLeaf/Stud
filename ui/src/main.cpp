@@ -720,12 +720,14 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Vulkan mode -- so comparing the two is a routine part of chasing a
     // rendering bug, and editing Settings between every run is a way to
     // leave the wrong value saved.
+    QString graphics_mode_arg;
     {
         const QString forced = qEnvironmentVariable("STUD_GRAPHICS_MODE");
         const bool vulkan = forced.isEmpty()
                                 ? settings.graphics_mode == stud::config::GraphicsMode::kVulkan
                                 : forced != QStringLiteral("opengl");
-        render_host_args << "--graphics-mode" << (vulkan ? "vulkan" : "opengl");
+        graphics_mode_arg = vulkan ? QStringLiteral("vulkan") : QStringLiteral("opengl");
+        render_host_args << "--graphics-mode" << graphics_mode_arg;
     }
     // Real HiDPI selection. Process C owns the window, so it is the only
     // process that can honour the compositor's scale -- this toggle had
@@ -943,6 +945,12 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // halves: following the display only means anything while the buffer
     // is being scaled, because with HiDPI off the buffer is already the
     // window's logical size.
+    // The same choice, to the process that can actually make the ENGINE
+    // honour it. render-host only selects which backend it hands over;
+    // which renderer the engine picks is decided by its own flags, which
+    // Process B merges into ClientSettings.
+    config.args.push_back("--graphics-mode");
+    config.args.push_back(graphics_mode_arg.toStdString());
     config.args.push_back("--follow-dpi");
     config.args.push_back(settings.follow_dpi ? "on" : "off");
     config.args.push_back("--hidpi");
