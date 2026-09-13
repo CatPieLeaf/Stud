@@ -648,6 +648,14 @@ enum class CallId : uint32_t {
     // to the display server this process is connected to. Appended last:
     // every existing id keeps its value.
     CopyToClipboard,
+    // Keep the pointer inside the window for the duration of a camera
+    // drag, a[0] != 0 to confine. Not a lock: the pointer keeps its real
+    // position and its ordinary motion, so the engine's cursor is driven
+    // exactly as it is when nothing is constrained -- it simply cannot
+    // leave the window, and relative motion keeps arriving at the
+    // boundary so a spin does not stop there. Appended last: every
+    // existing id keeps its value.
+    SetPointerConfined,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -896,9 +904,10 @@ inline const char* call_id_name(CallId id) {
         "PollWebViewNavigation",
         "WebViewLoadUrl",
         "CopyToClipboard",
+        "SetPointerConfined",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::CopyToClipboard) + 1,
+                      static_cast<size_t>(CallId::SetPointerConfined) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

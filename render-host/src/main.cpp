@@ -2586,6 +2586,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             }
             return 1;
         }
+        case CallId::SetPointerConfined:
+            stud::android_glue::native_window_set_pointer_confined(g_real_window, a[0] != 0);
+            return 0;
         case CallId::CopyToClipboard: {
             if (in.empty()) return 0;
             const std::string text(reinterpret_cast<const char*>(in.data()), in.size());

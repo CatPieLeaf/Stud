@@ -134,6 +134,11 @@ struct WaylandConnectionState {
     double pinch_scale = 1.0;
     zwp_relative_pointer_v1* relative_pointer = nullptr;
     zwp_locked_pointer_v1* locked_pointer = nullptr;
+    // The pointer kept inside the window for a camera drag. Unlike a
+    // lock, it keeps its real position and keeps producing ordinary
+    // motion -- it just cannot leave -- so the engine's cursor is driven
+    // by the pointer itself, exactly as when nothing is constrained.
+    zwp_confined_pointer_v1* confined_pointer = nullptr;
     zxdg_output_v1* xdg_output = nullptr;
     int32_t output_logical_w = 0;
     int32_t output_logical_h = 0;
@@ -455,6 +460,7 @@ std::atomic<uint32_t> g_last_input_serial{0};
 
 // Whether the pointer is currently locked in place for mouse look.
 std::atomic<bool> g_pointer_locked{false};
+std::atomic<bool> g_pointer_confined{false};
 
 void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_fixed_t sx,
                     wl_fixed_t sy) {
@@ -719,7 +725,11 @@ const wl_keyboard_listener kKeyboardListener = {
 // position it tracks itself, which is what Process B does with these.
 void relative_pointer_motion(void*, zwp_relative_pointer_v1*, uint32_t, uint32_t, wl_fixed_t dx,
                              wl_fixed_t dy, wl_fixed_t, wl_fixed_t) {
-    if (!g_pointer_locked.load()) return;
+    // Also while CONFINED, and that is the whole point of confining: at
+    // the boundary the pointer stops moving, so ordinary motion stops
+    // reporting anything, while the device carries on. These events are
+    // what keeps a camera turning past the edge of the window.
+    if (!g_pointer_locked.load() && !g_pointer_confined.load()) return;
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
     ev.x = scale_pointer_coord(wl_fixed_to_double(dx));
@@ -1733,6 +1743,40 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
             state.locked_pointer = nullptr;
         }
         g_pointer_locked.store(false);
+    }
+    if (state.display != nullptr) wl_display_flush(state.display);
+}
+
+void native_window_set_pointer_confined(ANativeWindow* window, bool confined) {
+    if (display_backend() == DisplayBackend::X11) {
+        // X11 confines with the grab it already takes for mouse look --
+        // XGrabPointer's confine_to is this same window.
+        x11::set_pointer_confined(confined);
+        g_pointer_confined.store(confined);
+        return;
+    }
+    auto& state = wayland_state();
+    if (confined == g_pointer_confined.load()) return;
+    if (confined) {
+        if (state.pointer_constraints == nullptr || state.pointer == nullptr || window == nullptr ||
+            window->surface == nullptr) {
+            return;
+        }
+        // No region: the whole surface. PERSISTENT, because a camera drag
+        // lasts as long as the button is held and a oneshot confinement
+        // ends itself the first time the pointer reaches the boundary --
+        // which is exactly when it is needed.
+        state.confined_pointer = zwp_pointer_constraints_v1_confine_pointer(
+            state.pointer_constraints, window->surface, state.pointer, nullptr,
+            ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+        if (state.confined_pointer == nullptr) return;
+        g_pointer_confined.store(true);
+    } else {
+        if (state.confined_pointer != nullptr) {
+            zwp_confined_pointer_v1_destroy(state.confined_pointer);
+            state.confined_pointer = nullptr;
+        }
+        g_pointer_confined.store(false);
     }
     if (state.display != nullptr) wl_display_flush(state.display);
 }
