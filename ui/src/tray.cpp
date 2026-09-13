@@ -36,19 +36,21 @@ namespace stud::ui {
 
 namespace {
 
-// Where render-host records the deep link for the server the player is
+// Where render-host records the link to the server the player is
 // currently in, so the tray can offer it without needing to speak the
-// render protocol. Written on every presence change and removed on the
+// render protocol. A real https link to that one server -- not an
+// invite: minting one of those needs the Lua SocialService inside an
+// experience (see ui/src/main.cpp's --game-info). Written on every presence change and removed on the
 // way back to the app shell, so its absence means "not in a game".
-QString invite_link_path() {
+QString server_link_path() {
     if (const char* xdg = std::getenv("XDG_RUNTIME_DIR")) {
         return QString::fromUtf8(xdg) + "/stud/invite";
     }
     return QStringLiteral("/tmp/stud/invite");
 }
 
-QString read_invite_link() {
-    QFile file(invite_link_path());
+QString read_server_link() {
+    QFile file(server_link_path());
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
     return QTextStream(&file).readAll().trimmed();
 }
@@ -94,7 +96,7 @@ bool Tray::show() {
 
     auto* menu = new QMenu();
     menu->addAction(QStringLiteral("Stud settings"), this, &Tray::openSettings);
-    menu->addAction(QStringLiteral("Copy server invite link"), this, &Tray::copyInviteLink);
+    menu->addAction(QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
     menu->addAction(QStringLiteral("Export logs"), this, &Tray::exportLogs);
     menu->addSeparator();
     menu->addAction(QStringLiteral("About Stud"), this, &Tray::showAbout);
@@ -128,8 +130,8 @@ void Tray::openSettings() {
     window->activateWindow();
 }
 
-void Tray::copyInviteLink() {
-    const QString link = read_invite_link();
+void Tray::copyServerLink() {
+    const QString link = read_server_link();
     if (link.isEmpty()) {
         icon_->showMessage(QStringLiteral("Stud"),
                             QStringLiteral("Not in a game, so there is no server to link to."),
@@ -137,7 +139,7 @@ void Tray::copyInviteLink() {
         return;
     }
     QApplication::clipboard()->setText(link);
-    icon_->showMessage(QStringLiteral("Stud"), QStringLiteral("Server invite link copied."),
+    icon_->showMessage(QStringLiteral("Stud"), QStringLiteral("Server link copied."),
                         QSystemTrayIcon::Information, 3000);
 }
 

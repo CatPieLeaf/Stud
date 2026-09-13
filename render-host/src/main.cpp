@@ -632,6 +632,24 @@ std::atomic<uint32_t> g_webview_closed{0};
 std::mutex g_webview_message_mutex;
 std::deque<std::string> g_webview_messages;
 
+// URLs the viewer refused to navigate to itself, waiting for the app to
+// say whether the engine wants them. Separate from the bridge queue: one
+// is a page talking to the app, the other is a navigation the app has
+// first refusal on.
+std::mutex g_webview_navigation_mutex;
+std::deque<std::string> g_webview_navigations;
+
+// The open viewer's stdin. It stays open for the life of the panel now,
+// because the answer to a blocked navigation ("load it after all") has
+// to reach it. -1 when no viewer is open.
+std::atomic<int> g_webview_stdin{-1};
+
+void queue_web_view_navigation(std::string url) {
+    std::lock_guard<std::mutex> lock(g_webview_navigation_mutex);
+    if (g_webview_navigations.size() >= 32) g_webview_navigations.pop_front();
+    g_webview_navigations.push_back(std::move(url));
+}
+
 void queue_web_view_message(std::string message) {
     std::lock_guard<std::mutex> lock(g_webview_message_mutex);
     // A page that talks endlessly must not grow this without bound; the
@@ -655,8 +673,18 @@ void read_web_view_output(int fd) {
             if (newline == std::string::npos) break;
             std::string line = pending.substr(0, newline);
             pending.erase(0, newline + 1);
+            static constexpr char kNavigate[] = "navigate ";
             static constexpr char kPrefix[] = "hybrid ";
-            if (line.rfind(kPrefix, 0) == 0) {
+            if (line.rfind(kNavigate, 0) == 0) {
+                const std::string url = line.substr(sizeof(kNavigate) - 1);
+                queue_web_view_navigation(url);
+                // The query can carry a one-time join ticket.
+                const auto cut = url.find('?');
+                std::printf("stud-render-host: web view asked about %s\n",
+                            (cut == std::string::npos ? url
+                                                      : url.substr(0, cut) + "?<query withheld>")
+                                .c_str());
+            } else if (line.rfind(kPrefix, 0) == 0) {
                 queue_web_view_message(line.substr(sizeof(kPrefix) - 1));
                 std::printf("stud-render-host: web view sent a bridge message (%zu bytes)\n",
                             line.size() - (sizeof(kPrefix) - 1));
@@ -2477,15 +2505,25 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 return 0;
             }
             std::thread(read_web_view_output, out_fds[0]).detach();
-            const char* bytes = payload.data();
-            size_t left = payload.size();
+            // The sentinel ends the request; the pipe itself stays open,
+            // because a blocked navigation is answered down it later.
+            // Without the sentinel the viewer would read its cookies
+            // until EOF, which now never comes.
+            std::string request = payload;
+            if (request.empty() || request.back() != '\n') request.push_back('\n');
+            request += "END\n";
+            const char* bytes = request.data();
+            size_t left = request.size();
             while (left > 0) {
                 const ssize_t written = ::write(pipe_fds[1], bytes, left);
                 if (written <= 0) break;
                 bytes += written;
                 left -= static_cast<size_t>(written);
             }
-            ::close(pipe_fds[1]);
+            {
+                const int previous = g_webview_stdin.exchange(pipe_fds[1]);
+                if (previous >= 0) ::close(previous);
+            }
             track_web_view(pid);
             std::thread([pid] {
                 int status = 0;
@@ -2494,6 +2532,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 // must not be signalled again once the kernel is free to
                 // reuse it.
                 forget_web_view(pid);
+                {
+                    const int fd = g_webview_stdin.exchange(-1);
+                    if (fd >= 0) ::close(fd);
+                }
                 g_webview_closed.fetch_add(1, std::memory_order_relaxed);
                 std::printf("stud-render-host: web-view window closed\n");
                 std::fflush(stdout);
@@ -2515,6 +2557,34 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             out.assign(message.begin(), message.end());
             *out_len = static_cast<uint32_t>(out.size());
             return out.size();
+        }
+        case CallId::PollWebViewNavigation: {
+            std::string url;
+            {
+                std::lock_guard<std::mutex> lock(g_webview_navigation_mutex);
+                if (g_webview_navigations.empty()) return 0;
+                url = std::move(g_webview_navigations.front());
+                g_webview_navigations.pop_front();
+            }
+            out.assign(url.begin(), url.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::WebViewLoadUrl: {
+            const int fd = g_webview_stdin.load();
+            if (fd < 0 || in.empty()) return 0;
+            std::string line = (a[0] != 0 ? std::string("drop ") : std::string("load ")) +
+                               std::string(reinterpret_cast<const char*>(in.data()), in.size()) +
+                               "\n";
+            size_t left = line.size();
+            const char* bytes = line.data();
+            while (left > 0) {
+                const ssize_t written = ::write(fd, bytes, left);
+                if (written <= 0) return 0;
+                bytes += written;
+                left -= static_cast<size_t>(written);
+            }
+            return 1;
         }
         case CallId::CloseWebView: {
             // The app asked, so the viewer's exit is not a user closing
@@ -2645,7 +2715,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // JSON, so it runs in stud-ui one-shot -- the same helper
             // shape as the keyring and the region lookup.
             std::string body(reinterpret_cast<const char*>(in.data()), in.size());
-            // The tray offers "copy server invite link" and is a separate
+            // The tray offers "copy server link" and is a separate
             // process, so the link is left where it can read it. Its
             // absence is what "not in a game" looks like from there.
             const std::string invite_path = []() {

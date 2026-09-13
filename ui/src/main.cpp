@@ -1204,7 +1204,21 @@ int main(int argc, char** argv) {
             thumbnail = thumbs.at(0).toObject().value("imageUrl").toString();
         }
 
-        QString join_url = "roblox://experiences/start?placeId=" + place_id;
+        // The link Roblox itself builds to join one specific server --
+        // `ServerList.js` sends exactly this shape when a private server
+        // or an instance is picked. An https link, deliberately, not the
+        // `roblox://` deep link this used to be: a deep link is not
+        // something anyone can paste into a chat and it is not a URL
+        // Discord will accept on a button at all, so the tray entry
+        // produced a link that mostly did not work anywhere.
+        //
+        // It is a SERVER link, not an invite. Roblox has a real invite
+        // link (`share?code=...&type=ExperienceInvite`) but only the Lua
+        // SocialService in an experience can mint one -- the web API
+        // Stud could call for it does not exist (checked live:
+        // apis.roblox.com/sharelinks/v1/generate-link answers 404, and
+        // the only share-link path in libroblox.so is resolve-link).
+        QString join_url = "https://www.roblox.com/games/start?placeId=" + place_id;
         if (!job_id.isEmpty()) join_url += "&gameInstanceId=" + job_id;
 
         std::printf("%s\n%s\n%s\n%s\n", name.toUtf8().constData(),
