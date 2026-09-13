@@ -2103,12 +2103,26 @@ struct UpscaleChain {
     // case the recorded command buffers hold a plain blit instead -- an
     // honest degrade rather than a black window.
     bool compute = false;
+    // Whether the sharpening pass is in the chain at all. Off when
+    // sharpness is zero, in which case EASU's output goes straight to the
+    // swapchain and the second image and dispatch are never created.
+    bool sharpen = false;
     VkShaderModule shader = VK_NULL_HANDLE;
+    VkShaderModule sharpen_shader = VK_NULL_HANDLE;
+    VkPipeline sharpen_pipeline = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> sharpen_sets;
+    std::vector<VkImageView> sharpen_src_views;
+    std::vector<VkImageView> sharpen_dst_views;
+    // EASU's output, which RCAS then reads. Separate from `staging`
+    // because a compute pass cannot read and write the same image.
+    std::vector<VkImage> sharpened;
+    std::vector<VkDeviceMemory> sharpened_memory;
     VkSampler sampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+    VkDescriptorPool sharpen_pool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> sets;
     std::vector<VkImageView> src_views;
     std::vector<VkImageView> dst_views;
@@ -2155,6 +2169,9 @@ void destroy_upscale_chain(UpscaleChain& c) {
     if (c.descriptor_pool != VK_NULL_HANDLE && l.destroy_descriptor_pool != nullptr) {
         l.destroy_descriptor_pool(l.device, c.descriptor_pool, nullptr);
     }
+    if (c.sharpen_pool != VK_NULL_HANDLE && l.destroy_descriptor_pool != nullptr) {
+        l.destroy_descriptor_pool(l.device, c.sharpen_pool, nullptr);
+    }
     if (c.pipeline != VK_NULL_HANDLE && l.destroy_pipeline != nullptr) {
         l.destroy_pipeline(l.device, c.pipeline, nullptr);
     }
@@ -2169,6 +2186,30 @@ void destroy_upscale_chain(UpscaleChain& c) {
     }
     if (c.shader != VK_NULL_HANDLE && l.destroy_shader_module != nullptr) {
         l.destroy_shader_module(l.device, c.shader, nullptr);
+    }
+    if (c.sharpen_shader != VK_NULL_HANDLE && l.destroy_shader_module != nullptr) {
+        l.destroy_shader_module(l.device, c.sharpen_shader, nullptr);
+    }
+    if (c.sharpen_pipeline != VK_NULL_HANDLE && l.destroy_pipeline != nullptr) {
+        l.destroy_pipeline(l.device, c.sharpen_pipeline, nullptr);
+    }
+    for (auto v : c.sharpen_src_views) {
+        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
+            l.destroy_image_view(l.device, v, nullptr);
+        }
+    }
+    for (auto v : c.sharpen_dst_views) {
+        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
+            l.destroy_image_view(l.device, v, nullptr);
+        }
+    }
+    for (auto img : c.sharpened) {
+        if (img != VK_NULL_HANDLE && l.destroy_image != nullptr) {
+            l.destroy_image(l.device, img, nullptr);
+        }
+    }
+    for (auto mem : c.sharpened_memory) {
+        if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
     }
     for (auto f : c.fence) {
         if (f != VK_NULL_HANDLE && l.destroy_fence != nullptr) l.destroy_fence(l.device, f, nullptr);
@@ -2370,7 +2411,10 @@ bool build_upscale_compute(UpscaleChain& c) {
         sii.arrayLayers = 1;
         sii.samples = VK_SAMPLE_COUNT_1_BIT;
         sii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        sii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        // Sampled too: when sharpening is on, the second pass reads this
+        // image back.
+        sii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                    VK_IMAGE_USAGE_SAMPLED_BIT;
         sii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         sii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         if (l.create_image(l.device, &sii, nullptr, &c.staging[i]) != VK_SUCCESS) return false;
@@ -2414,6 +2458,133 @@ bool build_upscale_compute(UpscaleChain& c) {
         l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
     }
     c.compute = true;
+
+    // The sharpening pass, if it is wanted. Its own image, pipeline and
+    // descriptor set -- a compute pass cannot read and write one image, so
+    // EASU's output and RCAS's output are different images.
+    if (upscale_sharpness() <= 0.0f) return true;
+    static const uint32_t kSharpenSpv[] =
+#include "sharpen_spv.h"
+        ;
+    if (sizeof(kSharpenSpv) < 32) return true;  // built without glslc
+
+    VkShaderModuleCreateInfo ssci{};
+    ssci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ssci.codeSize = sizeof(kSharpenSpv);
+    ssci.pCode = kSharpenSpv;
+    if (l.create_shader_module(l.device, &ssci, nullptr, &c.sharpen_shader) != VK_SUCCESS) {
+        return true;  // EASU alone still works
+    }
+    VkComputePipelineCreateInfo scpci{};
+    scpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    scpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    scpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    scpci.stage.module = c.sharpen_shader;
+    scpci.stage.pName = "main";
+    scpci.layout = c.pipeline_layout;  // same bindings and push constants
+    if (l.create_compute_pipelines(l.device, VK_NULL_HANDLE, 1, &scpci, nullptr,
+                                    &c.sharpen_pipeline) != VK_SUCCESS) {
+        return true;
+    }
+
+    c.sharpened.resize(count, VK_NULL_HANDLE);
+    c.sharpened_memory.resize(count, VK_NULL_HANDLE);
+    c.sharpen_src_views.resize(count, VK_NULL_HANDLE);
+    c.sharpen_dst_views.resize(count, VK_NULL_HANDLE);
+    c.sharpen_sets.resize(count, VK_NULL_HANDLE);
+    bool sharpen_ok = true;
+    for (uint32_t i = 0; sharpen_ok && i < count; ++i) {
+        VkImageCreateInfo sii{};
+        sii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        sii.imageType = VK_IMAGE_TYPE_2D;
+        sii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        sii.extent = {c.present.width, c.present.height, 1};
+        sii.mipLevels = 1;
+        sii.arrayLayers = 1;
+        sii.samples = VK_SAMPLE_COUNT_1_BIT;
+        sii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        sii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        sii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        sii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (l.create_image(l.device, &sii, nullptr, &c.sharpened[i]) != VK_SUCCESS ||
+            !allocate_offscreen_memory(c.sharpened[i], c.sharpened_memory[i])) {
+            sharpen_ok = false;
+            break;
+        }
+        VkImageViewCreateInfo vci{};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vci.image = c.staging[i];
+        if (l.create_image_view(l.device, &vci, nullptr, &c.sharpen_src_views[i]) != VK_SUCCESS) {
+            sharpen_ok = false;
+            break;
+        }
+        vci.image = c.sharpened[i];
+        if (l.create_image_view(l.device, &vci, nullptr, &c.sharpen_dst_views[i]) != VK_SUCCESS) {
+            sharpen_ok = false;
+            break;
+        }
+    }
+    if (sharpen_ok) {
+        VkDescriptorPoolSize ssizes[2]{};
+        ssizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        ssizes[0].descriptorCount = count;
+        ssizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        ssizes[1].descriptorCount = count;
+        // The first pool was sized for one set per image; the second pass
+        // needs its own, so it gets its own allocation from a pool of the
+        // same shape.
+        VkDescriptorPoolCreateInfo sdpci{};
+        sdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        sdpci.maxSets = count;
+        sdpci.poolSizeCount = 2;
+        sdpci.pPoolSizes = ssizes;
+        VkDescriptorPool sharpen_pool = VK_NULL_HANDLE;
+        if (l.create_descriptor_pool(l.device, &sdpci, nullptr, &sharpen_pool) == VK_SUCCESS) {
+            // Kept on the chain so it is destroyed with everything else;
+            // the first pool handle is replaced by a pair.
+            c.sharpen_pool = sharpen_pool;
+            std::vector<VkDescriptorSetLayout> slayouts(count, c.set_layout);
+            VkDescriptorSetAllocateInfo sdsai{};
+            sdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            sdsai.descriptorPool = sharpen_pool;
+            sdsai.descriptorSetCount = count;
+            sdsai.pSetLayouts = slayouts.data();
+            sharpen_ok = l.allocate_descriptor_sets(l.device, &sdsai, c.sharpen_sets.data()) ==
+                          VK_SUCCESS;
+        } else {
+            sharpen_ok = false;
+        }
+    }
+    if (sharpen_ok) {
+        for (uint32_t i = 0; i < count; ++i) {
+            VkDescriptorImageInfo src{};
+            src.sampler = c.sampler;
+            src.imageView = c.sharpen_src_views[i];
+            src.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo dst{};
+            dst.imageView = c.sharpen_dst_views[i];
+            dst.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkWriteDescriptorSet writes[2]{};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = c.sharpen_sets[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo = &src;
+            writes[1] = writes[0];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &dst;
+            l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
+        }
+        c.sharpen = true;
+    } else {
+        std::printf("stud-render-host: sharpening pass unavailable -- upscaling without it\n");
+        std::fflush(stdout);
+    }
     return true;
 }
 
@@ -2480,14 +2651,54 @@ bool record_upscale_blits(UpscaleChain& c) {
             push.src_h = static_cast<int32_t>(c.engine.height);
             push.dst_w = static_cast<int32_t>(c.present.width);
             push.dst_h = static_cast<int32_t>(c.present.height);
-            push.sharpness = upscale_sharpness();
+            push.sharpness = 0.0f;  // EASU does no sharpening; RCAS below does
             l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                  sizeof(push), &push);
             // 8x8 per group, matching the shader's own local size.
             l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
 
+            // RCAS, at the output resolution, over what EASU just wrote.
+            if (c.sharpen) {
+                VkImageMemoryBarrier to_sharpen[2]{};
+                to_sharpen[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                to_sharpen[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                to_sharpen[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                to_sharpen[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                to_sharpen[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                to_sharpen[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_sharpen[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_sharpen[0].image = c.staging[i];
+                to_sharpen[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                to_sharpen[1] = to_sharpen[0];
+                to_sharpen[1].srcAccessMask = 0;
+                to_sharpen[1].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                to_sharpen[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                to_sharpen[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                to_sharpen[1].image = c.sharpened[i];
+                l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
+                                       nullptr, 2, to_sharpen);
+
+                l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.sharpen_pipeline);
+                l.cmd_bind_descriptor_sets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
+                                           c.pipeline_layout, 0, 1, &c.sharpen_sets[i], 0,
+                                           nullptr);
+                // Same size in and out for this pass, which is what lets
+                // it read exactly the four neighbouring pixels.
+                UpscalePush sharpen_push{};
+                sharpen_push.src_w = static_cast<int32_t>(c.present.width);
+                sharpen_push.src_h = static_cast<int32_t>(c.present.height);
+                sharpen_push.dst_w = static_cast<int32_t>(c.present.width);
+                sharpen_push.dst_h = static_cast<int32_t>(c.present.height);
+                sharpen_push.sharpness = upscale_sharpness();
+                l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                                     sizeof(sharpen_push), &sharpen_push);
+                l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
+            }
+
             // Hand the result to the swapchain: same size, so this is a
             // copy that also converts RGBA to the swapchain's BGRA.
+            VkImage finished = c.sharpen ? c.sharpened[i] : c.staging[i];
             VkImageMemoryBarrier hand_over[2]{};
             hand_over[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             hand_over[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -2496,7 +2707,7 @@ bool record_upscale_blits(UpscaleChain& c) {
             hand_over[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             hand_over[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             hand_over[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            hand_over[0].image = c.staging[i];
+            hand_over[0].image = finished;
             hand_over[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             hand_over[1] = hand_over[0];
             hand_over[1].srcAccessMask = 0;
@@ -2516,7 +2727,7 @@ bool record_upscale_blits(UpscaleChain& c) {
             same.dstSubresource = same.srcSubresource;
             same.dstOffsets[0] = same.srcOffsets[0];
             same.dstOffsets[1] = same.srcOffsets[1];
-            l.cmd_blit_image(c.cmd[i], c.staging[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            l.cmd_blit_image(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &same,
                              VK_FILTER_NEAREST);
         } else {

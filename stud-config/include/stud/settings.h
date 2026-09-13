@@ -93,18 +93,23 @@ struct StudSettings {
     // so the engine is left believing nothing changed and the scaling
     // happens entirely inside Stud.
     bool upscaling = false;
-    // How far below the output the engine renders, as a percentage --
-    // DLSS's Quality/Balanced/Performance, and the only knob that buys
-    // frames: 67 renders 44% of the pixels, 50 renders a quarter.
+    // What the upscaler writes, as a multiple of the window's own pixels
+    // (100 = the window, 150 = half again, 200 = double, then scaled down
+    // when shown).
     //
-    // The output is always the screen's own resolution. What this costs
-    // besides sharpness is UI size: the engine lays its interface out in
-    // the pixels it renders, and its own scale cannot be used to
-    // compensate (below 1.0 it draws square corners, above it drops
-    // SSAO), so a lower setting shows a larger interface. 80 is what
-    // HiDPI-off already does today.
-    int upscale_quality_percent = 80;
-    // Smooth zoom: the wheel eases the camera toward the new distance
+    // There is deliberately NO quality preset here. DLSS's
+    // Quality/Balanced/Performance choose how far below the output the
+    // GAME renders, and in this engine that cannot be done: it lays its UI
+    // out in the pixels it renders, so a lower render size shows a larger
+    // interface -- and compensating through its own DPI scale makes it draw
+    // square corners below 1.0 and drop SSAO above. All measured. So the
+    // engine is pinned to the window's logical size (what Stud already
+    // renders with HiDPI off) and only Stud's own output moves.
+    int upscale_target_percent = 100;
+    // How hard the sharpening pass pulls, 0-100. It runs at the output
+    // resolution over the upscaled image, so it sharpens what is actually
+    // shown rather than what was rendered.
+    int upscale_sharpness_percent = 30;    // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;

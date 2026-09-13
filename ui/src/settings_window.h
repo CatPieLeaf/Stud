@@ -79,6 +79,8 @@ private:
     QCheckBox* followDpiCheck_;
     QCheckBox* upscalingCheck_;
     QComboBox* upscaleOutputCombo_;
+    QSlider* upscaleSharpnessSlider_;
+    QLabel* sharpnessValueLabel_;
     QCheckBox* smoothZoomCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;

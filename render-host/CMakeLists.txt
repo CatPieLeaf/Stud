@@ -13,6 +13,8 @@ pkg_check_modules(GlesV2 REQUIRED IMPORTED_TARGET glesv2)
 # the NDK this project already vendors -- no new tool.
 set(UpscaleShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/upscale.comp")
 set(UpscaleShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/upscale_spv.h")
+set(SharpenShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sharpen.comp")
+set(SharpenShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sharpen_spv.h")
 find_program(StudGlslc glslc
     HINTS "${STUD_ANDROID_NDK_ROOT}/shader-tools/linux-x86_64"
     NO_CMAKE_FIND_ROOT_PATH)
@@ -26,6 +28,14 @@ if(StudGlslc)
         DEPENDS "${UpscaleShaderSrc}"
         COMMENT "Compiling the upscale shader to SPIR-V"
     )
+    add_custom_command(
+        OUTPUT "${SharpenShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -o "${SharpenShaderHeader}" "${SharpenShaderSrc}"
+        DEPENDS "${SharpenShaderSrc}"
+        COMMENT "Compiling the sharpening shader to SPIR-V"
+    )
 else()
     # Without glslc the upscaler cannot exist; an empty array makes that a
     # clean runtime degrade (the blit path) rather than a build failure on
@@ -36,9 +46,15 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${UpscaleShaderHeader}"
         COMMENT "glslc not found -- building without the upscale shader"
     )
+    add_custom_command(
+        OUTPUT "${SharpenShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SharpenShaderHeader}"
+        COMMENT "glslc not found -- building without the sharpening shader"
+    )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp)
+add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
