@@ -1016,6 +1016,12 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back(settings.follow_dpi ? "on" : "off");
     config.args.push_back("--hidpi");
     config.args.push_back(settings.hidpi ? "on" : "off");
+    // Process B needs it too, and for the opposite reason to render-host:
+    // render-host makes the engine DRAW fewer pixels, this makes the
+    // engine LAY OUT its UI smaller by the same factor, so the UI keeps
+    // its apparent size once the smaller image is scaled back up.
+    config.args.push_back("--render-scale");
+    config.args.push_back(std::to_string(settings.render_scale_percent));
     config.args.push_back("--notify-region");
     config.args.push_back(settings.server_region_notification ? "on" : "off");
     config.args.push_back("--close-on-leave");
