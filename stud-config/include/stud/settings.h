@@ -114,7 +114,13 @@ struct StudSettings {
     bool close_on_leave = false;
     // A notification naming the game server's region on every join.
     // Sober calls this the server location indicator.
-    bool server_region_notification = true;
+    //
+    // Off by default, for the same reason Discord presence is: answering
+    // it means one HTTPS request per join to a third-party geolocation
+    // service (the datacenter's IP leaves the machine, never the user's).
+    // Anything that talks to someone else is asked for, not assumed --
+    // and Sober ships this off too.
+    bool server_region_notification = false;
     // The transcoded-texture cache: whether to keep one at all, and how
     // much disk it may use.
     //

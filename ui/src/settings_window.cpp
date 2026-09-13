@@ -217,7 +217,12 @@ void SettingsWindow::loadFromDisk() {
         return;
     }
 
-    int index = gpuCombo_->findData(settings.gpu.device_index);
+    // An empty name means nobody has ever picked one, which is not the
+    // same as having picked device 0 -- see default_gpu_index().
+    const uint32_t wanted = settings.gpu.device_name.empty()
+                                ? default_gpu_index()
+                                : settings.gpu.device_index;
+    int index = gpuCombo_->findData(wanted);
     if (index >= 0) {
         gpuCombo_->setCurrentIndex(index);
     }

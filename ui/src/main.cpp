@@ -669,6 +669,13 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         // Fall through with defaults -- apk_path will be empty, caught below.
     }
 
+    // A launch that has never seen the settings window still gets a real
+    // GPU choice rather than whatever the driver enumerated first --
+    // same rule the window applies, see default_gpu_index().
+    if (settings.gpu.device_name.empty()) {
+        settings.gpu.device_index = stud::ui::default_gpu_index();
+    }
+
     if (settings.apk_path.empty()) {
         // main() opens Settings when nothing is configured, so reaching
         // here means the APK went missing between that check and this

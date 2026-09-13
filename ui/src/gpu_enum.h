@@ -36,6 +36,16 @@ struct GpuInfo {
 // honest-degradation pattern.
 std::vector<GpuInfo> enumerate_gpus();
 
+// Which device a machine that has never been asked should use.
+//
+// Not index 0: Vulkan's enumeration order is the driver's, not a
+// ranking, and on a hybrid laptop the integrated GPU commonly comes
+// first -- measured here, where index 0 is an Intel Iris Xe and index 1
+// is an RTX 3050. Defaulting to 0 quietly hands a new install the slower
+// device, with nothing on screen to say so. A discrete device wins when
+// one exists; otherwise this is 0 and nothing changes.
+uint32_t default_gpu_index();
+
 // Which compressed texture formats a device can sample natively.
 //
 // This is the question that decides how much CPU a session spends on
