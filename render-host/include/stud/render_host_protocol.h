@@ -613,6 +613,20 @@ enum class CallId : uint32_t {
     GlEndQuery,
     GlGetQueryObjectuiv,
     GlGetQueryObjectui64v,
+    // Many pipelined calls in one request.
+    //
+    // A reply-free call still carried a full Header -- call id, eight
+    // 64-bit arguments, a PBO offset, flags and two lengths, about 100
+    // bytes -- for calls that mostly use two or three arguments. On the
+    // OpenGL path the engine issues around 17,700 of them per frame, so
+    // that is ~1.7MB of header per frame to build, copy and write.
+    //
+    // A batch writes one Header and then packs each call as: argc, a
+    // flags byte, the 16-bit call id, argc arguments, and only the
+    // length/PBO fields that are actually used. A typical GL call comes
+    // to 12-28 bytes instead of ~100. Appended last: every existing id
+    // keeps its value.
+    GlCommandBatch,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -857,9 +871,10 @@ inline const char* call_id_name(CallId id) {
         "GlEndQuery",
         "GlGetQueryObjectuiv",
         "GlGetQueryObjectui64v",
+        "GlCommandBatch",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlGetQueryObjectui64v) + 1,
+                      static_cast<size_t>(CallId::GlCommandBatch) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
@@ -1011,6 +1026,10 @@ public:
         // "IPC is expensive" is not actionable; "one call id is 90% of the
         // round-trips" says exactly what to make reply-free or cache.
         emit_command_batch_locked();
+        // Everything queued reply-free so far has to reach the host
+        // before this call's answer is asked for, or the answer would be
+        // computed against state that has not been applied yet.
+        emit_gl_batch_locked();
         static const bool top = std::getenv("STUD_IPC_TOP") != nullptr;
         const auto top_t0 = top ? std::chrono::steady_clock::now()
                                 : std::chrono::steady_clock::time_point{};
@@ -1241,24 +1260,48 @@ public:
         // whole thing into the queue through an iterator-range insert.
         // That is two passes over the header and one redundant clear of
         // bytes that are all about to be overwritten.
-        const size_t at = queue_.size();
-        queue_.resize(at + sizeof(Header) + (in_buffer != nullptr ? in_len : 0));
-        auto* hdr = reinterpret_cast<Header*>(queue_.data() + at);
-        hdr->call_id = id;
-        std::memcpy(hdr->args, args, sizeof(hdr->args));
-        hdr->pixel_buffer_offset_plus_one = pixel_buffer_offset_plus_one;
-        hdr->flags = Header::kNoReply;
-        hdr->in_buffer_len = in_len;
-        hdr->out_buffer_len = 0;
-        if (in_len > 0 && in_buffer != nullptr) {
-            std::memcpy(queue_.data() + at + sizeof(Header), in_buffer, in_len);
+        // Only the arguments that carry anything. The host zero-fills
+        // the rest, so an argument that is legitimately zero past the
+        // last non-zero one still arrives as zero.
+        uint8_t argc = 8;
+        while (argc > 0 && args[argc - 1] == 0) --argc;
+
+        const bool has_payload = in_len > 0 && in_buffer != nullptr;
+        const bool has_pixel_offset = pixel_buffer_offset_plus_one != 0;
+        const size_t record = 4 + static_cast<size_t>(argc) * sizeof(uint64_t) +
+                              (has_payload ? sizeof(uint32_t) + in_len : 0) +
+                              (has_pixel_offset ? sizeof(uint64_t) : 0);
+
+        const size_t at = batch_.size();
+        batch_.resize(at + record);
+        uint8_t* p = batch_.data() + at;
+        *p++ = argc;
+        *p++ = static_cast<uint8_t>((has_payload ? 1u : 0u) | (has_pixel_offset ? 2u : 0u));
+        const auto id16 = static_cast<uint16_t>(id);
+        std::memcpy(p, &id16, sizeof(id16));
+        p += sizeof(id16);
+        if (argc > 0) {
+            std::memcpy(p, args, static_cast<size_t>(argc) * sizeof(uint64_t));
+            p += static_cast<size_t>(argc) * sizeof(uint64_t);
+        }
+        if (has_payload) {
+            std::memcpy(p, &in_len, sizeof(in_len));
+            p += sizeof(in_len);
+            std::memcpy(p, in_buffer, in_len);
+            p += in_len;
+        }
+        if (has_pixel_offset) {
+            std::memcpy(p, &pixel_buffer_offset_plus_one, sizeof(pixel_buffer_offset_plus_one));
         }
         // STUD_IPC_NO_PIPELINE=1 sends every request immediately, i.e. the
         // pre-pipelining behaviour. Kept as a one-switch A/B for exactly the
         // kind of "did batching starve something that was waiting on it"
         // question that is otherwise guesswork.
         static const bool no_pipeline = std::getenv("STUD_IPC_NO_PIPELINE") != nullptr;
-        if (no_pipeline || queue_.size() >= kQueueFlushBytes) flush_locked();
+        if (no_pipeline || batch_.size() >= kQueueFlushBytes) {
+            emit_gl_batch_locked();
+            flush_locked();
+        }
         if (stats) {
             ++stats_void_calls_;
             stats_void_ns_ += static_cast<uint64_t>(
@@ -1290,6 +1333,7 @@ public:
     bool flush() {
         std::lock_guard<std::mutex> lock(call_mutex_);
         emit_command_batch_locked();
+        emit_gl_batch_locked();
         return flush_locked();
     }
 
@@ -1298,8 +1342,27 @@ private:
     static constexpr size_t kCommandBatchBytes = 32u * 1024u;
 
     // Moves the accumulated commands into the send queue as one request.
+    // Packs whatever reply-free calls have accumulated into one request.
+    // Called before anything that must be ordered after them -- a call
+    // that waits for a reply, or a flush.
+    void emit_gl_batch_locked() {
+        if (batch_.empty()) return;
+        const size_t at = queue_.size();
+        queue_.resize(at + sizeof(Header) + batch_.size());
+        auto* hdr = reinterpret_cast<Header*>(queue_.data() + at);
+        std::memset(hdr, 0, sizeof(*hdr));
+        hdr->call_id = CallId::GlCommandBatch;
+        hdr->flags = Header::kNoReply;
+        hdr->in_buffer_len = static_cast<uint32_t>(batch_.size());
+        std::memcpy(queue_.data() + at + sizeof(Header), batch_.data(), batch_.size());
+        batch_.clear();
+    }
+
+    std::vector<uint8_t> batch_;
+
     void emit_command_batch_locked() {
         if (command_batch_.empty()) return;
+        emit_gl_batch_locked();
         Header hdr{};
         hdr.call_id = CallId::VkCmdRecordBatch;
         hdr.flags = Header::kNoReply;
