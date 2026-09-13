@@ -20,6 +20,7 @@
 #include "stud/text_editor.h"
 #include "stud/bionic_jvm.h"
 #include "stud/trap_recovery.h"
+#include "mouse_behavior.h"
 
 using stud::render_host::CallId;
 
@@ -271,6 +272,31 @@ float g_drag_anchor_py = 0.0f;
 // motion), so the movement comes from the compositor's RELATIVE stream,
 // which keeps reporting what the device did however far the pointer got.
 bool g_drag_confined = false;
+
+// What the engine says it is doing with its own cursor, polled beside the
+// LockCenter poll. This is the fact every earlier attempt at this had to
+// guess at -- see mouse_behavior.h.
+std::atomic<int> g_engine_mouse_behavior{
+    static_cast<int>(stud::runtime::MouseBehavior::kUnknown)};
+
+bool engine_pins_cursor() {
+    return g_engine_mouse_behavior.load() ==
+           static_cast<int>(stud::runtime::MouseBehavior::kLockCurrentPosition);
+}
+
+// Set the moment the engine starts pinning during a gesture, and holds
+// where its cursor stopped. Until then a drag is an ordinary drag and the
+// cursor follows the hand, which is what an in-game UI needs.
+bool g_pin_seen = false;
+float g_pin_x = 0.0f;
+float g_pin_y = 0.0f;
+float g_pin_px = 0.0f;
+float g_pin_py = 0.0f;
+
+// The last raw pointer position in surface pixels, which is what a warp
+// takes -- kept because the pin can begin on a poll, away from any event.
+float g_last_raw_px = 0.0f;
+float g_last_raw_py = 0.0f;
 
 // Whether the compositor can move the pointer at all (wp_pointer_warp_v1,
 // or X11's own warp). Asked once. Without it the pointer cannot be put
@@ -1070,28 +1096,48 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // No clamp either. The client bounds nothing here; only its
             // ACTION_SCROLL branch floors the position it reports at
             // zero, which is the wheel's business and not the pointer's.
-            if (g_drag_confined) {
-                // The cursor STAYS for the whole of a camera drag.
+            g_last_raw_px = ev.x;
+            g_last_raw_py = ev.y;
+            if (g_drag_confined && engine_pins_cursor()) {
+                // The engine is pinning its own cursor RIGHT NOW -- it
+                // says so (MouseBehavior == LockCurrentPosition), which
+                // is the one thing this used to have to guess at.
                 //
-                // The engine pins its own cursor for a rotation and
-                // ignores every position it is given; over an in-game UI
-                // it follows them instead. Nothing says which is
-                // happening, so the cursor is left alone in both cases --
-                // which is what the real desktop client does with a
-                // camera button held, and what makes a teleport
-                // impossible: the reported position does not change during
-                // the gesture, and does not change at the end of it
-                // either.
-                //
-                // The movement still reaches the engine, from the relative
-                // stream, so the camera turns exactly as far as the hand
-                // moved -- and keeps turning once the pointer has reached
-                // the confinement boundary and stopped. Sending it here as
-                // well would turn it twice as far.
+                // While that lasts the engine ignores every position it
+                // is given, so the position is left exactly where its
+                // cursor is and only the movement is sent -- from the
+                // relative stream, which keeps reporting what the device
+                // did even once the pointer has reached the confinement
+                // boundary and stopped. That is what makes a spin
+                // unlimited, and what makes the end of one a non-event:
+                // nothing was moved, so nothing has to be put back.
+                if (!g_pin_seen) {
+                    g_pin_seen = true;
+                    g_pin_x = last_x;
+                    g_pin_y = last_y;
+                    g_pin_px = ev.x;
+                    g_pin_py = ev.y;
+                    if (input_trace_enabled()) {
+                        std::printf("stud: the engine pinned its cursor at (%.1f,%.1f)\n",
+                                    static_cast<double>(g_pin_x), static_cast<double>(g_pin_y));
+                        std::fflush(stdout);
+                    }
+                }
+                last_x = g_pin_x;
+                last_y = g_pin_y;
                 return;
             }
             last_x = x;
             last_y = y;
+            if (g_drag_confined) {
+                // Confined but NOT pinned: an ordinary drag, including a
+                // right-drag on an in-game UI, where the engine really is
+                // following the positions it is given. The cursor follows
+                // the hand; only the movement is withheld, because the
+                // relative event for this same motion carries it and
+                // sending it twice would turn the camera twice as far.
+                return;
+            }
             call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
             return;
         }
@@ -1250,6 +1296,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                         g_drag_anchor_y = to_density_independent(ev.y);
                         g_drag_anchor_px = ev.x;
                         g_drag_anchor_py = ev.y;
+                        g_pin_seen = false;
                         last_x = g_drag_anchor_x;
                         last_y = g_drag_anchor_y;
                         set_pointer_confined(true);
@@ -1269,23 +1316,34 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                         // delta, so a compositor that cannot warp loses
                         // the cursor's place rather than turning the
                         // difference into camera movement.
-                        if (pointer_warp_available()) {
-                            warp_pointer_to(g_drag_anchor_px, g_drag_anchor_py);
+                        if (g_pin_seen) {
+                            // The engine held its cursor still for part of
+                            // this gesture, so the pointer is somewhere
+                            // else by now. Put the pointer back ON the
+                            // cursor rather than moving the cursor to the
+                            // pointer -- that direction is the teleport.
+                            if (pointer_warp_available()) {
+                                warp_pointer_to(g_pin_px, g_pin_py);
+                            }
+                            g_prev_raw_x = g_pin_x;
+                            g_prev_raw_y = g_pin_y;
+                            g_resync_after_unlock.store(true);
+                            last_x = g_pin_x;
+                            last_y = g_pin_y;
                         }
-                        g_prev_raw_x = g_drag_anchor_x;
-                        g_prev_raw_y = g_drag_anchor_y;
-                        g_resync_after_unlock.store(true);
-                        last_x = g_drag_anchor_x;
-                        last_y = g_drag_anchor_y;
                         if (input_trace_enabled()) {
-                            std::printf("stud: drag ended, cursor stayed at (%.1f,%.1f)%s\n",
-                                        static_cast<double>(g_drag_anchor_x),
-                                        static_cast<double>(g_drag_anchor_y),
-                                        pointer_warp_available()
-                                            ? ", pointer put back on it"
-                                            : " -- no warp on this compositor");
+                            std::printf("stud: drag ended at (%.1f,%.1f) -- %s\n",
+                                        static_cast<double>(last_x), static_cast<double>(last_y),
+                                        g_pin_seen
+                                            ? (pointer_warp_available()
+                                                   ? "the engine had pinned its cursor, pointer "
+                                                     "put back on it"
+                                                   : "the engine had pinned its cursor, and this "
+                                                     "compositor cannot warp")
+                                            : "the cursor followed the hand, nothing to put back");
                             std::fflush(stdout);
                         }
+                        g_pin_seen = false;
                     }
                     g_lock_from_drag = held && drag_lock_enabled();
                     apply_pointer_lock();
@@ -1980,6 +2038,10 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedKeyWithGamepadType"));
     fns.gamepad_supported_motion = reinterpret_cast<GamepadSupportedMotionFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedMotionWithGamepadType"));
+    // The engine's own MouseBehavior, decoded out of the engine itself.
+    // Everything the cursor does during a drag depends on it -- see
+    // mouse_behavior.h -- and it degrades to "unknown" safely.
+    stud::runtime::init_mouse_behavior_probe(lib);
     g_jvm = &jvm;
     g_agdk.activity = std::move(activity);
     g_agdk.handle = static_cast<jlong>(activity_handle);
@@ -2217,6 +2279,28 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     if (editor().text() != text) editor().set_text(text);
                     push_text_overlay(box != 0, text, editor().caret(),
                                       editor().selection_begin(), editor().selection_end());
+                }
+            }
+            {
+                // What the engine is doing with its own cursor, asked at
+                // the same cadence as the button state it goes with. A
+                // rotation begins and ends inside a gesture, not on its
+                // edges, so this has to be polled rather than read once at
+                // the press.
+                const auto behavior = stud::runtime::read_mouse_behavior();
+                const int before = g_engine_mouse_behavior.exchange(static_cast<int>(behavior));
+                if (input_trace_enabled() && before != static_cast<int>(behavior)) {
+                    const char* name = behavior == stud::runtime::MouseBehavior::kDefault
+                                           ? "Default"
+                                           : behavior == stud::runtime::MouseBehavior::kLockCenter
+                                                 ? "LockCenter"
+                                                 : behavior ==
+                                                           stud::runtime::MouseBehavior::
+                                                               kLockCurrentPosition
+                                                       ? "LockCurrentPosition"
+                                                       : "unknown";
+                    std::printf("stud: engine MouseBehavior = %s\n", name);
+                    std::fflush(stdout);
                 }
             }
             if (fns.is_mouse_locked != nullptr && mouse_lock_enabled()) {
