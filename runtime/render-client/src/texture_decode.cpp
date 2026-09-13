@@ -1,6 +1,11 @@
 #include "texture_decode.h"
 
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
+#include <functional>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 // detex decodes every ETC/EAC format Stud emulates. It replaced
@@ -18,6 +23,118 @@ extern "C" {
 
 namespace stud::texture_decode {
 namespace {
+
+// A few worker threads for the block loop.
+//
+// Decoding a compressed block and re-encoding it to BC is per-block work
+// with no dependency between blocks, and there are a lot of them: a
+// 1024x1024 texture is 65,536. Done one after another on the calling
+// thread that is hundreds of milliseconds, which is exactly the stall
+// the engine reports as a 500ms frame when a new place loads and every
+// texture in it arrives at once.
+//
+// Threads are created once and parked. The pool is deliberately small --
+// this runs on the engine's own thread while the engine has work of its
+// own to do, and taking every core would win the texture and lose the
+// frame.
+class BlockPool {
+public:
+    static BlockPool& instance() {
+        static BlockPool pool;
+        return pool;
+    }
+
+    unsigned workers() const { return static_cast<unsigned>(threads_.size()); }
+
+    // Runs fn(begin, end) over [0, count) split across the pool, and
+    // returns once every part is done. The caller's own thread takes a
+    // share too rather than waiting idle.
+    void run(uint32_t count, const std::function<void(uint32_t, uint32_t)>& fn) {
+        const unsigned parts = workers() + 1;
+        if (parts <= 1 || count < 2) {
+            fn(0, count);
+            return;
+        }
+        // One parallel decode at a time. The engine decodes textures on
+        // several threads at once (it runs eight texture-loading
+        // threads), and they were all writing the same work state --
+        // each one clobbering the others' slice bounds, so the counter
+        // this waits on never reached zero and everything stopped.
+        //
+        // A second caller does its own work inline rather than queueing
+        // behind the first: it already has a thread of its own, so the
+        // machine stays just as busy and nothing waits on anything.
+        std::unique_lock<std::mutex> busy(run_mutex_, std::try_to_lock);
+        if (!busy.owns_lock()) {
+            fn(0, count);
+            return;
+        }
+        const uint32_t per = (count + parts - 1) / parts;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            work_ = &fn;
+            next_ = per;          // the caller takes the first slice
+            end_ = count;
+            stride_ = per;
+            remaining_ = 0;
+            for (uint32_t at = per; at < count; at += per) ++remaining_;
+            generation_++;
+        }
+        wake_.notify_all();
+        fn(0, per < count ? per : count);
+        std::unique_lock<std::mutex> lock(mutex_);
+        done_.wait(lock, [this] { return remaining_ == 0; });
+        work_ = nullptr;
+    }
+
+private:
+    BlockPool() {
+        unsigned hw = std::thread::hardware_concurrency();
+        if (hw < 2) hw = 2;
+        const unsigned want = hw > 8 ? 3 : (hw > 4 ? 2 : 1);
+        for (unsigned i = 0; i < want; ++i) {
+            threads_.emplace_back([this] { worker(); });
+        }
+    }
+
+    void worker() {
+        uint64_t seen = 0;
+        for (;;) {
+            std::unique_lock<std::mutex> lock(mutex_);
+            wake_.wait(lock, [&] { return generation_ != seen; });
+            seen = generation_;
+            for (;;) {
+                if (work_ == nullptr || next_ >= end_) break;
+                const uint32_t begin = next_;
+                uint32_t stop = begin + stride_;
+                if (stop > end_) stop = end_;
+                next_ = stop;
+                const auto* fn = work_;
+                lock.unlock();
+                (*fn)(begin, stop);
+                lock.lock();
+                if (remaining_ > 0) --remaining_;
+                if (remaining_ == 0) done_.notify_all();
+            }
+        }
+    }
+
+    std::vector<std::thread> threads_;
+    // Held for the length of one parallel run, so the shared slice state
+    // below belongs to exactly one caller at a time.
+    std::mutex run_mutex_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::condition_variable done_;
+    const std::function<void(uint32_t, uint32_t)>* work_ = nullptr;
+    uint32_t next_ = 0;
+    uint32_t end_ = 0;
+    uint32_t stride_ = 1;
+    uint32_t remaining_ = 0;
+    uint64_t generation_ = 0;
+};
+
+
 
 // How a format is laid out and what it decodes into. Everything the
 // decoders need is here, so the switch below stays a table rather than a
@@ -224,9 +341,17 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // the right or bottom edge of a non-multiple-of-four level writes only
     // the part that exists. 4x4 texels at 4 bytes is the largest case any
     // of these codecs produces.
+    // Rows of blocks are split across the pool. Each row writes only its
+    // own output, so nothing is shared and no locking is needed inside.
+    // Small levels stay on one thread: waking workers costs more than the
+    // work itself, and a texture's small mips are most of its levels.
+    // A codec layout_for() already validated cannot turn up here, but if
+    // it did a worker cannot return from decode() -- it records it.
+    std::atomic<bool> failed{false};
+    const auto do_rows = [&](uint32_t row_begin, uint32_t row_end) {
     uint8_t scratch[4 * 4 * 4];
 
-    for (uint32_t by = 0; by < bh; ++by) {
+    for (uint32_t by = row_begin; by < row_end; ++by) {
         for (uint32_t bx = 0; bx < bw; ++bx) {
             const uint8_t* block =
                 in + static_cast<uint64_t>(by) * block_row_pitch + static_cast<uint64_t>(bx) * l.block_bytes;
@@ -256,7 +381,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
                 case Layout::kEacRg11:
                     ok = detexDecompressBlockEAC_RG11(block, DETEX_MODE_MASK_ALL, 0, scratch);
                     break;
-                default: return false;
+                default: failed.store(true); continue;
             }
             // A block detex refuses is a block the engine should not have
             // produced. Zero is visibly wrong rather than random, which is
@@ -295,7 +420,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
                         stud::texture_encode::bc5_block_from_rg16(
                             reinterpret_cast<const uint16_t*>(scratch), dst_block);
                         break;
-                    default: return false;
+                    default: failed.store(true); continue;
                 }
                 continue;
             }
@@ -308,7 +433,18 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
             }
         }
     }
-    return true;
+    };
+
+    // Worth spreading only when there is enough work to pay for waking
+    // the pool. Below this a level is a handful of blocks and the
+    // calling thread does it faster alone.
+    constexpr uint32_t kParallelBlockThreshold = 4096;
+    if (static_cast<uint64_t>(bw) * bh >= kParallelBlockThreshold) {
+        BlockPool::instance().run(bh, do_rows);
+    } else {
+        do_rows(0, bh);
+    }
+    return !failed.load();
 }
 
 }  // namespace stud::texture_decode
