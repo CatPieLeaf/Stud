@@ -271,6 +271,23 @@ std::string native_window_activation_token(ANativeWindow* window);
 // constraints protocol.
 void native_window_set_pointer_locked(ANativeWindow* window, bool locked);
 
+// Put the pointer at a point in the window, in surface pixels.
+//
+// This is how the desktop pointer is put back on the engine's own cursor
+// when a camera drag ends: the cursor did not move for the whole gesture,
+// so the pointer is returned to it and the two are together again, with
+// nothing to reconcile afterwards. Wayland only grew a request for this
+// recently (wp_pointer_warp_v1); the lock/hint/unlock trick that came
+// before it drops warps silently and cannot coexist with a constraint.
+//
+// Where the compositor does not support it, this does nothing at all and
+// the pointer simply stays where the hand left it.
+void native_window_warp_pointer(ANativeWindow* window, float x, float y);
+
+// Whether warping is possible at all, so callers can choose the
+// behaviour that works rather than one that silently does not.
+bool native_window_can_warp_pointer();
+
 // Keep the pointer inside the window without taking it.
 //
 // Unlike a lock, a confinement leaves the pointer its real position and
