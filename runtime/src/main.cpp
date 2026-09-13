@@ -2097,6 +2097,34 @@ int main(int argc, char** argv) {
             return ok != 0;
         });
 
+    // The other half of the same protocol: a URL the web-view panel was
+    // about to navigate to, offered to the engine first. This is how a
+    // private server is joined -- see linking_bridge.h.
+    stud::jni_bridge::run_linking_url_detection_bootstrap(
+        jvm, lib, [&jvm, &lib](const std::string& url, bool registered) {
+            if (registered) {
+                stud::jni_bridge::hand_url_to_engine(jvm, lib, url);
+                // The panel exists for the page the user was on, and the
+                // app has just moved past it -- a private-server join
+                // leaves the experience loading behind a server list
+                // nobody can act on any more. A device does the same: the
+                // web activity is finished as the launch takes over.
+                uint64_t close_args[8] = {};
+                stud::render_client::connection().call(
+                    stud::render_host::CallId::CloseWebView, close_args, nullptr, 0, nullptr, 0,
+                    nullptr);
+            }
+            // Either way the viewer is told: it loads the page when the
+            // engine declined, and drops it when the engine took it --
+            // without the second, its own "nobody answered" deadline
+            // would load the page on top of a launching experience.
+            uint64_t args[8] = {};
+            args[0] = registered ? 1 : 0;
+            stud::render_client::connection().call(
+                stud::render_host::CallId::WebViewLoadUrl, args, url.data(),
+                static_cast<uint32_t>(url.size()), nullptr, 0, nullptr);
+        });
+
     stud::jni_bridge::run_webview_protocol_bootstrap(
         jvm, lib,
         [&jvm, &lib, web_view_agent = stud::jni_bridge::build_web_view_user_agent()](
@@ -2406,6 +2434,23 @@ int main(int argc, char** argv) {
                 nullptr);
             for (uint64_t i = 0; i < closed; ++i) {
                 stud::jni_bridge::publish_webview_closed(jvm, lib);
+            }
+        }
+        // A navigation the panel handed over rather than following. The
+        // engine is asked whether it wants the URL; its answer arrives
+        // on the subscription registered at bring-up.
+        {
+            std::vector<char> url(8 * 1024);
+            for (;;) {
+                uint64_t args[8] = {};
+                uint32_t written = 0;
+                const uint64_t got = stud::render_client::connection().call(
+                    stud::render_host::CallId::PollWebViewNavigation, args, nullptr, 0, url.data(),
+                    static_cast<uint32_t>(url.size()), &written);
+                if (got == 0 || written == 0) break;
+                stud::jni_bridge::ask_engine_about_url(
+                    jvm, lib,
+                    std::string(url.data(), std::min<size_t>(written, url.size())));
             }
         }
         // Anything the page sent through its JavaScript bridge, in the

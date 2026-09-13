@@ -35,7 +35,7 @@ public:
 
 private slots:
     void openSettings();
-    void copyInviteLink();
+    void copyServerLink();
     void exportLogs();
     void showAbout();
     void quitStud();

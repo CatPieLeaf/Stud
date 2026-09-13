@@ -627,6 +627,19 @@ enum class CallId : uint32_t {
     // to 12-28 bytes instead of ~100. Appended last: every existing id
     // keeps its value.
     GlCommandBatch,
+    // A URL the web view was about to navigate to and did NOT, because
+    // the app has first refusal on it -- exactly what a real device's
+    // WebView does (`shouldOverrideUrlLoading` returns true for every
+    // URL, then routes it through the LINKING protocol). Returns the
+    // number of bytes written to the out-buffer, 0 when the queue is
+    // empty. Appended last: every existing id keeps its value.
+    PollWebViewNavigation,
+    // ...and the answer. The in-buffer is the URL; a[0] is 0 for "the
+    // engine does not want it, load it after all" and 1 for "the engine
+    // took it, drop it" -- the viewer needs the second because it gives
+    // an unanswered question a short deadline and then loads the page
+    // itself rather than leaving a dead link.
+    WebViewLoadUrl,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -872,9 +885,11 @@ inline const char* call_id_name(CallId id) {
         "GlGetQueryObjectuiv",
         "GlGetQueryObjectui64v",
         "GlCommandBatch",
+        "PollWebViewNavigation",
+        "WebViewLoadUrl",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlCommandBatch) + 1,
+                      static_cast<size_t>(CallId::WebViewLoadUrl) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

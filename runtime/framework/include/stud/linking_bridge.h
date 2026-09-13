@@ -45,4 +45,48 @@ LinkingIds read_linking_ids(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
 bool run_linking_protocol_bootstrap(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                      std::function<bool(const std::string&)> on_open_url);
 
+// The other half of this protocol: a URL the web view is about to
+// navigate to, handed to the engine to see whether IT wants it.
+//
+// This is how a private server is joined on a real device, and it is
+// not the hybrid JS bridge. The server list's own code
+// (`ServerList.js`) only calls `Roblox.GameLauncher.joinPrivateGame` on
+// a device whose `deviceType` is "computer" -- on a tablet or a phone it
+// sets `window.location.href` to
+// `/games/start?placeId=...&accessCode=...` instead. The real app never
+// loads that page: its WebView's `shouldOverrideUrlLoading` returns true
+// for every URL, publishes this protocol's isURLRegistered REQUEST, and
+// on a "yes" publishes detectURL, which is what makes the engine launch
+// the experience. On a "no" it loads the URL in the WebView as usual.
+//
+// Stud had neither half, so the navigation went to a page that tries to
+// hand off to a desktop Roblox install through a protocol handler --
+// nothing happened, and nothing was logged.
+struct LinkingUrlIds {
+    std::string protocol;
+    std::string url_key;
+    std::string detect_url_id;
+    std::string is_url_registered_request_id;
+    std::string is_url_registered_response_id;
+    std::string is_registered_key;
+    std::string matched_url_key;
+    bool resolved = false;
+};
+
+// Subscribes to the isURLRegistered RESPONSE. The callback is handed the
+// URL the answer is about and whether the engine claims it.
+bool run_linking_url_detection_bootstrap(
+    FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+    std::function<void(const std::string& url, bool registered)> on_answer);
+
+// "Do you handle this URL?" -- answered asynchronously through the
+// callback registered above.
+void ask_engine_about_url(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                          const std::string& url);
+
+// "Then handle it." Publishes detectURL, the real message that makes the
+// engine act on a URL it recognised.
+void hand_url_to_engine(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                        const std::string& url);
+
 }  // namespace stud::jni_bridge

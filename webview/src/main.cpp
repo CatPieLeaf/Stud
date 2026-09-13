@@ -25,6 +25,8 @@
 #include <QMainWindow>
 #include <QNetworkCookie>
 #include <QTextStream>
+#include <QSet>
+#include <QTimer>
 #include <QUrl>
 #include <QWebEngineCookieStore>
 #include <QWebEnginePage>
@@ -36,6 +38,10 @@
 #include "stud/webview_user_agent.h"
 
 #include <cstdio>
+#include <string>
+#include <thread>
+
+#include <unistd.h>
 
 namespace {
 
@@ -56,6 +62,11 @@ Request read_request() {
     request.userAgent = stream.readLine();
     while (!stream.atEnd()) {
         const QString line = stream.readLine();
+        // The request ends here and the pipe stays open: the answer to a
+        // navigation this viewer blocked arrives on the same stdin
+        // later, so reading to EOF would wait forever. Run by hand with
+        // no sentinel, EOF still ends it.
+        if (line == QLatin1String("END")) break;
         if (line.isEmpty()) continue;
         // Each line is a Set-Cookie style header, which is exactly what
         // QNetworkCookie::parseCookies already understands.
@@ -76,6 +87,77 @@ constexpr char kHybridPrefix[] = "__STUD_HYBRID__";
 class BridgePage : public QWebEnginePage {
 public:
     using QWebEnginePage::QWebEnginePage;
+
+    // The app has first refusal on every navigation, exactly as it does
+    // on a real device.
+    //
+    // A real Android WebView's `shouldOverrideUrlLoading` returns true
+    // for every URL: the app asks the engine (the LINKING protocol's
+    // isURLRegistered) whether it wants it, hands it over with detectURL
+    // if so, and otherwise loads it in the WebView itself. That is not a
+    // detail -- it is the ONLY way a private server is joined from this
+    // panel. The server list only calls the JavaScript bridge's
+    // `joinPrivateGame` when the device reports itself a computer; on a
+    // phone or tablet it sets `window.location.href` to
+    // `/games/start?placeId=...&accessCode=...` and expects the host to
+    // intercept it. Loading that page instead is what made joining a
+    // private server do nothing at all.
+    //
+    // Only main-frame navigations the page itself initiates are
+    // intercepted: a subframe (an embedded video), a back/forward step,
+    // a reload, and this process's own initial load are the page working
+    // as intended, not a request aimed at the app.
+    bool acceptNavigationRequest(const QUrl& url, NavigationType type, bool isMainFrame) override {
+        const QString scheme = url.scheme();
+        const bool web = scheme == QLatin1String("http") || scheme == QLatin1String("https");
+        const bool page_initiated =
+            type == NavigationTypeLinkClicked || type == NavigationTypeOther;
+        const QString text = url.toString();
+        if (!isMainFrame || text == m_allowed) {
+            if (text == m_allowed) m_allowed.clear();
+            return true;
+        }
+        if (!web || page_initiated) {
+            // Either something only the app can act on (a `roblox://`
+            // deep link, which QtWebEngine would otherwise drop in
+            // silence) or an ordinary link the app gets to claim first.
+            std::printf("navigate %s\n", text.toUtf8().constData());
+            std::fflush(stdout);
+            // If nobody answers, load it rather than leave the panel
+            // stuck on the page it was on: an unanswered question must
+            // not cost the user a working link.
+            if (web) {
+                const QString pending = text;
+                QTimer::singleShot(1500, this, [this, pending]() {
+                    if (m_answered.contains(pending)) {
+                        m_answered.remove(pending);
+                        return;
+                    }
+                    std::printf("stud-webview: nobody answered, loading it\n");
+                    std::fflush(stdout);
+                    loadAllowed(pending);
+                });
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // Load a URL that was offered to the app and declined, without
+    // offering it again.
+    void loadAllowed(const QString& url) {
+        m_answered.insert(url);
+        m_allowed = url;
+        setUrl(QUrl(url));
+    }
+
+    // The app claimed it: no load, and the fallback timer above must not
+    // load it either.
+    void markHandled(const QString& url) { m_answered.insert(url); }
+
+private:
+    QString m_allowed;
+    QSet<QString> m_answered;
 
 protected:
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message,
@@ -186,7 +268,47 @@ int main(int argc, char** argv) {
             "};").arg(QLatin1String(kHybridPrefix)));
         profile->scripts()->insert(bridge);
     }
-    view->setPage(new BridgePage(profile, view));
+    auto* page = new BridgePage(profile, view);
+    view->setPage(page);
+    // The rest of the conversation with Stud: an answer to a navigation
+    // this viewer blocked. One line, "load <url>", meaning the engine
+    // did not want it after all. A thread rather than a socket notifier
+    // because stdin here is an ordinary pipe and this reads whole lines;
+    // the load itself is posted to the GUI thread, which is the only one
+    // allowed to touch the page.
+    std::thread([page]() {
+        std::string pending;
+        char buffer[4096];
+        for (;;) {
+            const ssize_t got = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+            if (got <= 0) break;
+            pending.append(buffer, static_cast<size_t>(got));
+            for (;;) {
+                const auto newline = pending.find('\n');
+                if (newline == std::string::npos) break;
+                const std::string line = pending.substr(0, newline);
+                pending.erase(0, newline + 1);
+                static constexpr char kLoad[] = "load ";
+                static constexpr char kDrop[] = "drop ";
+                const bool load = line.rfind(kLoad, 0) == 0;
+                const bool drop = line.rfind(kDrop, 0) == 0;
+                if (!load && !drop) continue;
+                const QString url = QString::fromStdString(line.substr(sizeof(kLoad) - 1));
+                QMetaObject::invokeMethod(
+                    page,
+                    [page, url, load]() {
+                        if (load) {
+                            page->loadAllowed(url);
+                        } else {
+                            // The app took it: no page load, and the
+                            // deadline below must not undo that.
+                            page->markHandled(url);
+                        }
+                    },
+                    Qt::QueuedConnection);
+            }
+        }
+    }).detach();
     window.setCentralWidget(view);
     window.setWindowTitle(request.title.isEmpty() ? QStringLiteral("Roblox") : request.title);
     // Stud's own icon, by theme name, with the installed file as a
@@ -231,7 +353,26 @@ int main(int argc, char** argv) {
                 "hybrid:typeof r.Hybrid,"
                 "hybridKeys:Object.keys(r.Hybrid||{}),"
                 "navigation:typeof (r.Hybrid||{}).Navigation,"
-                "nativeCallback:typeof ((r.Hybrid||{}).Bridge||{}).nativeCallback"
+                "nativeCallback:typeof ((r.Hybrid||{}).Bridge||{}).nativeCallback,"
+                // What decides whether a launch (a game, a private
+                // server) goes to the app or nowhere. The page picks its
+                // launch transport from these, and a private-server join
+                // that does nothing means it found none of them.
+                "isNative:!!(r.Hybrid||{}).isNative,"
+                "gameKeys:Object.keys((r.Hybrid||{}).Game||{}),"
+                "gameLauncher:typeof r.GameLauncher,"
+                "launcherKeys:Object.keys(r.GameLauncher||{}).slice(0,40),"
+                // The server's own verdict on what client this is,
+                // stamped into the page: the same attribute that decides
+                // whether a login challenge gets a native transport.
+                "gameIsNative:!!(((r.Hybrid||{}).Game)||{}).isNative,"
+                "ua:navigator.userAgent,"
+                // The server stamps its own verdict into a meta tag,
+                // which is a different question from whether the page's
+                // own script then enables its native transport.
+                "isAndroidApp:(function(){var m=document.querySelector("
+                "'meta[name=\"device-meta\"]');return m?m.getAttribute("
+                "'data-is-android-app'):null;})()"
                 "});})()"),
             [](const QVariant& result) {
                 std::printf("stud-webview: page bridge state: %s\n",
