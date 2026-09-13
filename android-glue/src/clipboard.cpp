@@ -11,6 +11,9 @@
 
 #include "wayland_overlay_deps.h"
 
+#include "stud/android_glue.h"
+#include "x11_backend.h"
+
 // The real system clipboard, for the text box Stud draws itself.
 //
 // Stud owns text editing while a Lua TextBox is focused (see
@@ -150,6 +153,12 @@ bool ensure_device(const WaylandOverlayDeps& deps) {
 }  // namespace
 
 void clipboard_set_text(const std::string& text) {
+    // X11 owns its selections through a window rather than a seat, so it
+    // has its own implementation entirely (x11_backend.cpp).
+    if (display_backend() == DisplayBackend::X11) {
+        x11::clipboard_set(text);
+        return;
+    }
     const WaylandOverlayDeps deps = overlay_deps();
     if (deps.display == nullptr || !ensure_device(deps)) return;
     auto& c = clipboard();
@@ -172,6 +181,7 @@ void clipboard_set_text(const std::string& text) {
 }
 
 std::string clipboard_get_text() {
+    if (display_backend() == DisplayBackend::X11) return x11::clipboard_get();
     const WaylandOverlayDeps deps = overlay_deps();
     if (deps.display == nullptr || !ensure_device(deps)) return {};
     auto& c = clipboard();
