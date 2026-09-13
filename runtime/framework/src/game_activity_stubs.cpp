@@ -142,8 +142,7 @@ BEGIN_NATIVE_DESCRIPTOR(JavaUtilListStub)
 { FakeJni::Function<&JavaUtilListStub::get>{}, "get" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(AppRtcDeviceWrapperStub)
-END_NATIVE_DESCRIPTOR
+
 
 BEGIN_NATIVE_DESCRIPTOR(FmodMediaCodecStub)
 END_NATIVE_DESCRIPTOR
@@ -865,6 +864,39 @@ BEGIN_NATIVE_DESCRIPTOR(LoggingProtocolStub)
 { FakeJni::Function<&LoggingProtocolStub::getProcessTimestamp>{}, "getProcessTimestamp", kStaticPublic },
 END_NATIVE_DESCRIPTOR
 
+FakeJni::JInt AppRtcDeviceWrapperStub::getSelectedAudioDeviceAsInt() {
+    return 1;  // WIRED_HEADSET -- an ordinary desktop output
+}
+std::shared_ptr<FakeJni::JString> AppRtcDeviceWrapperStub::getSelectedAudioDeviceName() {
+    return std::make_shared<FakeJni::JString>("Desktop Audio");
+}
+FakeJni::JBoolean AppRtcDeviceWrapperStub::isValid() { return true; }
+void AppRtcDeviceWrapperStub::wrapSetCommunicationMute(FakeJni::JBoolean muted) {
+    // Reported, not acted on: Stud has no system-level microphone mute,
+    // and the engine stops reading the stream when it mutes anyway.
+    std::printf("stud: audio: engine set communication mute = %d\n", muted ? 1 : 0);
+    std::fflush(stdout);
+}
+void AppRtcDeviceWrapperStub::wrapStartCommunication() {
+    std::printf("stud: audio: engine started voice communication\n");
+    std::fflush(stdout);
+}
+void AppRtcDeviceWrapperStub::wrapStopCommunication() {
+    std::printf("stud: audio: engine stopped voice communication\n");
+    std::fflush(stdout);
+}
+
+BEGIN_NATIVE_DESCRIPTOR(AppRtcDeviceWrapperStub)
+{ FakeJni::Constructor<AppRtcDeviceWrapperStub>{} },
+{ FakeJni::Constructor<AppRtcDeviceWrapperStub, FakeJni::JLong>{} },
+{ FakeJni::Function<&AppRtcDeviceWrapperStub::getSelectedAudioDeviceAsInt>{}, "getSelectedAudioDeviceAsInt" },
+{ FakeJni::Function<&AppRtcDeviceWrapperStub::getSelectedAudioDeviceName>{}, "getSelectedAudioDeviceName" },
+{ FakeJni::Function<&AppRtcDeviceWrapperStub::isValid>{}, "isValid" },
+{ FakeJni::Function<&AppRtcDeviceWrapperStub::wrapSetCommunicationMute>{}, "wrapSetCommunicationMute" },
+{ FakeJni::Function<&AppRtcDeviceWrapperStub::wrapStartCommunication>{}, "wrapStartCommunication" },
+{ FakeJni::Function<&AppRtcDeviceWrapperStub::wrapStopCommunication>{}, "wrapStopCommunication" },
+END_NATIVE_DESCRIPTOR
+
 BEGIN_NATIVE_DESCRIPTOR(MessageBusConnectionStub)
 { FakeJni::Constructor<MessageBusConnectionStub>{} },
 { FakeJni::Constructor<MessageBusConnectionStub, FakeJni::JLong>{} },
@@ -1054,6 +1086,7 @@ void register_game_activity_stubs(FakeJni::Jvm& jvm) {
     jvm.registerClass<VideoCodecCapabilityStub>();
     jvm.registerClass<MediaCodecInfoUtilsStub>();
     jvm.registerClass<LoggingProtocolStub>();
+    jvm.registerClass<AppRtcDeviceWrapperStub>();
     jvm.registerClass<MessageBusConnectionStub>();
     jvm.registerClass<MessageBusStub>();
     jvm.registerClass<MessageBusRawCallbackStub>();
@@ -1083,7 +1116,6 @@ void register_game_activity_stubs(FakeJni::Jvm& jvm) {
     jvm.registerClass<JniCookieProtocolStub>();
     jvm.registerClass<CookieProtocolStub>();
     jvm.registerClass<JavaUtilListStub>();
-    jvm.registerClass<AppRtcDeviceWrapperStub>();
     jvm.registerClass<FmodMediaCodecStub>();
     jvm.registerClass<SystemDialogRequestStub>();
     jvm.registerClass<ISystemDialogCallbackStub>();
