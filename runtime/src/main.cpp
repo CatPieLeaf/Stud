@@ -910,6 +910,18 @@ int main(int argc, char** argv) {
         // it, so the engine is left at 1.0 there.
         layout_density = (follow_dpi && hidpi_enabled) ? real_density : 1.0f;
         engine_dpi_scale = layout_density;
+        // TEST ONLY, off unless set: PlatformParams.dpiScale on its own,
+        // independent of DisplayMetrics density. The two are the same
+        // number in normal use, and separating them is what says which one
+        // the engine keys its UI SIZE off and which one it keys its
+        // rounded corners off -- measured, not reasoned: with density at
+        // 0.67 and this left at 1.0, the UI did not shrink at all.
+        if (const char* v = std::getenv("STUD_TEST_DPI_SCALE")) {
+            engine_dpi_scale = static_cast<float>(std::atof(v));
+            std::printf("stud: TEST PlatformParams.dpiScale forced to %.3f\n",
+                        static_cast<double>(engine_dpi_scale));
+            std::fflush(stdout);
+        }
         std::printf("stud: engine layout scale %.2f (follow DPI %s, hidpi %s, display %.2f)\n",
                     static_cast<double>(engine_dpi_scale), follow_dpi ? "on" : "off",
                     hidpi_enabled ? "on" : "off", static_cast<double>(real_density));
