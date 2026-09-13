@@ -856,6 +856,13 @@ uint32_t gl_pixel_size(GLenum format, GLenum type) {
 
 }  // namespace
 
+// Defined further down, at the main loop that usually calls it -- input
+// asks for it too, so that a pointer event is never older than the moment
+// it was requested. Declared out here because that definition is at file
+// scope, not in the anonymous namespace below.
+namespace { struct RealWindow; }
+void pump_display(const RealWindow& window, bool fd_readable);
+
 namespace {
 uint64_t g_window_surface_handle = kNullHandle;
 bool g_prefer_vulkan = true;
@@ -2874,6 +2881,24 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // listeners (this process already dispatches that fd in its
             // main poll loop). Reply with as many as the client's buffer
             // can hold; the rest stay queued for the next poll.
+            // Pump the display HERE, first.
+            //
+            // A pointer event only reaches the queue when something
+            // dispatches Wayland, and the main loop does that at most
+            // every STUD_WL_POLL_MS (50ms) -- and not at all while a busy
+            // client keeps the connection saturated, which is exactly
+            // when the mouse is moving. The hand could therefore be up to
+            // a twentieth of a second ahead of the queue before Process B
+            // even asked. Pumping at the moment input is requested makes
+            // the answer as fresh as the compositor has it.
+            {
+                bool readable = false;
+                if (!window.on_x11() && window.display != nullptr) {
+                    pollfd wl{wl_display_get_fd(window.display), POLLIN, 0};
+                    readable = ::poll(&wl, 1, 0) > 0 && (wl.revents & POLLIN) != 0;
+                }
+                pump_display(window, readable);
+            }
             using stud::android_glue::HostInputEvent;
             size_t capacity = hdr.out_buffer_len / sizeof(HostInputEvent);
             if (capacity == 0) return 0;
