@@ -1,0 +1,88 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
+  "manifest_version": "3.0",
+  "name": "Stud",
+  "description": "Play Roblox on Linux.",
+  "version": "0.1.0",
+  "image": "ghcr.io/catpieleaf/stud:0.1.0",
+  "binaries": [
+    "/usr/bin/stud"
+  ],
+  "desktop_entries": [
+    "/usr/share/applications/io.github.catpieleaf.Stud.desktop"
+  ],
+  "form_factors": [
+    "desktop"
+  ],
+  "services": {},
+  "dependencies": [],
+  "addons": [],
+  "idle_time": 0,
+  "override": {
+    "socketWayland": true,
+    "socketPulseAudio": true,
+    "deviceDri": true,
+    "deviceShm": true,
+    "notification": true,
+    "openURI": true,
+    "network": true,
+    "userNamespaces": true,
+    "clipboard": {
+      "hostToApp": true,
+      "appToHost": true
+    },
+    "filePicker": {
+      "openFile": true,
+      "persistent": true
+    },
+    "filesystem": [
+      {
+        "path": "xdg-download",
+        "access": "read-only"
+      }
+    ],
+    "sessionBus": {
+      "talk": [
+        {
+          "name": "org.freedesktop.secrets",
+          "path": "/org/freedesktop/secrets",
+          "interface": "org.freedesktop.Secret.Service",
+          "members": [
+            "OpenSession",
+            "SearchItems",
+            "Unlock",
+            "Lock",
+            "GetSecrets",
+            "ReadAlias",
+            "CreateCollection"
+          ]
+        },
+        {
+          "name": "org.freedesktop.secrets",
+          "path": "/org/freedesktop/secrets/aliases/default",
+          "interface": "org.freedesktop.Secret.Collection",
+          "members": [
+            "CreateItem",
+            "SearchItems"
+          ]
+        },
+        {
+          "name": "org.kde.kwalletd6",
+          "path": "/modules/kwalletd6",
+          "interface": "org.kde.KWallet",
+          "members": [
+            "open",
+            "close",
+            "hasEntry",
+            "readEntry",
+            "writeEntry",
+            "removeEntry",
+            "createFolder",
+            "hasFolder",
+            "networkWallet"
+          ]
+        }
+      ]
+    }
+  }
+}
