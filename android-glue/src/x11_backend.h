@@ -45,6 +45,13 @@ bool focused();
 // -1 before the display is open.
 int connection_fd();
 
+// Mouse look. X11 has no pointer-constraints protocol, so the lock is
+// the classic pointer grab plus a warp back to the centre after every
+// motion -- the pointer never reaches an edge and the deltas keep
+// coming. Reports relative motion instead of positions while held, the
+// same as the Wayland path.
+void set_pointer_locked(bool locked);
+
 int32_t width();
 int32_t height();
 
