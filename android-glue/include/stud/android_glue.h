@@ -253,6 +253,15 @@ int32_t native_window_buffer_scale_120();
 // it is wrong for the whole session.
 int32_t native_window_wait_for_display_scale_120();
 
+// The window's size in the DISPLAY's own pixels, whatever the engine is
+// rendering at. This is what Stud's upscaler writes into: the output
+// always matches the screen, and follows the window as it is resized.
+//
+// Different from ANativeWindow_getWidth/getHeight, which report the size
+// the ENGINE renders at -- the two are equal only when nothing is being
+// upscaled.
+void native_window_display_pixel_size(int32_t* width, int32_t* height);
+
 // An xdg-activation token for launching another application from this
 // window. A Wayland compositor deliberately will not let an arbitrary
 // process steal focus; handing the launched program a token minted

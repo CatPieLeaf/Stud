@@ -16,6 +16,28 @@ namespace stud::render_host {
 // undefined currentExtent and this is the honest answer to substitute.
 void vk_set_window_size(uint32_t width, uint32_t height);
 
+// How much bigger the PRESENTED image is than the one the engine renders,
+// in 120ths. 120 is 1:1 and disables the whole path.
+//
+// This is Stud's own upscaler, and it exists because the engine's own
+// scale cannot be touched: below 1.0 it switches to a simplified UI with
+// square corners, and above 1.0 it drops SSAO -- both measured. So the
+// engine is left believing its window is exactly the size it asked for,
+// at scale 1.0, and renders into an offscreen image of that size; Stud
+// presents a full-resolution image built from it. The engine learns
+// nothing, so its UI size, its rounded corners, its SSAO and the cursor
+// are all untouched.
+//
+// The ratio is the display's own scale in the non-HiDPI configuration,
+// where the engine already renders at the window's logical size and the
+// compositor stretches the result -- this replaces that stretch with a
+// real pass, at exactly the performance non-HiDPI already has.
+// The size Stud's upscaler writes, in the display's own pixels. Always
+// the window's real size, so the presented image matches the screen
+// exactly and is shown 1:1 -- and it follows a resize. 0x0 disables the
+// whole path.
+void vk_set_upscale_output_size(uint32_t width, uint32_t height);
+
 // Whether the window is an X11 one, which decides whether instance
 // creation asks for VK_KHR_xlib_surface or VK_KHR_wayland_surface.
 void vk_set_on_x11(bool on_x11);

@@ -86,6 +86,24 @@ StudSettings load_settings(const std::string& path) {
         const double scale = doc.at("renderScale").get<double>();
         result.hidpi = scale <= 0.0 || scale > 1.0;
     }
+    if (doc.contains("upscaling")) {
+        if (!doc.at("upscaling").is_boolean()) {
+            throw SettingsError("stud: config '" + path + "' has a non-boolean \"upscaling\"");
+        }
+        result.upscaling = doc.at("upscaling").get<bool>();
+    }
+    if (doc.contains("upscaleQualityPercent")) {
+        if (!doc.at("upscaleQualityPercent").is_number_integer()) {
+            throw SettingsError("stud: config '" + path +
+                                "' has a non-integer \"upscaleQualityPercent\"");
+        }
+        const int percent = doc.at("upscaleQualityPercent").get<int>();
+        // Clamped rather than rejected. 33 is DLSS's own Ultra
+        // Performance ratio and the floor below which there is nothing
+        // left to reconstruct; 100 means rendering the output size, which
+        // is upscaling nothing.
+        result.upscale_quality_percent = percent < 33 ? 33 : (percent > 100 ? 100 : percent);
+    }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
@@ -209,6 +227,9 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     // Written as a plain multiplier rather than 120ths: this file is meant
     // to be hand-editable, and "1.25" is what a person means.
     doc.erase("renderScale");
+    doc["upscaling"] = settings.upscaling;
+    doc.erase("upscaleOutputPercent");
+    doc["upscaleQualityPercent"] = settings.upscale_quality_percent;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;

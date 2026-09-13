@@ -195,6 +195,11 @@ std::atomic<int32_t> g_display_scale_120{kScaleUnit};
 // surface -- which is exactly the reported "HiDPI off, window starts
 // stretched, still high DPI".
 std::atomic<int32_t> g_render_scale_120{kScaleUnit};
+// The window's last known LOGICAL size. Latched here because the size
+// itself lives on the window object and the upscaler needs it from
+// elsewhere -- see native_window_display_pixel_size().
+std::atomic<int32_t> g_logical_width{0};
+std::atomic<int32_t> g_logical_height{0};
 // What the user asked for, in 120ths. 0 means "follow the display",
 // which is the default and what HiDPI-on used to mean.
 std::atomic<int32_t> g_requested_render_scale_120{0};
@@ -1298,6 +1303,8 @@ void apply_window_geometry(ANativeWindow* window, const char* reason) {
         wp_viewport_set_destination(window->viewport, logical_w, logical_h);
         wl_surface_commit(window->surface);
     }
+    g_logical_width.store(logical_w);
+    g_logical_height.store(logical_h);
     stud::android_glue::set_native_window_size(buf_w, buf_h);
     std::printf("stud: android-glue: window %s: %dx%d logical, %dx%d buffer (scale=%d/120)\n",
                 reason, logical_w, logical_h, buf_w, buf_h, g_render_scale_120.load());
@@ -1909,6 +1916,28 @@ std::string native_window_activation_token(ANativeWindow* window) {
     }
     xdg_activation_token_v1_destroy(tok);
     return g_pending_activation_token;
+}
+
+void native_window_display_pixel_size(int32_t* width, int32_t* height) {
+    // From the window's LOGICAL size and the display's own scale, not from
+    // the buffer: the buffer is whatever the engine renders at, which is
+    // exactly what this is not.
+    const int32_t scale = display_scale_120();
+    const int32_t logical_w = g_logical_width.load();
+    const int32_t logical_h = g_logical_height.load();
+    if (logical_w <= 0 || logical_h <= 0) {
+        if (width != nullptr) *width = 0;
+        if (height != nullptr) *height = 0;
+        return;
+    }
+    if (width != nullptr) {
+        *width = static_cast<int32_t>((static_cast<int64_t>(logical_w) * scale + kScaleUnit - 1) /
+                                      kScaleUnit);
+    }
+    if (height != nullptr) {
+        *height = static_cast<int32_t>((static_cast<int64_t>(logical_h) * scale + kScaleUnit - 1) /
+                                      kScaleUnit);
+    }
 }
 
 int32_t native_window_wait_for_display_scale_120() {
