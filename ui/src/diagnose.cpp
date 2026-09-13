@@ -294,7 +294,20 @@ void write_diagnostics() {
     line("wayland display", qEnvironmentVariable("WAYLAND_DISPLAY").toStdString());
     line("x11 display", qEnvironmentVariable("DISPLAY").toStdString());
     report_cpu();
-    line("preloaded allocator", preloaded_allocators());
+    const std::string allocator = preloaded_allocators();
+    line("preloaded allocator", allocator);
+    if (!allocator.empty()) {
+        // Worth stating rather than leaving to be noticed: a replacement
+        // allocator forced in through LD_PRELOAD applies to Stud's glibc
+        // processes but not to Process B, which runs real bionic with
+        // its own allocator and an engine that links mimalloc
+        // statically. Two machines running the same build can behave
+        // differently because of this, and hardened_malloc in
+        // particular is strict enough to matter.
+        std::printf("  %-22s %s\n", "",
+                    "note: this replaces the allocator in Stud's glibc processes only -- "
+                    "Process B keeps bionic's");
+    }
     line("appimage", qEnvironmentVariable("APPIMAGE").toStdString());
     std::printf("\n");
 
