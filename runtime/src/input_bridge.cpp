@@ -315,7 +315,15 @@ float g_last_raw_py = 0.0f;
 bool g_warp_pending = false;
 float g_warp_target_px = 0.0f;
 float g_warp_target_py = 0.0f;
-int g_warp_events_left = 0;
+// Where the pointer was when the warp was asked for. The echo is
+// recognised by being nearer the place it was sent to than the place it
+// came from, which ends the window on the FIRST event after the warp
+// lands however fast the hand is still moving -- waiting for the pointer
+// to be exactly on the target instead held the cursor still for a couple
+// of hundred milliseconds whenever the hand had not stopped.
+float g_warp_from_px = 0.0f;
+float g_warp_from_py = 0.0f;
+std::chrono::steady_clock::time_point g_warp_started{};
 
 
 // Whether the compositor can move the pointer at all (wp_pointer_warp_v1,
@@ -358,10 +366,12 @@ void begin_warp(float target_px, float target_py) {
     g_warp_pending = true;
     g_warp_target_px = target_px;
     g_warp_target_py = target_py;
-    // A bound, so a warp the compositor quietly drops cannot swallow the
-    // pointer for the rest of the session. Generous: a fast hand produces
-    // a handful of events in the time a round-trip takes.
-    g_warp_events_left = 32;
+    g_warp_from_px = g_last_raw_px;
+    g_warp_from_py = g_last_raw_py;
+    // A bound in TIME, so a warp the compositor quietly drops cannot
+    // swallow the pointer -- and short, because every millisecond of it
+    // is a millisecond the cursor does not move.
+    g_warp_started = std::chrono::steady_clock::now();
 }
 
 void set_pointer_locked(bool locked) {
@@ -1134,18 +1144,24 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // warp itself arriving. Keep the engine's cursor where it
                 // is, report no movement, and measure the next real
                 // movement from wherever the pointer actually is now.
-                const bool landed = std::fabs(ev.x - g_warp_target_px) < 3.0f &&
-                                    std::fabs(ev.y - g_warp_target_py) < 3.0f;
+                const float to_target = std::fabs(ev.x - g_warp_target_px) +
+                                        std::fabs(ev.y - g_warp_target_py);
+                const float to_origin = std::fabs(ev.x - g_warp_from_px) +
+                                        std::fabs(ev.y - g_warp_from_py);
+                const bool landed = to_target <= to_origin;
+                const bool timed_out =
+                    std::chrono::steady_clock::now() - g_warp_started >
+                    std::chrono::milliseconds(80);
                 g_prev_raw_x = x;
                 g_prev_raw_y = y;
                 g_have_prev_raw = true;
                 g_last_raw_px = ev.x;
                 g_last_raw_py = ev.y;
-                if (landed || --g_warp_events_left <= 0) {
+                if (landed || timed_out) {
                     g_warp_pending = false;
                     if (input_trace_enabled()) {
                         std::printf("stud: warp %s at (%.1f,%.1f)\n",
-                                    landed ? "landed" : "gave up",
+                                    landed ? "landed" : "gave up (not seen)",
                                     static_cast<double>(ev.x), static_cast<double>(ev.y));
                         std::fflush(stdout);
                     }
