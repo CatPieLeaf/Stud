@@ -91,7 +91,22 @@
   </content_rating>
 
   <releases>
-    <release version="@STUD_VERSION@" date="2026-09-12">
+    <release version="@STUD_VERSION@" date="2026-09-13">
+      <description>
+        <p>The mouse cursor now behaves as it does on the desktop client.</p>
+        <ul>
+          <li>The cursor stays put through a camera rotation and follows the
+              hand everywhere else, decided from the engine's own mouse
+              state rather than guessed at.</li>
+          <li>The pointer is kept inside the window during a camera drag, so
+              a spin is no longer stopped by the edge of the screen.</li>
+          <li>Input reaches the engine the moment the compositor delivers
+              it, which also lifted the frame rate well past 60.</li>
+          <li>The app shell's Exit button closes Stud.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-09-12">
       <description>
         <p>First packaged release.</p>
       </description>
