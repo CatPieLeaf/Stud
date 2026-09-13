@@ -106,9 +106,15 @@ EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext, const 
     return h == 0 ? EGL_NO_CONTEXT : from_handle<EGLContext>(h);
 }
 
+// Which context this thread has current. Tracked here because the only
+// thing that ever makes one current is this client, on this thread -- so
+// asking the host is a round-trip to be told something already known.
+thread_local EGLContext g_current_context = EGL_NO_CONTEXT;
+
 EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface, EGLContext ctx) {
     uint64_t a[8] = {to_handle(dpy), to_handle(draw), to_handle(ctx)};
     uint64_t r = connection().call(CallId::EglMakeCurrent, a, nullptr, 0, nullptr, 0, nullptr);
+    if (r) g_current_context = ctx;
     return r ? EGL_TRUE : EGL_FALSE;
 }
 
@@ -163,9 +169,10 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute
 }
 
 EGLContext eglGetCurrentContext() {
-    uint64_t a[8] = {};
-    uint64_t h = connection().call(CallId::EglGetCurrentContext, a, nullptr, 0, nullptr, 0, nullptr);
-    return h == 0 ? EGL_NO_CONTEXT : from_handle<EGLContext>(h);
+    // Answered from what eglMakeCurrent recorded. The engine asks this
+    // every frame and the answer cannot have changed without this client
+    // changing it.
+    return g_current_context;
 }
 
 EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint* value) {
