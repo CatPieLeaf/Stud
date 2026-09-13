@@ -68,9 +68,15 @@ std::atomic<bool> g_pointer_locked{false};
 // and mouse look cancels itself out.
 bool g_ignore_next_motion = false;
 // The last unlocked pointer position, in window coordinates: where a
-// drag began, and where the pointer is put back when it ends.
+// drag began, what every event reports while the drag lasts, and where
+// the pointer is put back when it ends.
 float g_pointer_x = 0.0f;
 float g_pointer_y = 0.0f;
+// The previous raw position while locked, which is what the deltas are
+// measured against. Not the window centre: warping on every motion is
+// what put the cursor in the middle of the screen.
+int g_locked_last_x = 0;
+int g_locked_last_y = 0;
 Atom g_wm_delete = 0;
 std::atomic<bool> g_close_requested{false};
 // X11's own answer to "can anybody see this": the window is either
@@ -260,11 +266,12 @@ void set_pointer_locked(bool locked) {
                           GrabModeAsync, g_window, None, CurrentTime);
         if (result != GrabSuccess) return;
         g_pointer_locked.store(true);
-        // Start from the centre, so the first delta is measured against
-        // a known point rather than wherever the drag began.
-        g_ignore_next_motion = true;
-        x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, g_width.load() / 2,
-                      g_height.load() / 2);
+        // Measure the first delta from where the drag actually began --
+        // no warp here. Moving the pointer at the moment of the lock is
+        // visible as the cursor jumping, and there is no reason for it.
+        g_locked_last_x = static_cast<int>(g_pointer_x);
+        g_locked_last_y = static_cast<int>(g_pointer_y);
+        g_ignore_next_motion = false;
         if (x.Flush != nullptr) x.Flush(g_display);
         return;
     }
@@ -311,25 +318,44 @@ void push(stud::android_glue::HostInputEvent ev) {
 
 void on_motion(int x_pos, int y_pos) {
     if (g_pointer_locked.load()) {
+        // A warp of our own is not the user moving the mouse. It only
+        // re-establishes where the next delta is measured from.
         if (g_ignore_next_motion) {
             g_ignore_next_motion = false;
+            g_locked_last_x = x_pos;
+            g_locked_last_y = y_pos;
             return;
         }
-        const int centre_x = g_width.load() / 2;
-        const int centre_y = g_height.load() / 2;
-        const int dx = x_pos - centre_x;
-        const int dy = y_pos - centre_y;
-        if (dx == 0 && dy == 0) return;
-        stud::android_glue::HostInputEvent ev;
-        ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
-        ev.x = static_cast<float>(dx);
-        ev.y = static_cast<float>(dy);
-        push(ev);
-        Xlib& x = xlib();
-        if (x.WarpPointer != nullptr) {
-            g_ignore_next_motion = true;
-            x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, centre_x, centre_y);
-            if (x.Flush != nullptr) x.Flush(g_display);
+        const int dx = x_pos - g_locked_last_x;
+        const int dy = y_pos - g_locked_last_y;
+        g_locked_last_x = x_pos;
+        g_locked_last_y = y_pos;
+        if (dx != 0 || dy != 0) {
+            stud::android_glue::HostInputEvent ev;
+            ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
+            ev.x = static_cast<float>(dx);
+            ev.y = static_cast<float>(dy);
+            // The position reported alongside a delta stays at the
+            // anchor, because that is what a locked pointer means
+            // downstream: Wayland's compositor genuinely does not move
+            // the pointer, and the whole unlock path depends on the
+            // first absolute position afterwards still being the anchor.
+            push(ev);
+        }
+        // Only warp when the pointer is about to run out of window --
+        // the grab confines it, so it would stop dead at the edge and
+        // the camera with it. Recentring here rather than on every
+        // motion is what keeps the pointer where the user left it.
+        const int margin = 64;
+        const int w = g_width.load();
+        const int h = g_height.load();
+        if (x_pos < margin || y_pos < margin || x_pos > w - margin || y_pos > h - margin) {
+            Xlib& x = xlib();
+            if (x.WarpPointer != nullptr) {
+                g_ignore_next_motion = true;
+                x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, w / 2, h / 2);
+                if (x.Flush != nullptr) x.Flush(g_display);
+            }
         }
         return;
     }
@@ -343,8 +369,14 @@ void on_motion(int x_pos, int y_pos) {
 }
 
 void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
-    g_pointer_x = static_cast<float>(x_pos);
-    g_pointer_y = static_cast<float>(y_pos);
+    // While locked, every event reports the anchor. The pointer really
+    // has moved (X11 has no way to hold it still), but saying so would
+    // hand the engine the warped position and move its cursor there --
+    // which is exactly the jump to the middle of the screen this had.
+    if (!g_pointer_locked.load()) {
+        g_pointer_x = static_cast<float>(x_pos);
+        g_pointer_y = static_cast<float>(y_pos);
+    }
     if (button == 4 || button == 5) {
         // A wheel notch is a press followed by a release; only one of
         // them is a scroll, or every notch would count twice.
