@@ -180,12 +180,31 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscaleRow->addStretch();
     graphics->addLayout(upscaleRow);
 
+    // What the upscaler writes. The screen is the sane default and is
+    // shown 1:1; above it the frame is built larger and scaled down, which
+    // is what NVIDIA sells as DLDSR.
+    auto* targetRow = new QHBoxLayout();
+    targetRow->addWidget(new QLabel("Target resolution", this));
+    upscaleTargetCombo_ = new QComboBox(this);
+    upscaleTargetCombo_->addItem("100% (screen)", 100);
+    upscaleTargetCombo_->addItem("125%", 125);
+    upscaleTargetCombo_->addItem("150%", 150);
+    upscaleTargetCombo_->addItem("200%", 200);
+    upscaleTargetCombo_->setToolTip(
+        "What the upscaler writes. 100% is your screen. Above it the frame is built larger and\n"
+        "scaled down when shown -- finer detail and steadier edges, paid for in fill rate.\n"
+        "Quality is a fraction of this, so raising it also raises what the game renders.");
+    targetRow->addWidget(upscaleTargetCombo_);
+    targetRow->addStretch();
+    graphics->addLayout(targetRow);
+
     // The output resolution only means anything while the upscaler is the
     // thing producing the frame.
     auto sync_upscale_controls = [this]() {
         const bool available = !hidpiCheck_->isChecked();
         upscalingCheck_->setEnabled(available);
         upscaleOutputCombo_->setEnabled(available && upscalingCheck_->isChecked());
+        upscaleTargetCombo_->setEnabled(available && upscalingCheck_->isChecked());
     };
     connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
         sync_upscale_controls();
@@ -300,6 +319,9 @@ void SettingsWindow::loadFromDisk() {
         const int index = upscaleOutputCombo_->findData(settings.upscale_quality_percent);
         upscaleOutputCombo_->setCurrentIndex(index >= 0 ? index : 0);
         upscaleOutputCombo_->setEnabled(!settings.hidpi && settings.upscaling);
+        const int target = upscaleTargetCombo_->findData(settings.upscale_target_percent);
+        upscaleTargetCombo_->setCurrentIndex(target >= 0 ? target : 0);
+        upscaleTargetCombo_->setEnabled(!settings.hidpi && settings.upscaling);
     }
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
     // Unlimited is stored as 0 and lives at the far end of the slider.
@@ -485,6 +507,7 @@ void SettingsWindow::onSaveClicked() {
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
     settings.upscale_quality_percent = upscaleOutputCombo_->currentData().toInt();
+    settings.upscale_target_percent = upscaleTargetCombo_->currentData().toInt();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
                                   ? stud::config::kBackgroundFpsNoLimit

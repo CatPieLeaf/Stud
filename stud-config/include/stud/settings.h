@@ -104,6 +104,15 @@ struct StudSettings {
     // SSAO), so a lower setting shows a larger interface. 80 is what
     // HiDPI-off already does today.
     int upscale_quality_percent = 80;
+    // What the upscaler writes, as a percentage of the screen's own
+    // pixels. 100 is the screen itself and is shown 1:1.
+    //
+    // Above it, the frame is built larger than the screen and scaled back
+    // down when shown -- real supersampling, which is what NVIDIA sells as
+    // DLDSR: steadier edges and finer detail, paid for in fill rate. The
+    // quality preset above is a fraction of THIS, so raising the target
+    // raises what the engine renders too.
+    int upscale_target_percent = 100;
     // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
