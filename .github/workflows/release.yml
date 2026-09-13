@@ -1,0 +1,191 @@
+# Builds Stud from source and attaches the packages to a release.
+#
+# It runs when a release is PUBLISHED, and at no other time: no push
+# builds, no pull-request builds. (workflow_dispatch is here so the
+# pipeline can be exercised without cutting a release -- it only ever
+# runs when someone presses the button.)
+#
+# The long pole is ANGLE, which builds from source and takes about an
+# hour. It is cached, so that happens once per container image and every
+# later release restores it in seconds. The NDK and the extracted bionic
+# are cached the same way. Caching works because tools/setup.sh skips any
+# dependency that is already present -- a cache hit makes it a no-op.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and upload to"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  # The version the packages carry comes from the tag being released, so
+  # an rpm can never disagree with the release it is attached to. A
+  # leading "v" is stripped: rpm and AppStream both want a bare number.
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  rpm:
+    name: rpm (Fedora)
+    runs-on: ubuntu-latest
+    container: fedora:42
+    steps:
+      - name: Install build dependencies
+        # Before checkout on purpose: the image has no git, and
+        # actions/checkout and actions/cache both need it and tar.
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build \
+            qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
+            wayland-devel wayland-protocols-devel libxkbcommon-devel \
+            libglvnd-devel vulkan-loader-devel vulkan-headers \
+            freetype-devel portaudio-devel openssl-devel \
+            curl unzip tar zstd python3 e2fsprogs findutils
+
+      - uses: actions/checkout@v4
+        with:
+          # The tag being released, not whatever the default branch holds:
+          # the packages attached to a release must be built from the code
+          # that release names.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Free up disk space
+        # Only matters on a cache miss, when ANGLE's own checkout needs
+        # about 15 GB. Harmless otherwise.
+        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
+
+      - name: Restore the Android NDK
+        uses: actions/cache@v4
+        with:
+          path: third_party/android-ndk-r28c
+          key: ndk-fedora42-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Restore ANGLE and bionic
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/angle
+            third_party/android-bionic
+          key: deps-fedora42-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Fetch what Stud cannot ship
+        run: tools/setup.sh
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSTUD_VERSION="${TAG#v}"
+          cmake --build build -j"$(nproc)"
+
+      - name: Package
+        run: cd build && cpack -G RPM
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: build/*.rpm
+          if-no-files-found: error
+
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    # The same base packaging/Containerfile.appimage pins, for the same
+    # reasons: Qt 6.8 and a KF6 that has the real Breeze style. Running it
+    # as the job's container means build-appimage.sh does not have to
+    # start one of its own.
+    container: ubuntu:25.04
+    env:
+      STUD_APPIMAGE_IN_CONTAINER: "1"
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git curl ca-certificates \
+            file desktop-file-utils zsync fuse3 unzip tar zstd python3 e2fsprogs \
+            qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
+            qt6-l10n-tools libqt6opengl6-dev qtkeychain-qt6-dev libssl-dev \
+            qt6-wayland qt6-wayland-dev qt6-xdgdesktopportal-platformtheme \
+            kde-style-breeze \
+            libwayland-dev libwayland-egl-backend-dev wayland-protocols \
+            libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
+            libxkbcommon-dev portaudio19-dev
+
+      - uses: actions/checkout@v4
+        with:
+          # The tag being released, not whatever the default branch holds:
+          # the packages attached to a release must be built from the code
+          # that release names.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Free up disk space
+        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
+
+      - name: Restore the Android NDK
+        uses: actions/cache@v4
+        with:
+          path: third_party/android-ndk-r28c
+          key: ndk-ubuntu2504-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Restore ANGLE and bionic
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/angle
+            third_party/android-bionic
+          key: deps-ubuntu2504-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Restore linuxdeploy and appimagetool
+        uses: actions/cache@v4
+        with:
+          path: third_party/appimage-tools
+          key: appimage-tools-${{ hashFiles('packaging/build-appimage.sh') }}
+
+      - name: Fetch what Stud cannot ship
+        run: tools/setup.sh
+
+      - name: Build the AppImage
+        run: |
+          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${TAG#v}"
+          packaging/build-appimage.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: build-appimage/packages/*.AppImage
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: [rpm, appimage]
+    runs-on: ubuntu-latest
+    # Not in a container: this is where the GitHub CLI already lives.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          find artifacts -type f -printf '%f  %s bytes\n'
+          gh release upload "$TAG" \
+            artifacts/rpm/*.rpm \
+            artifacts/appimage/*.AppImage \
+            --clobber
