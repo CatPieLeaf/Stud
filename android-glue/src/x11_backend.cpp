@@ -322,6 +322,23 @@ bool create_window(int32_t width, int32_t height) {
     return true;
 }
 
+void set_pointer_confined(bool confined) {
+    if (g_display == nullptr || g_window == 0) return;
+    Xlib& x11 = xlib();
+    if (confined) {
+        if (x11.GrabPointer == nullptr) return;
+        // confine_to = this window, and nothing else: the pointer keeps
+        // its own position and its ordinary motion, it simply cannot
+        // cross the frame. No warping, unlike the mouse-look grab.
+        x11.GrabPointer(g_display, g_window, True,
+                        ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
+                        GrabModeAsync, g_window, 0, 0);
+    } else if (x11.UngrabPointer != nullptr) {
+        x11.UngrabPointer(g_display, 0);
+    }
+    if (x11.Flush != nullptr) x11.Flush(g_display);
+}
+
 void set_pointer_locked(bool locked) {
     if (g_display == nullptr || g_window == 0) return;
     if (locked == g_pointer_locked.load()) return;

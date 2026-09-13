@@ -271,6 +271,16 @@ std::string native_window_activation_token(ANativeWindow* window);
 // constraints protocol.
 void native_window_set_pointer_locked(ANativeWindow* window, bool locked);
 
+// Keep the pointer inside the window without taking it.
+//
+// Unlike a lock, a confinement leaves the pointer its real position and
+// its ordinary motion events -- it only cannot cross the boundary. That
+// is what lets the engine's cursor keep being driven by the pointer
+// itself while the desktop cursor is prevented from escaping mid-drag.
+// Relative motion keeps arriving at the boundary, which is what keeps a
+// camera turning when the pointer can go no further.
+void native_window_set_pointer_confined(ANativeWindow* window, bool confined);
+
 // Applies the surface's logical-size/scale state. The EGL path does this
 // while creating its wl_egl_window; Vulkan attaches buffers directly and
 // must ask for it explicitly.

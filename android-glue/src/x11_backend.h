@@ -52,6 +52,9 @@ int connection_fd();
 // coming. Reports relative motion instead of positions while held, the
 // same as the Wayland path.
 void set_pointer_locked(bool locked);
+// Keep the pointer inside the window, without the recentring a mouse-look
+// grab does.
+void set_pointer_confined(bool confined);
 
 // The system clipboard, X11's way: a selection is owned by a window, and
 // the owner hands the bytes over on request. Both calls are no-ops (and
