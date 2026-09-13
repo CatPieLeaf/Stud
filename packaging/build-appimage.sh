@@ -80,7 +80,12 @@ if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" = 1 ]; then
     # before tools/setup.sh ran keeps producing an image without them
     # until it is configured again.
     printf '\033[1mappimage:\033[0m configuring\n' >&2
-    cmake -S "$repo_root" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo >&2
+    # STUD_CMAKE_ARGS passes anything else through -- release automation
+    # uses it to set -DSTUD_VERSION from the tag being built, so the
+    # AppImage's own metadata says what the release says.
+    # shellcheck disable=SC2086
+    cmake -S "$repo_root" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        ${STUD_CMAKE_ARGS:-} >&2
     printf '\033[1mappimage:\033[0m building\n' >&2
     cmake --build "$build_dir" -j"$(nproc)" >&2
 else
