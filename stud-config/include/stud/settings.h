@@ -82,22 +82,6 @@ struct StudSettings {
     // already the window's logical size, where 1.0 is the size that
     // matches the desktop.
     bool follow_dpi = false;
-    // Internal render scale: how many pixels the ENGINE draws, as a
-    // percentage of the buffer it draws into. 100 renders every pixel of
-    // the output, which is what Stud has always done.
-    //
-    // Below that, the engine renders fewer pixels and the result is
-    // scaled back up to the window -- the resolution scale every PC game
-    // has and Roblox's own Android build does not offer. It is the input
-    // end of the same pipeline HiDPI sits at the output end of: HiDPI
-    // decides how many real pixels the buffer has, this decides how many
-    // of them are actually drawn.
-    //
-    // Only meaningful with HiDPI on. With it off the buffer is already
-    // the window's logical size and the compositor stretches it, so
-    // scaling down here would be resampled a second time and any
-    // sharpening thrown away.
-    int render_scale_percent = 100;
     // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.

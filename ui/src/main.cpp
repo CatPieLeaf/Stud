@@ -791,10 +791,6 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // process that can honour the compositor's scale -- this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
-    // The input end of the same pipeline HiDPI sits at the output end of.
-    // render-host ignores it when HiDPI is off, where the compositor is
-    // already scaling the buffer.
-    render_host_args << "--render-scale" << QString::number(settings.render_scale_percent);
     // 0 is "no limit" in the config; render-host reads anything outside
     // 1..240 the same way, so it travels unchanged.
     render_host_args << "--background-fps" << QString::number(settings.background_fps);
@@ -1016,12 +1012,6 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back(settings.follow_dpi ? "on" : "off");
     config.args.push_back("--hidpi");
     config.args.push_back(settings.hidpi ? "on" : "off");
-    // Process B needs it too, and for the opposite reason to render-host:
-    // render-host makes the engine DRAW fewer pixels, this makes the
-    // engine LAY OUT its UI smaller by the same factor, so the UI keeps
-    // its apparent size once the smaller image is scaled back up.
-    config.args.push_back("--render-scale");
-    config.args.push_back(std::to_string(settings.render_scale_percent));
     config.args.push_back("--notify-region");
     config.args.push_back(settings.server_region_notification ? "on" : "off");
     config.args.push_back("--close-on-leave");

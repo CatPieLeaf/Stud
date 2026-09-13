@@ -86,24 +86,6 @@ StudSettings load_settings(const std::string& path) {
         const double scale = doc.at("renderScale").get<double>();
         result.hidpi = scale <= 0.0 || scale > 1.0;
     }
-    // NOT "renderScale": that key already means something else above (an
-    // old buffer-scale setting kept only for migration), and quietly
-    // changing what a hand-editable file's key means is how a setting
-    // ends up doing the opposite of what it says.
-    if (doc.contains("renderScalePercent")) {
-        if (!doc.at("renderScalePercent").is_number_integer()) {
-            throw SettingsError("stud: config '" + path +
-                                "' has a non-integer \"renderScalePercent\"");
-        }
-        const int percent = doc.at("renderScalePercent").get<int>();
-        // Clamped rather than rejected: a file asking for 30% is asking
-        // for something real, just further than Stud will go. 50 is the
-        // floor because below it even a good upscaler has nothing to work
-        // with, and 100 is the ceiling because rendering MORE than the
-        // output is supersampling -- a different feature, and an
-        // expensive one to enable by typo.
-        result.render_scale_percent = percent < 50 ? 50 : (percent > 100 ? 100 : percent);
-    }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
@@ -227,7 +209,6 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     // Written as a plain multiplier rather than 120ths: this file is meant
     // to be hand-editable, and "1.25" is what a person means.
     doc.erase("renderScale");
-    doc["renderScalePercent"] = settings.render_scale_percent;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;

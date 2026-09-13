@@ -147,34 +147,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // so the control would claim to do something it cannot.
     connect(hidpiCheck_, &QCheckBox::toggled, followDpiCheck_, &QWidget::setEnabled);
 
-    // Render scale: the input end of the pipeline HiDPI sits at the
-    // output end of. HiDPI decides how many real pixels the buffer has;
-    // this decides how many of them the engine actually draws, and the
-    // rest of the way is a scale back up to the window.
-    //
-    // Greyed out without HiDPI for the same reason as Follow DPI, and a
-    // sharper one: with HiDPI off the compositor is already stretching
-    // the buffer, so rendering smaller here would simply be resampled
-    // twice.
-    auto* renderScaleRow = new QHBoxLayout();
-    renderScaleRow->addWidget(new QLabel("Render scale", this));
-    renderScaleCombo_ = new QComboBox(this);
-    // Percentages, not adjectives: "Quality"/"Performance" are marketing
-    // for a number, and the number is the thing that is true.
-    renderScaleCombo_->addItem("100% (native)", 100);
-    renderScaleCombo_->addItem("85%", 85);
-    renderScaleCombo_->addItem("75%", 75);
-    renderScaleCombo_->addItem("67%", 67);
-    renderScaleCombo_->addItem("50%", 50);
-    renderScaleCombo_->setToolTip(
-        "Draw the game at a fraction of the window's pixels and scale the result back up.\n"
-        "Fewer pixels to draw means more frames; everything the engine draws, including its\n"
-        "own menus and chat, is scaled with it.");
-    renderScaleRow->addWidget(renderScaleCombo_);
-    renderScaleRow->addStretch();
-    graphics->addLayout(renderScaleRow);
-    connect(hidpiCheck_, &QCheckBox::toggled, renderScaleCombo_, &QWidget::setEnabled);
-
     // Enabled or greyed out by the render path -- see onRenderPathChanged,
     // which also owns the tooltip and says why when it is unavailable.
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
@@ -275,11 +247,6 @@ void SettingsWindow::loadFromDisk() {
     hidpiCheck_->setChecked(settings.hidpi);
     followDpiCheck_->setChecked(settings.follow_dpi);
     followDpiCheck_->setEnabled(settings.hidpi);
-    {
-        const int index = renderScaleCombo_->findData(settings.render_scale_percent);
-        renderScaleCombo_->setCurrentIndex(index >= 0 ? index : 0);
-        renderScaleCombo_->setEnabled(settings.hidpi);
-    }
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
     // Unlimited is stored as 0 and lives at the far end of the slider.
     const int fps_position = settings.background_fps <= stud::config::kBackgroundFpsNoLimit
@@ -462,7 +429,6 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
-    settings.render_scale_percent = renderScaleCombo_->currentData().toInt();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
                                   ? stud::config::kBackgroundFpsNoLimit
