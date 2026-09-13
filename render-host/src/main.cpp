@@ -197,6 +197,12 @@ const std::unordered_map<int32_t, RobloxFont>& font_table() {
     return table;
 }
 
+// The ids the APK's own mapping describes are legacy Enum.Font values,
+// which run to 51 in this build. Anything above that is a modern
+// FontFace, which the mapping says nothing about -- and, measured
+// against the engine, needs no conversion at all: its TextSize IS the em.
+constexpr int32_t kLastLegacyFontEnum = 51;
+
 RobloxFont roblox_font_for(int32_t font_enum) {
     const auto& table = font_table();
     const auto it = table.find(font_enum);
@@ -207,6 +213,24 @@ RobloxFont roblox_font_for(int32_t font_enum) {
         if (::access(it->second.path.c_str(), R_OK) == 0) return it->second;
     }
     RobloxFont f;
+    if (font_enum > kLastLegacyFontEnum) {
+        // A FontFace, not a legacy enum -- in-game chat is one (font=100,
+        // TextSize 14 in a box exactly 14 tall). Two things follow, both
+        // measured against the engine drawing the same box unfocused:
+        // the em is the TextSize itself (a legacy ratio here made the
+        // text a visible 26% short), and the typeface is Roblox's
+        // current default rather than the legacy Source Sans.
+        f.ratio = 1.0f;
+        f.path = assets_dir() + "/content/fonts/BuilderSans-Regular.otf";
+        if (::access(f.path.c_str(), R_OK) != 0) {
+            f.ratio = 0.795f;
+            f.path = assets_dir() + "/fonts/SourceSansPro-Regular.ttf";
+        }
+        return f;
+    }
+    // A legacy id the mapping does not carry: the Source Sans family,
+    // whose own upem/(ascender - descender) really is 0.7955 -- checked
+    // against the files rather than assumed.
     f.ratio = 0.795f;
     if (font_enum == 4) {
         f.path = assets_dir() + "/fonts/SourceSansPro-Bold.ttf";
@@ -2766,7 +2790,24 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             spec.text.assign(reinterpret_cast<const char*>(in.data()), in.size());
             const RobloxFont font = roblox_font_for(font_enum);
             spec.font_path = font.path;
+            // Roblox's TextSize, turned into an em.
+            //
+            // `fromRbxFontRatio` is the font's own upem/(ascender -
+            // descender) -- verified against the real files (Arimo
+            // 0.895105, HWYGOTH 0.903342, PressStart2P 0.976168, each
+            // matching the APK's mapping exactly). Multiplying by it
+            // makes the LINE HEIGHT equal TextSize, which is what
+            // Roblox's own documentation says TextSize means.
+            //
+            // Measured against the engine, that comes out too small: the
+            // same chat box is visibly bigger when the engine draws it
+            // (unfocused) than when this overlay does (focused).
+            // Which is right depends on the id: a legacy Enum.Font is
+            // converted by its ratio, a modern FontFace is not (its
+            // ratio is 1.0). See roblox_font_for.
             spec.pixel_size = font_size * font.ratio;
+            // The line box stays Roblox's own TextSize whatever the em is.
+            spec.line_height = font_size;
             spec.letter_spacing = font.letter_spacing;
             stud::android_glue::set_text_overlay(spec);
             return 1;

@@ -39,6 +39,15 @@ struct TextOverlaySpec {
     // `fromRbxFontRatio` (see font-mappings.json) exactly as the real
     // app does before calling setTextSize().
     float pixel_size = 0.0f;
+    // Roblox's own line box, which is its TextSize -- the height one line
+    // of text occupies, and what every vertical alignment is measured
+    // against. Separate from pixel_size (the em the glyphs are drawn at)
+    // because the two are NOT the same number: measured against the
+    // engine, it draws the em at TextSize and lays that out inside a line
+    // box of TextSize, so the box is shorter than the font's own
+    // ascender-to-descender span at that em. Deriving the box from the
+    // font instead put the baseline visibly low inside it.
+    float line_height = 0.0f;
     // Real letter spacing as a fraction of the em, from the same source.
     float letter_spacing = 0.0f;
     uint32_t argb = 0xffffffffu;
