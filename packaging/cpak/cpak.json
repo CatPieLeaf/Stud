@@ -3,8 +3,8 @@
   "manifest_version": "3.0",
   "name": "Stud",
   "description": "Play Roblox on Linux.",
-  "version": "0.1.0",
-  "image": "ghcr.io/catpieleaf/stud:0.1.0",
+  "version": "1.1.0",
+  "image": "ghcr.io/catpieleaf/stud:1.1.0",
   "binaries": [
     "/usr/bin/stud"
   ],
