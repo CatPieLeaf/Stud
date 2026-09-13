@@ -20,12 +20,12 @@
 
 namespace {
 
-void check(bool condition, const char* what) {
+void check(bool condition, const std::string& what) {
     if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
+        std::fprintf(stderr, "FAILED: %s\n", what.c_str());
         std::exit(1);
     }
-    std::printf("ok: %s\n", what);
+    std::printf("ok: %s\n", what.c_str());
 }
 
 bool file_exists(const std::string& path) {
@@ -107,6 +107,42 @@ int main(int argc, char** argv) {
         threw = true;
     }
     check(threw, "extracting a native library that doesn't exist in the APK throws ExtractError");
+
+    // Split-APK bundles, in both of the shapes people actually download.
+    //
+    // .apkm/.apks name the base "base.apk"; .xapk names it after the
+    // package and describes the set in a manifest.json. Both are treated
+    // as bundles, and in both the base must be read first -- every other
+    // split is an overlay on it.
+    // The bundle fixtures are built beside the plain APK.
+    const std::string fixture_dir = apk_path.substr(0, apk_path.find_last_of('/'));
+    for (const char* bundle : {"toy_bundle.apkm", "toy_bundle.xapk"}) {
+        const std::string bundle_path = fixture_dir + "/" + bundle;
+        const std::string out_dir = dest_dir + "/" + bundle;
+
+        const auto sources = stud::android_glue::resolve_apk_sources_for_metadata(bundle_path);
+        check(sources.size() >= 2,
+              std::string(bundle) + " is recognised as a bundle, not read as one APK");
+        const bool base_first = sources.front().find("arm64") == std::string::npos &&
+                                sources.front().find("x86_64") == std::string::npos;
+        check(base_first, std::string(bundle) + "'s base split is read first");
+
+        // The library has to come out of the x86_64 split, and never out
+        // of the arm64 one sitting beside it.
+        const std::string so_out = out_dir + ".so";
+        stud::android_glue::extract_apk_native_library(bundle_path, "libroblox.so", so_out);
+        std::ifstream f(so_out);
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        check(content == "FAKE_ELF_BYTES_NOT_A_REAL_SHARED_OBJECT",
+              std::string(bundle) + ": the x86_64 split's library is the one extracted");
+
+        // Assets from every member, not just the base.
+        stud::android_glue::extract_apk_assets(bundle_path, out_dir);
+        check(std::ifstream(out_dir + "/from_base.txt").good(),
+              std::string(bundle) + ": assets from the base split are extracted");
+        check(std::ifstream(out_dir + "/from_split.txt").good(),
+              std::string(bundle) + ": assets from a config split are extracted too");
+    }
 
     std::printf("all apk-extract checks passed\n");
     return 0;

@@ -53,7 +53,7 @@ jobs:
             freetype-devel portaudio-devel openssl-devel \
             curl unzip tar zstd python3 e2fsprogs findutils
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The tag being released, not whatever the default branch holds:
           # the packages attached to a release must be built from the code
@@ -66,13 +66,13 @@ jobs:
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
       - name: Restore the Android NDK
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
           key: ndk-fedora42-${{ hashFiles('tools/setup.sh') }}
 
       - name: Restore ANGLE and bionic
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             third_party/angle
@@ -80,7 +80,15 @@ jobs:
           key: deps-fedora42-${{ hashFiles('tools/setup.sh') }}
 
       - name: Fetch what Stud cannot ship
-        run: tools/setup.sh
+        # A cold cache builds ANGLE from source: several GB of checkout and
+        # about an hour. Its sources are no use afterwards -- only the two
+        # libraries it produced, which is all the cache keeps -- so they go
+        # straight back to the disk the rest of the build needs.
+        run: |
+          df -h /__w | tail -1
+          tools/setup.sh
+          rm -rf third_party/angle-src third_party/depot_tools
+          df -h /__w | tail -1
 
       - name: Build
         run: |
@@ -92,7 +100,7 @@ jobs:
       - name: Package
         run: cd build && cpack -G RPM
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rpm
           path: build/*.rpm
@@ -125,7 +133,7 @@ jobs:
             libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
             libxkbcommon-dev portaudio19-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The tag being released, not whatever the default branch holds:
           # the packages attached to a release must be built from the code
@@ -136,13 +144,13 @@ jobs:
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
       - name: Restore the Android NDK
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
           key: ndk-ubuntu2504-${{ hashFiles('tools/setup.sh') }}
 
       - name: Restore ANGLE and bionic
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             third_party/angle
@@ -150,20 +158,28 @@ jobs:
           key: deps-ubuntu2504-${{ hashFiles('tools/setup.sh') }}
 
       - name: Restore linuxdeploy and appimagetool
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: third_party/appimage-tools
           key: appimage-tools-${{ hashFiles('packaging/build-appimage.sh') }}
 
       - name: Fetch what Stud cannot ship
-        run: tools/setup.sh
+        # A cold cache builds ANGLE from source: several GB of checkout and
+        # about an hour. Its sources are no use afterwards -- only the two
+        # libraries it produced, which is all the cache keeps -- so they go
+        # straight back to the disk the rest of the build needs.
+        run: |
+          df -h /__w | tail -1
+          tools/setup.sh
+          rm -rf third_party/angle-src third_party/depot_tools
+          df -h /__w | tail -1
 
       - name: Build the AppImage
         run: |
           export STUD_CMAKE_ARGS="-DSTUD_VERSION=${TAG#v}"
           packaging/build-appimage.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: build-appimage/packages/*.AppImage
@@ -175,7 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -185,7 +201,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           find artifacts -type f -printf '%f  %s bytes\n'
-          gh release upload "$TAG" \
-            artifacts/rpm/*.rpm \
-            artifacts/appimage/*.AppImage \
-            --clobber
+          # Found rather than assumed: the artifact actions have changed
+          # where they unpack to before, and a release that silently gets
+          # no packages attached is worse than a loud failure.
+          mapfile -t packages < <(find artifacts -type f \( -name '*.rpm' -o -name '*.AppImage' \))
+          [ "${#packages[@]}" -eq 2 ] ||
+            { echo "expected 2 packages, found ${#packages[@]}" >&2; exit 1; }
+          gh release upload "$TAG" "${packages[@]}" --clobber

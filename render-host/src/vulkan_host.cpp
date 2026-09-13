@@ -47,8 +47,13 @@ namespace {
 // trying that.
 std::map<uint64_t, VkExtent2D> g_swapchain_extents;
 
-uint32_t g_window_width = 0;
-uint32_t g_window_height = 0;
+// Atomic because they are written by whichever thread pumps Wayland and
+// read by whichever thread is answering a surface-capabilities query --
+// and after the secondary-connection change those are routinely
+// different threads. Relaxed is enough: each is read on its own, and a
+// reader that catches a resize one query late simply asks again.
+std::atomic<uint32_t> g_window_width{0};
+std::atomic<uint32_t> g_window_height{0};
 
 // Whether this process offers Vulkan at all -- see the header. Set once,
 // from main(), before any client can connect.
@@ -59,6 +64,11 @@ bool g_vulkan_enabled = true;
 // settings window enumerated against. Until now nothing read it back,
 // so the choice did nothing at all.
 uint32_t g_preferred_device_index = 0;
+
+// Which WSI this process presents through, so instance creation asks for
+// the extension that actually exists on this session. Set once from
+// main(), before any client connects.
+bool g_on_x11 = false;
 }  // namespace
 
 // Bumped every time the window changes size, so tracing that is capped
@@ -71,12 +81,15 @@ void vk_set_vulkan_enabled(bool enabled) { g_vulkan_enabled = enabled; }
 
 void vk_set_preferred_device_index(uint32_t index) { g_preferred_device_index = index; }
 
+void vk_set_on_x11(bool on_x11) { g_on_x11 = on_x11; }
+
 void vk_set_window_size(uint32_t width, uint32_t height) {
-    if (width != g_window_width || height != g_window_height) {
+    if (width != g_window_width.load(std::memory_order_relaxed) ||
+        height != g_window_height.load(std::memory_order_relaxed)) {
         g_resize_generation.fetch_add(1, std::memory_order_relaxed);
     }
-    g_window_width = width;
-    g_window_height = height;
+    g_window_width.store(width, std::memory_order_relaxed);
+    g_window_height.store(height, std::memory_order_relaxed);
 }
 
 namespace {
@@ -440,7 +453,9 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     // the window belongs to Process C either way, and the engine never
     // sees which WSI is underneath.
     for (std::string& e : extensions) {
-        if (e == "VK_KHR_android_surface") e = "VK_KHR_wayland_surface";
+        if (e == "VK_KHR_android_surface") {
+            e = g_on_x11 ? "VK_KHR_xlib_surface" : "VK_KHR_wayland_surface";
+        }
     }
 
     std::vector<const char*> layer_ptrs;
@@ -1513,8 +1528,8 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         // loop spawned over a hundred real windows (live-caught, by the
         // user, on their own desktop). The window this process already
         // owns is handed in once at startup instead.
-        const uint32_t w = g_window_width;
-        const uint32_t h = g_window_height;
+        const uint32_t w = g_window_width.load(std::memory_order_relaxed);
+        const uint32_t h = g_window_height.load(std::memory_order_relaxed);
         if (w > 0 && h > 0) {
             caps.currentExtent = {w, h};
             // Keep the reported range consistent with the size just
@@ -1941,6 +1956,67 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
+// Which present mode the swapchain actually gets.
+//
+// The engine asks for FIFO, which is v-sync: one frame per refresh, and a
+// hard ceiling at the display's rate however much headroom the machine
+// has. MAILBOX renders as fast as it can and shows the newest finished
+// frame at each refresh -- no tearing, no ceiling -- and IMMEDIATE is the
+// uncapped fallback that every driver has, at the cost of tearing.
+//
+// Only ever a substitution among modes the driver advertises FOR THIS
+// SURFACE, asked for each time rather than assumed: presenting with a
+// mode the surface does not support is undefined behaviour, not a slow
+// path.
+//
+// STUD_PRESENT_MODE=engine|mailbox|immediate|fifo|fifo-relaxed picks one.
+// `engine` forwards whatever the engine asked for, which is the control
+// for measuring whether any of this helps.
+VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR surface) {
+    static const std::string choice = [] {
+        const char* v = std::getenv("STUD_PRESENT_MODE");
+        return std::string(v != nullptr ? v : "mailbox");
+    }();
+    if (choice == "engine" || surface == VK_NULL_HANDLE) return requested;
+
+    Loader& l = loader();
+    if (l.get_surface_present_modes == nullptr || l.physical_device == VK_NULL_HANDLE) {
+        return requested;
+    }
+    uint32_t count = 0;
+    l.get_surface_present_modes(l.physical_device, surface, &count, nullptr);
+    if (count == 0) return requested;
+    std::vector<VkPresentModeKHR> modes(count);
+    l.get_surface_present_modes(l.physical_device, surface, &count, modes.data());
+    auto advertised = [&](VkPresentModeKHR m) {
+        return std::find(modes.begin(), modes.end(), m) != modes.end();
+    };
+
+    std::vector<VkPresentModeKHR> wanted;
+    if (choice == "immediate") {
+        wanted = {VK_PRESENT_MODE_IMMEDIATE_KHR};
+    } else if (choice == "fifo") {
+        wanted = {VK_PRESENT_MODE_FIFO_KHR};
+    } else if (choice == "fifo-relaxed") {
+        wanted = {VK_PRESENT_MODE_FIFO_RELAXED_KHR};
+    } else {
+        // The default: uncap without tearing where the driver can, and
+        // leave the engine's own choice alone where it cannot.
+        wanted = {VK_PRESENT_MODE_MAILBOX_KHR};
+    }
+    for (VkPresentModeKHR m : wanted) {
+        if (!advertised(m) || m == requested) continue;
+        static std::set<int> announced;
+        if (announced.insert(static_cast<int>(m)).second) {
+            std::printf("stud-render-host: present mode %d -> %d (%s)\n",
+                         static_cast<int>(requested), static_cast<int>(m), choice.c_str());
+            std::fflush(stdout);
+        }
+        return m;
+    }
+    return requested;
+}
+
 uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                               uint32_t* out_len) {
     Loader& l = loader();
@@ -1995,7 +2071,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     std::printf("stud-render-host: swapchain compositeAlpha=0x%x format=%u usage=0x%x\n",
                 h.composite_alpha, h.image_format, h.image_usage);
     std::fflush(stdout);
-    ci.presentMode = static_cast<VkPresentModeKHR>(h.present_mode);
+    ci.presentMode = choose_present_mode(static_cast<VkPresentModeKHR>(h.present_mode),
+                                          from_u64<VkSurfaceKHR>(h.surface));
     ci.clipped = h.clipped;
     ci.oldSwapchain = from_u64<VkSwapchainKHR>(h.old_swapchain);
 
@@ -2024,10 +2101,12 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
 // loop keeps true. Kept because "did this swapchain outlive its window
 // size" is the question a future resize bug will ask first.
 bool swapchain_is_out_of_date(uint64_t swapchain) {
-    if (g_window_width == 0 || g_window_height == 0) return false;
+    const uint32_t win_w = g_window_width.load(std::memory_order_relaxed);
+    const uint32_t win_h = g_window_height.load(std::memory_order_relaxed);
+    if (win_w == 0 || win_h == 0) return false;
     auto it = g_swapchain_extents.find(swapchain);
     if (it == g_swapchain_extents.end()) return false;
-    return it->second.width != g_window_width || it->second.height != g_window_height;
+    return it->second.width != win_w || it->second.height != win_h;
 }
 
 uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vector<uint8_t>& out,
@@ -3229,7 +3308,8 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     l.get_swapchain_images(l.device, swapchain, &count, images.data());
     if (index >= count) return;
 
-    const uint32_t w = g_window_width, h = g_window_height;
+    const uint32_t w = g_window_width.load(std::memory_order_relaxed);
+    const uint32_t h = g_window_height.load(std::memory_order_relaxed);
     const VkDeviceSize size = static_cast<VkDeviceSize>(w) * h * 4;
 
     VkBufferCreateInfo bci{};

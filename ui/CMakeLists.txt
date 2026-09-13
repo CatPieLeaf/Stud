@@ -88,6 +88,8 @@ target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network stud_ui_gpu_enum
 set_target_properties(stud-ui PROPERTIES
     AUTOMOC ON
     AUTORCC ON
+    # So a crash report carries function names, not bare addresses.
+    ENABLE_EXPORTS ON
 )
 
 target_compile_definitions(stud-ui PRIVATE STUD_APP_ID="${STUD_APP_ID}")

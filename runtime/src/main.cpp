@@ -1215,6 +1215,7 @@ int main(int argc, char** argv) {
         // from the raw, hand-edited file, never from a Settings toggle --
         // only how they reach the engine changes.
         std::string client_settings_body = launch_payload->client_settings_body;
+
         if (overrides.size() > 0 && !client_settings_body.empty()) {
             try {
                 auto doc = nlohmann::json::parse(client_settings_body);

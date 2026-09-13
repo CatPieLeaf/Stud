@@ -28,6 +28,10 @@ enum class GraphicsMode {
     kOpenGL,
 };
 
+// The top of the background-frame-rate range. A slider set above this
+// reads as unlimited rather than as a number.
+inline constexpr int kBackgroundFpsUnlimited = 240;
+
 struct GpuSelection {
     // Index into vkEnumeratePhysicalDevices()'s own result order --
     // that's the real, stable-for-a-given-driver-state identifier the
@@ -77,6 +81,15 @@ struct StudSettings {
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;
+    // Frames per second while nobody can see the window -- minimised, on
+    // another workspace, or fully covered.
+    //
+    // Rendering a game at full rate into a window nobody is looking at is
+    // pure waste of GPU and CPU, and on a laptop it is the difference
+    // between a warm machine and a hot one. Anything above
+    // kBackgroundFpsUnlimited means "do not throttle at all", which is
+    // what a recording or a download inside the client wants.
+    int background_fps = 30;
     // MangoHud's performance overlay over Stud's own window. It is a
     // Vulkan implicit layer, so it belongs on render-host: that is the
     // process holding the real driver and the real swapchain, on both

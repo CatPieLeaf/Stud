@@ -16,6 +16,10 @@ namespace stud::render_host {
 // undefined currentExtent and this is the honest answer to substitute.
 void vk_set_window_size(uint32_t width, uint32_t height);
 
+// Whether the window is an X11 one, which decides whether instance
+// creation asks for VK_KHR_xlib_surface or VK_KHR_wayland_surface.
+void vk_set_on_x11(bool on_x11);
+
 // Whether this process offers Vulkan at all. The user's own graphics-mode
 // setting decides it: choosing OpenGL means Stud does not provide Vulkan,
 // and vkCreateInstance then answers VK_ERROR_INCOMPATIBLE_DRIVER -- the

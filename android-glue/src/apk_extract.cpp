@@ -51,6 +51,55 @@ bool zip_contains(mz_zip_archive& zip, const char* entry) {
     return mz_zip_reader_locate_file(&zip, entry, nullptr, 0) >= 0;
 }
 
+// .xapk is the same idea with different names.
+//
+// APKMirror's .apkm and SAI's .apks both call the base split "base.apk",
+// which is what kBundleMarker looks for. An .xapk (APKPure and friends)
+// names it after the package instead -- `com.roblox.client.apk` -- and
+// describes the set in a `manifest.json` beside it. So an .xapk holds a
+// perfectly ordinary split-APK bundle that the base.apk check alone
+// would miss, and Stud would then try to read the outer zip as if it
+// were one APK and find no libroblox.so in it.
+//
+// The manifest is the honest marker: it is what makes this file a
+// bundle rather than a zip that happens to contain an apk. Its contents
+// are not parsed -- the split members are already found by walking the
+// archive, and a format that can rename the base can rename anything
+// else in the JSON too.
+constexpr std::string_view kXapkManifest = "manifest.json";
+
+bool looks_like_bundle(mz_zip_archive& zip) {
+    if (zip_contains(zip, std::string(kBundleMarker).c_str())) return true;
+    if (!zip_contains(zip, std::string(kXapkManifest).c_str())) return false;
+    // A manifest alone is not enough: plenty of zips carry one. It has to
+    // come with at least one top-level .apk for this to be a bundle.
+    const mz_uint num_files = mz_zip_reader_get_num_files(&zip);
+    for (mz_uint i = 0; i < num_files; ++i) {
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, i, &stat)) continue;
+        if (mz_zip_reader_is_file_a_directory(&zip, i)) continue;
+        std::string_view name(stat.m_filename);
+        if (name.size() < 5 || name.substr(name.size() - 4) != ".apk") continue;
+        if (name.find('/') != std::string_view::npos) continue;
+        return true;
+    }
+    return false;
+}
+
+// The base split of a bundle, whatever it is called.
+//
+// It is the one that carries the app's own assets and manifest, and it
+// has to be read first -- every later split is an overlay on it. "base"
+// for an .apkm/.apks; for an .xapk, the member with no `config.` or
+// `split_` in its name, which is how those tools name every non-base
+// split.
+bool is_base_split(std::string_view name) {
+    if (name == kBundleMarker) return true;
+    return name.find("config.") == std::string_view::npos &&
+           name.find("split_") == std::string_view::npos &&
+           name.find("split.") == std::string_view::npos;
+}
+
 // Splits for ABIs Stud cannot run. Everything else in the bundle -- the
 // base, the x86_64 split, feature splits like gmasdk, language and
 // density splits -- is kept, since any of them may legitimately carry
@@ -111,7 +160,16 @@ std::vector<std::string> unpack_bundle_members(const std::string& bundle_path,
             throw stud::android_glue::ExtractError("stud: failed to extract '" + std::string(name) + "' from bundle '" +
                                 bundle_path + "': " + error);
         }
+        // An .apkm/.apks says which member is the base by name, and that
+        // always wins. An .xapk does not, so the first member that looks
+        // like one stands in until a real base.apk turns up -- feature
+        // splits (gmasdk.apk and friends) carry neither marker either, so
+        // without the exact match taking precedence one of them could be
+        // read first.
         if (name == kBundleMarker) {
+            if (!base_member.empty()) members.push_back(base_member);
+            base_member = dest_path;
+        } else if (base_member.empty() && is_base_split(name)) {
             base_member = dest_path;
         } else {
             members.push_back(dest_path);
@@ -122,16 +180,16 @@ std::vector<std::string> unpack_bundle_members(const std::string& bundle_path,
 }
 
 // Returns the real .apk files to read from: the file itself when it is a
-// plain APK, or the bundle's own unpacked members when it is an .apkm/
-// .apks. Detected by content (a base.apk entry), not by file extension,
-// since either extension can hold either thing.
+// plain APK, or the bundle's own unpacked members when it is an .apkm,
+// .apks or .xapk. Detected by content, not by file extension, since any
+// of those extensions can hold either thing.
 std::vector<std::string> resolve_apk_sources_impl(const std::string& path) {
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_file(&zip, path.c_str(), 0)) {
         throw stud::android_glue::ExtractError("stud: failed to open '" + path + "' as a zip archive: " +
                             mz_zip_get_error_string(mz_zip_get_last_error(&zip)));
     }
-    if (!zip_contains(zip, std::string(kBundleMarker).c_str())) {
+    if (!looks_like_bundle(zip)) {
         mz_zip_reader_end(&zip);
         return {path};
     }

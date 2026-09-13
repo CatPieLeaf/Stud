@@ -9,6 +9,7 @@ class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSlider;
 
 namespace stud::ui {
 
@@ -34,6 +35,7 @@ private slots:
     void onBrowseApkClicked();
     void onRenderPathChanged(int index);
     void onMangohudToggled(bool checked);
+    void onBackgroundFpsChanged(int value);
 
 private:
     void loadFromDisk();
@@ -55,6 +57,8 @@ private:
     QCheckBox* hidpiCheck_;
     QCheckBox* followDpiCheck_;
     QCheckBox* smoothZoomCheck_;
+    QSlider* backgroundFpsSlider_;
+    QLabel* backgroundFpsLabel_;
     QCheckBox* mangohudCheck_;
     // What the user last asked for, kept across a render path that cannot
     // show the overlay -- switching to ANGLE and back should not silently
