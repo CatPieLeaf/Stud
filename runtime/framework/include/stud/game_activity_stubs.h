@@ -1259,6 +1259,15 @@ public:
     static void onAppShellReloadNeeded();
     static void onDataModelNotificationCallback(std::shared_ptr<FakeJni::JString> type,
                                                  std::shared_ptr<FakeJni::JString> data);
+    // The user asked to quit: the app shell's own Exit button.
+    //
+    // The engine announces it as a NATIVE_EXIT data-model notification and
+    // then ignores its own notification ("Ignore notification: type
+    // (NATIVE_EXIT, 35)") -- on a real device closing the app is the Java
+    // layer's job, and a phone has no Exit button to press in the first
+    // place. Stud shows one because it presents as a desktop client, so
+    // Stud is what has to act on it.
+    static inline std::function<void()> on_native_exit;
     static void onLuaTextBoxChangedCallback(std::shared_ptr<FakeJni::JString> value);
     static void onLuaTextBoxPropertyChangedCallback();
     static void onVrSessionStateUpdate(FakeJni::JInt state);

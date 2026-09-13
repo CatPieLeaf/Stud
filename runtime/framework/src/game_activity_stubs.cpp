@@ -663,9 +663,11 @@ void NativeGLJavaInterfaceStub::onAppShellReloadNeeded() {
 void NativeGLJavaInterfaceStub::onDataModelNotificationCallback(
     std::shared_ptr<FakeJni::JString> type, std::shared_ptr<FakeJni::JString>) {
     // Type only -- the payload can carry account data.
+    const std::string kind = type ? type->asStdString() : std::string();
     std::printf("stud: NativeGLJavaInterface.onDataModelNotificationCallback: type=%s\n",
-                type ? type->asStdString().c_str() : "");
+                kind.c_str());
     std::fflush(stdout);
+    if (kind == "NATIVE_EXIT" && on_native_exit) on_native_exit();
 }
 void NativeGLJavaInterfaceStub::onLuaTextBoxChangedCallback(std::shared_ptr<FakeJni::JString> value) {
     // Length only, never the content: a real TextBox can be a password field.
