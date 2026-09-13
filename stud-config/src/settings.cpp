@@ -144,6 +144,19 @@ StudSettings load_settings(const std::string& path) {
         }
         result.server_region_notification = doc.at("serverRegionNotification").get<bool>();
     }
+    if (doc.contains("textureCache")) {
+        if (!doc.at("textureCache").is_boolean()) {
+            throw SettingsError("stud: config '" + path + "' has a non-boolean \"textureCache\"");
+        }
+        result.texture_cache = doc.at("textureCache").get<bool>();
+    }
+    if (doc.contains("textureCacheMB")) {
+        if (!doc.at("textureCacheMB").is_number_integer()) {
+            throw SettingsError("stud: config '" + path + "' has a non-integer \"textureCacheMB\"");
+        }
+        const int value = doc.at("textureCacheMB").get<int>();
+        result.texture_cache_mb = value < 0 ? 0 : value;
+    }
     if (doc.contains("graphicsMode")) {
         if (!doc.at("graphicsMode").is_string()) {
             throw SettingsError("stud: config '" + path + "' has a non-string \"graphicsMode\"");
@@ -205,6 +218,8 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["systemTray"] = settings.system_tray;
     doc["closeOnLeave"] = settings.close_on_leave;
     doc["serverRegionNotification"] = settings.server_region_notification;
+    doc["textureCache"] = settings.texture_cache;
+    doc["textureCacheMB"] = settings.texture_cache_mb;
     doc["graphicsMode"] = settings.graphics_mode == GraphicsMode::kVulkan ? "vulkan" : "opengl";
     doc["apkPath"] = settings.apk_path;
 

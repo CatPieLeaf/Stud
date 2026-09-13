@@ -1013,6 +1013,12 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back("--smooth-zoom");
     config.args.push_back(settings.smooth_zoom ? "on" : "off");
 
+    // The transcoded-texture cache lives inside the Vulkan client
+    // library, which Process B loads rather than links, so its size limit
+    // travels as environment rather than as an argument.
+    config.extra_env.emplace_back(
+        "STUD_TEXTURE_CACHE_MB",
+        std::to_string(settings.texture_cache ? settings.texture_cache_mb : 0));
     if (const QByteArray log_file = qgetenv("STUD_LOG_FILE"); !log_file.isEmpty()) {
         config.extra_env.emplace_back("STUD_LOG_FILE", log_file.toStdString());
     }

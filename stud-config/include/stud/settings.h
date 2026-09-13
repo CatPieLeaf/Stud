@@ -115,6 +115,20 @@ struct StudSettings {
     // A notification naming the game server's region on every join.
     // Sober calls this the server location indicator.
     bool server_region_notification = true;
+    // The transcoded-texture cache: whether to keep one at all, and how
+    // much disk it may use.
+    //
+    // Both are config-file only, deliberately absent from the settings
+    // window: this is a disk-space trade, and the honest reason to change
+    // it is knowing your own disk rather than judging it by feel.
+    //
+    // It is turned off automatically on a spinning disk, where a random
+    // read with a seek is close enough to the cost of re-encoding not to
+    // be worth the space. On an SSD it is a clear win and on an NVMe an
+    // enormous one. Setting `textureCache` false, or `textureCacheMB` to
+    // 0, disables it anywhere.
+    bool texture_cache = true;
+    int texture_cache_mb = 500;
     GraphicsMode graphics_mode = GraphicsMode::kVulkan;
     // Real, user-supplied path to the Roblox APK (locked decision:
     // "User-provided, not auto-downloaded... via a file picker in the
