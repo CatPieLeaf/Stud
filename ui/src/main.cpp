@@ -1032,7 +1032,8 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     }
     // Test levers that only Process B reads, passed through so trying one
     // is a relaunch rather than a rebuild.
-    for (const char* name : {"STUD_FORCE_THEME", "STUD_TLS_TRACE", "STUD_VIDEO_CODECS"}) {
+    for (const char* name : {"STUD_FORCE_THEME", "STUD_TLS_TRACE", "STUD_VIDEO_CODECS",
+                             "STUD_AGDK_INPUT", "STUD_NO_MOUSE_LOCK"}) {
         if (const QByteArray value = qgetenv(name); !value.isEmpty()) {
             config.extra_env.emplace_back(name, value.toStdString());
         }
