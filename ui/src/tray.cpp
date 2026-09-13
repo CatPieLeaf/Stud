@@ -79,6 +79,16 @@ Tray::Tray(QObject* parent) : QObject(parent) {}
 bool Tray::show() {
     if (!QSystemTrayIcon::isSystemTrayAvailable()) return false;
 
+    // A tray-only process has no windows, and Qt quits an application
+    // when its last window closes. So opening Settings from the tray and
+    // closing it again ended the process -- taking the tray icon with it,
+    // for the rest of the session, while the game carried on running with
+    // no way back to the menu.
+    //
+    // The session's own lifetime is what ends this process (see
+    // checkSessionAlive), not whether a window happens to be open.
+    QApplication::setQuitOnLastWindowClosed(false);
+
     icon_ = new QSystemTrayIcon(QIcon(":/stud-logo-color.png"), this);
     icon_->setToolTip(QStringLiteral("Stud"));
 
@@ -182,7 +192,7 @@ void Tray::exportLogs() {
 
 void Tray::showAbout() {
     QMessageBox::about(nullptr, QStringLiteral("About Stud"),
-                        QStringLiteral("<b>Stud</b><br><br>"
+                        QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
                                        "A Linux desktop wrapper that runs the real, unmodified "
                                        "Roblox Android app.<br><br>"
                                        "<a href=\"https://github.com/CatPieLeaf/Stud\">"
