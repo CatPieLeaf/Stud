@@ -11,6 +11,9 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QPointer>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
@@ -27,6 +30,16 @@
 #include <QPixmap>
 
 #include <fstream>
+
+#include <unistd.h>
+
+// Defined in main.cpp -- the session this window may have to stop and
+// put back.
+namespace stud::ui {
+void terminate_stud_session();
+bool stud_session_is_running();
+void start_stud_session();
+}  // namespace stud::ui
 
 namespace stud::ui {
 
@@ -299,6 +312,62 @@ void SettingsWindow::loadFromDisk() {
 // layer crashes ANGLE the moment a swapchain is recreated, which is what
 // joining a game does (MangoHud#1259, #1774). Stud disables that layer on
 // those paths, so there is genuinely no overlay to offer.
+namespace {
+
+// One well-known name per user session, beside the render socket Stud
+// already keeps there.
+QString settings_socket_name() {
+    return QStringLiteral("stud-settings-%1").arg(::getuid());
+}
+
+QPointer<SettingsWindow> g_open_window;
+QLocalServer* g_open_server = nullptr;
+
+}  // namespace
+
+SettingsWindow* SettingsWindow::showSingleton(const QString& status) {
+    if (g_open_window.isNull()) {
+        g_open_window = new SettingsWindow();
+        g_open_window->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    if (!status.isEmpty()) g_open_window->setStatusMessage(status);
+    g_open_window->show();
+    g_open_window->raise();
+    g_open_window->activateWindow();
+    return g_open_window;
+}
+
+bool SettingsWindow::handOffToRunningInstance() {
+    QLocalSocket socket;
+    socket.connectToServer(settings_socket_name());
+    if (!socket.waitForConnected(500)) return false;
+    socket.write("show\n");
+    socket.waitForBytesWritten(500);
+    socket.disconnectFromServer();
+    return true;
+}
+
+void SettingsWindow::listenForOpenRequests() {
+    if (g_open_server != nullptr) return;
+    g_open_server = new QLocalServer(qApp);
+    // A server socket outlives a process that was killed rather than
+    // closed, and QLocalServer will not bind over one. Removing it is
+    // safe here: anything still listening on it would have answered the
+    // hand-off attempt that ran first.
+    QLocalServer::removeServer(settings_socket_name());
+    if (!g_open_server->listen(settings_socket_name())) {
+        std::fprintf(stderr, "stud: could not listen for settings requests: %s\n",
+                     g_open_server->errorString().toUtf8().constData());
+        return;
+    }
+    QObject::connect(g_open_server, &QLocalServer::newConnection, g_open_server, []() {
+        while (QLocalSocket* client = g_open_server->nextPendingConnection()) {
+            QObject::connect(client, &QLocalSocket::disconnected, client, &QObject::deleteLater);
+            showSingleton();
+        }
+    });
+}
+
 void SettingsWindow::setStatusMessage(const QString& text) { statusLabel_->setText(text); }
 
 void SettingsWindow::onRenderPathChanged(int index) {
@@ -383,8 +452,26 @@ void SettingsWindow::onSaveClicked() {
     // there is never a second copy quietly aging on disk.
     const QString stored = QString::fromStdString(stud::paths::stored_apk_path());
     bool imported = false;
+    bool restart_session = false;
     if (!pickedApkPath_.isEmpty() &&
         QFileInfo(pickedApkPath_).absoluteFilePath() != QFileInfo(stored).absoluteFilePath()) {
+        // Stop the session BEFORE replacing anything underneath it.
+        //
+        // A running Stud has the extracted libroblox.so mapped and the
+        // engine's caches open; importing over them while it runs takes
+        // it down -- live-reported as "if someone loads Stud's APK while
+        // Stud is open, Stud crashes". The runtime also clears everything
+        // derived from the previous build on the next launch, which is
+        // not a thing to do to a live process either.
+        //
+        // Put back afterwards only if there was one: replacing the APK
+        // from a closed Stud should not start a game.
+        if (stud_session_is_running()) {
+            statusLabel_->setText("Stopping Stud to replace the APK...");
+            QApplication::processEvents();
+            terminate_stud_session();
+            restart_session = true;
+        }
         if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
             statusLabel_->setText("Could not create Stud's APK directory.");
             return;
@@ -466,7 +553,14 @@ void SettingsWindow::onSaveClicked() {
         // purpose (saying what was about to be imported).
         pickedApkPath_.clear();
         apkPathEdit_->setText(storedApkLabel());
-        statusLabel_->setText("Settings saved.");
+        if (restart_session) {
+            statusLabel_->setText("Starting Stud again...");
+            QApplication::processEvents();
+            start_stud_session();
+            statusLabel_->setText("Settings saved. Stud restarted with the new APK.");
+        } else {
+            statusLabel_->setText("Settings saved.");
+        }
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(QString("Failed to save settings: %1").arg(e.what()));
     } catch (const std::runtime_error& e) {
