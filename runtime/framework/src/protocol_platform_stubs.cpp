@@ -114,6 +114,11 @@ BEGIN_NATIVE_DESCRIPTOR(PinShortcutPlatformStub)
 { FakeJni::Function<&PinShortcutPlatformStub::isAvailable>{}, "isAvailable" },
 { FakeJni::Function<&PinShortcutPlatformStub::pinExperience>{}, "pinExperience" },
 { FakeJni::Function<&PinShortcutPlatformStub::getDesiredThumbnailFormat>{}, "getDesiredThumbnailFormat" },
+{ FakeJni::Function<&PinShortcutPlatformStub::isRevealPinnedExperienceAvailable>{}, "isRevealPinnedExperienceAvailable" },
+{ FakeJni::Function<&PinShortcutPlatformStub::revealPinnedExperience>{}, "revealPinnedExperience" },
+{ FakeJni::Function<&PinShortcutPlatformStub::isPinExperienceV2Available>{}, "isPinExperienceV2Available" },
+{ FakeJni::Function<&PinShortcutPlatformStub::pinExperienceV2>{}, "pinExperienceV2" },
+{ FakeJni::Function<&PinShortcutPlatformStub::shouldShowLuaNotificationOnPinExperienceCompleted>{}, "shouldShowLuaNotificationOnPinExperienceCompleted" },
 END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(DeviceDisplayCapabilityStub)

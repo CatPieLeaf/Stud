@@ -668,9 +668,27 @@ public:
 // `GetMethodID MISS class=... method=...` lines naming exactly which methods
 // the engine actually wants, which is the evidence needed to implement them
 // honestly instead of inventing a surface.
+// AppRtcDeviceWrapper is no longer empty: the engine constructs it with a
+// pointer back to itself and asks which audio route is in use and to mute
+// the microphone at the system level. On a desktop the route is whatever
+// the audio server chose, so the honest answer is the wired one -- not an
+// earpiece, which a desktop does not have. Muting is reported rather than
+// claimed: Stud has no system-level mute, and the engine stops reading the
+// capture stream when it mutes anyway. The enum's own order is
+// SPEAKER_PHONE, WIRED_HEADSET, EARPIECE, BLUETOOTH, NONE.
 class AppRtcDeviceWrapperStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/audio/AppRtcDeviceWrapper")
+    FakeJni::JLong nativeReference = 0;
+    AppRtcDeviceWrapperStub() = default;
+    explicit AppRtcDeviceWrapperStub(FakeJni::JLong reference) : nativeReference(reference) {}
+
+    FakeJni::JInt getSelectedAudioDeviceAsInt();
+    std::shared_ptr<FakeJni::JString> getSelectedAudioDeviceName();
+    FakeJni::JBoolean isValid();
+    void wrapSetCommunicationMute(FakeJni::JBoolean muted);
+    void wrapStartCommunication();
+    void wrapStopCommunication();
 };
 
 class FmodMediaCodecStub : public FakeJni::JObject {

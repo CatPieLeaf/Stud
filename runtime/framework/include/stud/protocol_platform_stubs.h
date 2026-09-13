@@ -95,6 +95,25 @@ public:
     std::shared_ptr<FakeJni::JString> getDesiredThumbnailFormat() {
         return std::make_shared<FakeJni::JString>("");
     }
+    // Same shape again, one APK later: 2.738 asks for this one too.
+    // False for the same reason as isAvailable() -- there is no desktop
+    // equivalent of a pinned home-screen shortcut to reveal.
+    FakeJni::JBoolean isRevealPinnedExperienceAvailable() { return false; }
+    // The action behind the flag above. Nothing to do: there is no
+    // pinned shortcut to reveal, and isRevealPinnedExperienceAvailable()
+    // says so, so a caller that respects it never gets here.
+    void revealPinnedExperience(FakeJni::JLong /*universeId*/) {}
+    // The rest of this protocol's surface, taken from the CONFIGURED
+    // APK's own copy of the class rather than discovered one failed
+    // registration at a time: 2.738 adds a V2 pin call and a flag for
+    // whether Lua should show a notification afterwards. All false/no-op
+    // for the same reason as isAvailable() -- a desktop has no home
+    // screen to pin an experience to.
+    FakeJni::JBoolean isPinExperienceV2Available() { return false; }
+    void pinExperienceV2(FakeJni::JLong /*universeId*/, FakeJni::JLong /*placeId*/,
+                         std::shared_ptr<FakeJni::JString> /*name*/,
+                         std::shared_ptr<FakeJni::JString> /*iconUrl*/) {}
+    FakeJni::JBoolean shouldShowLuaNotificationOnPinExperienceCompleted() { return false; }
 };
 
 // com.roblox.protocols.devicedisplayplatforminterface.generated.
