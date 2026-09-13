@@ -18,7 +18,8 @@ namespace stud::render_host::gamepad {
 
 struct Event {
     enum Type : uint32_t {
-        kConnect = 1,     // device appeared; v0 is the Android gamepad type
+        kConnect = 1,     // device appeared; v0 is the Android gamepad type,
+                          // v1 is 1 when the pad can rumble
         kDisconnect = 2,  // device went away
         kButton = 3,      // `code` is an Android keycode; v0 != 0 => pressed
         // `code` is an Android axis id and v0/v1/v2 are the three floats
@@ -55,6 +56,17 @@ void init();
 // Re-scans for devices that appeared or went away, then reads whatever
 // each one has sent. Never blocks.
 void poll(std::vector<Event>& out);
+
+// Rumble on one pad, by the device id its events carry. Both magnitudes
+// are 0..1 -- the heavy and light motors a real pad has -- and zero for
+// both stops it. `duration_ms` of 0 means "until told otherwise".
+// Returns false when that pad has no force feedback, or when its device
+// node could only be opened read-only.
+bool set_rumble(int device_id, float strong, float weak, int duration_ms);
+
+// Whether any open pad can rumble at all -- what the engine is told when
+// it asks whether this platform supports haptics.
+bool any_rumble_capable();
 
 // How many controllers are open right now -- for the diagnostics command
 // and the startup line.
