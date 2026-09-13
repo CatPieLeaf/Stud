@@ -192,7 +192,13 @@ uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count
                                     uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len);
 
 // The whole vkCmd* family, keyed by vk_wire::CmdKind.
-uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint8_t>& in);
+// Records one command. The batch form takes a pointer into the batch
+// rather than a vector, so a frame's worth of commands is decoded where
+// it already sits instead of each one being copied out first.
+uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size);
+inline uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint8_t>& in) {
+    return vk_cmd_record(cb_handle, kind, in.data(), in.size());
+}
 
 }  // namespace stud::render_host
 

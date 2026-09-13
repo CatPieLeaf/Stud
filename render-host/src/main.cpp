@@ -2166,7 +2166,6 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // Executed strictly in order, which is what makes a batch
             // identical to the same commands sent one at a time.
             size_t off = 0;
-            std::vector<uint8_t> payload;
             while (off + 16 <= in.size()) {
                 uint64_t cb = 0;
                 uint32_t kind = 0;
@@ -2176,10 +2175,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 std::memcpy(&len, in.data() + off + 12, sizeof(len));
                 off += 16;
                 if (off + len > in.size()) break;
-                payload.assign(in.begin() + static_cast<long>(off),
-                               in.begin() + static_cast<long>(off + len));
+                // Read where it already is: copying each command out of
+                // the batch first is a copy of the whole batch per frame.
+                stud::render_host::vk_cmd_record(cb, kind, in.data() + off, len);
                 off += len;
-                stud::render_host::vk_cmd_record(cb, kind, payload);
             }
             return 0;
         }
