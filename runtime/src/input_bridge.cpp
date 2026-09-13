@@ -2480,8 +2480,13 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 // waits behind it.
                 static const int poll_ms = [] {
                     const char* v = std::getenv("STUD_INPUT_POLL_MS");
-                    int ms = v != nullptr ? std::atoi(v) : 8;
-                    return ms > 0 ? ms : 8;
+                    // 4ms, not 8. The engine paints its cursor inside the
+                    // frame, so every millisecond between the hand moving
+                    // and the engine hearing about it is a millisecond the
+                    // cursor is visibly behind -- there is no hardware
+                    // cursor here to hide it, the way there is on Windows.
+                    int ms = v != nullptr ? std::atoi(v) : 4;
+                    return ms > 0 ? ms : 4;
                 }();
                 std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
             }
