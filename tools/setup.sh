@@ -182,12 +182,40 @@ setup_angle() {
     export DEPOT_TOOLS_UPDATE=0
 
     mkdir -p "$ANGLE_SRC_DIR"
-    if [ ! -d "$ANGLE_SRC_DIR/angle" ]; then
+    # Where `fetch angle` actually puts the checkout is not fixed.
+    # Current depot_tools writes a gclient solution named "." and checks
+    # ANGLE out into the directory fetch was run from; older recipes used
+    # an `angle/` subdirectory. Hardcoding the second one is what broke
+    # CI -- a clean machine, where this path runs for real:
+    #
+    #   tools/setup.sh: line 187: cd: angle: No such file or directory
+    #
+    # So the checkout is found rather than assumed, by looking for
+    # ANGLE's own DEPS in both places.
+    angle_checkout() {
+        if [ -f "$ANGLE_SRC_DIR/DEPS" ]; then
+            printf '%s\n' "$ANGLE_SRC_DIR"
+        elif [ -f "$ANGLE_SRC_DIR/angle/DEPS" ]; then
+            printf '%s\n' "$ANGLE_SRC_DIR/angle"
+        fi
+    }
+    if [ -z "$(angle_checkout)" ]; then
         say "fetching ANGLE (this is the slow part)"
-        (cd "$ANGLE_SRC_DIR" && fetch --nohooks angle && cd angle && python3 scripts/bootstrap.py)
+        # A previous run that died partway leaves a gclient file behind,
+        # and `fetch` refuses to start where one already exists. Finish
+        # that checkout instead of failing on it.
+        if [ -f "$ANGLE_SRC_DIR/.gclient" ]; then
+            (cd "$ANGLE_SRC_DIR" && gclient sync --nohooks)
+        else
+            (cd "$ANGLE_SRC_DIR" && fetch --nohooks angle)
+        fi
     fi
+    angle_src="$(angle_checkout)"
+    [ -n "$angle_src" ] ||
+        die "ANGLE did not check out into $ANGLE_SRC_DIR -- nothing there has a DEPS file"
+    (cd "$angle_src" && python3 scripts/bootstrap.py)
     (
-        cd "$ANGLE_SRC_DIR/angle"
+        cd "$angle_src"
         gclient sync -D
         # Matches the build this project has been developed and measured
         # against: release, Vulkan and desktop-GL backends both enabled
@@ -200,7 +228,7 @@ angle_build_tests = false
 is_component_build = false'
         autoninja -C out/Release libEGL libGLESv2 vk_swiftshader
     )
-    copy_angle_runtime "$ANGLE_SRC_DIR/angle/out/Release"
+    copy_angle_runtime "$angle_src/out/Release"
 }
 
 # ------------------------------------------------------------- bionic
