@@ -1070,25 +1070,28 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // No clamp either. The client bounds nothing here; only its
             // ACTION_SCROLL branch floors the position it reports at
             // zero, which is the wheel's business and not the pointer's.
-            last_x = x;
-            last_y = y;
             if (g_drag_confined) {
-                // Position from the pointer, movement from the device.
+                // The cursor STAYS for the whole of a camera drag.
                 //
-                // The cursor FOLLOWS the hand for the whole gesture, in
-                // every case -- freezing it pins the cursor on an in-game
-                // UI overlay, where the engine really is following the
-                // positions it is given, and a cursor that cannot move
-                // over the thing the press just opened is unusable.
+                // The engine pins its own cursor for a rotation and
+                // ignores every position it is given; over an in-game UI
+                // it follows them instead. Nothing says which is
+                // happening, so the cursor is left alone in both cases --
+                // which is what the real desktop client does with a
+                // camera button held, and what makes a teleport
+                // impossible: the reported position does not change during
+                // the gesture, and does not change at the end of it
+                // either.
                 //
-                // The movement is not sent from here: the relative event
-                // for this same motion carries it, and sending it twice
-                // would turn the camera twice as far. That is also what
-                // keeps a spin unlimited -- at the confinement boundary
-                // the pointer stops and these events stop, while the
-                // relative stream keeps reporting what the device did.
+                // The movement still reaches the engine, from the relative
+                // stream, so the camera turns exactly as far as the hand
+                // moved -- and keeps turning once the pointer has reached
+                // the confinement boundary and stopped. Sending it here as
+                // well would turn it twice as far.
                 return;
             }
+            last_x = x;
+            last_y = y;
             call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
             return;
         }
@@ -1253,19 +1256,34 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     } else if (!held && g_drag_anchored) {
                         g_drag_anchored = false;
                         set_pointer_confined(false);
-                        // Nothing is put back, and nothing is shifted.
+                        // The pointer goes back to the cursor, not the
+                        // cursor to the pointer. The cursor did not move
+                        // for the whole gesture, so returning the pointer
+                        // to it leaves nothing to reconcile: the next
+                        // ordinary motion arrives at the anchor and moves
+                        // the cursor by the hand's own movement from
+                        // there.
                         //
-                        // The cursor followed the pointer for the whole
-                        // gesture, so the two are already in the same
-                        // place: the drag simply ends. Every version that
-                        // moved something here -- an offset carried from
-                        // the anchor, a warp of the pointer back to it --
-                        // was a jump in whichever case the engine had NOT
-                        // been pinning its own cursor.
+                        // The resync makes that first motion adopt
+                        // whatever position it really carries with a zero
+                        // delta, so a compositor that cannot warp loses
+                        // the cursor's place rather than turning the
+                        // difference into camera movement.
+                        if (pointer_warp_available()) {
+                            warp_pointer_to(g_drag_anchor_px, g_drag_anchor_py);
+                        }
+                        g_prev_raw_x = g_drag_anchor_x;
+                        g_prev_raw_y = g_drag_anchor_y;
+                        g_resync_after_unlock.store(true);
+                        last_x = g_drag_anchor_x;
+                        last_y = g_drag_anchor_y;
                         if (input_trace_enabled()) {
-                            std::printf("stud: drag ended at (%.1f,%.1f), nothing moved\n",
-                                        static_cast<double>(last_x),
-                                        static_cast<double>(last_y));
+                            std::printf("stud: drag ended, cursor stayed at (%.1f,%.1f)%s\n",
+                                        static_cast<double>(g_drag_anchor_x),
+                                        static_cast<double>(g_drag_anchor_y),
+                                        pointer_warp_available()
+                                            ? ", pointer put back on it"
+                                            : " -- no warp on this compositor");
                             std::fflush(stdout);
                         }
                     }
