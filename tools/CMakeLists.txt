@@ -40,6 +40,7 @@ if (VulkanLoader_FOUND AND EXISTS "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp")
     add_executable(stud_tex_decode_compare
         tex_decode_compare.cpp
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src/texture_decode.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src/texture_cache.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src/texture_encode.cpp"
         "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp"
         "${STUD_TEXDEC_DIR}/detex/bits.c"
@@ -50,6 +51,7 @@ if (VulkanLoader_FOUND AND EXISTS "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp")
     )
     target_include_directories(stud_tex_decode_compare PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include"
         "${STUD_TEXDEC_DIR}"
         "${STUD_TEXDEC_DIR}/detex"
     )

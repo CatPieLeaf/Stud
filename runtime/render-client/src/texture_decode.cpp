@@ -19,6 +19,7 @@ extern "C" {
 
 #include <PVRTDecompress.h>
 
+#include "texture_cache.h"
 #include "texture_encode.h"
 
 namespace stud::texture_decode {
@@ -334,6 +335,32 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     const Target target = target_for(l);
     const bool use_bc7 = target.format == VK_FORMAT_BC7_UNORM_BLOCK ||
                          target.format == VK_FORMAT_BC7_SRGB_BLOCK;
+
+    // Has this exact transcode been done before?
+    //
+    // The work below is deterministic: the same source bytes and target
+    // format always produce the same output, and Roblox's content never
+    // changes. So the result is kept between runs, which is what turns
+    // the launch spike -- every texture in the place, encoded from
+    // scratch, every time -- into a file read.
+    const uint64_t source_bytes =
+        static_cast<uint64_t>(bh) * (src_row_pitch != 0 ? src_row_pitch
+                                                        : static_cast<uint64_t>(bw) * l.block_bytes);
+    const uint64_t output_bytes =
+        transcode ? static_cast<uint64_t>(bw) * bh * target.block_bytes
+                  : static_cast<uint64_t>(height) * row_bytes;
+    uint64_t key_high = 0;
+    uint64_t key_low = 0;
+    const bool cacheable = stud::texture_cache::enabled() && output_bytes > 0 &&
+                           // Small levels are not worth a file: hashing
+                           // and opening cost more than encoding them.
+                           output_bytes >= 16u * 1024u;
+    if (cacheable) {
+        stud::texture_cache::key_for(in, source_bytes, static_cast<uint32_t>(format),
+                                     static_cast<uint32_t>(transcode ? target.format : 0), width,
+                                     height, &key_high, &key_low);
+        if (stud::texture_cache::load(key_high, key_low, dst, output_bytes)) return true;
+    }
     // Rows of blocks are tightly packed unless the copy said otherwise.
     const uint64_t block_row_pitch =
         src_row_pitch != 0 ? src_row_pitch : static_cast<uint64_t>(bw) * l.block_bytes;
@@ -444,7 +471,11 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     } else {
         do_rows(0, bh);
     }
-    return !failed.load();
+    const bool ok = !failed.load();
+    if (ok && cacheable) {
+        stud::texture_cache::store(key_high, key_low, dst, output_bytes);
+    }
+    return ok;
 }
 
 }  // namespace stud::texture_decode
