@@ -1126,6 +1126,10 @@ void ensure_wayland_connection() {
 }  // namespace
 
 namespace stud::android_glue {
+// The X11 backend lives in its own translation unit and reaches the one
+// input queue through this.
+void push_host_input_event(const HostInputEvent& ev) { push_input_event(ev); }
+
 void set_native_window_size(int32_t width, int32_t height) {
     g_window_width = width;
     g_window_height = height;

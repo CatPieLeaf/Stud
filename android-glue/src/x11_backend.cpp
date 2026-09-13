@@ -1,5 +1,8 @@
 #include "x11_backend.h"
 
+#include "stud/android_glue.h"
+#include "stud_window_icon.h"
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -37,6 +40,13 @@ struct Xlib {
     int (*ChangeProperty)(Display*, Window, Atom, Atom, int, int, const unsigned char*,
                           int) = nullptr;
     int (*ConnectionNumber_)(Display*) = nullptr;
+    Pixmap (*CreateBitmapFromData)(Display*, Drawable, const char*, unsigned int,
+                                   unsigned int) = nullptr;
+    Cursor (*CreatePixmapCursor)(Display*, Pixmap, Pixmap, XColor*, XColor*, unsigned int,
+                                 unsigned int) = nullptr;
+    int (*DefineCursor)(Display*, Window, Cursor) = nullptr;
+    int (*FreePixmap)(Display*, Pixmap) = nullptr;
+    int (*FreeCursor)(Display*, Cursor) = nullptr;
 };
 
 Xlib& xlib() {
@@ -92,6 +102,11 @@ bool load_xlib() {
     LOAD(NextEvent, "XNextEvent");
     LOAD(ChangeProperty, "XChangeProperty");
     LOAD(ConnectionNumber_, "XConnectionNumber");
+    LOAD(CreateBitmapFromData, "XCreateBitmapFromData");
+    LOAD(CreatePixmapCursor, "XCreatePixmapCursor");
+    LOAD(DefineCursor, "XDefineCursor");
+    LOAD(FreePixmap, "XFreePixmap");
+    LOAD(FreeCursor, "XFreeCursor");
 #undef LOAD
     if (!ok) {
         ::dlclose(x.handle);
@@ -137,12 +152,13 @@ bool create_window(int32_t width, int32_t height) {
         return false;
     }
 
-    // StructureNotify is what carries ConfigureNotify (the resizes this
-    // backend exists to notice) and the map/unmap pair. Input masks are
-    // added when the input backend lands; asking for them now would
-    // queue events nothing drains.
+    // StructureNotify carries ConfigureNotify (resizes) and the
+    // map/unmap pair; the rest is real input, which this backend now
+    // delivers into the same queue the Wayland listeners feed.
     x.SelectInput(g_display, g_window,
-                  StructureNotifyMask | VisibilityChangeMask | FocusChangeMask);
+                  StructureNotifyMask | VisibilityChangeMask | FocusChangeMask |
+                      KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
+                      PointerMotionMask | EnterWindowMask | LeaveWindowMask);
 
     x.StoreName(g_display, g_window, "Stud");
     // WM_CLASS is X11's answer to Wayland's app_id: it is what ties this
@@ -162,6 +178,44 @@ bool create_window(int32_t width, int32_t height) {
     g_width.store(width);
     g_height.store(height);
 
+    // The engine draws its own cursor, in-frame, on the app shell and
+    // in-game alike -- the same reason the Wayland path passes a null
+    // cursor surface. Without this X11 shows the desktop's arrow on top
+    // of Roblox's own, which is two cursors.
+    //
+    // X11 has no "no cursor": the way to have none is a cursor made
+    // from an empty 1x1 bitmap, which is what every application that
+    // hides the pointer does.
+    if (x.CreateBitmapFromData != nullptr && x.CreatePixmapCursor != nullptr &&
+        x.DefineCursor != nullptr) {
+        const char empty[8] = {0};
+        Pixmap bitmap = x.CreateBitmapFromData(g_display, g_window, empty, 1, 1);
+        if (bitmap != 0) {
+            XColor black{};
+            Cursor blank = x.CreatePixmapCursor(g_display, bitmap, bitmap, &black, &black, 0, 0);
+            if (blank != 0) {
+                x.DefineCursor(g_display, g_window, blank);
+                if (x.FreeCursor != nullptr) x.FreeCursor(g_display, blank);
+            }
+            if (x.FreePixmap != nullptr) x.FreePixmap(g_display, bitmap);
+        }
+    }
+
+    // The taskbar/titlebar icon. WM_CLASS above is enough for a desktop
+    // that can find Stud's .desktop file, but nothing guarantees one is
+    // installed -- an AppImage run straight from a download has none --
+    // and then the window has no icon at all. _NET_WM_ICON carries the
+    // pixels themselves, so it works either way.
+    {
+        const Atom net_wm_icon = x.InternAtom(g_display, "_NET_WM_ICON", False);
+        const Atom cardinal = x.InternAtom(g_display, "CARDINAL", False);
+        if (net_wm_icon != 0 && cardinal != 0) {
+            x.ChangeProperty(g_display, g_window, net_wm_icon, cardinal, 32, PropModeReplace,
+                             reinterpret_cast<const unsigned char*>(kStudWindowIcon),
+                             static_cast<int>(kStudWindowIconLength));
+        }
+    }
+
     x.MapWindow(g_display, g_window);
     x.Flush(g_display);
 
@@ -175,6 +229,94 @@ bool create_window(int32_t width, int32_t height) {
 void* display() { return g_display; }
 
 unsigned long window() { return g_window; }
+
+
+// X11 input, translated into the same HostInputEvent queue the Wayland
+// listeners push onto -- so everything downstream (Process B's bridge,
+// the engine's own entry points) is identical on both backends and
+// nothing had to learn about X11.
+//
+// Two conversions matter and both are exact rather than approximate:
+//
+//  - An X keycode is the evdev scancode plus 8, fixed by the X protocol.
+//    The Wayland path reports raw evdev codes, and so does a real
+//    Android device's own KeyEvent.getScanCode(), so subtracting 8 puts
+//    X11 on precisely the same footing with no second mapping table.
+//  - X button numbers are 1-based with the wheel occupying 4-7. The
+//    first three map to Android's own button indices the same way the
+//    Wayland path does (PRIMARY-1=0, SECONDARY-1=1, TERTIARY-1=3), and
+//    4/5 are a wheel notch each rather than buttons.
+namespace {
+
+float g_pointer_x = 0.0f;
+float g_pointer_y = 0.0f;
+
+void push(stud::android_glue::HostInputEvent ev) {
+    ev.surface_width = static_cast<uint32_t>(g_width.load());
+    ev.surface_height = static_cast<uint32_t>(g_height.load());
+    stud::android_glue::push_host_input_event(ev);
+}
+
+void on_motion(int x_pos, int y_pos) {
+    g_pointer_x = static_cast<float>(x_pos);
+    g_pointer_y = static_cast<float>(y_pos);
+    stud::android_glue::HostInputEvent ev;
+    ev.type = stud::android_glue::HostInputEvent::kPointerMotion;
+    ev.x = g_pointer_x;
+    ev.y = g_pointer_y;
+    push(ev);
+}
+
+void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
+    g_pointer_x = static_cast<float>(x_pos);
+    g_pointer_y = static_cast<float>(y_pos);
+    if (button == 4 || button == 5) {
+        // A wheel notch is a press followed by a release; only one of
+        // them is a scroll, or every notch would count twice.
+        if (!pressed) return;
+        stud::android_glue::HostInputEvent ev;
+        ev.type = stud::android_glue::HostInputEvent::kPointerAxis;
+        ev.x = g_pointer_x;
+        ev.y = g_pointer_y;
+        // Button 4 is up. The Wayland path reports a positive value for
+        // scrolling up after negating Wayland's own downward axis, so
+        // this matches without a second convention.
+        ev.a = button == 4 ? 1.0f : -1.0f;
+        push(ev);
+        return;
+    }
+    uint32_t android_button;
+    switch (button) {
+        case 1: android_button = 0; break;  // primary
+        case 3: android_button = 1; break;  // secondary
+        case 2: android_button = 3; break;  // tertiary
+        default: return;                    // no real Android equivalent
+    }
+    stud::android_glue::HostInputEvent ev;
+    ev.type = stud::android_glue::HostInputEvent::kPointerButton;
+    ev.code = android_button;
+    ev.x = g_pointer_x;
+    ev.y = g_pointer_y;
+    ev.a = pressed ? 1.0f : 0.0f;
+    push(ev);
+}
+
+void on_key(unsigned int keycode, bool pressed) {
+    if (keycode < 8) return;  // no evdev code below this exists
+    stud::android_glue::HostInputEvent ev;
+    ev.type = stud::android_glue::HostInputEvent::kKey;
+    ev.code = keycode - 8;
+    ev.a = pressed ? 1.0f : 0.0f;
+    // X11 delivers its own auto-repeat as ordinary press events with no
+    // marker, and telling a real repeat from a fast typist needs the
+    // XKB detectable-autorepeat extension. Reported as first presses
+    // until that lands, which is the honest side to err on: a held key
+    // still reaches the engine.
+    ev.b = 0.0f;
+    push(ev);
+}
+
+}  // namespace
 
 void pump() {
     if (g_display == nullptr || g_window == 0) return;
@@ -207,6 +349,30 @@ void pump() {
                     std::printf("stud: android-glue: window no longer visible (unmapped)\n");
                     std::fflush(stdout);
                 }
+                break;
+            case MotionNotify:
+                on_motion(event.xmotion.x, event.xmotion.y);
+                break;
+            case EnterNotify:
+                on_motion(event.xcrossing.x, event.xcrossing.y);
+                break;
+            case LeaveNotify: {
+                stud::android_glue::HostInputEvent ev;
+                ev.type = stud::android_glue::HostInputEvent::kPointerLeave;
+                push(ev);
+                break;
+            }
+            case ButtonPress:
+                on_button(event.xbutton.button, true, event.xbutton.x, event.xbutton.y);
+                break;
+            case ButtonRelease:
+                on_button(event.xbutton.button, false, event.xbutton.x, event.xbutton.y);
+                break;
+            case KeyPress:
+                on_key(event.xkey.keycode, true);
+                break;
+            case KeyRelease:
+                on_key(event.xkey.keycode, false);
                 break;
             case MapNotify:
                 if (!g_visible.exchange(true)) {
