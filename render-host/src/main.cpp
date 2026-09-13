@@ -897,6 +897,11 @@ bool g_prefer_vulkan = true;
 // default, which is Vulkan on this platform.
 std::string g_angle_backend;
 bool g_hidpi_enabled = true;
+// Stud's own upscaler, and how far below the screen the engine renders
+// for it -- DLSS's quality presets. The output is never a setting: it is
+// always the window's size in the display's own pixels.
+bool g_upscaling_enabled = false;
+int g_upscale_quality_percent = 80;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
@@ -3607,6 +3612,19 @@ void sync_vk_window_size() {
     last_w = w;
     last_h = h;
     stud::render_host::vk_set_window_size(w, h);
+    // What the upscaler writes: the window in the display's own pixels,
+    // which is a different number from the one above whenever the engine
+    // is rendering below the screen. Zero while upscaling is off, which
+    // disables the path entirely.
+    if (g_upscaling_enabled) {
+        int32_t real_w = 0;
+        int32_t real_h = 0;
+        stud::android_glue::native_window_display_pixel_size(&real_w, &real_h);
+        if (real_w > 0 && real_h > 0) {
+            stud::render_host::vk_set_upscale_output_size(static_cast<uint32_t>(real_w),
+                                                           static_cast<uint32_t>(real_h));
+        }
+    }
     std::printf("stud-render-host: window size now %ux%u (Vulkan surface extent updated)\n", w, h);
     std::fflush(stdout);
 }
@@ -3952,6 +3970,11 @@ int main(int argc, char** argv) {
             g_discord_join_button = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--hidpi") {
             g_hidpi_enabled = std::string_view(argv[i + 1]) != "off";
+        } else if (std::string_view(argv[i]) == "--upscaling") {
+            g_upscaling_enabled = std::string_view(argv[i + 1]) == "on";
+        } else if (std::string_view(argv[i]) == "--upscale-quality") {
+            const int percent = std::atoi(argv[i + 1]);
+            if (percent >= 33 && percent <= 100) g_upscale_quality_percent = percent;
         }
     }
     // Latch the scale before any window or surface exists, so the very
@@ -3962,6 +3985,30 @@ int main(int argc, char** argv) {
     // alone -- that separation is what makes the off state merely blurry
     // instead of also wrong.
     stud::android_glue::set_render_scale_120(g_hidpi_enabled ? 0 : 120);
+
+    // Stud's own upscaler.
+    //
+    // The engine renders below the screen's resolution at scale 1.0 --
+    // correct UI, rounded corners, SSAO, all of it -- and Stud builds the
+    // presented frame from that image rather than letting the compositor
+    // stretch it. The engine's own scale is never touched, because it
+    // cannot be: below 1.0 it draws square corners, above it drops SSAO.
+    //
+    // The quality preset is how far below the screen the engine renders.
+    // The OUTPUT is not a setting: it is always the window's size in the
+    // display's own pixels, pushed on every resize by sync_vk_window_size.
+    if (g_upscaling_enabled) {
+        const int32_t display_120 = stud::android_glue::native_window_wait_for_display_scale_120();
+        const int32_t engine_scale_120 =
+            static_cast<int32_t>(static_cast<int64_t>(display_120) * g_upscale_quality_percent /
+                                  100);
+        stud::android_glue::set_render_scale_120(engine_scale_120 > 1 ? engine_scale_120 : 1);
+        std::printf("stud-render-host: upscaling: the engine renders at %d%% of the screen "
+                    "(scale %d/120, display %d/120) and Stud writes the screen's own "
+                    "resolution\n",
+                    g_upscale_quality_percent, engine_scale_120, display_120);
+        std::fflush(stdout);
+    }
 
     // Open the audio device now, not when a sound first plays: Stud should
     // appear in the desktop's volume mixer from launch, like any other

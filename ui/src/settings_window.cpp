@@ -147,6 +147,53 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // so the control would claim to do something it cannot.
     connect(hidpiCheck_, &QCheckBox::toggled, followDpiCheck_, &QWidget::setEnabled);
 
+    // Stud's own upscaler. The engine renders at the window's logical size
+    // -- what HiDPI off already does, at scale 1.0, so its UI size,
+    // rounded corners and SSAO are all untouched -- and Stud builds the
+    // presented frame from that image instead of letting the compositor
+    // stretch it.
+    //
+    // So it belongs to HiDPI being OFF: with HiDPI on the engine already
+    // draws every real pixel and there is nothing to upscale from.
+    upscalingCheck_ = new QCheckBox("Upscaling", this);
+    upscalingCheck_->setToolTip(
+        "Rebuild the frame at full resolution instead of letting the compositor stretch it.\n"
+        "Needs HiDPI off, which is where the game renders below the screen's resolution.");
+    graphics->addWidget(upscalingCheck_);
+
+    // The output is never a choice: it is the window's size in the
+    // display's own pixels, and it follows a resize. What IS a choice is
+    // how far below it the engine renders -- DLSS's quality presets, and
+    // the only knob that buys frames.
+    auto* upscaleRow = new QHBoxLayout();
+    upscaleRow->addWidget(new QLabel("Quality", this));
+    upscaleOutputCombo_ = new QComboBox(this);
+    upscaleOutputCombo_->addItem("Quality (80%)", 80);
+    upscaleOutputCombo_->addItem("Balanced (67%)", 67);
+    upscaleOutputCombo_->addItem("Performance (50%)", 50);
+    upscaleOutputCombo_->setToolTip(
+        "How much of the screen's resolution the game actually renders; the upscaler always\n"
+        "writes the full screen. Lower is faster and softer -- and shows a larger interface,\n"
+        "because the engine lays its menus out in the pixels it renders and will not scale\n"
+        "them separately.");
+    upscaleRow->addWidget(upscaleOutputCombo_);
+    upscaleRow->addStretch();
+    graphics->addLayout(upscaleRow);
+
+    // The output resolution only means anything while the upscaler is the
+    // thing producing the frame.
+    auto sync_upscale_controls = [this]() {
+        const bool available = !hidpiCheck_->isChecked();
+        upscalingCheck_->setEnabled(available);
+        upscaleOutputCombo_->setEnabled(available && upscalingCheck_->isChecked());
+    };
+    connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
+        sync_upscale_controls();
+    });
+    connect(upscalingCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
+        sync_upscale_controls();
+    });
+
     // Enabled or greyed out by the render path -- see onRenderPathChanged,
     // which also owns the tooltip and says why when it is unavailable.
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
@@ -247,6 +294,13 @@ void SettingsWindow::loadFromDisk() {
     hidpiCheck_->setChecked(settings.hidpi);
     followDpiCheck_->setChecked(settings.follow_dpi);
     followDpiCheck_->setEnabled(settings.hidpi);
+    upscalingCheck_->setChecked(settings.upscaling);
+    upscalingCheck_->setEnabled(!settings.hidpi);
+    {
+        const int index = upscaleOutputCombo_->findData(settings.upscale_quality_percent);
+        upscaleOutputCombo_->setCurrentIndex(index >= 0 ? index : 0);
+        upscaleOutputCombo_->setEnabled(!settings.hidpi && settings.upscaling);
+    }
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
     // Unlimited is stored as 0 and lives at the far end of the slider.
     const int fps_position = settings.background_fps <= stud::config::kBackgroundFpsNoLimit
@@ -429,6 +483,8 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
+    settings.upscaling = upscalingCheck_->isChecked();
+    settings.upscale_quality_percent = upscaleOutputCombo_->currentData().toInt();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
                                   ? stud::config::kBackgroundFpsNoLimit

@@ -82,6 +82,28 @@ struct StudSettings {
     // already the window's logical size, where 1.0 is the size that
     // matches the desktop.
     bool follow_dpi = false;
+    // Stud's own upscaler: the engine renders at the window's logical
+    // size, exactly as it does with HiDPI off, and Stud builds the
+    // presented frame from that image instead of letting the compositor
+    // stretch it.
+    //
+    // Only meaningful with HiDPI off, and that is not a limitation so much
+    // as the whole design: the engine's own scale cannot be moved (below
+    // 1.0 it draws square corners, above it drops SSAO -- both measured),
+    // so the engine is left believing nothing changed and the scaling
+    // happens entirely inside Stud.
+    bool upscaling = false;
+    // How far below the output the engine renders, as a percentage --
+    // DLSS's Quality/Balanced/Performance, and the only knob that buys
+    // frames: 67 renders 44% of the pixels, 50 renders a quarter.
+    //
+    // The output is always the screen's own resolution. What this costs
+    // besides sharpness is UI size: the engine lays its interface out in
+    // the pixels it renders, and its own scale cannot be used to
+    // compensate (below 1.0 it draws square corners, above it drops
+    // SSAO), so a lower setting shows a larger interface. 80 is what
+    // HiDPI-off already does today.
+    int upscale_quality_percent = 80;
     // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.

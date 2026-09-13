@@ -85,6 +85,14 @@ void vk_set_preferred_device_index(uint32_t index) { g_preferred_device_index = 
 
 void vk_set_on_x11(bool on_x11) { g_on_x11 = on_x11; }
 
+std::atomic<uint32_t> g_upscale_output_w{0};
+std::atomic<uint32_t> g_upscale_output_h{0};
+
+void vk_set_upscale_output_size(uint32_t width, uint32_t height) {
+    g_upscale_output_w.store(width, std::memory_order_relaxed);
+    g_upscale_output_h.store(height, std::memory_order_relaxed);
+}
+
 void vk_set_window_size(uint32_t width, uint32_t height) {
     if (width != g_window_width.load(std::memory_order_relaxed) ||
         height != g_window_height.load(std::memory_order_relaxed)) {
@@ -255,6 +263,10 @@ struct Loader {
     // follows image -> view -> framebuffer and reports whether any render
     // pass or blit actually writes to one.
     std::set<uint64_t> swapchain_images;
+    // The queue family the engine asked for first, which is the family
+    // Stud's own upscale pass records its command buffers against.
+    uint32_t first_queue_family = 0;
+    bool have_first_queue_family = false;
     // Which images belong to which swapchain, and which images belonged
     // to one that has since been destroyed.
     //
@@ -1298,6 +1310,10 @@ uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_
     // The pixel probe needs a queue and a pool of its own; the first
     // queue the engine asks for is as good as any, and it is only used
     // when STUD_VK_PROBE_PIXELS is set.
+    if (!l.have_first_queue_family) {
+        l.have_first_queue_family = true;
+        l.first_queue_family = family;
+    }
     if (l.probe_queue == VK_NULL_HANDLE) {
         l.probe_queue = queue;
         if (l.create_command_pool != nullptr) {
@@ -2034,6 +2050,180 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
     return requested;
 }
 
+// ---- Stud's own upscale, between the engine's last draw and the present
+//
+// The engine is handed offscreen images the size it asked for and never
+// learns they are not the swapchain's own. Stud owns the real swapchain,
+// at the window's full resolution, and builds each presented frame from
+// the engine's image. See vk_set_upscale_ratio_120() in the header for
+// why the engine's own scale cannot be used instead.
+//
+// Phase one is a linear blit, which is what the compositor was already
+// doing to the same image -- so it must look identical to not upscaling
+// at all. The pass is replaced with EASU+RCAS once this sync is proven.
+struct UpscaleChain {
+    VkSwapchainKHR real = VK_NULL_HANDLE;
+    VkExtent2D engine{};
+    VkExtent2D present{};
+    std::vector<VkImage> offscreen;
+    std::vector<VkDeviceMemory> memory;
+    std::vector<VkImage> real_images;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    // One pre-recorded command buffer per image: the blit is identical
+    // every frame, so nothing has to be re-recorded and no command-buffer
+    // reset is needed. The fence is what says the previous submit of THIS
+    // buffer has finished, which a re-submit requires.
+    std::vector<VkCommandBuffer> cmd;
+    std::vector<VkSemaphore> done;
+    std::vector<VkFence> fence;
+    std::vector<bool> in_flight;
+};
+
+std::map<uint64_t, UpscaleChain> g_upscale_chains;
+
+void destroy_upscale_chain(UpscaleChain& c) {
+    Loader& l = loader();
+    if (l.device == VK_NULL_HANDLE) return;
+    if (l.device_wait_idle != nullptr) l.device_wait_idle(l.device);
+    for (auto f : c.fence) {
+        if (f != VK_NULL_HANDLE && l.destroy_fence != nullptr) l.destroy_fence(l.device, f, nullptr);
+    }
+    for (auto sem : c.done) {
+        if (sem != VK_NULL_HANDLE && l.destroy_semaphore != nullptr) {
+            l.destroy_semaphore(l.device, sem, nullptr);
+        }
+    }
+    if (c.pool != VK_NULL_HANDLE && l.destroy_command_pool != nullptr) {
+        l.destroy_command_pool(l.device, c.pool, nullptr);
+    }
+    for (auto img : c.offscreen) {
+        if (img != VK_NULL_HANDLE && l.destroy_image != nullptr) {
+            l.destroy_image(l.device, img, nullptr);
+        }
+    }
+    for (auto mem : c.memory) {
+        if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
+    }
+    c = UpscaleChain{};
+}
+
+// Device-local memory for an offscreen colour target. No host access is
+// wanted here: the engine renders into it and Stud reads it on the GPU.
+bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
+    Loader& l = loader();
+    if (l.get_image_memory_requirements == nullptr || l.allocate_memory == nullptr ||
+        l.bind_image_memory == nullptr || l.get_physical_device_memory_properties == nullptr) {
+        return false;
+    }
+    VkMemoryRequirements req{};
+    l.get_image_memory_requirements(l.device, image, &req);
+    VkPhysicalDeviceMemoryProperties props{};
+    l.get_physical_device_memory_properties(l.physical_device, &props);
+    uint32_t chosen = UINT32_MAX;
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        const bool usable = (req.memoryTypeBits & (1u << i)) != 0;
+        const bool device_local = (props.memoryTypes[i].propertyFlags &
+                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+        if (usable && device_local) { chosen = i; break; }
+    }
+    if (chosen == UINT32_MAX) {
+        for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+            if ((req.memoryTypeBits & (1u << i)) != 0) { chosen = i; break; }
+        }
+    }
+    if (chosen == UINT32_MAX) return false;
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = chosen;
+    if (l.allocate_memory(l.device, &ai, nullptr, &memory) != VK_SUCCESS) return false;
+    return l.bind_image_memory(l.device, image, memory, 0) == VK_SUCCESS;
+}
+
+// Records one command buffer per image, once. Each is the same work every
+// frame -- read the engine's image, write the real one -- so nothing needs
+// re-recording and no command buffer ever has to be reset.
+//
+// The layouts are what a real swapchain image would be in at these
+// points, which is what makes this invisible to the engine: it finishes
+// its render pass leaving its image in PRESENT_SRC_KHR (it believes it is
+// presenting), so that is the source layout here, and it is put back
+// before the buffer is handed over again.
+bool record_upscale_blits(UpscaleChain& c) {
+    Loader& l = loader();
+    if (l.begin_command_buffer == nullptr || l.end_command_buffer == nullptr ||
+        l.cmd_pipeline_barrier == nullptr || l.cmd_blit_image == nullptr) {
+        return false;
+    }
+    for (size_t i = 0; i < c.cmd.size(); ++i) {
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        if (l.begin_command_buffer(c.cmd[i], &bi) != VK_SUCCESS) return false;
+
+        VkImageMemoryBarrier to_read{};
+        to_read.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_read.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        to_read.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        to_read.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_read.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_read.image = c.offscreen[i];
+        to_read.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        // UNDEFINED as the old layout every frame, deliberately: the whole
+        // image is overwritten, so its previous contents are worth
+        // nothing, and a real acquired swapchain image is undefined on the
+        // first frame anyway.
+        VkImageMemoryBarrier to_write = to_read;
+        to_write.srcAccessMask = 0;
+        to_write.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_write.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        to_write.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_write.image = c.real_images[i];
+
+        VkImageMemoryBarrier before[2] = {to_read, to_write};
+        l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
+                               before);
+
+        VkImageBlit region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.srcOffsets[0] = {0, 0, 0};
+        region.srcOffsets[1] = {static_cast<int32_t>(c.engine.width),
+                                static_cast<int32_t>(c.engine.height), 1};
+        region.dstSubresource = region.srcSubresource;
+        region.dstOffsets[0] = {0, 0, 0};
+        region.dstOffsets[1] = {static_cast<int32_t>(c.present.width),
+                                static_cast<int32_t>(c.present.height), 1};
+        l.cmd_blit_image(c.cmd[i], c.offscreen[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
+                         VK_FILTER_LINEAR);
+
+        VkImageMemoryBarrier after_src = to_read;
+        after_src.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        after_src.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        after_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        // Back where the engine left it, so the next frame's render pass
+        // finds exactly the layout it would have found on a real
+        // swapchain image.
+        after_src.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkImageMemoryBarrier after_dst = to_write;
+        after_dst.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        after_dst.dstAccessMask = 0;
+        after_dst.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        after_dst.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkImageMemoryBarrier after[2] = {after_src, after_dst};
+        l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
+                               nullptr, 2, after);
+        if (l.end_command_buffer(c.cmd[i]) != VK_SUCCESS) return false;
+    }
+    return true;
+}
+
 uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                               uint32_t* out_len) {
     Loader& l = loader();
@@ -2093,6 +2283,32 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     ci.clipped = h.clipped;
     ci.oldSwapchain = from_u64<VkSwapchainKHR>(h.old_swapchain);
 
+    // Stud's own upscale: the real swapchain is bigger than the engine
+    // asked for, and the engine is given offscreen images of its own
+    // requested size instead. Everything about the engine's view -- the
+    // extent it asked for, its scale, its UI -- is left exactly as it
+    // would have been.
+    const uint32_t out_w = g_upscale_output_w.load(std::memory_order_relaxed);
+    const uint32_t out_h = g_upscale_output_h.load(std::memory_order_relaxed);
+    UpscaleChain pending;
+    // Only when the output really is bigger than what the engine asked
+    // for. Equal sizes mean there is nothing to upscale, and a blit of an
+    // image onto itself would be pure cost.
+    const bool want_upscale = out_w > ci.imageExtent.width && out_h > ci.imageExtent.height &&
+                               ci.imageExtent.width > 0 && ci.imageExtent.height > 0 &&
+                               l.create_image != nullptr &&
+                               l.allocate_command_buffers != nullptr && l.have_first_queue_family;
+    if (want_upscale) {
+        pending.engine = ci.imageExtent;
+        pending.present = {out_w, out_h};
+        // The real swapchain is what reaches the compositor, so it is the
+        // one that carries the full resolution -- and it has to be a blit
+        // destination, which a swapchain image is not asked to be
+        // otherwise.
+        ci.imageExtent = pending.present;
+        ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    }
+
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkResult r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
     std::printf("stud-render-host: vkCreateSwapchainKHR -> %d (%ux%u format=%u images>=%u)\n",
@@ -2100,6 +2316,93 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     std::fflush(stdout);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     g_swapchain_extents[to_u64(swapchain)] = ci.imageExtent;
+    if (want_upscale) {
+        // One offscreen image per real swapchain image, so an index means
+        // the same thing on both sides and vkAcquireNextImageKHR needs no
+        // translation at all.
+        uint32_t count = 0;
+        l.get_swapchain_images(l.device, swapchain, &count, nullptr);
+        pending.real_images.resize(count);
+        l.get_swapchain_images(l.device, swapchain, &count, pending.real_images.data());
+        pending.real = swapchain;
+
+        bool ok = count > 0;
+        for (uint32_t i = 0; ok && i < count; ++i) {
+            VkImageCreateInfo ii{};
+            ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            ii.imageType = VK_IMAGE_TYPE_2D;
+            ii.format = ci.imageFormat;
+            ii.extent = {pending.engine.width, pending.engine.height, 1};
+            ii.mipLevels = 1;
+            ii.arrayLayers = 1;
+            ii.samples = VK_SAMPLE_COUNT_1_BIT;
+            ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+            // Whatever the engine wanted from a swapchain image, plus the
+            // ability for Stud to read it back out on the GPU.
+            ii.usage = ci.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                        VK_IMAGE_USAGE_SAMPLED_BIT;
+            ii.usage &= ~static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+            ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VkImage image = VK_NULL_HANDLE;
+            if (l.create_image(l.device, &ii, nullptr, &image) != VK_SUCCESS) { ok = false; break; }
+            VkDeviceMemory mem = VK_NULL_HANDLE;
+            if (!allocate_offscreen_memory(image, mem)) {
+                if (l.destroy_image != nullptr) l.destroy_image(l.device, image, nullptr);
+                ok = false;
+                break;
+            }
+            pending.offscreen.push_back(image);
+            pending.memory.push_back(mem);
+        }
+
+        if (ok) {
+            VkCommandPoolCreateInfo pci{};
+            pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pci.queueFamilyIndex = l.first_queue_family;
+            ok = l.create_command_pool(l.device, &pci, nullptr, &pending.pool) == VK_SUCCESS;
+        }
+        if (ok) {
+            pending.cmd.resize(count, VK_NULL_HANDLE);
+            VkCommandBufferAllocateInfo cbai{};
+            cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            cbai.commandPool = pending.pool;
+            cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            cbai.commandBufferCount = count;
+            ok = l.allocate_command_buffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
+        }
+        for (uint32_t i = 0; ok && i < count; ++i) {
+            VkSemaphoreCreateInfo sci{};
+            sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            VkSemaphore sem = VK_NULL_HANDLE;
+            if (l.create_semaphore(l.device, &sci, nullptr, &sem) != VK_SUCCESS) { ok = false; break; }
+            pending.done.push_back(sem);
+            VkFenceCreateInfo fci{};
+            fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VkFence fence = VK_NULL_HANDLE;
+            if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
+            pending.fence.push_back(fence);
+        }
+        if (ok) ok = record_upscale_blits(pending);
+        if (!ok) {
+            // An honest degrade: tear the half-built chain down and let
+            // the engine render straight into the real swapchain, which
+            // is exactly today's behaviour.
+            std::printf("stud-render-host: upscale unavailable for this swapchain -- presenting "
+                        "the engine's own image instead\n");
+            std::fflush(stdout);
+            destroy_upscale_chain(pending);
+        } else {
+            pending.in_flight.assign(count, false);
+            g_upscale_chains[to_u64(swapchain)] = std::move(pending);
+            std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, linear blit)\n",
+                        g_upscale_chains[to_u64(swapchain)].engine.width,
+                        g_upscale_chains[to_u64(swapchain)].engine.height,
+                        g_upscale_chains[to_u64(swapchain)].present.width,
+                        g_upscale_chains[to_u64(swapchain)].present.height, count);
+            std::fflush(stdout);
+        }
+    }
     return write_handle(to_u64(swapchain), out, out_len);
 }
 
@@ -2132,6 +2435,33 @@ uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vec
     if (l.get_swapchain_images == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    // Upscaling: the engine gets the offscreen images. They are the same
+    // count as the real ones and in the same order, so an index means the
+    // same thing on both sides and nothing else has to translate.
+    const auto chain = g_upscale_chains.find(swapchain);
+    if (chain != g_upscale_chains.end()) {
+        const auto& images = chain->second.offscreen;
+        const uint32_t returned =
+            capacity > 0 ? static_cast<uint32_t>(std::min<size_t>(capacity, images.size())) : 0;
+        const uint32_t reported = capacity > 0 ? returned : static_cast<uint32_t>(images.size());
+        out.resize(sizeof(uint32_t) + sizeof(uint64_t) * returned);
+        std::memcpy(out.data(), &reported, sizeof(reported));
+        for (uint32_t i = 0; i < returned; ++i) {
+            uint64_t h = to_u64(images[i]);
+            // Registered exactly as a real swapchain image would be: the
+            // engine's views and framebuffers over them must still count
+            // as "targets the screen".
+            l.swapchain_images.insert(h);
+            l.swapchain_image_list[swapchain].push_back(h);
+            l.retired_images.erase(h);
+            std::memcpy(out.data() + sizeof(uint32_t) + i * sizeof(h), &h, sizeof(h));
+        }
+        *out_len = static_cast<uint32_t>(out.size());
+        const bool truncated = capacity > 0 && returned < images.size();
+        return static_cast<uint64_t>(
+            static_cast<int32_t>(truncated ? VK_INCOMPLETE : VK_SUCCESS));
+    }
+
     VkSwapchainKHR sc = from_u64<VkSwapchainKHR>(swapchain);
     uint32_t count = 0;
     VkResult r = l.get_swapchain_images(l.device, sc, &count, nullptr);
@@ -2395,6 +2725,15 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::Swapchain: {
             g_swapchain_extents.erase(handle);
+            // Stud's own offscreen images and the pass that reads them go
+            // with the swapchain they belong to.
+            {
+                auto chain = g_upscale_chains.find(handle);
+                if (chain != g_upscale_chains.end()) {
+                    destroy_upscale_chain(chain->second);
+                    g_upscale_chains.erase(chain);
+                }
+            }
             auto images = l.swapchain_image_list.find(handle);
             if (images != l.swapchain_image_list.end()) {
                 for (uint64_t image : images->second) {
@@ -3470,6 +3809,61 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     if (probe && probed < 3 && ns > 0 && !indices.empty()) {
         probe_swapchain_pixels(chains[0], indices[0]);
         ++probed;
+    }
+
+    // Stud's own upscale pass, between the engine's last draw and the
+    // present it asked for.
+    //
+    // The engine's wait semaphores become the pass's wait semaphores, and
+    // the present then waits on the pass instead -- so the chain is
+    // engine render -> blit -> present, with nothing running early. The
+    // per-image fence is what makes re-submitting the same pre-recorded
+    // command buffer legal: it says the previous submit of it has
+    // finished.
+    std::vector<VkSemaphore> upscaled_waits;
+    if (ns > 0 && !indices.empty()) {
+        auto chain = g_upscale_chains.find(to_u64(chains[0]));
+        if (chain != g_upscale_chains.end() && l.queue_submit != nullptr) {
+            UpscaleChain& c = chain->second;
+            const uint32_t index = indices[0];
+            if (index < c.cmd.size()) {
+                if (c.in_flight[index] && l.wait_for_fences != nullptr) {
+                    l.wait_for_fences(l.device, 1, &c.fence[index], VK_TRUE, UINT64_MAX);
+                    if (l.reset_fences != nullptr) l.reset_fences(l.device, 1, &c.fence[index]);
+                }
+                std::vector<VkPipelineStageFlags> stages(
+                    waits.size(), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                VkSubmitInfo si{};
+                si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                si.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
+                si.pWaitSemaphores = waits.empty() ? nullptr : waits.data();
+                si.pWaitDstStageMask = stages.empty() ? nullptr : stages.data();
+                si.commandBufferCount = 1;
+                si.pCommandBuffers = &c.cmd[index];
+                si.signalSemaphoreCount = 1;
+                si.pSignalSemaphores = &c.done[index];
+                const VkResult sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si,
+                                                    c.fence[index]);
+                if (sr == VK_SUCCESS) {
+                    c.in_flight[index] = true;
+                    // The present now waits on the pass, not on the
+                    // engine -- the engine's own semaphores have already
+                    // been consumed by the submit above, and waiting on
+                    // them twice would hang.
+                    upscaled_waits.push_back(c.done[index]);
+                    pi.waitSemaphoreCount = 1;
+                    pi.pWaitSemaphores = upscaled_waits.data();
+                } else {
+                    static bool said = false;
+                    if (!said) {
+                        said = true;
+                        std::printf("stud-render-host: upscale submit failed (%d) -- presenting "
+                                    "without it\n", static_cast<int>(sr));
+                        std::fflush(stdout);
+                    }
+                }
+            }
+        }
     }
 
     VkResult res = l.queue_present(from_u64<VkQueue>(queue), &pi);

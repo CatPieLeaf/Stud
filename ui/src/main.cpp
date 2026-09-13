@@ -791,6 +791,12 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // process that can honour the compositor's scale -- this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
+    // Stud's own upscaler and how far below the screen the engine renders
+    // for it. The output is never passed: it is always the window's real
+    // size, which only render-host can know.
+    render_host_args << "--upscaling" << (settings.upscaling && !settings.hidpi ? "on" : "off");
+    render_host_args << "--upscale-quality"
+                     << QString::number(settings.upscale_quality_percent);
     // 0 is "no limit" in the config; render-host reads anything outside
     // 1..240 the same way, so it travels unchanged.
     render_host_args << "--background-fps" << QString::number(settings.background_fps);
