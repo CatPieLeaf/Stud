@@ -291,9 +291,23 @@ void draw(const TextOverlaySpec& spec, Overlay& o, const WaylandOverlayDeps& dep
     // this em is exactly Roblox's own TextSize -- see the ratio note
     // above.
     const auto upem = static_cast<float>(face->units_per_EM);
-    const float asc_px = size_px * static_cast<float>(face->ascender) / upem;
-    const float desc_px = size_px * static_cast<float>(face->descender) / upem;  // negative
-    const float line_px = asc_px - desc_px;
+    float asc_px = size_px * static_cast<float>(face->ascender) / upem;
+    float desc_px = size_px * static_cast<float>(face->descender) / upem;  // negative
+    float line_px = asc_px - desc_px;
+    // Roblox's line box, when it is known, rather than the font's span at
+    // this em. The two are different once the em is TextSize (see
+    // TextOverlaySpec::line_height): the font's own span is then taller
+    // than TextSize, so centring against it dropped the baseline a pixel
+    // or two below the engine's -- visible as text sitting low against a
+    // caret that was in the right place. The box is split by the font's
+    // own ascent fraction, which is what puts the baseline back where it
+    // was before the em changed.
+    if (spec.line_height > 1.0f && line_px > 0.0f) {
+        const float ascent_fraction = asc_px / line_px;
+        line_px = spec.line_height;
+        asc_px = line_px * ascent_fraction;
+        desc_px = asc_px - line_px;
+    }
     float top = spec.residual_y;
     if (spec.y_alignment == 1) top = spec.residual_y + (spec.height - line_px) / 2.0f;
     else if (spec.y_alignment == 2) top = spec.residual_y + spec.height - line_px;

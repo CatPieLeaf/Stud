@@ -845,6 +845,20 @@ bool read_text_box_info(JNIEnv* env, jobject info,
     int input_type = 0;
     get_int("textInputType", input_type);
     out.password = input_type == 5 || input_type == 9;
+    if (text_input_trace_enabled()) {
+        // What the engine says about the box, which is all Stud has to go
+        // on: it reports a TextSize but not whether the box scales its
+        // text to fit (Roblox's TextScaled), and those two cases need
+        // different ems. Never the contents -- a TextBox can be a
+        // password field.
+        std::printf("stud: text box: font=%d fontSize=%.2f box=%.1fx%.1f at (%.1f,%.1f) "
+                    "align=%d/%d\n",
+                    out.font, static_cast<double>(out.font_size),
+                    static_cast<double>(out.width), static_cast<double>(out.height),
+                    static_cast<double>(out.x), static_cast<double>(out.y), out.x_alignment,
+                    out.y_alignment);
+        std::fflush(stdout);
+    }
     // A box the engine reports with no area is one of the ghost focuses
     // showKeyboard also produces; refuse it rather than blanking a real
     // box's geometry.
