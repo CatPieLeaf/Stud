@@ -249,19 +249,34 @@ bool sync_gl_errors() {
 
 GLenum glGetError() {
     if (sync_gl_errors()) return static_cast<GLenum>(call1(CallId::GlGetError));
-    // Ask the real GL on a budget: once every kErrorPollInterval checks, and
-    // immediately whenever an error is already known (so the caller's
-    // read-and-clear still drains it in order). 856 checks a frame become ~13.
-    constexpr unsigned kErrorPollInterval = 64;
-    static unsigned since_poll = 0;
-    if (g_cached_gl_error == GL_NO_ERROR && ++since_poll >= kErrorPollInterval) {
-        since_poll = 0;
-        g_cached_gl_error = static_cast<GLenum>(call1(CallId::GlGetError));
-    }
-    // GL semantics: reading the error clears it.
+    // Answered entirely from the cache, which the swap path refreshes with
+    // ONE real query per frame (refresh_gl_error_cache, below).
+    //
+    // This used to poll every 64 checks, which sounds cheap and is not: the
+    // engine makes about 14,500 GL calls in a frame on this path and checks
+    // the error after nearly all of them, so one poll per 64 still came to
+    // 226 blocking round-trips a frame -- measured at 25ms of pure waiting,
+    // against 2ms for the other 14,300 calls put together. It WAS the frame
+    // rate of the OpenGL path.
+    //
+    // Nothing is swallowed: a real error still surfaces, on the next frame
+    // instead of within 64 calls, and STUD_SYNC_GL_ERRORS=1 restores strict
+    // per-call querying when that difference matters.
     GLenum e = g_cached_gl_error;
     g_cached_gl_error = GL_NO_ERROR;
     return e;
+}
+
+// Not a GL entry point -- Stud's own, called by the swap path. Inside
+// the extern "C" block so it keeps a plain, unmangled name, the same way
+// the rest of this file's symbols are resolved.
+void stud_refresh_gl_error_cache() {
+    if (sync_gl_errors()) return;
+    // Only when nothing is already pending, so a cached error is not lost
+    // before the caller has read it.
+    if (g_cached_gl_error == GL_NO_ERROR) {
+        g_cached_gl_error = static_cast<GLenum>(call1(CallId::GlGetError));
+    }
 }
 
 

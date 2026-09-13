@@ -113,6 +113,17 @@ EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface, EGLContex
 }
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
+    // One real glGetError for the frame that just ended. Every check the
+    // engine made during it was answered from the cache this refreshes --
+    // see glGetError() in gles_stub.cpp.
+    //
+    // Resolved by name rather than linked: the GL and EGL stubs are
+    // separate shared libraries, and a machine where the GL one is not
+    // loaded simply has no errors to refresh.
+    using RefreshFn = void (*)();
+    static RefreshFn refresh = reinterpret_cast<RefreshFn>(
+        ::dlsym(RTLD_DEFAULT, "stud_refresh_gl_error_cache"));
+    if (refresh != nullptr) refresh();
     uint64_t a[8] = {to_handle(dpy), to_handle(surface)};
     return connection().call(CallId::EglSwapBuffers, a, nullptr, 0, nullptr, 0, nullptr) ? EGL_TRUE : EGL_FALSE;
 }
