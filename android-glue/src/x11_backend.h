@@ -52,6 +52,8 @@ int connection_fd();
 // coming. Reports relative motion instead of positions while held, the
 // same as the Wayland path.
 void set_pointer_locked(bool locked);
+// Put the pointer at a point in the window, in window pixels.
+void warp_pointer(int x, int y);
 
 // The system clipboard, X11's way: a selection is owned by a window, and
 // the owner hands the bytes over on request. Both calls are no-ops (and

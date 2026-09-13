@@ -154,6 +154,32 @@ add_custom_command(
     DEPENDS "${PointerConstraintsXml}"
 )
 
+# The pointer-warp protocol: the only way a Wayland client can put the
+# pointer somewhere. The old trick -- lock the pointer, set a cursor
+# position hint, unlock, and let the compositor apply the hint -- drops
+# warps silently and cannot be used at all while the surface already has a
+# constraint (a second one is a protocol error and the compositor kills
+# the client). Wine's Wayland driver carried that same hack and replaced
+# it with this protocol for the same reasons.
+#
+# Staging, and young: KWin 6.4+, Mutter 49+, wlroots 0.19+. Absent at
+# runtime simply means no warping, and every caller is written to be
+# correct without it -- so an older compositor loses the cursor coming
+# back to where it was, and nothing else.
+set(PointerWarpXml "${WaylandProtocolsDataDir}/staging/pointer-warp/pointer-warp-v1.xml")
+set(PointerWarpHeader "${XdgShellGeneratedDir}/pointer-warp-v1-client-protocol.h")
+set(PointerWarpSource "${XdgShellGeneratedDir}/pointer-warp-v1-protocol.c")
+add_custom_command(
+    OUTPUT "${PointerWarpHeader}"
+    COMMAND "${WaylandScanner}" client-header "${PointerWarpXml}" "${PointerWarpHeader}"
+    DEPENDS "${PointerWarpXml}"
+)
+add_custom_command(
+    OUTPUT "${PointerWarpSource}"
+    COMMAND "${WaylandScanner}" private-code "${PointerWarpXml}" "${PointerWarpSource}"
+    DEPENDS "${PointerWarpXml}"
+)
+
 set(RelativePointerXml "${WaylandProtocolsDataDir}/unstable/relative-pointer/relative-pointer-unstable-v1.xml")
 set(RelativePointerHeader "${XdgShellGeneratedDir}/relative-pointer-unstable-v1-client-protocol.h")
 set(RelativePointerSource "${XdgShellGeneratedDir}/relative-pointer-unstable-v1-protocol.c")
@@ -247,6 +273,8 @@ add_library(stud_android_glue STATIC
     "${ViewporterHeader}"
     "${PointerConstraintsSource}"
     "${PointerConstraintsHeader}"
+    "${PointerWarpSource}"
+    "${PointerWarpHeader}"
     "${RelativePointerSource}"
     "${RelativePointerHeader}"
     "${PointerGesturesSource}"

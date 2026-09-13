@@ -162,7 +162,7 @@ std::atomic<bool> g_drag_locked{false};
 // It was how the cursor was kept still through an orbit, and it is no
 // longer needed: the engine pins its own cursor, and the position Stud
 // reports now carries on from that point when the drag ends (see
-// g_pos_offset_x). Holding the pointer as well is what made a right-drag
+// the anchor warp). Holding the pointer as well is what made a right-drag
 // on an in-game UI overlay unusable -- the cursor could not move over the
 // thing the press had just opened. STUD_DRAG_LOCK=1 brings it back.
 //
@@ -227,34 +227,60 @@ bool g_lock_from_drag = false;
 // moment nothing is asking for the lock, so the next drag re-arms it.
 bool g_lock_suppressed = false;
 
-// The cursor stays where the engine left it when a camera drag ends.
+// The pointer does not move during a camera drag: it is put back where
+// the drag began, on every movement.
 //
-// The engine pins its OWN cursor for the whole of a camera rotation
-// (MouseBehavior.LockCurrentPosition) and steers from the deltas -- with
-// or without any pointer lock, live-observed with locking off entirely.
-// It ignores the position it is given for the duration and picks it up
-// again on release, so a slow orbit that walked the hand 224 units left
-// ends with the cursor jumping exactly that far:
+// This is what games have always done, and it removes the problem rather
+// than correcting it afterwards. The engine pins its OWN cursor for a
+// camera rotation (MouseBehavior.LockCurrentPosition) and steers from the
+// deltas, ignoring the positions it is given; for a drag on a UI element
+// it follows those positions instead, and nothing tells the platform
+// which of the two is happening. Every scheme that let the pointer travel
+// and then reconciled the difference had to guess: shifting the reported
+// position at the end of a gesture is invisible after an orbit and a
+// visible snap after a UI drag, the shift accumulated without bound
+// (measured at 355 units after a few orbits), and re-entering the window
+// then jumped by whatever had built up.
 //
-//   press    pos=(525.5,559.2)          <- where the engine pins its cursor
-//   ...1365 moves, hand travels left...
-//   release  pos=(301.8,616.0)          <- adopted, and the cursor jumps
+// With the pointer pinned there is no difference to reconcile. The
+// positions the engine receives never leave the anchor, the deltas are
+// untouched so the camera turns exactly as before, the desktop pointer
+// cannot drift or escape, and at the release everything is already where
+// it started.
 //
-// So the gesture's starting point is remembered, and from the release
-// onwards every position is reported shifted by the distance between it
-// and where the hand ended. The cursor carries on from where it visibly
-// is, which is the whole of what was missing -- no lock, no warp, nothing
-// put back.
-//
-// This is NOT integration: each position is still the pointer's own plus
-// one constant, fixed once per gesture, so nothing accumulates while the
-// mouse moves. The position is also NOT frozen during the drag -- tried,
-// and it made the rotation itself wrong.
+// Needs a compositor that can warp (wp_pointer_warp_v1: KWin 6.4+,
+// Mutter 49+, wlroots 0.19+; X11 always could). Without one, nothing is
+// warped and the pointer travels as it used to.
 bool g_drag_anchored = false;
 float g_drag_anchor_x = 0.0f;
 float g_drag_anchor_y = 0.0f;
-float g_pos_offset_x = 0.0f;
-float g_pos_offset_y = 0.0f;
+// Surface pixels, which is what a warp request takes.
+float g_drag_anchor_px = 0.0f;
+float g_drag_anchor_py = 0.0f;
+bool g_can_warp = false;
+
+// Whether the compositor can move the pointer at all. Asked once: on
+// Wayland it depends on a protocol the compositor may not have, and
+// everything here has a correct do-nothing path when it does not.
+bool pointer_warp_available() {
+    static const bool available = []() {
+        uint64_t a[8] = {};
+        const bool yes = stud::render_client::connection().call(CallId::CanWarpPointer, a, nullptr,
+                                                                 0, nullptr, 0, nullptr) != 0;
+        std::printf("stud: the compositor %s move the pointer\n",
+                    yes ? "can" : "cannot (a camera drag will move it)");
+        std::fflush(stdout);
+        return yes;
+    }();
+    return available;
+}
+
+void warp_pointer_to(float surface_x, float surface_y) {
+    uint64_t a[8] = {};
+    a[0] = static_cast<uint64_t>(surface_x * 256.0f);
+    a[1] = static_cast<uint64_t>(surface_y * 256.0f);
+    stud::render_client::connection().call(CallId::WarpPointer, a, nullptr, 0, nullptr, 0, nullptr);
+}
 
 void set_pointer_locked(bool locked) {
     if (locked == g_drag_locked.load()) return;
@@ -954,6 +980,18 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // has no position of its own; that is the branch above, and
             // the resync flag is what carries the two back into agreement
             // when the lock ends.
+            // The pointer is pinned for this gesture, so absolute motion
+            // carries no information: half of it is the hand and half is
+            // Stud's own warp pulling it back, and the two cancel. Only
+            // the pin is done here; the movement comes from the relative
+            // stream, which a warp cannot corrupt.
+            if (g_drag_anchored && g_can_warp) {
+                g_prev_raw_x = x;
+                g_prev_raw_y = y;
+                g_have_prev_raw = true;
+                warp_pointer_to(g_drag_anchor_px, g_drag_anchor_py);
+                return;
+            }
             const bool resync = g_resync_after_unlock.exchange(false);
             if (resync || !g_have_prev_raw) {
                 g_prev_raw_x = x;
@@ -1020,12 +1058,28 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // No clamp either. The client bounds nothing here; only its
             // ACTION_SCROLL branch floors the position it reports at
             // zero, which is the wheel's business and not the pointer's.
-            last_x = x + g_pos_offset_x;
-            last_y = y + g_pos_offset_y;
+            last_x = x;
+            last_y = y;
             call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
             return;
         }
         case Ev::kPointerRelative: {
+            // The camera's movement while the pointer is pinned for a
+            // camera drag: the device's own, unaffected by the warps that
+            // hold the pointer at the anchor. The position stays the
+            // anchor throughout, which is where the engine has its cursor
+            // anyway for a rotation.
+            if (g_drag_anchored && g_can_warp) {
+                if (fns.mouse_move == nullptr) return;
+                last_x = g_drag_anchor_x;
+                last_y = g_drag_anchor_y;
+                call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, ev.x, ev.y);
+                return;
+            }
+            // Not a pinned drag: this is the engine's own LockCenter
+            // (first person), where the compositor is holding the pointer
+            // and these are the only motion there is.
+            if (!g_drag_locked.load()) return;
             // Mouse look. `ev.x`/`ev.y` are the raw delta, not a position:
             // the compositor is holding the cursor still, so this is the
             // only motion there is. The real captured-pointer path
@@ -1172,21 +1226,27 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     const bool held = (g_button_state & kCameraButtons) != 0;
                     if (held && !g_drag_anchored) {
                         g_drag_anchored = true;
-                        g_drag_anchor_x = to_density_independent(ev.x) + g_pos_offset_x;
-                        g_drag_anchor_y = to_density_independent(ev.y) + g_pos_offset_y;
+                        g_drag_anchor_x = to_density_independent(ev.x);
+                        g_drag_anchor_y = to_density_independent(ev.y);
+                        g_drag_anchor_px = ev.x;
+                        g_drag_anchor_py = ev.y;
+                        g_can_warp = pointer_warp_available();
+                        if (input_trace_enabled()) {
+                            std::printf("stud: drag anchored at (%.1f,%.1f)%s\n",
+                                        static_cast<double>(g_drag_anchor_x),
+                                        static_cast<double>(g_drag_anchor_y),
+                                        g_can_warp ? "" : " -- no warp, the pointer will travel");
+                            std::fflush(stdout);
+                        }
                     } else if (!held && g_drag_anchored) {
                         g_drag_anchored = false;
-                        // Where the engine's cursor is, minus where the hand
-                        // ended: every position from here on carries that
-                        // difference, so the cursor resumes from the anchor.
-                        g_pos_offset_x = g_drag_anchor_x - to_density_independent(ev.x);
-                        g_pos_offset_y = g_drag_anchor_y - to_density_independent(ev.y);
+                        // Nothing to put back: the pointer never left the
+                        // anchor, so it and the engine's cursor are both
+                        // already there.
                         if (input_trace_enabled()) {
-                            std::printf("stud: drag ended at anchor (%.1f,%.1f); offset now "
-                                        "(%.1f,%.1f)\n", static_cast<double>(g_drag_anchor_x),
-                                        static_cast<double>(g_drag_anchor_y),
-                                        static_cast<double>(g_pos_offset_x),
-                                        static_cast<double>(g_pos_offset_y));
+                            std::printf("stud: drag ended at anchor (%.1f,%.1f)\n",
+                                        static_cast<double>(g_drag_anchor_x),
+                                        static_cast<double>(g_drag_anchor_y));
                             std::fflush(stdout);
                         }
                     }
@@ -1653,10 +1713,11 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // the moment it came back in. Re-basing here is what makes
                 // entering seamless: the pointer really is at this point,
                 // so this is the one place adopting it is correct.
-                // Carrying whatever shift a camera drag left behind, so
-                // re-entering does not undo it -- see g_pos_offset_x.
-                last_x = x + g_pos_offset_x;
-                last_y = y + g_pos_offset_y;
+                // No shift to carry any more: a camera drag leaves the
+                // pointer exactly where it started, so the cursor and the
+                // pointer are never apart and entering is just entering.
+                last_x = x;
+                last_y = y;
                 g_prev_raw_x = x;
                 g_prev_raw_y = y;
                 g_have_prev_raw = true;
