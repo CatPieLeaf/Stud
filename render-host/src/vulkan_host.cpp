@@ -3520,10 +3520,10 @@ uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count
 // One entry point for the whole vkCmd* family. Every member takes a
 // command buffer, returns nothing, and differs only in payload -- so
 // they share a call id and, on the client side, the reply-free path.
-uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint8_t>& in) {
+uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
     Loader& l = loader();
     VkCommandBuffer cb = from_u64<VkCommandBuffer>(cb_handle);
-    vk_wire::Reader r(in.data(), in.size());
+    vk_wire::Reader r(data, size);
     using K = vk_wire::CmdKind;
 
     // Which command was being recorded, for the crash handler. A
@@ -3532,7 +3532,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint
     {
         char note[96];
         std::snprintf(note, sizeof(note), "vk_cmd_record kind=%u cb=%llx in=%zu", kind,
-                      static_cast<unsigned long long>(cb_handle), in.size());
+                      static_cast<unsigned long long>(cb_handle), size);
         stud::logging::set_crash_note(note);
     }
 
