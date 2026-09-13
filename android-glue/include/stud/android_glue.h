@@ -391,6 +391,10 @@ struct HostInputEvent {
         // the pad really has it.
         kGamepadSupportedKey = 12,
         kGamepadSupportedAxis = 13,
+        // A touchpad pinch. x, y are the pointer position and `a` is the
+        // change in scale since the previous update -- the shape the
+        // app's own mouse branch takes (`nativePassMousePinch`).
+        kPointerPinch = 14,
     };
     uint32_t type = 0;
     uint32_t code = 0;

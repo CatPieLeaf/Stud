@@ -22,6 +22,7 @@
 
 #include <iostream>
 #include "desktop_entry.h"
+#include "diagnose.h"
 #include "launch_uri.h"
 #include "notifications.h"
 #include "settings_window.h"
@@ -1236,6 +1237,13 @@ int main(int argc, char** argv) {
     // ~/.local/share tree, which is what gives its windows an icon and
     // makes roblox:// links from a browser open it. A package installs
     // its own entry system-wide and needs none of this.
+    // Everything a bug report needs, in one page of text. Reads state
+    // and prints it -- launches nothing, changes nothing, and never
+    // prints a credential.
+    if (argc > 1 && std::string(argv[1]) == "--diagnose") {
+        return stud::ui::run_diagnose();
+    }
+
     if (argc > 1 && std::string(argv[1]) == "--install-desktop-entry") {
         return stud::ui::install_desktop_entry();
     }

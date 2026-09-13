@@ -81,6 +81,7 @@ using SyncTextFn = void (*)(JNIEnv*, jclass, jstring, jint);
 // Game controllers. Signatures read off the real exported symbols; the
 // engine takes Android's own keycodes and axis ids, which is exactly what
 // render-host already produces from evdev.
+using MousePinchFn = void (*)(JNIEnv*, jclass, jfloat, jfloat, jfloat);
 using GamepadConnectFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*type*/);
 using GamepadDisconnectFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/);
 using GamepadButtonFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*keyCode*/,
@@ -122,6 +123,7 @@ struct InputFns {
     UpdateKeyboardSizeFn update_keyboard_size = nullptr;
     GetTextBoxInfoFn get_text_box_info = nullptr;
     IsMouseLockedFn is_mouse_locked = nullptr;
+    MousePinchFn mouse_pinch = nullptr;
     GamepadConnectFn gamepad_connect = nullptr;
     GamepadDisconnectFn gamepad_disconnect = nullptr;
     GamepadButtonFn gamepad_button = nullptr;
@@ -1570,6 +1572,16 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // controller being plugged in.
             return;
         }
+        case Ev::kPointerPinch: {
+            if (fns.mouse_pinch == nullptr) return;
+            // The real caller scales the change in pinch factor by 3.5
+            // before handing it over (the app's own mouse branch), and
+            // passes the position already divided by the display
+            // density -- same units every other pointer call uses here.
+            call_trapping_abort(fns.mouse_pinch, jni_env, nullptr, to_density_independent(ev.x),
+                                to_density_independent(ev.y), ev.a * 3.5f);
+            return;
+        }
         // Game controllers.
         //
         // render-host has already done the hard part: these arrive as
@@ -1718,6 +1730,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_nativeGetTextBoxInfo"));
     fns.is_mouse_locked = reinterpret_cast<IsMouseLockedFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeGetMainWindowIsMouseLockedCenter"));
+    fns.mouse_pinch = reinterpret_cast<MousePinchFn>(
+        lib.find_symbol("Java_com_roblox_engine_jni_NativeInputInterface_nativePassMousePinch"));
     fns.gamepad_connect = reinterpret_cast<GamepadConnectFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadConnectEventWithGamepadType"));
     fns.gamepad_disconnect = reinterpret_cast<GamepadDisconnectFn>(lib.find_symbol(

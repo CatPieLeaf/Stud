@@ -182,6 +182,26 @@ add_custom_command(
     DEPENDS "${ViewporterXml}"
 )
 
+# Real pointer-gestures bindings, same generation mechanism. A touchpad
+# pinch is a first-class Wayland event, not two synthesised scrolls, and
+# it is the only way a client learns the real scale factor. The app's own
+# handler has a mouse branch for exactly this shape
+# (`nativePassMousePinch(x, y, delta)`), which Stud has never had
+# anything to feed.
+set(PointerGesturesXml "${WaylandProtocolsDataDir}/unstable/pointer-gestures/pointer-gestures-unstable-v1.xml")
+set(PointerGesturesHeader "${XdgShellGeneratedDir}/pointer-gestures-unstable-v1-client-protocol.h")
+set(PointerGesturesSource "${XdgShellGeneratedDir}/pointer-gestures-unstable-v1-protocol.c")
+add_custom_command(
+    OUTPUT "${PointerGesturesHeader}"
+    COMMAND "${WaylandScanner}" client-header "${PointerGesturesXml}" "${PointerGesturesHeader}"
+    DEPENDS "${PointerGesturesXml}"
+)
+add_custom_command(
+    OUTPUT "${PointerGesturesSource}"
+    COMMAND "${WaylandScanner}" private-code "${PointerGesturesXml}" "${PointerGesturesSource}"
+    DEPENDS "${PointerGesturesXml}"
+)
+
 add_library(stud_android_glue STATIC
     src/asset_manager.cpp
     src/apk_extract.cpp
@@ -210,6 +230,8 @@ add_library(stud_android_glue STATIC
     "${PointerConstraintsHeader}"
     "${RelativePointerSource}"
     "${RelativePointerHeader}"
+    "${PointerGesturesSource}"
+    "${PointerGesturesHeader}"
 )
 target_include_directories(stud_android_glue PUBLIC "${XdgShellGeneratedDir}")
 target_include_directories(stud_android_glue PUBLIC include)
