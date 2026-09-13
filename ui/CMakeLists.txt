@@ -77,6 +77,7 @@ target_link_libraries(stud_ui_credential_store PUBLIC Qt6::Core Qt6Keychain::Qt6
 add_executable(stud-ui
     src/main.cpp
     src/desktop_entry.cpp
+    src/diagnose.cpp
     src/settings_window.cpp
     src/tray.cpp
     resources/resources.qrc
@@ -92,7 +93,7 @@ set_target_properties(stud-ui PROPERTIES
     ENABLE_EXPORTS ON
 )
 
-target_compile_definitions(stud-ui PRIVATE STUD_APP_ID="${STUD_APP_ID}")
+target_compile_definitions(stud-ui PRIVATE STUD_APP_ID="${STUD_APP_ID}" STUD_VERSION="${STUD_VERSION}")
 
 # The launcher is the only binary a user runs, so it is the only one on
 # PATH. The others live in libexec and are found relative to it.

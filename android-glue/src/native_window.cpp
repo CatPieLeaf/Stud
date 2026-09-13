@@ -12,6 +12,7 @@
 #include "wayland_overlay_deps.h"
 #include <xdg-output-unstable-v1-client-protocol.h>
 #include <pointer-constraints-unstable-v1-client-protocol.h>
+#include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
@@ -126,6 +127,11 @@ struct WaylandConnectionState {
     // behaviour, not a crash.
     zwp_pointer_constraints_v1* pointer_constraints = nullptr;
     zwp_relative_pointer_manager_v1* relative_pointer_manager = nullptr;
+    zwp_pointer_gestures_v1* pointer_gestures = nullptr;
+    zwp_pointer_gesture_pinch_v1* pinch = nullptr;
+    // The scale last reported. The engine wants a DELTA, not an
+    // absolute factor.
+    double pinch_scale = 1.0;
     zwp_relative_pointer_v1* relative_pointer = nullptr;
     zwp_locked_pointer_v1* locked_pointer = nullptr;
     zxdg_output_v1* xdg_output = nullptr;
@@ -707,6 +713,43 @@ void relative_pointer_motion(void*, zwp_relative_pointer_v1*, uint32_t, uint32_t
     ev.y = scale_pointer_coord(wl_fixed_to_double(dy));
     push_input_event(ev);
 }
+// A touchpad pinch. The app's own handler has a mouse branch for exactly
+// this (`nativePassMousePinch(x, y, (scale - last) * 3.5)`), so the
+// event carries the position and the change in scale since the previous
+// update -- an absolute factor would make the camera jump every time a
+// pinch began.
+void pinch_begin(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, uint32_t, wl_surface*,
+                 uint32_t) {
+    auto* state = static_cast<WaylandConnectionState*>(data);
+    state->pinch_scale = 1.0;
+}
+void pinch_update(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, wl_fixed_t, wl_fixed_t,
+                  wl_fixed_t scale, wl_fixed_t) {
+    auto* state = static_cast<WaylandConnectionState*>(data);
+    const double now = wl_fixed_to_double(scale);
+    const double delta = now - state->pinch_scale;
+    state->pinch_scale = now;
+    if (delta == 0.0) return;
+    stud::android_glue::HostInputEvent ev{};
+    ev.type = stud::android_glue::HostInputEvent::kPointerPinch;
+    // The pointer does not move during a pinch, so the last known
+    // position is the gesture's position -- which is what the real
+    // handler passes too (the first touch point's own coordinates).
+    ev.x = g_pointer_x;
+    ev.y = g_pointer_y;
+    ev.a = static_cast<float>(delta);
+    push_input_event(ev);
+}
+void pinch_end(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, uint32_t, int32_t) {
+    auto* state = static_cast<WaylandConnectionState*>(data);
+    state->pinch_scale = 1.0;
+}
+const zwp_pointer_gesture_pinch_v1_listener kPinchListener = {
+    .begin = pinch_begin,
+    .update = pinch_update,
+    .end = pinch_end,
+};
+
 const zwp_relative_pointer_v1_listener kRelativePointerListener = {
     .relative_motion = relative_pointer_motion,
 };
@@ -716,6 +759,11 @@ void seat_capabilities(void* data, wl_seat* seat, uint32_t caps) {
     if ((caps & WL_SEAT_CAPABILITY_POINTER) != 0 && state->pointer == nullptr) {
         state->pointer = wl_seat_get_pointer(seat);
         wl_pointer_add_listener(state->pointer, &kPointerListener, state);
+        if (state->pointer_gestures != nullptr && state->pinch == nullptr) {
+            state->pinch = zwp_pointer_gestures_v1_get_pinch_gesture(state->pointer_gestures,
+                                                                     state->pointer);
+            zwp_pointer_gesture_pinch_v1_add_listener(state->pinch, &kPinchListener, state);
+        }
         if (state->relative_pointer_manager != nullptr && state->relative_pointer == nullptr) {
             state->relative_pointer = zwp_relative_pointer_manager_v1_get_relative_pointer(
                 state->relative_pointer_manager, state->pointer);
@@ -830,6 +878,11 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
     } else if (std::string_view(interface) == zwp_pointer_constraints_v1_interface.name) {
         state->pointer_constraints = static_cast<zwp_pointer_constraints_v1*>(
             wl_registry_bind(registry, name, &zwp_pointer_constraints_v1_interface, 1));
+    } else if (std::string_view(interface) == zwp_pointer_gestures_v1_interface.name) {
+        // Version 1 is all this needs: pinch begin/update/end have been
+        // there since the protocol's first version.
+        state->pointer_gestures = static_cast<zwp_pointer_gestures_v1*>(
+            wl_registry_bind(registry, name, &zwp_pointer_gestures_v1_interface, 1));
     } else if (std::string_view(interface) == zwp_relative_pointer_manager_v1_interface.name) {
         state->relative_pointer_manager = static_cast<zwp_relative_pointer_manager_v1*>(
             wl_registry_bind(registry, name, &zwp_relative_pointer_manager_v1_interface, 1));
