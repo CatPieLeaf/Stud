@@ -9,6 +9,8 @@
 // to launch.
 
 #include "stud/vulkan_host.h"
+#include "stud/android_glue.h"
+#include "stud/session_log.h"
 
 #include <dlfcn.h>
 #include <sys/syscall.h>
@@ -253,6 +255,21 @@ struct Loader {
     // follows image -> view -> framebuffer and reports whether any render
     // pass or blit actually writes to one.
     std::set<uint64_t> swapchain_images;
+    // Which images belong to which swapchain, and which images belonged
+    // to one that has since been destroyed.
+    //
+    // vkDestroySwapchainKHR frees its images with it. An application is
+    // not supposed to use them afterwards -- but a resize makes the
+    // engine do exactly that: vkAcquireNextImageKHR fails with
+    // VK_ERROR_OUT_OF_DATE_KHR, the engine tears the swapchain down, and
+    // a command buffer already in flight still records a barrier against
+    // the image index it never successfully acquired. On a real device
+    // that call goes straight into the driver in the same process and is
+    // undefined behaviour; here it crosses a socket first, which means
+    // Stud can decline to pass a handle it knows is dead instead of
+    // segfaulting the driver in render-host.
+    std::map<uint64_t, std::vector<uint64_t>> swapchain_image_list;
+    std::set<uint64_t> retired_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
 
@@ -2134,6 +2151,10 @@ uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vec
     for (uint32_t i = 0; i < returned; ++i) {
         uint64_t h = to_u64(images[i]);
         l.swapchain_images.insert(h);
+        l.swapchain_image_list[swapchain].push_back(h);
+        // A handle can be reused by a later swapchain, so anything that
+        // comes back live is no longer retired.
+        l.retired_images.erase(h);
         std::memcpy(out.data() + sizeof(uint32_t) + i * sizeof(h), &h, sizeof(h));
     }
     *out_len = static_cast<uint32_t>(out.size());
@@ -2372,12 +2393,22 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.destroy_query_pool(l.device, from_u64<VkQueryPool>(handle), nullptr);
             }
             break;
-        case K::Swapchain:
+        case K::Swapchain: {
             g_swapchain_extents.erase(handle);
+            auto images = l.swapchain_image_list.find(handle);
+            if (images != l.swapchain_image_list.end()) {
+                for (uint64_t image : images->second) {
+                    l.swapchain_images.erase(image);
+                    l.swapchain_views.erase(image);
+                    l.retired_images.insert(image);
+                }
+                l.swapchain_image_list.erase(images);
+            }
             if (l.destroy_swapchain) {
                 l.destroy_swapchain(l.device, from_u64<VkSwapchainKHR>(handle), nullptr);
             }
             break;
+        }
         case K::Surface:
             if (l.destroy_surface) {
                 l.destroy_surface(l.instance, from_u64<VkSurfaceKHR>(handle), nullptr);
@@ -3448,6 +3479,10 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // So it is worth saying when it CHANGES, not once every two seconds
     // for the life of the session -- these two lines were 615 of one
     // in-game log.
+    // The window is shown on the first frame rather than at creation,
+    // so it never sits empty through the engine's bring-up. No-op on
+    // Wayland and after the first call.
+    stud::android_glue::x11_ensure_mapped();
     const int present_tid = static_cast<int>(::syscall(SYS_gettid));
     static int announced_tid = -1;
     if (present_tid != announced_tid) {
@@ -3490,6 +3525,16 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint
     VkCommandBuffer cb = from_u64<VkCommandBuffer>(cb_handle);
     vk_wire::Reader r(in.data(), in.size());
     using K = vk_wire::CmdKind;
+
+    // Which command was being recorded, for the crash handler. A
+    // backtrace that stops at this function names the function and not
+    // the command, which is the one thing needed to act on it.
+    {
+        char note[96];
+        std::snprintf(note, sizeof(note), "vk_cmd_record kind=%u cb=%llx in=%zu", kind,
+                      static_cast<unsigned long long>(cb_handle), in.size());
+        stud::logging::set_crash_note(note);
+    }
 
     // STUD_VK_CMD_STATS=1: how many of each command actually get
     // recorded. Distinguishes "the engine never drew" from "it drew and
@@ -3737,6 +3782,14 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint
                 b.offset = r.u64();
                 b.size = r.u64();
             }
+            // Same treatment for buffers, for the same reason -- a
+            // barrier on no buffer is meaningless and the driver has no
+            // reason to tolerate one.
+            buf.erase(std::remove_if(buf.begin(), buf.end(),
+                                     [](const VkBufferMemoryBarrier& b) {
+                                         return b.buffer == VK_NULL_HANDLE;
+                                     }),
+                      buf.end());
             const uint32_t ni = r.u32();
             std::vector<VkImageMemoryBarrier> img(ni);
             for (auto& i : img) {
@@ -3753,6 +3806,57 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint
                 i.subresourceRange.levelCount = r.u32();
                 i.subresourceRange.baseArrayLayer = r.u32();
                 i.subresourceRange.layerCount = r.u32();
+            }
+            // Drop barriers against images that died with their
+            // swapchain. See Loader::retired_images for why the engine
+            // records these at all -- in short, a resize makes the
+            // acquire fail and the frame already in flight carries on
+            // regardless. Passing the freed handle through crashes the
+            // driver inside render-host, taking the whole session with
+            // it; dropping the barrier loses a layout transition for an
+            // image that is never going to be presented anyway.
+            {
+                const size_t before = img.size();
+                img.erase(std::remove_if(img.begin(), img.end(),
+                                         [&l](const VkImageMemoryBarrier& b) {
+                                             // A NULL image is the one that actually crashes:
+                                             // when vkAcquireNextImageKHR fails with
+                                             // OUT_OF_DATE during a resize the engine has no
+                                             // image to transition, and records the barrier
+                                             // with VK_NULL_HANDLE anyway. The driver
+                                             // dereferences it (live-caught: fault address
+                                             // 0x34a, a fixed offset off null). A barrier on
+                                             // no image means nothing, so dropping it costs
+                                             // nothing.
+                                             return b.image == VK_NULL_HANDLE ||
+                                                    l.retired_images.count(to_u64(b.image)) != 0;
+                                         }),
+                          img.end());
+                if (img.size() != before) {
+                    static uint64_t dropped = 0;
+                    dropped += before - img.size();
+                    static uint64_t announced = 0;
+                    if (dropped >= announced + 64 || announced == 0) {
+                        announced = dropped;
+                        std::printf("stud-render-host: dropped %llu image barrier(s) with no "
+                                    "live image (resize)\n",
+                                    static_cast<unsigned long long>(dropped));
+                        std::fflush(stdout);
+                    }
+                }
+            }
+            {
+                char note[160];
+                int at = std::snprintf(note, sizeof(note),
+                                       "PipelineBarrier cb=%llx mem=%u buf=%u img=%u:",
+                                       static_cast<unsigned long long>(cb_handle), nm, nb,
+                                       static_cast<unsigned>(img.size()));
+                for (const auto& b : img) {
+                    if (at < 0 || at >= static_cast<int>(sizeof(note))) break;
+                    at += std::snprintf(note + at, sizeof(note) - static_cast<size_t>(at), " %llx",
+                                        static_cast<unsigned long long>(to_u64(b.image)));
+                }
+                stud::logging::set_crash_note(note);
             }
             // STUD_VK_TRACE_PASSES also reports layout transitions on the
             // swapchain images. A swapchain image presented in the wrong
@@ -3771,9 +3875,16 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const std::vector<uint
                     }
                 }
             }
-            l.cmd_pipeline_barrier(cb, src_stage, dst_stage, dep_flags, nm,
-                                    mem.empty() ? nullptr : mem.data(), nb,
-                                    buf.empty() ? nullptr : buf.data(), ni,
+            // The COUNTS come from the vectors, not from the wire. They
+            // are the same number until something above drops an entry,
+            // and then handing the driver the original count with a
+            // shorter array is a read past the end of it.
+            l.cmd_pipeline_barrier(cb, src_stage, dst_stage, dep_flags,
+                                    static_cast<uint32_t>(mem.size()),
+                                    mem.empty() ? nullptr : mem.data(),
+                                    static_cast<uint32_t>(buf.size()),
+                                    buf.empty() ? nullptr : buf.data(),
+                                    static_cast<uint32_t>(img.size()),
                                     img.empty() ? nullptr : img.data());
             break;
         }

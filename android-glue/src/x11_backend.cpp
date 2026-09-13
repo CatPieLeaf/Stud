@@ -83,6 +83,7 @@ struct Xlib {
                                  Window*) = nullptr;
     int (*RaiseWindow)(Display*, Window) = nullptr;
     char* (*ResourceManagerString)(Display*) = nullptr;
+    int (*SetWindowBackgroundPixmap)(Display*, Window, Pixmap) = nullptr;
 };
 
 Xlib& xlib() {
@@ -100,6 +101,9 @@ std::atomic<bool> g_pointer_locked{false};
 bool g_ignore_next_motion = false;
 // The empty cursor, shared by the game window and the text overlay.
 Cursor g_blank_cursor = 0;
+// Whether the window has been shown yet. It is held back until the first
+// frame, so it never appears empty.
+bool g_mapped = false;
 // The last unlocked pointer position, in window coordinates: where a
 // drag began, what every event reports while the drag lasts, and where
 // the pointer is put back when it ends.
@@ -183,6 +187,7 @@ bool load_xlib() {
     LOAD(TranslateCoordinates, "XTranslateCoordinates");
     LOAD(RaiseWindow, "XRaiseWindow");
     LOAD(ResourceManagerString, "XResourceManagerString");
+    LOAD(SetWindowBackgroundPixmap, "XSetWindowBackgroundPixmap");
 #undef LOAD
     if (!ok) {
         ::dlclose(x.handle);
@@ -251,6 +256,20 @@ bool create_window(int32_t width, int32_t height) {
     g_wm_delete = x.InternAtom(g_display, "WM_DELETE_WINDOW", False);
     x.SetWMProtocols(g_display, g_window, &g_wm_delete, 1);
 
+    // No background, so the server paints nothing of its own when the
+    // window is resized or exposed.
+    //
+    // By default X fills the window with its background colour on every
+    // configure, and the engine only overwrites that when it next
+    // presents -- which during a drag-resize it largely cannot, because
+    // the swapchain is being invalidated as fast as the size changes.
+    // The result is a window that goes black for as long as the mouse
+    // button is held. With no background the previous frame simply stays
+    // on screen until a new one replaces it.
+    if (x.SetWindowBackgroundPixmap != nullptr) {
+        x.SetWindowBackgroundPixmap(g_display, g_window, None);
+    }
+
     g_width.store(width);
     g_height.store(height);
 
@@ -292,7 +311,8 @@ bool create_window(int32_t width, int32_t height) {
         }
     }
 
-    x.MapWindow(g_display, g_window);
+    // Deliberately NOT mapped here -- see ensure_mapped(). The window is
+    // shown when there is something in it.
     x.Flush(g_display);
 
     std::printf("stud: android-glue: X11 window %lux%lu, WM_CLASS=\"%s\", title=\"Stud\"\n",
@@ -841,6 +861,15 @@ bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h)
     mm_w = DisplayWidthMM(g_display, screen);
     mm_h = DisplayHeightMM(g_display, screen);
     return px_w > 0 && px_h > 0;
+}
+
+void ensure_mapped() {
+    if (g_display == nullptr || g_window == 0 || g_mapped) return;
+    Xlib& x = xlib();
+    if (x.MapWindow == nullptr) return;
+    g_mapped = true;
+    x.MapWindow(g_display, g_window);
+    if (x.Flush != nullptr) x.Flush(g_display);
 }
 
 void clipboard_set(const std::string& text) {

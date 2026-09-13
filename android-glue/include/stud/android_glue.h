@@ -162,6 +162,13 @@ DisplayBackend display_backend();
 void* native_window_x11_display();
 unsigned long native_window_x11_window();
 
+// Shows the X11 window, if it is not shown yet. Called when the first
+// frame is presented: a Wayland surface does not exist until a buffer is
+// committed to it, and holding the X11 window back until there is
+// something in it matches that instead of showing an empty window for
+// the whole of the engine's bring-up. No-op on Wayland.
+void x11_ensure_mapped();
+
 // The X connection's socket, for the render host's own poll loop.
 // -1 on Wayland.
 int native_window_x11_fd();

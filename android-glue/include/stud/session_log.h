@@ -95,6 +95,7 @@ inline void* tee_thread(void* arg) {
 
 }  // namespace detail
 
+
 // Tees this process's stdout and stderr into `path`. Safe to call with an
 // empty path (does nothing) and safe to call when the file cannot be
 // opened -- output simply keeps going where it already went.
@@ -175,6 +176,15 @@ inline void write_hex(unsigned long long value) {
     ::write(STDERR_FILENO, buf, static_cast<size_t>(at));
 }
 
+// A one-line breadcrumb the crash handler prints, if anything has set
+// one. Plain storage rather than a std::string: the handler runs in a
+// signal context, where allocating is not allowed and the value has to
+// be readable however broken the process is.
+inline char* crash_note_storage() {
+    static char note[192] = {0};
+    return note;
+}
+
 inline void crash_handler(int sig, siginfo_t* info, void*) {
     const char* name = crash_process_name();
     char digits[3] = {static_cast<char>('0' + (sig / 10) % 10),
@@ -199,6 +209,13 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
         ::write(STDERR_FILENO, "\n", 1);
     }
 
+    if (crash_note_storage()[0] != '\0') {
+        const char* label = "stud: last: ";
+        ::write(STDERR_FILENO, label, ::strlen(label));
+        ::write(STDERR_FILENO, crash_note_storage(), ::strlen(crash_note_storage()));
+        ::write(STDERR_FILENO, "\n", 1);
+    }
+
     // backtrace() can allocate the first time it runs, which is not
     // allowed here -- install_crash_reporter() calls it once up front so
     // that by now it cannot. backtrace_symbols_fd writes with write(2)
@@ -220,6 +237,14 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
 }
 
 }  // namespace detail
+// Leaves a breadcrumb for the crash handler to print. Cheap enough to
+// call on a hot path: one snprintf into fixed storage, no allocation.
+// Overwritten each time, so it names the last thing attempted rather
+// than keeping a history nothing would read.
+inline void set_crash_note(const char* text) {
+    char* note = detail::crash_note_storage();
+    std::snprintf(note, 192, "%s", text);
+}
 
 // Names this process in the session log if it dies of a fatal signal.
 // The engine's own process has a far more capable trap handler
