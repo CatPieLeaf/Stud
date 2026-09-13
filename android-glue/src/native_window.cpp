@@ -484,6 +484,17 @@ std::atomic<bool> g_pointer_locked{false};
 // and key event overwrites. A warp with the wrong serial is rejected.
 std::atomic<uint32_t> g_pointer_enter_serial{0};
 std::atomic<bool> g_pointer_confined{false};
+// A surface may have exactly ONE pointer constraint. Asking for a second
+// is a protocol error and the compositor kills the client -- live-caught
+// as `zwp_pointer_constraints_v1: error 1: the surface is already
+// constrained` the moment first person (a lock) began while a camera drag
+// still had the pointer confined, followed by VK_ERROR_SURFACE_LOST_KHR
+// and a frozen window.
+//
+// So the lock wins while it lasts, and the confinement is remembered
+// rather than created: whoever asked for it still wants it when the lock
+// ends, and a lock already keeps the pointer inside the window anyway.
+std::atomic<bool> g_confine_wanted{false};
 
 void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_fixed_t sx,
                     wl_fixed_t sy) {
@@ -1745,6 +1756,13 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
     }
     auto& state = wayland_state();
     if (locked == g_pointer_locked.load()) return;
+    if (locked && state.confined_pointer != nullptr) {
+        // Make room: one constraint per surface, and the lock is the
+        // stronger of the two.
+        zwp_confined_pointer_v1_destroy(state.confined_pointer);
+        state.confined_pointer = nullptr;
+        g_pointer_confined.store(false);
+    }
     if (locked) {
         if (state.pointer_constraints == nullptr || state.pointer == nullptr || window == nullptr ||
             window->surface == nullptr) {
@@ -1773,6 +1791,14 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
             state.locked_pointer = nullptr;
         }
         g_pointer_locked.store(false);
+        // Whatever wanted the pointer confined still wants it.
+        if (g_confine_wanted.load() && state.pointer_constraints != nullptr &&
+            state.pointer != nullptr && window != nullptr && window->surface != nullptr) {
+            state.confined_pointer = zwp_pointer_constraints_v1_confine_pointer(
+                state.pointer_constraints, window->surface, state.pointer, nullptr,
+                ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+            g_pointer_confined.store(state.confined_pointer != nullptr);
+        }
     }
     if (state.display != nullptr) wl_display_flush(state.display);
 }
@@ -1820,12 +1846,17 @@ void native_window_set_pointer_confined(ANativeWindow* window, bool confined) {
         return;
     }
     auto& state = wayland_state();
+    g_confine_wanted.store(confined);
     if (confined == g_pointer_confined.load()) return;
     if (confined) {
         if (state.pointer_constraints == nullptr || state.pointer == nullptr || window == nullptr ||
             window->surface == nullptr) {
             return;
         }
+        // Never alongside a lock: that is the protocol error that kills
+        // the client. The want is recorded above and honoured when the
+        // lock ends.
+        if (g_pointer_locked.load()) return;
         // No region: the whole surface. PERSISTENT, because a camera drag
         // lasts as long as the button is held and a oneshot confinement
         // ends itself the first time the pointer reaches the boundary --
