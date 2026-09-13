@@ -12,7 +12,6 @@
 #include "wayland_overlay_deps.h"
 #include <xdg-output-unstable-v1-client-protocol.h>
 #include <pointer-constraints-unstable-v1-client-protocol.h>
-#include <pointer-warp-v1-client-protocol.h>
 #include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
@@ -135,10 +134,6 @@ struct WaylandConnectionState {
     double pinch_scale = 1.0;
     zwp_relative_pointer_v1* relative_pointer = nullptr;
     zwp_locked_pointer_v1* locked_pointer = nullptr;
-    // The compositor's own way to move the pointer. Absent on anything
-    // older than KWin 6.4 / Mutter 49 / wlroots 0.19, in which case
-    // nothing warps and every caller still behaves.
-    wp_pointer_warp_v1* pointer_warp = nullptr;
     zxdg_output_v1* xdg_output = nullptr;
     int32_t output_logical_w = 0;
     int32_t output_logical_h = 0;
@@ -449,19 +444,6 @@ float scale_pointer_coord(double v) {
                               static_cast<double>(kScaleUnit));
 }
 
-// ...and back. Pointer events arrive in surface-local coordinates and are
-// scaled up to buffer pixels above, because that is the space the engine
-// works in -- but every request that takes a position back (a warp, a
-// cursor hint) wants the surface-local one. Warping with a buffer pixel
-// puts the pointer 1.25x away on a scaled display: live-caught as a drag
-// anchored at 885 that warped to 1106 every time, never matched its own
-// anchor, and left the cursor stuck in a twitching loop.
-float unscale_pointer_coord(float v) {
-    const double scale = static_cast<double>(g_render_scale_120.load());
-    if (scale <= 0.0) return v;
-    return static_cast<float>(static_cast<double>(v) * static_cast<double>(kScaleUnit) / scale);
-}
-
 // The serial of the most recent real input event from the compositor.
 // A compositor will not let a client raise a window -- its own or one it
 // launches -- off nothing: xdg_activation_v1 tokens must carry the serial
@@ -474,15 +456,9 @@ std::atomic<uint32_t> g_last_input_serial{0};
 // Whether the pointer is currently locked in place for mouse look.
 std::atomic<bool> g_pointer_locked{false};
 
-// The serial of the last pointer ENTER, which is what a warp request
-// takes -- and specifically not `g_last_input_serial`, which every button
-// and key event overwrites. A warp with the wrong serial is rejected.
-std::atomic<uint32_t> g_pointer_enter_serial{0};
-
 void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_fixed_t sx,
                     wl_fixed_t sy) {
     g_last_input_serial.store(serial);
-    g_pointer_enter_serial.store(serial);
     g_pointer_x = scale_pointer_coord(wl_fixed_to_double(sx));
     g_pointer_y = scale_pointer_coord(wl_fixed_to_double(sy));
     // A Wayland client owns the pointer image over its own surface, and
@@ -743,17 +719,7 @@ const wl_keyboard_listener kKeyboardListener = {
 // position it tracks itself, which is what Process B does with these.
 void relative_pointer_motion(void*, zwp_relative_pointer_v1*, uint32_t, uint32_t, wl_fixed_t dx,
                              wl_fixed_t dy, wl_fixed_t, wl_fixed_t) {
-    // Always, not only while locked.
-    //
-    // This is what the device did, and it is the one description of a
-    // movement that a warp cannot corrupt: absolute positions come back
-    // changed by every warp Stud makes, so a camera driven from position
-    // differences is driven by its own warps as much as by the hand --
-    // live-caught as a rotation cancelling itself out, forward then back,
-    // with the cursor twitching in place.
-    //
-    // Process B decides what to do with them; sending them costs a queue
-    // entry and nothing else.
+    if (!g_pointer_locked.load()) return;
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
     ev.x = scale_pointer_coord(wl_fixed_to_double(dx));
@@ -922,12 +888,6 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
         state->seat =
             static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, bind_version));
         wl_seat_add_listener(state->seat, &kSeatListener, state);
-    } else if (std::string_view(interface) == wp_pointer_warp_v1_interface.name) {
-        state->pointer_warp = static_cast<wp_pointer_warp_v1*>(
-            wl_registry_bind(registry, name, &wp_pointer_warp_v1_interface, 1));
-        std::printf("stud-render-host: the compositor can move the pointer "
-                    "(wp_pointer_warp_v1)\n");
-        std::fflush(stdout);
     } else if (std::string_view(interface) == zwp_pointer_constraints_v1_interface.name) {
         state->pointer_constraints = static_cast<zwp_pointer_constraints_v1*>(
             wl_registry_bind(registry, name, &zwp_pointer_constraints_v1_interface, 1));
@@ -1775,40 +1735,6 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
         g_pointer_locked.store(false);
     }
     if (state.display != nullptr) wl_display_flush(state.display);
-}
-
-void native_window_warp_pointer(ANativeWindow* window, float x, float y) {
-    if (display_backend() == DisplayBackend::X11) {
-        x11::warp_pointer(static_cast<int>(x), static_cast<int>(y));
-        return;
-    }
-    auto& state = wayland_state();
-    if (state.pointer_warp == nullptr || state.pointer == nullptr || window == nullptr ||
-        window->surface == nullptr) {
-        return;
-    }
-    // The compositor honours this while the surface has pointer focus,
-    // "including when it has an implicit pointer grab" -- which is
-    // exactly the case that matters here, a button held down mid-drag.
-    // It rejects a position outside the surface, so clamp rather than
-    // hand it something it will throw away.
-    const float w = static_cast<float>(g_window_width.load());
-    const float h = static_cast<float>(g_window_height.load());
-    const float cx = w > 0.0f ? std::min(std::max(x, 0.0f), w - 1.0f) : x;
-    const float cy = h > 0.0f ? std::min(std::max(y, 0.0f), h - 1.0f) : y;
-    // Surface-local, not buffer pixels -- see unscale_pointer_coord().
-    wp_pointer_warp_v1_warp_pointer(state.pointer_warp, window->surface, state.pointer,
-                                     wl_fixed_from_double(unscale_pointer_coord(cx)),
-                                     wl_fixed_from_double(unscale_pointer_coord(cy)),
-                                     g_pointer_enter_serial.load());
-    if (state.display != nullptr) wl_display_flush(state.display);
-    g_pointer_x = cx;
-    g_pointer_y = cy;
-}
-
-bool native_window_can_warp_pointer() {
-    if (display_backend() == DisplayBackend::X11) return true;
-    return wayland_state().pointer_warp != nullptr;
 }
 
 std::string native_window_activation_token(ANativeWindow* window) {
