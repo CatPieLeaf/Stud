@@ -38,6 +38,10 @@ void vk_set_window_size(uint32_t width, uint32_t height);
 // whole path.
 void vk_set_upscale_output_size(uint32_t width, uint32_t height);
 
+// How hard the upscaler's sharpening pass pulls, 0-100. Read when the
+// pass is recorded, so it applies from the next swapchain onwards.
+void vk_set_upscale_sharpness_percent(int32_t percent);
+
 // Whether the window is an X11 one, which decides whether instance
 // creation asks for VK_KHR_xlib_surface or VK_KHR_wayland_surface.
 void vk_set_on_x11(bool on_x11);
