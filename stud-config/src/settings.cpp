@@ -101,9 +101,12 @@ StudSettings load_settings(const std::string& path) {
         // be out of range, and the honest reading of 5000 is "unlimited"
         // rather than an error that stops Stud starting.
         const int value = doc.at("backgroundFps").get<int>();
-        result.background_fps = value < 1 ? 1 : (value > kBackgroundFpsUnlimited + 1
-                                                     ? kBackgroundFpsUnlimited + 1
-                                                     : value);
+        // 0 means no limit. Anything above the top of the range means
+        // the same thing -- including the `241` older builds wrote,
+        // which is why that is read back as unlimited rather than
+        // clamped to a number.
+        result.background_fps =
+            (value <= 0 || value > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : value;
     }
     if (doc.contains("mangohud")) {
         if (!doc.at("mangohud").is_boolean()) {
@@ -172,10 +175,6 @@ StudSettings load_settings(const std::string& path) {
         }
     }
 
-    if (doc.contains("apkPath") && doc.at("apkPath").is_string()) {
-        result.apk_path = doc.at("apkPath").get<std::string>();
-    }
-
     return result;
 }
 
@@ -221,7 +220,17 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["textureCache"] = settings.texture_cache;
     doc["textureCacheMB"] = settings.texture_cache_mb;
     doc["graphicsMode"] = settings.graphics_mode == GraphicsMode::kVulkan ? "vulkan" : "opengl";
-    doc["apkPath"] = settings.apk_path;
+    // Keys that are nobody's setting any more. Erased rather than left
+    // alone, because a file that still lists them reads as if they do
+    // something: apkPath/apkName (Stud keeps one APK of its own, at a
+    // fixed path -- see settings.h), uiScale (there is no such control;
+    // the layout density is fixed at 1.0), needsBionicFallback (from an
+    // architecture that no longer exists), and renderScale (split into
+    // hidpi and followDpi).
+    doc.erase("apkPath");
+    doc.erase("apkName");
+    doc.erase("uiScale");
+    doc.erase("needsBionicFallback");
 
     make_directories(parent_directory(path));
 

@@ -676,7 +676,10 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         settings.gpu.device_index = stud::ui::default_gpu_index();
     }
 
-    if (settings.apk_path.empty()) {
+    // Stud's own copy, always -- nothing points at wherever the user
+    // picked it from, so nothing breaks when that file moves.
+    const std::string apk_path = stud::paths::stored_apk_path();
+    if (!QFileInfo::exists(QString::fromStdString(apk_path))) {
         // main() opens Settings when nothing is configured, so reaching
         // here means the APK went missing between that check and this
         // one. Say that, rather than the old text telling the user to
@@ -714,7 +717,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // this cache came from, not only when the cache is gone: a user who
     // points Stud at a newer build has to actually get that build.
     const std::string launch_fingerprint =
-        stud::android_glue::apk_source_fingerprint(settings.apk_path);
+        stud::android_glue::apk_source_fingerprint(apk_path);
     const std::string launch_stamp_path = so_path + ".source";
     std::string launch_cached_fingerprint;
     {
@@ -724,7 +727,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     if (!QFile::exists(QString::fromStdString(so_path)) ||
         (!launch_fingerprint.empty() && launch_cached_fingerprint != launch_fingerprint)) {
         try {
-            stud::android_glue::extract_apk_native_library(settings.apk_path, "libroblox.so",
+            stud::android_glue::extract_apk_native_library(apk_path, "libroblox.so",
                                                             so_path);
             std::ofstream(launch_stamp_path, std::ios::trunc) << launch_fingerprint << "\n";
         } catch (const stud::android_glue::ExtractError& e) {
@@ -732,7 +735,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
                 nullptr, "Stud",
                 QString("Could not extract libroblox.so from the configured APK:\n%1\n\nAPK: %2")
                     .arg(e.what())
-                    .arg(QString::fromStdString(settings.apk_path)));
+                    .arg(QString::fromStdString(apk_path)));
             return;
         }
     }
@@ -788,6 +791,8 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // process that can honour the compositor's scale -- this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
+    // 0 is "no limit" in the config; render-host reads anything outside
+    // 1..240 the same way, so it travels unchanged.
     render_host_args << "--background-fps" << QString::number(settings.background_fps);
     render_host_args << "--discord-presence" << (settings.discord_rich_presence ? "on" : "off");
     render_host_args << "--discord-join-button" << (settings.discord_join_button ? "on" : "off");
@@ -934,12 +939,8 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
         extra_binds.push_back({xdg_runtime_dir, /*writable=*/true});
     }
-    {
-        std::string apk_dir = std::filesystem::path(settings.apk_path).parent_path().string();
-        if (!apk_dir.empty()) {
-            extra_binds.push_back({apk_dir, /*writable=*/false});
-        }
-    }
+    // No bind for the APK: it lives inside Stud's own data directory,
+    // which is bound writable just below.
     // Writable bind for Stud's own data directory, where the runtime keeps
     // the persistent local storage the engine logs in through. Without it
     // Process B's sandbox (`--tmpfs /`) has no such path at all, the store
@@ -977,7 +978,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
 
     stud::bionic_runtime::ProcessBConfig config;
     config.executable_path = process_b_binary.toStdString();
-    config.args = {so_path, "--apk", settings.apk_path, "--ipc-connect", socket_path};
+    config.args = {so_path, "--apk", apk_path, "--ipc-connect", socket_path};
 
     // Real, previously-missing wiring: process-b/src/main.cpp already
     // reads a "--flag-overrides <path>" arg and threads it all the way
@@ -1400,8 +1401,8 @@ int main(int argc, char** argv) {
         bool have_apk = false;
         try {
             const auto configured = stud::config::load_settings(stud::config::default_config_path());
-            have_apk = !configured.apk_path.empty() &&
-                       QFileInfo::exists(QString::fromStdString(configured.apk_path));
+            have_apk = QFileInfo::exists(
+                QString::fromStdString(stud::paths::stored_apk_path()));
         } catch (const stud::config::SettingsError&) {
             // No readable config at all is the same answer: nothing configured.
         }

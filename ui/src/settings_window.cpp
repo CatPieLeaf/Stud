@@ -3,14 +3,19 @@
 #include "gpu_enum.h"
 #include "stud/android_glue.h"
 #include "stud/settings.h"
+#include "stud/stud_paths.h"
 
 #ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
 #include "stud/dev_backend_config.h"
 #endif
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSlider>
@@ -230,8 +235,12 @@ void SettingsWindow::loadFromDisk() {
     followDpiCheck_->setChecked(settings.follow_dpi);
     followDpiCheck_->setEnabled(settings.hidpi);
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
-    backgroundFpsSlider_->setValue(settings.background_fps);
-    onBackgroundFpsChanged(settings.background_fps);
+    // Unlimited is stored as 0 and lives at the far end of the slider.
+    const int fps_position = settings.background_fps <= stud::config::kBackgroundFpsNoLimit
+                                 ? stud::config::kBackgroundFpsUnlimited + 1
+                                 : settings.background_fps;
+    backgroundFpsSlider_->setValue(fps_position);
+    onBackgroundFpsChanged(fps_position);
     mangohudCheck_->setChecked(settings.mangohud);
     closeOnLeaveCheck_->setChecked(settings.close_on_leave);
     trayCheck_->setChecked(settings.system_tray);
@@ -241,8 +250,12 @@ void SettingsWindow::loadFromDisk() {
     discordJoinCheck_->setEnabled(settings.discord_rich_presence);
     // Carried through untouched: the window offers no field for it, but a
     // hand-edited id must survive a save.
-    apkPathEdit_->setText(QString::fromStdString(settings.apk_path));
-    loadedApkPath_ = settings.apk_path;
+    // The version of the APK Stud actually has, read out of its own
+    // manifest -- not a path, and not the name of whatever file it was
+    // copied from. That name is shown only while the user is picking;
+    // after import the useful fact is which Roblox build this is.
+    pickedApkPath_.clear();
+    apkPathEdit_->setText(storedApkLabel());
 
     // Vulkan wins outright: the backend key is about which GL library to
     // load, and Vulkan mode loads none, so a saved "zink" alongside
@@ -308,6 +321,17 @@ void SettingsWindow::onRenderPathChanged(int index) {
 
 void SettingsWindow::onMangohudToggled(bool checked) { mangohudWanted_ = checked; }
 
+// What the picker shows when it is not mid-pick: which Roblox build
+// Stud has, read out of the stored APK's own manifest. Empty when there
+// is no APK or its manifest cannot be read, so the field falls back to
+// its placeholder rather than claiming a version.
+QString SettingsWindow::storedApkLabel() const {
+    const std::string version =
+        stud::android_glue::apk_version_name(stud::paths::stored_apk_path());
+    if (version.empty()) return {};
+    return QStringLiteral("Loaded version: %1").arg(QString::fromStdString(version));
+}
+
 void SettingsWindow::onBackgroundFpsChanged(int value) {
     backgroundFpsLabel_->setText(
         value > stud::config::kBackgroundFpsUnlimited
@@ -325,7 +349,8 @@ void SettingsWindow::onBrowseApkClicked() {
         "Roblox APK or bundle (*.apk *.apkm *.apks *.xapk);;APK files (*.apk);;"
         "Split-APK bundles (*.apkm *.apks *.xapk)");
     if (!path.isEmpty()) {
-        apkPathEdit_->setText(path);
+        pickedApkPath_ = path;
+        apkPathEdit_->setText(QFileInfo(path).fileName());
     }
 }
 
@@ -336,7 +361,9 @@ void SettingsWindow::onSaveClicked() {
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
-    settings.background_fps = backgroundFpsSlider_->value();
+    settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
+                                  ? stud::config::kBackgroundFpsNoLimit
+                                  : backgroundFpsSlider_->value();
     settings.mangohud = mangohudCheck_->isChecked();
     settings.close_on_leave = closeOnLeaveCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
@@ -346,7 +373,48 @@ void SettingsWindow::onSaveClicked() {
     const int render_path = renderPathCombo_->currentIndex();
     settings.graphics_mode = render_path == kRenderPathVulkan ? stud::config::GraphicsMode::kVulkan
                                                                : stud::config::GraphicsMode::kOpenGL;
-    settings.apk_path = apkPathEdit_->text().toStdString();
+    // Take a copy, and use the copy.
+    //
+    // The window is a picker: a user who picks an APK out of ~/Downloads
+    // and then clears Downloads should not discover weeks later that
+    // Stud will no longer launch. Stud keeps exactly one APK of its own,
+    // under one fixed name in its data directory, and importing another
+    // overwrites it -- so nothing points at the user's own file and
+    // there is never a second copy quietly aging on disk.
+    const QString stored = QString::fromStdString(stud::paths::stored_apk_path());
+    bool imported = false;
+    if (!pickedApkPath_.isEmpty() &&
+        QFileInfo(pickedApkPath_).absoluteFilePath() != QFileInfo(stored).absoluteFilePath()) {
+        if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
+            statusLabel_->setText("Could not create Stud's APK directory.");
+            return;
+        }
+        statusLabel_->setText("Importing the APK...");
+        QApplication::processEvents();
+        // Written beside the real file and renamed over it, so an
+        // interrupted import cannot leave half an APK in place of a
+        // working one.
+        const QString partial = stored + ".part";
+        QFile::remove(partial);
+        if (!QFile::copy(pickedApkPath_, partial) ||
+            (QFile::exists(stored) && !QFile::remove(stored)) ||
+            !QFile::rename(partial, stored)) {
+            QFile::remove(partial);
+            statusLabel_->setText(QString("Could not copy the APK into %1 -- is there room?")
+                                       .arg(QString::fromStdString(stud::paths::apk_dir())));
+            return;
+        }
+        // Anything else in there is not Stud's: an earlier build kept
+        // the picked file under its own name, and leaving a second
+        // 230MB copy behind is exactly what keeping one APK is meant to
+        // avoid.
+        QDir store(QString::fromStdString(stud::paths::apk_dir()));
+        for (const QString& name : store.entryList(QDir::Files | QDir::NoDotAndDotDot)) {
+            if (name != QFileInfo(stored).fileName()) store.remove(name);
+        }
+        imported = true;
+    }
+    const std::string apk = stored.toStdString();
 
     // Real, once-per-import work: extract libroblox.so from the chosen
     // APK, once, right here at APK-selection time -- not on every game
@@ -362,16 +430,14 @@ void SettingsWindow::onSaveClicked() {
     // Compare the APK's own identity, not just its path: re-saving the
     // same path after replacing the file with a newer build has to
     // re-extract, and it silently did not.
-    const std::string apk_fingerprint =
-        stud::android_glue::apk_source_fingerprint(settings.apk_path);
+    const std::string apk_fingerprint = stud::android_glue::apk_source_fingerprint(apk);
     const std::string fingerprint_path = cache_path + ".source";
     std::string cached_fingerprint;
     if (std::ifstream stamp{fingerprint_path}) std::getline(stamp, cached_fingerprint);
-    if (!settings.apk_path.empty() &&
-        (settings.apk_path != loadedApkPath_ || !cache_exists ||
-         cached_fingerprint != apk_fingerprint)) {
+    if (QFile::exists(stored) &&
+        (imported || !cache_exists || cached_fingerprint != apk_fingerprint)) {
         try {
-            stud::android_glue::extract_apk_native_library(settings.apk_path, "libroblox.so", cache_path);
+            stud::android_glue::extract_apk_native_library(apk, "libroblox.so", cache_path);
             std::ofstream(fingerprint_path, std::ios::trunc) << apk_fingerprint << "\n";
         } catch (const stud::android_glue::ExtractError& e) {
             statusLabel_->setText(QString("Failed to extract libroblox.so from the selected APK: %1").arg(e.what()));
@@ -396,7 +462,10 @@ void SettingsWindow::onSaveClicked() {
         }
         stud::render::save_dev_render_backend_config(stud::config::default_config_path(), backend);
 #endif
-        loadedApkPath_ = settings.apk_path;
+        // Back to the version, now that the picked name has served its
+        // purpose (saying what was about to be imported).
+        pickedApkPath_.clear();
+        apkPathEdit_->setText(storedApkLabel());
         statusLabel_->setText("Settings saved.");
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(QString("Failed to save settings: %1").arg(e.what()));

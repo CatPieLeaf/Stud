@@ -32,6 +32,11 @@ enum class GraphicsMode {
 // reads as unlimited rather than as a number.
 inline constexpr int kBackgroundFpsUnlimited = 240;
 
+// ...and how "unlimited" is stored. A number one past the top of a
+// slider is a UI detail, not a setting: it wrote `241` into a file meant
+// to be read by a person. Zero says the thing itself -- no limit.
+inline constexpr int kBackgroundFpsNoLimit = 0;
+
 struct GpuSelection {
     // Index into vkEnumeratePhysicalDevices()'s own result order --
     // that's the real, stable-for-a-given-driver-state identifier the
@@ -96,9 +101,11 @@ struct StudSettings {
     // render paths (the OpenGL one reaches Vulkan through ANGLE).
     bool mangohud = false;
     // Discord rich presence: what game is being played, its thumbnail,
-    // and how long for. Off by default -- it tells a third party what the
-    // user is doing, so it is opt-in.
-    bool discord_rich_presence = false;
+    // and how long for. On by default: it reaches only a Discord client
+    // already running on this machine, shows what a Roblox client on any
+    // other platform would show, and is off entirely for anyone without
+    // Discord open.
+    bool discord_rich_presence = true;
     // A "Join server" button carrying the experience's own deep link.
     // Separate, because sharing a joinable link is a bigger step than
     // saying what you are playing.
@@ -136,12 +143,14 @@ struct StudSettings {
     bool texture_cache = true;
     int texture_cache_mb = 500;
     GraphicsMode graphics_mode = GraphicsMode::kVulkan;
-    // Real, user-supplied path to the Roblox APK (locked decision:
-    // "User-provided, not auto-downloaded... via a file picker in the
-    // Qt6 UI"). Empty until the user has picked one via the settings
-    // window.
-    std::string apk_path;
-
+    // The APK is deliberately NOT here.
+    //
+    // Stud keeps its own copy at one fixed path (stud_paths.h's
+    // stored_apk_path) and always uses that one, so there is nothing for
+    // a config file to point at and nothing for a hand edit to break.
+    // The settings window is a picker: it copies what is chosen into
+    // that path. The name of the file that was picked is shown in the
+    // window while it is open and is not written anywhere.
 };
 
 class SettingsError : public std::runtime_error {
