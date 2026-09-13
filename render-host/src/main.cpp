@@ -372,6 +372,12 @@ using PFN_glGetShaderiv = void (*)(GLuint, GLenum, GLint*);
 using PFN_glGetShaderSource = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
 using PFN_glBufferData = void (*)(GLenum, GLsizeiptr, const void*, GLenum);
 using PFN_glBufferStorage = void (*)(GLenum, GLsizeiptr, const void*, GLbitfield);
+using PFN_glGenQueries = void (*)(GLsizei, GLuint*);
+using PFN_glDeleteQueries = void (*)(GLsizei, const GLuint*);
+using PFN_glBeginQuery = void (*)(GLenum, GLuint);
+using PFN_glEndQuery = void (*)(GLenum);
+using PFN_glGetQueryObjectuiv = void (*)(GLuint, GLenum, GLuint*);
+using PFN_glGetQueryObjectui64v = void (*)(GLuint, GLenum, GLuint64*);
 using PFN_glBufferSubData = void (*)(GLenum, GLintptr, GLsizeiptr, const void*);
 using PFN_glMapBufferRange = void* (*)(GLenum, GLintptr, GLsizeiptr, GLbitfield);
 using PFN_glGetVertexAttribiv = void (*)(GLuint, GLenum, GLint*);
@@ -539,6 +545,12 @@ struct RealFns {
     FN(glGetShaderSource);
     FN(glBufferData);
     FN(glBufferStorage);
+    FN(glGenQueries);
+    FN(glDeleteQueries);
+    FN(glBeginQuery);
+    FN(glEndQuery);
+    FN(glGetQueryObjectuiv);
+    FN(glGetQueryObjectui64v);
     FN(glBufferSubData);
     FN(glMapBufferRange);
     FN(glGetVertexAttribiv);
@@ -2980,6 +2992,46 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
                                in.empty() ? nullptr : in.data(), static_cast<GLenum>(a[3]));
             return 0;
+        case CallId::GlGenQueries: {
+            const auto n = static_cast<GLsizei>(a[0]);
+            if (fns.glGenQueries_ == nullptr || n <= 0) return 0;
+            out.resize(static_cast<size_t>(n) * sizeof(GLuint));
+            fns.glGenQueries_(n, reinterpret_cast<GLuint*>(out.data()));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlDeleteQueries:
+            if (fns.glDeleteQueries_ == nullptr || in.empty()) return 0;
+            fns.glDeleteQueries_(static_cast<GLsizei>(a[0]),
+                                 reinterpret_cast<const GLuint*>(in.data()));
+            return 0;
+        case CallId::GlBeginQuery:
+            if (fns.glBeginQuery_ == nullptr) return 0;
+            fns.glBeginQuery_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]));
+            return 0;
+        case CallId::GlEndQuery:
+            if (fns.glEndQuery_ == nullptr) return 0;
+            fns.glEndQuery_(static_cast<GLenum>(a[0]));
+            return 0;
+        case CallId::GlGetQueryObjectuiv: {
+            if (fns.glGetQueryObjectuiv_ == nullptr) return 0;
+            GLuint value = 0;
+            fns.glGetQueryObjectuiv_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]), &value);
+            out.resize(sizeof(value));
+            std::memcpy(out.data(), &value, sizeof(value));
+            *out_len = sizeof(value);
+            return 1;
+        }
+        case CallId::GlGetQueryObjectui64v: {
+            if (fns.glGetQueryObjectui64v_ == nullptr) return 0;
+            GLuint64 value = 0;
+            fns.glGetQueryObjectui64v_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
+                                       &value);
+            out.resize(sizeof(value));
+            std::memcpy(out.data(), &value, sizeof(value));
+            *out_len = sizeof(value);
+            return 1;
+        }
         case CallId::GlBufferStorage:
             if (fns.glBufferStorage_ == nullptr) {
                 // No immutable storage on this driver: an ordinary
@@ -3772,6 +3824,9 @@ int main(int argc, char** argv) {
     RESOLVE(glUniformBlockBinding); RESOLVE(glGetActiveUniformBlockiv);
     RESOLVE(glGenBuffers); RESOLVE(glGenFramebuffers); RESOLVE(glGenRenderbuffers); RESOLVE(glGenTextures);
     RESOLVE(glGetIntegerv); RESOLVE(glIsEnabled); RESOLVE(glTexParameterfv); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glGetShaderSource);
+    RESOLVE_OPTIONAL(glGenQueries); RESOLVE_OPTIONAL(glDeleteQueries);
+    RESOLVE_OPTIONAL(glBeginQuery); RESOLVE_OPTIONAL(glEndQuery);
+    RESOLVE_OPTIONAL(glGetQueryObjectuiv); RESOLVE_OPTIONAL(glGetQueryObjectui64v);
     RESOLVE(glBufferData); RESOLVE_OPTIONAL(glBufferStorage); RESOLVE(glBufferSubData); RESOLVE(glTexImage2D); RESOLVE(glTexSubImage2D);
     RESOLVE(glMapBufferRange); RESOLVE(glUnmapBuffer);
     RESOLVE(glGetVertexAttribiv); RESOLVE(glGetVertexAttribPointerv);
