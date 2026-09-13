@@ -35,7 +35,9 @@ std::vector<GpuInfo> enumerate_gpus() {
         for (uint32_t i = 0; i < device_count; ++i) {
             VkPhysicalDeviceProperties props{};
             vkGetPhysicalDeviceProperties(devices[i], &props);
-            result.push_back(GpuInfo{i, std::string(props.deviceName)});
+            result.push_back(GpuInfo{i, std::string(props.deviceName), props.vendorID,
+                                     props.deviceType ==
+                                         VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU});
         }
     }
 

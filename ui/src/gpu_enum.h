@@ -18,6 +18,14 @@ namespace stud::ui {
 struct GpuInfo {
     uint32_t device_index = 0;  // vkEnumeratePhysicalDevices()'s own result order
     std::string name;
+    // PCI vendor id, as Vulkan reports it. Needed because selecting a GPU
+    // for the OpenGL path is not a Vulkan question: GLX hands out the
+    // system default, and which environment variable moves it off that
+    // depends on whose driver is being asked (NVIDIA's PRIME offload, or
+    // Mesa's DRI_PRIME).
+    uint32_t vendor_id = 0;
+    // Whether it is a discrete GPU (VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU).
+    bool discrete = false;
 };
 
 // Real, not stubbed: creates a throwaway VkInstance, enumerates real

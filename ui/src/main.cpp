@@ -22,6 +22,7 @@
 
 #include <iostream>
 #include "desktop_entry.h"
+#include "gpu_enum.h"
 #include "diagnose.h"
 #include "launch_uri.h"
 #include "notifications.h"
@@ -308,6 +309,48 @@ void keep_mangohud_out_of_this_process() {
             ? g_host_layers_disable + QStringLiteral(",VK_LAYER_MANGOHUD_overlay_*")
             : QStringLiteral("VK_LAYER_MANGOHUD_overlay_*");
     ::setenv("VK_LOADER_LAYERS_DISABLE", disabled.toLocal8Bit().constData(), 1);
+}
+
+
+// Point the OpenGL path at the GPU the user actually chose.
+//
+// Vulkan enumerates every device and Stud picks one by index, so the
+// Vulkan path already runs where it was told. GLX has no such thing: it
+// hands out the system default, which on a hybrid laptop is the
+// integrated GPU -- measured here as ANGLE coming up on "Mesa Intel(R)
+// Iris(R) Xe Graphics" while the setting said RTX 3050, at a third of
+// the frame rate. That is not a tuning problem, it is the wrong GPU.
+//
+// Which variable moves it depends on whose driver answers: NVIDIA's
+// PRIME offload for their proprietary stack, DRI_PRIME for Mesa. Both
+// are the documented, supported way to do this, and both are ignored on
+// a machine with one GPU -- so this is safe to set whenever a discrete
+// device is selected.
+void apply_gpu_selection_environment(QProcessEnvironment& env,
+                                     const stud::config::StudSettings& settings,
+                                     bool vulkan_render_path) {
+    if (vulkan_render_path) return;  // Vulkan selects by index, not by environment
+    const auto gpus = stud::ui::enumerate_gpus();
+    const stud::ui::GpuInfo* chosen = nullptr;
+    for (const auto& gpu : gpus) {
+        if (gpu.device_index == settings.gpu.device_index) chosen = &gpu;
+    }
+    if (chosen == nullptr || !chosen->discrete) return;
+
+    constexpr uint32_t kVendorNvidia = 0x10de;
+    if (chosen->vendor_id == kVendorNvidia) {
+        env.insert(QStringLiteral("__NV_PRIME_RENDER_OFFLOAD"), QStringLiteral("1"));
+        env.insert(QStringLiteral("__GLX_VENDOR_LIBRARY_NAME"), QStringLiteral("nvidia"));
+        // The Vulkan half of ANGLE's GL backend, where it has one.
+        env.insert(QStringLiteral("__VK_LAYER_NV_optimus"),
+                   QStringLiteral("NVIDIA_only"));
+    } else {
+        // Mesa's own offload, by the same rule: ask for a device that is
+        // not the default one.
+        env.insert(QStringLiteral("DRI_PRIME"), QStringLiteral("1"));
+    }
+    std::printf("stud: OpenGL path offloaded to \"%s\"\n", chosen->name.c_str());
+    std::fflush(stdout);
 }
 
 void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vulkan_render_path) {
@@ -765,8 +808,9 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     render_host.setArguments(render_host_args);
     {
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-        apply_mangohud_environment(env, settings.mangohud,
-                                    settings.graphics_mode == stud::config::GraphicsMode::kVulkan);
+        const bool vulkan_path = graphics_mode_arg == QStringLiteral("vulkan");
+        apply_mangohud_environment(env, settings.mangohud, vulkan_path);
+        apply_gpu_selection_environment(env, settings, vulkan_path);
         render_host.setProcessEnvironment(env);
     }
     if (!render_host.startDetached()) {
