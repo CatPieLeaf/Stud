@@ -909,6 +909,35 @@ int main(int argc, char** argv) {
         // buffer is the window's logical size and the compositor scales
         // it, so the engine is left at 1.0 there.
         layout_density = (follow_dpi && hidpi_enabled) ? real_density : 1.0f;
+        // Render scale lands here as well, and this is what keeps the UI
+        // the size it was.
+        //
+        // The engine lays its UI out in the pixels of whatever target it
+        // draws into. Shrink that target and stretch the result, and
+        // every menu, button and line of chat comes out bigger by exactly
+        // the scale factor -- user-reported as "UI is way too big now"
+        // the first time render scale worked. A PC game avoids it by
+        // drawing the UI smaller in the smaller target, which is this
+        // number: the size of a UI point.
+        //
+        // And it goes DOWN, which is the part that matters: the engine
+        // drops SSAO and its softer shadows only ABOVE 1.0 (measured at
+        // 1.00, 1.10 and 1.25 -- the boundary is exactly 1.0). A scale of
+        // 0.67 is below it, so the full render path survives. That is why
+        // this can be had together with upscaling, where raising the DPI
+        // scale to match a scaled desktop cannot.
+        const int render_scale_percent = [&]() {
+            const std::string value = find_named_arg(argc, argv, "--render-scale");
+            const int percent = value.empty() ? 100 : std::atoi(value.c_str());
+            return (percent >= 50 && percent <= 100) ? percent : 100;
+        }();
+        if (render_scale_percent < 100) {
+            layout_density *= static_cast<float>(render_scale_percent) / 100.0f;
+            std::printf("stud: render scale %d%%: UI laid out at %.2f so it keeps its size "
+                        "through the upscale\n",
+                        render_scale_percent, static_cast<double>(layout_density));
+            std::fflush(stdout);
+        }
         engine_dpi_scale = layout_density;
         std::printf("stud: engine layout scale %.2f (follow DPI %s, hidpi %s, display %.2f)\n",
                     static_cast<double>(engine_dpi_scale), follow_dpi ? "on" : "off",
