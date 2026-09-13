@@ -358,6 +358,12 @@ bool poll_orphaned_loopers_once();
 // it to libroblox's own real `NativeInputInterface` entry points. Kept
 // deliberately flat/POD so it crosses the render IPC boundary as raw bytes
 // with no serialisation layer of its own.
+// Queues one input event for Process B to collect. The Wayland listeners
+// use it directly; the X11 backend (x11_backend.cpp) is a separate
+// translation unit and reaches the same queue through this.
+struct HostInputEvent;
+void push_host_input_event(const HostInputEvent& ev);
+
 struct HostInputEvent {
     enum Type : uint32_t {
         kPointerMotion = 1,  // x, y = surface-local position

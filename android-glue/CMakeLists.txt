@@ -202,6 +202,25 @@ add_custom_command(
     DEPENDS "${PointerGesturesXml}"
 )
 
+# The window icon, as _NET_WM_ICON's own raw ARGB array. X11 has no way
+# to point a window at an icon file, so it has to be in the binary --
+# generated at configure time from the same PNGs the packages install, so
+# there is no second copy to keep in step and no image decoder in a
+# process with no other use for one.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(WindowIconHeader "${XdgShellGeneratedDir}/stud_window_icon.h")
+set(WindowIconSources
+    "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/32.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/48.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/128.png")
+add_custom_command(
+    OUTPUT "${WindowIconHeader}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/png_to_argb_header.py"
+            "${WindowIconHeader}" ${WindowIconSources}
+    DEPENDS ${WindowIconSources}
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/png_to_argb_header.py"
+)
+
 add_library(stud_android_glue STATIC
     src/asset_manager.cpp
     src/apk_extract.cpp
@@ -232,6 +251,7 @@ add_library(stud_android_glue STATIC
     "${RelativePointerHeader}"
     "${PointerGesturesSource}"
     "${PointerGesturesHeader}"
+    "${WindowIconHeader}"
 )
 target_include_directories(stud_android_glue PUBLIC "${XdgShellGeneratedDir}")
 target_include_directories(stud_android_glue PUBLIC include)
