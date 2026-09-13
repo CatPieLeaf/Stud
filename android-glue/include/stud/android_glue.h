@@ -271,23 +271,6 @@ std::string native_window_activation_token(ANativeWindow* window);
 // constraints protocol.
 void native_window_set_pointer_locked(ANativeWindow* window, bool locked);
 
-// Put the pointer at a point in the window, in surface pixels.
-//
-// This is how the desktop pointer is kept on the engine's own cursor: it
-// is warped back to the point a camera drag began, every time it moves,
-// so it never travels at all. Games have done exactly this for decades;
-// Wayland only grew a request for it recently (wp_pointer_warp_v1), and
-// before that there was nothing that worked -- the lock/hint/unlock trick
-// drops warps silently and cannot coexist with a pointer constraint.
-//
-// Where the compositor does not support it, this does nothing at all and
-// the pointer simply travels as it always did.
-void native_window_warp_pointer(ANativeWindow* window, float x, float y);
-
-// Whether warping is possible at all, so callers can choose the
-// behaviour that works rather than one that silently does not.
-bool native_window_can_warp_pointer();
-
 // Applies the surface's logical-size/scale state. The EGL path does this
 // while creating its wl_egl_window; Vulkan attaches buffers directly and
 // must ask for it explicitly.
