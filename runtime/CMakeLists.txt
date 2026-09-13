@@ -167,6 +167,7 @@ add_library(stud_runtime_framework STATIC
     "${FRAMEWORK_SRC}/src/engine_v2_bridge.cpp"
     "${FRAMEWORK_SRC}/src/haptics_bridge.cpp"
     "${FRAMEWORK_SRC}/src/webview_bridge.cpp"
+    "${FRAMEWORK_SRC}/src/permissions_bridge.cpp"
     "${FRAMEWORK_SRC}/src/system_theme_bridge.cpp"
     "${FRAMEWORK_SRC}/src/linking_bridge.cpp"
     "${FRAMEWORK_SRC}/src/webview_cookies.cpp"

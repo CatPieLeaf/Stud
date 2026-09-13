@@ -691,9 +691,23 @@ public:
     void wrapStopCommunication();
 };
 
+// FMOD's hardware-decoder bridge. Stud has no MediaCodec at all, so
+// `init()` answering false is the truthful "no hardware codec here" --
+// the same answer MediaCodecInfoUtils already gives -- and FMOD decodes
+// in software instead, which is what has been playing Roblox's audio all
+// along. Registered empty until now, which left the engine constructing
+// it and finding nothing: the real surface is small and is below, so the
+// refusal is explicit rather than a silently dropped call.
 class FmodMediaCodecStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/fmod/MediaCodec")
+    FmodMediaCodecStub() = default;
+    FakeJni::JBoolean init(FakeJni::JLong handle);
+    FakeJni::JInt getChannelCount();
+    FakeJni::JInt getSampleRate();
+    FakeJni::JLong getLength();
+    FakeJni::JInt read(std::shared_ptr<FakeJni::JByteArray> buffer, FakeJni::JInt size);
+    void release();
 };
 
 // Classes the engine only ever asks for once its reflective

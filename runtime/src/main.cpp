@@ -48,6 +48,7 @@
 #include "stud/engine_v2_bridge.h"
 #include "stud/system_theme_bridge.h"
 #include "stud/webview_bridge.h"
+#include "stud/permissions_bridge.h"
 #include "stud/webview_user_agent.h"
 #include "stud/webview_cookies.h"
 #include "stud/linking_bridge.h"
@@ -2099,6 +2100,11 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
     });
     stud::jni_bridge::subscribe_to_experience_launch(jvm, lib);
+    // Android's runtime permissions, which nothing in this process has
+    // ever answered -- see permissions_bridge.h. Voice chat asks for the
+    // microphone through this protocol before it starts, and an
+    // unanswered request resolves as ACCESS_DENIED.
+    stud::jni_bridge::run_permissions_bridge(jvm, lib);
     // The web-view protocol, which nothing has ever answered in this
     // process (see webview_bridge.h). Registering the availability
     // handler is what gives the Lua app a reason to send an open request
