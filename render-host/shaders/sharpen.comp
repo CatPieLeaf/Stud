@@ -1,0 +1,62 @@
+#version 450
+
+// RCAS: contrast-adaptive sharpening, the second half of AMD's FSR1.
+//
+// Runs at the OUTPUT resolution, over EASU's result, reading the four
+// pixels around the one it writes. That is the whole point of it being its
+// own pass: sharpening with a neighbourhood taken from the smaller source
+// image stretches the cross by the upscale ratio, which over-sharpens
+// every edge and looks scratched.
+//
+// The limiter is what separates this from a plain unsharp mask: the
+// strength is reduced by how little headroom the local neighbourhood has
+// before clipping, so flat regions and already-hard edges are left alone
+// and only genuinely soft detail is pulled up. No ringing, no halos.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
+
+layout(push_constant) uniform Params {
+    ivec2 src_size;
+    ivec2 dst_size;
+    float sharpness;  // 0 = none, 1 = strongest
+} p;
+
+float luma(vec3 c) { return c.g + 0.5 * (c.r + c.b); }
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    if (pos.x >= p.dst_size.x || pos.y >= p.dst_size.y) return;
+
+    // Same resolution in and out, so these are exact texel fetches and the
+    // cross is exactly one pixel wide in every direction.
+    vec2 inv = 1.0 / vec2(p.src_size);
+    vec3 e = texture(src, (vec2(pos) + 0.5) * inv).rgb;
+    vec3 n = texture(src, (vec2(pos) + vec2(0.5, -0.5)) * inv).rgb;
+    vec3 s = texture(src, (vec2(pos) + vec2(0.5, 1.5)) * inv).rgb;
+    vec3 w = texture(src, (vec2(pos) + vec2(-0.5, 0.5)) * inv).rgb;
+    vec3 d = texture(src, (vec2(pos) + vec2(1.5, 0.5)) * inv).rgb;
+
+    vec3 mn = min(min(n, s), min(w, d));
+    vec3 mx = max(max(n, s), max(w, d));
+    // Headroom on both sides: how far the neighbourhood is from black and
+    // from white. Whichever is tighter limits the strength.
+    vec3 head = min(mn, vec3(1.0) - mx) / max(mx - mn, vec3(1.0 / 255.0));
+    float limit = clamp(min(min(head.r, head.g), head.b), 0.0, 1.0);
+
+    // RCAS's own weight: negative, so the cross is subtracted and the
+    // centre pulled up. Scaled by the limiter and by the requested
+    // strength, and deliberately gentle at the top end -- 1.0 here is
+    // about as far as this can go before edges start to glint.
+    float strength = clamp(p.sharpness, 0.0, 1.0);
+    float weight = -limit * strength * 0.25;
+    vec3 sharpened = (e + weight * (n + s + w + d)) / (1.0 + 4.0 * weight);
+
+    // Never outside what the neighbourhood already spans: that is what
+    // makes this incapable of ringing, however hard it is pushed.
+    vec3 lo = min(e, mn);
+    vec3 hi = max(e, mx);
+    imageStore(dst, pos, vec4(clamp(sharpened, lo, hi), 1.0));
+}

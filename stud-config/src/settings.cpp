@@ -92,17 +92,25 @@ StudSettings load_settings(const std::string& path) {
         }
         result.upscaling = doc.at("upscaling").get<bool>();
     }
-    if (doc.contains("upscaleQualityPercent")) {
-        if (!doc.at("upscaleQualityPercent").is_number_integer()) {
+    if (doc.contains("upscaleTargetPercent")) {
+        if (!doc.at("upscaleTargetPercent").is_number_integer()) {
             throw SettingsError("stud: config '" + path +
-                                "' has a non-integer \"upscaleQualityPercent\"");
+                                "' has a non-integer \"upscaleTargetPercent\"");
         }
-        const int percent = doc.at("upscaleQualityPercent").get<int>();
-        // Clamped rather than rejected. 33 is DLSS's own Ultra
-        // Performance ratio and the floor below which there is nothing
-        // left to reconstruct; 100 means rendering the output size, which
-        // is upscaling nothing.
-        result.upscale_quality_percent = percent < 33 ? 33 : (percent > 100 ? 100 : percent);
+        const int percent = doc.at("upscaleTargetPercent").get<int>();
+        // 100 is the window's own pixels, which is shown 1:1. Below that
+        // the upscaler would write less than it presents, which is a
+        // downscale wearing the wrong name; 200 is four times the fill
+        // rate, where this stops paying for itself.
+        result.upscale_target_percent = percent < 100 ? 100 : (percent > 200 ? 200 : percent);
+    }
+    if (doc.contains("upscaleSharpnessPercent")) {
+        if (!doc.at("upscaleSharpnessPercent").is_number_integer()) {
+            throw SettingsError("stud: config '" + path +
+                                "' has a non-integer \"upscaleSharpnessPercent\"");
+        }
+        const int percent = doc.at("upscaleSharpnessPercent").get<int>();
+        result.upscale_sharpness_percent = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
     }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
@@ -229,7 +237,10 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.erase("renderScale");
     doc["upscaling"] = settings.upscaling;
     doc.erase("upscaleOutputPercent");
-    doc["upscaleQualityPercent"] = settings.upscale_quality_percent;
+    // Removed: it could only work by moving the engine's own render size.
+    doc.erase("upscaleQualityPercent");
+    doc["upscaleTargetPercent"] = settings.upscale_target_percent;
+    doc["upscaleSharpnessPercent"] = settings.upscale_sharpness_percent;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
