@@ -791,6 +791,10 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // process that can honour the compositor's scale -- this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
+    // The input end of the same pipeline HiDPI sits at the output end of.
+    // render-host ignores it when HiDPI is off, where the compositor is
+    // already scaling the buffer.
+    render_host_args << "--render-scale" << QString::number(settings.render_scale_percent);
     // 0 is "no limit" in the config; render-host reads anything outside
     // 1..240 the same way, so it travels unchanged.
     render_host_args << "--background-fps" << QString::number(settings.background_fps);
