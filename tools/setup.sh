@@ -134,6 +134,10 @@ copy_angle_runtime() {
     # ANGLE's Vulkan backend reads its own data directory next to the
     # libraries when one is present.
     [ -d "$from/angledata" ] && cp -a "$from/angledata" "$ANGLE_DIR/"
+    # Optional, and worth saying when it is missing rather than letting
+    # the Settings window offer a backend that cannot load.
+    [ -f "$ANGLE_DIR/libvk_swiftshader.so" ] ||
+        warn "no libvk_swiftshader.so -- the Software rendering entry will not work"
     say "ANGLE runtime in $ANGLE_DIR"
 }
 
@@ -226,7 +230,23 @@ angle_enable_gl = true
 angle_enable_null = false
 angle_build_tests = false
 is_component_build = false'
-        autoninja -C out/Release libEGL libGLESv2 vk_swiftshader
+        # The two Stud cannot run without.
+        autoninja -C out/Release libEGL libGLESv2
+        # ...and SwiftShader, which is the "Software rendering" entry in
+        # the Settings window. Its target has been renamed across ANGLE
+        # revisions -- `vk_swiftshader` in the tree this project was
+        # developed against, plain `swiftshader` at tip, where asking for
+        # the old name fails the whole build:
+        #
+        #   Schedule Failure: unknown target "vk_swiftshader"
+        #   Did you mean: "libEGL" "libGLESv2" "swiftshader" ?
+        #
+        # So both names are tried, and neither working costs only the
+        # software backend rather than the build: copy_angle_runtime
+        # takes whichever files are actually there.
+        autoninja -C out/Release swiftshader ||
+            autoninja -C out/Release vk_swiftshader ||
+            warn "no SwiftShader target in this ANGLE -- software rendering will be unavailable"
     )
     copy_angle_runtime "$angle_src/out/Release"
 }
