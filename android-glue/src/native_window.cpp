@@ -231,7 +231,20 @@ int32_t display_scale_120() {
 // How much bigger the BUFFER is than the window's logical size. That is
 // a rendering choice (sharpness), not a property of the display, so it
 // is the only thing the HiDPI setting controls.
+// Defined further down, where the backend decision actually lives.
+stud::android_glue::DisplayBackend display_backend_impl();
+
 int32_t effective_scale_120() {
+    // X11 has no logical/buffer split: a window's size IS its size in
+    // device pixels, and the server scales nothing. So there is no
+    // buffer to multiply -- rendering is already 1:1 with the panel, and
+    // treating Xft.dpi as a buffer scale here would render 1.25x the
+    // pixels and then have nothing scale them back down.
+    //
+    // The display scale is still recorded (display_scale_120 above), and
+    // still reaches the engine as DisplayMetrics density when "Follow
+    // DPI" asks for it -- that is a layout decision, not a buffer one.
+    if (display_backend_impl() == stud::android_glue::DisplayBackend::X11) return kScaleUnit;
     const int32_t requested = g_requested_render_scale_120.load();
     if (requested > 0) return requested;
     return display_scale_120();
@@ -1559,6 +1572,15 @@ int native_window_x11_fd() {
 }
 
 void display_output_geometry(int32_t* px_w, int32_t* px_h, int32_t* mm_w, int32_t* mm_h) {
+    if (display_backend() == DisplayBackend::X11) {
+        int32_t w = 0, h = 0, mw = 0, mh = 0;
+        x11::output_geometry(w, h, mw, mh);
+        if (px_w != nullptr) *px_w = w;
+        if (px_h != nullptr) *px_h = h;
+        if (mm_w != nullptr) *mm_w = mw;
+        if (mm_h != nullptr) *mm_h = mh;
+        return;
+    }
     ensure_wayland_connection();
     const auto& state = wayland_state();
     // A rotated output reports its mode in the panel's own orientation
@@ -1746,6 +1768,19 @@ std::string native_window_activation_token(ANativeWindow* window) {
 }
 
 int32_t native_window_wait_for_display_scale_120() {
+    if (display_backend() == DisplayBackend::X11) {
+        // X11 has no fractional-scale protocol. Xft.dpi is what a
+        // desktop's scale setting writes and what every toolkit reads,
+        // so it is the same measurement by a different route.
+        const int32_t scale = x11::display_scale_120();
+        if (g_display_scale_120.load() == kScaleUnit && scale != kScaleUnit) {
+            g_display_scale_120.store(scale);
+            g_render_scale_120.store(effective_scale_120());
+            std::printf("stud: android-glue: display scale %d/120 from Xft.dpi\n", scale);
+            std::fflush(stdout);
+        }
+        return display_scale_120();
+    }
     auto& state = wayland_state();
     if (g_display_scale_120.load() != kScaleUnit) return display_scale_120();
 

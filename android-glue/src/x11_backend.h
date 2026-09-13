@@ -65,6 +65,18 @@ std::string clipboard_get();
 void present_text_overlay(const void* argb, int width, int height, int x, int y);
 void hide_text_overlay();
 
+// The desktop's scale, in 120ths, from X11's own answer: the Xft.dpi
+// resource against a 96-dpi baseline. X11 has no fractional-scale
+// protocol -- Xft.dpi is what every toolkit reads and what a desktop's
+// own scale setting writes -- so this is the equivalent measurement, not
+// a guess. Returns 120 when nothing says otherwise.
+int32_t display_scale_120();
+
+// The display itself: size in pixels and in millimetres, which is what
+// real dots-per-inch is computed from. Returns false when the display
+// cannot be asked.
+bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h);
+
 int32_t width();
 int32_t height();
 

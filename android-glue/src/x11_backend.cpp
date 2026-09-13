@@ -82,6 +82,7 @@ struct Xlib {
     Bool (*TranslateCoordinates)(Display*, Window, Window, int, int, int*, int*,
                                  Window*) = nullptr;
     int (*RaiseWindow)(Display*, Window) = nullptr;
+    char* (*ResourceManagerString)(Display*) = nullptr;
 };
 
 Xlib& xlib() {
@@ -181,6 +182,7 @@ bool load_xlib() {
     LOAD(UnmapWindow, "XUnmapWindow");
     LOAD(TranslateCoordinates, "XTranslateCoordinates");
     LOAD(RaiseWindow, "XRaiseWindow");
+    LOAD(ResourceManagerString, "XResourceManagerString");
 #undef LOAD
     if (!ok) {
         ::dlclose(x.handle);
@@ -804,6 +806,42 @@ void hide_text_overlay() {
     if (x.Flush != nullptr) x.Flush(g_display);
 }
 
+
+int32_t display_scale_120() {
+    if (g_display == nullptr) return 120;
+    Xlib& x = xlib();
+    if (x.ResourceManagerString == nullptr) return 120;
+    const char* resources = x.ResourceManagerString(g_display);
+    if (resources == nullptr) return 120;
+    // The resource database is plain text, one "Name:\tvalue" per line.
+    // Only one entry matters here and parsing the whole database with
+    // Xrm would pull in more of Xlib for no gain.
+    const std::string text(resources);
+    const std::string key = "Xft.dpi:";
+    auto at = text.find(key);
+    if (at == std::string::npos) return 120;
+    at += key.size();
+    double dpi = 0.0;
+    try {
+        dpi = std::stod(text.substr(at));
+    } catch (const std::exception&) {
+        return 120;
+    }
+    if (dpi <= 0.0) return 120;
+    // 96 dpi is the unscaled baseline every toolkit uses.
+    const int32_t scale = static_cast<int32_t>(dpi * 120.0 / 96.0 + 0.5);
+    return scale > 0 ? scale : 120;
+}
+
+bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h) {
+    if (g_display == nullptr) return false;
+    const int screen = DefaultScreen(g_display);
+    px_w = DisplayWidth(g_display, screen);
+    px_h = DisplayHeight(g_display, screen);
+    mm_w = DisplayWidthMM(g_display, screen);
+    mm_h = DisplayHeightMM(g_display, screen);
+    return px_w > 0 && px_h > 0;
+}
 
 void clipboard_set(const std::string& text) {
     if (g_display == nullptr || g_window == 0) return;
