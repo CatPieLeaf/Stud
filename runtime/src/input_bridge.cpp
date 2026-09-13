@@ -280,8 +280,18 @@ std::atomic<int> g_engine_mouse_behavior{
     static_cast<int>(stud::runtime::MouseBehavior::kUnknown)};
 
 bool engine_pins_cursor() {
+    // Either locked mode: the engine holds its own cursor and ignores
+    // every position it is given. LockCurrentPosition is a camera
+    // rotation, LockCenter is first person -- for the cursor they are the
+    // same thing, and only Default means "follow the pointer".
+    const int behavior = g_engine_mouse_behavior.load();
+    return behavior == static_cast<int>(stud::runtime::MouseBehavior::kLockCurrentPosition) ||
+           behavior == static_cast<int>(stud::runtime::MouseBehavior::kLockCenter);
+}
+
+bool engine_locks_center() {
     return g_engine_mouse_behavior.load() ==
-           static_cast<int>(stud::runtime::MouseBehavior::kLockCurrentPosition);
+           static_cast<int>(stud::runtime::MouseBehavior::kLockCenter);
 }
 
 // Set the moment the engine starts pinning during a gesture, and holds
@@ -556,7 +566,6 @@ struct AgdkInput {
     std::shared_ptr<MainGameActivityStub> activity;
     jlong handle = 0;
     bool resolved = false;
-    jmethodID on_touch = nullptr;
     jmethodID on_key_down = nullptr;
     jmethodID on_key_up = nullptr;
     jmethodID on_text_input = nullptr;
@@ -580,15 +589,9 @@ constexpr jint kSourceKeyboard = 0x101;    // SOURCE_KEYBOARD
 constexpr jint kKeyCodeBack = 4;           // KEYCODE_BACK
 constexpr jint kMetaAlt = 0x02;            // META_ALT_ON
 constexpr jint kToolTypeMouse = 3;         // TOOL_TYPE_MOUSE
-constexpr jint kActionDown = 0;
-constexpr jint kActionUp = 1;
-constexpr jint kActionMove = 2;
-constexpr jint kActionHoverMove = 7;
 constexpr jint kActionHoverEnter = 9;
 constexpr jint kActionHoverExit = 10;
 constexpr jint kActionScroll = 8;
-constexpr jint kActionButtonPress = 11;
-constexpr jint kActionButtonRelease = 12;
 constexpr jint kKeyActionDown = 0;
 constexpr jint kKeyActionUp = 1;
 
@@ -682,8 +685,11 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
     }
     jclass cls = env.GetObjectClass(activity_ref);
     if (cls == nullptr) return;
-    g_agdk.on_touch = env.GetMethodID(cls, "onTouchEventNative",
-                                      "(JLandroid/view/MotionEvent;IIIIIJJIIIIIIFF)Z");
+    // No onTouchEventNative here. A real mouse never reaches it: the
+    // app's own handler returns from its mouse branch before the touch
+    // path, so mouse input goes through nativePassMouse* alone -- and
+    // the dispatcher that used to build a MotionEvent for it had no
+    // callers left at all.
     g_agdk.on_key_down = env.GetMethodID(cls, "onKeyDownNative", "(JLandroid/view/KeyEvent;)Z");
     g_agdk.on_key_up = env.GetMethodID(cls, "onKeyUpNative", "(JLandroid/view/KeyEvent;)Z");
     // Real AGDK text input. This is a genuinely separate path from the
@@ -700,10 +706,8 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
     g_agdk.on_text_input = env.GetMethodID(
         cls, "onTextInputEventNative",
         "(JLcom/google/androidgamesdk/gametextinput/State;)V");
-    std::printf("stud: input bridge: AGDK onTouchEventNative=%s onKeyDown=%s onKeyUp=%s "
-                "onTextInputEvent=%s\n",
-                g_agdk.on_touch ? "ok" : "MISSING", g_agdk.on_key_down ? "ok" : "MISSING",
-                g_agdk.on_key_up ? "ok" : "MISSING",
+    std::printf("stud: input bridge: AGDK onKeyDown=%s onKeyUp=%s onTextInputEvent=%s\n",
+                g_agdk.on_key_down ? "ok" : "MISSING", g_agdk.on_key_up ? "ok" : "MISSING",
                 g_agdk.on_text_input ? "ok" : "MISSING");
     std::fflush(stdout);
 }
@@ -726,44 +730,6 @@ void send_agdk_text(FakeJni::Env& env, jobject activity_ref, const std::string& 
         static_cast<FakeJni::JInt>(-1));
     jobject state_ref = env.createLocalReference(state);
     env.CallVoidMethod(activity_ref, g_agdk.on_text_input, g_agdk.handle, state_ref);
-}
-
-// Delivers one real mouse event through AGDK, carrying the real
-// SOURCE_MOUSE/TOOL_TYPE_MOUSE identity `nativePassMouse*` cannot express.
-// AGDK's own MotionEvent path -- deliberately NOT used for the mouse.
-//
-// Roblox installs its own View.OnTouchListener on the SurfaceView
-// (the app's own input handler's onTouch) and every branch of its mouse handler,
-// returns true: press, move, release and scroll alike. A listener that
-// returns true CONSUMES the event, so it never reaches the view's own
-// onTouchEvent and therefore never reaches GameActivity's
-// onTouchEventNative. On a real device AGDK sees no mouse input at all.
-//
-// Stud used to send it anyway, on every motion, in parallel with
-// nativePassMouseMove. The engine was being told about the same gesture
-// twice through two subsystems, and that is what made a camera rotation
-// end with the cursor somewhere else. The path is kept for real touch,
-// which does reach AGDK on a device.
-void send_agdk_motion(FakeJni::Env& env, jobject activity_ref, jint action, jint action_button,
-                      jint button_state, float x, float y, float vscroll, jlong down_time) {
-    if (g_agdk.on_touch == nullptr) return;
-    auto ev = std::make_shared<stud::jni_bridge::MotionEventStub>();
-    ev->action = action;
-    ev->source = kSourceMouse;
-    ev->tool_type = kToolTypeMouse;
-    ev->button_state = button_state;
-    ev->action_button = action_button;
-    ev->x = x;
-    ev->y = y;
-    ev->vscroll = vscroll;
-    ev->event_time = now_ms();
-    ev->down_time = down_time;
-    jobject ev_ref = env.createLocalReference(ev);
-    env.CallBooleanMethod(activity_ref, g_agdk.on_touch, g_agdk.handle, ev_ref,
-                          /*pointerCount=*/1, /*historySize=*/0, /*deviceId=*/0, kSourceMouse,
-                          action, ev->event_time, down_time, /*flags=*/0, /*metaState=*/0,
-                          action_button, button_state, /*classification=*/0, /*edgeFlags=*/0,
-                          1.0f, 1.0f);
 }
 
 void send_agdk_key(FakeJni::Env& env, jobject activity_ref, bool down, jint scan, jint key_code,
@@ -2430,8 +2396,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 // Shift-lock and first-person: the one mode the engine will
                 // actually admit to. Or-ed with the button hold above, which
                 // covers the rotation drag it says nothing about.
-                const bool asked = call_trapping_abort_with_result(fns.is_mouse_locked, locked,
-                                                                   lock_env, nullptr);
+                bool asked = call_trapping_abort_with_result(fns.is_mouse_locked, locked,
+                                                             lock_env, nullptr);
                 if (!asked) {
                     // A trapped call leaves `locked` untouched, so a
                     // failing query is indistinguishable from a steady
@@ -2454,6 +2420,28 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                                     static_cast<int>(locked));
                         std::fflush(stdout);
                     }
+                }
+                const bool probe_valid = g_engine_mouse_behavior.load() !=
+                                         static_cast<int>(stud::runtime::MouseBehavior::kUnknown);
+                if (probe_valid) {
+                    // The field itself, not the predicate over it. Both
+                    // read the same MouseBehavior -- the predicate just
+                    // answers for one of its three values -- and a live
+                    // capture caught them disagreeing, which is worth
+                    // knowing about rather than silently picking one.
+                    const bool field_says_center = engine_locks_center();
+                    if (asked && (locked != 0) != field_says_center) {
+                        static bool said = false;
+                        if (!said) {
+                            said = true;
+                            std::printf("stud: the engine's LockCenter predicate (%d) and its own "
+                                        "MouseBehavior (%d) disagree -- going with the field\n",
+                                        static_cast<int>(locked), g_engine_mouse_behavior.load());
+                            std::fflush(stdout);
+                        }
+                    }
+                    locked = field_says_center ? 1 : 0;
+                    asked = true;
                 }
                 if (asked) {
                     static int last_reported = -1;
