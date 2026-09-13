@@ -76,31 +76,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     smoothZoomCheck_ = new QCheckBox("Smooth zoom", this);
     general->addWidget(smoothZoomCheck_);
 
-    // Frame rate while Stud is in the background.
-    //
-    // Background means both halves of it: hidden (minimised, another
-    // workspace, covered) and merely unfocused. A slider rather than a
-    // checkbox because the useful answer is a number: a few frames a
-    // second keeps the game alive and costs almost nothing, while someone
-    // recording, waiting on a download, or watching it on a second
-    // monitor wants it left alone. One step past the top reads as
-    // Unlimited, so "do not throttle" is a position on the same control
-    // rather than a second one.
-    backgroundFpsLabel_ = new QLabel(this);
-    general->addWidget(backgroundFpsLabel_);
-    backgroundFpsSlider_ = new QSlider(Qt::Horizontal, this);
-    backgroundFpsSlider_->setRange(1, stud::config::kBackgroundFpsUnlimited + 1);
-    backgroundFpsSlider_->setSingleStep(1);
-    backgroundFpsSlider_->setPageStep(10);
-    backgroundFpsSlider_->setToolTip(
-        "Frames per second while Stud is not the window you are using -- minimised,\n"
-        "on another workspace, covered, or simply alt-tabbed away. Rendering a game\n"
-        "at full rate for a window nobody is looking at wastes GPU and CPU.\n"
-        "All the way right is Unlimited.");
-    general->addWidget(backgroundFpsSlider_);
-    connect(backgroundFpsSlider_, &QSlider::valueChanged, this,
-            &SettingsWindow::onBackgroundFpsChanged);
-
     general->addStretch();
 
     // ---- Graphics ------------------------------------------------------
@@ -164,6 +139,31 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // a null dereference.
     connect(renderPathCombo_, &QComboBox::currentIndexChanged, this,
             &SettingsWindow::onRenderPathChanged);
+    // Frame rate while Stud is in the background.
+    //
+    // Background means both halves of it: hidden (minimised, another
+    // workspace, covered) and merely unfocused. A slider rather than a
+    // checkbox because the useful answer is a number: a few frames a
+    // second keeps the game alive and costs almost nothing, while someone
+    // recording, waiting on a download, or watching it on a second
+    // monitor wants it left alone. One step past the top reads as
+    // Unlimited, so "do not throttle" is a position on the same control
+    // rather than a second one.
+    backgroundFpsLabel_ = new QLabel(this);
+    graphics->addWidget(backgroundFpsLabel_);
+    backgroundFpsSlider_ = new QSlider(Qt::Horizontal, this);
+    backgroundFpsSlider_->setRange(1, stud::config::kBackgroundFpsUnlimited + 1);
+    backgroundFpsSlider_->setSingleStep(1);
+    backgroundFpsSlider_->setPageStep(10);
+    backgroundFpsSlider_->setToolTip(
+        "Frames per second while Stud is not the window you are using -- minimised,\n"
+        "on another workspace, covered, or simply alt-tabbed away. Rendering a game\n"
+        "at full rate for a window nobody is looking at wastes GPU and CPU.\n"
+        "All the way right is Unlimited.");
+    graphics->addWidget(backgroundFpsSlider_);
+    connect(backgroundFpsSlider_, &QSlider::valueChanged, this,
+            &SettingsWindow::onBackgroundFpsChanged);
+
     graphics->addStretch();
 
     // ---- Discord RPC ---------------------------------------------------
@@ -184,6 +184,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     about->addWidget(logo);
     auto* aboutText = new QLabel(
         "<div style='text-align:center'>"
+        "<p><b>Version " STUD_VERSION "</b></p>"
         "<p>A Linux desktop wrapper that runs the real, unmodified<br>"
         "Roblox Android app.</p>"
         "<p><a href=\"https://github.com/CatPieLeaf/Stud\">"

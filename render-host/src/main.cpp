@@ -1336,9 +1336,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // Shown on the first frame, like the Vulkan path -- so the
             // window never appears empty. No-op on Wayland.
             stud::android_glue::x11_ensure_mapped();
-            // Same gate as the Vulkan present path: the OpenGL render path
-            // has to honour the background frame limit too.
-            throttle_while_hidden();
+            // The background frame limit is applied before the dispatch
+            // lock is taken -- see throttle_before_dispatch().
             // Real frame-rate measurement, env-gated (STUD_FPS=1, or
             // STUD_FPS=<seconds> for a different window). Counts swaps and
             // reports once per window -- per-swap tracing
@@ -1969,7 +1968,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::VkAcquireNextImageKHR:
             return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
         case CallId::VkQueuePresentKHR:
-            throttle_while_hidden();
+            // The throttle happens BEFORE the dispatch lock is taken --
+            // see throttle_before_dispatch().
             return stud::render_host::vk_queue_present(a[0], in);
         case CallId::VkGetQueryPoolResults:
             return stud::render_host::vk_get_query_pool_results(
@@ -3145,12 +3145,33 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // Vulkan's own rule makes this safe: these entry points require external
 // synchronisation on the queue or the fences they name, not on the whole
 // device, and each of them is already called from one thread at a time.
+// The background frame limit, applied BEFORE the dispatch lock is taken.
+//
+// It used to sleep inside the dispatch handler, which holds the one
+// process-wide lock -- so throttling to a few frames a second also held
+// audio, input polling and everything else on every other connection for
+// the same tens of milliseconds. Audio is fed from its own connection
+// and stutters if its writes are made to wait; the point of the setting
+// is to stop drawing a window nobody is looking at, not to slow the
+// process down.
+void throttle_before_dispatch(stud::render_host::CallId id) {
+    if (id == stud::render_host::CallId::VkQueuePresentKHR ||
+        id == stud::render_host::CallId::EglSwapBuffers) {
+        throttle_while_hidden();
+    }
+}
+
 bool blocks_in_the_driver(stud::render_host::CallId id) {
     switch (id) {
         case stud::render_host::CallId::VkDeviceWaitIdle:
         case stud::render_host::CallId::VkWaitForFences:
         case stud::render_host::CallId::VkAcquireNextImageKHR:
         case stud::render_host::CallId::VkQueuePresentKHR:
+        // Audio blocks until the device has taken the samples -- that is
+        // what paces the engine's mixer -- so holding the dispatch lock
+        // across it makes every other connection wait on the sound card.
+        case stud::render_host::CallId::AudioWriteFrames:
+        case stud::render_host::CallId::AudioReadFrames:
             return true;
         default:
             return false;
@@ -3170,6 +3191,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         out_scratch.clear();
         uint32_t out_len = 0;
         uint64_t result = 0;
+        throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id));
         if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
             result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
         } else {
@@ -3666,6 +3688,7 @@ int main(int argc, char** argv) {
             // Same exemption as the connection threads: a blocking
             // driver wait must not hold the dispatch lock, or the two
             // wait on each other.
+            throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id));
             if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             } else {
