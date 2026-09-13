@@ -2288,6 +2288,10 @@ int main(int argc, char** argv) {
     std::fflush(stdout);
     std::signal(SIGINT, handle_shutdown_signal);
     std::signal(SIGTERM, handle_shutdown_signal);
+    // Whether the loop ended because render-host went away, rather
+    // than because Stud was asked to stop. The two need different
+    // shutdowns -- see where it is read, below.
+    bool render_host_gone = false;
     while (g_should_keep_running.load(std::memory_order_relaxed)) {
         int fd = 0, events = 0;
         void* data = nullptr;
@@ -2430,8 +2434,29 @@ int main(int argc, char** argv) {
         if (!stud::render_client::connection().connected()) {
             std::printf("stud: render-host connection lost -- shutting down\n");
             g_should_keep_running.store(false, std::memory_order_relaxed);
+            render_host_gone = true;
         }
     }
+    // With no render host there is nothing to shut down gracefully.
+    //
+    // LeaveGame and DestroyApp make the engine do real render work, and
+    // if the render host has gone that work runs against a dead
+    // connection: the engine's own threads are still mid-frame, their GL
+    // and Vulkan calls fail, and one of them faults. The trap handler
+    // then re-raises to produce a core -- which is why killing
+    // render-host left a trail of linker64 SIGSEGV cores with si_code
+    // SI_TKILL (a signal Stud sent itself, not a fault the CPU took),
+    // while closing the window never did.
+    //
+    // The teardown belongs to the window-close path, where the host is
+    // still there to answer. Here the honest thing is to stop.
+    if (render_host_gone) {
+        std::printf("stud: no render host to shut down against -- exiting\n");
+        std::fflush(stdout);
+        std::fflush(stderr);
+        ::_exit(0);
+    }
+
     // Real graceful shutdown pair (see engine_v2_bridge.h's own UPDATE 2
     // doc comment: four real Sober journalctl captures all show this as
     // the real titlebar-close sequence) -- LeaveGame then DestroyApp,
