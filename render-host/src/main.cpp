@@ -2992,6 +2992,57 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
                                in.empty() ? nullptr : in.data(), static_cast<GLenum>(a[3]));
             return 0;
+        case CallId::GlCommandBatch: {
+            // Unpacks what call_void() packed: argc, a flags byte, the
+            // 16-bit call id, argc arguments, then the payload length and
+            // PBO offset only if they were used. Each call is dispatched
+            // in order, exactly as if it had arrived as its own request.
+            const uint8_t* p = in.data();
+            const uint8_t* end = in.data() + in.size();
+            while (end - p >= 4) {
+                const uint8_t argc = *p++;
+                const uint8_t bits = *p++;
+                uint16_t id16 = 0;
+                std::memcpy(&id16, p, sizeof(id16));
+                p += sizeof(id16);
+                if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) break;
+
+                Header sub{};
+                sub.call_id = static_cast<CallId>(id16);
+                sub.flags = Header::kNoReply;
+                if (argc > 0) {
+                    std::memcpy(sub.args, p, static_cast<size_t>(argc) * sizeof(uint64_t));
+                    p += static_cast<size_t>(argc) * sizeof(uint64_t);
+                }
+                const uint8_t* payload = nullptr;
+                uint32_t payload_len = 0;
+                if ((bits & 1u) != 0) {
+                    if (end - p < 4) break;
+                    std::memcpy(&payload_len, p, sizeof(payload_len));
+                    p += sizeof(payload_len);
+                    if (end - p < static_cast<ptrdiff_t>(payload_len)) break;
+                    payload = p;
+                    p += payload_len;
+                }
+                if ((bits & 2u) != 0) {
+                    if (end - p < 8) break;
+                    std::memcpy(&sub.pixel_buffer_offset_plus_one, p,
+                                sizeof(sub.pixel_buffer_offset_plus_one));
+                    p += sizeof(sub.pixel_buffer_offset_plus_one);
+                }
+                sub.in_buffer_len = payload_len;
+
+                // Reused across the whole batch rather than allocated
+                // per call -- a batch holds thousands of them.
+                static thread_local std::vector<uint8_t> sub_in;
+                static thread_local std::vector<uint8_t> sub_out;
+                sub_in.assign(payload, payload + payload_len);
+                sub_out.clear();
+                uint32_t sub_out_len = 0;
+                dispatch(sub, fns, window, sub_in, sub_out, &sub_out_len);
+            }
+            return 0;
+        }
         case CallId::GlGenQueries: {
             const auto n = static_cast<GLsizei>(a[0]);
             if (fns.glGenQueries_ == nullptr || n <= 0) return 0;
