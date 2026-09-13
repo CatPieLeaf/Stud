@@ -56,6 +56,7 @@ public:
 
 private slots:
     void onSaveClicked();
+    void onRestartClicked();
     void onBrowseApkClicked();
     void onRenderPathChanged(int index);
     void onMangohudToggled(bool checked);
@@ -81,6 +82,7 @@ private:
     QComboBox* upscaleOutputCombo_;
     QSlider* upscaleSharpnessSlider_;
     QLabel* sharpnessValueLabel_;
+    QPushButton* restartButton_;
     QCheckBox* smoothZoomCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;

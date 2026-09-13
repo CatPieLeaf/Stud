@@ -285,8 +285,27 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     about->addStretch();
 
     // ---- Save, shared by every tab -------------------------------------
+    auto* buttonRow = new QHBoxLayout();
+    // Restart, for comparing two settings without a trip through the tray:
+    // save, restart, look, repeat. Only meaningful while a session is
+    // actually running, so it appears only then -- there is nothing to
+    // restart otherwise, and Save already starts one when it has to.
+    restartButton_ = new QPushButton(this);
+    restartButton_->setIcon(QIcon::fromTheme(
+        "view-refresh", QIcon::fromTheme("system-reboot")));
+    restartButton_->setToolTip("Save and restart Stud");
+    // Icon only: the row's width belongs to Save, and a refresh glyph says
+    // this on its own.
+    restartButton_->setFixedWidth(36);
+    // Only when there is a session to restart. Opened from the desktop
+    // entry with nothing running, Save is the whole story.
+    restartButton_->setVisible(stud_session_is_running());
+    buttonRow->addWidget(restartButton_);
+    connect(restartButton_, &QPushButton::clicked, this, &SettingsWindow::onRestartClicked);
+
     auto* saveButton = new QPushButton("Save", this);
-    layout->addWidget(saveButton);
+    buttonRow->addWidget(saveButton);
+    layout->addLayout(buttonRow);
     connect(saveButton, &QPushButton::clicked, this, &SettingsWindow::onSaveClicked);
 
     statusLabel_ = new QLabel(this);
@@ -500,6 +519,32 @@ void SettingsWindow::onBrowseApkClicked() {
         pickedApkPath_ = path;
         apkPathEdit_->setText(QFileInfo(path).fileName());
     }
+}
+
+// Save, stop the running session, start it again. The whole point is the
+// A/B loop: change a setting, see it, change it back.
+//
+// Not a plain restart: settings are read when a session STARTS, so
+// restarting without saving would relaunch the old ones and look like the
+// change did nothing.
+void SettingsWindow::onRestartClicked() {
+    // Save first, through the ordinary path -- settings are read when a
+    // session STARTS, so restarting without saving would relaunch the old
+    // ones and look like the change did nothing.
+    onSaveClicked();
+    if (!stud_session_is_running()) {
+        // Save already started one (it does that when the APK changed), or
+        // there was nothing running to begin with.
+        statusLabel_->setText("Settings saved. Stud started.");
+        return;
+    }
+    statusLabel_->setText("Restarting Stud...");
+    // Let the label paint: stopping and relaunching blocks this thread for
+    // a moment.
+    QApplication::processEvents();
+    terminate_stud_session();
+    start_stud_session();
+    statusLabel_->setText("Restarted with the saved settings.");
 }
 
 void SettingsWindow::onSaveClicked() {
