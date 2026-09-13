@@ -98,4 +98,12 @@ TextureFormatSupport query_texture_formats(uint32_t device_index) {
     return support;
 }
 
+uint32_t default_gpu_index() {
+    const auto gpus = enumerate_gpus();
+    for (const auto& gpu : gpus) {
+        if (gpu.discrete) return gpu.device_index;
+    }
+    return 0;
+}
+
 }  // namespace stud::ui
