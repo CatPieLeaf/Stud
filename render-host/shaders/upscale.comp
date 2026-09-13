@@ -1,0 +1,178 @@
+#version 450
+
+// Edge-adaptive upscale plus contrast-adaptive sharpening: AMD's FSR1,
+// which is EASU followed by RCAS.
+//
+// Both are SPATIAL -- they need only the colour image -- which is the
+// whole reason they can be used here. DLSS, FSR2 and XeSS are temporal:
+// they need per-frame motion vectors, depth and the jitter matrix from the
+// renderer, and Stud sees vkCmdDraw calls, not a G-buffer. There is
+// nothing to hand them.
+//
+// Written against AMD's published FSR1 algorithm rather than including
+// ffx_fsr1.h: the header is a large GLSL/HLSL-portability layer built on
+// packed 16-bit maths, and what it computes for the RGBA case is small
+// enough to express directly. The structure is theirs -- a 12-tap
+// gather, a direction and length estimate from the four inner taps, a
+// Lanczos-shaped kernel stretched along that direction, then RCAS over
+// the result.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
+
+layout(push_constant) uniform Params {
+    ivec2 src_size;
+    ivec2 dst_size;
+    float sharpness;  // 0 = none, 1 = RCAS's strongest
+} p;
+
+// Lanczos-2 shaped, as FSR1 uses it: a windowed sinc approximated by two
+// polynomials so it costs no trigonometry.
+float lanczos2(float x2) {
+    // x2 is the SQUARED distance, which is what the taps give for free.
+    float a = (2.0 / 5.0) * x2 - 1.0;
+    float b = (1.0 / 4.0) * x2 - 1.0;
+    return (a * a - (25.0 / 16.0) * b * b) * (4.0 / 9.0);
+}
+
+// The perceptual weight FSR1 uses to pick a direction: green dominates
+// luminance, so it is what the edge estimate is built from.
+float tap_luma(vec3 c) { return c.g + 0.5 * (c.r + c.b); }
+
+void main() {
+    ivec2 out_pos = ivec2(gl_GlobalInvocationID.xy);
+    if (out_pos.x >= p.dst_size.x || out_pos.y >= p.dst_size.y) return;
+
+    vec2 scale = vec2(p.src_size) / vec2(p.dst_size);
+    // Centre of this output pixel, in source pixels.
+    vec2 src_pos = (vec2(out_pos) + 0.5) * scale - 0.5;
+    vec2 base = floor(src_pos);
+    vec2 f = src_pos - base;
+    vec2 inv_src = 1.0 / vec2(p.src_size);
+
+    // The 12 taps EASU reads: the 4x4 neighbourhood without its corners.
+    //
+    //      b c
+    //    e f g h
+    //    i j k l
+    //      n o
+    #define TAP(dx, dy) texture(src, (base + vec2(dx, dy) + 0.5) * inv_src).rgb
+    vec3 b = TAP(0.0, -1.0), c = TAP(1.0, -1.0);
+    vec3 e = TAP(-1.0, 0.0), fc = TAP(0.0, 0.0), g = TAP(1.0, 0.0), h = TAP(2.0, 0.0);
+    vec3 i = TAP(-1.0, 1.0), j = TAP(0.0, 1.0), k = TAP(1.0, 1.0), l = TAP(2.0, 1.0);
+    vec3 n = TAP(0.0, 2.0), o = TAP(1.0, 2.0);
+    #undef TAP
+
+    // Direction and length of the edge through the four inner taps, from
+    // the luma gradients around each. `len` ends up near 0 on flat areas
+    // (where the kernel stays round) and near 1 on a hard edge (where it
+    // is stretched along it) -- that adaptation is what separates this
+    // from a bicubic resample.
+    float lf = tap_luma(fc), lg = tap_luma(g), lj = tap_luma(j), lk = tap_luma(k);
+    float lb = tap_luma(b), lc = tap_luma(c), le = tap_luma(e), lh = tap_luma(h);
+    float li = tap_luma(i), ll = tap_luma(l), ln = tap_luma(n), lo = tap_luma(o);
+
+    vec2 dir = vec2(0.0);
+    float len = 0.0;
+    {
+        // One contribution per inner tap, weighted by how much this output
+        // pixel actually sits on it.
+        float w0 = (1.0 - f.x) * (1.0 - f.y);
+        float w1 = f.x * (1.0 - f.y);
+        float w2 = (1.0 - f.x) * f.y;
+        float w3 = f.x * f.y;
+
+        // f: horizontal gradient e..g, vertical b..j
+        float dcx = le - lg;
+        float dcy = lb - lj;
+        float lenx = clamp(abs(dcx) / max(max(le, lg), max(lf, 1e-5)), 0.0, 1.0);
+        float leny = clamp(abs(dcy) / max(max(lb, lj), max(lf, 1e-5)), 0.0, 1.0);
+        dir += w0 * vec2(dcx, dcy);
+        len += w0 * (lenx * lenx + leny * leny);
+
+        // g
+        dcx = lf - lh;
+        dcy = lc - lk;
+        lenx = clamp(abs(dcx) / max(max(lf, lh), max(lg, 1e-5)), 0.0, 1.0);
+        leny = clamp(abs(dcy) / max(max(lc, lk), max(lg, 1e-5)), 0.0, 1.0);
+        dir += w1 * vec2(dcx, dcy);
+        len += w1 * (lenx * lenx + leny * leny);
+
+        // j
+        dcx = li - lk;
+        dcy = lf - ln;
+        lenx = clamp(abs(dcx) / max(max(li, lk), max(lj, 1e-5)), 0.0, 1.0);
+        leny = clamp(abs(dcy) / max(max(lf, ln), max(lj, 1e-5)), 0.0, 1.0);
+        dir += w2 * vec2(dcx, dcy);
+        len += w2 * (lenx * lenx + leny * leny);
+
+        // k
+        dcx = lj - ll;
+        dcy = lg - lo;
+        lenx = clamp(abs(dcx) / max(max(lj, ll), max(lk, 1e-5)), 0.0, 1.0);
+        leny = clamp(abs(dcy) / max(max(lg, lo), max(lk, 1e-5)), 0.0, 1.0);
+        dir += w3 * vec2(dcx, dcy);
+        len += w3 * (lenx * lenx + leny * leny);
+    }
+
+    // Normalise the direction; a flat neighbourhood has none, and then the
+    // kernel must stay axis-aligned and round rather than pick a
+    // direction out of noise.
+    float dir2 = dot(dir, dir);
+    vec2 dir_n = dir2 < 1e-8 ? vec2(1.0, 0.0) : dir * inversesqrt(dir2);
+    len = clamp(len * 0.5, 0.0, 1.0);
+
+    // Stretch: 1 across the edge, up to 2 along it. FSR1 derives this
+    // from the direction's own aspect so a diagonal edge is not
+    // over-sharpened.
+    float stretch = (abs(dir_n.x) > abs(dir_n.y)) ? 1.0 / max(abs(dir_n.x), 1e-5)
+                                                  : 1.0 / max(abs(dir_n.y), 1e-5);
+    vec2 len_xy = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+
+    // Accumulate the 12 taps through the shaped kernel.
+    vec3 sum = vec3(0.0);
+    float weight = 0.0;
+    #define ACC(tap, dx, dy) { \
+        vec2 d = vec2(dx, dy) - f; \
+        vec2 rot = vec2(d.x * dir_n.x + d.y * dir_n.y, d.y * dir_n.x - d.x * dir_n.y); \
+        rot /= len_xy; \
+        float w = lanczos2(min(dot(rot, rot), 4.0)); \
+        sum += tap * w; \
+        weight += w; \
+    }
+    ACC(b, 0.0, -1.0) ACC(c, 1.0, -1.0)
+    ACC(e, -1.0, 0.0) ACC(fc, 0.0, 0.0) ACC(g, 1.0, 0.0) ACC(h, 2.0, 0.0)
+    ACC(i, -1.0, 1.0) ACC(j, 0.0, 1.0) ACC(k, 1.0, 1.0) ACC(l, 2.0, 1.0)
+    ACC(n, 0.0, 2.0) ACC(o, 1.0, 2.0)
+    #undef ACC
+
+    vec3 colour = weight > 1e-5 ? sum / weight : fc;
+    // Never outside what the four inner taps span: a Lanczos kernel rings,
+    // and unclamped ringing on a hard UI edge is a visible halo.
+    vec3 lo_bound = min(min(fc, g), min(j, k));
+    vec3 hi_bound = max(max(fc, g), max(j, k));
+    colour = clamp(colour, lo_bound, hi_bound);
+
+    // RCAS: sharpen against the local contrast, so flat regions and
+    // already-hard edges are left alone and only genuinely soft detail is
+    // pulled up. The 5-tap cross is the neighbourhood it judges from.
+    if (p.sharpness > 0.0) {
+        vec3 cn = colour;
+        // The cross around this output pixel, taken from the source taps
+        // that surround it -- b/n above and below, e/h left and right.
+        vec3 cu = b, cd = n, cl = e, cr = h;
+        vec3 mn = min(min(cu, cd), min(cl, cr));
+        vec3 mx = max(max(cu, cd), max(cl, cr));
+        // How much headroom there is before clipping, per channel --
+        // RCAS's own limiter, and what keeps it from crushing highlights.
+        vec3 head = min(mn, 1.0 - mx) / max(mx - mn, vec3(1e-5));
+        float limit = clamp(min(min(head.r, head.g), head.b), 0.0, 1.0);
+        float w = -(1.0 / mix(8.0, 5.0, clamp(p.sharpness, 0.0, 1.0))) * limit;
+        vec3 sharpened = (cn + w * (cu + cd + cl + cr)) / (1.0 + 4.0 * w);
+        colour = clamp(mix(cn, sharpened, clamp(p.sharpness, 0.0, 1.0)), 0.0, 1.0);
+    }
+
+    imageStore(dst, out_pos, vec4(colour, 1.0));
+}

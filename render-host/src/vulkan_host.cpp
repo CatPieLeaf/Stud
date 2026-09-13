@@ -85,6 +85,20 @@ void vk_set_preferred_device_index(uint32_t index) { g_preferred_device_index = 
 
 void vk_set_on_x11(bool on_x11) { g_on_x11 = on_x11; }
 
+// How hard the sharpening pass pulls. 0 leaves the resample alone; 1 is
+// RCAS at its strongest. Settable so it can be judged by eye rather than
+// argued about.
+std::atomic<int32_t> g_upscale_sharpness_percent{60};
+
+float upscale_sharpness() {
+    return static_cast<float>(g_upscale_sharpness_percent.load(std::memory_order_relaxed)) / 100.0f;
+}
+
+void vk_set_upscale_sharpness_percent(int32_t percent) {
+    const int32_t clamped = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+    g_upscale_sharpness_percent.store(clamped, std::memory_order_relaxed);
+}
+
 std::atomic<uint32_t> g_upscale_output_w{0};
 std::atomic<uint32_t> g_upscale_output_h{0};
 
@@ -236,6 +250,8 @@ struct Loader {
     PFN_vkCmdDraw cmd_draw = nullptr;
     PFN_vkCmdDrawIndexed cmd_draw_indexed = nullptr;
     PFN_vkCmdDispatch cmd_dispatch = nullptr;
+    PFN_vkUpdateDescriptorSets update_descriptor_sets = nullptr;
+    PFN_vkCmdPushConstants cmd_push_constants = nullptr;
     PFN_vkCmdSetViewport cmd_set_viewport = nullptr;
     PFN_vkCmdSetScissor cmd_set_scissor = nullptr;
     PFN_vkCmdPipelineBarrier cmd_pipeline_barrier = nullptr;
@@ -1201,6 +1217,9 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         l.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(dev("vkCmdDraw"));
         l.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(dev("vkCmdDrawIndexed"));
         l.cmd_dispatch = reinterpret_cast<PFN_vkCmdDispatch>(dev("vkCmdDispatch"));
+        l.update_descriptor_sets =
+            reinterpret_cast<PFN_vkUpdateDescriptorSets>(dev("vkUpdateDescriptorSets"));
+        l.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(dev("vkCmdPushConstants"));
         l.cmd_set_viewport = reinterpret_cast<PFN_vkCmdSetViewport>(dev("vkCmdSetViewport"));
         l.cmd_set_scissor = reinterpret_cast<PFN_vkCmdSetScissor>(dev("vkCmdSetScissor"));
         l.cmd_pipeline_barrier =
@@ -2065,6 +2084,7 @@ struct UpscaleChain {
     VkSwapchainKHR real = VK_NULL_HANDLE;
     VkExtent2D engine{};
     VkExtent2D present{};
+    VkFormat format = VK_FORMAT_UNDEFINED;
     std::vector<VkImage> offscreen;
     std::vector<VkDeviceMemory> memory;
     std::vector<VkImage> real_images;
@@ -2077,6 +2097,43 @@ struct UpscaleChain {
     std::vector<VkSemaphore> done;
     std::vector<VkFence> fence;
     std::vector<bool> in_flight;
+    // The real upscale: one compute dispatch per frame, reading the
+    // engine's image through a sampler and writing the swapchain's.
+    // Absent (VK_NULL_HANDLE) when the pass could not be built, in which
+    // case the recorded command buffers hold a plain blit instead -- an
+    // honest degrade rather than a black window.
+    bool compute = false;
+    VkShaderModule shader = VK_NULL_HANDLE;
+    VkSampler sampler = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> sets;
+    std::vector<VkImageView> src_views;
+    std::vector<VkImageView> dst_views;
+    // The compute pass writes HERE, not straight into the swapchain.
+    //
+    // A swapchain image on this driver is B8G8R8A8_UNORM, and storage-image
+    // writes are not guaranteed for BGRA formats -- nor does a swapchain
+    // image carry STORAGE usage unless asked, which the surface need not
+    // support. Writing into a plain R8G8B8A8_UNORM image (where storage
+    // support IS mandatory) and then blitting 1:1 into the swapchain costs
+    // one full-resolution copy and makes the channel order the blit's
+    // problem, which it handles by definition. Live-caught as a black
+    // window: the dispatch ran, wrote nothing the presentation engine
+    // could show.
+    std::vector<VkImage> staging;
+    std::vector<VkDeviceMemory> staging_memory;
+};
+
+// What the shader needs to know, and all it needs to know.
+struct UpscalePush {
+    int32_t src_w;
+    int32_t src_h;
+    int32_t dst_w;
+    int32_t dst_h;
+    float sharpness;
 };
 
 std::map<uint64_t, UpscaleChain> g_upscale_chains;
@@ -2085,6 +2142,34 @@ void destroy_upscale_chain(UpscaleChain& c) {
     Loader& l = loader();
     if (l.device == VK_NULL_HANDLE) return;
     if (l.device_wait_idle != nullptr) l.device_wait_idle(l.device);
+    for (auto v : c.src_views) {
+        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
+            l.destroy_image_view(l.device, v, nullptr);
+        }
+    }
+    for (auto v : c.dst_views) {
+        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
+            l.destroy_image_view(l.device, v, nullptr);
+        }
+    }
+    if (c.descriptor_pool != VK_NULL_HANDLE && l.destroy_descriptor_pool != nullptr) {
+        l.destroy_descriptor_pool(l.device, c.descriptor_pool, nullptr);
+    }
+    if (c.pipeline != VK_NULL_HANDLE && l.destroy_pipeline != nullptr) {
+        l.destroy_pipeline(l.device, c.pipeline, nullptr);
+    }
+    if (c.pipeline_layout != VK_NULL_HANDLE && l.destroy_pipeline_layout != nullptr) {
+        l.destroy_pipeline_layout(l.device, c.pipeline_layout, nullptr);
+    }
+    if (c.set_layout != VK_NULL_HANDLE && l.destroy_descriptor_set_layout != nullptr) {
+        l.destroy_descriptor_set_layout(l.device, c.set_layout, nullptr);
+    }
+    if (c.sampler != VK_NULL_HANDLE && l.destroy_sampler != nullptr) {
+        l.destroy_sampler(l.device, c.sampler, nullptr);
+    }
+    if (c.shader != VK_NULL_HANDLE && l.destroy_shader_module != nullptr) {
+        l.destroy_shader_module(l.device, c.shader, nullptr);
+    }
     for (auto f : c.fence) {
         if (f != VK_NULL_HANDLE && l.destroy_fence != nullptr) l.destroy_fence(l.device, f, nullptr);
     }
@@ -2101,7 +2186,15 @@ void destroy_upscale_chain(UpscaleChain& c) {
             l.destroy_image(l.device, img, nullptr);
         }
     }
+    for (auto img : c.staging) {
+        if (img != VK_NULL_HANDLE && l.destroy_image != nullptr) {
+            l.destroy_image(l.device, img, nullptr);
+        }
+    }
     for (auto mem : c.memory) {
+        if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
+    }
+    for (auto mem : c.staging_memory) {
         if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
     }
     c = UpscaleChain{};
@@ -2149,6 +2242,181 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
 // its render pass leaving its image in PRESENT_SRC_KHR (it believes it is
 // presenting), so that is the source layout here, and it is put back
 // before the buffer is handed over again.
+// The upscale pass: FSR1's algorithm (edge-adaptive resample, then
+// contrast-adaptive sharpening) as one compute dispatch per frame.
+//
+// Vendor-neutral by construction -- it is ordinary compute maths and runs
+// the same on any GPU with Vulkan. There is deliberately no DLSS path:
+// that needs motion vectors, depth and a jitter matrix from the renderer,
+// which Stud cannot see (it forwards draw calls, not a G-buffer), plus a
+// proprietary runtime. A vendor switch here would run the same shader
+// down both branches.
+bool build_upscale_compute(UpscaleChain& c) {
+    Loader& l = loader();
+    if (l.create_shader_module == nullptr || l.create_compute_pipelines == nullptr ||
+        l.create_descriptor_set_layout == nullptr || l.create_pipeline_layout == nullptr ||
+        l.create_descriptor_pool == nullptr || l.allocate_descriptor_sets == nullptr ||
+        l.update_descriptor_sets == nullptr || l.create_sampler == nullptr ||
+        l.create_image_view == nullptr || l.cmd_push_constants == nullptr ||
+        l.cmd_bind_pipeline == nullptr || l.cmd_bind_descriptor_sets == nullptr ||
+        l.cmd_dispatch == nullptr) {
+        return false;
+    }
+    static const uint32_t kUpscaleSpv[] =
+#include "upscale_spv.h"
+        ;
+    if (sizeof(kUpscaleSpv) < 32) return false;  // built without glslc
+
+    VkShaderModuleCreateInfo smci{};
+    smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smci.codeSize = sizeof(kUpscaleSpv);
+    smci.pCode = kUpscaleSpv;
+    if (l.create_shader_module(l.device, &smci, nullptr, &c.shader) != VK_SUCCESS) return false;
+
+    // Linear filtering with clamped edges: the shader takes its own taps,
+    // so the sampler only has to not wrap and not invent anything.
+    VkSamplerCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_LINEAR;
+    sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.maxLod = 0.0f;
+    if (l.create_sampler(l.device, &sci, nullptr, &c.sampler) != VK_SUCCESS) return false;
+
+    VkDescriptorSetLayoutBinding bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutCreateInfo dslci{};
+    dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslci.bindingCount = 2;
+    dslci.pBindings = bindings;
+    if (l.create_descriptor_set_layout(l.device, &dslci, nullptr, &c.set_layout) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkPushConstantRange range{};
+    range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    range.offset = 0;
+    range.size = sizeof(UpscalePush);
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &c.set_layout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &range;
+    if (l.create_pipeline_layout(l.device, &plci, nullptr, &c.pipeline_layout) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkComputePipelineCreateInfo cpci{};
+    cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = c.shader;
+    cpci.stage.pName = "main";
+    cpci.layout = c.pipeline_layout;
+    if (l.create_compute_pipelines(l.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &c.pipeline) !=
+        VK_SUCCESS) {
+        return false;
+    }
+
+    const auto count = static_cast<uint32_t>(c.offscreen.size());
+    VkDescriptorPoolSize sizes[2]{};
+    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sizes[0].descriptorCount = count;
+    sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    sizes[1].descriptorCount = count;
+    VkDescriptorPoolCreateInfo dpci{};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = count;
+    dpci.poolSizeCount = 2;
+    dpci.pPoolSizes = sizes;
+    if (l.create_descriptor_pool(l.device, &dpci, nullptr, &c.descriptor_pool) != VK_SUCCESS) {
+        return false;
+    }
+
+    std::vector<VkDescriptorSetLayout> layouts(count, c.set_layout);
+    VkDescriptorSetAllocateInfo dsai{};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = c.descriptor_pool;
+    dsai.descriptorSetCount = count;
+    dsai.pSetLayouts = layouts.data();
+    c.sets.resize(count, VK_NULL_HANDLE);
+    if (l.allocate_descriptor_sets(l.device, &dsai, c.sets.data()) != VK_SUCCESS) return false;
+
+    c.src_views.resize(count, VK_NULL_HANDLE);
+    c.dst_views.resize(count, VK_NULL_HANDLE);
+    c.staging.resize(count, VK_NULL_HANDLE);
+    c.staging_memory.resize(count, VK_NULL_HANDLE);
+    for (uint32_t i = 0; i < count; ++i) {
+        // The image the shader writes: R8G8B8A8_UNORM, which every Vulkan
+        // implementation must support as a storage image, at the output
+        // size. See UpscaleChain::staging.
+        VkImageCreateInfo sii{};
+        sii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        sii.imageType = VK_IMAGE_TYPE_2D;
+        sii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        sii.extent = {c.present.width, c.present.height, 1};
+        sii.mipLevels = 1;
+        sii.arrayLayers = 1;
+        sii.samples = VK_SAMPLE_COUNT_1_BIT;
+        sii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        sii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        sii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        sii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (l.create_image(l.device, &sii, nullptr, &c.staging[i]) != VK_SUCCESS) return false;
+        if (!allocate_offscreen_memory(c.staging[i], c.staging_memory[i])) return false;
+
+        VkImageViewCreateInfo vci{};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = c.format;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vci.image = c.offscreen[i];
+        if (l.create_image_view(l.device, &vci, nullptr, &c.src_views[i]) != VK_SUCCESS) {
+            return false;
+        }
+        // The storage view's format must match the shader's own qualifier
+        // (rgba8), which is why this is not the swapchain's format.
+        vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+        vci.image = c.staging[i];
+        if (l.create_image_view(l.device, &vci, nullptr, &c.dst_views[i]) != VK_SUCCESS) {
+            return false;
+        }
+
+        VkDescriptorImageInfo src{};
+        src.sampler = c.sampler;
+        src.imageView = c.src_views[i];
+        src.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo dst{};
+        dst.imageView = c.dst_views[i];
+        dst.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = c.sets[i];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &src;
+        writes[1] = writes[0];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &dst;
+        l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
+    }
+    c.compute = true;
+    return true;
+}
+
 bool record_upscale_blits(UpscaleChain& c) {
     Loader& l = loader();
     if (l.begin_command_buffer == nullptr || l.end_command_buffer == nullptr ||
@@ -2160,12 +2428,27 @@ bool record_upscale_blits(UpscaleChain& c) {
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         if (l.begin_command_buffer(c.cmd[i], &bi) != VK_SUCCESS) return false;
 
+        // Where the two images have to be for the pass that follows: the
+        // compute path samples the engine's image and writes the real one
+        // through a storage image; the blit path reads and writes them as
+        // transfer operands.
+        const VkImageLayout read_layout = c.compute ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                    : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        const VkImageLayout write_layout = c.compute ? VK_IMAGE_LAYOUT_GENERAL
+                                                     : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        const VkPipelineStageFlags pass_stage = c.compute ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                                                          : VK_PIPELINE_STAGE_TRANSFER_BIT;
+        const VkAccessFlags read_access = c.compute ? VK_ACCESS_SHADER_READ_BIT
+                                                    : VK_ACCESS_TRANSFER_READ_BIT;
+        const VkAccessFlags write_access = c.compute ? VK_ACCESS_SHADER_WRITE_BIT
+                                                     : VK_ACCESS_TRANSFER_WRITE_BIT;
+
         VkImageMemoryBarrier to_read{};
         to_read.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         to_read.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        to_read.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        to_read.dstAccessMask = read_access;
         to_read.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        to_read.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_read.newLayout = read_layout;
         to_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         to_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         to_read.image = c.offscreen[i];
@@ -2177,16 +2460,66 @@ bool record_upscale_blits(UpscaleChain& c) {
         // first frame anyway.
         VkImageMemoryBarrier to_write = to_read;
         to_write.srcAccessMask = 0;
-        to_write.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_write.dstAccessMask = write_access;
         to_write.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        to_write.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_write.image = c.real_images[i];
+        to_write.newLayout = write_layout;
+        // Under compute the shader writes the staging image; the swapchain
+        // image is prepared as a blit destination further down.
+        to_write.image = c.compute ? c.staging[i] : c.real_images[i];
 
         VkImageMemoryBarrier before[2] = {to_read, to_write};
-        l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
-                               before);
+        l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, pass_stage,
+                               0, 0, nullptr, 0, nullptr, 2, before);
 
+        if (c.compute) {
+            l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
+            l.cmd_bind_descriptor_sets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
+                                       c.pipeline_layout, 0, 1, &c.sets[i], 0, nullptr);
+            UpscalePush push{};
+            push.src_w = static_cast<int32_t>(c.engine.width);
+            push.src_h = static_cast<int32_t>(c.engine.height);
+            push.dst_w = static_cast<int32_t>(c.present.width);
+            push.dst_h = static_cast<int32_t>(c.present.height);
+            push.sharpness = upscale_sharpness();
+            l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                                 sizeof(push), &push);
+            // 8x8 per group, matching the shader's own local size.
+            l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
+
+            // Hand the result to the swapchain: same size, so this is a
+            // copy that also converts RGBA to the swapchain's BGRA.
+            VkImageMemoryBarrier hand_over[2]{};
+            hand_over[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            hand_over[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            hand_over[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            hand_over[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            hand_over[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            hand_over[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            hand_over[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            hand_over[0].image = c.staging[i];
+            hand_over[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            hand_over[1] = hand_over[0];
+            hand_over[1].srcAccessMask = 0;
+            hand_over[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            hand_over[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            hand_over[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            hand_over[1].image = c.real_images[i];
+            l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
+                                   hand_over);
+
+            VkImageBlit same{};
+            same.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            same.srcOffsets[0] = {0, 0, 0};
+            same.srcOffsets[1] = {static_cast<int32_t>(c.present.width),
+                                  static_cast<int32_t>(c.present.height), 1};
+            same.dstSubresource = same.srcSubresource;
+            same.dstOffsets[0] = same.srcOffsets[0];
+            same.dstOffsets[1] = same.srcOffsets[1];
+            l.cmd_blit_image(c.cmd[i], c.staging[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &same,
+                             VK_FILTER_NEAREST);
+        } else {
         VkImageBlit region{};
         region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.srcOffsets[0] = {0, 0, 0};
@@ -2199,11 +2532,12 @@ bool record_upscale_blits(UpscaleChain& c) {
         l.cmd_blit_image(c.cmd[i], c.offscreen[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                          c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
                          VK_FILTER_LINEAR);
+        }
 
         VkImageMemoryBarrier after_src = to_read;
-        after_src.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        after_src.srcAccessMask = read_access;
         after_src.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        after_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        after_src.oldLayout = read_layout;
         // Back where the engine left it, so the next frame's render pass
         // finds exactly the layout it would have found on a real
         // swapchain image.
@@ -2214,6 +2548,9 @@ bool record_upscale_blits(UpscaleChain& c) {
         after_dst.dstAccessMask = 0;
         after_dst.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         after_dst.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        // Always the swapchain image here: both paths end with it as a
+        // transfer destination, the compute one via the hand-over blit.
+        after_dst.image = c.real_images[i];
 
         VkImageMemoryBarrier after[2] = {after_src, after_dst};
         l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -2301,6 +2638,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     if (want_upscale) {
         pending.engine = ci.imageExtent;
         pending.present = {out_w, out_h};
+        pending.format = ci.imageFormat;
         // The real swapchain is what reaches the compositor, so it is the
         // one that carries the full resolution -- and it has to be a blit
         // destination, which a swapchain image is not asked to be
@@ -2383,6 +2721,17 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
             if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
             pending.fence.push_back(fence);
         }
+        // The real pass. If it cannot be built -- an old driver, a format
+        // that will not take a storage image, a machine with no glslc at
+        // build time -- the recorded command buffers fall back to a plain
+        // blit, which is what the compositor was doing anyway. Never a
+        // black window.
+        if (ok && !build_upscale_compute(pending)) {
+            std::printf("stud-render-host: the upscale shader could not be set up -- falling back "
+                        "to a plain scaled blit\n");
+            std::fflush(stdout);
+            pending.compute = false;
+        }
         if (ok) ok = record_upscale_blits(pending);
         if (!ok) {
             // An honest degrade: tear the half-built chain down and let
@@ -2395,11 +2744,11 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         } else {
             pending.in_flight.assign(count, false);
             g_upscale_chains[to_u64(swapchain)] = std::move(pending);
-            std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, linear blit)\n",
-                        g_upscale_chains[to_u64(swapchain)].engine.width,
-                        g_upscale_chains[to_u64(swapchain)].engine.height,
-                        g_upscale_chains[to_u64(swapchain)].present.width,
-                        g_upscale_chains[to_u64(swapchain)].present.height, count);
+            const UpscaleChain& built = g_upscale_chains[to_u64(swapchain)];
+            std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
+                        built.engine.width, built.engine.height, built.present.width,
+                        built.present.height, count,
+                        built.compute ? "edge-adaptive + sharpening" : "linear blit");
             std::fflush(stdout);
         }
     }
