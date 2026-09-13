@@ -2586,6 +2586,88 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             }
             return 1;
         }
+        case CallId::CopyToClipboard: {
+            if (in.empty()) return 0;
+            const std::string text(reinterpret_cast<const char*>(in.data()), in.size());
+            // Through a helper that keeps serving the selection after
+            // this returns.
+            //
+            // A clipboard is not a store: whoever puts something on it
+            // owns it and has to hand it over when a paste asks, so a
+            // process that sets it and exits copies nothing. This one
+            // cannot hold it either -- on Wayland an offer needs the
+            // serial of a real input event and this process has no
+            // clipboard plumbing at all -- so wl-copy (Wayland) and
+            // xclip/xsel (X11) do it, each of which forks and stays.
+            //
+            // The text is never logged: an invite link carries a
+            // one-time code.
+            static const char* const kWayland[] = {"wl-copy", nullptr};
+            static const char* const kXclip[] = {"xclip", "-selection", "clipboard", nullptr};
+            static const char* const kXsel[] = {"xsel", "--input", "--clipboard", nullptr};
+            const bool wayland = ::getenv("WAYLAND_DISPLAY") != nullptr;
+            const char* const* candidates[3] = {};
+            if (wayland) {
+                candidates[0] = kWayland;
+                candidates[1] = kXclip;
+                candidates[2] = kXsel;
+            } else {
+                candidates[0] = kXclip;
+                candidates[1] = kXsel;
+                candidates[2] = kWayland;
+            }
+            for (const char* const* argv_template : candidates) {
+                if (argv_template == nullptr) continue;
+                int fds[2] = {-1, -1};
+                if (::pipe(fds) != 0) return 0;
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    ::close(fds[1]);
+                    ::dup2(fds[0], STDIN_FILENO);
+                    ::close(fds[0]);
+                    // Its own session: the helper outlives this call and
+                    // must not die with the game window.
+                    ::setsid();
+                    char* argv[8] = {};
+                    size_t n = 0;
+                    for (; argv_template[n] != nullptr && n < 7; ++n) {
+                        argv[n] = const_cast<char*>(argv_template[n]);
+                    }
+                    ::execvp(argv[0], argv);
+                    ::_exit(127);
+                }
+                ::close(fds[0]);
+                if (pid < 0) {
+                    ::close(fds[1]);
+                    return 0;
+                }
+                size_t left = text.size();
+                const char* bytes = text.data();
+                while (left > 0) {
+                    const ssize_t written = ::write(fds[1], bytes, left);
+                    if (written <= 0) break;
+                    bytes += written;
+                    left -= static_cast<size_t>(written);
+                }
+                ::close(fds[1]);
+                // wl-copy and xclip both fork a server and the parent
+                // exits, so this wait is short and tells us whether the
+                // tool was there at all.
+                int status = 0;
+                ::waitpid(pid, &status, 0);
+                const bool ran = WIFEXITED(status) && WEXITSTATUS(status) != 127;
+                if (ran) {
+                    std::printf("stud-render-host: copied %zu bytes to the clipboard via %s\n",
+                                text.size(), argv_template[0]);
+                    std::fflush(stdout);
+                    return 1;
+                }
+            }
+            std::printf("stud-render-host: nothing to copy with -- install wl-clipboard "
+                        "(Wayland) or xclip (X11)\n");
+            std::fflush(stdout);
+            return 0;
+        }
         case CallId::CloseWebView: {
             // The app asked, so the viewer's exit is not a user closing
             // the panel -- but reporting it either way is what a real

@@ -55,6 +55,7 @@
 #include "stud/android_framework_stubs.h"
 #include "stud/protocol_platform_stubs.h"
 #include "stud/game_activity_stubs.h"
+#include "stud/content_sharing_bridge.h"
 #include "stud/game_instance.h"
 #include "stud/server_address.h"
 #include "stud/game_engine_boot.h"
@@ -2098,6 +2099,16 @@ int main(int argc, char** argv) {
                 static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
             return ok != 0;
         });
+
+    // "Copy link" inside an experience: the engine publishes the text
+    // and the platform owns the clipboard, which here means render-host
+    // -- Process B is sandboxed and has no display connection at all.
+    stud::jni_bridge::run_content_sharing_bridge(jvm, lib, [](const std::string& text) {
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::CopyToClipboard, args, text.data(),
+            static_cast<uint32_t>(text.size()), nullptr, 0, nullptr);
+    });
 
     // The other half of the same protocol: a URL the web-view panel was
     // about to navigate to, offered to the engine first. This is how a

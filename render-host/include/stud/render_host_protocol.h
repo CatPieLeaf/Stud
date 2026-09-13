@@ -640,6 +640,14 @@ enum class CallId : uint32_t {
     // an unanswered question a short deadline and then loads the page
     // itself rather than leaving a dead link.
     WebViewLoadUrl,
+    // Put the in-buffer's text on the system clipboard.
+    //
+    // "Copy link" in an experience's invite dialog publishes
+    // `ExternalContentSharing.setClipboardText` and expects the platform
+    // to do this; nothing in Process B can, since the clipboard belongs
+    // to the display server this process is connected to. Appended last:
+    // every existing id keeps its value.
+    CopyToClipboard,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -887,9 +895,10 @@ inline const char* call_id_name(CallId id) {
         "GlCommandBatch",
         "PollWebViewNavigation",
         "WebViewLoadUrl",
+        "CopyToClipboard",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::WebViewLoadUrl) + 1,
+                      static_cast<size_t>(CallId::CopyToClipboard) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
