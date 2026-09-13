@@ -1087,6 +1087,18 @@ namespace stud::ui {
 // Outside the anonymous namespace above so the tray can link against it.
 void terminate_stud_session() { terminate_stale_processes(); }
 
+// Whether a session is running right now.
+//
+// The same flock render-host holds for its whole life, not a process
+// scan: a leftover process can outlive a crash, while a held lock means
+// something is genuinely running.
+bool stud_session_is_running() { return another_instance_is_running(); }
+
+// Start one, with no deep link -- Roblox opens on its own home screen.
+// Used to put back a session that Settings had to stop to replace the
+// APK underneath it.
+void start_stud_session() { launch_game(std::nullopt); }
+
 }  // namespace stud::ui
 
 int main(int argc, char** argv) {
@@ -1377,10 +1389,14 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
     }
 
-    auto showSettings = std::make_shared<std::unique_ptr<stud::ui::SettingsWindow>>();
     if (settings_only) {
-        *showSettings = std::make_unique<stud::ui::SettingsWindow>();
-        (*showSettings)->show();
+        // A Stud that is already running owns Settings: hand the request
+        // over and get out of the way, so the shortcut and the tray open
+        // the same window -- and so the one that can stop and restart the
+        // session is the one that has it.
+        if (stud::ui::SettingsWindow::handOffToRunningInstance()) return 0;
+        stud::ui::SettingsWindow::listenForOpenRequests();
+        stud::ui::SettingsWindow::showSingleton();
         return app.exec();
     }
 
@@ -1407,11 +1423,11 @@ int main(int argc, char** argv) {
             // No readable config at all is the same answer: nothing configured.
         }
         if (!have_apk) {
-            *showSettings = std::make_unique<stud::ui::SettingsWindow>();
-            (*showSettings)->setStatusMessage(
+            if (stud::ui::SettingsWindow::handOffToRunningInstance()) return 0;
+            stud::ui::SettingsWindow::listenForOpenRequests();
+            stud::ui::SettingsWindow::showSingleton(
                 QStringLiteral("Select your Roblox APK to finish setting Stud up. "
                                "Stud does not download or include Roblox itself."));
-            (*showSettings)->show();
             return app.exec();
         }
     }
@@ -1464,7 +1480,12 @@ int main(int argc, char** argv) {
         // menu, not somewhere to hide a running game.
         if (tray_wanted) {
             auto* tray = new stud::ui::Tray(qApp);
-            if (tray->show()) return;
+            if (tray->show()) {
+                // This process outlives the launch, so it is the one that
+                // answers a `--settings` started from the desktop entry.
+                stud::ui::SettingsWindow::listenForOpenRequests();
+                return;
+            }
             std::fprintf(stderr, "stud: no system tray available -- exiting after launch\n");
         }
         QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);

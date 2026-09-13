@@ -21,6 +21,8 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QIcon>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
+#include <QPointer>
 #include <QProcess>
 #include <QSystemTrayIcon>
 #include <QTextStream>
@@ -122,13 +124,9 @@ void Tray::checkSessionAlive() {
 }
 
 void Tray::openSettings() {
-    // Owned by nothing and deleted on close, so opening it twice does not
-    // leak and closing it does not end the session.
-    auto* window = new SettingsWindow();
-    window->setAttribute(Qt::WA_DeleteOnClose);
-    window->show();
-    window->raise();
-    window->activateWindow();
+    // One window, whether the request came from here or from the desktop
+    // entry's own Settings action -- see SettingsWindow::showSingleton().
+    SettingsWindow::showSingleton();
 }
 
 void Tray::copyServerLink() {
@@ -227,12 +225,31 @@ void Tray::exportLogs() {
 }
 
 void Tray::showAbout() {
-    QMessageBox::about(nullptr, QStringLiteral("About Stud"),
-                        QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
-                                       "A Linux desktop wrapper that runs the real, unmodified "
-                                       "Roblox Android app.<br><br>"
-                                       "<a href=\"https://github.com/CatPieLeaf/Stud\">"
-                                       "github.com/CatPieLeaf/Stud</a>"));
+    // One card, however many times the entry is clicked. QMessageBox::about
+    // builds a new dialog every call, so a few clicks left a stack of
+    // identical windows -- the same reason Settings is a singleton.
+    static QPointer<QMessageBox> about;
+    if (about.isNull()) {
+        about = new QMessageBox(QMessageBox::NoIcon, QStringLiteral("About Stud"),
+                                QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
+                                               "A Linux desktop wrapper that runs the real, "
+                                               "unmodified Roblox Android app.<br><br>"
+                                               "<a href=\"https://github.com/CatPieLeaf/Stud\">"
+                                               "github.com/CatPieLeaf/Stud</a>"),
+                                QMessageBox::Ok);
+        about->setAttribute(Qt::WA_DeleteOnClose);
+        about->setTextFormat(Qt::RichText);
+        about->setTextInteractionFlags(Qt::TextBrowserInteraction);
+        // The same logo the About tab shows, at the size a dialog wants.
+        const QPixmap logo(QStringLiteral(":/stud-logo.png"));
+        if (!logo.isNull()) {
+            about->setIconPixmap(
+                logo.scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
+    }
+    about->show();
+    about->raise();
+    about->activateWindow();
 }
 
 void Tray::quitStud() {

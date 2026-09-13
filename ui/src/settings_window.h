@@ -26,6 +26,30 @@ class SettingsWindow : public QWidget {
 public:
     explicit SettingsWindow(QWidget* parent = nullptr);
 
+    // The one settings window, wherever the request came from.
+    //
+    // Two of these can disagree -- both loaded the same file, both write
+    // the whole of it on Save, so whichever is saved last silently undoes
+    // the other. It is also the window that stops and restarts the
+    // session to replace the APK, which two of cannot do at once. So
+    // there is exactly one: in this process, and (see below) across
+    // processes too.
+    static SettingsWindow* showSingleton(const QString& status = QString());
+
+    // The desktop entry's Settings action starts a new stud-ui, which
+    // knows nothing about the one already running the session. If that
+    // one is listening, hand the request over and let it raise its own
+    // window -- opening Settings from the shortcut then behaves exactly
+    // like opening it from the tray, because it IS that window.
+    //
+    // True when the request was handed off and this process should exit.
+    static bool handOffToRunningInstance();
+
+    // Listen for those requests. Called by a stud-ui that is staying
+    // alive (the tray) and by a settings-only one that found nobody to
+    // hand off to.
+    static void listenForOpenRequests();
+
     // Says why this window opened, above the Save button, when Stud
     // opened it rather than the user asking for it.
     void setStatusMessage(const QString& text);
