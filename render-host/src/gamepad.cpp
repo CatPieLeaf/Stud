@@ -560,7 +560,17 @@ void poll(std::vector<Event>& out) {
 
     for (auto it = devices().begin(); it != devices().end();) {
         bool died = false;
-        read_device(it->second, out, died);
+        // A pad that goes away usually takes its device node with it --
+        // a wireless receiver destroys the node when the pad powers off.
+        // Reading it may not fail for a while, so the node's own absence
+        // is what says the pad is gone. Without this the engine keeps
+        // believing a controller is attached long after it is not, which
+        // leaves the app in controller mode with nothing to drive it.
+        if (::access(it->first.c_str(), F_OK) != 0) {
+            died = true;
+            it->second.death_errno = errno;
+        }
+        if (!died) read_device(it->second, out, died);
         if (died) {
             std::printf("stud-render-host: gamepad disconnected: %s (id %d, %s)\n",
                         it->second.name.empty() ? "unnamed" : it->second.name.c_str(),
