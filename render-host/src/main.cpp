@@ -3961,7 +3961,21 @@ int main(int argc, char** argv) {
     // compositor upscales it. Either way the DISPLAY's own scale is left
     // alone -- that separation is what makes the off state merely blurry
     // instead of also wrong.
-    stud::android_glue::set_render_scale_120(g_hidpi_enabled ? 0 : 120);
+    int32_t render_scale_120 = g_hidpi_enabled ? 0 : 120;
+    // TEST ONLY, off unless set: the buffer scale on its own, with the
+    // engine's layout density left alone. Separates "the engine simplifies
+    // its UI at a low resolution" from "it simplifies at a sub-1.0 DPI
+    // scale" -- two explanations for the same observed loss of rounded
+    // corners, and they need different answers.
+    if (const char* v = std::getenv("STUD_TEST_RENDER_SCALE_120")) {
+        const int requested = std::atoi(v);
+        if (requested > 0) {
+            render_scale_120 = requested;
+            std::printf("stud-render-host: TEST buffer scale forced to %d/120\n", requested);
+            std::fflush(stdout);
+        }
+    }
+    stud::android_glue::set_render_scale_120(render_scale_120);
 
     // Open the audio device now, not when a sound first plays: Stud should
     // appear in the desktop's volume mixer from launch, like any other
