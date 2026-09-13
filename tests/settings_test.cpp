@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
     check(defaults.graphics_mode == stud::config::GraphicsMode::kVulkan,
           "missing config file defaults to Vulkan (locked default-on-first-launch decision)");
     check(defaults.gpu.device_index == 0, "missing config file defaults gpu.deviceIndex to 0");
-    check(defaults.apk_path.empty(), "missing config file defaults apkPath to empty (no APK picked yet)");
+    check(defaults.background_fps == 30, "missing config file defaults the background frame rate to 30");
 
     std::string path = dir + "/config.json";
 
@@ -45,7 +45,6 @@ int main(int argc, char** argv) {
     settings.hidpi = false;
     settings.follow_dpi = true;
     settings.graphics_mode = stud::config::GraphicsMode::kOpenGL;
-    settings.apk_path = "/home/user/Downloads/roblox.apk";
     stud::config::save_settings(path, settings);
 
     auto loaded = stud::config::load_settings(path);
@@ -54,7 +53,30 @@ int main(int argc, char** argv) {
     check(loaded.hidpi == false, "hidpi round-trips as false");
     check(loaded.follow_dpi == true, "followDpi round-trips as true");
     check(loaded.graphics_mode == stud::config::GraphicsMode::kOpenGL, "graphicsMode round-trips as opengl");
-    check(loaded.apk_path == "/home/user/Downloads/roblox.apk", "apkPath round-trips");
+    // Retired keys are removed on save rather than carried forward: a
+    // file that still lists them reads as if they do something.
+    {
+        std::ofstream stale(path, std::ios::trunc);
+        stale << R"({"apkPath":"/home/user/Downloads/roblox.apk","apkName":"roblox.apk",)"
+                 R"("uiScale":1.25,"needsBionicFallback":false,"backgroundFps":241})";
+    }
+    auto stale_loaded = stud::config::load_settings(path);
+    check(stale_loaded.background_fps == stud::config::kBackgroundFpsNoLimit,
+          "an out-of-range backgroundFps (the 241 older builds wrote) reads as unlimited");
+    stud::config::save_settings(path, stale_loaded);
+    {
+        std::ifstream f(path);
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        check(content.find("apkPath") == std::string::npos, "apkPath is not written any more");
+        check(content.find("apkName") == std::string::npos, "apkName is not written any more");
+        check(content.find("uiScale") == std::string::npos, "uiScale is not written any more");
+        check(content.find("needsBionicFallback") == std::string::npos,
+              "needsBionicFallback is not written any more");
+        check(content.find("\"backgroundFps\": 0") != std::string::npos,
+              "unlimited is stored as 0, not as one past the top of a slider");
+    }
+    // Back to the round-trip file for the checks below.
+    stud::config::save_settings(path, settings);
 
     // Real content check -- keys are actually named as the schema promises.
     {

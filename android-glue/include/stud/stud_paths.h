@@ -53,6 +53,18 @@ inline std::string log_dir() { return state_dir() + "/logs"; }
 // is what an app is expected to keep, getCacheDir() is what it is
 // expected to lose. Stud honours that distinction rather than putting
 // both under one root.
+// Stud's own copy of the Roblox APK.
+//
+// The settings window is a picker, not a path field: whatever is chosen
+// is copied here and used from here forever after, so moving, renaming
+// or deleting the file that was picked cannot break a launch. Exactly
+// one is kept, under one fixed name, and importing another overwrites
+// it -- the name the user picked is a label in the window, not a thing
+// on disk. The extractor works out a merged .apk from a split bundle by
+// content, so the extension carries no meaning here either.
+inline std::string apk_dir() { return data_dir() + "/apk"; }
+inline std::string stored_apk_path() { return apk_dir() + "/roblox.apk"; }
+
 inline std::string engine_files_dir() { return data_dir() + "/files"; }
 inline std::string engine_cache_dir() { return cache_dir() + "/cache"; }
 

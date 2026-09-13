@@ -39,15 +39,12 @@ private slots:
 
 private:
     void loadFromDisk();
+    QString storedApkLabel() const;
 
-    // Real path this APK's libroblox.so was originally loaded from
-    // (settings.apk_path as read from disk at construction time) --
-    // compared against the field's live text on Save so the
-    // extraction+patch-attempt work (task #17: real, once-per-import
-    // work, not something to redo on every unrelated settings change)
-    // only runs when the user actually picked a *different* APK, or
-    // when no cached extraction exists yet at all.
-    std::string loadedApkPath_;
+    // The file the user just picked, until Save imports it. The field
+    // beside the button shows a name, not a path, so it cannot be the
+    // place the choice is kept.
+    QString pickedApkPath_;
 
     QComboBox* gpuCombo_;
     // Sharpness: whether the buffer is rendered at the display's own

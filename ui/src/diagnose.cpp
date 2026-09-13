@@ -318,11 +318,10 @@ void write_diagnostics() {
         line("mangohud", yes_no(settings.mangohud));
         line("system tray", yes_no(settings.system_tray));
         line("discord presence", yes_no(settings.discord_rich_presence));
-        line("apk", settings.apk_path);
-        if (!settings.apk_path.empty()) {
-            line("apk file", exists_size(settings.apk_path));
-            line("apk version", stud::android_glue::apk_version_name(settings.apk_path));
-        }
+        const std::string apk = stud::paths::stored_apk_path();
+        line("apk", apk);
+        line("apk file", exists_size(apk));
+        line("apk version", stud::android_glue::apk_version_name(apk));
     }
     std::printf("\n");
 
