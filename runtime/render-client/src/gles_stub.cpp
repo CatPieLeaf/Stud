@@ -513,12 +513,12 @@ void glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat* value) {
     if (value != nullptr) {
         for (int i = 0; i < 4; ++i) local[i] = value[i];
     }
-    connection().call(CallId::GlClearBufferfv, a, local, sizeof(local), nullptr, 0, nullptr);
+    connection().call_void(CallId::GlClearBufferfv, a, local, sizeof(local));
 }
 void glDrawBuffers(GLsizei n, const GLenum* bufs) {
     uint64_t a[8] = {static_cast<uint64_t>(n)};
-    connection().call(CallId::GlDrawBuffers, a, bufs,
-                       static_cast<uint32_t>(n) * sizeof(GLenum), nullptr, 0, nullptr);
+    connection().call_void(CallId::GlDrawBuffers, a, bufs,
+                            static_cast<uint32_t>(n) * sizeof(GLenum));
 }
 
 // The engine's main colour buffer is a multisampled renderbuffer. While
@@ -549,8 +549,8 @@ void glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint
 }
 void glInvalidateFramebuffer(GLenum target, GLsizei numAttachments, const GLenum* attachments) {
     uint64_t a[8] = {target, static_cast<uint64_t>(numAttachments)};
-    connection().call(CallId::GlInvalidateFramebuffer, a, attachments,
-                       static_cast<uint32_t>(numAttachments) * sizeof(GLenum), nullptr, 0, nullptr);
+    connection().call_void(CallId::GlInvalidateFramebuffer, a, attachments,
+                            static_cast<uint32_t>(numAttachments) * sizeof(GLenum));
 }
 
 // Real GLES3 sync objects. A GLsync is an opaque handle the caller
@@ -604,7 +604,7 @@ void glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint 
                               srcWidth,                      srcHeight,
                               srcDepth};
     uint64_t a[8] = {};
-    connection().call(CallId::GlCopyImageSubData, a, args, sizeof(args), nullptr, 0, nullptr);
+    connection().call_void(CallId::GlCopyImageSubData, a, args, sizeof(args));
 }
 
 // Real GLES3 entry points libroblox actually calls during app bring-up
