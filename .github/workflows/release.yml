@@ -22,10 +22,11 @@ on:
         description: "Existing release tag to build and upload to"
         required: true
 
+# Read-only by default; the two jobs that need more say so themselves.
+# Only `publish` writes to the release, and only the cpak image push needs
+# ghcr.io.
 permissions:
-  contents: write
-  # ghcr.io, for the OCI image cpak installs from.
-  packages: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event.release.tag_name || inputs.tag }}
@@ -39,10 +40,16 @@ env:
 
 jobs:
   packages:
-    # One build of Stud, wrapped four ways. Building each format in its
-    # own job would mean four builds of ANGLE -- an hour each -- and no
-    # guarantee that the packages hold the same binaries.
+    # One build of Stud, wrapped several ways: the rpm, the deb, the Arch
+    # package, the Flatpak and the cpak image all come from the install
+    # tree this job produces, so they cannot hold different binaries.
+    #
+    # The AppImage is the exception and builds its own, because it links
+    # against an older glibc than this container has -- which is also why
+    # it keeps a separate ANGLE cache.
     name: Build, rpm and deb
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     container: fedora:42
     steps:
@@ -63,7 +70,7 @@ jobs:
           # The tag being released, not whatever the default branch holds:
           # the packages attached to a release must be built from the code
           # that release names.
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ env.TAG }}
 
       - name: Free up disk space
         # Only matters on a cache miss, when ANGLE's own checkout needs
@@ -149,18 +156,9 @@ jobs:
           path: |
             build/*.rpm
             build/*.deb
-            *.pkg.tar.zst
             stud-*-x86_64.tar.zst
           if-no-files-found: error
 
-  # Arch package and cpak image.
-  #
-  # These run HERE, on the runner, and not in the packages job -- that one
-  # runs inside a Fedora container, and podman is installed on the runner,
-  # not in the container. It failed there with `podman: command not found`
-  # (exit 127) and, because both steps carried continue-on-error, the job
-  # still went green while producing neither. Two of five package formats
-  # were silently missing from the release.
   # The manifest is lint-able on its own: it needs no build, no install
   # tree and no artifact, so it gets its own job and reports within a
   # minute of the release starting rather than waiting on the build.
@@ -171,11 +169,13 @@ jobs:
   # checked by the job that builds the Arch package and the cpak image.
   flatpak-manifest:
     name: Flatpak manifest lint
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ env.TAG }}
 
       - name: The Flatpak manifest must pass Flathub's own linter
         # The same linter Flathub runs on a submission. It exits 0 for
@@ -198,6 +198,14 @@ jobs:
           PY
 
 
+  # Arch package and cpak image.
+  #
+  # These run HERE, on the runner, and not in the packages job -- that one
+  # runs inside a Fedora container, and podman is installed on the runner,
+  # not in the container. It failed there with `podman: command not found`
+  # (exit 127) and, because both steps carried continue-on-error, the job
+  # still went green while producing neither. Two of five package formats
+  # were silently missing from the release.
   containers:
     name: Arch package and cpak image
     needs: packages
@@ -205,12 +213,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ env.TAG }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -331,6 +337,8 @@ jobs:
 
   appimage:
     name: AppImage
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     # The same base packaging/Containerfile.appimage pins, for the same
     # reasons: Qt 6.8 and a KF6 that has the real Breeze style. Running it
@@ -361,7 +369,7 @@ jobs:
           # The tag being released, not whatever the default branch holds:
           # the packages attached to a release must be built from the code
           # that release names.
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ env.TAG }}
 
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
@@ -410,8 +418,12 @@ jobs:
           if-no-files-found: error
 
   flatpak:
-    # After the job above, because it installs the archive that job built.
+    # Needs `packages` for the archive it installs, and the manifest lint
+    # because a manifest Flathub would reject is not worth spending a
+    # twenty-minute build on.
     name: Flatpak bundle
+    permissions:
+      contents: read
     needs: [packages, flatpak-manifest]
     runs-on: ubuntu-latest
     container:
@@ -420,7 +432,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ env.TAG }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -471,6 +483,8 @@ jobs:
 
   publish:
     name: Attach every package to the release
+    permissions:
+      contents: write
     needs: [packages, containers, appimage, flatpak]
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
@@ -492,10 +506,11 @@ jobs:
             \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
                -o -name '*.pkg.tar.zst' -o -name 'stud-*-x86_64.tar.zst' \
                -o -name '*.flatpak' \))
-          # rpm, deb, AppImage and the Flatpak archive are required. The
-          # Arch package is not: its job is allowed to fail, since makepkg
-          # in a container is the one step here that depends on something
-          # outside this repository's control.
+          # Every format is required, the Arch package included. It used
+          # to be exempt, back when its step carried continue-on-error and
+          # could vanish quietly; that is gone, `needs` covers its job, and
+          # this list is the last check that what the release promises is
+          # actually attached to it.
           for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.flatpak$' '\.pkg\.tar\.zst$'; do
             printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
               { echo "no package matching $required" >&2; exit 1; }
@@ -509,9 +524,11 @@ jobs:
       # repositories can copy them.
       - name: Checksums for the AUR and Flathub repositories
         run: |
-          echo "Source tarball (AUR sha256sums):"
+          echo "Source tarball -- for the source PKGBUILD, which is NOT the"
+          echo "published one (see packaging/aur/README.md):"
           curl -fsSL "https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz" \
             | sha256sum | cut -d' ' -f1
           echo
-          echo "Flatpak archive (manifest sha256):"
+          echo "Release archive -- this is the one stud-bin and the Flatpak"
+          echo "manifest both name, so both take this checksum:"
           find artifacts -name 'stud-*-x86_64.tar.zst' -exec sha256sum {} + | cut -d' ' -f1
