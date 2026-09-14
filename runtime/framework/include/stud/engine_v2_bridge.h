@@ -366,6 +366,22 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
 // Called from NativeHelperStub::gameActivity_onExperienceStart's hook, which
 // runs on the engine's own callback thread -- so this dispatches the real work
 // to its own bounded background thread and returns immediately.
+// Join a place handed over by a second stud-ui, because a game link was
+// clicked while this session was already playing.
+//
+// The payload is the parsed link as key=value lines (placeId, gameInfo,
+// joinAttemptId, ...), produced by Process A, which owns the URI parser.
+// This runs the same nativeAppBridgeV2StartGameWithParam path a deep-link
+// launch already uses -- the difference is only when it happens.
+//
+// Returns false when the payload carries no place id. NEVER logs the
+// payload: a deep link carries a one-time join ticket.
+bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                                    const std::string& payload,
+                                    const std::shared_ptr<PlatformParams>& platform_params,
+                                    const std::shared_ptr<DeviceParams>& device_params,
+                                    const std::shared_ptr<SurfaceStub>& surface);
+
 void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                   const std::shared_ptr<PlatformParams>& platform_params,
                                   const std::shared_ptr<DeviceParams>& device_params,

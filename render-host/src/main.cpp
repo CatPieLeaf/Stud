@@ -654,6 +654,12 @@ std::atomic<uint32_t> g_webview_closed{0};
 // reports that it is finished this way, so dropping these means the page
 // completes and the login never does.
 std::mutex g_webview_message_mutex;
+// Deep links handed over by a second stud-ui. Bounded, because a queue
+// nothing drains must not grow for the life of the process -- and if
+// several arrive before Process B looks, the newest is the one the person
+// actually asked for.
+std::mutex g_deep_link_mutex;
+std::deque<std::string> g_deep_links;
 std::deque<std::string> g_webview_messages;
 
 // URLs the viewer refused to navigate to itself, waiting for the app to
@@ -2615,6 +2621,35 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // The out-buffer is the handler's to size, same as every
             // other call that answers with bytes.
             out.assign(message.begin(), message.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::DeliverDeepLink: {
+            std::string uri(reinterpret_cast<const char*>(in.data()), in.size());
+            if (uri.empty()) return 0;
+            {
+                std::lock_guard<std::mutex> lock(g_deep_link_mutex);
+                // Two links queued at once means the first was never
+                // acted on; keep the newest rather than replaying a stale
+                // one at whatever the person just asked for.
+                while (g_deep_links.size() >= 4) g_deep_links.pop_front();
+                g_deep_links.push_back(std::move(uri));
+            }
+            // The URI itself is never logged: a deep link carries a
+            // one-time join ticket.
+            std::printf("stud-render-host: a second launch handed over a deep link\n");
+            std::fflush(stdout);
+            return 1;
+        }
+        case CallId::PollDeepLink: {
+            std::string uri;
+            {
+                std::lock_guard<std::mutex> lock(g_deep_link_mutex);
+                if (g_deep_links.empty()) return 0;
+                uri = std::move(g_deep_links.front());
+                g_deep_links.pop_front();
+            }
+            out.assign(uri.begin(), uri.end());
             *out_len = static_cast<uint32_t>(out.size());
             return out.size();
         }
