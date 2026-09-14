@@ -23,6 +23,27 @@ endif()
 option(STUD_BUILD_TESTS "Build Stud tests" ON)
 option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
+
+# Hardening for the glibc-side binaries.
+#
+# Position-independent executables and immediate binding with a read-only
+# GOT are what a distribution's own build flags supply by default, and an
+# Arch packaging analyser reports their absence (`lacks PIE`, `lacks FULL
+# RELRO`) on binaries built without them -- which a prebuilt release is,
+# since it never passes through makepkg's flags.
+#
+# Deliberately NOT applied to the bionic sub-build: that one is compiled
+# with the Android NDK toolchain against a real bionic, and its linker
+# flags are its own business.
+# POSITION_INDEPENDENT_CODE alone only reaches the COMPILER (-fPIE); the
+# link needs -pie as well, which CMP0083 is what makes CMake add. Without
+# the policy the binaries still come out ET_EXEC and the analyser is
+# right to say so -- checked, before this line existed.
+cmake_policy(SET CMP0083 NEW)
+include(CheckPIESupported)
+check_pie_supported(LANGUAGES CXX)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_link_options($<$<LINK_LANGUAGE:CXX>:-Wl,-z,relro,-z,now>)
 option(STUD_ENABLE_DEV_RENDER_TOGGLE "Enable the prototype-only dev render-backend config toggle" ON)
 
 # The application's identity, in one place.

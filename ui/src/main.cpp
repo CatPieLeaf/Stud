@@ -170,6 +170,14 @@ QString find_render_host_binary() {
     if (QFile::exists(libexec)) {
         return libexec;
     }
+    // Some distributions do not use libexec at all -- Arch puts a
+    // package's private executables in lib/<pkg>/, and its own packaging
+    // analyser treats anything under libexec as misplaced. Both layouts
+    // are checked so one build works either way.
+    QString privlib = QCoreApplication::applicationDirPath() + "/../lib/stud/stud-render-host";
+    if (QFile::exists(privlib)) {
+        return privlib;
+    }
     return QStandardPaths::findExecutable("stud-render-host");
 }
 
@@ -190,6 +198,11 @@ QString find_process_b_binary() {
         QCoreApplication::applicationDirPath() + "/../libexec/stud/stud-runtime-bionic";
     if (QFile::exists(libexec)) {
         return libexec;
+    }
+    // The lib/stud layout, same reasoning as find_render_host_binary().
+    QString privlib = QCoreApplication::applicationDirPath() + "/../lib/stud/stud-runtime-bionic";
+    if (QFile::exists(privlib)) {
+        return privlib;
     }
     return QStandardPaths::findExecutable("stud-runtime-bionic");
 }

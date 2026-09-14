@@ -29,10 +29,16 @@ depends=(
   'qt6-webengine'
   'qtkeychain-qt6'
   'vulkan-icd-loader'
+  'libglvnd'
+  'libxext'
   'portaudio'
   'freetype2'
   'wayland'
   'libxkbcommon'
+  'glibc'
+  'gcc-libs'
+  'openssl'
+  'hicolor-icon-theme'
 )
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
@@ -42,7 +48,7 @@ optdepends=(
 # there is nothing here for makepkg to strip that upstream did not mean.
 options=(!strip !debug emptydirs)
 # The tag carries no leading "v" -- match what is actually published.
-source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-x86_64.tar.zst")
+source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst")
 # Replaced at publish time by the checksum of the archive the release
 # actually serves -- `updpkgsums`, or the value the release workflow
 # prints. A stale checksum here would be worse than none.
@@ -50,6 +56,17 @@ sha256sums=('SKIP')
 
 package() {
   # The archive is the install tree rooted at usr/, which is exactly what
-  # a package is. Nothing is rebuilt or rearranged.
+  # a package is. Nothing is rebuilt, only relocated below.
   cp -a usr "$pkgdir"/
+
+  # Arch does not use /usr/libexec -- a package's own executables belong
+  # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
+  # misplaced (12 errors on this package before this moved). stud-ui
+  # probes both layouts, so the binaries need no rebuild for this.
+  if [ -d "$pkgdir/usr/libexec/stud" ]; then
+    mkdir -p "$pkgdir/usr/lib"
+    cp -a "$pkgdir/usr/libexec/stud" "$pkgdir/usr/lib/stud-helpers"
+    cp -a "$pkgdir/usr/lib/stud-helpers/." "$pkgdir/usr/lib/stud/"
+    rm -rf "$pkgdir/usr/lib/stud-helpers" "$pkgdir/usr/libexec"
+  fi
 }
