@@ -2596,6 +2596,9 @@ int main(int argc, char** argv) {
     // The teardown belongs to the window-close path, where the host is
     // still there to answer. Here the honest thing is to stop.
     if (render_host_gone) {
+        // Same reasoning as the teardown below: the engine's threads are
+        // still live and are about to lose the process under them.
+        stud::jni_bridge::note_shutting_down();
         std::printf("stud: no render host to shut down against -- exiting\n");
         std::fflush(stdout);
         std::fflush(stderr);
@@ -2607,6 +2610,9 @@ int main(int argc, char** argv) {
     // the real titlebar-close sequence) -- LeaveGame then DestroyApp,
     // both real, confirmed-safe to call even if no game was ever
     // joined. Previously this process just exited raw here.
+    // From here the engine is being destroyed under its own still-running
+    // threads, so a fault on one of them is the teardown, not a bug.
+    stud::jni_bridge::note_shutting_down();
     try {
         stud::jni_bridge::run_engine_v2_teardown(jvm, lib);
     } catch (const std::exception& e) {
