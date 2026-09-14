@@ -1,11 +1,14 @@
 # Packages, built from the same install tree as `cmake --install`.
 #
-#   cpack -G RPM   -B <dir>     Fedora, and what Discover lists
-#   packaging/build-appimage.sh  everything in one file, any distribution
+#   cpack -G RPM   -B <dir>      Fedora, and what Discover lists
+#   cpack -G DEB   -B <dir>      Debian and Ubuntu
+#   packaging/build-appimage.sh   everything in one file, any distribution
 #
-# There is deliberately no DEB generator: the AppImage is what Stud
-# offers everywhere the rpm does not reach, and a third format is a third
-# thing to keep working.
+# Each generator's dependency list is its own, and that separation is the
+# point: the Debian list names Debian's packages and lives with whatever
+# Qt an Ubuntu LTS happens to carry, and none of that reaches the rpm, the
+# Arch package (packaging/aur) or the AppImage -- which bundles Qt
+# precisely because it has to run where no list applies.
 
 set(CPACK_PACKAGE_NAME "stud")
 set(CPACK_PACKAGE_VERSION "${STUD_VERSION}")
@@ -64,5 +67,40 @@ set(CPACK_RPM_SPEC_MORE_DEFINE "%global __os_install_post %{nil}
 %global __brp_check_rpaths %{nil}
 %global __requires_exclude_from ^/usr/lib/stud/.*|^/usr/libexec/stud/.*$
 %global __provides_exclude_from ^/usr/lib/stud/.*|^/usr/libexec/stud/.*$")
+
+# ---------------------------------------------------------------- DEB
+#
+# Debian and Ubuntu, and deliberately nothing else: every name below is a
+# Debian package name, and the older Qt that an Ubuntu LTS carries is this
+# package's business alone. Nothing here reaches the rpm, the Arch package
+# or the AppImage -- the AppImage in particular has to work on
+# distributions this list has never heard of, which is why it bundles Qt
+# instead of depending on it.
+set(CPACK_DEBIAN_PACKAGE_NAME "stud")
+set(CPACK_DEBIAN_PACKAGE_SECTION "games")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
+set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+# The same reasoning as the rpm's own list: bubblewrap because Process B
+# is launched inside it and Stud will not start without one, and
+# portaudio because render-host loads it by name at runtime rather than
+# linking it, so no dependency scan would ever find it.
+#
+# Qt is named by its Debian binary packages rather than a version:
+# whatever the distribution has is what this package builds against, and
+# pinning a minimum here would only make the package uninstallable on the
+# release it was built for.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS
+    "bubblewrap, libqt6gui6, libqt6widgets6, libqt6network6, libqt6webenginewidgets6, \
+qtkeychain-qt6-dev | libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
+libwayland-client0, libxkbcommon0")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud")
+# The bundled libraries are private to Stud. Without this, dpkg-shlibdeps
+# reads ANGLE and the bionic set and either invents dependencies that do
+# not exist or fails outright -- they are not built against the host's
+# libraries and have no business in the scan.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+set(CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS OFF)
 
 include(CPack)
