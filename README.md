@@ -15,7 +15,7 @@
   <p align="center">Play Roblox on Linux — the real Android app, running on your desktop.</p>
 </div>
 
-<p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything the real Roblox client would have — the Android framework, a window, a mouse and keyboard, a graphics stack — so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
+<p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything it needs to run — the Android framework, a window, a mouse and keyboard, a graphics stack — so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
 
 <div align="center">
 
