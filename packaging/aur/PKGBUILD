@@ -1,0 +1,85 @@
+# Maintainer: Stud contributors <https://github.com/CatPieLeaf/Stud>
+#
+# Builds Stud from the release source. Be warned in advance: most of the
+# build time is ANGLE, which is compiled from source because Stud needs
+# both its Vulkan and its SwiftShader backends and no distribution ships
+# that combination. Expect around an hour on a modern machine, and around
+# 15 GB of scratch space. tools/setup.sh fetches the three dependencies
+# that cannot be redistributed -- Google's NDK, ANGLE's source, and a real
+# bionic taken from AOSP's own prebuilt Runtime APEX.
+#
+# A prebuilt package is attached to every release if you would rather not
+# wait: https://github.com/CatPieLeaf/Stud/releases
+
+pkgname=stud
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Play Roblox on Linux -- runs the real, unmodified Roblox Android app"
+arch=('x86_64')
+url="https://github.com/CatPieLeaf/Stud"
+license=('AGPL-3.0-or-later')
+# bubblewrap is not optional: Process B is launched inside it, and Stud
+# refuses to start without it. It is a package rather than a bundled
+# binary on purpose -- a distribution's own build carries the AppArmor and
+# SELinux policy that lets it create a user namespace at all.
+#
+# portaudio is loaded by name at runtime rather than linked, so nothing in
+# the ELF would record the dependency; the engine's own FMOD opens an
+# audio device when a game starts and fails outright without one.
+depends=(
+  'bubblewrap'
+  'qt6-base'
+  'qt6-webengine'
+  'qtkeychain-qt6'
+  'vulkan-icd-loader'
+  'portaudio'
+  'freetype2'
+  'wayland'
+  'libxkbcommon'
+)
+makedepends=(
+  'cmake'
+  'ninja'
+  'git'
+  'python'
+  'curl'
+  'unzip'
+  'zstd'
+  'e2fsprogs'
+  'wayland-protocols'
+  'vulkan-headers'
+  'pkgconf'
+)
+optdepends=(
+  'mangohud: the performance overlay Stud can switch on in Settings'
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# Replaced by CI at release time, from the tarball GitHub actually serves.
+sha256sums=('SKIP')
+
+prepare() {
+  cd "Stud-$pkgver"
+  # The NDK, ANGLE and bionic. This is the long part, and it is skipped
+  # for anything already present -- so an interrupted build resumes
+  # rather than starting over.
+  tools/setup.sh
+}
+
+build() {
+  cd "Stud-$pkgver"
+  cmake -S . -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DSTUD_VERSION="$pkgver"
+  cmake --build build
+}
+
+check() {
+  cd "Stud-$pkgver"
+  ctest --test-dir build --output-on-failure
+}
+
+package() {
+  cd "Stud-$pkgver"
+  DESTDIR="$pkgdir" cmake --install build
+}
