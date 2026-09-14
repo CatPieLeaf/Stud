@@ -122,7 +122,7 @@ jobs:
           DESTDIR="$PWD/install-tree" cmake --install build
           # What the Flatpak manifest expects: the tree rooted at usr/,
           # compressed the way its `type: archive` source reads it.
-          tar -C install-tree -caf "stud-${TAG#v}-x86_64-flatpak.tar.zst" usr
+          tar -C install-tree -caf "stud-${TAG#v}-x86_64.tar.zst" usr
 
       - name: Package the Arch pkg.tar.zst
         # In a container, because makepkg is Arch's and refuses to run as
@@ -172,7 +172,7 @@ jobs:
             build/*.rpm
             build/*.deb
             *.pkg.tar.zst
-            *-flatpak.tar.zst
+            stud-*-x86_64.tar.zst
             cpak-image-digest.txt
           if-no-files-found: error
 
@@ -280,7 +280,7 @@ jobs:
         # rewritten to the local file. Same archive either way; only where
         # flatpak-builder reads it from differs.
         run: |
-          archive="$(find artifacts -name '*-flatpak.tar.zst' | head -1)"
+          archive="$(find artifacts -name 'stud-*-x86_64.tar.zst' | head -1)"
           [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
           cp "$archive" stud-archive.tar.zst
           python3 - <<'PY'
@@ -337,7 +337,7 @@ jobs:
           # no packages attached is worse than a loud failure.
           mapfile -t packages < <(find artifacts -type f \
             \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
-               -o -name '*.pkg.tar.zst' -o -name '*-flatpak.tar.zst' \
+               -o -name '*.pkg.tar.zst' -o -name 'stud-*-x86_64.tar.zst' \
                -o -name '*.flatpak' \))
           # rpm, deb, AppImage and the Flatpak archive are required. The
           # Arch package is not: its job is allowed to fail, since makepkg
@@ -361,4 +361,4 @@ jobs:
             | sha256sum | cut -d' ' -f1
           echo
           echo "Flatpak archive (manifest sha256):"
-          find artifacts -name '*-flatpak.tar.zst' -exec sha256sum {} + | cut -d' ' -f1
+          find artifacts -name 'stud-*-x86_64.tar.zst' -exec sha256sum {} + | cut -d' ' -f1

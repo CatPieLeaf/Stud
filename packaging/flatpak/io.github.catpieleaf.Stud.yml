@@ -126,7 +126,7 @@ modules:
       # change what it installs without changing what it says is not
       # reproducible.
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/releases/download/v1.1.0/stud-1.1.0-x86_64-flatpak.tar.zst
+        url: https://github.com/CatPieLeaf/Stud/releases/download/v1.1.0/stud-1.1.0-x86_64.tar.zst
         sha256: PLACEHOLDER_STUD_SHA256
         only-arches:
           - x86_64

@@ -1,0 +1,54 @@
+# Maintainer: CatPieLeaf <catpieleaf@proton.me>
+#
+# The prebuilt package. It installs the release archive CI built from the
+# tag, so it needs no ANGLE build and no network beyond fetching that one
+# file -- which makepkg does itself, before build() ever runs.
+#
+# This is the one that belongs in the AUR. The source PKGBUILD beside it
+# fetches Google's NDK, an ANGLE checkout and a bionic image from inside
+# prepare(), and makepkg only downloads what is in source=(): in a clean
+# chroot there is no network at that point, so it cannot build there.
+# packaging/aur/README.md has the whole of that reasoning.
+
+pkgname=stud-bin
+_pkgname=stud
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Play Roblox on Linux -- runs the real, unmodified Roblox Android app"
+arch=('x86_64')
+url="https://github.com/CatPieLeaf/Stud"
+license=('AGPL-3.0-or-later')
+provides=("$_pkgname=$pkgver")
+conflicts=("$_pkgname")
+# The same list as the source PKGBUILD, and it has to stay that way: a
+# dependency that only one of them names is a broken package for half the
+# people who install it.
+depends=(
+  'bubblewrap'
+  'qt6-base'
+  'qt6-webengine'
+  'qtkeychain-qt6'
+  'vulkan-icd-loader'
+  'portaudio'
+  'freetype2'
+  'wayland'
+  'libxkbcommon'
+)
+optdepends=(
+  'mangohud: the performance overlay Stud can switch on in Settings'
+)
+# Stripping a bionic ELF or ANGLE is neither useful nor safe -- the same
+# reason the rpm turns it off. These are also already-built binaries, so
+# there is nothing here for makepkg to strip that upstream did not mean.
+options=(!strip !debug emptydirs)
+source=("$pkgname-$pkgver.tar.zst::$url/releases/download/v$pkgver/stud-$pkgver-x86_64.tar.zst")
+# Replaced at publish time by the checksum of the archive the release
+# actually serves -- `updpkgsums`, or the value the release workflow
+# prints. A stale checksum here would be worse than none.
+sha256sums=('SKIP')
+
+package() {
+  # The archive is the install tree rooted at usr/, which is exactly what
+  # a package is. Nothing is rebuilt or rearranged.
+  cp -a usr "$pkgdir"/
+}
