@@ -262,6 +262,46 @@ jobs:
           podman run --rm -v "$PWD":/work:z -v /tmp/srcinfo.sh:/srcinfo.sh:z \
             docker.io/library/archlinux:base-devel /srcinfo.sh
 
+      - name: The deb must be a well-formed Debian package
+        # dpkg is not in the Fedora container that builds it, so nothing
+        # there can check its own output -- and CPack, asked to detect the
+        # architecture with no dpkg to ask, quietly produced an EMPTY
+        # Architecture field and a package called `stud_1.1.0_.deb` that
+        # dpkg refuses to install. It shipped in a green release.
+        #
+        # Checked here instead, where podman can run a real Debian.
+        run: |
+          cat > /tmp/debcheck.sh <<'SCRIPT'
+          #!/bin/bash
+          set -eu
+          deb=$(find /work/artifacts -name '*.deb' | head -1)
+          [ -n "$deb" ] || { echo "::error::no deb to check"; exit 1; }
+          echo "checking $(basename "$deb")"
+          # Every field dpkg itself requires. `dpkg-deb -f` prints nothing
+          # for a field that is absent, which is exactly the failure.
+          status=0
+          for field in Package Version Architecture Maintainer Description; do
+            value=$(dpkg-deb -f "$deb" "$field")
+            if [ -z "$value" ]; then
+              echo "::error::the deb has no $field field"
+              status=1
+            else
+              echo "  $field: $value"
+            fi
+          done
+          # ...and the name a Debian archive expects, which encodes the
+          # architecture: an empty one leaves a bare trailing underscore.
+          case "$(basename "$deb")" in
+            *_*_*.deb) ;;
+            *) echo "::error::$(basename "$deb") is not <package>_<version>_<arch>.deb"; status=1 ;;
+          esac
+          dpkg-deb -I "$deb" >/dev/null
+          exit $status
+          SCRIPT
+          chmod +x /tmp/debcheck.sh
+          podman run --rm -v "$PWD":/work:z -v /tmp/debcheck.sh:/debcheck.sh:z \
+            docker.io/library/debian:stable-slim /debcheck.sh
+
       - name: Package the Arch pkg.tar.zst
         # makepkg is Arch's and refuses to run as root, hence the
         # unprivileged user. It compiles nothing: the PKGBUILD copies the
