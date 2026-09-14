@@ -14,7 +14,7 @@
 # fetched here: ANGLE builds from source and takes hours, which does not
 # belong inside an image build that is otherwise minutes.
 
-FROM fedora:42 AS build
+FROM fedora:44 AS build
 
 RUN dnf install -y --setopt=install_weak_deps=False \
         gcc-c++ cmake ninja-build git pkgconf-pkg-config \
@@ -29,7 +29,7 @@ RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     && cmake --build /build -j"$(nproc)" \
     && DESTDIR=/stage cmake --install /build --prefix /usr
 
-FROM fedora:42
+FROM fedora:44
 
 # bubblewrap is a real runtime dependency, not a packaging detail:
 # Process B is a bionic ELF that runs inside its own mount, PID and IPC
