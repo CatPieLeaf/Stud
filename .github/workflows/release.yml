@@ -161,6 +161,43 @@ jobs:
   # (exit 127) and, because both steps carried continue-on-error, the job
   # still went green while producing neither. Two of five package formats
   # were silently missing from the release.
+  # The manifest is lint-able on its own: it needs no build, no install
+  # tree and no artifact, so it gets its own job and reports within a
+  # minute of the release starting rather than waiting on the build.
+  #
+  # It used to live in the `containers` job purely because that job has
+  # podman and does not itself run inside a container -- which is a
+  # convenience, not a reason, and left the Flatpak manifest being
+  # checked by the job that builds the Arch package and the cpak image.
+  flatpak-manifest:
+    name: Flatpak manifest lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: The Flatpak manifest must pass Flathub's own linter
+        # The same linter Flathub runs on a submission. It exits 0 for
+        # warnings (an available runtime update is one), so errors are
+        # read out of its JSON rather than from the exit code alone.
+        run: |
+          podman run --rm -v "$PWD:/src:z" -w /src \
+            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            manifest packaging/flatpak/io.github.catpieleaf.Stud.yml | tee /tmp/flatpak-lint.json
+          python3 - <<'PY'
+          import json, sys
+          with open("/tmp/flatpak-lint.json") as f:
+              report = json.load(f)
+          errors = report.get("errors", [])
+          for w in report.get("warnings", []):
+              print(f"::warning::flatpak-builder-lint: {w}")
+          for e in errors:
+              print(f"::error::flatpak-builder-lint: {e}")
+          sys.exit(1 if errors else 0)
+          PY
+
+
   containers:
     name: Arch package and cpak image
     needs: packages
@@ -190,26 +227,6 @@ jobs:
           [ -n "$archive" ] || { echo "no install tree in the artifacts" >&2; exit 1; }
           tar -C install-tree -xf "$archive"
           test -d install-tree/usr
-
-      - name: The Flatpak manifest must pass Flathub's own linter
-        # The same linter Flathub runs on a submission. It exits 0 for
-        # warnings (an available runtime update is one), so errors are
-        # read out of its JSON rather than from the exit code alone.
-        run: |
-          podman run --rm -v "$PWD:/src:z" -w /src \
-            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
-            manifest packaging/flatpak/io.github.catpieleaf.Stud.yml | tee /tmp/flatpak-lint.json
-          python3 - <<'PY'
-          import json, sys
-          with open("/tmp/flatpak-lint.json") as f:
-              report = json.load(f)
-          errors = report.get("errors", [])
-          for w in report.get("warnings", []):
-              print(f"::warning::flatpak-builder-lint: {w}")
-          for e in errors:
-              print(f"::error::flatpak-builder-lint: {e}")
-          sys.exit(1 if errors else 0)
-          PY
 
       - name: Each .SRCINFO must match the PKGBUILD it describes
         # The AUR serves .SRCINFO, not the PKGBUILD -- so a stale one
@@ -395,7 +412,7 @@ jobs:
   flatpak:
     # After the job above, because it installs the archive that job built.
     name: Flatpak bundle (needs the build above)
-    needs: packages
+    needs: [packages, flatpak-manifest]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
