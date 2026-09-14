@@ -296,6 +296,32 @@ std::map<std::string, std::string> stud_default_flags() {
         // reduced textures. 4 is the top of the range.
         {"TextureQualityOverride", "4"},
         {"DFFlagTextureQualityOverrideEnabled", "True"},
+        // The modern cursor set. One global byte inside the engine picks
+        // between them, and this flag is what sets it:
+        //
+        //   cmpb $0x0, <byte>
+        //   je   -> "textures/ArrowCursor.png"                          (legacy)
+        //        -> "textures/Cursors/KeyboardMouse/ArrowFarCursor.png" (modern)
+        //
+        // The legacy art is a coarse hollow triangle; the modern set is
+        // the hand and the small solid arrow the desktop client draws.
+        // The name is registered right beside the pointer to that byte,
+        // and the FFlag prefix is not a guess: HideCursorForNonMouseUsers
+        // registers with a byte-identical signature and appears in the
+        // live settings as FFlagHideCursorForNonMouseUsers.
+        //
+        // Roblox ships this flag in NONE of its own settings channels --
+        // checked against PC, Mac, Android, iOS and Xbox -- so it sits at
+        // its compiled-in default and every client that does not override
+        // it gets the old art. Overriding it is a real improvement Stud
+        // can make rather than a workaround for something Stud broke.
+        //
+        // Live-confirmed: with this set, the cursor really does become
+        // the modern one. It is also the first flag override in this
+        // project's history proven to change the engine's behaviour,
+        // which settles a question the notes had left open for a long
+        // time about whether this path reaches live state at all.
+        {"FFlagImprovedCursors", "True"},
     };
 }
 
