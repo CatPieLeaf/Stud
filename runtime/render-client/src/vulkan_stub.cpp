@@ -3698,7 +3698,11 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
         frame_timing().decode_ms += ms;
         frame_timing().decode_bytes += decoded_bytes;
     }
-    if (ms >= 2.0) {
+    // Behind the same switch as the burst breakdown above. Unconditional,
+    // this wrote an unbuffered line per stalling submit -- 447 of them in
+    // one real session, through the session-log tee, at exactly the moment
+    // the frame was already late. Investigation output, armed by default.
+    if (decode_trace && ms >= 2.0) {
         std::fprintf(stderr, "stud: texture decode took %.1f ms this submit (%.2f MB)\n", ms,
                      static_cast<double>(decoded_bytes) / (1024.0 * 1024.0));
     }
