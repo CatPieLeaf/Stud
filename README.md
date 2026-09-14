@@ -80,7 +80,7 @@
  - MangoHud overlay toggle, HiDPI and UI scaling, GPU picker, system tray
  - Caps the frame rate while nothing can see the window — minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
- - Ships as an rpm and an AppImage — and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
+ - Ships as an **rpm**, a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, and a **Flatpak** — plus an [AUR](https://aur.archlinux.org/packages/stud) package and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
 
 <br>
 
