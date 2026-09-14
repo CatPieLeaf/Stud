@@ -61,7 +61,8 @@ makedepends=(
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# The tag carries no leading "v" -- match what is actually published.
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Replaced by CI at release time, from the tarball GitHub actually serves.
 sha256sums=('SKIP')
 

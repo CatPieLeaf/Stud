@@ -41,7 +41,8 @@ optdepends=(
 # reason the rpm turns it off. These are also already-built binaries, so
 # there is nothing here for makepkg to strip that upstream did not mean.
 options=(!strip !debug emptydirs)
-source=("$pkgname-$pkgver.tar.zst::$url/releases/download/v$pkgver/stud-$pkgver-x86_64.tar.zst")
+# The tag carries no leading "v" -- match what is actually published.
+source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-x86_64.tar.zst")
 # Replaced at publish time by the checksum of the archive the release
 # actually serves -- `updpkgsums`, or the value the release workflow
 # prints. A stale checksum here would be worse than none.

@@ -26,7 +26,7 @@ pkgbase = stud
 	depends = wayland
 	depends = libxkbcommon
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
-	source = stud-1.1.0.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/v1.1.0.tar.gz
+	source = stud-1.1.0.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
 	sha256sums = SKIP
 
 pkgname = stud
