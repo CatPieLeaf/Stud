@@ -244,9 +244,79 @@ jobs:
           path: build-appimage/packages/*.AppImage
           if-no-files-found: error
 
+  flatpak:
+    name: Flatpak bundle
+    needs: rpm
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.8
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: artifacts
+
+      - name: Point the manifest at the archive we just built
+        # The manifest in the tree names the release URL, which does not
+        # exist until this release is published -- so for the bundle it is
+        # rewritten to the local file. Same archive either way; only where
+        # flatpak-builder reads it from differs.
+        run: |
+          archive="$(find artifacts -name '*-flatpak.tar.zst' | head -1)"
+          [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
+          cp "$archive" stud-archive.tar.zst
+          python3 - <<'PY'
+          import re
+          p = "packaging/flatpak/io.github.catpieleaf.Stud.yml"
+          s = open(p).read()
+          s = re.sub(r"        url: https://github\.com/CatPieLeaf/Stud/releases/[^\n]*\n"
+                     r"        sha256: PLACEHOLDER_STUD_SHA256\n",
+                     "        path: ../../stud-archive.tar.zst\n", s)
+          # The three dependency checksums are real upstream tarballs, so
+          # they are filled rather than removed.
+          open(p, "w").write(s)
+          PY
+          grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
+
+      - name: Fill in the dependency checksums
+        # Each of these is a fixed upstream tarball; the manifest carries a
+        # placeholder in the tree because a checksum belongs to one
+        # specific file and a stale one is worse than an obvious gap.
+        run: |
+          set -eu
+          fill() {
+            local url="$1" placeholder="$2"
+            local sum
+            sum="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
+            sed -i "s/$placeholder/$sum/" packaging/flatpak/io.github.catpieleaf.Stud.yml
+          }
+          fill https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz PLACEHOLDER_BWRAP_SHA256
+          fill https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz PLACEHOLDER_PORTAUDIO_SHA256
+          fill https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz PLACEHOLDER_QTKEYCHAIN_SHA256
+          ! grep -q PLACEHOLDER packaging/flatpak/io.github.catpieleaf.Stud.yml
+
+      - name: Build and bundle
+        run: |
+          flatpak-builder --force-clean --disable-rofiles-fuse \
+            --repo=flatpak-repo build-dir \
+            packaging/flatpak/io.github.catpieleaf.Stud.yml
+          flatpak build-bundle flatpak-repo \
+            "stud-${TAG#v}-x86_64.flatpak" io.github.catpieleaf.Stud
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flatpak-bundle
+          path: "*.flatpak"
+          if-no-files-found: error
+
   publish:
     name: Attach to the release
-    needs: [rpm, appimage]
+    needs: [rpm, appimage, flatpak]
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
     steps:
@@ -265,12 +335,13 @@ jobs:
           # no packages attached is worse than a loud failure.
           mapfile -t packages < <(find artifacts -type f \
             \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
-               -o -name '*.pkg.tar.zst' -o -name '*-flatpak.tar.zst' \))
+               -o -name '*.pkg.tar.zst' -o -name '*-flatpak.tar.zst' \
+               -o -name '*.flatpak' \))
           # rpm, deb, AppImage and the Flatpak archive are required. The
           # Arch package is not: its job is allowed to fail, since makepkg
           # in a container is the one step here that depends on something
           # outside this repository's control.
-          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\-flatpak\.tar\.zst$'; do
+          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.flatpak$'; do
             printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
               { echo "no package matching $required" >&2; exit 1; }
           done
