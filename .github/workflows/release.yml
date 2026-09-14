@@ -56,7 +56,7 @@ jobs:
             wayland-devel wayland-protocols-devel libxkbcommon-devel \
             libglvnd-devel vulkan-loader-devel vulkan-headers \
             freetype-devel portaudio-devel openssl-devel \
-            curl unzip tar zstd python3 e2fsprogs findutils
+            curl unzip tar xz zstd python3 e2fsprogs findutils
 
       - uses: actions/checkout@v7
         with:
@@ -194,7 +194,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git curl ca-certificates \
-            file desktop-file-utils zsync fuse3 unzip tar zstd python3 e2fsprogs \
+            file desktop-file-utils zsync fuse3 unzip tar xz-utils zstd python3 e2fsprogs \
             qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
             qt6-l10n-tools libqt6opengl6-dev qtkeychain-qt6-dev libssl-dev \
             qt6-wayland qt6-wayland-dev qt6-xdgdesktopportal-platformtheme \
