@@ -65,6 +65,7 @@
 #include <deque>
 #include <mutex>
 #include <sys/wait.h>
+#include <fstream>
 #include <thread>
 #include <cstdio>
 #include <ctime>
@@ -644,6 +645,9 @@ PFN_vkGetInstanceProcAddr g_real_vk_get_instance_proc_addr = nullptr;
 // reads this rather than re-deriving it -- re-deriving is what created a
 // window per call and put a hundred of them on screen.
 ANativeWindow* g_real_window = nullptr;
+
+// Defined below, beside the other code that spawns a process.
+void raise_through_kwin();
 
 // Viewer windows that have exited and not yet been reported to
 // Process B, which is what tells the app its web view is gone.
@@ -2699,6 +2703,25 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     } else {
                         std::printf("stud-render-host: could not mint an activation token\n");
                     }
+                    // Last resort, and compositor-specific on purpose.
+                    //
+                    // xdg-activation is the only way a Wayland client can
+                    // be raised, and both of its paths are exhausted by
+                    // this point: measured on a real KDE session, the
+                    // launcher passes NO token to a URL handler even with
+                    // StartupNotify set, and a token Stud mints for
+                    // itself is refused -- correctly -- because the
+                    // serial it carries is from Stud's last input, which
+                    // is stale when the user was clicking in a browser.
+                    // That refusal is the protocol working as designed.
+                    //
+                    // So this asks the compositor directly, through
+                    // KWin's own scripting interface. It is NOT a general
+                    // way to raise a window and must not be copied as
+                    // one: it works on KDE and is a silent no-op
+                    // everywhere else, where the gdbus call simply finds
+                    // no org.kde.KWin to talk to.
+                    raise_through_kwin();
                     std::fflush(stdout);
                 }
             }
@@ -3943,6 +3966,55 @@ void trace_gl_error_after(stud::render_host::CallId id, const RealFns& fns) {
     std::fflush(stdout);
 }
 
+
+// Ask KWin to focus Stud's own window. See the call site for why this
+// exists at all, and why it is deliberately the last thing tried.
+// In the anonymous namespace, matching the declaration above -- both
+// blocks in this file are the same namespace.
+namespace {
+void raise_through_kwin() {
+    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+    if (runtime == nullptr) return;
+    std::string js_path = std::string(runtime) + "/stud/kwin-raise.js";
+    {
+        std::ofstream js(js_path, std::ios::trunc);
+        if (!js) return;
+        // windowList() is KWin 6, clientList() KWin 5; activeWindow was
+        // activeClient before 6. Both spellings, so this does not depend
+        // on which one the session happens to be running.
+        js << "var l = (typeof workspace.windowList === 'function')\n"
+              "        ? workspace.windowList() : workspace.clientList();\n"
+              "for (var i = 0; i < l.length; i++) {\n"
+              "  var w = l[i]; if (!w) continue;\n"
+              "  var c = String(w.resourceClass || '');\n"
+              "  if (c.indexOf('" STUD_APP_ID "') !== -1 || c.toLowerCase() === 'stud') {\n"
+              "    if ('activeWindow' in workspace) workspace.activeWindow = w;\n"
+              "    else workspace.activeClient = w;\n"
+              "    break;\n"
+              "  }\n"
+              "}\n";
+    }
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        // Load, run, unload. A script left loaded would accumulate one
+        // entry per link clicked for the life of the session.
+        const std::string cmd =
+            "id=$(gdbus call --session --dest org.kde.KWin --object-path /Scripting "
+            "--method org.kde.kwin.Scripting.loadScript '" + js_path + "' studraise "
+            "2>/dev/null | grep -oE '[0-9]+' | head -1); "
+            "[ -n \"$id\" ] && gdbus call --session --dest org.kde.KWin "
+            "--object-path /Scripting/Script$id --method org.kde.kwin.Script.run >/dev/null 2>&1; "
+            "gdbus call --session --dest org.kde.KWin --object-path /Scripting "
+            "--method org.kde.kwin.Scripting.unloadScript studraise >/dev/null 2>&1";
+        ::execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        ::_exit(127);
+    }
+    if (pid > 0) {
+        // Reaped off-thread so this never blocks the dispatch it runs on.
+        std::thread([pid] { int st = 0; ::waitpid(pid, &st, 0); }).detach();
+    }
+}
+}  // namespace
 
 void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
     std::vector<unsigned char> in_scratch;

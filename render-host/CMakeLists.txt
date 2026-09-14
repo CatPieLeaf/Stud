@@ -70,6 +70,12 @@ if(STUD_ENABLE_DEV_RENDER_TOGGLE)
     target_compile_definitions(stud-render-host PRIVATE STUD_ENABLE_DEV_RENDER_TOGGLE)
 endif()
 
+# The window's own app id, for the KWin fallback that raises Stud when a
+# game link is clicked. android-glue already compiles this in for
+# xdg_toplevel_set_app_id; matching on it means the two cannot disagree
+# about which window is Stud's.
+target_compile_definitions(stud-render-host PRIVATE STUD_APP_ID="${STUD_APP_ID}")
+
 # MVP proof-of-mechanism client, independent of Process B/bionic --
 # proves the IPC protocol itself renders a real frame before wiring the
 # bionic-side stub library that will be Process B's real client.
