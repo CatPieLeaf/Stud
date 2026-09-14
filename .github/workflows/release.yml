@@ -42,7 +42,7 @@ jobs:
     # One build of Stud, wrapped four ways. Building each format in its
     # own job would mean four builds of ANGLE -- an hour each -- and no
     # guarantee that the packages hold the same binaries.
-    name: rpm, deb, Arch, cpak image
+    name: Build, rpm and deb
     runs-on: ubuntu-latest
     container: fedora:42
     steps:
@@ -411,7 +411,7 @@ jobs:
 
   flatpak:
     # After the job above, because it installs the archive that job built.
-    name: Flatpak bundle (needs the build above)
+    name: Flatpak bundle
     needs: [packages, flatpak-manifest]
     runs-on: ubuntu-latest
     container:
