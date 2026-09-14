@@ -40,6 +40,22 @@ else()
     # Without glslc the upscaler cannot exist; an empty array makes that a
     # clean runtime degrade (the blit path) rather than a build failure on
     # a machine that only wants the rest of Stud.
+    #
+    # Said out loud, because silence is how a release shipped with FSR
+    # quietly doing nothing: the setting was there, the option was in
+    # Settings, and the shader behind it was an empty array. A package
+    # build should never take this branch -- STUD_REQUIRE_SHADERS makes
+    # it fatal, and the release workflow sets it.
+    if(STUD_REQUIRE_SHADERS)
+        message(FATAL_ERROR
+            "glslc not found, so the upscaler would have no shader. It ships with "
+            "the Android NDK at <ndk>/shader-tools/linux-x86_64/glslc, or comes "
+            "from the glslc/shaderc package. Pass -DSTUD_REQUIRE_SHADERS=OFF to "
+            "build without the upscaler on purpose.")
+    endif()
+    message(WARNING
+        "Stud: glslc not found -- building WITHOUT the upscale and sharpening "
+        "shaders. The FSR setting will exist and do nothing.")
     add_custom_command(
         OUTPUT "${UpscaleShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"

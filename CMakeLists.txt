@@ -107,6 +107,16 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(libjnivm)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 
+# Defined BEFORE the subdirectories, because render-host looks for the
+# NDK's own glslc through it to compile the upscale shaders. Declared
+# after add_subdirectory(render-host) it was still empty at the point
+# that search ran, so a FRESH configure never found glslc and silently
+# built an upscaler with no shader in it -- while an incremental
+# reconfigure found it in the cache and worked. That is why every locally
+# built package had FSR and the one CI produced did not.
+set(STUD_ANDROID_NDK_ROOT "${STUD_THIRD_PARTY_DIR}/android-ndk-r28c" CACHE PATH
+    "Path to the Android NDK used to build Stud's bionic runtime process")
+
 add_subdirectory(bionic-runtime)
 add_subdirectory(cpu-compat)
 add_subdirectory(android-glue)
@@ -121,8 +131,6 @@ add_subdirectory(tools)
 # same real reason as before (Process B's own code must be real
 # bionic-ABI code to call directly into libroblox.so's real bionic JNI
 # exports on the same thread/ABI, no glibc-forwarding trampoline).
-set(STUD_ANDROID_NDK_ROOT "${STUD_THIRD_PARTY_DIR}/android-ndk-r28c" CACHE PATH
-    "Path to the Android NDK used to build Stud's bionic runtime process")
 if(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
     include(ExternalProject)
     ExternalProject_Add(runtime

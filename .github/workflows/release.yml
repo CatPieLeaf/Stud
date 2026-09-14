@@ -122,6 +122,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_VERSION="${TAG#v}"
           cmake --build build -j"$(nproc)"
 
@@ -129,6 +130,28 @@ jobs:
       # mean several builds of ANGLE and no guarantee the packages contain
       # the same binaries -- so the install tree is produced once here and
       # every package is made from it.
+      - name: The upscaler must have its shaders
+        # A build with no glslc silently produces an empty shader array,
+        # so FSR is present in Settings and does nothing. That shipped:
+        # the released render-host carried one SPIR-V module where a
+        # correct build carries three. -DSTUD_REQUIRE_SHADERS=ON makes
+        # the configure fail now; this checks the binary itself, because
+        # the thing that matters is what is IN it.
+        run: |
+          python3 - <<'PY'
+          import sys
+          p = "build/render-host/stud-render-host"
+          blob = open(p, "rb").read()
+          # SPIR-V's magic number, little-endian, once per embedded module.
+          modules = blob.count(b"\x03\x02\x23\x07")
+          print(f"{p}: {modules} SPIR-V module(s)")
+          if modules < 3:
+              print("::error::the render host is missing embedded shaders -- "
+                    "the upscale and sharpening shaders are built by glslc, "
+                    "which the configure step should have found in the NDK")
+              sys.exit(1)
+          PY
+
       - name: Package the rpm and the deb
         run: cd build && cpack -G RPM && cpack -G DEB
 
