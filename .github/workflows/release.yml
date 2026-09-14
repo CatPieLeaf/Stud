@@ -85,7 +85,7 @@ jobs:
             third_party/android-bionic
           key: deps-fedora42-${{ hashFiles('tools/setup.sh') }}
 
-      - name: Fetch what Stud cannot ship
+      - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
         # about an hour. Its sources are no use afterwards -- only the two
         # libraries it produced, which is all the cache keeps -- so they go
@@ -226,7 +226,7 @@ jobs:
           path: third_party/appimage-tools
           key: appimage-tools-${{ hashFiles('packaging/build-appimage.sh') }}
 
-      - name: Fetch what Stud cannot ship
+      - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
         # about an hour. Its sources are no use afterwards -- only the two
         # libraries it produced, which is all the cache keeps -- so they go
