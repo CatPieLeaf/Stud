@@ -161,25 +161,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "Needs HiDPI off, which is where the game renders below the screen's resolution.");
     graphics->addWidget(upscalingCheck_);
 
-    // What the upscaler writes, as a multiple of the window's own pixels.
-    // The engine's render size is NOT a knob and never appears here -- it
-    // is pinned to the window's logical size, because moving it moves the
-    // UI's size with it (see StudSettings::upscale_target_percent).
-    auto* upscaleRow = new QHBoxLayout();
-    upscaleRow->addWidget(new QLabel("Target resolution", this));
-    upscaleOutputCombo_ = new QComboBox(this);
-    upscaleOutputCombo_->addItem("1x window", 100);
-    upscaleOutputCombo_->addItem("1.25x", 125);
-    upscaleOutputCombo_->addItem("1.5x", 150);
-    upscaleOutputCombo_->addItem("2x", 200);
-    upscaleOutputCombo_->setToolTip(
-        "What the upscaler writes, as a multiple of this window's pixels. 1x fills the window\n"
-        "exactly. Above that the frame is built larger and scaled down when shown, which\n"
-        "steadies edges at the cost of fill rate.");
-    upscaleRow->addWidget(upscaleOutputCombo_);
-    upscaleRow->addStretch();
-    graphics->addLayout(upscaleRow);
-
     // Sharpening strength. Its own control because the right amount is a
     // matter of taste and of content -- too much looks scratched.
     auto* sharpRow = new QHBoxLayout();
@@ -206,7 +187,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto sync_upscale_controls = [this]() {
         const bool available = !hidpiCheck_->isChecked();
         upscalingCheck_->setEnabled(available);
-        upscaleOutputCombo_->setEnabled(available && upscalingCheck_->isChecked());
         upscaleSharpnessSlider_->setEnabled(available && upscalingCheck_->isChecked());
     };
     connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
@@ -338,9 +318,6 @@ void SettingsWindow::loadFromDisk() {
     upscalingCheck_->setChecked(settings.upscaling);
     upscalingCheck_->setEnabled(!settings.hidpi);
     {
-        const int index = upscaleOutputCombo_->findData(settings.upscale_target_percent);
-        upscaleOutputCombo_->setCurrentIndex(index >= 0 ? index : 0);
-        upscaleOutputCombo_->setEnabled(!settings.hidpi && settings.upscaling);
         upscaleSharpnessSlider_->setValue(settings.upscale_sharpness_percent);
         sharpnessValueLabel_->setText(QString::number(settings.upscale_sharpness_percent) + "%");
         upscaleSharpnessSlider_->setEnabled(!settings.hidpi && settings.upscaling);
@@ -554,7 +531,6 @@ void SettingsWindow::onSaveClicked() {
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
-    settings.upscale_target_percent = upscaleOutputCombo_->currentData().toInt();
     settings.upscale_sharpness_percent = upscaleSharpnessSlider_->value();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited

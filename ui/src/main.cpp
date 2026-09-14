@@ -795,7 +795,6 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // for it. The output is never passed: it is always the window's real
     // size, which only render-host can know.
     render_host_args << "--upscaling" << (settings.upscaling && !settings.hidpi ? "on" : "off");
-    render_host_args << "--upscale-target" << QString::number(settings.upscale_target_percent);
     render_host_args << "--upscale-sharpness"
                      << QString::number(settings.upscale_sharpness_percent);
     // 0 is "no limit" in the config; render-host reads anything outside

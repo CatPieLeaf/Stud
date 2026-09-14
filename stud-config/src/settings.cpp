@@ -92,18 +92,6 @@ StudSettings load_settings(const std::string& path) {
         }
         result.upscaling = doc.at("upscaling").get<bool>();
     }
-    if (doc.contains("upscaleTargetPercent")) {
-        if (!doc.at("upscaleTargetPercent").is_number_integer()) {
-            throw SettingsError("stud: config '" + path +
-                                "' has a non-integer \"upscaleTargetPercent\"");
-        }
-        const int percent = doc.at("upscaleTargetPercent").get<int>();
-        // 100 is the window's own pixels, which is shown 1:1. Below that
-        // the upscaler would write less than it presents, which is a
-        // downscale wearing the wrong name; 200 is four times the fill
-        // rate, where this stops paying for itself.
-        result.upscale_target_percent = percent < 100 ? 100 : (percent > 200 ? 200 : percent);
-    }
     if (doc.contains("upscaleSharpnessPercent")) {
         if (!doc.at("upscaleSharpnessPercent").is_number_integer()) {
             throw SettingsError("stud: config '" + path +
@@ -239,7 +227,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.erase("upscaleOutputPercent");
     // Removed: it could only work by moving the engine's own render size.
     doc.erase("upscaleQualityPercent");
-    doc["upscaleTargetPercent"] = settings.upscale_target_percent;
+    doc.erase("upscaleTargetPercent");
     doc["upscaleSharpnessPercent"] = settings.upscale_sharpness_percent;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
