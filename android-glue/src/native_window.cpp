@@ -17,6 +17,7 @@
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include <algorithm>
 #include <chrono>
@@ -644,8 +645,81 @@ const wl_pointer_listener kPointerListener = {
     .axis_relative_direction = pointer_axis_relative_direction,
 };
 
-void keyboard_keymap(void*, wl_keyboard*, uint32_t, int32_t fd, uint32_t) {
-    if (fd >= 0) ::close(fd);
+// The compositor's own keymap, which is the only authority on what any
+// key actually produces. This used to close the fd and throw it away,
+// leaving a US layout compiled into Stud as the only answer -- wrong for
+// every other layout on earth, and the reason "/" did nothing on a
+// Brazilian ABNT2 keyboard (it sits on evdev 89, which US has no key at).
+//
+// Only ever touched from the compositor's own dispatch thread, the same
+// one that owns keys_down().
+struct XkbState {
+    xkb_context* context = nullptr;
+    xkb_keymap* keymap = nullptr;
+    xkb_state* state = nullptr;
+};
+
+XkbState& xkb() {
+    static XkbState x;
+    return x;
+}
+
+void keyboard_keymap(void*, wl_keyboard*, uint32_t format, int32_t fd, uint32_t size) {
+    if (fd < 0) return;
+    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
+        ::close(fd);
+        return;
+    }
+    // MAP_PRIVATE, not MAP_SHARED: the compositor may hand the same file
+    // to several clients, and this one has no business writing to it.
+    void* mapped = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    ::close(fd);
+    if (mapped == MAP_FAILED) return;
+
+    auto& x = xkb();
+    if (x.context == nullptr) x.context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (x.context != nullptr) {
+        xkb_keymap* keymap = xkb_keymap_new_from_string(x.context,
+                                                        static_cast<const char*>(mapped),
+                                                        XKB_KEYMAP_FORMAT_TEXT_V1,
+                                                        XKB_KEYMAP_COMPILE_NO_FLAGS);
+        if (keymap != nullptr) {
+            xkb_state* state = xkb_state_new(keymap);
+            if (state != nullptr) {
+                // Replace only once the new pair is fully built, so a
+                // keymap that fails to compile leaves the old one working.
+                if (x.state != nullptr) xkb_state_unref(x.state);
+                if (x.keymap != nullptr) xkb_keymap_unref(x.keymap);
+                x.keymap = keymap;
+                x.state = state;
+                static bool announced = false;
+                if (!announced) {
+                    announced = true;
+                    std::printf("stud: keyboard layout from the compositor: %s\n",
+                                xkb_keymap_layout_get_name(keymap, 0) != nullptr
+                                    ? xkb_keymap_layout_get_name(keymap, 0)
+                                    : "(unnamed)");
+                    std::fflush(stdout);
+                }
+            } else {
+                xkb_keymap_unref(keymap);
+            }
+        }
+    }
+    ::munmap(mapped, size);
+}
+
+// Fills in what the real keymap says this key produces. Leaves both at
+// zero when there is no keymap yet, which is the caller's cue to fall
+// back to its own table.
+void resolve_key_from_keymap(uint32_t evdev_code, stud::android_glue::HostInputEvent* ev) {
+    auto& x = xkb();
+    if (x.state == nullptr) return;
+    // XKB keycodes are evdev codes plus 8 -- the X11 offset, which
+    // Wayland keeps.
+    const xkb_keycode_t keycode = evdev_code + 8;
+    ev->keysym = static_cast<uint32_t>(xkb_state_key_get_one_sym(x.state, keycode));
+    ev->codepoint = xkb_state_key_get_utf32(x.state, keycode);
 }
 void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*) {
     g_last_input_serial.store(serial);
@@ -705,6 +779,7 @@ void release_all_held_keys() {
         ev.type = stud::android_glue::HostInputEvent::kKey;
         ev.code = key;
         ev.a = 0.0f;
+        resolve_key_from_keymap(key, &ev);
         push_input_event(ev);
     }
     keys_down().clear();
@@ -738,9 +813,17 @@ void keyboard_key(void*, wl_keyboard*, uint32_t serial, uint32_t, uint32_t key, 
     // Android's own KeyEvent.getScanCode() reports too.
     ev.code = key;
     ev.a = pressed ? 1.0f : 0.0f;
+    resolve_key_from_keymap(key, &ev);
     push_input_event(ev);
 }
-void keyboard_modifiers(void*, wl_keyboard*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
+// Shift, AltGr and the rest live here. Without them xkb resolves every
+// key to its unshifted level, so a shifted "?" came back as "/".
+void keyboard_modifiers(void*, wl_keyboard*, uint32_t, uint32_t depressed, uint32_t latched,
+                        uint32_t locked, uint32_t group) {
+    auto& x = xkb();
+    if (x.state == nullptr) return;
+    xkb_state_update_mask(x.state, depressed, latched, locked, 0, 0, group);
+}
 void keyboard_repeat_info(void*, wl_keyboard*, int32_t rate, int32_t delay) {
     auto& r = key_repeat();
     r.rate_per_sec.store(rate);
@@ -2201,6 +2284,7 @@ void native_window_pump_key_repeat() {
     // Marks this as a repeat rather than a fresh press, matching what a
     // real device reports through KeyEvent.getRepeatCount().
     ev.b = 1.0f;
+    resolve_key_from_keymap(key, &ev);
     push_input_event(ev);
 }
 
