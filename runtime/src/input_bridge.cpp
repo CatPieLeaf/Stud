@@ -1882,23 +1882,22 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     std::fflush(stdout);
                 }
             }
-            // The first keys of a session, one line each, so a run can say
-            // exactly what the engine was handed rather than leaving it to
-            // be inferred. Bounded so it cannot fill a log, and off unless
-            // asked for -- see STUD_INPUT_TRACE.
+            if (fns.key_event == nullptr) return;
+            // Every key actually handed to the engine, one line each,
+            // immediately before the call -- so a run says what the engine
+            // received rather than leaving it to be inferred from what
+            // Stud meant to send. Bounded so it cannot fill a log.
             {
-                static const bool trace_keys = std::getenv("STUD_INPUT_TRACE") != nullptr;
                 static int traced = 0;
-                if (trace_keys && traced < 40) {
+                if (traced < 60) {
                     ++traced;
-                    std::printf("stud: key: %s scan=%u->%d keycode=%d repeat=%d textbox=%d "
-                                "held=%zu\n",
+                    std::printf("stud: key -> engine: %s scan=%u->%d keycode=%d repeat=%d "
+                                "textbox=%d\n",
                                 down ? "down" : "up  ", ev.code, scan_code, key_code,
-                                ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0, held_keys().size());
+                                ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0);
                     std::fflush(stdout);
                 }
             }
-            if (fns.key_event == nullptr) return;
             // A held key repeats, and says so: real Android reports the
             // same through KeyEvent.getRepeatCount(), which is exactly
             // what this argument stands for.
