@@ -485,6 +485,12 @@ struct HostInputEvent {
     // and every consumer falls back to the scan-code table then.
     uint32_t keysym = 0;      // an X11 keysym (XKB_KEY_*)
     uint32_t codepoint = 0;   // the Unicode character it types, or 0
+    // The few compose sequences whose result is more than one character
+    // (`codepoint` carries the ordinary single-character case). Empty
+    // unless this press completed such a sequence. NUL-terminated; sized
+    // for the longest result any standard Compose file produces, and a
+    // longer one is dropped rather than cut in half.
+    char composed_utf8[12] = {};
 };
 
 // Copies up to `max` queued real input events into `out` and removes them

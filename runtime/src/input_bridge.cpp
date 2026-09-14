@@ -1604,7 +1604,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // layout, so it is only the fallback now -- for the X11 backend,
             // and for the moment before the keymap has arrived.
             std::string typed_text;
-            if (ev.codepoint != 0) {
+            if (ev.composed_utf8[0] != '\0') {
+                // A completed dead-key sequence whose result is more than
+                // one character; the ordinary single-character case comes
+                // through as a code point below.
+                typed_text.assign(ev.composed_utf8,
+                                  ::strnlen(ev.composed_utf8, sizeof(ev.composed_utf8)));
+            } else if (ev.codepoint != 0) {
                 typed_text = utf8_from_codepoint(ev.codepoint);
             } else {
                 char from_table = 0;
@@ -1614,12 +1620,15 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
             // real one goes through whole rather than being truncated.
+            // KeyEvent.getUnicodeChar() is a single code point, so a
+            // multi-character composed result has none to report -- the
+            // text still reaches the engine through typed_text.
             const jint unicode_char =
                 ev.codepoint != 0
                     ? static_cast<jint>(ev.codepoint)
-                    : (typed_text.empty() ? 0
-                                          : static_cast<jint>(
-                                                static_cast<unsigned char>(typed_text[0])));
+                    : (ev.composed_utf8[0] != '\0' || typed_text.empty()
+                           ? 0
+                           : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
             const jint key_code = android_key_code_for_event(ev.code, ev.keysym);
 
             // Real text entry. When the engine has told us a Lua TextBox

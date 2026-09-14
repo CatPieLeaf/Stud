@@ -18,12 +18,14 @@
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
 #include <xkbcommon/xkbcommon.h>
+#include "stud/key_compose.h"
 
 #include <algorithm>
 #include <chrono>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <set>
@@ -657,11 +659,47 @@ struct XkbState {
     xkb_context* context = nullptr;
     xkb_keymap* keymap = nullptr;
     xkb_state* state = nullptr;
+    // Dead keys. On ABNT2 the acute and tilde are dead keys: they produce
+    // no character of their own, and the character only exists once the
+    // NEXT key arrives ("'" then "a" is "a-acute"). Without a compose
+    // state each half resolves to nothing typable and a Portuguese
+    // speaker cannot write their own language.
+    //
+    // The sequences come from the system's own Compose file for the
+    // user's locale, so this is the same table every other application on
+    // the desktop composes with -- not a list Stud invented.
+    xkb_compose_table* compose_table = nullptr;
+    xkb_compose_state* compose_state = nullptr;
 };
 
 XkbState& xkb() {
     static XkbState x;
     return x;
+}
+
+// Builds the compose state once, from the locale the user is actually
+// running in. Best-effort by design: a system with no Compose file for
+// its locale simply has no dead keys, which is exactly what it had
+// before, rather than a failure.
+void setup_compose(XkbState* x) {
+    if (x->compose_state != nullptr) return;  // already built; it outlives a keymap swap
+    const char* locale = std::getenv("LC_ALL");
+    if (locale == nullptr || *locale == '\0') locale = std::getenv("LC_CTYPE");
+    if (locale == nullptr || *locale == '\0') locale = std::getenv("LANG");
+    if (locale == nullptr || *locale == '\0') locale = "C.UTF-8";
+    x->compose_table =
+        xkb_compose_table_new_from_locale(x->context, locale, XKB_COMPOSE_COMPILE_NO_FLAGS);
+    if (x->compose_table == nullptr) {
+        std::printf("stud: no compose table for locale \"%s\" -- dead keys will not compose\n",
+                    locale);
+        std::fflush(stdout);
+        return;
+    }
+    x->compose_state = xkb_compose_state_new(x->compose_table, XKB_COMPOSE_STATE_NO_FLAGS);
+    if (x->compose_state == nullptr) {
+        xkb_compose_table_unref(x->compose_table);
+        x->compose_table = nullptr;
+    }
 }
 
 void keyboard_keymap(void*, wl_keyboard*, uint32_t format, int32_t fd, uint32_t size) {
@@ -692,6 +730,7 @@ void keyboard_keymap(void*, wl_keyboard*, uint32_t format, int32_t fd, uint32_t 
                 if (x.keymap != nullptr) xkb_keymap_unref(x.keymap);
                 x.keymap = keymap;
                 x.state = state;
+                setup_compose(&x);
                 static bool announced = false;
                 if (!announced) {
                     announced = true;
@@ -709,17 +748,37 @@ void keyboard_keymap(void*, wl_keyboard*, uint32_t format, int32_t fd, uint32_t 
     ::munmap(mapped, size);
 }
 
-// Fills in what the real keymap says this key produces. Leaves both at
-// zero when there is no keymap yet, which is the caller's cue to fall
-// back to its own table.
-void resolve_key_from_keymap(uint32_t evdev_code, stud::android_glue::HostInputEvent* ev) {
+// Fills in what the real keymap says this key produces, composing dead
+// keys along the way. Leaves everything at zero when there is no keymap
+// yet, which is the caller's cue to fall back to its own table.
+//
+// Composition only ever changes the CHARACTER, never whether the key
+// event happens: the press is always delivered, so a dead key pressed
+// mid-game is still a key the engine hears about. Only a press feeds the
+// compose state -- a release would advance the sequence a second time.
+void resolve_key_from_keymap(uint32_t evdev_code, bool pressed,
+                             stud::android_glue::HostInputEvent* ev) {
     auto& x = xkb();
     if (x.state == nullptr) return;
     // XKB keycodes are evdev codes plus 8 -- the X11 offset, which
     // Wayland keeps.
     const xkb_keycode_t keycode = evdev_code + 8;
-    ev->keysym = static_cast<uint32_t>(xkb_state_key_get_one_sym(x.state, keycode));
+    const xkb_keysym_t sym = xkb_state_key_get_one_sym(x.state, keycode);
+    // The keycode is always the physical key's own: "acute then a" is a
+    // press of the A key that happens to type "a-acute", and reporting
+    // anything else would break it as a game binding.
+    ev->keysym = static_cast<uint32_t>(sym);
     ev->codepoint = xkb_state_key_get_utf32(x.state, keycode);
+
+    if (!pressed) return;
+    const stud::android_glue::ComposeResult composed =
+        stud::android_glue::compose_key_press(x.compose_state, sym, ev->codepoint);
+    ev->codepoint = composed.codepoint;
+    ev->composed_utf8[0] = '\0';
+    if (!composed.text.empty() && composed.text.size() < sizeof(ev->composed_utf8)) {
+        std::memcpy(ev->composed_utf8, composed.text.data(), composed.text.size());
+        ev->composed_utf8[composed.text.size()] = '\0';
+    }
 }
 void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*) {
     g_last_input_serial.store(serial);
@@ -729,6 +788,10 @@ void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*
 void release_all_held_keys();
 
 void keyboard_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
+    // Abandon any half-finished dead-key sequence. Focus went elsewhere
+    // mid-sequence, and a pending acute silently swallowing the first
+    // key typed on the way back is worse than losing the accent.
+    if (xkb().compose_state != nullptr) xkb_compose_state_reset(xkb().compose_state);
     // Release everything still held.
     //
     // The compositor stops sending key events the moment the surface
@@ -779,7 +842,7 @@ void release_all_held_keys() {
         ev.type = stud::android_glue::HostInputEvent::kKey;
         ev.code = key;
         ev.a = 0.0f;
-        resolve_key_from_keymap(key, &ev);
+        resolve_key_from_keymap(key, /*pressed=*/false, &ev);
         push_input_event(ev);
     }
     keys_down().clear();
@@ -813,7 +876,7 @@ void keyboard_key(void*, wl_keyboard*, uint32_t serial, uint32_t, uint32_t key, 
     // Android's own KeyEvent.getScanCode() reports too.
     ev.code = key;
     ev.a = pressed ? 1.0f : 0.0f;
-    resolve_key_from_keymap(key, &ev);
+    resolve_key_from_keymap(key, pressed, &ev);
     push_input_event(ev);
 }
 // Shift, AltGr and the rest live here. Without them xkb resolves every
@@ -2284,7 +2347,7 @@ void native_window_pump_key_repeat() {
     // Marks this as a repeat rather than a fresh press, matching what a
     // real device reports through KeyEvent.getRepeatCount().
     ev.b = 1.0f;
-    resolve_key_from_keymap(key, &ev);
+    resolve_key_from_keymap(key, /*pressed=*/true, &ev);
     push_input_event(ev);
 }
 
