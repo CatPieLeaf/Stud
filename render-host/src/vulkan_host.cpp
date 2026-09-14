@@ -85,17 +85,17 @@ void vk_set_preferred_device_index(uint32_t index) { g_preferred_device_index = 
 
 void vk_set_on_x11(bool on_x11) { g_on_x11 = on_x11; }
 
-// How hard the sharpening pass pulls. 0 leaves the resample alone; 1 is
-// RCAS at its strongest. Settable so it can be judged by eye rather than
-// argued about.
-std::atomic<int32_t> g_upscale_sharpness_percent{60};
+// How hard the sharpening pass pulls, as a percentage: 100 is RCAS at its
+// ordinary full strength and 125 is as far as the filter can be pushed
+// before its renormaliser reaches zero (see sharpen.comp).
+std::atomic<int32_t> g_upscale_sharpness_percent{100};
 
 float upscale_sharpness() {
     return static_cast<float>(g_upscale_sharpness_percent.load(std::memory_order_relaxed)) / 100.0f;
 }
 
 void vk_set_upscale_sharpness_percent(int32_t percent) {
-    const int32_t clamped = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+    const int32_t clamped = percent < 100 ? 100 : (percent > 125 ? 125 : percent);
     g_upscale_sharpness_percent.store(clamped, std::memory_order_relaxed);
 }
 
@@ -2462,6 +2462,8 @@ bool build_upscale_compute(UpscaleChain& c) {
     // The sharpening pass, if it is wanted. Its own image, pipeline and
     // descriptor set -- a compute pass cannot read and write one image, so
     // EASU's output and RCAS's output are different images.
+    // Always built now: the strength floor is 100%, so there is no "off"
+    // for this pass short of turning upscaling off altogether.
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"

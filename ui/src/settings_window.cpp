@@ -166,13 +166,18 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* sharpRow = new QHBoxLayout();
     sharpRow->addWidget(new QLabel("Sharpening", this));
     upscaleSharpnessSlider_ = new QSlider(Qt::Horizontal, this);
-    upscaleSharpnessSlider_->setRange(0, 100);
-    upscaleSharpnessSlider_->setSingleStep(5);
-    upscaleSharpnessSlider_->setPageStep(10);
+    // 100 is the floor: RCAS at its ordinary full strength, which is what
+    // the upscaled image wants. 125 is the ceiling because that is where
+    // the filter's own renormaliser reaches zero -- the top of the range
+    // is mapped to just short of it.
+    upscaleSharpnessSlider_->setRange(100, 125);
+    upscaleSharpnessSlider_->setSingleStep(1);
+    upscaleSharpnessSlider_->setPageStep(5);
     upscaleSharpnessSlider_->setMaximumWidth(200);
     upscaleSharpnessSlider_->setToolTip(
-        "How hard the upscaler sharpens what it produces. 0 leaves the resample alone.\n"
-        "High values look scratched on flat art, which Roblox UI has a lot of.");
+        "How hard the upscaler sharpens what it produces. 100% is full strength; above it\n"
+        "is extra bite, which can look scratched on flat art -- and Roblox UI is mostly\n"
+        "flat art. Applies on the next start, so use the restart button beside Save.");
     sharpRow->addWidget(upscaleSharpnessSlider_);
     sharpnessValueLabel_ = new QLabel(this);
     sharpRow->addWidget(sharpnessValueLabel_);
