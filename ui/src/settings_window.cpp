@@ -155,7 +155,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     //
     // So it belongs to HiDPI being OFF: with HiDPI on the engine already
     // draws every real pixel and there is nothing to upscale from.
-    upscalingCheck_ = new QCheckBox("FSR1 Upscaler", this);
+    upscalingCheck_ = new QCheckBox("FSR Upscaler", this);
     upscalingCheck_->setToolTip(
         "AMD FidelityFX Super Resolution 1: rebuild the frame at full resolution instead of\n"
         "letting the compositor stretch it. Needs HiDPI off, which is where the game renders\n"
