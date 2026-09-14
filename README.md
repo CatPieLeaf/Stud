@@ -332,6 +332,8 @@ Every binary Stud redistributes carries its own licence and copyright notice. `t
 
 Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox engine Stud loads but never distributes. Stud is and always will be Open Source.
 
+[`NOTICE.md`](NOTICE.md) covers the rest: affiliation, trademarks, your Roblox account, and what does and does not leave your machine.
+
 ---
 <br>
 
