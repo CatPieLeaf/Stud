@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QWidget>
+#include <QHash>
+#include <functional>
 
 #include <string>
 
@@ -62,8 +64,14 @@ private slots:
     void onMangohudToggled(bool checked);
     void onBackgroundFpsChanged(int value);
 
+protected:
+    // Right-click resets the control under the pointer -- see
+    // installResets().
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     void loadFromDisk();
+    void installResets();
     QString storedApkLabel() const;
 
     // The file the user just picked, until Save imports it. The field
@@ -111,6 +119,12 @@ private:
     QComboBox* renderPathCombo_;
 
     QLabel* statusLabel_;
+
+    // What each control's default is, as a closure that applies it. Keyed
+    // by the widget, so the event filter can look up whatever was
+    // right-clicked. Every value comes from a default-constructed
+    // StudSettings rather than being written down a second time.
+    QHash<QObject*, std::function<void()>> resets_;
 };
 
 }  // namespace stud::ui

@@ -297,6 +297,73 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     layout->addWidget(statusLabel_);
 
     loadFromDisk();
+    installResets();
+}
+
+// Right-click a control to put it back to its default.
+//
+// The defaults come from a default-constructed StudSettings, which is
+// where they are already defined -- writing them out again here would be a
+// second copy to drift out of step with the first.
+//
+// The APK picker is deliberately absent: its "default" is having no APK,
+// and a stray right-click that throws away the imported build is not a
+// convenience. Changing it is what the Browse button is for.
+void SettingsWindow::installResets() {
+    const stud::config::StudSettings d;
+    auto add = [this](QWidget* widget, std::function<void()> reset) {
+        if (widget == nullptr) return;
+        widget->installEventFilter(this);
+        resets_.insert(widget, std::move(reset));
+    };
+
+    add(gpuCombo_, [this] {
+        // The default is whichever device Stud would have picked on its
+        // own, not simply the first row.
+        const int index = gpuCombo_->findData(default_gpu_index());
+        gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
+    });
+    add(hidpiCheck_, [this, d] { hidpiCheck_->setChecked(d.hidpi); });
+    add(followDpiCheck_, [this, d] { followDpiCheck_->setChecked(d.follow_dpi); });
+    add(upscalingCheck_, [this, d] { upscalingCheck_->setChecked(d.upscaling); });
+    add(upscaleSharpnessSlider_,
+        [this, d] { upscaleSharpnessSlider_->setValue(d.upscale_sharpness_percent); });
+    add(smoothZoomCheck_, [this, d] { smoothZoomCheck_->setChecked(d.smooth_zoom); });
+    add(backgroundFpsSlider_, [this, d] {
+        // Unlimited is stored as 0 and lives at the far end of the slider,
+        // the same conversion loadFromDisk does.
+        const int position = d.background_fps <= stud::config::kBackgroundFpsNoLimit
+                                 ? stud::config::kBackgroundFpsUnlimited + 1
+                                 : d.background_fps;
+        backgroundFpsSlider_->setValue(position);
+        onBackgroundFpsChanged(position);
+    });
+    add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
+    add(closeOnLeaveCheck_, [this, d] { closeOnLeaveCheck_->setChecked(d.close_on_leave); });
+    add(trayCheck_, [this, d] { trayCheck_->setChecked(d.system_tray); });
+    add(serverRegionCheck_,
+        [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
+    add(discordCheck_, [this, d] { discordCheck_->setChecked(d.discord_rich_presence); });
+    add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
+    add(renderPathCombo_, [this] {
+        // Vulkan: the engine's own path, and the first entry.
+        renderPathCombo_->setCurrentIndex(0);
+    });
+}
+
+bool SettingsWindow::eventFilter(QObject* watched, QEvent* event) {
+    // The context-menu event rather than a raw right-button press: it is
+    // what a right-click means on every platform, and it arrives whether
+    // the pointer or the keyboard asked for it.
+    if (event->type() == QEvent::ContextMenu) {
+        const auto reset = resets_.constFind(watched);
+        if (reset != resets_.constEnd()) {
+            (*reset)();
+            statusLabel_->setText("Reset to default. Save to keep it.");
+            return true;  // no empty context menu behind it
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void SettingsWindow::loadFromDisk() {
