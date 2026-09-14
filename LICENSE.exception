@@ -49,14 +49,3 @@ is under a permissive licence, and each ships with its own notice.
 This permission is here so that argument does not have to be made. A
 distribution packaging Stud, and anyone building on it, can rely on the
 grant instead of on a reading.
-
-
-A note on AGPL versus GPL
--------------------------
-
-Moving Stud to the plain GPL would not change any of the above. The two
-licences are identical on linking and on derived works; AGPL section 13
-adds an obligation about software users interact with over a network,
-which does not describe a desktop game client. The additional permission
-above is the mechanism under either licence, and section 7 is the same
-section in both.
