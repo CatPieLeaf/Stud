@@ -252,6 +252,60 @@ int main() {
         check(text.empty(), "an arrow key types nothing");
     }
 
+    // The scan code the engine is handed. It indexes a table straight to a
+    // USB HID usage code and the Android key code is never read, so the
+    // scan code has to carry what the key TYPES. The expectations below
+    // are the real table's own entries, read out of the binary:
+    //
+    //   evdev 17 -> 26 (HID W)          evdev 53 -> 56 (HID Slash)
+    //   evdev 39 -> 51 (HID Semicolon)  evdev 98 -> 84 (HID Keypad Divide)
+    {
+        using stud::jni_bridge::engine_scan_code_for_event;
+
+        // The bug this exists for: on ABNT2 "/" is evdev 98, which the
+        // engine reads as a keypad divide and nothing is bound to.
+        check(engine_scan_code_for_event(98, "/") == 53,
+              "the key that types / is handed the slash position");
+        check(engine_scan_code_for_event(98, "?") == 53,
+              "its shifted level is the same physical key");
+
+        // ...and the mirror: ABNT2's evdev 53 types ";", so it must not
+        // keep claiming the slash position.
+        check(engine_scan_code_for_event(53, ";") == 39,
+              "the key that types ; is handed the semicolon position");
+
+        // A US keyboard cannot move: every key already sits where its own
+        // character says it should.
+        check(engine_scan_code_for_event(53, "/") == 53, "us: slash stays put");
+        check(engine_scan_code_for_event(39, ";") == 39, "us: semicolon stays put");
+        check(engine_scan_code_for_event(17, "w") == 17, "us: W stays put");
+        check(engine_scan_code_for_event(17, "W") == 17, "a shifted letter stays put");
+
+        // Gameplay must not move on any layout.
+        check(engine_scan_code_for_event(17, "w") == 17, "W is still W");
+        check(engine_scan_code_for_event(30, "a") == 30, "A is still A");
+        check(engine_scan_code_for_event(31, "s") == 31, "S is still S");
+        check(engine_scan_code_for_event(32, "d") == 32, "D is still D");
+
+        // The keypad keeps its own identity -- a numpad digit is not the
+        // digit row.
+        check(engine_scan_code_for_event(82, "0") == 82, "numpad 0 stays on the numpad");
+        check(engine_scan_code_for_event(79, "1") == 79, "numpad 1 stays on the numpad");
+        check(engine_scan_code_for_event(78, "+") == 78, "numpad plus stays on the numpad");
+
+        // Nothing typed means nothing to place: dead keys, modifiers,
+        // function and arrow keys all keep the position they came from.
+        check(engine_scan_code_for_event(26, "") == 26, "a dead key keeps its position");
+        check(engine_scan_code_for_event(1, "") == 1, "escape keeps its position");
+        check(engine_scan_code_for_event(105, "") == 105, "the left arrow keeps its position");
+        check(engine_scan_code_for_event(42, "") == 42, "shift keeps its position");
+
+        // A character no US position types (ABNT2 has a dedicated cedilla
+        // key) has nowhere to move to, so it stays where it is.
+        check(engine_scan_code_for_event(39, "\xC3\xA7") == 39,
+              "a character with no US position stays put");
+    }
+
     if (g_failures != 0) {
         std::printf("%d check(s) failed\n", g_failures);
         return 1;
