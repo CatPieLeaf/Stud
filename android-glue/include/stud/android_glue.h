@@ -271,6 +271,15 @@ void native_window_display_pixel_size(int32_t* width, int32_t* height);
 // xdg_activation_v1, in which case the launch is simply unfocused.
 std::string native_window_activation_token(ANativeWindow* window);
 
+// Raise this window using a token minted by whoever launched us.
+//
+// Spends an XDG_ACTIVATION_TOKEN the way the protocol intends: the
+// process the user actually clicked in mints it, and the process that
+// should come forward spends it. An empty or absent token leaves the
+// window exactly where it is -- a compositor refusing to let an
+// application raise itself unprompted is correct, not a bug.
+void native_window_activate(ANativeWindow* window, const char* token);
+
 // Locks the pointer in place and switches it to raw relative motion, or
 // releases it. This is mouse look: the compositor stops moving the cursor
 // and reports deltas through kPointerRelative instead.

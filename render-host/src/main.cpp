@@ -2635,6 +2635,31 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 while (g_deep_links.size() >= 4) g_deep_links.pop_front();
                 g_deep_links.push_back(std::move(uri));
             }
+            // Raise the window, if the launch carried a token to do it
+            // with. Stud may well be minimised or behind the browser the
+            // link was clicked in -- joining a game into a window nobody
+            // can see is not much of an answer.
+            //
+            // Handled here rather than in Process B because this process
+            // owns the Wayland surface; the token is consumed and does
+            // not travel on with the rest of the payload.
+            {
+                const std::string key = "activationToken=";
+                size_t at = 0;
+                while (at < uri.size()) {
+                    size_t end = uri.find('\n', at);
+                    if (end == std::string::npos) end = uri.size();
+                    if (uri.compare(at, key.size(), key) == 0) {
+                        const std::string token = uri.substr(at + key.size(), end - at - key.size());
+                        // Same window the activation-token getter above
+                        // uses; the one real surface this process owns.
+                        stud::android_glue::native_window_activate(g_real_window, token.c_str());
+                        std::printf("stud-render-host: raising the window for the new link\n");
+                        break;
+                    }
+                    at = end + 1;
+                }
+            }
             // The URI itself is never logged: a deep link carries a
             // one-time join ticket.
             std::printf("stud-render-host: a second launch handed over a deep link\n");

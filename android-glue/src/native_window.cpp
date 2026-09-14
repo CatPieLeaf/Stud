@@ -1883,6 +1883,27 @@ void native_window_set_pointer_confined(ANativeWindow* window, bool confined) {
     if (state.display != nullptr) wl_display_flush(state.display);
 }
 
+void native_window_activate(ANativeWindow* window, const char* token) {
+    // The other direction: a token MINTED by whoever launched us, spent
+    // here to raise this window.
+    //
+    // Wayland gives a client no way to raise itself -- that is the whole
+    // point of the protocol -- so the only thing that can bring Stud
+    // forward is a token from the process the user actually acted in. A
+    // browser click travels as XDG_ACTIVATION_TOKEN to the second
+    // stud-ui, which hands it here along with the link.
+    //
+    // Without a token the window simply stays where it is. That is the
+    // honest outcome and not a failure: the compositor is refusing focus
+    // theft, which is exactly what it should do for an app raising itself
+    // off a timer.
+    if (token == nullptr || *token == '\0') return;
+    auto& state = wayland_state();
+    if (state.activation == nullptr || window == nullptr || window->surface == nullptr) return;
+    xdg_activation_v1_activate(state.activation, token, window->surface);
+    if (state.display != nullptr) wl_display_flush(state.display);
+}
+
 std::string native_window_activation_token(ANativeWindow* window) {
     auto& state = wayland_state();
     if (state.activation == nullptr || state.display == nullptr || state.queue == nullptr) {
