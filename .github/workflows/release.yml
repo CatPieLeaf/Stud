@@ -449,12 +449,21 @@ jobs:
           [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
           cp "$archive" stud-archive.tar.zst
           python3 - <<'PY'
-          import re
+          import re, sys
           p = "packaging/flatpak/io.github.catpieleaf.Stud.yml"
           s = open(p).read()
-          s = re.sub(r"        url: https://github\.com/CatPieLeaf/Stud/releases/[^\n]*\n"
-                     r"        sha256: PLACEHOLDER_STUD_SHA256\n",
-                     "        path: ../../stud-archive.tar.zst\n", s)
+          # Matches whatever checksum the manifest carries, not one literal
+          # placeholder. The manifest holds the REAL sha256 of the published
+          # archive so Flathub can build it as committed -- keying this on a
+          # placeholder meant that the moment the real value went in, the
+          # substitution silently stopped matching and the build fetched the
+          # release URL instead of the archive this run just produced.
+          s, n = re.subn(r"        url: https://github\.com/CatPieLeaf/Stud/releases/[^\n]*\n"
+                         r"        sha256: \S+\n",
+                         "        path: ../../stud-archive.tar.zst\n", s)
+          if n != 1:
+              print(f"::error::expected one archive source to rewrite, rewrote {n}")
+              sys.exit(1)
           open(p, "w").write(s)
           PY
           grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
