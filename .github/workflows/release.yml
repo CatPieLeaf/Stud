@@ -39,7 +39,11 @@ env:
 
 jobs:
   rpm:
-    name: rpm (Fedora)
+    # The job id stays `rpm` so `needs:` and existing run links keep
+    # working; the name says what it actually does. One build of Stud,
+    # wrapped four ways -- building each separately would mean four builds
+    # of ANGLE and no guarantee they hold the same binaries.
+    name: rpm, deb, Arch, cpak image
     runs-on: ubuntu-latest
     container: fedora:42
     steps:
@@ -103,17 +107,17 @@ jobs:
       # mean several builds of ANGLE and no guarantee the packages contain
       # the same binaries -- so the install tree is produced once here and
       # every package is made from it.
-      - name: Package (rpm, deb)
+      - name: Package the rpm and the deb
         run: cd build && cpack -G RPM && cpack -G DEB
 
-      - name: Install tree, for the Arch package and the Flatpak archive
+      - name: Lay out the install tree the rest of the packages come from
         run: |
           DESTDIR="$PWD/install-tree" cmake --install build
           # What the Flatpak manifest expects: the tree rooted at usr/,
           # compressed the way its `type: archive` source reads it.
           tar -C install-tree -caf "stud-${TAG#v}-x86_64-flatpak.tar.zst" usr
 
-      - name: Build the Arch package
+      - name: Package the Arch pkg.tar.zst
         # In a container, because makepkg is Arch's and refuses to run as
         # root -- hence the unprivileged user. It compiles nothing: the
         # PKGBUILD copies the install tree that already exists.
@@ -137,7 +141,7 @@ jobs:
       # above rather than from source: a second build would mean a second
       # hour of ANGLE and no guarantee the image holds the same binaries
       # as the packages beside it.
-      - name: Build and push the cpak image
+      - name: Push the cpak image to ghcr.io
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -245,7 +249,8 @@ jobs:
           if-no-files-found: error
 
   flatpak:
-    name: Flatpak bundle
+    # After the job above, because it installs the archive that job built.
+    name: Flatpak bundle (needs the build above)
     needs: rpm
     runs-on: ubuntu-latest
     container:
@@ -315,7 +320,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Attach to the release
+    name: Attach every package to the release
     needs: [rpm, appimage, flatpak]
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
