@@ -315,6 +315,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     loadFromDisk();
     installResets();
+    // Ask now, rather than only on the signal. The tray starts the same
+    // check at launch, so by the time this window is opened the answer is
+    // usually already known and `updateFound` has long since fired --
+    // connecting to it and waiting meant Settings never showed the notice
+    // at all.
+    showIdleStatus();
 }
 
 // Right-click a control to put it back to its default.
