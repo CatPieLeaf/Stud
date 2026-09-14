@@ -187,6 +187,39 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.png"
         RENAME "${STUD_APP_ID}.png")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud")
+# GNUInstallDirs derives the doc directory from the CMake project name,
+# which is capitalised; the package is `stud`, and the two have to agree
+# or the documentation lands somewhere nothing looks.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/stud")
+
+# The man page. @STUD_VERSION@ in its header is the only substitution.
+#
+# It is compressed here rather than left to the packaging tools: rpm's own
+# brp scripts would do it, but Stud switches every one of them off
+# (__os_install_post) to keep them from stripping a bionic ELF, so the
+# page would ship uncompressed. Doing it once suits every format -- man
+# reads a .gz directly, and dpkg and makepkg both expect one.
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/man/stud.1"
+               "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1" @ONLY)
+find_program(STUD_GZIP gzip)
+if(STUD_GZIP)
+    add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1.gz"
+        COMMAND "${STUD_GZIP}" -9nc "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
+                > "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1.gz"
+        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
+        COMMENT "Compressing stud.1"
+        VERBATIM)
+    add_custom_target(stud_manpage ALL
+        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1.gz")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1.gz"
+            DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+else()
+    message(WARNING "no gzip found -- the man page will ship uncompressed")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
+            DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+endif()
 # AMD's FSR1 reference headers are vendored, and render-host's upscaler is
 # EASU and RCAS ported from them -- so MIT's notice travels with the build
 # output, not just with the source tree.
@@ -236,6 +269,10 @@ install(PROGRAMS "${STUD_RUNTIME_BUILD_DIR}/stud-runtime-bionic"
         DESTINATION "${STUD_LIBEXEC_DIR}" OPTIONAL)
 install(DIRECTORY "${STUD_RUNTIME_BUILD_DIR}/lib64/"
         DESTINATION "${STUD_LIBEXEC_DIR}/lib64"
+        FILE_PERMISSIONS
+            OWNER_READ OWNER_WRITE OWNER_EXECUTE
+            GROUP_READ GROUP_EXECUTE
+            WORLD_READ WORLD_EXECUTE
         FILES_MATCHING PATTERN "*.so*")
 
 include(packaging/Packaging.cmake)

@@ -20,7 +20,9 @@ phone would, supplying the framework, window, input devices and graphics \
 stack itself. Roblox is not included: you supply the Android application \
 package yourself.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CatPieLeaf/Stud")
-set(CPACK_PACKAGE_CONTACT "CatPieLeaf")
+# Debian policy wants Maintainer as "Name <email>", and lintian says so
+# (maintainer-address-malformed); rpm's Packager is the same shape.
+set(CPACK_PACKAGE_CONTACT "CatPieLeaf <catpieleaf@proton.me>")
 set(CPACK_PACKAGE_VENDOR "CatPieLeaf")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
@@ -40,7 +42,14 @@ set(CPACK_PACKAGE_FILE_NAME
 # binary on purpose -- a distribution's own build carries the AppArmor
 # and SELinux policy that lets it create a user namespace at all.
 set(CPACK_RPM_PACKAGE_SUMMARY "${CPACK_PACKAGE_DESCRIPTION_SUMMARY}")
-set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
+# The same text, hard-wrapped: rpm carries a description verbatim and
+# rpmlint rejects a line past 79 columns (description-line-too-long).
+set(CPACK_RPM_PACKAGE_DESCRIPTION
+"Stud runs the real Roblox Android client on a Linux desktop. It loads
+Roblox's own engine and drives it through the same interfaces an Android
+phone would, supplying the framework, window, input devices and graphics
+stack itself. Roblox is not included: you supply the Android application
+package yourself.")
 set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
@@ -54,10 +63,30 @@ set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 # The bundled libraries are private to Stud: nothing else may resolve
 # against them, and rpm must not advertise them as provided.
 set(CPACK_RPM_PACKAGE_AUTOREQPROV " no")
+# Directories the distribution already owns. This has to be a real CMake
+# list: written as one space-and-newline separated string it is a single
+# list element that matches no path at all, which is how the package came
+# to claim %dir /usr/share/icons (rpmlint: standard-dir-owned-by-package).
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
-    "/usr/lib /usr/libexec /usr/share/applications /usr/share/metainfo
-     /usr/share/icons /usr/share/icons/hicolor /usr/share/icons/hicolor/512x512
-     /usr/share/icons/hicolor/512x512/apps /usr/share/licenses")
+    /usr/bin
+    /usr/lib
+    /usr/libexec
+    /usr/share
+    /usr/share/applications
+    /usr/share/doc
+    /usr/share/man
+    /usr/share/man/man1
+    /usr/share/metainfo
+    /usr/share/licenses
+    /usr/share/icons
+    /usr/share/icons/hicolor)
+# ...and every size directory the icons land in, all of which belong to
+# hicolor-icon-theme.
+foreach(stud_icon_size 16 24 32 48 64 128 256 512)
+    list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
+        "/usr/share/icons/hicolor/${stud_icon_size}x${stud_icon_size}"
+        "/usr/share/icons/hicolor/${stud_icon_size}x${stud_icon_size}/apps")
+endforeach()
 # Stripping or extracting build-ids from a bionic ELF or from ANGLE is
 # neither useful nor safe here.
 set(CPACK_RPM_SPEC_MORE_DEFINE "%global __os_install_post %{nil}

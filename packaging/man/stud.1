@@ -1,0 +1,79 @@
+.TH STUD 1 "September 2026" "Stud @STUD_VERSION@" "User Commands"
+.SH NAME
+stud \- play Roblox on Linux
+.SH SYNOPSIS
+.B stud
+.RI [ URI ]
+.br
+.B stud \-\-settings
+.br
+.B stud \-\-install\-desktop\-entry
+.SH DESCRIPTION
+.B Stud
+runs the real, unmodified Roblox Android application on a Linux desktop, in
+its own window, with the mouse and keyboard. There is no browser, no
+emulator and no virtual machine: Stud loads Roblox's own engine and supplies
+the Android framework, window, input devices and graphics stack itself.
+.PP
+Roblox is not included. You supply the Android application package yourself,
+and Roblox remains subject to its own terms. Point Stud at it in Settings
+before the first launch.
+.PP
+Run with no arguments, Stud launches the application. Given a
+.B roblox:
+or
+.B roblox\-player:
+URI \- what a browser hands over when you press Play on the website \- it
+launches straight into that experience.
+.SH OPTIONS
+.TP
+.B \-\-settings
+Open the Settings window on its own, without launching the application.
+This is what the desktop entry's Settings action runs.
+.TP
+.B \-\-install\-desktop\-entry
+Register Stud as the handler for
+.B roblox:
+URIs for the current user, so a browser can hand a game over to it. A
+package installs the desktop entry system-wide already; this exists for
+running Stud from a build tree.
+.PP
+Stud also re-executes itself with several internal options
+.RB ( \-\-game\-info ,
+.BR \-\-notify ,
+.BR \-\-notify\-region ,
+.BR \-\-store\-secret ,
+.BR \-\-load\-secret ).
+They are implementation details, not a supported interface.
+.SH FILES
+.TP
+.I ~/.config/stud/config.json
+Settings. Written by the Settings window, and safe to edit by hand.
+.TP
+.I ~/.config/stud/flags.json
+Roblox engine flag overrides, if any. Hand-edited only: Stud never
+generates this file.
+.TP
+.I ~/.local/share/stud/
+Stud's own data, including the engine's files directory.
+.TP
+.I ~/.cache/stud/
+The extracted application package and the engine's caches. Regenerable:
+deleting it costs a re-extraction, nothing else.
+.TP
+.I ~/.local/state/stud/logs/
+One log per session, from all three of Stud's processes. The last ten are
+kept.
+.SH NOTES
+The login is kept in the system keyring through the Secret Service
+interface, never in a file of Stud's own.
+.SH BUGS
+Report at
+.UR https://github.com/CatPieLeaf/Stud/issues
+.UE .
+.SH SEE ALSO
+.BR bwrap (1)
+.PP
+Stud is free software under the GNU Affero General Public License, version 3
+or later. It is an independent project, not affiliated with, endorsed by or
+supported by Roblox Corporation.
