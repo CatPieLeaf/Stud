@@ -254,14 +254,31 @@ package — `paru -S stud`, and expect around an hour, almost all of it ANGLE:
 git clone https://aur.archlinux.org/stud.git && cd stud && makepkg -si
 ```
 
-## 🔶 F L A T P A K
+## 🔶 F L A T P A K  ( N O T _ Y E T _ O N _ F L A T H U B )
+
+The manifest is in `packaging/flatpak` and works, but Stud is not on Flathub yet, so
+there is nothing to `flatpak install` from a remote. Building it yourself:
 
 ```bash
-flatpak install --user stud.flatpak
+flatpak install -y flathub org.kde.Sdk//6.8 org.kde.Platform//6.8
+flatpak-builder --force-clean --user --install build-flatpak \
+  packaging/flatpak/io.github.catpieleaf.Stud.yml
 flatpak run io.github.catpieleaf.Stud
 ```
 
-Not on Flathub yet; the manifest lives in `packaging/flatpak`.
+The `*-flatpak.tar.zst` attached to releases is what that manifest installs — it is
+not something to install directly.
+
+## ⬛ C P A K  ( N O T _ Y E T _ P U B L I S H E D )
+
+[cpak](https://github.com/Containerpak/cpak) installs an application from an OCI
+image and runs it rootless. The `Containerfile` and the manifest are in
+`packaging/cpak`, but the image is not published yet, so this does not work until it
+is:
+
+```bash
+cpak install github.com/CatPieLeaf/Stud
+```
 
 ## 🟠 A P P I M A G E  ( A N Y _ D I S T R O )
 
