@@ -31,7 +31,12 @@ __pycache__/
 # Third-party dependencies fetched by tools/setup.sh: the Android NDK,
 # the ANGLE build, and a real extracted bionic. None of them are Stud's
 # and none of them are redistributable from here.
-third_party/
+third_party/*
+# AMD's FSR1 headers are the exception: a few KB, MIT licensed, and the
+# reference render-host/shaders/upscale.comp is ported from. Keeping them
+# out of the tree would leave that shader with nothing to be checked
+# against, which is how its first version came to be wrong.
+!third_party/fidelityfx-fsr1/
 
 # The real Roblox APK is user-supplied and must never be distributed.
 # Stud does not ship, mirror or download it.
