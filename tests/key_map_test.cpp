@@ -12,6 +12,7 @@
 // runtime, so these are the real keysyms, not fixtures.
 
 #include "stud/key_map.h"
+#include "stud/key_compose.h"
 
 #include <xkbcommon/xkbcommon.h>
 
@@ -133,6 +134,69 @@ int main() {
     check(utf8_from_codepoint(0x00E7) == "\xC3\xA7", "c-cedilla encodes as two UTF-8 bytes");
     check(utf8_from_codepoint('/') == "/", "ASCII encodes as itself");
     check(utf8_from_codepoint(0).empty(), "no character produces no text");
+
+    // Dead keys. The acute and tilde on ABNT2 type nothing by themselves
+    // and only produce a character once the next key arrives. Composed
+    // against the system's own Compose file, so these are the same
+    // sequences every other application on the desktop performs.
+    {
+        using stud::android_glue::compose_key_press;
+        using stud::android_glue::ComposeResult;
+        xkb_compose_table* table = xkb_compose_table_new_from_locale(
+            br.context, "en_US.UTF-8", XKB_COMPOSE_COMPILE_NO_FLAGS);
+        if (table == nullptr) {
+            std::printf("note: no compose table for en_US.UTF-8; dead keys not checked\n");
+        } else {
+            xkb_compose_state* cs = xkb_compose_state_new(table, XKB_COMPOSE_STATE_NO_FLAGS);
+
+            // "acute" then "a" is "a-acute": the first press types
+            // nothing, the second carries the whole character.
+            ComposeResult dead = compose_key_press(cs, XKB_KEY_dead_acute, 0);
+            check(dead.types_nothing && dead.codepoint == 0,
+                  "the acute dead key itself types nothing");
+            ComposeResult done = compose_key_press(cs, XKB_KEY_a, 'a');
+            check(done.codepoint == 0x00E1 && !done.types_nothing,
+                  "acute then a composes to a-acute");
+
+            // The tilde, which Portuguese needs at least as much.
+            compose_key_press(cs, XKB_KEY_dead_tilde, 0);
+            ComposeResult atilde = compose_key_press(cs, XKB_KEY_a, 'a');
+            check(atilde.codepoint == 0x00E3, "tilde then a composes to a-tilde");
+
+            // Cedilla, the other character an ABNT2 keyboard is shaped for
+            // (it also has a dedicated key, which needs no composing).
+            compose_key_press(cs, XKB_KEY_dead_cedilla, 0);
+            ComposeResult ccedilla = compose_key_press(cs, XKB_KEY_c, 'c');
+            check(ccedilla.codepoint == 0x00E7, "cedilla then c composes to c-cedilla");
+
+            // A sequence the Compose file does not define produces
+            // nothing rather than a stray character.
+            compose_key_press(cs, XKB_KEY_dead_acute, 0);
+            ComposeResult bad = compose_key_press(cs, XKB_KEY_q, 'q');
+            check(bad.types_nothing && bad.codepoint == 0 && bad.text.empty(),
+                  "an undefined sequence types nothing");
+
+            // ...and the state recovers: an ordinary key straight after
+            // is completely unaffected.
+            ComposeResult plain = compose_key_press(cs, XKB_KEY_w, 'w');
+            check(plain.codepoint == 'w' && !plain.types_nothing,
+                  "an ordinary key after a cancelled sequence is untouched");
+
+            // The whole point of the fallback argument: with no sequence
+            // in play the keymap's own answer passes straight through.
+            ComposeResult slash = compose_key_press(cs, '/', '/');
+            check(slash.codepoint == '/' && !slash.types_nothing, "slash is unaffected by compose");
+
+            // No compose table at all (a locale with no Compose file) must
+            // behave exactly as before it existed.
+            ComposeResult none = compose_key_press(nullptr, XKB_KEY_a, 'a');
+            check(none.codepoint == 'a' && !none.types_nothing,
+                  "with no compose table a key still types what the keymap says");
+
+            xkb_compose_state_unref(cs);
+            xkb_compose_table_unref(table);
+        }
+    }
 
     if (g_failures != 0) {
         std::printf("%d check(s) failed\n", g_failures);

@@ -54,7 +54,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(XkbcommonTest REQUIRED IMPORTED_TARGET xkbcommon)
 add_executable(stud_key_map_test key_map_test.cpp)
 target_include_directories(stud_key_map_test PRIVATE
-    "${CMAKE_SOURCE_DIR}/runtime/framework/include")
+    "${CMAKE_SOURCE_DIR}/runtime/framework/include"
+    "${CMAKE_SOURCE_DIR}/android-glue/include")
 target_link_libraries(stud_key_map_test PRIVATE PkgConfig::XkbcommonTest)
 add_test(NAME key_map_test COMMAND stud_key_map_test)
 set_tests_properties(key_map_test PROPERTIES SKIP_RETURN_CODE 77)
