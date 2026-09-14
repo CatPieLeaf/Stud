@@ -270,4 +270,120 @@ inline bool text_from_keymap(uint32_t keysym, uint32_t codepoint, const char* co
     return true;
 }
 
+// Real evdev scan code -> the character it produces, unshifted and
+// shifted, for a US layout -- the FALLBACK only.
+//
+// The compositor hands over its own keymap and android-glue resolves the
+// real character from it (HostInputEvent::codepoint), so this is reached
+// only where there is no keymap to read: the X11 backend, and the moment
+// before wl_keyboard.keymap arrives. It describes a US layout and cannot
+// describe any other, which is exactly why it is no longer the primary
+// answer -- on a Brazilian ABNT2 keyboard it claims evdev 53 types "/"
+// when it really types ";".
+//
+// Anything not listed produces no character (the key is still delivered
+// as a real key event separately).
+inline bool char_for_scan_code(uint32_t scan, bool shift, char* out) {
+    static const char* kUnshifted =
+        "\0\0" "1234567890-=" "\0\0" "qwertyuiop[]" "\0\0" "asdfghjkl;'`" "\0" "\\zxcvbnm,./";
+    static const char* kShifted =
+        "\0\0" "!@#$%^&*()_+" "\0\0" "QWERTYUIOP{}" "\0\0" "ASDFGHJKL:\"~" "\0" "|ZXCVBNM<>?";
+    if (scan == 57) {  // SPACE
+        *out = ' ';
+        return true;
+    }
+    // The keypad, which this table never covered -- every one of these
+    // reached the engine as character 0.
+    //
+    // 98 is KEY_KPSLASH, and it is not only the numpad: a Brazilian ABNT2
+    // keyboard's own "/ ?" key -- the ordinary one beside the right shift,
+    // not a numpad at all -- is reported by the kernel as KPSLASH too.
+    // Live-caught: pressing "/" on such a keyboard produced scan=98,
+    // keycode=0, unicode=0, and Roblox cannot open chat on a key it was
+    // never told about.
+    switch (scan) {
+        case 98: *out = shift ? '?' : '/'; return true;  // KPSLASH
+        case 55: *out = '*'; return true;                // KPASTERISK
+        case 74: *out = '-'; return true;                // KPMINUS
+        case 78: *out = '+'; return true;                // KPPLUS
+        case 83: *out = '.'; return true;                // KPDOT
+        case 79: *out = '1'; return true;
+        case 80: *out = '2'; return true;
+        case 81: *out = '3'; return true;
+        case 75: *out = '4'; return true;
+        case 76: *out = '5'; return true;
+        case 77: *out = '6'; return true;
+        case 71: *out = '7'; return true;
+        case 72: *out = '8'; return true;
+        case 73: *out = '9'; return true;
+        case 82: *out = '0'; return true;
+        default: break;
+    }
+    if (scan >= 2 && scan <= 53) {
+        const char* table = shift ? kShifted : kUnshifted;
+        char c = table[scan];
+        if (c == '\0') return false;
+        *out = c;
+        return true;
+    }
+    return false;
+}
+
+// The scan code that MEANS this character on a standard layout.
+//
+// Derived from the table above by searching it, so the two can never
+// disagree: whatever that table says a US position types, this finds the
+// position back. Zero when no position types it.
+inline uint32_t canonical_scan_code_for_char(char c) {
+    if (c == '\0') return 0;
+    // Ascending, so a main-block position always wins over the keypad's
+    // copy of the same character.
+    for (int shifted = 0; shifted <= 1; ++shifted) {
+        for (uint32_t scan = 1; scan < 120; ++scan) {
+            char produced = 0;
+            if (char_for_scan_code(scan, shifted != 0, &produced) && produced == c) return scan;
+        }
+    }
+    return 0;
+}
+
+// True for the keypad proper, whose keys must keep their own identity.
+//
+// KEY_KPSLASH (98) is deliberately NOT in here. On a Brazilian ABNT2
+// keyboard the ordinary "/" key beside the right shift is reported by the
+// kernel as KPSLASH, so treating it as a keypad key is what stopped "/"
+// from opening chat. A real numpad divide therefore reports as an
+// ordinary slash, which is the same trade this file already makes for the
+// Android key code.
+inline bool is_keypad_scan_code(uint32_t scan) {
+    return (scan >= 71 && scan <= 83) || scan == 55 || scan == 74 || scan == 78 || scan == 96 ||
+           scan == 97 || scan == 99 || scan == 117 || scan == 118;
+}
+
+// The scan code to hand the engine for a real key press.
+//
+// This is the argument that actually decides which key the engine thinks
+// was pressed. The engine looks it up directly:
+//
+//   scan code above 127: nothing happens
+//   table[scanCode] -> a USB HID usage code
+//
+// The Android key code is the NEXT argument and is never read. So the
+// scan code has to mean what the key types, not where it sits: on a
+// Brazilian ABNT2 keyboard "/" is evdev 98, whose table entry is 84 (HID
+// Keypad Divide) rather than 56 (HID Slash), and the engine can no more
+// open chat on that than on any other key nobody bound.
+//
+// Only ever moves a key to the position that types the same character, so
+// a US keyboard is unaffected -- every one of its keys already sits where
+// the character says.
+inline uint32_t engine_scan_code_for_event(uint32_t reported_scan, const std::string& typed_text) {
+    // Nothing typed (a dead key, a function key, a modifier) means there
+    // is no character to place, so where it sits is all there is.
+    if (typed_text.size() != 1) return reported_scan;
+    if (is_keypad_scan_code(reported_scan)) return reported_scan;
+    const uint32_t canonical = canonical_scan_code_for_char(typed_text[0]);
+    return canonical != 0 ? canonical : reported_scan;
+}
+
 }  // namespace stud::jni_bridge

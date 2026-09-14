@@ -434,64 +434,6 @@ void apply_pointer_lock() {
     set_pointer_locked(asked && !g_lock_suppressed);
 }
 
-// Real evdev scan code -> the character it produces, unshifted and
-// shifted, for a US layout -- the FALLBACK only.
-//
-// The compositor hands over its own keymap and android-glue resolves the
-// real character from it (HostInputEvent::codepoint), so this is reached
-// only where there is no keymap to read: the X11 backend, and the moment
-// before wl_keyboard.keymap arrives. It describes a US layout and cannot
-// describe any other, which is exactly why it is no longer the primary
-// answer -- on a Brazilian ABNT2 keyboard it claims evdev 53 types "/"
-// when it really types ";".
-//
-// Anything not listed produces no character (the key is still delivered
-// as a real key event separately).
-bool char_for_scan_code(uint32_t scan, bool shift, char* out) {
-    static const char* kUnshifted =
-        "\0\0" "1234567890-=" "\0\0" "qwertyuiop[]" "\0\0" "asdfghjkl;'`" "\0" "\\zxcvbnm,./";
-    static const char* kShifted =
-        "\0\0" "!@#$%^&*()_+" "\0\0" "QWERTYUIOP{}" "\0\0" "ASDFGHJKL:\"~" "\0" "|ZXCVBNM<>?";
-    if (scan == 57) {  // SPACE
-        *out = ' ';
-        return true;
-    }
-    // The keypad, which this table never covered -- every one of these
-    // reached the engine as character 0.
-    //
-    // 98 is KEY_KPSLASH, and it is not only the numpad: a Brazilian ABNT2
-    // keyboard's own "/ ?" key -- the ordinary one beside the right shift,
-    // not a numpad at all -- is reported by the kernel as KPSLASH too.
-    // Live-caught: pressing "/" on such a keyboard produced scan=98,
-    // keycode=0, unicode=0, and Roblox cannot open chat on a key it was
-    // never told about.
-    switch (scan) {
-        case 98: *out = shift ? '?' : '/'; return true;  // KPSLASH
-        case 55: *out = '*'; return true;                // KPASTERISK
-        case 74: *out = '-'; return true;                // KPMINUS
-        case 78: *out = '+'; return true;                // KPPLUS
-        case 83: *out = '.'; return true;                // KPDOT
-        case 79: *out = '1'; return true;
-        case 80: *out = '2'; return true;
-        case 81: *out = '3'; return true;
-        case 75: *out = '4'; return true;
-        case 76: *out = '5'; return true;
-        case 77: *out = '6'; return true;
-        case 71: *out = '7'; return true;
-        case 72: *out = '8'; return true;
-        case 73: *out = '9'; return true;
-        case 82: *out = '0'; return true;
-        default: break;
-    }
-    if (scan >= 2 && scan <= 53) {
-        const char* table = shift ? kShifted : kUnshifted;
-        char c = table[scan];
-        if (c == '\0') return false;
-        *out = c;
-        return true;
-    }
-    return false;
-}
 
 
 
@@ -556,6 +498,19 @@ jint g_button_state = 0;
 // Every key this process currently believes is held, by evdev code.
 // Touched only from the input thread, which is one thread.
 std::set<uint32_t>& held_keys() {
+    static std::set<uint32_t> k;
+    return k;
+}
+
+// Keys that were held when a text box took focus, and whose release has
+// already been sent.
+//
+// Releasing them once is not enough on its own: the compositor reports a
+// held key ~25 times a second (android-glue synthesises the repeats
+// Wayland leaves to the client), so the very next repeat presses the key
+// straight back down and the character carries on walking. A key stays
+// here until it is genuinely let go, or genuinely pressed again.
+std::set<uint32_t>& keys_released_into_text_entry() {
     static std::set<uint32_t> k;
     return k;
 }
@@ -1607,6 +1562,23 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             } else {
                 held_keys().erase(ev.code);
             }
+
+            // A key already released into text entry stays released until
+            // it is really let go. Without this the next auto-repeat --
+            // 25 a second -- presses it straight back down, which is why
+            // the character kept walking while its owner typed.
+            {
+                auto& released_into_text = keys_released_into_text_entry();
+                const auto it = released_into_text.find(ev.code);
+                if (it != released_into_text.end()) {
+                    const bool is_a_repeat = ev.b != 0.0f;
+                    if (down && is_a_repeat) return;  // the repeat of a key already let go
+                    // A real release, or a deliberate fresh press: either
+                    // ends the suppression, and both are worth forwarding.
+                    released_into_text.erase(it);
+                    if (!down) return;  // its release was sent at focus time
+                }
+            }
             // Track modifiers locally: Wayland reports them in a separate
             // event Stud does not forward, and every synthesized KeyEvent
             // has to carry them the way a real keyboard would.
@@ -1658,6 +1630,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                            ? 0
                            : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
             const jint key_code = android_key_code_for_event(ev.code, ev.keysym);
+            // The scan code is what the engine actually keys off -- it
+            // indexes a table straight to a USB HID usage code, and never
+            // reads the Android key code at all. So it has to carry what
+            // the key types rather than where it sits. See
+            // engine_scan_code_for_event().
+            const jint scan_code = static_cast<jint>(
+                engine_scan_code_for_event(ev.code, typed_text));
 
             // Real text entry. When the engine has told us a Lua TextBox
             // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
@@ -1870,8 +1849,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
 
             if (g_agdk_env != nullptr) {
-                send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, static_cast<jint>(ev.code),
-                              key_code, unicode_char);
+                send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, scan_code, key_code,
+                              unicode_char);
             }
             // One-shot per path, so a live run says exactly which of the
             // three real key paths actually reached the engine.
@@ -1886,8 +1865,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 if (!told_key) {
                     told_key = true;
                     std::printf("stud: input bridge: nativePassKeyEvent path active "
-                                "(scan=%u keycode=%d unicode=%d)\n", ev.code,
-                                key_code, unicode_char);
+                                "(scan=%u->%d keycode=%d unicode=%d)\n", ev.code,
+                                scan_code, key_code, unicode_char);
                     std::fflush(stdout);
                 }
             }
@@ -1897,7 +1876,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // what this argument stands for.
             call_trapping_abort(fns.key_event, jni_env, nullptr,
                                 static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
-                                static_cast<jint>(ev.code),
+                                scan_code,
                                 key_code,
                                 static_cast<jboolean>(ev.b != 0.0f ? JNI_TRUE : JNI_FALSE));
             return;
@@ -2324,8 +2303,14 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                         up.a = 0.0f;
                         released.push_back(up);
                     }
+                    // Held until really let go, so the repeats that
+                    // follow cannot press them back down.
+                    keys_released_into_text_entry() = held_keys();
                     held_keys().clear();
-                    if (!released.empty() && std::getenv("STUD_INPUT_TRACE") != nullptr) {
+                    if (!released.empty()) {
+                        // Worth a line in every log: this is the moment a
+                        // walk is supposed to stop, and its absence is the
+                        // first thing to check if one does not.
                         std::printf("stud: input bridge: a text box took focus -- released %zu "
                                     "held key(s)\n", released.size());
                         std::fflush(stdout);
