@@ -42,6 +42,16 @@ bool hand_deep_link_to_running_stud(const LaunchUri& link) {
     if (token == nullptr || *token == '\0') token = std::getenv("DESKTOP_STARTUP_ID");
     if (token != nullptr && *token != '\0' && std::strchr(token, '\n') == nullptr) {
         payload += std::string("activationToken=") + token + "\n";
+    } else {
+        // Worth saying: without it the game joins into a window that
+        // stays behind whatever the link was clicked in, and nothing else
+        // reports why. The usual cause is a launcher that was not asked
+        // for startup notification (StartupNotify in the desktop entry),
+        // or a direct invocation from a terminal, which has no token to
+        // give.
+        std::fprintf(stderr,
+                     "stud: no activation token in the environment -- the running Stud will "
+                     "join the game but stay in the background\n");
     }
     const std::string& uri = payload;
     stud::render_host::Client client;
