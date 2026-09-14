@@ -20,8 +20,8 @@ phone would, supplying the framework, window, input devices and graphics \
 stack itself. Roblox is not included: you supply the Android application \
 package yourself.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CatPieLeaf/Stud")
-set(CPACK_PACKAGE_CONTACT "Stud contributors")
-set(CPACK_PACKAGE_VENDOR "Stud contributors")
+set(CPACK_PACKAGE_CONTACT "CatPieLeaf")
+set(CPACK_PACKAGE_VENDOR "CatPieLeaf")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_STRIP_FILES FALSE)
