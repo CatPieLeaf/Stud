@@ -2645,11 +2645,21 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // not travel on with the rest of the payload.
             {
                 const std::string key = "activationToken=";
+                // Said out loud, because the second stud-ui's own stderr
+                // goes nowhere -- it has no terminal and is not teed into
+                // the session log -- so a missing token was invisible
+                // from both ends.
+                std::printf("stud-render-host: deep link payload %zu bytes, activation token %s\n",
+                            uri.size(),
+                            uri.find(key) != std::string::npos ? "present" : "ABSENT");
+                std::fflush(stdout);
                 size_t at = 0;
+                bool raised = false;
                 while (at < uri.size()) {
                     size_t end = uri.find('\n', at);
                     if (end == std::string::npos) end = uri.size();
                     if (uri.compare(at, key.size(), key) == 0) {
+                        raised = true;
                         const std::string token = uri.substr(at + key.size(), end - at - key.size());
                         // Same window the activation-token getter above
                         // uses; the one real surface this process owns.
@@ -2658,6 +2668,33 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                         break;
                     }
                     at = end + 1;
+                }
+                if (!raised) {
+                    // No token from the launcher. Mint one against this
+                    // window and spend it here.
+                    //
+                    // Self-activation, and deliberately so: the same call
+                    // the outgoing path above uses attaches the serial of
+                    // a real input event on this seat, which is the thing
+                    // a compositor actually checks. It is the only
+                    // in-protocol way to come forward when whatever
+                    // launched the link passed nothing -- and a launcher
+                    // that passes nothing is common, since the token only
+                    // exists if the entry asked for startup notification
+                    // AND the launcher honoured it.
+                    //
+                    // If the compositor declines, nothing happens and the
+                    // window stays put, which is the same outcome as
+                    // doing nothing at all.
+                    const std::string own =
+                        stud::android_glue::native_window_activation_token(g_real_window);
+                    if (!own.empty()) {
+                        stud::android_glue::native_window_activate(g_real_window, own.c_str());
+                        std::printf("stud-render-host: no token given -- raising with our own\n");
+                    } else {
+                        std::printf("stud-render-host: could not mint an activation token\n");
+                    }
+                    std::fflush(stdout);
                 }
             }
             // The URI itself is never logged: a deep link carries a
