@@ -98,7 +98,9 @@ StudSettings load_settings(const std::string& path) {
                                 "' has a non-integer \"upscaleSharpnessPercent\"");
         }
         const int percent = doc.at("upscaleSharpnessPercent").get<int>();
-        result.upscale_sharpness_percent = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+        // 100 is the floor and 125 the ceiling -- see the field's own
+        // comment for why those two numbers and not others.
+        result.upscale_sharpness_percent = percent < 100 ? 100 : (percent > 125 ? 125 : percent);
     }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {

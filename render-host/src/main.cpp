@@ -905,7 +905,7 @@ bool g_upscaling_enabled = false;
 // window's logical size, because moving it moves the UI's size with it --
 // and neither is the output: that is the window's own resolution, which
 // the compositor shows 1:1.
-int g_upscale_sharpness_percent = 0;
+int g_upscale_sharpness_percent = 100;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
@@ -3980,7 +3980,7 @@ int main(int argc, char** argv) {
             g_upscaling_enabled = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--upscale-sharpness") {
             const int percent = std::atoi(argv[i + 1]);
-            if (percent >= 0 && percent <= 100) g_upscale_sharpness_percent = percent;
+            if (percent >= 100 && percent <= 125) g_upscale_sharpness_percent = percent;
         }
     }
     // Latch the scale before any window or surface exists, so the very
