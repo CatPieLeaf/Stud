@@ -2546,6 +2546,30 @@ int main(int argc, char** argv) {
                     jvm, lib, std::string(message.data(), std::min<size_t>(written, message.size())));
             }
         }
+        // A deep link handed over by a second stud-ui, because someone
+        // clicked a game in a browser while this session was already
+        // playing. The old answer was a dialog telling them to close the
+        // window they were using.
+        {
+            std::vector<char> link(4096);
+            for (;;) {
+                uint64_t args[8] = {};
+                uint32_t written = 0;
+                const uint64_t got = stud::render_client::connection().call(
+                    stud::render_host::CallId::PollDeepLink, args, nullptr, 0, link.data(),
+                    static_cast<uint32_t>(link.size()), &written);
+                if (got == 0 || written == 0) break;
+                const std::string uri(link.data(), std::min<size_t>(written, link.size()));
+                // The URI is never logged: it carries a one-time join
+                // ticket. Its length is enough to see that one arrived.
+                std::printf("stud: a deep link arrived from a second launch (%zu bytes)\n",
+                            uri.size());
+                std::fflush(stdout);
+                stud::jni_bridge::join_experience_from_deep_link(jvm, lib, uri, v2_platform_params,
+                                                                 v2_device_params,
+                                                                 lifecycle.surface);
+            }
+        }
         // Real, user-reported bug fixed: closing the real window
         // (stud-render-host, Process C) used to leave this process
         // running forever. Treat a lost render connection as this

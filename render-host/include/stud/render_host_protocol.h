@@ -673,6 +673,24 @@ enum class CallId : uint32_t {
     // it (X11 always does), 0 otherwise. Appended last: every existing id
     // keeps its value.
     CanWarpPointer,
+    // A deep link that arrived while Stud was already running.
+    //
+    // Clicking a game in a browser starts a SECOND stud-ui. It used to
+    // find the lock held and answer with "Stud is already running --
+    // close the existing window", which is the wrong answer to someone
+    // who just asked to play something. That process cannot reach the
+    // engine itself (it is a fresh process; Process B is inside its own
+    // sandbox), but it CAN reach render-host, which both of them already
+    // talk to. So it hands the link over here and exits.
+    //
+    // The in-buffer is the URI, not NUL-terminated. Appended last: every
+    // existing id keeps its value.
+    DeliverDeepLink,
+    // Drains one queued deep link into the out-buffer, returning its
+    // length, or 0 when there is none. Same shape as PollWebViewMessage,
+    // and polled by Process B beside it. Appended last: every existing id
+    // keeps its value.
+    PollDeepLink,
 };
 // Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -924,9 +942,11 @@ inline const char* call_id_name(CallId id) {
         "SetPointerConfined",
         "WarpPointer",
         "CanWarpPointer",
+        "DeliverDeepLink",
+        "PollDeepLink",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::CanWarpPointer) + 1,
+                      static_cast<size_t>(CallId::PollDeepLink) + 1,
                   "a CallId was added without its name -- append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

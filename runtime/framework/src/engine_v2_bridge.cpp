@@ -865,6 +865,54 @@ bool notify_surface_resized(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
     return !outcome.still_running && !outcome.trapped_abort;
 }
 
+bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                                    const std::string& payload,
+                                    const std::shared_ptr<PlatformParams>& platform_params,
+                                    const std::shared_ptr<DeviceParams>& device_params,
+                                    const std::shared_ptr<SurfaceStub>& surface) {
+    // key=value per line, produced by Process A from its own parsed link.
+    NativeHelperStub::LaunchRequest request{};
+    size_t at = 0;
+    while (at < payload.size()) {
+        size_t end = payload.find('\n', at);
+        if (end == std::string::npos) end = payload.size();
+        const std::string line = payload.substr(at, end - at);
+        at = end + 1;
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = line.substr(0, eq);
+        const std::string value = line.substr(eq + 1);
+        if (key == "placeId") {
+            request.place_id = std::strtoll(value.c_str(), nullptr, 10);
+        } else if (key == "referredBy") {
+            request.referred_by_player_id = std::strtoll(value.c_str(), nullptr, 10);
+        } else if (key == "joinAttemptId") {
+            request.join_attempt_id = value;
+        } else if (key == "joinOrigin") {
+            request.join_attempt_origin = value;
+        } else if (key == "gameInfo") {
+            request.launch_data = value;
+        } else if (key == "gameInstanceId") {
+            request.game_instance_id = value;
+        }
+    }
+    if (request.place_id == 0) {
+        std::fprintf(stderr, "stud: the handed-over link named no place id -- ignoring it\n");
+        std::fflush(stderr);
+        return false;
+    }
+    // Everything past here is what a Lua-initiated launch already does:
+    // the request becomes the one acknowledge_experience_start reads, and
+    // that runs the real nativeAppBridgeV2StartGameWithParam. Reusing it
+    // rather than repeating it means one join path, not two that can
+    // drift.
+    std::fprintf(stderr, "stud: joining placeId=%lld from a second launch\n", request.place_id);
+    std::fflush(stderr);
+    NativeHelperStub::set_last_launch_request(std::move(request));
+    acknowledge_experience_start(jvm, lib, platform_params, device_params, surface);
+    return true;
+}
+
 void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                   const std::shared_ptr<PlatformParams>& platform_params,
                                   const std::shared_ptr<DeviceParams>& device_params,

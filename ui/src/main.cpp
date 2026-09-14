@@ -24,6 +24,7 @@
 #include "desktop_entry.h"
 #include "gpu_enum.h"
 #include "diagnose.h"
+#include "deep_link_handoff.h"
 #include "launch_uri.h"
 #include "notifications.h"
 #include "settings_window.h"
@@ -746,6 +747,10 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // desktop entry again, and clicking a game link in a browser while
     // already playing. Both used to end the session in progress.
     if (another_instance_is_running()) {
+        // A deep link never reaches here: main() hands it to the running
+        // session before Qt is even constructed, so that case has already
+        // returned. What is left is a plain second launch, which really
+        // does have nothing to do.
         QMessageBox::information(nullptr, "Stud",
                                   "Stud is already running.\n\nClose the existing window before "
                                   "starting it again.");
@@ -1113,6 +1118,25 @@ int main(int argc, char** argv) {
     // function's own comment for what loading MangoHud into this process
     // actually does.
     keep_mangohud_out_of_this_process();
+
+    // A game link clicked while Stud is already playing: hand it over and
+    // leave, BEFORE Qt exists.
+    //
+    // This used to happen further down, after QApplication was
+    // constructed, and the cost was visible -- a second Stud icon
+    // appeared in the taskbar for as long as this process lived, for a
+    // process whose whole job is to pass on a place id and exit. Nothing
+    // here needs Qt: the instance check reads /proc and the hand-off is a
+    // plain socket.
+    if (argc > 1 && std::string(argv[1]) != "--settings" && argv[1][0] != '-') {
+        const auto link = stud::ui::parse_launch_uri(argv[1]);
+        if (link && link->place_id != 0 && another_instance_is_running() &&
+            stud::ui::hand_deep_link_to_running_stud(*link)) {
+            std::printf("stud: already running -- handed the link to the running session\n");
+            std::fflush(stdout);
+            return 0;
+        }
+    }
 
     QApplication app(argc, argv);
     app.setWindowIcon(QIcon(":/stud-logo-color.png"));

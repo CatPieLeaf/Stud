@@ -42,6 +42,20 @@ add_library(stud_ui_launch_uri STATIC
 target_include_directories(stud_ui_launch_uri PUBLIC src)
 target_link_libraries(stud_ui_launch_uri PUBLIC Qt6::Core)
 
+# Handing a deep link to a Stud that is already playing. Header-only
+# protocol, so this needs render-host's include directory and nothing
+# else -- no Qt, and no link against render-host itself.
+add_library(stud_ui_deep_link_handoff STATIC
+    src/deep_link_handoff.cpp
+    # default_socket_path() lives here, and both other processes already
+    # compile this same file for the same reason -- the three of them have
+    # to agree on where the socket is.
+    "${CMAKE_CURRENT_SOURCE_DIR}/../render-host/src/render_host_protocol.cpp"
+)
+target_include_directories(stud_ui_deep_link_handoff PUBLIC src
+                            "${CMAKE_CURRENT_SOURCE_DIR}/../render-host/include"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include")
+
 
 # Real GPU enumeration (vkEnumeratePhysicalDevices) -- no Qt dependency,
 # kept as its own small library so it's independently testable (see
@@ -85,7 +99,8 @@ add_executable(stud-ui
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network stud_ui_gpu_enum stud_config stud_ui_credential_store
                                        stud_ui_notifications stud_ui_launch_uri stud_ui_log_archive
-                                       stud_ipc stud_android_glue stud_render stud_bionic_runtime)
+                                       stud_ipc stud_android_glue stud_render stud_bionic_runtime
+                      stud_ui_deep_link_handoff)
 
 set_target_properties(stud-ui PROPERTIES
     AUTOMOC ON
