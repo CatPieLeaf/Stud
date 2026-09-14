@@ -30,6 +30,14 @@ void check(bool ok, const std::string& what) {
     }
 }
 
+void check_eq(const std::string& got, const std::string& want, const std::string& what) {
+    if (got != want) {
+        std::printf("FAIL: %s (got \"%s\", wanted \"%s\")\n", what.c_str(), got.c_str(),
+                    want.c_str());
+        ++g_failures;
+    }
+}
+
 // Android key codes, by name, so the expectations below read as intent.
 constexpr std::int32_t kKeycodeA = 29;
 constexpr std::int32_t kKeycodeW = 51;
@@ -199,6 +207,49 @@ int main() {
             xkb_compose_state_unref(cs);
             xkb_compose_table_unref(table);
         }
+    }
+
+    // What a key types, and the difference between "nothing" and
+    // "don't know" -- which is what put a spurious "[" in front of every
+    // accented character.
+    {
+        using stud::jni_bridge::text_from_keymap;
+        std::string text;
+        char none[12] = {};
+
+        // A dead key mid-sequence: the keymap answered, and the answer is
+        // that this key types nothing yet. The caller must NOT fall back
+        // to its own layout table -- on ABNT2 the dead acute sits at the
+        // US "[" position and the dead tilde at the US "'" position, so
+        // falling back types exactly the character the user reported
+        // seeing: "[e-acute" instead of "e-acute".
+        check(text_from_keymap(XKB_KEY_dead_acute, 0, none, sizeof(none), &text),
+              "a dead key IS answered by the keymap");
+        check(text.empty(), "a dead key types nothing at all");
+
+        // The key that completes it carries the whole character.
+        check(text_from_keymap(XKB_KEY_e, 0x00E9, none, sizeof(none), &text),
+              "the completing key is answered");
+        check_eq(text, "\xC3\xA9", "the completing key types the composed character");
+
+        // An ordinary key.
+        check(text_from_keymap(XKB_KEY_a, 'a', none, sizeof(none), &text), "an ordinary key");
+        check_eq(text, "a", "an ordinary key types itself");
+
+        // A multi-character composed result travels as text.
+        char multi[12] = {'n', 'o', '\0'};
+        check(text_from_keymap(XKB_KEY_a, 0, multi, sizeof(multi), &text), "a multi-char result");
+        check_eq(text, "no", "a multi-character result is not truncated");
+
+        // Only with NO keysym at all is the layout table the right answer,
+        // which is the X11 backend and the moment before the keymap lands.
+        check(!text_from_keymap(0, 0, none, sizeof(none), &text),
+              "no keysym means no keymap, so the caller falls back");
+
+        // A key that types nothing and is not a dead key -- a function or
+        // arrow key -- is still answered, and still types nothing.
+        check(text_from_keymap(XKB_KEY_Left, 0, none, sizeof(none), &text), "an arrow key");
+        check(text.empty(), "an arrow key types nothing");
     }
 
     if (g_failures != 0) {

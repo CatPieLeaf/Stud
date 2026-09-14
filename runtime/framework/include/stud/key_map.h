@@ -237,4 +237,37 @@ inline std::string utf8_from_codepoint(uint32_t cp) {
     return out;
 }
 
+// What a key types, according to the compositor's own keymap.
+//
+// Returns false when there is no keymap answer at all, which is the
+// caller's cue to fall back to its own layout table. Returns true with
+// `out` set to what to type -- and that may legitimately be EMPTY: a dead
+// key mid-sequence types nothing, and the character arrives with the key
+// that completes the sequence.
+//
+// Telling those two apart is the whole point. A dead key and an unknown
+// key both carry no code point, so a caller that only checks the code
+// point reaches for its own table and types whatever a US layout happens
+// to have at that position. On a Brazilian ABNT2 keyboard the dead acute
+// sits where US puts "[" and the dead tilde where US puts "'", which is
+// exactly the spurious character that appeared in front of every accent:
+// "[e-acute" rather than "e-acute". A resolved keysym means the keymap
+// spoke, and the keymap is then the only authority.
+inline bool text_from_keymap(uint32_t keysym, uint32_t codepoint, const char* composed_utf8,
+                             std::size_t composed_max, std::string* out) {
+    out->clear();
+    // XKB_KEY_NoSymbol: no keymap has been read yet, or this backend has
+    // none to read. Only then is a layout table the best available answer.
+    if (keysym == 0) return false;
+    if (composed_utf8 != nullptr && composed_max > 0 && composed_utf8[0] != '\0') {
+        // A completed sequence whose result is more than one character.
+        std::size_t length = 0;
+        while (length < composed_max && composed_utf8[length] != '\0') ++length;
+        out->assign(composed_utf8, length);
+    } else if (codepoint != 0) {
+        *out = utf8_from_codepoint(codepoint);
+    }
+    return true;
+}
+
 }  // namespace stud::jni_bridge
