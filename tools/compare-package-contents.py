@@ -17,7 +17,6 @@ import argparse
 import hashlib
 import subprocess
 import sys
-import tarfile
 from pathlib import Path
 
 
@@ -48,9 +47,19 @@ def extract(package: Path, kind: str, dest: Path) -> None:
     elif kind == "deb":
         subprocess.run(["dpkg-deb", "-x", str(package), str(dest)], check=True)
     elif kind == "arch":
-        with tarfile.open(package, "r:*") as tf:
-            members = [m for m in tf.getmembers() if not m.name.startswith(".")]
-            tf.extractall(dest, members=members, filter="tar")
+        # Through tar rather than Python's own tarfile, which only learned
+        # to read zstd in 3.14 -- the release runner has 3.12 and failed
+        # with "not a gzip file ... invalid header" on a perfectly good
+        # package. tar hands the work to the zstd binary, which is present
+        # wherever an Arch package can be built in the first place.
+        #
+        # The excludes drop Arch's own metadata (.PKGINFO, .MTREE,
+        # .BUILDINFO), which is not part of the payload being compared.
+        subprocess.run(
+            ["tar", "--zstd", "-xf", str(package), "-C", str(dest),
+             "--exclude=.PKGINFO", "--exclude=.MTREE", "--exclude=.BUILDINFO",
+             "--exclude=.INSTALL", "--exclude=.Changelog"],
+            check=True)
     else:
         raise SystemExit(f"unknown package kind {kind}")
 
