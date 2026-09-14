@@ -1078,10 +1078,29 @@ bool subscribe_to_experience_launch(FakeJni::Jvm& jvm, const stud::linker::Loade
         return false;
     }
 
-    auto bus = std::make_shared<MessageBusStub>();
-    auto callback = std::make_shared<MessageBusRawCallbackStub>();
-    jobject bus_ref = env.createLocalReference(bus);
-    jobject callback_ref = env.createLocalReference(callback);
+    // The engine keeps this subscription for the rest of the process, so
+    // the objects behind it have to live that long too.
+    //
+    // They used to be plain locals: a shared_ptr destroyed when this
+    // function returned, wrapped in a reference belonging to the
+    // LocalFrame above, which is destroyed at the same moment. The engine
+    // was then holding a subscription whose callback had been freed --
+    // and the symptom was exactly what that predicts, an experience
+    // launch that worked on one run, did nothing on the next, and
+    // occasionally faulted. (webview_bridge.cpp subscribes the same way
+    // and already owns its callbacks for this reason.)
+    //
+    // Owned here, deliberately, because process lifetime IS the correct
+    // lifetime for them: nothing ever unsubscribes.
+    struct ExperienceLaunchSubscription {
+        std::shared_ptr<MessageBusStub> bus;
+        std::shared_ptr<MessageBusRawCallbackStub> callback;
+    };
+    static ExperienceLaunchSubscription subscription;
+    subscription.bus = std::make_shared<MessageBusStub>();
+    subscription.callback = std::make_shared<MessageBusRawCallbackStub>();
+    jobject bus_ref = env.createLocalReference(subscription.bus);
+    jobject callback_ref = env.createLocalReference(subscription.callback);
 
     jobject connection = nullptr;
     const bool ok = call_trapping_abort_with_result(do_subscribe, connection, jni_env, bus_ref,
