@@ -4,6 +4,8 @@
 #include <QString>
 
 class QSystemTrayIcon;
+class QMenu;
+class QAction;
 
 // Stud's system-tray presence, and the reason Process A now outlives a
 // launch at all.
@@ -39,8 +41,15 @@ private slots:
     void exportLogs();
     void showAbout();
     void quitStud();
+    // A newer release exists: change the icon and add an entry for it.
+    void showUpdateAvailable(const QString& latestVersion);
 
 private:
+    // The menu, kept so the update entry can join it later, and the entry
+    // itself, kept so it is only ever added once.
+    QMenu* menu_ = nullptr;
+    QAction* updateAction_ = nullptr;
+
     // Whether the session is still running, checked so the tray does not
     // outlive the game it belongs to.
     void checkSessionAlive();

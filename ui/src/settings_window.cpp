@@ -1,5 +1,7 @@
 #include "settings_window.h"
 
+#include "update_check.h"
+
 #include "gpu_enum.h"
 #include "stud/android_glue.h"
 #include "stud/settings.h"
@@ -297,7 +299,19 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     connect(saveButton, &QPushButton::clicked, this, &SettingsWindow::onSaveClicked);
 
     statusLabel_ = new QLabel(this);
+    // The status line doubles as where an available update is announced,
+    // so it has to render a link and open it.
+    statusLabel_->setTextFormat(Qt::RichText);
+    statusLabel_->setOpenExternalLinks(true);
+    statusLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
     layout->addWidget(statusLabel_);
+
+    // Ask GitHub whether there is a newer Stud. The tray may have asked
+    // already, in which case this costs nothing and the answer is
+    // remembered -- see UpdateCheck.
+    connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this,
+            [this] { showIdleStatus(); });
+    UpdateCheck::start();
 
     loadFromDisk();
     installResets();
@@ -518,7 +532,35 @@ void SettingsWindow::listenForOpenRequests() {
     });
 }
 
-void SettingsWindow::setStatusMessage(const QString& text) { statusLabel_->setText(text); }
+void SettingsWindow::setStatusMessage(const QString& text) {
+    if (text.isEmpty()) {
+        showIdleStatus();
+        return;
+    }
+    statusLabel_->setText(text.toHtmlEscaped());
+}
+
+// What the status line says when it has nothing else to say: either
+// nothing, or that this Stud is out of date.
+//
+// It lives here rather than in a banner of its own because this is the
+// one line in the window that is already about "what just happened", and
+// an update is news of exactly that kind. Anything the user actually does
+// -- saving, restarting -- replaces it, and it comes back when that
+// message is cleared.
+void SettingsWindow::showIdleStatus() {
+    if (!UpdateCheck::updateAvailable()) {
+        statusLabel_->clear();
+        return;
+    }
+    // Blue and underlined, stated rather than inherited: a link's default
+    // colour comes from the palette and is not dependable across themes,
+    // and this one has to read as a link in both.
+    statusLabel_->setText(
+        QStringLiteral("<a href=\"%1\" style=\"color:#2f7fd6; text-decoration:underline;\">"
+                       "Your Stud version is outdated!</a>")
+            .arg(UpdateCheck::releasesUrl()));
+}
 
 void SettingsWindow::onRenderPathChanged(int index) {
     const bool can_overlay = index == kRenderPathVulkan || index == kRenderPathAngleDesktopGL;

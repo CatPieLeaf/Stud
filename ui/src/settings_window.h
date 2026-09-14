@@ -56,6 +56,12 @@ public:
     // opened it rather than the user asking for it.
     void setStatusMessage(const QString& text);
 
+private:
+    // The status line at rest: empty, or the update notice.
+    void showIdleStatus();
+
+public:
+
 private slots:
     void onSaveClicked();
     void onRestartClicked();
