@@ -262,7 +262,7 @@ jobs:
     needs: packages
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.8
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
       options: --privileged
     steps:
       - uses: actions/checkout@v7
@@ -290,27 +290,16 @@ jobs:
           s = re.sub(r"        url: https://github\.com/CatPieLeaf/Stud/releases/[^\n]*\n"
                      r"        sha256: PLACEHOLDER_STUD_SHA256\n",
                      "        path: ../../stud-archive.tar.zst\n", s)
-          # The three dependency checksums are real upstream tarballs, so
-          # they are filled rather than removed.
           open(p, "w").write(s)
           PY
           grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
 
-      - name: Fill in the dependency checksums
-        # Each of these is a fixed upstream tarball; the manifest carries a
-        # placeholder in the tree because a checksum belongs to one
-        # specific file and a stale one is worse than an obvious gap.
+      - name: The manifest must carry no placeholder into the build
+        # The dependency checksums are real in the tree -- Flathub builds
+        # from the manifest as committed, so a manifest that only works
+        # after CI has rewritten it is not one they can build at all. The
+        # only substitution left is the archive path above.
         run: |
-          set -eu
-          fill() {
-            local url="$1" placeholder="$2"
-            local sum
-            sum="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
-            sed -i "s/$placeholder/$sum/" packaging/flatpak/io.github.catpieleaf.Stud.yml
-          }
-          fill https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz PLACEHOLDER_BWRAP_SHA256
-          fill https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz PLACEHOLDER_PORTAUDIO_SHA256
-          fill https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz PLACEHOLDER_QTKEYCHAIN_SHA256
           ! grep -q PLACEHOLDER packaging/flatpak/io.github.catpieleaf.Stud.yml
 
       - name: Build and bundle

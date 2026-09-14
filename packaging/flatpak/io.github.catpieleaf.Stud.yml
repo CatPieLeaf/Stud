@@ -21,7 +21,7 @@
 
 app-id: io.github.catpieleaf.Stud
 runtime: org.kde.Platform
-runtime-version: '6.8'
+runtime-version: '6.10'
 sdk: org.kde.Sdk
 command: stud
 separate-locales: false
@@ -42,13 +42,20 @@ finish-args:
   # Wayland first. X11 is the fallback, and the one that needs --share=ipc.
   - --socket=wayland
   - --socket=fallback-x11
-  # Audio out, and microphone in for voice chat. PipeWire's own socket
-  # rather than PulseAudio's, since the runtime speaks it.
+  # Audio out, and microphone in for voice chat. This is the PulseAudio
+  # socket; on a PipeWire desktop it is pipewire-pulse that answers it.
   - --socket=pulseaudio
-  # The APK the user supplies, and nothing else: Stud reads a file the
-  # user picks in Settings, and writes only its own data directories.
-  - --filesystem=xdg-download:ro
-  - --filesystem=xdg-documents:ro
+  # No filesystem access is requested. The APK is chosen through a
+  # QFileDialog, which Qt routes to the file chooser portal inside a
+  # sandbox -- the portal hands back a path under /run/user/<uid>/doc/
+  # that stays readable on later launches, so a static grant on
+  # xdg-download and xdg-documents would only widen what Stud can read
+  # without letting it read anything it needs.
+  #
+  # Verify on the first real Flatpak build: pick an APK in Settings, then
+  # relaunch and confirm it is still readable. If the portal path does not
+  # survive, the honest fix is --filesystem=xdg-download:ro, not a wider
+  # grant -- and config.json takes a path by hand either way.
   # The keyring, where the login lives. Without it Stud would have to keep
   # a session cookie in its own config, which it deliberately never does.
   - --talk-name=org.freedesktop.secrets
@@ -69,7 +76,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz
-        sha256: PLACEHOLDER_BWRAP_SHA256
+        sha256: 988fd6b232dafa04b8b8198723efeaccdb3c6aa9c1c7936219d5791a8b7a8646
     cleanup:
       - /share/bash-completion
       - /share/zsh
@@ -85,7 +92,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz
-        sha256: PLACEHOLDER_PORTAUDIO_SHA256
+        sha256: 5af29ba58bbdbb7bbcefaaecc77ec8fc413f0db6f4c4e286c40c3e1b83174fa0
 
   # QtKeychain, for the login. Qt itself comes from the runtime.
   - name: qtkeychain
@@ -97,7 +104,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz
-        sha256: PLACEHOLDER_QTKEYCHAIN_SHA256
+        sha256: a22c708f351431d8736a0ac5c562414f2b7bb919a6292cbca1ff7ac0849cb0a7
 
   - name: stud
     buildsystem: simple

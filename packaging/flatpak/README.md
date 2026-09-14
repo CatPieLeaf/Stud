@@ -32,17 +32,32 @@ permission. Sober is granted it (for ptrace), so the precedent exists, but
 expect a reviewer to ask, and the answer is the architecture rather than
 convenience.
 
-## Placeholders
+## The one placeholder
 
-The four `PLACEHOLDER_*_SHA256` values are filled in by CI at release
-time, along with the release URL. They are placeholders in the tree on
-purpose: a checksum belongs to one specific archive, and a stale one in
-version control is worse than an obvious gap.
+`PLACEHOLDER_STUD_SHA256` is Stud's own release archive, and it is the
+only value CI fills in: that archive does not exist until the release it
+belongs to is published. Every dependency checksum is real and committed,
+because Flathub builds the manifest exactly as it stands in the tree -- a
+manifest that only works once CI has rewritten it is one they cannot
+build at all.
+
+Changing a dependency's version means changing its checksum in the same
+commit. `flatpak-builder` refuses a mismatch, so a stale one fails the
+build rather than installing the wrong thing.
+
+## Filesystem access
+
+None is requested. The APK is chosen through a `QFileDialog`, which Qt
+routes to the file chooser portal inside a sandbox; the portal returns a
+path under `/run/user/<uid>/doc/` that stays readable afterwards. Confirm
+that on the first real build -- pick an APK, relaunch, and check it is
+still readable. If it is not, the fix is `--filesystem=xdg-download:ro`,
+never a wider grant.
 
 ## Testing it locally
 
 ```sh
-flatpak install -y flathub org.kde.Sdk//6.8 org.kde.Platform//6.8
+flatpak install -y flathub org.kde.Sdk//6.10 org.kde.Platform//6.10
 flatpak-builder --force-clean --user --install build-flatpak \
   packaging/flatpak/io.github.catpieleaf.Stud.yml
 flatpak run io.github.catpieleaf.Stud
