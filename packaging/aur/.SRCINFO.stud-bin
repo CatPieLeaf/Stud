@@ -14,6 +14,12 @@ pkgbase = stud-bin
 	depends = freetype2
 	depends = wayland
 	depends = libxkbcommon
+	depends = glibc
+	depends = gcc-libs
+	depends = openssl
+	depends = hicolor-icon-theme
+	depends = libglvnd
+	depends = libxext
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	provides = stud=1.1.0
 	conflicts = stud

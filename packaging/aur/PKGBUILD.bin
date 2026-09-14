@@ -27,6 +27,10 @@ depends=(
   'freetype2'
   'wayland'
   'libxkbcommon'
+  'glibc'
+  'gcc-libs'
+  'openssl'
+  'hicolor-icon-theme'
 )
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
@@ -37,4 +41,15 @@ package() {
   # Stripping a bionic ELF or ANGLE is neither useful nor safe -- the same
   # reason the rpm turns it off.
   cp -a "${STUD_DESTDIR:?set STUD_DESTDIR to the install tree}"/. "$pkgdir"/
+
+  # Arch does not use /usr/libexec -- a package's own executables belong
+  # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
+  # misplaced (12 errors on this package before this moved). stud-ui
+  # probes both layouts, so the binaries need no rebuild for this.
+  if [ -d "$pkgdir/usr/libexec/stud" ]; then
+    mkdir -p "$pkgdir/usr/lib"
+    cp -a "$pkgdir/usr/libexec/stud" "$pkgdir/usr/lib/stud-helpers"
+    cp -a "$pkgdir/usr/lib/stud-helpers/." "$pkgdir/usr/lib/stud/"
+    rm -rf "$pkgdir/usr/lib/stud-helpers" "$pkgdir/usr/libexec"
+  fi
 }
