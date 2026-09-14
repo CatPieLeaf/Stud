@@ -179,6 +179,12 @@ jobs:
         run: |
           cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
           cat > /tmp/makepkg.sh <<'SCRIPT'
+          #!/bin/bash
+          # The shebang matters: this file is mounted into the container
+          # and exec'd directly, and without one the kernel refuses it --
+          # `exec container process /makepkg.sh: Exec format error`. It
+          # went unnoticed because the step never ran this far before;
+          # podman was missing from the container entirely.
           set -eux
           pacman -Sy --noconfirm --needed base-devel zstd
           useradd -m builder
