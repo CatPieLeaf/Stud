@@ -446,6 +446,33 @@ bool char_for_scan_code(uint32_t scan, bool shift, char* out) {
         *out = ' ';
         return true;
     }
+    // The keypad, which this table never covered -- every one of these
+    // reached the engine as character 0.
+    //
+    // 98 is KEY_KPSLASH, and it is not only the numpad: a Brazilian ABNT2
+    // keyboard's own "/ ?" key -- the ordinary one beside the right shift,
+    // not a numpad at all -- is reported by the kernel as KPSLASH too.
+    // Live-caught: pressing "/" on such a keyboard produced scan=98,
+    // keycode=0, unicode=0, and Roblox cannot open chat on a key it was
+    // never told about.
+    switch (scan) {
+        case 98: *out = shift ? '?' : '/'; return true;  // KPSLASH
+        case 55: *out = '*'; return true;                // KPASTERISK
+        case 74: *out = '-'; return true;                // KPMINUS
+        case 78: *out = '+'; return true;                // KPPLUS
+        case 83: *out = '.'; return true;                // KPDOT
+        case 79: *out = '1'; return true;
+        case 80: *out = '2'; return true;
+        case 81: *out = '3'; return true;
+        case 75: *out = '4'; return true;
+        case 76: *out = '5'; return true;
+        case 77: *out = '6'; return true;
+        case 71: *out = '7'; return true;
+        case 72: *out = '8'; return true;
+        case 73: *out = '9'; return true;
+        case 82: *out = '0'; return true;
+        default: break;
+    }
     if (scan >= 2 && scan <= 53) {
         const char* table = shift ? kShifted : kUnshifted;
         char c = table[scan];
@@ -533,6 +560,31 @@ jint android_key_code_for_scan_code(uint32_t scan) {
         case 109: return 93;   // PAGEDOWN
         case 110: return 124;  // INSERT
         case 111: return 112;  // DELETE -> KEYCODE_FORWARD_DEL
+        // KEYCODE_SLASH rather than KEYCODE_NUMPAD_DIVIDE, deliberately.
+        // On a Brazilian ABNT2 layout this scan code IS the ordinary "/"
+        // key, and Roblox binds chat to Slash -- reporting the numpad code
+        // would be faithful to what the kernel says and useless to the
+        // person pressing it. The character it produces is "/" either way,
+        // which is what makes the substitution safe on a real numpad too.
+        //
+        // The honest fix is to read the compositor's own keymap instead of
+        // assuming a US layout; see the note on char_for_scan_code.
+        case 98: return 76;    // KPSLASH -> KEYCODE_SLASH
+        case 55: return 155;   // KPASTERISK -> KEYCODE_NUMPAD_MULTIPLY
+        case 74: return 156;   // KPMINUS -> KEYCODE_NUMPAD_SUBTRACT
+        case 78: return 157;   // KPPLUS -> KEYCODE_NUMPAD_ADD
+        case 83: return 158;   // KPDOT -> KEYCODE_NUMPAD_DOT
+        case 96: return 160;   // KPENTER -> KEYCODE_NUMPAD_ENTER
+        case 79: return 145;   // KP1 -> KEYCODE_NUMPAD_1
+        case 80: return 146;
+        case 81: return 147;
+        case 75: return 148;
+        case 76: return 149;
+        case 77: return 150;
+        case 71: return 151;
+        case 72: return 152;
+        case 73: return 153;
+        case 82: return 144;   // KP0 -> KEYCODE_NUMPAD_0
         default: return 0;
     }
 }
