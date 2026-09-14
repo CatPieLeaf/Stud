@@ -1,6 +1,8 @@
 #include "deep_link_handoff.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include "stud/render_host_protocol.h"
 
@@ -23,6 +25,23 @@ bool hand_deep_link_to_running_stud(const LaunchUri& link) {
     if (!link.game_info.empty()) payload += "gameInfo=" + link.game_info + "\n";
     if (!link.game_instance_id.empty()) {
         payload += "gameInstanceId=" + link.game_instance_id + "\n";
+    }
+    // The token that lets the running Stud come forward.
+    //
+    // A compositor will not let an application raise itself -- so the
+    // only thing that can bring Stud to the front is a token minted by
+    // the process the user actually clicked in. The browser (or the
+    // portal) hands it to THIS process in the environment, and this
+    // process is about to exit without ever showing a window, so passing
+    // it on is the whole of its value. Without it the game would join
+    // into a window still sitting behind the browser.
+    //
+    // Both spellings: XDG_ACTIVATION_TOKEN is the Wayland one,
+    // DESKTOP_STARTUP_ID the older X11 name that launchers still set.
+    const char* token = std::getenv("XDG_ACTIVATION_TOKEN");
+    if (token == nullptr || *token == '\0') token = std::getenv("DESKTOP_STARTUP_ID");
+    if (token != nullptr && *token != '\0' && std::strchr(token, '\n') == nullptr) {
+        payload += std::string("activationToken=") + token + "\n";
     }
     const std::string& uri = payload;
     stud::render_host::Client client;
