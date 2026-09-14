@@ -1,0 +1,40 @@
+# Maintainer: Stud contributors <https://github.com/CatPieLeaf/Stud>
+#
+# Not for the AUR. This is what CI uses to turn an already-built install
+# tree into a pkg.tar.zst, so Arch users can install Stud without the
+# hour-long ANGLE build the source PKGBUILD needs.
+#
+# It builds nothing: `package()` copies a DESTDIR that cmake --install has
+# already produced. CI sets STUD_DESTDIR to it.
+
+pkgname=stud
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Play Roblox on Linux -- runs the real, unmodified Roblox Android app"
+arch=('x86_64')
+url="https://github.com/CatPieLeaf/Stud"
+license=('AGPL-3.0-or-later')
+# The same list as the source PKGBUILD, and it has to stay that way: a
+# dependency that only one of them names is a broken package for half the
+# people who install it.
+depends=(
+  'bubblewrap'
+  'qt6-base'
+  'qt6-webengine'
+  'qtkeychain-qt6'
+  'vulkan-icd-loader'
+  'portaudio'
+  'freetype2'
+  'wayland'
+  'libxkbcommon'
+)
+optdepends=(
+  'mangohud: the performance overlay Stud can switch on in Settings'
+)
+options=(!strip !debug emptydirs)
+
+package() {
+  # Stripping a bionic ELF or ANGLE is neither useful nor safe -- the same
+  # reason the rpm turns it off.
+  cp -a "${STUD_DESTDIR:?set STUD_DESTDIR to the install tree}"/. "$pkgdir"/
+}
