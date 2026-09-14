@@ -10,6 +10,8 @@ pkgbase = stud-bin
 	depends = qt6-webengine
 	depends = qtkeychain-qt6
 	depends = vulkan-icd-loader
+	depends = libglvnd
+	depends = libxext
 	depends = portaudio
 	depends = freetype2
 	depends = wayland
@@ -18,8 +20,6 @@ pkgbase = stud-bin
 	depends = gcc-libs
 	depends = openssl
 	depends = hicolor-icon-theme
-	depends = libglvnd
-	depends = libxext
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	provides = stud=1.1.0
 	conflicts = stud
