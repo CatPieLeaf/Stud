@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Stud
-Comment=Unofficial Roblox launcher/runtime for Linux
+Comment=Unofficial Roblox launcher for Linux
 # Exec is filled in at configure time: the plain command for an
 # installed package, an absolute path for a build tree.
 Exec=@STUD_EXEC@ %u

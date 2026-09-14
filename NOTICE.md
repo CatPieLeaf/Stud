@@ -81,7 +81,7 @@ and no crash reporting of any kind.
   interface, never in a file of Stud's own.
 - If, and only if, you switch on the server-region notification in
   Settings — off by default — the address of the **game server** you
-  joined is sent to `ip-api.com` to name its country. Your own address is
+  joined is sent over HTTPS to `ipwho.is` to name its country. Your own address is
   not sent. Leaving the setting off means the request never happens.
 - Logs are written under `~/.local/state/stud/logs/` and stay on your
   machine. Nothing uploads them.
