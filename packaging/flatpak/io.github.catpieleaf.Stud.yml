@@ -1,0 +1,125 @@
+# Flatpak manifest for Flathub.
+#
+# It installs a prebuilt archive rather than building from source, and
+# that is not a shortcut -- it is the only thing that can work. Stud needs
+# ANGLE with both its Vulkan and its SwiftShader backends, which no
+# distribution ships, so it is compiled from source; and ANGLE's own build
+# uses `gclient sync`, which downloads dozens of dependencies while it
+# runs. Flathub builds have no network. There is no self-contained ANGLE
+# source tarball to pin instead.
+#
+# The precedent is Sober (org.vinegarhq.Sober), which is the same kind of
+# application -- the real Roblox Android app on Linux -- and which ships
+# its own prebuilt archive from its own server with a sha256. Every
+# permission below follows theirs, for the same reasons.
+#
+# The archive is built by Stud's own CI from the tag being released, so
+# what ships here is the same binary as the rpm, the deb and the AppImage.
+# If Flathub would rather have a from-source build, the way to give them
+# one is a vendored ANGLE checkout published as a source bundle (post
+# `gclient sync`, a few GB) -- possible, and a much larger build.
+
+app-id: io.github.catpieleaf.Stud
+runtime: org.kde.Platform
+runtime-version: '6.8'
+sdk: org.kde.Sdk
+command: stud
+separate-locales: false
+
+finish-args:
+  # Rendering. Stud's whole reason to exist is that the GPU driver runs in
+  # its own process; it still needs the device to do it.
+  - --device=dri
+  # Process B runs inside its own bwrap, with its own user namespace --
+  # that is the architecture, not an optional hardening step. A nested
+  # sandbox needs this. (Sober requires the same, for ptrace.)
+  - --allow=devel
+  # The engine expects a shared IPC namespace for X11 shared memory.
+  # Wayland does not need it; the X11 fallback does.
+  - --share=ipc
+  # Roblox is an online game and Stud's login is a real HTTPS session.
+  - --share=network
+  # Wayland first. X11 is the fallback, and the one that needs --share=ipc.
+  - --socket=wayland
+  - --socket=fallback-x11
+  # Audio out, and microphone in for voice chat. PipeWire's own socket
+  # rather than PulseAudio's, since the runtime speaks it.
+  - --socket=pulseaudio
+  # The APK the user supplies, and nothing else: Stud reads a file the
+  # user picks in Settings, and writes only its own data directories.
+  - --filesystem=xdg-download:ro
+  - --filesystem=xdg-documents:ro
+  # The keyring, where the login lives. Without it Stud would have to keep
+  # a session cookie in its own config, which it deliberately never does.
+  - --talk-name=org.freedesktop.secrets
+  # The tray icon, and the notification Stud raises when a game server's
+  # region is known.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  # bubblewrap, from source. The runtime does not carry it, and Stud will
+  # not start without one: Process B is launched inside it.
+  - name: bubblewrap
+    buildsystem: meson
+    config-opts:
+      - -Dprogram_prefix=
+      - -Dsetuid=false
+      - -Dman=disabled
+    sources:
+      - type: archive
+        url: https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz
+        sha256: PLACEHOLDER_BWRAP_SHA256
+    cleanup:
+      - /share/bash-completion
+      - /share/zsh
+
+  # PortAudio. render-host loads it by name at runtime, so it must be in
+  # the sandbox even though nothing links against it.
+  - name: portaudio
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DPA_BUILD_SHARED_LIBS=ON
+      - -DPA_BUILD_TESTS=OFF
+      - -DPA_BUILD_EXAMPLES=OFF
+    sources:
+      - type: archive
+        url: https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz
+        sha256: PLACEHOLDER_PORTAUDIO_SHA256
+
+  # QtKeychain, for the login. Qt itself comes from the runtime.
+  - name: qtkeychain
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_WITH_QT6=ON
+      - -DQTKEYCHAIN_STATIC=OFF
+      - -DBUILD_TRANSLATIONS=OFF
+    sources:
+      - type: archive
+        url: https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz
+        sha256: PLACEHOLDER_QTKEYCHAIN_SHA256
+
+  - name: stud
+    buildsystem: simple
+    build-commands:
+      # The archive is the install tree Stud's own CMake produces, rooted
+      # at /usr -- so it is relocated to /app here rather than rebuilt.
+      - cp -a usr/bin/. /app/bin/
+      - cp -a usr/lib/stud /app/lib/stud
+      - cp -a usr/libexec/stud /app/libexec/stud
+      - cp -a usr/share/. /app/share/
+      # Flathub requires both to be named for the app id.
+      - install -Dm644 usr/share/metainfo/io.github.catpieleaf.Stud.metainfo.xml
+          -t /app/share/metainfo/
+      - install -Dm644 usr/share/applications/io.github.catpieleaf.Stud.desktop
+          -t /app/share/applications/
+    sources:
+      # Replaced at release time by CI, which knows the tag and the digest
+      # of the archive it just built. Never "latest": a manifest that can
+      # change what it installs without changing what it says is not
+      # reproducible.
+      - type: archive
+        url: https://github.com/CatPieLeaf/Stud/releases/download/v1.1.0/stud-1.1.0-x86_64-flatpak.tar.zst
+        sha256: PLACEHOLDER_STUD_SHA256
+        only-arches:
+          - x86_64
