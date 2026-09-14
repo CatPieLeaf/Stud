@@ -28,7 +28,7 @@
 # Stud's own code runs. Measured directly on Fedora 44. NO_STRIP=1 and
 # the exclude list in packaging/build-appimage.sh are what keep that away
 # from the libraries where it actually bit.
-FROM ubuntu:25.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 

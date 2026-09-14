@@ -295,7 +295,7 @@ chmod +x Stud-x86_64.AppImage
 > [!NOTE]
 > `bubblewrap` is deliberately **not** bundled in the AppImage — it needs the AppArmor or SELinux policy your own distribution ships alongside it. Install it from your package manager (`bubblewrap`); the AppImage will tell you if it is missing. The rpm, deb and Arch packages depend on it, so those pull it in for you, and the Flatpak builds its own inside the sandbox.
 >
-> The AppImage carries its own Qt and Breeze, which puts a floor of glibc 2.41 on it: Fedora 42+, Ubuntu 25.04+ and current rolling releases. Older than that, build from source or use the rpm.
+> Every package here is built on a current distribution, which puts a floor of glibc 2.43 under all of them: Fedora 44+, Ubuntu 26.04+ and current rolling releases. That includes the AppImage, which also carries its own Qt and Breeze. Older than that, build from source.
 
 <br>
 

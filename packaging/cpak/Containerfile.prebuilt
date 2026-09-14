@@ -10,7 +10,7 @@
 # Expects install-tree/usr next to it, which is what
 # `DESTDIR=install-tree cmake --install build` writes.
 
-FROM fedora:42
+FROM fedora:44
 
 # bubblewrap is a real runtime dependency, not a packaging detail:
 # Process B is a bionic ELF that runs inside its own mount, PID and IPC
