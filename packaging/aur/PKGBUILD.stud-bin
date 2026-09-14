@@ -49,11 +49,13 @@ optdepends=(
 options=(!strip !debug emptydirs)
 # The tag carries no leading "v" -- match what is actually published.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst")
-# The checksum of the archive this release actually serves, printed by
-# the release workflow and verified against the published asset. It
-# belongs to exactly this pkgver -- bump one, regenerate the other
-# (`updpkgsums`, or the workflow's own output).
-sha256sums=('b6c093195a2a3025fc7dca3f8eaa500d1c4dfcfcfdd898498deacac6ac6ea89e')
+# Filled in at publish time from the archive the release actually
+# serves -- `updpkgsums`, or the value the release workflow prints at the
+# end of its run. A checksum belongs to one specific archive, so a stale
+# one is worse than an obvious gap: this carried the digest of a release
+# that was later deleted, which would have failed every install with a
+# corruption error rather than a missing-file one.
+sha256sums=('SKIP')
 
 package() {
   # The archive is the install tree rooted at usr/, which is exactly what
