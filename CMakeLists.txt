@@ -186,6 +186,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.png"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
         RENAME "${STUD_APP_ID}.png")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+              "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.exception"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud")
 # GNUInstallDirs derives the doc directory from the CMake project name,
 # which is capitalised; the package is `stud`, and the two have to agree

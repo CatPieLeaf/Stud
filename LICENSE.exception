@@ -1,0 +1,62 @@
+Additional permission under GNU AGPL version 3 section 7
+========================================================
+
+Stud is licensed under the GNU Affero General Public License, version 3
+or later; the full text is in LICENSE. This file adds a permission on top
+of it. It only ever grants: if you never rely on it, Stud is plain AGPLv3
+to you, unchanged.
+
+
+The permission
+--------------
+
+  As an additional permission under section 7 of the GNU Affero General
+  Public License version 3, the copyright holders of Stud give you
+  permission to link or combine Stud with the Roblox Engine, and to
+  convey the resulting work.
+
+  "The Roblox Engine" means the software contained in the Roblox
+  application package published by Roblox Corporation, and any library
+  loaded from it -- software under terms incompatible with the GNU
+  Affero General Public License, which Stud neither includes nor
+  distributes, and which the person running Stud supplies themselves.
+
+  You must still comply with the GNU Affero General Public License in
+  all respects for all of the code used other than the Roblox Engine.
+
+  If you modify Stud, you may extend this permission to your version,
+  but you are not obliged to. If you do not wish to, delete this
+  statement from your version.
+
+
+Why it exists
+-------------
+
+Stud loads the Roblox Engine into one of its own processes, and Stud's
+own code runs in that process. Whether that makes a combined work whose
+distribution the AGPL would forbid is the old question about linking
+against proprietary code, and it is a question nobody involved should
+have to spend time on.
+
+In Stud's case there is a good argument that it never arises. Stud does
+not ship the engine, mirror it, or download it. The person running Stud
+supplies the application package themselves, so whatever combination
+happens, happens on their own machine and is never conveyed to anyone.
+Every binary Stud does redistribute -- ANGLE, SwiftShader, the Vulkan
+loader and validation layers, Android's libc, libm, libdl and linker --
+is under a permissive licence, and each ships with its own notice.
+
+This permission is here so that argument does not have to be made. A
+distribution packaging Stud, and anyone building on it, can rely on the
+grant instead of on a reading.
+
+
+A note on AGPL versus GPL
+-------------------------
+
+Moving Stud to the plain GPL would not change any of the above. The two
+licences are identical on linking and on derived works; AGPL section 13
+adds an obligation about software users interact with over a network,
+which does not describe a desktop game client. The additional permission
+above is the mechanism under either licence, and section 7 is the same
+section in both.
