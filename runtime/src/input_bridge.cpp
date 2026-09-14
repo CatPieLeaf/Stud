@@ -2320,6 +2320,9 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             // usually arrives from a MOUSE click and the engine reports it
             // asynchronously, with no key event anywhere near it.
             std::vector<android_glue::HostInputEvent> released;
+            // Suppression starts only AFTER the releases below have been
+            // dispatched -- see where this is applied.
+            std::set<uint32_t> to_suppress;
             {
                 static jlong previous_text_box = 0;
                 const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
@@ -2338,8 +2341,15 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                         released.push_back(up);
                     }
                     // Held until really let go, so the repeats that
-                    // follow cannot press them back down.
-                    keys_released_into_text_entry() = held_keys();
+                    // follow cannot press them back down -- but NOT yet.
+                    // Applying it here would suppress the releases that
+                    // were just collected, since they go through the same
+                    // path: the key would already be in the set by the
+                    // time its own release was dispatched, and get dropped
+                    // before ever reaching the engine. That is exactly
+                    // what happened, and why a release that the log
+                    // confirmed was queued never took effect.
+                    to_suppress = held_keys();
                     held_keys().clear();
 
                 }
@@ -2413,6 +2423,11 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 // keys that were being held are no longer held.
                 for (const android_glue::HostInputEvent& up : released) {
                     dispatch_event(up, fns, jni_env, last_x, last_y);
+                }
+                // Now that the releases have actually gone out, stop
+                // anything from pressing those keys back down.
+                if (!to_suppress.empty()) {
+                    keys_released_into_text_entry() = to_suppress;
                 }
 
                 for (size_t i = 0; i < count; ++i) {
