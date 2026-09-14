@@ -47,11 +47,16 @@ void main() {
     float limit = clamp(min(min(head.r, head.g), head.b), 0.0, 1.0);
 
     // RCAS's own weight: negative, so the cross is subtracted and the
-    // centre pulled up. Scaled by the limiter and by the requested
-    // strength, and deliberately gentle at the top end -- 1.0 here is
-    // about as far as this can go before edges start to glint.
+    // centre pulled up, then renormalised by (1 + 4w).
+    //
+    // Capped at 0.2 in magnitude, and that bound is arithmetic rather than
+    // taste: at 0.25 the denominator (1 + 4w) is exactly zero and the
+    // result is infinite -- which the clamp below then quietly swallowed,
+    // so the strongest settings looked like they did nothing at all. 0.2
+    // leaves a denominator of 0.2, which is also about where RCAS itself
+    // stops.
     float strength = clamp(p.sharpness, 0.0, 1.0);
-    float weight = -limit * strength * 0.25;
+    float weight = -limit * strength * 0.2;
     vec3 sharpened = (e + weight * (n + s + w + d)) / (1.0 + 4.0 * weight);
 
     // Never outside what the neighbourhood already spans: that is what
