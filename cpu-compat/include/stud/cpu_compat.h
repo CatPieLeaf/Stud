@@ -20,8 +20,20 @@
 // emulation for the POPCNT instruction specifically -- the one most likely
 // to actually be hit in practice, since compilers emit it directly for
 // __builtin_popcount()/std::popcount() and it's the headline instruction
-// in both projects' stated CPU requirements. Other instructions (MOVBE,
-// LZCNT, TZCNT, BMI1 ANDN/BLSI/BLSMSK/BLSR) are NOT emulated yet -- the
+// in both projects' stated CPU requirements -- and BMI1's ANDN, BLSR,
+// BLSMSK and BLSI, which compilers emit freely for ordinary bit
+// arithmetic and which no CPU before roughly 2013 has.
+//
+// A note on those four, because getting them subtly wrong is worse than
+// not having them: their operands live in VEX.vvvv (stored
+// one's-complemented), and BLSR/BLSMSK/BLSI share a single opcode,
+// separated only by ModRM.reg. Decode either detail wrongly and they
+// return plausible numbers that are simply incorrect, which the engine
+// then carries onward -- no crash, no signal, just wrong results. That is
+// why they are unit-tested against real encodings and real expected
+// values rather than only for "did it decode".
+//
+// Other instructions (MOVBE, LZCNT, TZCNT) are NOT emulated yet -- the
 // handler reports them clearly and aborts rather than silently
 // misbehaving, growing iteratively against real SIGILL traps the same way
 // the rest of this project has, rather than guessing a full instruction

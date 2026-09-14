@@ -53,6 +53,100 @@ void test_feature_detection() {
           "a CPU reporting no features fails the minimum-requirements check");
 }
 
+void test_bmi1_decode_and_emulate() {
+    using namespace stud::cpu_compat;
+    greg_t gregs[NGREG] = {};
+
+    // andn eax, ecx, ebx   C4 E2 70 F2 C3
+    //   VEX.NDS.LZ.0F38.W0 F2 /r, vvvv=ecx(1) -> 0x70 carries ~1 in bits 6:3
+    //   ModRM C3: mod=11 reg=000(eax) rm=011(ebx)
+    {
+        const uint8_t code[] = {0xC4, 0xE2, 0x70, 0xF2, 0xC3};
+        auto d = try_decode_bmi1(code);
+        check(d.length == 5, "andn decodes to a 5-byte instruction");
+        check(d.op == Bmi1Op::kAndn, "opcode F2 decodes as ANDN");
+        check(d.dest_reg == 0, "ANDN destination is ModRM.reg (eax)");
+        check(d.src1_reg == 1, "ANDN src1 comes from VEX.vvvv (ecx), not ModRM");
+        check(d.src2_reg == 3, "ANDN src2 is the r/m operand (ebx)");
+        check(!d.is_64bit, "VEX.W=0 means the 32-bit form");
+        gregs[reg_to_greg_index(1)] = 0x0F;        // ecx
+        gregs[reg_to_greg_index(3)] = 0xFF;        // ebx
+        emulate_bmi1(d, gregs);
+        check(static_cast<uint64_t>(gregs[reg_to_greg_index(0)]) == 0xF0,
+              "ANDN computes ~src1 & src2 (~0x0F & 0xFF == 0xF0)");
+    }
+
+    // blsr eax, ebx        C4 E2 78 F3 CB   (/1, vvvv=eax)
+    // blsmsk eax, ebx      C4 E2 78 F3 D3   (/2)
+    // blsi eax, ebx        C4 E2 78 F3 DB   (/3)
+    //
+    // All three share opcode F3 and differ ONLY in ModRM.reg -- this is
+    // the distinction that, if missed, silently runs all three as one.
+    {
+        const uint8_t blsr[]   = {0xC4, 0xE2, 0x78, 0xF3, 0xCB};
+        const uint8_t blsmsk[] = {0xC4, 0xE2, 0x78, 0xF3, 0xD3};
+        const uint8_t blsi[]   = {0xC4, 0xE2, 0x78, 0xF3, 0xDB};
+        auto dr = try_decode_bmi1(blsr);
+        auto dm = try_decode_bmi1(blsmsk);
+        auto di = try_decode_bmi1(blsi);
+        check(dr.op == Bmi1Op::kBlsr, "F3 /1 decodes as BLSR");
+        check(dm.op == Bmi1Op::kBlsmsk, "F3 /2 decodes as BLSMSK");
+        check(di.op == Bmi1Op::kBlsi, "F3 /3 decodes as BLSI");
+        check(dr.dest_reg == 0 && dr.src2_reg == 3,
+              "BLSR writes VEX.vvvv (eax) and reads r/m (ebx)");
+
+        gregs[reg_to_greg_index(3)] = 0b10110000;  // ebx
+        emulate_bmi1(dr, gregs);
+        check(static_cast<uint64_t>(gregs[reg_to_greg_index(0)]) == 0b10100000,
+              "BLSR clears the lowest set bit");
+        gregs[reg_to_greg_index(3)] = 0b10110000;
+        emulate_bmi1(dm, gregs);
+        check(static_cast<uint64_t>(gregs[reg_to_greg_index(0)]) == 0b00011111,
+              "BLSMSK masks up to and including the lowest set bit");
+        gregs[reg_to_greg_index(3)] = 0b10110000;
+        emulate_bmi1(di, gregs);
+        check(static_cast<uint64_t>(gregs[reg_to_greg_index(0)]) == 0b00010000,
+              "BLSI isolates the lowest set bit");
+    }
+
+    // The flags each one really defines (Intel SDM).
+    {
+        const uint8_t blsi[] = {0xC4, 0xE2, 0x78, 0xF3, 0xDB};
+        auto d = try_decode_bmi1(blsi);
+        gregs[reg_to_greg_index(3)] = 0;
+        gregs[REG_EFL] = 0;
+        emulate_bmi1(d, gregs);
+        const uint64_t f = static_cast<uint64_t>(gregs[REG_EFL]);
+        check((f & 1u) == 0, "BLSI clears CF when the source is zero");
+        check((f & (1u << 6)) != 0, "BLSI sets ZF when the result is zero");
+    }
+
+    // The 64-bit form, which differs only in VEX.W -- byte 2 becomes 0xF0.
+    // Every encoding in this test was checked against `as`/`objdump`
+    // rather than hand-derived, so a decoder that agrees with them is
+    // agreeing with the assembler, not with me.
+    {
+        const uint8_t code[] = {0xC4, 0xE2, 0xF0, 0xF2, 0xC3};  // andn rax, rcx, rbx
+        auto d = try_decode_bmi1(code);
+        check(d.op == Bmi1Op::kAndn && d.is_64bit, "VEX.W=1 decodes as the 64-bit ANDN");
+        gregs[reg_to_greg_index(1)] = 0xFFFFFFFF00000000ull;
+        gregs[reg_to_greg_index(3)] = 0xFFFFFFFFFFFFFFFFull;
+        emulate_bmi1(d, gregs);
+        check(static_cast<uint64_t>(gregs[reg_to_greg_index(0)]) == 0x00000000FFFFFFFFull,
+              "64-bit ANDN operates on the full register");
+    }
+
+    // Not BMI1, and must not be claimed: the 2-byte VEX form cannot
+    // encode the 0F38 map these live in.
+    {
+        const uint8_t two_byte_vex[] = {0xC5, 0x78, 0xF3, 0xDB, 0x00};
+        check(try_decode_bmi1(two_byte_vex).length == 0,
+              "a 2-byte VEX prefix is not decoded as BMI1");
+        const uint8_t popcnt[] = {0xF3, 0x0F, 0xB8, 0xC3, 0x00};
+        check(try_decode_bmi1(popcnt).length == 0, "POPCNT is not decoded as BMI1");
+    }
+}
+
 void test_popcnt_decode_and_emulate() {
     // popcnt eax, ebx  (32-bit form, no REX)
     const uint8_t code32[] = {0xF3, 0x0F, 0xB8, 0xC3};  // ModRM: mod=11 reg=000(eax) rm=011(ebx)
@@ -129,6 +223,7 @@ void test_signal_handler_install() {
 int main() {
     test_feature_detection();
     test_popcnt_decode_and_emulate();
+    test_bmi1_decode_and_emulate();
     test_signal_handler_install();
 
     std::printf("all cpu-compat checks passed\n");

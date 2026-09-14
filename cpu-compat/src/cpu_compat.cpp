@@ -40,6 +40,13 @@ void sigill_handler(int /*signum*/, siginfo_t* /*info*/, void* ucontext_raw) {
         return;
     }
 
+    DecodedBmi1 bmi1 = try_decode_bmi1(rip);
+    if (bmi1.length > 0) {
+        emulate_bmi1(bmi1, gregs);
+        gregs[REG_RIP] += bmi1.length;
+        return;
+    }
+
     std::fprintf(stderr,
                   "stud: SIGILL at %p -- instruction not recognized or not yet "
                   "emulated (bytes: %02x %02x %02x %02x). This CPU is missing an "
