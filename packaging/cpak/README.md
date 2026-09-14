@@ -56,9 +56,10 @@ demonstrably does:
 - **`filePicker` + `xdg-download` read-only** -- Stud does not
   distribute Roblox; the user supplies the APK, and Downloads is where a
   downloaded one lands. Nothing else of the host's home is visible.
-- **`sessionBus.talk`** -- the login cookie is stored through the
-  Secret Service (and KWallet on KDE), never in Stud's own config or
-  cache.
+- **`sessionBus.talk`** -- the login cookie is stored encrypted under
+  Stud's own data directory, and the key that decrypts it is held
+  through the Secret Service (and KWallet on KDE). Without the keyring
+  the stored cookie cannot be read at all.
 
 ## Known gap: the keyring's own item paths
 

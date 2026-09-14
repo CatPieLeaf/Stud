@@ -15,10 +15,10 @@ set(CPACK_PACKAGE_VERSION "${STUD_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Play Roblox on Linux")
 set(CPACK_PACKAGE_DESCRIPTION
     "Stud runs the real Roblox Android client on a Linux desktop. It loads \
-Roblox's own engine and drives it through the same interfaces an Android \
-phone would, supplying the framework, window, input devices and graphics \
-stack itself. Roblox is not included: you supply the Android application \
-package yourself.")
+Roblox's own engine and drives it through the same interfaces the real \
+Roblox client uses, supplying the framework, window, input devices and \
+graphics stack itself. Roblox is not included: you supply the Android \
+application package yourself.")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CatPieLeaf/Stud")
 # Debian policy wants Maintainer as "Name <email>", and lintian says so
 # (maintainer-address-malformed); rpm's Packager is the same shape.
@@ -46,10 +46,10 @@ set(CPACK_RPM_PACKAGE_SUMMARY "${CPACK_PACKAGE_DESCRIPTION_SUMMARY}")
 # rpmlint rejects a line past 79 columns (description-line-too-long).
 set(CPACK_RPM_PACKAGE_DESCRIPTION
 "Stud runs the real Roblox Android client on a Linux desktop. It loads
-Roblox's own engine and drives it through the same interfaces an Android
-phone would, supplying the framework, window, input devices and graphics
-stack itself. Roblox is not included: you supply the Android application
-package yourself.")
+Roblox's own engine and drives it through the same interfaces the real
+Roblox client uses, supplying the framework, window, input devices and
+graphics stack itself. Roblox is not included: you supply the Android
+application package yourself.")
 set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
