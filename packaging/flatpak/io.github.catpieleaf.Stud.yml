@@ -71,9 +71,14 @@ modules:
   - name: bubblewrap
     buildsystem: meson
     config-opts:
+      # These are bubblewrap 0.11.0's real meson options, checked against
+      # the tarball this manifest pins. There is no "setuid" option -- it
+      # was passed here once and the build died with `Unknown option:
+      # "setuid"`. A plain build is already non-setuid, which is what a
+      # Flatpak needs.
       - -Dprogram_prefix=
-      - -Dsetuid=false
       - -Dman=disabled
+      - -Dtests=false
     sources:
       - type: archive
         url: https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz
@@ -127,7 +132,7 @@ modules:
       # change what it installs without changing what it says is not
       # reproducible.
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/releases/download/v1.1.0/stud-1.1.0-x86_64.tar.zst
+        url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.0/stud-1.1.0-x86_64.tar.zst
         sha256: PLACEHOLDER_STUD_SHA256
         only-arches:
           - x86_64

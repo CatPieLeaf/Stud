@@ -124,10 +124,58 @@ jobs:
           # compressed the way its `type: archive` source reads it.
           tar -C install-tree -caf "stud-${TAG#v}-x86_64.tar.zst" usr
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: |
+            build/*.rpm
+            build/*.deb
+            *.pkg.tar.zst
+            stud-*-x86_64.tar.zst
+          if-no-files-found: error
+
+  # Arch package and cpak image.
+  #
+  # These run HERE, on the runner, and not in the packages job -- that one
+  # runs inside a Fedora container, and podman is installed on the runner,
+  # not in the container. It failed there with `podman: command not found`
+  # (exit 127) and, because both steps carried continue-on-error, the job
+  # still went green while producing neither. Two of five package formats
+  # were silently missing from the release.
+  containers:
+    name: Arch package and cpak image
+    needs: packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: artifacts
+
+      - name: Unpack the install tree
+        # stud-<version>-x86_64.tar.zst IS the install tree, rooted at
+        # usr/ -- the same archive the Flatpak and stud-bin install. No
+        # second copy is made for this.
+        run: |
+          mkdir -p install-tree
+          archive="$(find artifacts -name 'stud-*-x86_64.tar.zst' | head -1)"
+          [ -n "$archive" ] || { echo "no install tree in the artifacts" >&2; exit 1; }
+          tar -C install-tree -xf "$archive"
+          test -d install-tree/usr
+
       - name: Package the Arch pkg.tar.zst
-        # In a container, because makepkg is Arch's and refuses to run as
-        # root -- hence the unprivileged user. It compiles nothing: the
-        # PKGBUILD copies the install tree that already exists.
+        # makepkg is Arch's and refuses to run as root, hence the
+        # unprivileged user. It compiles nothing: the PKGBUILD copies the
+        # install tree that already exists.
         run: |
           cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
           cat > /tmp/makepkg.sh <<'SCRIPT'
@@ -136,18 +184,16 @@ jobs:
           useradd -m builder
           cp /work/PKGBUILD /home/builder/
           chown -R builder:builder /home/builder
-          su builder -c "cd /home/builder && STUD_DESTDIR=/work/install-tree             PKGEXT=.pkg.tar.zst makepkg --nodeps --noconfirm"
+          su builder -c "cd /home/builder && STUD_DESTDIR=/work/install-tree PKGEXT=.pkg.tar.zst makepkg --nodeps --noconfirm"
           cp /home/builder/*.pkg.tar.zst /work/
           SCRIPT
           chmod +x /tmp/makepkg.sh
           podman run --rm -v "$PWD":/work:z -v /tmp/makepkg.sh:/makepkg.sh:z \
             docker.io/library/archlinux:base-devel /makepkg.sh
-        continue-on-error: true
+          # No continue-on-error: a missing package should fail the job,
+          # not vanish quietly.
+          ls -la ./*.pkg.tar.zst
 
-      # The OCI image cpak installs from. Built from the install tree
-      # above rather than from source: a second build would mean a second
-      # hour of ANGLE and no guarantee the image holds the same binaries
-      # as the packages beside it.
       - name: Push the cpak image to ghcr.io
         env:
           GH_TOKEN: ${{ github.token }}
@@ -159,20 +205,14 @@ jobs:
           echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
-          # The digest is what the manifest should pin: a tag can be
-          # moved, and cpak's manifest v3 wants something that cannot.
           podman inspect --format '{{index .RepoDigests 0}}' \
             "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" | tee cpak-image-digest.txt
-        continue-on-error: true
 
       - uses: actions/upload-artifact@v7
         with:
-          name: packages
+          name: containers
           path: |
-            build/*.rpm
-            build/*.deb
             *.pkg.tar.zst
-            stud-*-x86_64.tar.zst
             cpak-image-digest.txt
           if-no-files-found: error
 
@@ -318,7 +358,7 @@ jobs:
 
   publish:
     name: Attach every package to the release
-    needs: [packages, appimage, flatpak]
+    needs: [packages, containers, appimage, flatpak]
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
     steps:
@@ -343,7 +383,7 @@ jobs:
           # Arch package is not: its job is allowed to fail, since makepkg
           # in a container is the one step here that depends on something
           # outside this repository's control.
-          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.flatpak$'; do
+          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.flatpak$' '\.pkg\.tar\.zst$'; do
             printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
               { echo "no package matching $required" >&2; exit 1; }
           done
