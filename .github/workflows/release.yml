@@ -105,8 +105,16 @@ jobs:
 
       - name: Build
         run: |
+          # /usr, not CMake's own /usr/local default. The rpm and the
+          # deb were never affected -- CPACK_PACKAGING_INSTALL_PREFIX
+          # pins those -- but the install tree every OTHER package is
+          # built from comes from `cmake --install`, which honours this
+          # and nothing else. Left unset it produced usr/local/bin/stud,
+          # which namcap rejects outright ("outside of a valid path") and
+          # which the Flatpak manifest cannot find at all.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_VERSION="${TAG#v}"
           cmake --build build -j"$(nproc)"
 
@@ -120,6 +128,17 @@ jobs:
       - name: Lay out the install tree the rest of the packages come from
         run: |
           DESTDIR="$PWD/install-tree" cmake --install build
+          # The layout every package below assumes. Checked here so a
+          # wrong install prefix fails immediately, with the reason, at
+          # the step that produced it -- rather than surfacing much later
+          # as a namcap error or a Flatpak "cannot stat usr/bin/.".
+          for required in usr/bin/stud usr/lib/stud usr/libexec/stud usr/share/metainfo; do
+            if [ ! -e "install-tree/$required" ]; then
+              echo "::error::the install tree has no $required -- check CMAKE_INSTALL_PREFIX" >&2
+              find install-tree -maxdepth 3 -type d | head -20 >&2
+              exit 1
+            fi
+          done
           # What the Flatpak manifest expects: the tree rooted at usr/,
           # compressed the way its `type: archive` source reads it.
           tar -C install-tree -caf "stud-${TAG#v}-x86_64.tar.zst" usr
