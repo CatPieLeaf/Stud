@@ -37,6 +37,11 @@ third_party/*
 # out of the tree would leave that shader with nothing to be checked
 # against, which is how its first version came to be wrong.
 !third_party/fidelityfx-fsr1/
+# Same reasoning for the one vendored Wayland protocol: pointer-warp-v1 is
+# staging and young enough that a distribution a release behind does not
+# ship it, and a build should not fail over how new the host happens to
+# be. 3.5 KB, MIT, and the system copy still wins when it exists.
+!third_party/wayland-protocols/
 
 # The real Roblox APK is user-supplied and must never be distributed.
 # Stud does not ship, mirror or download it.
