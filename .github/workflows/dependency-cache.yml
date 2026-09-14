@@ -62,7 +62,7 @@ jobs:
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
-      - name: Restore the Android NDK
+      - name: Cache Android NDK
         # The same key the release workflow uses, and the whole point of
         # this job: written from main, so every tag can read it.
         uses: actions/cache@v6
@@ -70,7 +70,7 @@ jobs:
           path: third_party/android-ndk-r28c
           key: ndk-${{ hashFiles('tools/setup.sh') }}
 
-      - name: Restore ANGLE and bionic
+      - name: Cache ANGLE and bionic
         uses: actions/cache@v6
         with:
           path: |
@@ -102,7 +102,7 @@ jobs:
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
-      - name: Restore the Android NDK
+      - name: Cache Android NDK
         # Shared with the job above and with both release jobs: the NDK is
         # downloaded, not compiled, so one copy serves every container.
         uses: actions/cache@v6
@@ -110,7 +110,7 @@ jobs:
           path: third_party/android-ndk-r28c
           key: ndk-${{ hashFiles('tools/setup.sh') }}
 
-      - name: Restore ANGLE and bionic
+      - name: Cache ANGLE and bionic
         # Its own key: ANGLE is compiled against this container's glibc,
         # so the Fedora build is not interchangeable with this one.
         uses: actions/cache@v6

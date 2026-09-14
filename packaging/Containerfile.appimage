@@ -4,11 +4,11 @@
 # run on: it carries its dependencies, and anything it was linked
 # against is a floor on every machine that runs it.
 #
-# That argues for the oldest base possible, and this is not it. Ubuntu
-# 25.04 is chosen for two things an older one cannot give:
+# That argues for the oldest base possible, and this is not it. Two
+# things an older base cannot give:
 #
-#   Qt 6.8 rather than 6.4 -- the bundle carries its own Qt, so its
-#   version is Stud's version on every machine, not the host's.
+#   A current Qt. The bundle carries its own, so its version is Stud's
+#   version on every machine rather than the host's.
 #
 #   KF6 and the real Breeze widget style. A widget style is a Qt plugin
 #   and can only load into the Qt it was built against, so the host's
@@ -17,9 +17,13 @@
 #   at all (checked, not assumed), so on that base the answer was Fusion
 #   and nothing else.
 #
-# The cost is a glibc floor of 2.41: this image will not run on Ubuntu
-# 24.04 LTS or anything older than roughly Fedora 42. That is the trade
-# being made, deliberately.
+# Beyond that, this base matches the distribution Stud is developed and
+# tested on, so the AppImage is built the same way the working build is.
+#
+# The cost is a glibc floor of 2.43: this will not run on anything older
+# than a 2026-era distribution. That is the trade, deliberately. Lowering
+# it again means an older base here and in the release workflow, which
+# pins the same image.
 #
 # The other reason a base is chosen carefully: linuxdeploy rewrites the
 # rpath of every library it bundles, and the patchelf it carries corrupts
