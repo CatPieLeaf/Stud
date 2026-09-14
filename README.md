@@ -17,10 +17,18 @@
 
 <p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything a phone would have given it — the Android framework, a window, a mouse and keyboard, a graphics stack — so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
 
+<div align="center">
+
+[Screenshots](#screenshots) · [Why?](#why) · [Features](#features) · [Status](#status) · [What Stud is not](#not)
+
+[How it works](#how) · [Building](#building) · [Installation](#installation) · [Where things live](#files) · [Credits](#credits)
+
+</div>
+
 <br>
 <div align="center">
   <h1>🖼️</h1>
-  <h4>S C R E E N S H O T S</h4>
+  <h4 id="screenshots">S C R E E N S H O T S</h4>
 </div>
 
 <div align="center">
@@ -49,7 +57,7 @@
 
 <div align="center">
   <h1>🤔</h1>
-  <h4>W H Y ?</h4>
+  <h4 id="why">W H Y ?</h4>
 </div>
 
 <div align="center">
@@ -63,7 +71,7 @@
 
 <div align="center">
   <h1>✨</h1>
-  <h4>F E A T U R E S</h4>
+  <h4 id="features">F E A T U R E S</h4>
 </div>
 
  - Runs the **real, unmodified** Roblox Android app
@@ -86,7 +94,7 @@
 
 <div align="center">
   <h1>⚠️</h1>
-  <h4>W O R K  -  I N  -  P R O G R E S S</h4>
+  <h4 id="status">W O R K  -  I N  -  P R O G R E S S</h4>
 </div>
 
 > [!WARNING]
@@ -98,7 +106,7 @@
 
 <div align="center">
   <h1>📜</h1>
-  <h4>W H A T _ S T U D _ I S _ N O T</h4>
+  <h4 id="not">W H A T _ S T U D _ I S _ N O T</h4>
 </div>
 
  - **Not affiliated with Roblox.** Stud is an independent project, not endorsed, supported or approved by Roblox Corporation in any way.
@@ -111,7 +119,7 @@
 
 <div align="center">
   <h1>🧩</h1>
-  <h4>H O W _ I T _ W O R K S</h4>
+  <h4 id="how">H O W _ I T _ W O R K S</h4>
 </div>
 
 Three processes, talking over a Unix socket:
@@ -128,7 +136,7 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 
 <div align="center">
   <h1>🔨</h1>
-  <h4>B U I L D I N G</h4>
+  <h4 id="building">B U I L D I N G</h4>
 </div>
 
 > [!NOTE]
@@ -211,7 +219,7 @@ cd build && ctest
 
 <div align="center">
   <h1>📦</h1>
-  <h4>I N S T A L L A T I O N</h4>
+  <h4 id="installation">I N S T A L L A T I O N</h4>
 </div>
 
 Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/releases) page.
@@ -246,7 +254,7 @@ chmod +x Stud-x86_64.AppImage
 
 <div align="center">
   <h1>🗂️</h1>
-  <h4>W H E R E _ T H I N G S _ L I V E</h4>
+  <h4 id="files">W H E R E _ T H I N G S _ L I V E</h4>
 </div>
 
 | path | what |
@@ -262,7 +270,7 @@ That last one is the file to read when something goes wrong, and the one to atta
 
 <div align="center">
   <h1>📑</h1>
-  <h4>C R E D I T S </h4>
+  <h4 id="credits">C R E D I T S </h4>
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
