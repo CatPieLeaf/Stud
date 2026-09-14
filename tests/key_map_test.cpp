@@ -35,7 +35,6 @@ constexpr std::int32_t kKeycodeA = 29;
 constexpr std::int32_t kKeycodeW = 51;
 constexpr std::int32_t kKeycodeSemicolon = 74;
 constexpr std::int32_t kKeycodeSlash = 76;
-constexpr std::int32_t kKeycodeNumpadDivide = 154;
 constexpr std::int32_t kKeycodeEscape = 111;
 constexpr std::int32_t kKeycodeDpadLeft = 21;
 
@@ -97,9 +96,13 @@ int main() {
     // The numpad divide also types "/", but it is a different key and
     // must stay a numpad key -- its keysym is KP_Divide, not "/", so it
     // falls through to the positional table.
-    check(br.keysym(98) == XKB_KEY_KP_Divide, "br: evdev 98 is KP_Divide");
-    check(android_key_code_for_event(98, br.keysym(98)) == kKeycodeNumpadDivide,
-          "br: the numpad divide stays a numpad key");
+    // Evdev 98 is KP_Divide by keysym, but on a real ABNT2 keyboard it is
+    // the dedicated "/" key rather than a numpad one -- confirmed from a
+    // live run (scan=98, unicode=47). It reports KEYCODE_SLASH so that the
+    // key people actually press opens chat and search; see key_map.h.
+    check(br.keysym(98) == XKB_KEY_KP_Divide, "br: evdev 98 is KP_Divide by keysym");
+    check(android_key_code_for_event(98, br.keysym(98)) == kKeycodeSlash,
+          "br: the key the kernel calls KPSLASH reports KEYCODE_SLASH");
 
     // Gameplay must not move. W and A sit where US puts them on ABNT2 and
     // resolve identically whichever way round the lookup goes.
