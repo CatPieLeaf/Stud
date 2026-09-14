@@ -15,7 +15,7 @@
   <p align="center">Play Roblox on Linux — the real Android app, running on your desktop.</p>
 </div>
 
-<p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything a phone would have given it — the Android framework, a window, a mouse and keyboard, a graphics stack — so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
+<p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything the real Roblox client would have — the Android framework, a window, a mouse and keyboard, a graphics stack — so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
 
 <div align="center">
 
@@ -79,7 +79,7 @@
  - Vulkan by default, with OpenGL through ANGLE, OpenGL, and software-rendering in Settings
  - **AMD FSR upscaling** — the game renders below your screen's resolution and Stud rebuilds the frame at full size, with adjustable sharpening
  - Smooth zoom in/out just like Windows client
- - Your login lives in the system keyring — never in Stud's config, cache or logs
+ - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring — the same safe-storage arrangement Chromium uses
  - `roblox://` links from a browser open straight into the experience
  - In-app web panels — Messages, account pages, login challenges — and private servers joined from the server list
  - Copy Link in an experience puts the real invite link on your clipboard
@@ -307,7 +307,7 @@ chmod +x Stud-x86_64.AppImage
 | path | what |
 |---|---|
 | `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides |
-| `~/.local/share/stud/` | the keyring entry and the engine's own data |
+| `~/.local/share/stud/` | the encrypted session cookie, and the engine's own data |
 | `~/.cache/stud/` | the extracted APK, assets and caches — safe to delete |
 | `~/.local/state/stud/logs/` | one log per session, written by all three processes |
 

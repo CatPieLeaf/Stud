@@ -77,8 +77,12 @@ and no crash reporting of any kind.
 - Requests to `roblox.com` and its subdomains are made by Stud and by
   Roblox's own engine, to run the application: sign-in, settings, the
   experiences you open.
-- Your login is held in the system keyring through the Secret Service
-  interface, never in a file of Stud's own.
+- Your login is stored on disk, encrypted with AES-256-GCM. Only the
+  encryption key is held in the system keyring, through the Secret
+  Service interface -- the same arrangement Chromium calls safe storage.
+  The keyring therefore holds one opaque application key rather than a
+  readable `.ROBLOSECURITY` value, and deleting that entry makes the
+  stored cookie permanently unreadable.
 - If, and only if, you switch on the server-region notification in
   Settings — off by default — the address of the **game server** you
   joined is sent over HTTPS to `ipwho.is` to name its country. Your own address is

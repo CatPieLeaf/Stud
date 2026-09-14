@@ -56,8 +56,9 @@ finish-args:
   # relaunch and confirm it is still readable. If the portal path does not
   # survive, the honest fix is --filesystem=xdg-download:ro, not a wider
   # grant -- and config.json takes a path by hand either way.
-  # The keyring, where the login lives. Without it Stud would have to keep
-  # a session cookie in its own config, which it deliberately never does.
+  # The keyring, which holds the key the login is encrypted with -- not
+  # the login itself. Without it that encrypted file cannot be read, so
+  # Stud would have to fall back to storing the cookie in the clear.
   - --talk-name=org.freedesktop.secrets
   # The tray icon, and the notification Stud raises when a game server's
   # region is known.
