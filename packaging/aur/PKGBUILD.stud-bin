@@ -49,10 +49,11 @@ optdepends=(
 options=(!strip !debug emptydirs)
 # The tag carries no leading "v" -- match what is actually published.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst")
-# Replaced at publish time by the checksum of the archive the release
-# actually serves -- `updpkgsums`, or the value the release workflow
-# prints. A stale checksum here would be worse than none.
-sha256sums=('SKIP')
+# The checksum of the archive this release actually serves, printed by
+# the release workflow and verified against the published asset. It
+# belongs to exactly this pkgver -- bump one, regenerate the other
+# (`updpkgsums`, or the workflow's own output).
+sha256sums=('b6c093195a2a3025fc7dca3f8eaa500d1c4dfcfcfdd898498deacac6ac6ea89e')
 
 package() {
   # The archive is the install tree rooted at usr/, which is exactly what
