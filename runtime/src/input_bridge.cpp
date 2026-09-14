@@ -2319,9 +2319,6 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             // usually arrives from a MOUSE click and the engine reports it
             // asynchronously, with no key event anywhere near it.
             std::vector<android_glue::HostInputEvent> released;
-            // Suppression starts only AFTER the releases below have been
-            // dispatched -- see where this is applied.
-            std::set<uint32_t> to_suppress;
             {
                 static jlong previous_text_box = 0;
                 const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
@@ -2329,16 +2326,29 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // Unconditional: whether this fires, and how many keys
                     // it found held, is the first thing to check when a
                     // walk does not stop.
-                    std::printf("stud: input bridge: a text box took focus with %zu key(s) held\n",
+                    std::printf("stud: input bridge: a text box took focus with %zu key(s) held "
+                                "-- holding their release until it lets go\n",
                                 held_keys().size());
                     std::fflush(stdout);
-                    for (uint32_t code : held_keys()) {
-                        android_glue::HostInputEvent up{};
-                        up.type = android_glue::HostInputEvent::kKey;
-                        up.code = code;
-                        up.a = 0.0f;
-                        released.push_back(up);
-                    }
+                    // Deliberately NOT released here, and this is the
+                    // crux of the whole bug.
+                    //
+                    // Measured, with every key event logged at the moment
+                    // it reached the engine: the release sent here really
+                    // did arrive, and the character carried on walking --
+                    // while pressing the key again (a down AND an up)
+                    // stopped it. Roblox acts on the CHANGE, not on the
+                    // event: releasing here cleared the engine's own idea
+                    // that the key was down, so the release sent later,
+                    // when the engine was listening again, was no longer a
+                    // change and did nothing at all. This release was
+                    // destroying the very transition needed to stop.
+                    //
+                    // So the key is left down as far as the engine is
+                    // concerned, every event for it is dropped while the
+                    // text box has focus (so no repeat can disturb it),
+                    // and the one release is sent when focus is given up
+                    // -- where it is a real change, and stops the walk.
                     // Held until really let go, so the repeats that
                     // follow cannot press them back down -- but NOT yet.
                     // Applying it here would suppress the releases that
@@ -2348,7 +2358,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // before ever reaching the engine. That is exactly
                     // what happened, and why a release that the log
                     // confirmed was queued never took effect.
-                    to_suppress = held_keys();
+                    keys_released_into_text_entry() = held_keys();
                     held_keys().clear();
 
                 }
@@ -2378,7 +2388,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     }
                     if (!still_suppressed.empty()) {
                         std::printf("stud: input bridge: the text box let go -- releasing %zu "
-                                    "key(s) the engine would not let go of\n",
+                                    "key(s) held across it\n",
                                     still_suppressed.size());
                         std::fflush(stdout);
                     }
@@ -2423,11 +2433,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 for (const android_glue::HostInputEvent& up : released) {
                     dispatch_event(up, fns, jni_env, last_x, last_y);
                 }
-                // Now that the releases have actually gone out, stop
-                // anything from pressing those keys back down.
-                if (!to_suppress.empty()) {
-                    keys_released_into_text_entry() = to_suppress;
-                }
+
 
                 for (size_t i = 0; i < count; ++i) {
                     dispatch_event(batch[i], fns, jni_env, last_x, last_y);
