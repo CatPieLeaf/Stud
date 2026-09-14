@@ -172,6 +172,26 @@ jobs:
           tar -C install-tree -xf "$archive"
           test -d install-tree/usr
 
+      - name: The Flatpak manifest must pass Flathub's own linter
+        # The same linter Flathub runs on a submission. It exits 0 for
+        # warnings (an available runtime update is one), so errors are
+        # read out of its JSON rather than from the exit code alone.
+        run: |
+          podman run --rm -v "$PWD:/src:z" -w /src \
+            ghcr.io/flathub-infra/flatpak-builder-lint:latest \
+            manifest packaging/flatpak/io.github.catpieleaf.Stud.yml | tee /tmp/flatpak-lint.json
+          python3 - <<'PY'
+          import json, sys
+          with open("/tmp/flatpak-lint.json") as f:
+              report = json.load(f)
+          errors = report.get("errors", [])
+          for w in report.get("warnings", []):
+              print(f"::warning::flatpak-builder-lint: {w}")
+          for e in errors:
+              print(f"::error::flatpak-builder-lint: {e}")
+          sys.exit(1 if errors else 0)
+          PY
+
       - name: Each .SRCINFO must match the PKGBUILD it describes
         # The AUR serves .SRCINFO, not the PKGBUILD -- so a stale one
         # advertises dependencies the package does not actually declare.
@@ -227,6 +247,29 @@ jobs:
           # No continue-on-error: a missing package should fail the job,
           # not vanish quietly.
           ls -la ./*.pkg.tar.zst
+
+      - name: The Arch package must pass namcap
+        # Arch's own package analyser, run on the real .pkg.tar.zst just
+        # built. namcap exits 0 whatever it finds, so its errors are read
+        # from its output. Warnings are expected and not fatal: most are
+        # "uninstalled dependency", which only means the container has no
+        # Arch desktop installed to resolve them against.
+        run: |
+          cat > /tmp/namcap.sh <<'SCRIPT'
+          #!/bin/bash
+          set -eu
+          pacman -Sy --noconfirm --needed namcap >/dev/null
+          pkg=$(find /work -maxdepth 1 -name '*.pkg.tar.zst' | head -1)
+          [ -n "$pkg" ] || { echo "::error::no package for namcap to check"; exit 1; }
+          namcap "$pkg" | tee /tmp/namcap.out || true
+          if grep -q ' E: ' /tmp/namcap.out; then
+            grep ' E: ' /tmp/namcap.out | sed 's/^/::error::namcap: /'
+            exit 1
+          fi
+          SCRIPT
+          chmod +x /tmp/namcap.sh
+          podman run --rm -v "$PWD":/work:z -v /tmp/namcap.sh:/namcap.sh:z \
+            docker.io/library/archlinux:base-devel /namcap.sh
 
       - name: Push the cpak image to ghcr.io
         env:
