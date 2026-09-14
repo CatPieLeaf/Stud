@@ -60,6 +60,12 @@ target_link_libraries(stud_key_map_test PRIVATE PkgConfig::XkbcommonTest)
 add_test(NAME key_map_test COMMAND stud_key_map_test)
 set_tests_properties(key_map_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# Which language Stud reports to Roblox. Header-only, no dependencies --
+# the table it checks is transcribed from the real app's own code.
+add_executable(stud_locale_test locale_test.cpp)
+target_include_directories(stud_locale_test PRIVATE "${CMAKE_SOURCE_DIR}/android-glue/include")
+add_test(NAME locale_test COMMAND stud_locale_test)
+
 # M6 render dispatch test: portable fixtures standing in for a real ANGLE
 # build (see render_test.cpp for why real ANGLE isn't used here).
 add_custom_command(

@@ -45,6 +45,9 @@ BEGIN_NATIVE_DESCRIPTOR(LocaleStub)
 { FakeJni::Function<&LocaleStub::getScript>{}, "getScript" },
 { FakeJni::Function<&LocaleStub::getCountry>{}, "getCountry" },
 { FakeJni::Function<&LocaleStub::getVariant>{}, "getVariant" },
+// Locale.toString() is what the real getLocale() calls; without it that
+// lookup misses and the engine gets no system locale at all.
+{ FakeJni::Function<&LocaleStub::toString>{}, "toString" },
 END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(LocaleListStub)

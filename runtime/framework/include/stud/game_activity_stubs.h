@@ -7,6 +7,7 @@
 #include "stud/android_framework_stubs.h"
 #include "stud/device_params.h"
 #include "stud/linker.h"
+#include "stud/system_locale.h"
 
 #include <atomic>
 #include <functional>
@@ -53,12 +54,25 @@ public:
 class LocaleStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/Locale")
+    // The real system locale, not a literal. A real device answers this
+    // from its own language settings; a desktop's equivalent is the
+    // locale environment. See stud/system_locale.h.
     std::shared_ptr<FakeJni::JString> getLanguage() {
-        return std::make_shared<FakeJni::JString>("en");
+        return std::make_shared<FakeJni::JString>(
+            stud::android_glue::system_locale().language.c_str());
     }
     std::shared_ptr<FakeJni::JString> getScript() { return std::make_shared<FakeJni::JString>(""); }
     std::shared_ptr<FakeJni::JString> getCountry() {
-        return std::make_shared<FakeJni::JString>("US");
+        return std::make_shared<FakeJni::JString>(
+            stud::android_glue::system_locale().country.c_str());
+    }
+    // java.util.Locale.toString(): "pt_BR". The real implementation of
+    // NativeLocaleJavaInterface.getLocale() is exactly
+    // Configuration.getLocales().get(0).toString(), so this is the method
+    // that answers it.
+    std::shared_ptr<FakeJni::JString> toString() {
+        return std::make_shared<FakeJni::JString>(
+            stud::android_glue::system_locale().java_tag.c_str());
     }
     std::shared_ptr<FakeJni::JString> getVariant() { return std::make_shared<FakeJni::JString>(""); }
 };
@@ -2017,14 +2031,30 @@ class NativeLocaleJavaInterfaceStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/locale/NativeLocaleJavaInterface")
 
+    // All three used to be the literal "en_us", which is why the app came
+    // up in English whatever language the desktop was running in. The
+    // real implementations, read from the app's own code:
+    //
+    //   getLocale()       Configuration.getLocales().get(0).toString()
+    //                     -- the system locale, "pt_BR".
+    //   getRobloxLocale() the app's own locale id for it, "pt_br", from a
+    //                     fixed supported set that falls back to English.
+    //   getGameLocale()   a stored per-experience (UGC) locale, falling
+    //                     back to getRobloxLocale() when there is none.
+    //
+    // Stud runs no DEX, so nothing ever stores a UGC locale and the real
+    // fallback is the honest answer for the third.
     static std::shared_ptr<FakeJni::JString> getLocale() {
-        return std::make_shared<FakeJni::JString>("en_us");
+        return std::make_shared<FakeJni::JString>(
+            stud::android_glue::system_locale().java_tag.c_str());
     }
     static std::shared_ptr<FakeJni::JString> getRobloxLocale() {
-        return std::make_shared<FakeJni::JString>("en_us");
+        return std::make_shared<FakeJni::JString>(
+            stud::android_glue::system_locale().roblox.c_str());
     }
     static std::shared_ptr<FakeJni::JString> getGameLocale() {
-        return std::make_shared<FakeJni::JString>("en_us");
+        return std::make_shared<FakeJni::JString>(
+            stud::android_glue::system_locale().roblox.c_str());
     }
 };
 
