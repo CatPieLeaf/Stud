@@ -7,6 +7,14 @@ Comment=Unofficial Roblox launcher for Linux
 Exec=@STUD_EXEC@ %u
 Icon=@STUD_APP_ID@
 Terminal=false
+# Without this the launcher mints no activation token, and a Stud that is
+# already running cannot be brought forward when a game link is clicked:
+# Wayland lets no application raise itself, so the ONLY thing that can do
+# it is a token from the process the user acted in. The portal passes that
+# token to the handler it spawns in XDG_ACTIVATION_TOKEN -- but only when
+# the entry asks for startup notification. Live-caught: the link arrived
+# and the game joined, with the window still behind the browser.
+StartupNotify=true
 Categories=Game;
 NoDisplay=false
 MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;
