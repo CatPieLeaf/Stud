@@ -210,9 +210,16 @@ jobs:
             manifest packaging/flatpak/io.github.catpieleaf.Stud.yml | tee /tmp/flatpak-lint.json
           python3 - <<'PY'
           import json, sys
-          with open("/tmp/flatpak-lint.json") as f:
-              report = json.load(f)
+          # A manifest with nothing to report produces NO output at all,
+          # not an empty JSON object -- so this cannot go straight to
+          # json.load. Confirmed both ways against the real linter: the
+          # 6.10 manifest prints a warning object, the 6.11 one prints
+          # nothing.
+          text = open("/tmp/flatpak-lint.json").read().strip()
+          report = json.loads(text) if text else {}
           errors = report.get("errors", [])
+          if not text:
+              print("flatpak-builder-lint: clean, nothing reported")
           for w in report.get("warnings", []):
               print(f"::warning::flatpak-builder-lint: {w}")
           for e in errors:
@@ -541,7 +548,16 @@ jobs:
 
       - name: Build and bundle
         run: |
+          # The container image is built around one KDE SDK and the
+          # manifest may name a newer one -- there is no kde-6.11 image
+          # yet. --install-deps-from lets flatpak-builder fetch the
+          # runtime, SDK and base app the manifest actually asks for,
+          # instead of the build being pinned to whatever the image
+          # happens to carry.
+          flatpak remote-add --if-not-exists --system flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --force-clean --disable-rofiles-fuse \
+            --install-deps-from=flathub \
             --repo=flatpak-repo build-dir \
             packaging/flatpak/io.github.catpieleaf.Stud.yml
           flatpak build-bundle flatpak-repo \

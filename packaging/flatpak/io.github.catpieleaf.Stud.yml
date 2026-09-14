@@ -27,24 +27,16 @@ app-id: io.github.catpieleaf.Stud
 # This base app is how a Flathub application gets it, and its branch
 # tracks the runtime's.
 base: io.qt.qtwebengine.BaseApp
-base-version: '6.10'
+base-version: '6.11'
 runtime: org.kde.Platform
-# flatpak-builder-lint warns that 6.11 exists and suggests moving to it.
-# Staying on 6.10 deliberately:
-#
-#   * 6.10 is NOT end-of-life -- the linter errors on an EOL runtime and
-#     only warns about an available update, so this is informational.
-#   * The release workflow builds the bundle in
-#     ghcr.io/flathub-infra/flatpak-github-actions, whose tag list stops
-#     at kde-6.10. Raising this alone would build against an SDK that
-#     image does not carry.
-#
-# Flathub builds on its own infrastructure and would handle 6.11 fine, so
-# the constraint is ours, not theirs. Raise it once a kde-6.11 image
-# exists -- or, if it is ever needed sooner, by adding
-# `--install-deps-from=flathub` to the build and accepting the SDK
-# download on every release.
-runtime-version: '6.10'
+# The current runtime. This used to sit on 6.10 because the release
+# workflow builds in ghcr.io/flathub-infra/flatpak-github-actions, whose
+# tag list still stops at kde-6.10 -- so the container has no 6.11 SDK of
+# its own. That only mattered while the Qt executables were built
+# elsewhere and copied in; now they are compiled here, the workflow
+# installs the runtime it needs with `--install-deps-from=flathub` and
+# builds against whatever this names.
+runtime-version: '6.11'
 sdk: org.kde.Sdk
 command: stud
 separate-locales: false
