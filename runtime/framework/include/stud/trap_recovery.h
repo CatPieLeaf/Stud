@@ -134,6 +134,14 @@ bool call_trapping_abort_tolerating_wild_sigsegv(Fn fn, Args... args) {
 // was found and cleared.
 bool clear_pending_jni_exception(JNIEnv* env, const char* context);
 
+// Tell the trap handler that Stud is deliberately exiting.
+//
+// After this, a fault the handler would otherwise treat as fatal exits
+// quietly instead of re-raising. Teardown runs while the engine's own
+// threads are still live, so a fault there is the shutdown itself -- and
+// a core dump of a process that is about to _exit(0) helps nobody.
+void note_shutting_down();
+
 }  // namespace stud::jni_bridge
 
 extern "C" {

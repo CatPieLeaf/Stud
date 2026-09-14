@@ -21,6 +21,13 @@
 namespace stud::jni_bridge {
 
 namespace {
+// Set once by note_shutting_down(); read only from a signal handler.
+std::atomic<bool> g_shutting_down{false};
+}  // namespace
+
+void note_shutting_down() { g_shutting_down.store(true, std::memory_order_relaxed); }
+
+namespace {
 
 
 // Thread-local, not a plain global -- only the thread that armed a
@@ -522,6 +529,21 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
         describe_address("pc", static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RIP]));
         print_backtrace(static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RBP]));
+    }
+    // Shutting down: a fault here IS the teardown.
+    //
+    // Closing Stud runs LeaveGame/DestroyApp while the engine's own ~19
+    // threads are still live, so one of them touching a DataModel being
+    // destroyed underneath it is expected, not a defect. Re-raising made
+    // systemd write a 178 MB core dump of a process one line from
+    // _exit(0) -- reported as "random linker64 errors when I close Stud",
+    // with si_code SI_TKILL naming this raise() as the source rather than
+    // any hardware fault.
+    //
+    // Only the fatal path is short-circuited: a recoverable fault during
+    // teardown still recovers, so shutdown work that can finish, does.
+    if (g_shutting_down.load(std::memory_order_relaxed)) {
+        ::_exit(0);
     }
     ::signal(sig, SIG_DFL);
     ::raise(sig);
