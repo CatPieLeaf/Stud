@@ -47,6 +47,18 @@ add_executable(stud_cpu_compat_test cpu_compat_test.cpp)
 target_link_libraries(stud_cpu_compat_test PRIVATE stud_cpu_compat)
 add_test(NAME cpu_compat_test COMMAND stud_cpu_compat_test)
 
+# Key mapping, checked against real compiled keymaps (see the test's own
+# header comment). Header-only, so it needs no runtime target -- only the
+# same xkbcommon the compositor's keymap is read with.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(XkbcommonTest REQUIRED IMPORTED_TARGET xkbcommon)
+add_executable(stud_key_map_test key_map_test.cpp)
+target_include_directories(stud_key_map_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/runtime/framework/include")
+target_link_libraries(stud_key_map_test PRIVATE PkgConfig::XkbcommonTest)
+add_test(NAME key_map_test COMMAND stud_key_map_test)
+set_tests_properties(key_map_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # M6 render dispatch test: portable fixtures standing in for a real ANGLE
 # build (see render_test.cpp for why real ANGLE isn't used here).
 add_custom_command(

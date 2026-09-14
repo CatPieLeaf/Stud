@@ -17,6 +17,7 @@
 #include "stud/android_glue.h"
 #include "stud/android_framework_stubs.h"
 #include "stud/game_activity_stubs.h"
+#include "stud/key_map.h"
 #include "stud/text_editor.h"
 #include "stud/bionic_jvm.h"
 #include "stud/trap_recovery.h"
@@ -433,9 +434,17 @@ void apply_pointer_lock() {
 }
 
 // Real evdev scan code -> the character it produces, unshifted and
-// shifted, for a US layout. Stud has no IME and no xkb keymap yet, so
-// this is the honest minimum needed to type into a real Lua TextBox;
-// anything not listed produces no character (the key is still delivered
+// shifted, for a US layout -- the FALLBACK only.
+//
+// The compositor hands over its own keymap and android-glue resolves the
+// real character from it (HostInputEvent::codepoint), so this is reached
+// only where there is no keymap to read: the X11 backend, and the moment
+// before wl_keyboard.keymap arrives. It describes a US layout and cannot
+// describe any other, which is exactly why it is no longer the primary
+// answer -- on a Brazilian ABNT2 keyboard it claims evdev 53 types "/"
+// when it really types ";".
+//
+// Anything not listed produces no character (the key is still delivered
 // as a real key event separately).
 bool char_for_scan_code(uint32_t scan, bool shift, char* out) {
     static const char* kUnshifted =
@@ -483,111 +492,7 @@ bool char_for_scan_code(uint32_t scan, bool shift, char* out) {
     return false;
 }
 
-// Real evdev scan code -> real Android KeyEvent key code. Wayland only
-// ever reports the evdev code (which real Android reports identically as
-// KeyEvent.getScanCode()), so the virtual key code has to be derived
-// here. Covers the real printable/navigation/modifier set a login screen
-// and ordinary gameplay use; anything not listed is still delivered with
-// its real scan code and key code 0 rather than dropped.
-jint android_key_code_for_scan_code(uint32_t scan) {
-    switch (scan) {
-        case 1: return 111;    // ESC -> KEYCODE_ESCAPE
-        case 2: return 8;      // 1 -> KEYCODE_1
-        case 3: return 9;
-        case 4: return 10;
-        case 5: return 11;
-        case 6: return 12;
-        case 7: return 13;
-        case 8: return 14;
-        case 9: return 15;
-        case 10: return 16;    // 9
-        case 11: return 7;     // 0 -> KEYCODE_0
-        case 12: return 69;    // MINUS
-        case 13: return 70;    // EQUAL
-        case 14: return 67;    // BACKSPACE -> KEYCODE_DEL
-        case 15: return 61;    // TAB
-        case 16: return 45;    // Q -> KEYCODE_Q
-        case 17: return 51;    // W
-        case 18: return 33;    // E
-        case 19: return 46;    // R
-        case 20: return 48;    // T
-        case 21: return 53;    // Y
-        case 22: return 49;    // U
-        case 23: return 37;    // I
-        case 24: return 43;    // O
-        case 25: return 44;    // P
-        case 26: return 71;    // LEFTBRACE
-        case 27: return 72;    // RIGHTBRACE
-        case 28: return 66;    // ENTER
-        case 29: return 113;   // LEFTCTRL
-        case 30: return 29;    // A
-        case 31: return 47;    // S
-        case 32: return 32;    // D
-        case 33: return 34;    // F
-        case 34: return 35;    // G
-        case 35: return 36;    // H
-        case 36: return 38;    // J
-        case 37: return 39;    // K
-        case 38: return 40;    // L
-        case 39: return 74;    // SEMICOLON
-        case 40: return 75;    // APOSTROPHE
-        case 41: return 68;    // GRAVE
-        case 42: return 59;    // LEFTSHIFT
-        case 43: return 73;    // BACKSLASH
-        case 44: return 54;    // Z
-        case 45: return 52;    // X
-        case 46: return 31;    // C
-        case 47: return 50;    // V
-        case 48: return 30;    // B
-        case 49: return 42;    // N
-        case 50: return 41;    // M
-        case 51: return 55;    // COMMA
-        case 52: return 56;    // DOT
-        case 53: return 76;    // SLASH
-        case 54: return 60;    // RIGHTSHIFT
-        case 56: return 57;    // LEFTALT
-        case 57: return 62;    // SPACE
-        case 58: return 115;   // CAPSLOCK
-        case 97: return 114;   // RIGHTCTRL
-        case 100: return 58;   // RIGHTALT
-        case 102: return 122;  // HOME -> KEYCODE_MOVE_HOME
-        case 103: return 19;   // UP
-        case 104: return 92;   // PAGEUP
-        case 105: return 21;   // LEFT
-        case 106: return 22;   // RIGHT
-        case 107: return 123;  // END -> KEYCODE_MOVE_END
-        case 108: return 20;   // DOWN
-        case 109: return 93;   // PAGEDOWN
-        case 110: return 124;  // INSERT
-        case 111: return 112;  // DELETE -> KEYCODE_FORWARD_DEL
-        // KEYCODE_SLASH rather than KEYCODE_NUMPAD_DIVIDE, deliberately.
-        // On a Brazilian ABNT2 layout this scan code IS the ordinary "/"
-        // key, and Roblox binds chat to Slash -- reporting the numpad code
-        // would be faithful to what the kernel says and useless to the
-        // person pressing it. The character it produces is "/" either way,
-        // which is what makes the substitution safe on a real numpad too.
-        //
-        // The honest fix is to read the compositor's own keymap instead of
-        // assuming a US layout; see the note on char_for_scan_code.
-        case 98: return 76;    // KPSLASH -> KEYCODE_SLASH
-        case 55: return 155;   // KPASTERISK -> KEYCODE_NUMPAD_MULTIPLY
-        case 74: return 156;   // KPMINUS -> KEYCODE_NUMPAD_SUBTRACT
-        case 78: return 157;   // KPPLUS -> KEYCODE_NUMPAD_ADD
-        case 83: return 158;   // KPDOT -> KEYCODE_NUMPAD_DOT
-        case 96: return 160;   // KPENTER -> KEYCODE_NUMPAD_ENTER
-        case 79: return 145;   // KP1 -> KEYCODE_NUMPAD_1
-        case 80: return 146;
-        case 81: return 147;
-        case 75: return 148;
-        case 76: return 149;
-        case 77: return 150;
-        case 71: return 151;
-        case 72: return 152;
-        case 73: return 153;
-        case 82: return 144;   // KP0 -> KEYCODE_NUMPAD_0
-        default: return 0;
-    }
-}
+
 
 // Real Android behaviour with a real mouse attached, read directly out of
 // the app's own handler (`the app's own input handler`) rather than assumed:
@@ -1694,10 +1599,28 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 if (g_drag_locked.load()) g_lock_suppressed = true;
                 apply_pointer_lock();
             }
-            char typed = 0;
-            jint unicode_char = char_for_scan_code(ev.code, shift_down, &typed)
-                                    ? static_cast<jint>(static_cast<unsigned char>(typed))
-                                    : 0;
+            // What this key really types, according to the compositor's own
+            // keymap. Stud's own table is positional and describes a US
+            // layout, so it is only the fallback now -- for the X11 backend,
+            // and for the moment before the keymap has arrived.
+            std::string typed_text;
+            if (ev.codepoint != 0) {
+                typed_text = utf8_from_codepoint(ev.codepoint);
+            } else {
+                char from_table = 0;
+                if (char_for_scan_code(ev.code, shift_down, &from_table)) {
+                    typed_text.assign(1, from_table);
+                }
+            }
+            // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
+            // real one goes through whole rather than being truncated.
+            const jint unicode_char =
+                ev.codepoint != 0
+                    ? static_cast<jint>(ev.codepoint)
+                    : (typed_text.empty() ? 0
+                                          : static_cast<jint>(
+                                                static_cast<unsigned char>(typed_text[0])));
+            const jint key_code = android_key_code_for_event(ev.code, ev.keysym);
 
             // Real text entry. When the engine has told us a Lua TextBox
             // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
@@ -1842,8 +1765,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                         call_trapping_abort(fns.return_pressed, jni_env, nullptr,
                                             static_cast<jlong>(text_box));
                     }
-                } else if (typed != 0 && !ctrl) {
-                    changed = ed.insert(std::string(1, typed));
+                } else if (!typed_text.empty() && !ctrl) {
+                    changed = ed.insert(typed_text);
                 }
                 const std::string text = ed.text();
                 if (moved && !changed) {
@@ -1911,7 +1834,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
 
             if (g_agdk_env != nullptr) {
                 send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, static_cast<jint>(ev.code),
-                              android_key_code_for_scan_code(ev.code), unicode_char);
+                              key_code, unicode_char);
             }
             // One-shot per path, so a live run says exactly which of the
             // three real key paths actually reached the engine.
@@ -1927,7 +1850,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     told_key = true;
                     std::printf("stud: input bridge: nativePassKeyEvent path active "
                                 "(scan=%u keycode=%d unicode=%d)\n", ev.code,
-                                android_key_code_for_scan_code(ev.code), unicode_char);
+                                key_code, unicode_char);
                     std::fflush(stdout);
                 }
             }
@@ -1938,7 +1861,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             call_trapping_abort(fns.key_event, jni_env, nullptr,
                                 static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
                                 static_cast<jint>(ev.code),
-                                android_key_code_for_scan_code(ev.code),
+                                key_code,
                                 static_cast<jboolean>(ev.b != 0.0f ? JNI_TRUE : JNI_FALSE));
             return;
         }

@@ -469,6 +469,22 @@ struct HostInputEvent {
     // only this process knows the live window size.
     uint32_t surface_width = 0;
     uint32_t surface_height = 0;
+    // kKey: what the compositor's OWN keymap says this key produces --
+    // resolved with libxkbcommon from the keymap wl_keyboard.keymap hands
+    // over, not from a layout table compiled into Stud.
+    //
+    // This matters because only the compositor knows the layout. A
+    // Brazilian ABNT2 keyboard puts "/" on evdev 89 (<AB11>), which no US
+    // layout has at all, so a scan-code table built for US maps it to
+    // nothing and the engine receives keycode 0 -- which is exactly why
+    // "/" did not open the search box while the engine's own on-screen
+    // hint offered it. The same table is wrong for every accented key a
+    // Portuguese speaker needs to type.
+    //
+    // Zero when unknown (the X11 backend, or before the keymap arrives),
+    // and every consumer falls back to the scan-code table then.
+    uint32_t keysym = 0;      // an X11 keysym (XKB_KEY_*)
+    uint32_t codepoint = 0;   // the Unicode character it types, or 0
 };
 
 // Copies up to `max` queued real input events into `out` and removes them

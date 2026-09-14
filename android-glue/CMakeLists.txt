@@ -334,6 +334,12 @@ target_link_libraries(stud_android_glue PUBLIC PkgConfig::WaylandClient)
 pkg_check_modules(WaylandEgl REQUIRED IMPORTED_TARGET wayland-egl)
 target_link_libraries(stud_android_glue PUBLIC PkgConfig::WaylandEgl)
 
+# The compositor hands over its own keymap and only xkbcommon can read it.
+# Without it Stud would be back to guessing a US layout, which is wrong
+# for every key a Brazilian ABNT2 keyboard does not share with one.
+pkg_check_modules(Xkbcommon REQUIRED IMPORTED_TARGET xkbcommon)
+target_link_libraries(stud_android_glue PUBLIC PkgConfig::Xkbcommon)
+
 # Real glyph rasterisation for the native text input the engine asks Stud
 # to draw over a focused TextBox (src/text_overlay.cpp). Roblox ships its
 # own fonts in the APK and tells Stud which one to use, so the overlay
