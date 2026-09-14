@@ -1,15 +1,23 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
-# Builds Stud from the release source. Be warned in advance: most of the
-# build time is ANGLE, which is compiled from source because Stud needs
-# both its Vulkan and its SwiftShader backends and no distribution ships
-# that combination. Expect around an hour on a modern machine, and around
-# 15 GB of scratch space. tools/setup.sh fetches the three dependencies
-# that cannot be redistributed -- Google's NDK, ANGLE's source, and a real
-# bionic taken from AOSP's own prebuilt Runtime APEX.
+# Builds Stud from the release source.
 #
-# A prebuilt package is attached to every release if you would rather not
-# wait: https://github.com/CatPieLeaf/Stud/releases
+# NOT THE PACKAGE PUBLISHED TO THE AUR -- `stud-bin` is (PKGBUILD.stud-bin
+# beside this file). prepare() below runs tools/setup.sh, which downloads
+# Google's NDK, an ANGLE checkout and a bionic image from AOSP. makepkg
+# only fetches what is listed in source=(), and a clean chroot has no
+# network once the build starts, so this PKGBUILD cannot build there.
+#
+# That is not an oversight that can be tidied away: ANGLE's own build runs
+# `gclient sync`, which pulls dozens of dependencies as it goes, and there
+# is no self-contained ANGLE source tarball to list in source=() instead.
+# Stud needs both its Vulkan and its SwiftShader backends, which no
+# distribution ships, so it is built rather than depended on.
+#
+# It is kept here, and kept working, for building Stud from source on your
+# own machine -- `makepkg -si` in this directory does exactly that. Expect
+# around an hour, almost all of it ANGLE, and around 15 GB of scratch
+# space.
 
 pkgname=stud
 pkgver=1.1.0

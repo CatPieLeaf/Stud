@@ -1,35 +1,65 @@
 # AUR packaging
 
-`PKGBUILD` and `.SRCINFO` for the [`stud`](https://aur.archlinux.org/packages/stud)
-package. They live here rather than only in the AUR repository so the
-packaging is versioned with the code it builds -- a dependency added to
-Stud and not to the PKGBUILD is a broken package, and that is easier to
-notice in the same commit.
+Three PKGBUILDs live here, and only one of them is published to the AUR.
+
+| file | package | what it does |
+|------|---------|--------------|
+| `PKGBUILD.stud-bin` + `.SRCINFO.stud-bin` | **`stud-bin`** | **the AUR package.** Installs the release archive CI built from the tag. |
+| `PKGBUILD` | `stud` | builds from source, for building on your own machine. Not publishable -- see below. |
+| `PKGBUILD.bin` | — | CI only. Turns an install tree that already exists into a `pkg.tar.zst`. |
+
+They live here rather than only in the AUR repository so the packaging is
+versioned with the code it builds -- a dependency added to Stud and not to
+the PKGBUILDs is a broken package, and that is easier to notice in the
+same commit. `stud-bin` and `stud` carry the same `depends` list for the
+same reason.
+
+## Why the source PKGBUILD is not the AUR package
+
+`prepare()` runs `tools/setup.sh`, which downloads Google's NDK, an ANGLE
+checkout and a bionic image from AOSP. makepkg fetches what is listed in
+`source=()` and nothing else, and a clean chroot has no network once the
+build starts -- so that PKGBUILD builds on a normal machine and fails in
+`extra-x86_64-build`.
+
+It cannot be fixed by listing those downloads in `source=()`: ANGLE's own
+build runs `gclient sync`, which pulls dozens of dependencies as it goes,
+and there is no self-contained ANGLE source tarball to pin instead. Stud
+needs both ANGLE's Vulkan and its SwiftShader backends, which no
+distribution ships, so it is built rather than depended on.
+
+So `stud-bin` is what gets published. It installs prebuilt binaries, which
+is exactly what the `-bin` suffix is for, and it `provides`/`conflicts`
+with `stud` so that building from source instead stays possible.
 
 ## Publishing a release
 
-The AUR repository is a separate git repository, and the only two files
-it carries are these:
+The AUR repository is a separate git repository carrying two files:
 
 ```sh
-git clone ssh://aur@aur.archlinux.org/stud.git aur-stud
-cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO aur-stud/
+git clone ssh://aur@aur.archlinux.org/stud-bin.git aur-stud
+cp packaging/aur/PKGBUILD.stud-bin aur-stud/PKGBUILD
 cd aur-stud
-# The checksum of the tarball GitHub actually serves for this tag.
-updpkgsums && makepkg --printsrcinfo > .SRCINFO
-git commit -am "stud 1.1.0" && git push
+# The checksum of the archive the release actually serves. The release
+# workflow prints it too, under "Checksums for the AUR and Flathub
+# repositories".
+updpkgsums
+makepkg --printsrcinfo > .SRCINFO
+makepkg -si          # install it once before pushing it at anyone else
+git commit -am "stud-bin 1.1.0" && git push
 ```
 
-`sha256sums` is `SKIP` in the tree on purpose: the real checksum belongs
-to one specific tarball, and a stale one in version control is worse than
-none. `updpkgsums` fills it in at publish time, and CI does the same when
-it validates the build.
+`sha256sums` is `SKIP` in this tree on purpose: a checksum belongs to one
+specific archive, and a stale one in version control is worse than none.
+`updpkgsums` fills it in at publish time. `.SRCINFO.stud-bin` is kept in
+step by hand; `makepkg --printsrcinfo` above is what actually generates
+the one that ships.
 
-## Why it takes an hour
+## Building from source yourself
 
-ANGLE, compiled from source. Stud needs both its Vulkan and its
-SwiftShader backends, and no distribution ships that combination -- so
-`tools/setup.sh` builds it. Everything else in the build is minutes.
+```sh
+cd packaging/aur && makepkg -si
+```
 
-A prebuilt `pkg.tar.zst` is attached to every GitHub release for anyone
-who would rather not wait.
+Around an hour, almost all of it ANGLE, and around 15 GB of scratch space.
+Everything else in the build is minutes.
