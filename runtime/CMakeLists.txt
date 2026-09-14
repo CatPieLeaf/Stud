@@ -299,6 +299,19 @@ set_target_properties(stud_runtime_libvulkan PROPERTIES
 )
 
 set(STUD_IPC_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../stud-ipc")
+
+# Which library each copy of render_client_common.cpp ends up in.
+#
+# That file is listed in all five of these targets, so each gets its own
+# copy of the connection statics -- up to fifteen sockets to render-host,
+# not the three the header describes. STUD_IPC_OWNERS=1 makes each one
+# say which library opened it.
+target_compile_definitions(stud_runtime_libandroid PRIVATE STUD_CLIENT_OWNER="libandroid.so")
+target_compile_definitions(stud_runtime_libaaudio PRIVATE STUD_CLIENT_OWNER="libaaudio.so")
+target_compile_definitions(stud_runtime_libEGL PRIVATE STUD_CLIENT_OWNER="libEGL.so")
+target_compile_definitions(stud_runtime_libGLESv2 PRIVATE STUD_CLIENT_OWNER="libGLESv2.so")
+target_compile_definitions(stud_runtime_libvulkan PRIVATE STUD_CLIENT_OWNER="libvulkan.so.1")
+
 add_library(stud_runtime_ipc STATIC
     "${STUD_IPC_SRC}/src/ipc.cpp"
 )
