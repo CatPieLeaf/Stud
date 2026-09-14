@@ -57,8 +57,15 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # FMOD initialises an audio device when a game starts and fails outright
 # without one. render-host loads it by name at runtime rather than linking
 # it, so nothing here would notice it missing -- hence naming it.
+# The render host links libxkbcommon directly (it reads the compositor's
+# own keymap, so that a key reports what it types rather than what a US
+# layout would have). Autoreqprov is off below, so nothing would generate
+# that dependency on its own -- hence naming it here, by SONAME rather
+# than by package: that is the dependency rpm would have generated
+# itself, it does not assume a distribution's package name, and naming
+# the package instead is what rpmlint calls explicit-lib-dependency.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()(64bit)")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 # The bundled libraries are private to Stud: nothing else may resolve
 # against them, and rpm must not advertise them as provided.
