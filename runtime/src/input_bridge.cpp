@@ -1861,6 +1861,22 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, static_cast<jint>(ev.code),
                               android_key_code_for_scan_code(ev.code), unicode_char);
             }
+            // Every key, when asked for. The one-shot below names the
+            // path for the FIRST key of a session and then goes quiet,
+            // which cannot answer what one particular keystroke did --
+            // and "/" not opening chat is exactly that question.
+            if (input_trace_enabled()) {
+                std::printf("stud: key %s scan=%u keycode=%d unicode=%d(%c) meta=0x%x "
+                            "textbox=%llu agdk=%d pass_key=%d\n",
+                            down ? "down" : "up  ", ev.code,
+                            android_key_code_for_scan_code(ev.code), unicode_char,
+                            (unicode_char >= 32 && unicode_char < 127)
+                                ? static_cast<char>(unicode_char) : '.',
+                            static_cast<unsigned>(g_meta_state),
+                            static_cast<unsigned long long>(text_box),
+                            g_agdk_env != nullptr ? 1 : 0, fns.key_event != nullptr ? 1 : 0);
+                std::fflush(stdout);
+            }
             // One-shot per path, so a live run says exactly which of the
             // three real key paths actually reached the engine.
             {
