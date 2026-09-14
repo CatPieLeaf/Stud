@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: write
+  # ghcr.io, for the OCI image cpak installs from.
+  packages: write
 
 concurrency:
   group: release-${{ github.event.release.tag_name || inputs.tag }}
@@ -131,6 +133,27 @@ jobs:
             docker.io/library/archlinux:base-devel /makepkg.sh
         continue-on-error: true
 
+      # The OCI image cpak installs from. Built from the install tree
+      # above rather than from source: a second build would mean a second
+      # hour of ANGLE and no guarantee the image holds the same binaries
+      # as the packages beside it.
+      - name: Build and push the cpak image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          podman build -f packaging/cpak/Containerfile.prebuilt \
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" \
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest" .
+          echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
+          podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
+          # The digest is what the manifest should pin: a tag can be
+          # moved, and cpak's manifest v3 wants something that cannot.
+          podman inspect --format '{{index .RepoDigests 0}}' \
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" | tee cpak-image-digest.txt
+        continue-on-error: true
+
       - uses: actions/upload-artifact@v7
         with:
           name: packages
@@ -139,6 +162,7 @@ jobs:
             build/*.deb
             *.pkg.tar.zst
             *-flatpak.tar.zst
+            cpak-image-digest.txt
           if-no-files-found: error
 
   appimage:
