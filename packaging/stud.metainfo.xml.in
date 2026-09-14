@@ -8,23 +8,32 @@
   <name>Stud</name>
   <summary>Play Roblox on Linux</summary>
 
+  <!--
+    Written for someone deciding whether to install it, not for someone
+    reading the source: what Stud does, what they get, and what they have
+    to bring. The architecture is in the README, where it belongs.
+    (No double hyphen anywhere in here: XML forbids it inside a comment.)
+  -->
   <description>
     <p>
-      Stud runs the real Roblox Android client on a Linux desktop. It is not
-      a reimplementation and not an emulator: it loads Roblox's own engine
-      and drives it through the same interfaces an Android phone would,
-      supplying the parts a phone normally provides — the framework, the
-      window, the input devices and the graphics stack.
+      Stud plays Roblox on Linux. It runs the real Roblox app on your
+      desktop, in its own window, with your mouse and keyboard — no
+      browser, no emulator, no virtual machine.
     </p>
     <p>
-      It keeps the vendor graphics driver out of the process that runs the
-      engine, which is the crash class that makes other approaches unstable
-      on Linux, and it renders through Vulkan with OpenGL fallbacks for
-      older hardware.
+      It is built to stay out of the way while you play:
     </p>
+    <ul>
+      <li>Links from your browser open straight into the experience</li>
+      <li>Mouse and keyboard behave the way they do in the desktop client</li>
+      <li>Upscaling, so the game can render below your screen's resolution and still fill it</li>
+      <li>Discord Rich Presence, with a button friends can join through</li>
+      <li>A system tray menu, and it tells you which country a server is in when you join</li>
+      <li>Your login lives in the system keyring, never in a file Stud leaves lying around</li>
+    </ul>
     <p>
-      Stud does not include Roblox. You supply the Android application
-      package yourself, and Roblox remains subject to its own terms.
+      Roblox is not included. You supply the Android application package
+      yourself, and Roblox remains subject to its own terms.
     </p>
   </description>
 
