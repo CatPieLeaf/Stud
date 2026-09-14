@@ -141,5 +141,11 @@ modules:
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.0/stud-1.1.0-x86_64.tar.zst
         sha256: PLACEHOLDER_STUD_SHA256
+        # This archive IS the install tree, rooted at usr/, and every
+        # build-command below addresses it that way. flatpak-builder
+        # strips one leading component from an archive by default, which
+        # turned usr/bin into bin and failed with
+        # `cp: cannot stat 'usr/bin/.'`.
+        strip-components: 0
         only-arches:
           - x86_64
