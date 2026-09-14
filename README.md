@@ -232,6 +232,37 @@ sudo dnf install ./stud-*.x86_64.rpm
 
 Stud then shows up in Discover, GNOME Software and your application menu like anything else.
 
+## 🟣 D E B  ( D E B I A N  /  U B U N T U )
+
+```bash
+sudo apt install ./stud_*_amd64.deb
+```
+
+Built against whatever Qt the distribution carries, so an Ubuntu LTS gets a package
+that matches its own Qt rather than one that refuses to install.
+
+## 🔷 A R C H  ( P A C M A N )
+
+```bash
+sudo pacman -U stud-*-x86_64.pkg.tar.zst
+```
+
+Or build it from source with the [AUR](https://aur.archlinux.org/packages/stud)
+package — `paru -S stud`, and expect around an hour, almost all of it ANGLE:
+
+```bash
+git clone https://aur.archlinux.org/stud.git && cd stud && makepkg -si
+```
+
+## 🔶 F L A T P A K
+
+```bash
+flatpak install --user stud.flatpak
+flatpak run io.github.catpieleaf.Stud
+```
+
+Not on Flathub yet; the manifest lives in `packaging/flatpak`.
+
 ## 🟠 A P P I M A G E  ( A N Y _ D I S T R O )
 
 ```bash
@@ -246,7 +277,7 @@ chmod +x Stud-x86_64.AppImage
 > ```
 
 > [!NOTE]
-> `bubblewrap` is deliberately **not** bundled — it needs the AppArmor or SELinux policy your own distribution ships alongside it. Install it from your package manager (`bubblewrap`); the AppImage will tell you if it is missing.
+> `bubblewrap` is deliberately **not** bundled in the AppImage — it needs the AppArmor or SELinux policy your own distribution ships alongside it. Install it from your package manager (`bubblewrap`); the AppImage will tell you if it is missing. The rpm, deb and Arch packages depend on it, so those pull it in for you, and the Flatpak builds its own inside the sandbox.
 >
 > The AppImage carries its own Qt and Breeze, which puts a floor of glibc 2.41 on it: Fedora 42+, Ubuntu 25.04+ and current rolling releases. Older than that, build from source or use the rpm.
 
