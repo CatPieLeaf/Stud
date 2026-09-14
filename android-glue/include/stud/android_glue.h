@@ -453,6 +453,13 @@ struct HostInputEvent {
         // change in scale since the previous update -- the shape the
         // app's own mouse branch takes (`nativePassMousePinch`).
         kPointerPinch = 14,
+        // Keyboard focus arrived or left. `a != 0` means this window now
+        // has it. Real Android delivers the same thing as
+        // onWindowFocusChanged, and an engine that is never told it lost
+        // focus goes on believing whatever was held is still held --
+        // which is how a key released after clicking away left a
+        // character walking forever.
+        kWindowFocus = 15,
     };
     uint32_t type = 0;
     uint32_t code = 0;

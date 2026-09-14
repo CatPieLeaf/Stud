@@ -556,6 +556,13 @@ void pointer_motion(void*, wl_pointer*, uint32_t, wl_fixed_t sx, wl_fixed_t sy) 
     ev.y = g_pointer_y;
     push_input_event(ev);
 }
+// Held input, and the focus change that has to let go of it. All defined
+// further down, next to the state they touch; declared here because the
+// listeners that use them come first in this file.
+std::set<uint32_t>& buttons_down();
+void release_all_held_buttons();
+void push_window_focus(bool focused);
+
 void pointer_button(void*, wl_pointer*, uint32_t serial, uint32_t, uint32_t button,
                     uint32_t state) {
     g_last_input_serial.store(serial);
@@ -574,7 +581,13 @@ void pointer_button(void*, wl_pointer*, uint32_t serial, uint32_t, uint32_t butt
     ev.code = android_button;
     ev.x = g_pointer_x;
     ev.y = g_pointer_y;
-    ev.a = state == WL_POINTER_BUTTON_STATE_PRESSED ? 1.0f : 0.0f;
+    const bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
+    if (pressed) {
+        buttons_down().insert(android_button);
+    } else {
+        buttons_down().erase(android_button);
+    }
+    ev.a = pressed ? 1.0f : 0.0f;
     push_input_event(ev);
 }
 // Scroll arrives in up to three flavours, and only one of them is exact.
@@ -782,9 +795,10 @@ void resolve_key_from_keymap(uint32_t evdev_code, bool pressed,
 }
 void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*) {
     g_last_input_serial.store(serial);
+    push_window_focus(true);
 }
-// Defined below, once the repeat state and the held-key set it needs
-// exist; declared here because the listener that calls it comes first.
+// Defined below, once the repeat state and the held-key set they need
+// exist; declared here because the listener that calls them comes first.
 void release_all_held_keys();
 
 void keyboard_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
@@ -800,6 +814,13 @@ void keyboard_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
     // which in an experience means walking forever. Real Android ends the
     // gesture when a window loses focus; this does the same.
     release_all_held_keys();
+    // ...and every held mouse button, for the same reason.
+    release_all_held_buttons();
+    // Then tell the engine itself, which keeps its own idea of what is
+    // held and will not drop it just because Stud did. Real Android
+    // delivers exactly this, and it is the opposite of listening in the
+    // background: it says stop, rather than keep going.
+    push_window_focus(false);
 }
 // Key repeat is the CLIENT's job on Wayland: the compositor sends a press
 // and a release and nothing in between, and tells the client the rate and
@@ -831,6 +852,14 @@ std::set<uint32_t>& keys_down() {
     return k;
 }
 
+// Every mouse button currently held, by Android button index. Same thread,
+// same reason: a button still held when focus goes elsewhere is one whose
+// release this client will never be told about.
+std::set<uint32_t>& buttons_down() {
+    static std::set<uint32_t> b;
+    return b;
+}
+
 void release_all_held_keys() {
     auto& r = key_repeat();
     {
@@ -846,6 +875,31 @@ void release_all_held_keys() {
         push_input_event(ev);
     }
     keys_down().clear();
+}
+
+// The same for mouse buttons. Holding a button and clicking away leaves
+// the engine holding it too -- a stuck camera drag rather than a stuck
+// walk, but the identical bug.
+void release_all_held_buttons() {
+    for (uint32_t button : buttons_down()) {
+        stud::android_glue::HostInputEvent ev;
+        ev.type = stud::android_glue::HostInputEvent::kPointerButton;
+        ev.code = button;
+        ev.x = g_pointer_x;
+        ev.y = g_pointer_y;
+        ev.a = 0.0f;
+        push_input_event(ev);
+    }
+    buttons_down().clear();
+}
+
+// Tells Process B this window's keyboard focus changed, so the engine can
+// be told in turn (real Android's onWindowFocusChanged).
+void push_window_focus(bool focused) {
+    stud::android_glue::HostInputEvent ev;
+    ev.type = stud::android_glue::HostInputEvent::kWindowFocus;
+    ev.a = focused ? 1.0f : 0.0f;
+    push_input_event(ev);
 }
 
 void keyboard_key(void*, wl_keyboard*, uint32_t serial, uint32_t, uint32_t key, uint32_t state) {

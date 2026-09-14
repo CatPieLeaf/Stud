@@ -543,6 +543,7 @@ struct AgdkInput {
     jmethodID on_key_down = nullptr;
     jmethodID on_key_up = nullptr;
     jmethodID on_text_input = nullptr;
+    jmethodID on_window_focus_changed = nullptr;
 };
 AgdkInput g_agdk;
 // Set for the duration of one drained batch, so dispatch_event() can reach
@@ -652,6 +653,21 @@ bool agdk_input_enabled() {
 void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
     if (g_agdk.resolved) return;
     g_agdk.resolved = true;
+    // Window focus is lifecycle, not input, so it is resolved before the
+    // AGDK *input* switch below -- which is off by default. Telling the
+    // engine it lost focus is what makes it let go of a key whose release
+    // happened somewhere this window could not hear, and that has to work
+    // whether or not the AGDK input path is in use.
+    //
+    // Resolved once: focus changes are rare, but looking it up on each one
+    // would repeat the not-found diagnostic on any build lacking it.
+    {
+        jclass focus_cls = env.GetObjectClass(activity_ref);
+        if (focus_cls != nullptr) {
+            g_agdk.on_window_focus_changed =
+                env.GetMethodID(focus_cls, "onWindowFocusChangedNative", "(JZ)V");
+        }
+    }
     if (!agdk_input_enabled()) {
         std::printf("stud: input bridge: AGDK input path disabled (STUD_AGDK_INPUT=1 enables)\n");
         std::fflush(stdout);
@@ -1875,6 +1891,45 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             return;
         }
         case Ev::kPointerEnter:
+        case Ev::kWindowFocus: {
+            const bool focused = ev.a != 0.0f;
+            // Stud has already sent a release for everything it knew was
+            // held (android-glue does that before this event), but the
+            // engine keeps its own input state and will not drop it just
+            // because Stud did. Real Android delivers exactly this, and
+            // it is what makes the engine let go.
+            //
+            // This is the opposite of listening in the background: no
+            // input is read while unfocused -- the compositor stops
+            // sending any -- this only says "stop", and says it once.
+            if (!focused) {
+                // Local latched state goes too, or a modifier held at the
+                // moment focus left stays latched for the next keystroke
+                // after coming back.
+                g_meta_state = 0;
+                g_button_state = 0;
+                if (g_lock_from_drag) {
+                    g_lock_from_drag = false;
+                    apply_pointer_lock();
+                }
+            }
+            // Releasing the held keys above is the fix on its own; telling
+            // the engine is the belt-and-braces for input it believes is
+            // held that Stud never knew about. If that ever misbehaves,
+            // this turns it off without losing the fix.
+            static const bool tell_engine = std::getenv("STUD_NO_FOCUS_EVENTS") == nullptr;
+            if (tell_engine && g_agdk_env != nullptr && g_agdk_activity_ref != nullptr &&
+                g_agdk.on_window_focus_changed != nullptr) {
+                g_agdk_env->CallVoidMethod(
+                    g_agdk_activity_ref, g_agdk.on_window_focus_changed, g_agdk.handle,
+                    static_cast<jboolean>(focused ? JNI_TRUE : JNI_FALSE));
+            }
+            if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
+                std::printf("stud: input bridge: window focus %s\n", focused ? "gained" : "lost");
+                std::fflush(stdout);
+            }
+            return;
+        }
         case Ev::kPointerLeave: {
             // A drag lock cannot survive the pointer crossing the surface
             // boundary in either direction. Leaving means the release that

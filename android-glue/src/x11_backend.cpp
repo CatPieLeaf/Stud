@@ -2,6 +2,7 @@
 
 #include "stud/android_glue.h"
 
+#include <set>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -551,6 +552,53 @@ void on_motion(int x_pos, int y_pos) {
     push(ev);
 }
 
+// What is currently held, so it can be let go of when this window stops
+// being the one receiving input.
+//
+// X11 stops delivering key and button events the moment focus moves, so a
+// key released after clicking another window is one this client is never
+// told about -- and the engine goes on holding it, which in an experience
+// means walking forever. The Wayland backend has done this since it was
+// written; this side never did.
+//
+// Only ever touched from the thread that pumps X11, which is one thread.
+std::set<unsigned int>& keys_down() {
+    static std::set<unsigned int> k;
+    return k;
+}
+std::set<uint32_t>& buttons_down() {
+    static std::set<uint32_t> b;
+    return b;
+}
+
+void release_all_held_input() {
+    for (unsigned int code : keys_down()) {
+        stud::android_glue::HostInputEvent ev;
+        ev.type = stud::android_glue::HostInputEvent::kKey;
+        ev.code = code;
+        ev.a = 0.0f;
+        push(ev);
+    }
+    keys_down().clear();
+    for (uint32_t button : buttons_down()) {
+        stud::android_glue::HostInputEvent ev;
+        ev.type = stud::android_glue::HostInputEvent::kPointerButton;
+        ev.code = button;
+        ev.x = g_pointer_x;
+        ev.y = g_pointer_y;
+        ev.a = 0.0f;
+        push(ev);
+    }
+    buttons_down().clear();
+}
+
+void push_window_focus(bool focused) {
+    stud::android_glue::HostInputEvent ev;
+    ev.type = stud::android_glue::HostInputEvent::kWindowFocus;
+    ev.a = focused ? 1.0f : 0.0f;
+    push(ev);
+}
+
 void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
     // While locked, every event reports the anchor. The pointer really
     // has moved (X11 has no way to hold it still), but saying so would
@@ -588,11 +636,21 @@ void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
     ev.x = g_pointer_x;
     ev.y = g_pointer_y;
     ev.a = pressed ? 1.0f : 0.0f;
+    if (pressed) {
+        buttons_down().insert(android_button);
+    } else {
+        buttons_down().erase(android_button);
+    }
     push(ev);
 }
 
 void on_key(unsigned int keycode, bool pressed) {
     if (keycode < 8) return;  // no evdev code below this exists
+    if (pressed) {
+        keys_down().insert(keycode - 8);
+    } else {
+        keys_down().erase(keycode - 8);
+    }
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kKey;
     ev.code = keycode - 8;
@@ -686,12 +744,17 @@ void pump() {
                     std::printf("stud: android-glue: window focused\n");
                     std::fflush(stdout);
                 }
+                push_window_focus(true);
                 break;
             case FocusOut:
                 if (g_focused.exchange(false)) {
                     std::printf("stud: android-glue: window in the background\n");
                     std::fflush(stdout);
                 }
+                // Let go of everything held. Whatever is still down will
+                // be released somewhere this window cannot hear.
+                release_all_held_input();
+                push_window_focus(false);
                 break;
             case ClientMessage:
                 if (static_cast<Atom>(event.xclient.data.l[0]) == g_wm_delete) {
