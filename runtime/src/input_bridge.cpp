@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -552,6 +553,13 @@ AgdkInput g_agdk;
 FakeJni::Env* g_agdk_env = nullptr;
 jobject g_agdk_activity_ref = nullptr;
 jint g_button_state = 0;
+// Every key this process currently believes is held, by evdev code.
+// Touched only from the input thread, which is one thread.
+std::set<uint32_t>& held_keys() {
+    static std::set<uint32_t> k;
+    return k;
+}
+
 // Real Android meta-state bits, tracked from the physical modifier keys so
 // every KeyEvent Stud synthesizes reports them the way a real OTG keyboard
 // would: META_SHIFT_ON=0x1, META_ALT_ON=0x02, META_CTRL_ON=0x1000.
@@ -1591,6 +1599,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         }
         case Ev::kKey: {
             bool down = ev.a != 0.0f;
+            // What this process believes is held. android-glue keeps its
+            // own set for focus changes, but a Lua TextBox taking focus is
+            // something only this side ever hears about.
+            if (down) {
+                held_keys().insert(ev.code);
+            } else {
+                held_keys().erase(ev.code);
+            }
             // Track modifiers locally: Wayland reports them in a separate
             // event Stud does not forward, and every synthesized KeyEvent
             // has to carry them the way a real keyboard would.
@@ -2287,7 +2303,42 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             }
             size_t count = written / sizeof(batch[0]);
             if (count > batch.size()) count = batch.size();
-            if (count > 0) {
+
+            // A Lua TextBox taking focus ends every held key, the same way
+            // losing the window does.
+            //
+            // The engine stops treating keys as gameplay input the moment
+            // one of its own text boxes has focus, so the release that
+            // would have stopped a walk is simply never acted on -- click
+            // into chat while holding W and the character walks forever.
+            // A real device has the same handover and ends the gesture.
+            //
+            // Polled rather than driven by the key event, because focus
+            // usually arrives from a MOUSE click and the engine reports it
+            // asynchronously, with no key event anywhere near it.
+            std::vector<android_glue::HostInputEvent> released;
+            {
+                static jlong previous_text_box = 0;
+                const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
+                if (text_box != 0 && previous_text_box == 0) {
+                    for (uint32_t code : held_keys()) {
+                        android_glue::HostInputEvent up{};
+                        up.type = android_glue::HostInputEvent::kKey;
+                        up.code = code;
+                        up.a = 0.0f;
+                        released.push_back(up);
+                    }
+                    held_keys().clear();
+                    if (!released.empty() && std::getenv("STUD_INPUT_TRACE") != nullptr) {
+                        std::printf("stud: input bridge: a text box took focus -- released %zu "
+                                    "held key(s)\n", released.size());
+                        std::fflush(stdout);
+                    }
+                }
+                previous_text_box = text_box;
+            }
+
+            if (count > 0 || !released.empty()) {
                 // One-shot confirmation that the real seat is actually
                 // reaching this process -- silent afterwards.
                 // Temporary, low-rate diagnostic: which real event types
@@ -2317,6 +2368,11 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     g_agdk_activity_ref = env.createLocalReference(g_agdk.activity);
                     resolve_agdk(env, g_agdk_activity_ref);
                     g_agdk_env = &env;
+                }
+                // Ahead of the batch: whatever else arrived this round, the
+                // keys that were being held are no longer held.
+                for (const android_glue::HostInputEvent& up : released) {
+                    dispatch_event(up, fns, jni_env, last_x, last_y);
                 }
                 for (size_t i = 0; i < count; ++i) {
                     dispatch_event(batch[i], fns, jni_env, last_x, last_y);
