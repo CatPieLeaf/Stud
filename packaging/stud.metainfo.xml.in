@@ -10,7 +10,7 @@
 
   <description>
     <p>
-      Stud allows you to play Roblox on Linux. It runs the real,
+      Stud allows you to play Roblox on Linux. It runs the real and
       unmodified Roblox app on your desktop, in its own window, with your
       mouse and keyboard — no browser, no emulator, no virtual machine.
     </p>
@@ -29,9 +29,12 @@
       yourself, and Roblox remains subject to its own terms.
     </p>
     <p>
-      Stud is a launcher, not a distributor, not a modding tool and not an
-      emulator. It is an independent project, not affiliated with Roblox
-      Corporation, and not endorsed, supported or approved by it in any way.
+      Stud is a launcher. Not a distributor, not a modding tool and not
+      an emulator.
+    </p>
+    <p>
+      Stud is not affiliated with Roblox. Stud is an independent project,
+      not endorsed, supported or approved by Roblox Corporation in any way.
     </p>
   </description>
 
