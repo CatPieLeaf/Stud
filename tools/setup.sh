@@ -139,11 +139,94 @@ copy_angle_runtime() {
     [ -f "$ANGLE_DIR/libvk_swiftshader.so" ] ||
         warn "no libvk_swiftshader.so -- the Software rendering entry will not work"
     say "ANGLE runtime in $ANGLE_DIR"
+    # $from is the build directory (out/Release); the licences live at the
+    # checkout root, two levels up.
+    copy_angle_licenses "$from/../.." ||
+        warn "no LICENSE at $from/../.. -- ANGLE's licences were not copied"
+}
+
+# The licences for the binaries above.
+#
+# Every one of these .so files is someone else's work, redistributed in
+# binary form by every package Stud builds -- and both licences involved
+# require their text and copyright to travel with the binary. Shipping the
+# libraries without them is not a paperwork slip, it is the one thing BSD
+# and Apache-2.0 actually ask for.
+#
+# They are copied out of the ANGLE checkout, which already has all of them:
+# nothing here is downloaded and nothing is written by hand.
+copy_angle_licenses() {
+    local root="$1"
+    [ -f "$root/LICENSE" ] || return 1
+    local dest="$ANGLE_DIR/licenses"
+    mkdir -p "$dest"
+
+    cp -a "$root/LICENSE" "$dest/LICENSE-ANGLE.txt"
+    [ -f "$root/AUTHORS" ] && cp -a "$root/AUTHORS" "$dest/AUTHORS-ANGLE.txt"
+
+    # Each of these is one shipped library. A missing one is reported
+    # rather than skipped quietly -- the library it belongs to is very
+    # likely being shipped anyway.
+    local pair from to
+    for pair in \
+        "third_party/SwiftShader/LICENSE.txt|LICENSE-SwiftShader.txt" \
+        "third_party/vulkan-loader/src/LICENSE.txt|LICENSE-Vulkan-Loader.txt" \
+        "third_party/vulkan-validation-layers/src/LICENSE.txt|LICENSE-Vulkan-ValidationLayers.txt" \
+        "third_party/vulkan-tools/src/LICENSES/Apache-2.0.txt|LICENSE-Vulkan-Tools.txt"
+    do
+        from="${pair%%|*}"; to="${pair##*|}"
+        if [ -f "$root/$from" ]; then
+            cp -a "$root/$from" "$dest/$to"
+        else
+            warn "no $from in $root -- $to will be missing from packages"
+        fi
+    done
+
+    cat > "$dest/README.md" <<'EOF'
+# Licences for the ANGLE runtime Stud ships
+
+Stud does not build these; they come from an ANGLE checkout, and they are
+redistributed unmodified. This file says which licence covers which file.
+
+| file | project | licence |
+|------|---------|---------|
+| `libEGL.so`, `libGLESv2.so` | [ANGLE](https://chromium.googlesource.com/angle/angle) | `LICENSE-ANGLE.txt` (BSD-3-Clause) |
+| `libvulkan.so.1` | [Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader) | `LICENSE-Vulkan-Loader.txt` (Apache-2.0) |
+| `libvk_swiftshader.so`, `vk_swiftshader_icd.json` | [SwiftShader](https://swiftshader.googlesource.com/SwiftShader) | `LICENSE-SwiftShader.txt` (Apache-2.0) |
+| `libVkLayer_khronos_validation.so` | [Vulkan-ValidationLayers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) | `LICENSE-Vulkan-ValidationLayers.txt` (Apache-2.0) |
+| `libVkICD_mock_icd.so` | [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) | `LICENSE-Vulkan-Tools.txt` (Apache-2.0) |
+| `angledata/` | ANGLE | `LICENSE-ANGLE.txt` |
+
+ANGLE statically links further third-party code of its own (SPIRV-Tools,
+zlib, Abseil and others). Their licences are in the ANGLE source tree,
+under `third_party/`, and ANGLE's own build generates the full set; this
+directory carries the licence of each library actually shipped here.
+EOF
+    say "ANGLE licences in $dest"
+}
+
+# Used when ANGLE is already present but its licences are not -- an
+# install from before this existed. Neither source may still be around,
+# and that has to be said out loud rather than silently producing a
+# package that cannot legally be distributed.
+copy_angle_licenses_from_any_source() {
+    local root
+    for root in "${STUD_ANGLE_SRC:+$STUD_ANGLE_SRC/../..}" "$ANGLE_SRC_DIR" "$ANGLE_SRC_DIR/angle"; do
+        [ -n "$root" ] || continue
+        copy_angle_licenses "$root" && return 0
+    done
+    warn "ANGLE is present but its licences are not, and no ANGLE source was found."
+    warn "packages built from this tree would redistribute ANGLE, SwiftShader and the"
+    warn "Vulkan loader with no licence text. Re-run with STUD_ANGLE_SRC pointing at an"
+    warn "ANGLE checkout's out/Release, or delete $ANGLE_DIR and let setup rebuild it."
+    return 1
 }
 
 setup_angle() {
     if [ -f "$ANGLE_DIR/libEGL.so" ] && [ -f "$ANGLE_DIR/libGLESv2.so" ]; then
         say "ANGLE already at $ANGLE_DIR"
+        [ -f "$ANGLE_DIR/licenses/LICENSE-ANGLE.txt" ] ||
+            copy_angle_licenses_from_any_source || true
         return
     fi
     if [ -n "${STUD_ANGLE_SRC:-}" ]; then
@@ -481,18 +564,96 @@ verify_bionic() {
     say "checked: the extracted bionic exports what Stud resolves by name"
 }
 
+# The licences for the bionic set.
+#
+# Unlike ANGLE, these do not arrive with the binaries: what setup extracts
+# is a Runtime APEX image, which carries the libraries and no licence text
+# at all. AOSP publishes a NOTICE per component, and that is what a package
+# redistributing these has to carry -- bionic is largely inherited BSD libc
+# code, so its NOTICE is several hundred copyright notices rather than one.
+#
+# Fetched once. Everything already present is left alone, so this is a
+# no-op on a second run and an interrupted one resumes.
+fetch_bionic_notices() {
+    local dest="$BIONIC_DIR/licenses"
+    mkdir -p "$dest"
+
+    # AOSP serves these base64-encoded; ?format=TEXT is the raw-file API.
+    local pair url to missing=0
+    for pair in \
+        "https://android.googlesource.com/platform/bionic/+/refs/heads/main/libc/NOTICE|NOTICE-libc.txt" \
+        "https://android.googlesource.com/platform/bionic/+/refs/heads/main/libm/NOTICE|NOTICE-libm.txt" \
+        "https://android.googlesource.com/platform/bionic/+/refs/heads/main/libdl/NOTICE|NOTICE-libdl.txt" \
+        "https://android.googlesource.com/platform/bionic/+/refs/heads/main/linker/NOTICE|NOTICE-linker.txt" \
+        "https://android.googlesource.com/toolchain/llvm-project/+/refs/heads/main/libcxx/LICENSE.TXT|LICENSE-libc++.txt"
+    do
+        url="${pair%%|*}"; to="${pair##*|}"
+        [ -s "$dest/$to" ] && continue
+        if curl -sfL --max-time 60 "$url?format=TEXT" | base64 -d > "$dest/$to" 2>/dev/null &&
+           [ -s "$dest/$to" ]; then
+            :
+        else
+            rm -f "$dest/$to"
+            warn "could not fetch $to"
+            missing=1
+        fi
+    done
+
+    # liblog comes from platform/system/logging, which has no NOTICE of
+    # its own -- it is plain Apache-2.0, so the licence itself is what
+    # travels with it.
+    if [ ! -s "$dest/LICENSE-Apache-2.0.txt" ]; then
+        if curl -sfL --max-time 60 "https://www.apache.org/licenses/LICENSE-2.0.txt" \
+                -o "$dest/LICENSE-Apache-2.0.txt" && [ -s "$dest/LICENSE-Apache-2.0.txt" ]; then
+            :
+        else
+            rm -f "$dest/LICENSE-Apache-2.0.txt"
+            warn "could not fetch LICENSE-Apache-2.0.txt"
+            missing=1
+        fi
+    fi
+
+    cat > "$dest/README.md" <<'EOF'
+# Licences for the bionic set Stud ships
+
+These libraries are Android's own, taken unmodified from AOSP's prebuilt
+Runtime APEX. The APEX carries no licence text, so each component's NOTICE
+is fetched from AOSP itself. This file says which one covers which file.
+
+| file | project | notice |
+|------|---------|--------|
+| `libc.so` | [bionic](https://android.googlesource.com/platform/bionic/) libc | `NOTICE-libc.txt` (BSD, many holders; Apache-2.0 for AOSP's own) |
+| `libm.so` | bionic libm | `NOTICE-libm.txt` (BSD, mostly FreeBSD msun) |
+| `libdl.so`, `libdl_android.so` | bionic libdl | `NOTICE-libdl.txt` |
+| `linker64`, `ld-android.so` | bionic linker | `NOTICE-linker.txt` |
+| `libc++.so` | [LLVM libc++](https://android.googlesource.com/toolchain/llvm-project/) | `LICENSE-libc++.txt` (Apache-2.0 WITH LLVM-exception) |
+| `liblog.so` | [platform/system/logging](https://android.googlesource.com/platform/system/logging/) | `LICENSE-Apache-2.0.txt` |
+| `tzdata` | [IANA time zone database](https://www.iana.org/time-zones) | public domain |
+EOF
+
+    if [ "$missing" = 0 ]; then
+        say "bionic licences in $dest"
+    else
+        warn "some bionic licences are missing from $dest."
+        warn "packages built from this tree would redistribute Android's libc, libm and"
+        warn "linker with no notice. Re-run 'tools/setup.sh bionic' with a network."
+    fi
+}
+
 setup_bionic() {
     if have_all_bionic; then
         say "bionic already at $BIONIC_DIR"
+        fetch_bionic_notices
         return
     fi
     if [ -n "${STUD_BIONIC_SRC:-}" ]; then
         say "copying bionic from $STUD_BIONIC_SRC"
         copy_bionic_from_dir "$STUD_BIONIC_SRC"
+        fetch_bionic_notices
         return
     fi
 
-    fetch_bionic_from_aosp && { verify_bionic || true; return; }
+    fetch_bionic_from_aosp && { verify_bionic || true; fetch_bionic_notices; return; }
 
     cat >&2 <<EOF
 setup: could not assemble bionic from AOSP.
