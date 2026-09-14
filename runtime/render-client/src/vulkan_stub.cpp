@@ -1,12 +1,12 @@
-// Real libvulkan.so.1, bionic-compiled, placed at /system/lib64/ --
-// real bionic's own linker64 never loads this via a DT_NEEDED entry the
+// Real libvulkan.so.1, bionic-compiled, placed at /system/lib64/.
+// Real bionic's own linker64 never loads this via a DT_NEEDED entry the
 // way it does libEGL.so/libGLESv2.so (the ELF headers --dyn-syms on the real
 // libroblox.so shows zero "vk*" entries in its dynamic symbol table):
 // confirmed via static analysis reading the engine's own compiled code that
 // Roblox resolves its own Vulkan entry point exactly the way the
-// Vulkan spec requires -- dlopen("libvulkan.so.1", RTLD_NOW) (falling
+// Vulkan spec requires, dlopen("libvulkan.so.1", RTLD_NOW) (falling
 // back to "libvulkan.so"), then dlsym(handle, "vkGetInstanceProcAddr")
-// -- and resolves every other command, including vkGetDeviceProcAddr
+// and resolves every other command, including vkGetDeviceProcAddr
 // itself, BY NAME through that one function, never via a second dlsym.
 // So this file's only real exported C symbol is vkGetInstanceProcAddr;
 // everything else is a runtime name lookup below.
@@ -18,9 +18,9 @@
 // (VkCreateWaylandSurfaceForAndroidSurface) carried over from the old
 // architecture's vulkan-wsi/ design. Every OTHER command name Roblox
 // asks for returns nullptr here (a real, spec-legal "not supported"
-// answer -- the Vulkan spec explicitly allows vkGetInstanceProcAddr to
+// answer, the Vulkan spec explicitly allows vkGetInstanceProcAddr to
 // return NULL for anything not present) and, if
-// STUD_VULKAN_CALL_TRACE=1, is logged -- the real, evidence-based
+// STUD_VULKAN_CALL_TRACE=1, is logged, the real, evidence-based
 // signal this project needs to build the actual command list, instead
 // of guessing from the ~580-entry embedded dispatch-table-over-count
 // this session's own static analysis analysis already ruled out as unreliable
@@ -143,7 +143,7 @@ constexpr void fill_slots(PFN_vkVoidFunction (&table)[kMaxUnimplemented],
 //
 // This is what keeps an unimplemented command honest. Handing back a
 // non-null stub for everything told the engine that extensions the
-// driver does not have were available -- and for
+// driver does not have were available, and for
 // vkGetRefreshCycleDurationGOOGLE (VK_GOOGLE_display_timing) that was
 // not harmless: an extension entry point is exactly what an application
 // null-checks to decide whether to use the extension, so the engine
@@ -183,7 +183,7 @@ PFN_vkVoidFunction unimplemented_stub_for(const char* name) {
 
 // A POD reply is prefixed with the size the host wrote. A mismatch means
 // the two processes disagree about a Vulkan struct layout, which would
-// otherwise be read as garbage -- so it is reported and refused.
+// otherwise be read as garbage, so it is reported and refused.
 template <typename T>
 bool read_pod(const uint8_t* buf, uint32_t written, T& value, const char* what) {
     if (written < sizeof(uint32_t)) return false;
@@ -191,7 +191,7 @@ bool read_pod(const uint8_t* buf, uint32_t written, T& value, const char* what) 
     std::memcpy(&size, buf, sizeof(size));
     if (size != sizeof(T) || written < sizeof(uint32_t) + size) {
         std::fprintf(stderr,
-                     "stud: vulkan-client: %s struct size mismatch (host %u, client %zu) -- "
+                     "stud: vulkan-client: %s struct size mismatch (host %u, client %zu), "
                      "the two processes disagree about the Vulkan headers\n",
                      what, size, sizeof(T));
         std::fflush(stderr);
@@ -202,7 +202,7 @@ bool read_pod(const uint8_t* buf, uint32_t written, T& value, const char* what) 
 }
 
 // Flattens a pNext chain for the wire, and counts the nodes. An sType
-// this build cannot size is skipped -- both processes share the table
+// this build cannot size is skipped, both processes share the table
 // (vulkan_chain.cpp), so this is the same decision on both sides.
 uint32_t flatten_chain(const void* head, std::vector<uint8_t>& out) {
     uint32_t count = 0;
@@ -225,7 +225,7 @@ uint32_t flatten_chain(const void* head, std::vector<uint8_t>& out) {
 }
 
 // Copies the reply's nodes back into the caller's own chain, matched by
-// sType -- the driver may not fill them in the order they were sent.
+// sType, the driver may not fill them in the order they were sent.
 void scatter_chain(void* head, const uint8_t* p, size_t len) {
     size_t off = 0;
     while (off + sizeof(vk_wire::ChainNodeHeader) <= len) {
@@ -284,7 +284,7 @@ VkResult simple_create(const uint64_t (&a)[8], H* outHandle) {
 // Staging for mapped device memory. A real mapping is a pointer into
 // driver-owned memory in Process C and cannot be shared, so the engine
 // writes into a local buffer here and the bytes are shipped over on
-// flush or unmap -- the same emulation the GL path uses for
+// flush or unmap, the same emulation the GL path uses for
 // glMapBufferRange.
 //
 // Honest limitation, stated where it matters: a mapping is not
@@ -294,7 +294,7 @@ VkResult simple_create(const uint64_t (&a)[8], H* outHandle) {
 // case this serves.
 struct MappedRange {
     // Where the engine actually writes. Page-aligned and write-protected
-    // between flushes so the MMU records which pages changed -- see
+    // between flushes so the MMU records which pages changed; see
     // mapped_write_barrier.h for why this replaced a shadow-copy
     // comparison (that comparison was correct, but `memcmp` over every
     // mapped byte on every submit measured ~45% of the engine thread).
@@ -315,7 +315,7 @@ struct MappedRange {
 // Images whose format this process decodes itself. The engine believes it
 // created an ETC/PVRTC image; the device was handed an uncompressed one,
 // and every upload is decoded on the way through. See texture_decode.h for
-// why -- in short, NVIDIA has no ETC2 at all and the engine's textures are
+// why, in short, NVIDIA has no ETC2 at all and the engine's textures are
 // visibly worse without it.
 struct EmulatedImage {
     VkFormat compressed = VK_FORMAT_UNDEFINED;
@@ -353,7 +353,7 @@ VkPhysicalDevice g_decode_physical_device = VK_NULL_HANDLE;
 // Scratch upload buffers for decoded texture data, one pool per command
 // buffer. A pool is rewound when its command buffer begins recording
 // again, which is the point at which the engine has already waited for
-// that buffer's previous submission -- so nothing in flight is ever
+// that buffer's previous submission, so nothing in flight is ever
 // overwritten, and the buffers themselves are reused rather than churned.
 struct ScratchBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
@@ -362,7 +362,7 @@ struct ScratchBuffer {
     VkDeviceSize size = 0;
 };
 // One growing scratch buffer per command buffer, sub-allocated by a bump
-// pointer that rewinds when that buffer begins recording again -- the
+// pointer that rewinds when that buffer begins recording again, the
 // point at which the engine has already waited for its previous
 // submission, so nothing in flight is overwritten.
 //
@@ -380,7 +380,7 @@ struct ScratchPool {
 };
 // A decode that has been recorded but not yet performed. The copy is
 // recorded pointing at scratch immediately, and the bytes are decoded at
-// submit -- see run_pending_decodes() for why that is not done at record
+// submit; see run_pending_decodes() for why that is not done at record
 // time.
 struct PendingDecode {
     VkCommandBuffer cb = VK_NULL_HANDLE;
@@ -395,7 +395,7 @@ struct PendingDecode {
     uint32_t height = 0;
     uint32_t layers = 1;
     // The allocation this decode writes into, so those bytes can be sent
-    // once they exist -- see send_decoded_scratch().
+    // once they exist; see send_decoded_scratch().
     VkDeviceMemory scratch_memory = VK_NULL_HANDLE;
     // Diagnostic only: which image this upload is for, so a burst can be
     // read as "one texture streamed in" or "the same texture re-uploaded".
@@ -414,7 +414,7 @@ std::map<uint64_t, ScratchPool>& scratch_pools() {
 // Recursive on purpose: allocating decode scratch happens with this held
 // and goes back through Stud's own vkCreateBuffer/vkBindBufferMemory,
 // which record into the very maps it guards. A plain mutex deadlocks
-// there -- live-caught, as a window that never appeared at all.
+// there, live-caught, as a window that never appeared at all.
 std::recursive_mutex& emulation_mutex() {
     static std::recursive_mutex m;
     return m;
@@ -427,7 +427,7 @@ std::map<uint64_t, MappedRange>& mapped_ranges() {
 
 // STUD_VK_FRAME_TIME=1: where a frame's wall clock actually goes.
 // CPU sitting well under one core while frames are slow means the thread
-// is waiting, not computing -- this says on what.
+// is waiting, not computing; this says on what.
 struct FrameTiming {
     double acquire_ms = 0;
     double submit_ms = 0;
@@ -435,15 +435,15 @@ struct FrameTiming {
     double fence_ms = 0;
     double query_ms = 0;      // GPU query readback, which really can stall
     // Everything else that blocks on a reply from the host. `other` was
-    // 45ms in a frame issuing only 207 commands -- the engine was not
-    // busy, it was waiting -- so the blocking calls that were not being
+    // 45ms in a frame issuing only 207 commands, the engine was not
+    // busy, it was waiting, so the blocking calls that were not being
     // timed have to be visible before any theory about them is worth
     // anything.
     double wait_idle_ms = 0;
     uint64_t wait_idle_calls = 0;
     double blocking_ms = 0;   // every other call() that waits for a reply
     uint64_t blocking_calls = 0;
-    // Time inside record() itself -- appending a command to the
+    // Time inside record() itself, appending a command to the
     // reply-free queue. With waitIdle and blocking both measured at
     // zero, `other` is CPU somewhere, and this is the one path that
     // scales with cmds/frame (3708 commands in a 46ms frame is 12.4us
@@ -469,7 +469,7 @@ struct FrameTiming {
     double f_record = 0;
     double f_blocking = 0;
     double f_decode = 0;
-    // Time inside Stud's own command entry points, start to finish --
+    // Time inside Stud's own command entry points, start to finish,
     // serialising the arguments and appending to the batch, not just the
     // append. With ten thousand commands a frame, this is the number that
     // says whether a slow frame is Stud's doing or the engine's.
@@ -499,13 +499,13 @@ void report_frame_timing() {
     if (t.frames < 120) return;
     // The format used to be short of its arguments: worst_ms, over_7ms and
     // over_16ms were passed and never printed, so everything after "other"
-    // was reading the wrong argument -- which is why "cmds/frame" sat at
+    // was reading the wrong argument, which is why "cmds/frame" sat at
     // the same number all session whatever the scene did. Averages were
     // fine; the spike counters, the thing worth having, were not.
-    std::printf("stud: vulkan-client: %d frames avg %.2fms (%.0f fps) -- acquire %.2f submit %.2f "
+    std::printf("stud: vulkan-client: %d frames avg %.2fms (%.0f fps), acquire %.2f submit %.2f "
                 "present %.2f fence %.2f query %.2f waitIdle %.2f(%llu) blocking %.2f(%llu) "
-                "record %.2f, other %.2f -- worst %.1fms, %llu over 7ms, %llu over 16ms -- "
-                "%llu cmds/frame, %llu KB/frame -- decode %.2f ms/frame, %llu KB/frame\n",
+                "record %.2f, other %.2f: worst %.1fms, %llu over 7ms, %llu over 16ms, "
+                "%llu cmds/frame, %llu KB/frame: decode %.2f ms/frame, %llu KB/frame\n",
                 t.frames, t.frame_ms / t.frames, 1000.0 * t.frames / t.frame_ms,
                 t.acquire_ms / t.frames, t.submit_ms / t.frames, t.present_ms / t.frames,
                 t.fence_ms / t.frames, t.query_ms / t.frames,
@@ -537,7 +537,7 @@ void report_frame_timing() {
 }
 
 // Bytes actually put on the wire, and bytes a flush asked for.
-// STUD_VK_MEM_STATS=1 reports both -- the ratio is what says whether the
+// STUD_VK_MEM_STATS=1 reports both, the ratio is what says whether the
 // dirty tracking is earning its keep on a given workload.
 uint64_t g_mapped_bytes_sent = 0;
 uint64_t g_mapped_bytes_asked = 0;
@@ -577,7 +577,7 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
 
     // Nothing written since the last flush: there is nothing to send and
     // nothing to re-arm, so skip the allocation without walking its
-    // pages. This is the common case -- the engine keeps large heaps
+    // pages. This is the common case, the engine keeps large heaps
     // mapped and rewrites a small part of one per frame, and a submit
     // used to scan every page of every one of them regardless.
     if (m.barrier.valid() && m.barrier.clean()) return;
@@ -601,7 +601,7 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
     // Fallback path, used only when the barrier could not be installed
     // or allocated: compare against a shadow of what the host was last
     // told. Correct but O(all mapped memory) per submit, which is why it
-    // is not the default -- see mapped_write_barrier.h.
+    // is not the default; see mapped_write_barrier.h.
     if (m.shadow.size() != m.staging.size()) {
         m.shadow.assign(m.staging.begin(), m.staging.end());
         send_mapped_run(memory, m, rel_offset, n);
@@ -665,13 +665,13 @@ namespace {
 //
 // The engine writes vertices, uniforms and staging data through the
 // pointer vkMapMemory hands back. Stud used to give it a private buffer
-// and copy whatever changed to the host on every submit -- measured at
+// and copy whatever changed to the host on every submit, measured at
 // 197 MB/s through the socket in a real game, which was most of what the
 // render thread was doing. Backing the allocation with a file the host
 // imports as device memory (VK_EXT_external_memory_host) makes those
 // writes land in the device's memory directly, and the copy stops
 // existing. The file lives in the runtime directory, a tmpfs, so these
-// are ordinary anonymous pages -- nothing reaches a disk.
+// are ordinary anonymous pages; nothing reaches a disk.
 struct SharedAllocation {
     void* address = nullptr;
     size_t length = 0;
@@ -697,14 +697,14 @@ bool shared_memory_enabled() {
 }
 
 // Drops the NAME, keeping the pages. Both processes hold a mapping by
-// then, and a mapping keeps the pages alive with no directory entry --
+// then, and a mapping keeps the pages alive with no directory entry,
 // the ordinary POSIX shared-memory idiom.
 //
 // Unlinking here rather than at vkFreeMemory is what makes these
 // impossible to leak. The engine does not free every allocation before
 // the process ends, and a process that crashes or is killed frees none of
 // them, so the files accumulated in $XDG_RUNTIME_DIR/stud with nothing
-// ever removing them -- measured at 129 files and 3.1GB, which had filled
+// ever removing them, measured at 129 files and 3.1GB, which had filled
 // that tmpfs to 100% and takes the Wayland socket, D-Bus and the rest of
 // the session down with it.
 void unlink_shared_allocation_name(uint64_t id) {
@@ -802,7 +802,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateInstance(const VkInstanceCreateInfo*
                                                       VkInstance* pInstance) {
     if (pCreateInfo == nullptr || pInstance == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
 
-    // Flatten the pointer graph -- see vulkan_forward.h for why none of
+    // Flatten the pointer graph; see vulkan_forward.h for why none of
     // it can travel as-is.
     vk_wire::CreateInstanceHeader hdr{};
     hdr.flags = pCreateInfo->flags;
@@ -849,7 +849,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateInstance(const VkInstanceCreateInfo*
         return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
     }
     // The handle is the host's own real VkInstance, passed straight
-    // through as an opaque token -- Process B never dereferences it, it
+    // through as an opaque token. Process B never dereferences it, it
     // only ever hands it back on a later call, same as a GLsync.
     *pInstance = reinterpret_cast<VkInstance>(static_cast<uintptr_t>(handle));
     return VK_SUCCESS;
@@ -914,7 +914,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetPhysicalDeviceFeatures(VkPhysicalDevice phy
     read_pod(out.data(), written, *pFeatures, "VkPhysicalDeviceFeatures");
     // Stud decodes ETC/EAC itself when the device cannot, so the feature
     // really is available to the engine either way. If the device has it
-    // natively this changes nothing -- the bit is already set, and the
+    // natively this changes nothing, the bit is already set, and the
     // hardware keeps the work. See texture_decode.h.
     if (emulating(VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK)) {
         pFeatures->textureCompressionETC2 = VK_TRUE;
@@ -1025,7 +1025,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumerateDeviceExtensionProperties(
     // Deliberately NOT advertising VK_GOOGLE_display_timing, though Stud
     // implements it above and could. Measured: advertising it changes
     // nothing, because the engine resolves
-    // vkGetRefreshCycleDurationGOOGLE and then never calls it -- with the
+    // vkGetRefreshCycleDurationGOOGLE and then never calls it, with the
     // extension offered, steady state stayed 52-60fps and the
     // implementation's own first-call print never fired once. Since the
     // other half of the extension (past presentation timings) has no real
@@ -1217,15 +1217,15 @@ bool driver_supports_format(VkPhysicalDevice physicalDevice, VkFormat format) {
 bool emulating(VkFormat format) {
     if (!stud::texture_decode::is_emulated(format)) return false;
     // STUD_TEX_FORCE_DECODE=1 decodes even where the driver could do it
-    // itself. That is not useful in normal running -- hardware sampling is
-    // smaller and faster -- but it is the only way to check this decoder
+    // itself. That is not useful in normal running, hardware sampling is
+    // smaller and faster, but it is the only way to check this decoder
     // against a GPU that implements the same formats: run the same scene
     // on a device with real ETC2 with and without it, and any visible
     // difference is this code's fault rather than the format's.
     static const bool force = std::getenv("STUD_TEX_FORCE_DECODE") != nullptr;
     if (force) return true;
     // STUD_NO_TEX_DECODE=1 gives up the formats entirely, so the engine
-    // falls back to whatever the device really has -- BC/DXT on a desktop
+    // falls back to whatever the device really has, BC/DXT on a desktop
     // GPU. That is the pre-decode behaviour, and it is worth being able to
     // return to on demand: a decoded texture is stored uncompressed, so it
     // costs several times the memory and sampling bandwidth of the
@@ -1240,7 +1240,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetPhysicalDeviceFormatProperties(
     VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties* pFormatProperties) {
     if (pFormatProperties == nullptr) return;
     // The first thing anything asks about a device, and often before a
-    // device exists -- so it is also where the physical device Stud's own
+    // device exists, so it is also where the physical device Stud's own
     // capability questions are answered against gets picked up.
     if (g_decode_physical_device == VK_NULL_HANDLE) g_decode_physical_device = physicalDevice;
     *pFormatProperties = real_format_properties(physicalDevice, format);
@@ -1249,7 +1249,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetPhysicalDeviceFormatProperties(
         // What the engine may do with these is exactly what it may do with
         // the uncompressed image they are really stored as: sample it and
         // copy into it. Deliberately not claiming storage, blit or atomic
-        // use -- nothing decodes on those paths, so promising them would
+        // use. Nothing decodes on those paths, so promising them would
         // be a lie the engine could act on.
         pFormatProperties->linearTilingFeatures = 0;
         pFormatProperties->bufferFeatures = 0;
@@ -1528,7 +1528,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     // Share it only if the host says it really imported those pages. When
     // the driver refuses the import the host allocates ordinary memory
     // instead, and handing the engine the shared pointer anyway would mean
-    // it writes where nothing reads -- a black screen, live-caught.
+    // it writes where nothing reads, a black screen, live-caught.
     const bool host_shared = written >= sizeof(reply) && reply[1] != 0;
     if (want_shared && host_shared) {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
@@ -1556,7 +1556,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
         auto it = shared_allocations().find(to_u64(memory));
         if (it != shared_allocations().end()) {
             // The host still has the memory object at this point; it drops
-            // its own mapping when it frees it. Unlinking now is safe --
+            // its own mapping when it frees it. Unlinking now is safe,
             // the pages live until both mappings are gone.
             ::munmap(it->second.address, it->second.length);
             ::unlink(stud::render_host::shared_memory_path(it->second.id).c_str());
@@ -1606,7 +1606,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
     // chaining sigaction: trap_recovery.cpp installs its SIGSEGV handler
     // later in bring-up, so a chained handler is simply replaced and
     // every barrier write-fault arrives at crash classification, is read
-    // as wild-shaped, and kills the render thread -- live-caught as a
+    // as wild-shaped, and kills the render thread, live-caught as a
     // window that never appeared. STUD_VK_NO_WRITE_BARRIER=1 forces the
     // compare-based path back for an A/B.
     static const bool barrier_ok = std::getenv("STUD_VK_NO_WRITE_BARRIER") == nullptr &&
@@ -1835,7 +1835,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceImageFormatProperties2(
 
 // Android's surface extension does not exist on Wayland, so this creates
 // a real Wayland surface on the window Process C already owns. The engine
-// never learns which WSI is underneath -- the same substitution
+// never learns which WSI is underneath, the same substitution
 // vkCreateInstance makes for the extension name itself.
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateAndroidSurfaceKHR(
     VkInstance instance, const void* /*pCreateInfo*/, const VkAllocationCallbacks*,
@@ -1943,7 +1943,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateShaderModule(
 }
 
 // Every vkDestroyX has the same shape and returns nothing, so they share
-// one call id and ride the reply-free path -- no round-trip each.
+// one call id and ride the reply-free path; no round-trip each.
 void destroy_handle(VkDevice device, vk_wire::DestroyKind kind, uint64_t handle) {
     uint64_t a[8] = {to_u64(device), static_cast<uint64_t>(kind), handle};
     stud::render_client::connection().call_void(CallId::VkDestroyHandle, a);
@@ -1958,7 +1958,7 @@ void destroy_handle(VkDevice device, vk_wire::DestroyKind kind, uint64_t handle)
 // driver is free to hand the same handle value back for the next object
 // it creates. A stale entry therefore attaches one texture's staging
 // buffer, or one image's compressed format, to a completely different
-// object -- which decodes the wrong bytes, or decodes bytes that should
+// object, which decodes the wrong bytes, or decodes bytes that should
 // have been left alone. Both of those look like a handful of corrupt
 // textures rather than an obvious failure, so these two do not use the
 // shared macro.
@@ -1993,7 +1993,7 @@ STUD_VK_DESTROY(stud_vkDestroyQueryPool, VkQueryPool, QueryPool)
 STUD_VK_DESTROY(stud_vkDestroySwapchainKHR, VkSwapchainKHR, Swapchain)
 STUD_VK_DESTROY(stud_vkDestroyFramebuffer, VkFramebuffer, Framebuffer)
 // The pipeline family. Every one of these was resolving to a named
-// no-op stub, so the host kept the objects forever -- 2668 of them in a
+// no-op stub, so the host kept the objects forever, 2668 of them in a
 // handful of sessions, which is GPU memory that grows with every join.
 STUD_VK_DESTROY(stud_vkDestroySampler, VkSampler, Sampler)
 STUD_VK_DESTROY(stud_vkDestroyRenderPass, VkRenderPass, RenderPass)
@@ -2206,8 +2206,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateDescriptorSets(
     for (uint32_t i = 0; i < ai->descriptorSetCount; ++i) w.u64(to_u64(ai->pSetLayouts[i]));
 
     // Name the sets here instead of waiting to be told what they are
-    // called. A descriptor set is opaque to the application -- it only
-    // ever hands the handle back -- so the only thing a returned handle
+    // called. A descriptor set is opaque to the application; it only
+    // ever hands the handle back, so the only thing a returned handle
     // buys is a synchronous round trip, and the engine allocates 738 sets
     // a frame in a real game. The host keeps id -> real handle and
     // translates at the two places a set is used.
@@ -2262,7 +2262,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDescriptorUpdateTemplate(
         // itself a whole struct. kMaxDescriptorSize is the largest of the
         // three (VkDescriptorImageInfo and VkDescriptorBufferInfo are both
         // 24 bytes; VkBufferView is 8), so this is an upper bound rather
-        // than a per-type guess -- sending a few spare bytes is harmless,
+        // than a per-type guess, sending a few spare bytes is harmless,
         // sending too few is a crash.
         constexpr uint64_t kMaxDescriptorSize = 24;
         if (e.descriptorCount == 0) continue;
@@ -2298,7 +2298,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkUpdateDescriptorSetWithTemplate(
     // Reply-free: this returns nothing, so blocking for an answer bought
     // nothing but latency. Measured in a real game, it was 771 calls a
     // frame and the second-largest single cost in the whole frame.
-    // Ordering is unaffected -- the stream stays ordered, and anything
+    // Ordering is unaffected, the stream stays ordered, and anything
     // that does need an answer flushes what is queued ahead of it first.
     stud::render_client::connection().call_void(CallId::VkUpdateDescriptorSetWithTemplate, a,
                                                  pData, static_cast<uint32_t>(it->second));
@@ -2357,7 +2357,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateGraphicsPipelines(
         // VK_DYNAMIC_STATE_VIEWPORT / _SCISSOR; otherwise they are
         // required and the pipeline bakes them in. Sending only the
         // counts left the host building pipelines with null pointers, so
-        // every draw was clipped away and the frame came back black --
+        // every draw was clipped away and the frame came back black,
         // while every call still reported success.
         const auto* vp = ci.pViewportState;
         const uint32_t viewport_count = vp != nullptr ? vp->viewportCount : 0;
@@ -2551,7 +2551,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetCommandPool(VkDevice device, VkComman
 //
 // This is what makes HOST_COHERENT memory work across the process
 // boundary. Coherent memory exists precisely so an application does NOT
-// have to call vkFlushMappedMemoryRanges -- writes are visible to the
+// have to call vkFlushMappedMemoryRanges, writes are visible to the
 // device as soon as they are made. Stud's mapping is a local staging
 // buffer in another process, so "as soon as they are made" is never:
 // without this, an engine that maps coherent memory, writes its vertex
@@ -2585,12 +2585,12 @@ namespace {
 
 // Real Vulkan's vkQueueSubmit does not block: it hands the work to the
 // driver and returns. Stud's made a synchronous IPC round-trip and, when
-// a texture upload was in flight, first decoded the compressed texels --
+// a texture upload was in flight, first decoded the compressed texels,
 // measured at 15ms on the engine's own render thread during a streaming
 // burst, which is a dropped frame the engine would never have had on a
 // device that samples ETC2 in hardware.
 //
-// So the ordered tail of a submit -- the decode, then the IPC call --
+// So the ordered tail of a submit: the decode, then the IPC call,
 // runs on one background thread, and everything that could observe it
 // flushes that thread first: acquiring the next image, waiting on a
 // fence, waiting for the device to go idle, and tearing a swapchain
@@ -2624,8 +2624,8 @@ public:
     void flush() {
         std::unique_lock<std::mutex> lock(mutex_);
         // Bounded only so that a queue which has stopped draining says so.
-        // If the thread servicing it ever dies -- a fault inside a decode
-        // used to do exactly that -- every frame afterwards waits here
+        // If the thread servicing it ever dies, a fault inside a decode
+        // used to do exactly that; every frame afterwards waits here
         // forever, and what the user sees is a frozen window with no
         // message anywhere. The wait still does not give up; it just
         // stops being silent.
@@ -2635,7 +2635,7 @@ public:
                 warned_stalled_ = true;
                 std::fprintf(stderr,
                              "stud: vulkan-client: the deferred submit queue has not drained in "
-                             "2s (%zu queued) -- presentation is stalled\n",
+                             "2s (%zu queued), presentation is stalled\n",
                              work_.size());
                 std::fflush(stderr);
             }
@@ -2678,7 +2678,7 @@ void flush_deferred_queue() {
 
 // A submit or present that ran on the deferred thread reported something
 // other than success. Handed back on the next call of the same kind, and
-// said once -- swallowing it entirely would hide a real device loss.
+// said once, swallowing it entirely would hide a real device loss.
 std::atomic<int32_t> g_deferred_submit_result{VK_SUCCESS};
 std::atomic<int32_t> g_deferred_present_result{VK_SUCCESS};
 
@@ -2790,16 +2790,16 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetFences(VkDevice device, uint32_t fenc
 
 // VK_GOOGLE_display_timing, answered from the compositor.
 //
-// The engine resolves vkGetRefreshCycleDurationGOOGLE on every launch --
-// it is how an Android client learns how long a display refresh actually
+// The engine resolves vkGetRefreshCycleDurationGOOGLE on every launch.
+// It is how an Android client learns how long a display refresh actually
 // takes, and therefore how fast it may present. Stud IS the window-system
 // integration here (render-host owns the real surface), so implementing
 // this is not a lie about the driver: it is the one layer that genuinely
 // knows, and it answers with the rate the compositor reports for the
 // display the window is on.
 //
-// Returning null for it -- which is what a desktop driver does, since
-// this is an Android extension -- is honest but leaves the engine with no
+// Returning null for it, which is what a desktop driver does, since
+// this is an Android extension, is honest but leaves the engine with no
 // answer at all.
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetRefreshCycleDurationGOOGLE(
     VkDevice /*device*/, VkSwapchainKHR /*swapchain*/,
@@ -2826,7 +2826,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetRefreshCycleDurationGOOGLE(
 }
 
 // The history half of the same extension. Stud keeps no per-present
-// timing history, and an empty history is the honest answer -- the spec
+// timing history, and an empty history is the honest answer, the spec
 // allows reporting zero available timings.
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPastPresentationTimingGOOGLE(
     VkDevice /*device*/, VkSwapchainKHR /*swapchain*/, uint32_t* pPresentationTimingCount,
@@ -2841,8 +2841,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAcquireNextImageKHR(VkDevice device,
                                                            VkSemaphore semaphore, VkFence fence,
                                                            uint32_t* pImageIndex) {
     if (pImageIndex == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
-    // Everything the deferred thread still owes -- the previous frame's
-    // submit and present -- has to have reached the host before asking
+    // Everything the deferred thread still owes, the previous frame's
+    // submit and present, has to have reached the host before asking
     // which image is next.
     flush_deferred_queue();
     uint64_t a[8] = {to_u64(device), to_u64(swapchain), timeout, to_u64(semaphore),
@@ -2879,7 +2879,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
     if (DeferredQueue::enabled()) {
         // Presenting on the same ordered thread as the submit keeps the
         // two in the order the engine issued them. Its result is reported
-        // on the next present rather than this one -- a frame late, which
+        // on the next present rather than this one, a frame late, which
         // is the price of not blocking the engine here, and honest as
         // long as it is never dropped.
         DeferredQueue::get().push([a, payload = std::move(in)]() mutable {
@@ -2912,9 +2912,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
             static const bool slow_frames = std::getenv("STUD_VK_SLOW_FRAMES") != nullptr;
             if (slow_frames && this_frame_ms > 16.7) {
                 std::fprintf(stderr,
-                             "stud: SLOW FRAME %.1fms -- acquire %.2f submit %.2f present %.2f "
+                             "stud: SLOW FRAME %.1fms, acquire %.2f submit %.2f present %.2f "
                              "record %.2f stub %.2f blocking %.2f decode %.2f, "
-                             "unaccounted %.2f -- %llu "
+                             "unaccounted %.2f, %llu "
                              "cmds, %llu KB\n",
                              this_frame_ms, t.f_acquire, t.f_submit, t.f_present, t.f_record,
                              t.f_stub, t.f_blocking, t.f_decode,
@@ -2967,7 +2967,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetQueryPoolResults(VkDevice device, VkQue
 // for every Vulkan call.
 //
 // Every command built here used to construct a std::vector<uint8_t>, grow
-// it a field at a time, hand it over and free it -- once per call, at
+// it a field at a time, hand it over and free it, once per call, at
 // hundreds of calls a frame. Profiling the render thread in a real game
 // found the top costs were exactly that: vector construct/destroy,
 // __split_buffer growth, memcpy, and scudo (bionic's allocator, which is
@@ -3384,7 +3384,7 @@ const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t lengt
     if (bit == buffer_bindings().end()) return nullptr;
     // Shared with the host: the engine wrote straight into the file both
     // processes map, so the bytes are simply there. This has to be checked
-    // before the staged mappings -- a shared allocation deliberately has
+    // before the staged mappings, a shared allocation deliberately has
     // no MappedRange, and missing that made every compressed texture
     // decode fail and blank itself.
     {
@@ -3409,7 +3409,7 @@ const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t lengt
 //
 // This runs at submit rather than at record time on purpose. A copy is
 // recorded before the engine is obliged to have finished filling its
-// staging buffer -- only the submit is a real ordering point -- so
+// staging buffer, only the submit is a real ordering point, so
 // decoding at record time reads whatever happens to be there. That is
 // invisible for most textures, whose data is already complete, and
 // leaves a handful corrupt, which is exactly the symptom that survived
@@ -3418,7 +3418,7 @@ const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t lengt
 // work to land in one frame: measured at 62.7 ms for 72 MB in a single
 // submit when a batch of textures streams in, which is precisely the frame
 // spike that survived every other fix. ETC and EAC blocks are independent
-// of one another, so a level splits by rows of blocks with no seams --
+// of one another, so a level splits by rows of blocks with no seams,
 // PVRTC does not (its texels interpolate across block boundaries), so it
 // is handed over whole.
 struct DecodeBand {
@@ -3448,7 +3448,7 @@ public:
         // It used to count workers: run() set remaining_ to the worker
         // count and waited for each to decrement once. A worker that was
         // still finishing the previous batch when the next one was posted
-        // saw the generation jump by two and decremented once for both --
+        // saw the generation jump by two and decremented once for both,
         // so remaining_ never reached zero and run() span on
         // std::this_thread::yield() forever, at 100% of a core, with the
         // engine's rendering stopped behind it. Rare while submits were
@@ -3460,7 +3460,7 @@ public:
         const size_t count = bands.size();
         // The batch OWNS its bands. It used to point at the caller's own
         // vector, which run() then destroyed the moment the count reached
-        // zero -- while a worker that woke late was still inside
+        // zero, while a worker that woke late was still inside
         // work_on() and about to read it. That is a use-after-free on a
         // destroyed std::vector, and it read back as a near-null fault
         // (addr=0x1e0, 0x320, ...) that Stud's own recovery answered by
@@ -3539,7 +3539,7 @@ private:
 // Ships what a decode just wrote into the scratch.
 //
 // vkQueueSubmit flushes the engine's mapped memory and THEN runs the
-// decodes -- it has to be that order, because that flush must keep
+// decodes. It has to be that order, because that flush must keep
 // program order with the engine's own writes. But the scratch a decode
 // writes into is mapped memory too, and it is written after the flush,
 // so nothing sent it until the next submit came along. One submit late
@@ -3551,7 +3551,7 @@ private:
 // Deliberately NOT push_mapped_bytes(): that sends the dirty pages and
 // then re-arms the whole allocation, and doing that from the decode
 // thread while the engine's own thread is re-arming every mapping at
-// submit loses dirty pages between the two -- which is a far worse bug
+// submit loses dirty pages between the two, which is a far worse bug
 // than the one being fixed. This is Stud's own scratch and the decode
 // just wrote it, so there is nothing to work out: send it and leave the
 // barrier alone. The pages stay dirty, which costs one redundant send at
@@ -3567,7 +3567,7 @@ void send_decoded_scratch(uint64_t memory) {
 void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
     // The lock covers only the bookkeeping. Running the decode itself
     // under it would hold the engine out of vkCreateImage and every
-    // vkCmdCopyBufferToImage for the whole burst -- 15ms, measured --
+    // vkCmdCopyBufferToImage for the whole burst, 15ms, measured,
     // which is the opposite of the point now that this runs off the
     // engine's own thread.
     std::unique_lock<std::recursive_mutex> lock(emulation_mutex());
@@ -3580,7 +3580,7 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
     const auto decode_t0 = std::chrono::steady_clock::now();
     // Only what is actually decoded in this pass. Counting every pending
     // entry, including the ones belonging to command buffers this submit
-    // does not carry, reported work that never happened -- which is what
+    // does not carry, reported work that never happened, which is what
     // made a static Home screen look like it decoded 88GB in 100s.
     uint64_t decoded_bytes = 0;
     // Which scratch allocations this pass wrote into, so they can be sent
@@ -3627,7 +3627,7 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
                     b.src = src_layer + static_cast<uint64_t>(y / 4) * row_pitch;
                     // Where this band's rows really start. A transcoded
                     // level is stored as blocks, so this is not y times a
-                    // row of texels -- getting that wrong wrote each band
+                    // row of texels, getting that wrong wrote each band
                     // past the end of the one before it.
                     b.dst = dst_layer + stud::texture_decode::decoded_row_offset(pd.format,
                                                                                  pd.width, y);
@@ -3699,7 +3699,7 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
         frame_timing().decode_bytes += decoded_bytes;
     }
     // Behind the same switch as the burst breakdown above. Unconditional,
-    // this wrote an unbuffered line per stalling submit -- 447 of them in
+    // this wrote an unbuffered line per stalling submit, 447 of them in
     // one real session, through the session-log tee, at exactly the moment
     // the frame was already late. Investigation output, armed by default.
     if (decode_trace && ms >= 2.0) {
@@ -3722,7 +3722,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
     VkBuffer decode_src = VK_NULL_HANDLE;
     // Set when the copy cannot be decoded. Recording it anyway would put
     // compressed bytes into an uncompressed image, which is every texture
-    // turned to noise -- a texture that never arrives is the lesser harm,
+    // turned to noise, a texture that never arrives is the lesser harm,
     // and the warning says which happened.
     bool skip_copy = false;
     if (count > 0 && pRegions != nullptr) {
@@ -3763,8 +3763,8 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
             if (!have_scratch) {
                 skip_copy = true;
                 // Nowhere to decode into. Passing the copy through would
-                // put raw compressed bytes into an uncompressed image --
-                // every texture noise -- so say so loudly rather than
+                // put raw compressed bytes into an uncompressed image.
+                // Every texture noise, so say so loudly rather than
                 // quietly corrupting the frame.
                 static bool warned = false;
                 if (!warned) {
@@ -3866,9 +3866,9 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
     record(cb, vk_wire::CmdKind::CopyBufferToImage, in);
 }
 
-// The readback direction. Same wire shape as the upload above -- a
+// The readback direction. Same wire shape as the upload above, a
 // VkBufferImageCopy carries the same fields whichever way the data
-// travels -- so the host replays it with the same reader.
+// travels, so the host replays it with the same reader.
 //
 // Where the result lands: the engine's own destination buffer. When its
 // memory is one of the allocations Stud shares with render-host (the
@@ -4036,7 +4036,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdWriteTimestamp(VkCommandBuffer cb,
 // One table for both resolvers. Roblox resolves instance-level commands
 // through vkGetInstanceProcAddr and device-level ones through
 // vkGetDeviceProcAddr, and a command implemented here has to be found by
-// whichever one asks -- a real bug caught live: the device commands were
+// whichever one asks, a real bug caught live: the device commands were
 // implemented but only the instance resolver consulted the table, so
 // every one of them still resolved to an unimplemented stub.
 PFN_vkVoidFunction lookup_command(const char* pName) {
@@ -4259,7 +4259,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance /*inst
                 if (inner_name == nullptr) return nullptr;
                 if (PFN_vkVoidFunction fn = lookup_command(inner_name)) return fn;
                 // Anything the real driver does not have is answered
-                // null, exactly as that driver would -- see
+                // null, exactly as that driver would; see
                 // host_has_proc() for why claiming otherwise actively
                 // misleads the engine.
                 if (!host_has_proc(inner_name)) return nullptr;
@@ -4275,7 +4275,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance /*inst
             });
     }
 
-    // Everything past instance creation is unimplemented -- but do NOT
+    // Everything past instance creation is unimplemented, but do NOT
     // hand back nullptr. Roblox resolves its whole ~590-command dispatch
     // table up front and then calls through it without null-checking, so
     // a null slot becomes a jump to address zero on the render thread
@@ -4284,8 +4284,8 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance /*inst
     //
     // Return a named stub instead, exactly as the GL path already does
     // for unimplemented entry points. It reports which command was
-    // genuinely CALLED -- as opposed to merely resolved, which all 590
-    // are -- and returns VK_ERROR_INITIALIZATION_FAILED, a real error
+    // genuinely CALLED, as opposed to merely resolved, which all 590
+    // are, and returns VK_ERROR_INITIALIZATION_FAILED, a real error
     // code the engine can act on rather than a crash. That distinction
     // is what makes the remaining work tractable: only the called set
     // has to be built, and this names it.

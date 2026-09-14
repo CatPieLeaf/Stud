@@ -2,7 +2,7 @@
 """Check that a built package carries exactly the install tree.
 
 Every package Stud ships is a wrapper around one `cmake --install` tree.
-They are supposed to hold the same files, byte for byte -- and when they
+They are supposed to hold the same files, byte for byte, and when they
 have not, it was found by someone installing a package and noticing
 something missing, one piece at a time. This compares the payload
 against the tree instead, so a package that is short a file fails the
@@ -48,7 +48,7 @@ def extract(package: Path, kind: str, dest: Path) -> None:
         subprocess.run(["dpkg-deb", "-x", str(package), str(dest)], check=True)
     elif kind == "arch":
         # Through tar rather than Python's own tarfile, which only learned
-        # to read zstd in 3.14 -- the release runner has 3.12 and failed
+        # to read zstd in 3.14, the release runner has 3.12 and failed
         # with "not a gzip file ... invalid header" on a perfectly good
         # package. tar hands the work to the zstd binary, which is present
         # wherever an Arch package can be built in the first place.

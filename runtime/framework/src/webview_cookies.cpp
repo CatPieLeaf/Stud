@@ -82,7 +82,7 @@ void note_engine_cookies(const std::string& /*url*/, const std::vector<std::stri
 
         // Persist it. Stud's login happens inside the real Roblox app,
         // so this callback is the only place a new session ever appears
-        // -- and `rbxas` is what lets EVERY signed-in account come back
+        // and `rbxas` is what lets EVERY signed-in account come back
         // next launch rather than just the last active one.
         auto& sink = name == "rbxas" ? account_list_cookie_sink() : session_cookie_sink();
         if (sink) sink(value);

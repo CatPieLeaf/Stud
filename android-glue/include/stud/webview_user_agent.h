@@ -8,8 +8,8 @@
 // (NativeGLJavaInterface.getWebViewUserAgent) and sends it to Roblox when
 // it creates a login challenge; the page that answers the challenge then
 // runs in the viewer under whatever the viewer actually sends. If the two
-// differ -- or if the engine is told nothing, which is what Stud used to
-// do -- the challenge is created against one client and answered by
+// differ, or if the engine is told nothing, which is what Stud used to
+// do, the challenge is created against one client and answered by
 // another, and the page fails with "something went wrong".
 //
 // So both halves build it here, from the same inputs.
@@ -21,7 +21,7 @@ namespace stud::webview {
 // this one function, so they cannot disagree with each other.
 inline constexpr const char* kChromeVersion = "Chrome/140.0.0.0";
 
-// `app_token` is the app's own identifier, e.g. "RobloxApp/2.737.1584" --
+// `app_token` is the app's own identifier, e.g. "RobloxApp/2.737.1584",
 // what makes roblox.com serve its app layout rather than the full site.
 inline std::string user_agent(const std::string& app_token) {
     std::string agent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) ";

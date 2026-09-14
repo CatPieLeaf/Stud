@@ -1,5 +1,5 @@
 pkgbase = stud
-	pkgdesc = Play Roblox on Linux -- runs the real, unmodified Roblox Android app
+	pkgdesc = Play Roblox on Linux, runs the real, unmodified Roblox Android app
 	pkgver = 1.1.0
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud

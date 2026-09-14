@@ -1,12 +1,12 @@
 // Real, temporary diagnostic driver (the engineering notes' own "throwaway
-// diagnostic driver" pattern -- bypasses stud-ui's login/APK-config gate
+// diagnostic driver" pattern, bypasses stud-ui's login/APK-config gate
 // this sandbox genuinely has neither of, real interactive login and
 // ~/.config/stud/settings.json). Reconstructs the exact same
 // ProcessBConfig ui/src/main.cpp's launch_game() builds, calling
 // bionic_runtime::launch_process_b() directly, so the real bring-up
 // sequence (dlopen, JNI bootstrap, engine V2 sequence) runs exactly as it
 // would from a real stud-ui launch. Purpose here specifically: live-verify
-// the trap_recovery.cpp near_null unbounded-dereference fix -- does the
+// the trap_recovery.cpp near_null unbounded-dereference fix, does the
 // process now survive the known initializeLuaAppWithLoggedInUser crash?
 #include <array>
 #include <cstdio>
@@ -22,7 +22,7 @@
 #include "stud/ipc.h"
 
 namespace {
-// Plain curl subprocess fetch -- this driver is glibc-side and throwaway,
+// Plain curl subprocess fetch. This driver is glibc-side and throwaway,
 // so shelling out is simpler than linking libcurl just for one public GET
 // (same real, public, no-login-needed endpoint main.cpp's own
 // fetch_client_settings() hits from the real stud-ui launch path).
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     std::string socket_path = stud::ipc::default_socket_path();
 
     stud::ipc::LaunchPayload payload;
-    // Real session cookie. The earlier fake placeholder is gone -- it
+    // Real session cookie. The earlier fake placeholder is gone; it
     // only ever answered the narrow "does cookie PRESENCE change which
     // branch runs" question, and every question past that one needs a
     // cookie the engine can actually authenticate with.
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
                      payload.session_cookie.size());
     }
 
-    // Real, fresh ClientSettings fetch (public endpoint, no login needed --
+    // Real, fresh ClientSettings fetch (public endpoint, no login needed,
     // confirmed this project's own earlier session). Without this the
     // engine hits a real, different, earlier crash ("Can't initialize the
     // TaskScheduler before flags have been loaded") before ever reaching
@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
 
     // Real, deliberate: NOT a deep link. Stud's own standing rule (per
     // the user's explicit, repeated instruction) is to never attempt to
-    // launch/join an actual Roblox game/experience -- only the app UI
+    // launch/join an actual Roblox game/experience, only the app UI
     // (bare launch, Lua home screen/app chrome) is in scope. A deep link
     // with a real placeId would route toward a real game join; leaving
     // this at 0 keeps every test here on the bare-launch path only.

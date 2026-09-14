@@ -1,10 +1,10 @@
-// M4 test (first increment): builds a PlatformParams object -- Stud's
+// M4 test (first increment): builds a PlatformParams object; Stud's
 // desktop-vs-mobile spoof, ground-truth-traced from the real Roblox APK
-// (see the engineering notes) -- via libjnivm's real FakeJni::Jvm/JNIEnv, then
+// (see the engineering notes), via libjnivm's real FakeJni::Jvm/JNIEnv, then
 // reads every field back through genuine JNI field accessors (not direct
 // C++ member access) to prove the object is shaped exactly as
 // libroblox.so's native code, using real JNI calls, would expect. Not yet
-// tested against the real libroblox.so itself -- blocked on M2's
+// tested against the real libroblox.so itself, blocked on M2's
 // DT_GNU_HASH gap. See the engineering notes, milestone M4.
 
 #include "stud/platform_params.h"
@@ -82,8 +82,8 @@ int main() {
           "PlatformParamsWithLuaFlags.isTablet is false (desktop spoof)");
 
     // shared_ptr<PlatformParamsWithLuaFlags> must upcast cleanly into
-    // InitParams.platformParams (typed as shared_ptr<PlatformParams>) --
-    // this is exactly how the real bootstrap wires it.
+    // InitParams.platformParams (typed as shared_ptr<PlatformParams>).
+    // This is exactly how the real bootstrap wires it.
     std::shared_ptr<stud::jni_bridge::PlatformParams> upcast = lua_params;
     check(upcast != nullptr, "PlatformParamsWithLuaFlags upcasts to PlatformParams cleanly");
 

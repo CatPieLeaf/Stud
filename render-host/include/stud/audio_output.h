@@ -18,7 +18,7 @@ namespace stud::render_host {
 void audio_start_output_device();
 
 // Tells the host the engine has opened its own audio stream.
-// `bytes_per_frame` must be `channels * 4` -- 32-bit float interleaved,
+// `bytes_per_frame` must be `channels * 4`, 32-bit float interleaved,
 // which is what the engine produces and what a real Android device gives
 // an AAudio stream that does not request a format. Converting to 16-bit
 // anywhere in this path costs the mix its headroom and clips loud content. Returns a stream handle, or 0 when the host has
@@ -33,7 +33,7 @@ uint64_t audio_write_frames(uint64_t stream, const void* data, size_t bytes);
 void audio_close_stream(uint64_t stream);
 
 // Capture, for voice chat. Opened only when the engine actually asks for
-// an input stream -- never at startup, unlike output: holding a
+// an input stream, never at startup, unlike output: holding a
 // microphone open on the chance it might be wanted is not something to
 // do quietly. Every transition is logged.
 //

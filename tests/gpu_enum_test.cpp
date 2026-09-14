@@ -1,5 +1,5 @@
 // M8 test: real GPU enumeration (ui/src/gpu_enum.h) against this
-// machine's actual Vulkan driver -- not a mock, the real
+// machine's actual Vulkan driver, not a mock, the real
 // vkEnumeratePhysicalDevices output.
 
 #include "gpu_enum.h"
@@ -23,7 +23,7 @@ void check(bool condition, const char* what) {
 int main() {
     auto gpus = stud::ui::enumerate_gpus();
 
-    // Honest either-outcome check -- a machine with no usable Vulkan
+    // Honest either-outcome check, a machine with no usable Vulkan
     // driver should get an empty, non-crashing result (already exercised
     // structurally by enumerate_gpus()'s own vkCreateInstance failure
     // path); this development machine has real GPUs, so assert real
@@ -37,7 +37,7 @@ int main() {
 
     // device_index values are exactly 0..N-1, matching
     // vkEnumeratePhysicalDevices()'s own result order (the settings
-    // schema's real, stable identifier -- see stud-config/settings.h).
+    // schema's real, stable identifier; see stud-config/settings.h).
     for (size_t i = 0; i < gpus.size(); ++i) {
         check(gpus[i].device_index == static_cast<uint32_t>(i),
               "device_index matches vkEnumeratePhysicalDevices()'s own result order");

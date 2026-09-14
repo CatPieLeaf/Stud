@@ -13,13 +13,13 @@
 // The real call shapes are confirmed against the app's own code from the app's own
 // the app's own SurfaceView input handlers (the real SurfaceView input handlers), not
 // guessed:
-//   nativePassMouseMove(x, y, dx, dy)              -- x/y in surface px / density
-//   nativePassMouseButton(x, y, isDown, button)    -- button = getActionButton() - 1
-//   nativePassMouseWheel(x, y, delta)              -- delta = AXIS_VSCROLL
+//   nativePassMouseMove(x, y, dx, dy)             , x/y in surface px / density
+//   nativePassMouseButton(x, y, isDown, button)   , button = getActionButton() - 1
+//   nativePassMouseWheel(x, y, delta)             , delta = AXIS_VSCROLL
 //   nativePassKeyEvent(isDown, scanCode, keyCode, isRepeat)
 //
 // Real, honest limitation: `keyCode` is Android's own virtual key code,
-// which Wayland does not provide -- only the evdev scan code, which
+// which Wayland does not provide, only the evdev scan code, which
 // Android reports identically via `KeyEvent.getScanCode()`. The mapping
 // below covers the real ASCII/navigation keys a login screen and normal
 // gameplay need; anything unmapped is still delivered with a real scan
@@ -34,12 +34,12 @@ namespace stud::jni_bridge {
 
 // Starts the real input poll thread. Returns false if none of the real
 // input entry points are exported by this build (nothing to feed).
-// Idempotent -- a second call is a no-op.
+// Idempotent, a second call is a no-op.
 // `activity`/`activity_handle` are AGDK's own real GameActivity instance and
 // native handle. When supplied, every real pointer/key event is ALSO
 // delivered through `onTouchEventNative`/`onKeyDownNative`/`onKeyUpNative`
 // carrying a real InputDevice source (SOURCE_MOUSE) and tool type
-// (TOOL_TYPE_MOUSE) -- the only path that tells the engine what kind of
+// (TOOL_TYPE_MOUSE), the only path that tells the engine what kind of
 // device produced the input, and therefore the only one that can make it
 // draw its own in-frame cursor.
 // Whether the wheel eases the camera toward the new zoom distance or

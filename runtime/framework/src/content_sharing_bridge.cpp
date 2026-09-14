@@ -92,7 +92,7 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
     // Every way the engine can ask for content to leave the app, not
     // just the clipboard one. A desktop has no Android share sheet, so
     // sharing a link or some text here means putting it on the
-    // clipboard -- and subscribing to all of them is also what says,
+    // clipboard, and subscribing to all of them is also what says,
     // in the log, which one a given button actually uses.
     auto subscribe = [&](const std::string& topic,
                          std::function<void(const std::string&)> handler) {
@@ -130,7 +130,7 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
         subscribe(topic, [topic](const std::string&) {
             // A file, not text. Nothing honest to do with it yet, so it
             // says so rather than pretending to have shared something.
-            std::printf("stud: clipboard: %s asked to share a file -- not supported yet\n",
+            std::printf("stud: clipboard: %s asked to share a file, not supported yet\n",
                         topic.c_str());
             std::fflush(stdout);
         });

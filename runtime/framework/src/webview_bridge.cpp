@@ -191,7 +191,7 @@ bool run_webview_protocol_bootstrap(
             env.NewStringUTF(ids.is_available_id.c_str()), env.createLocalReference(handler));
         clear_pending_jni_exception(jni_env, "MessageBus.setRequestHandlerRaw");
         std::printf("stud: webview: availability handler registered: %s\n", ok ? "ok" : "trapped");
-        // The stub has to outlive this frame -- the bus keeps calling it.
+        // The stub has to outlive this frame, the bus keeps calling it.
         static std::shared_ptr<MessageBusRequestHandlerRawStub> kept_handler;
         kept_handler = handler;
     }
@@ -286,7 +286,7 @@ void signal_webview_javascript(FakeJni::Jvm& jvm, const stud::linker::LoadedLibr
     // The real app's own path for this: WebViewProtocol.u(String) ->
     // signalJavascriptCallback(String) ( the app's own web-view bridge hands the web
     // dialog's JavaScript listener straight to it). It is what finishes
-    // a login challenge -- the page completes the OTP or captcha, calls
+    // a login challenge, the page completes the OTP or captcha, calls
     // the bridge, and this is the only way the engine hears about it.
     auto* signal = reinterpret_cast<void (*)(JNIEnv*, jclass, jstring)>(
         lib.find_symbol("Java_com_roblox_protocols_webview_WebViewProtocol_"
@@ -319,7 +319,7 @@ void report_webview_user_agent(FakeJni::Jvm& jvm, const stud::linker::LoadedLibr
     // NativeHelper.java:703 / ActivityNativeMain.java:1136, both
     // NativeGLInterface.setWebviewUserAgent(...)). The engine reports
     // the answer to Roblox when it creates a login challenge, and the
-    // page that answers that challenge runs in Stud's own viewer -- so
+    // page that answers that challenge runs in Stud's own viewer, so
     // the string has to be the one the viewer really sends, or the
     // challenge is created against a client that never shows up.
     auto* setter = reinterpret_cast<void (*)(JNIEnv*, jclass, jstring)>(

@@ -95,8 +95,8 @@ std::vector<float> json_number_array(const std::string& json, const std::string&
 }
 
 // One intensity drives both motors. A pad's heavy and light motors are
-// not separately addressable through this protocol -- the engine asks
-// for a single per-motor intensity -- so both are given the same value,
+// not separately addressable through this protocol, the engine asks
+// for a single per-motor intensity, so both are given the same value,
 // which is what a single-vibrator device does too.
 void apply(float intensity, int duration_ms) {
     RumbleFn rumble;
@@ -236,7 +236,7 @@ bool run_haptics_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             static_cast<jboolean>(JNI_FALSE));
         clear_pending_jni_exception(jni_env, "MessageBus.doSubscribeRaw");
         std::printf("stud: haptics: subscribed to %s: %s\n", method, ok ? "ok" : "trapped");
-        // The callbacks outlive this frame -- the bus keeps calling them.
+        // The callbacks outlive this frame, the bus keeps calling them.
         static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept;
         kept.push_back(callback);
     };

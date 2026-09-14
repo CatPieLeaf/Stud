@@ -6,11 +6,11 @@
 #include <sys/types.h>
 
 // Real Android NDK API declarations (asset_manager.h, asset_manager_jni.h,
-// configuration.h, looper.h, native_window.h, native_window_jni.h) --
+// configuration.h, looper.h, native_window.h, native_window_jni.h),
 // signatures as documented/stable in the actual NDK, reproduced here
 // because the real NDK headers aren't installed in this environment. Not
 // copied from NDK source (which is Apache 2.0 and wouldn't need clean-room
-// treatment anyway) -- these are standard, unchanged-for-years public API
+// treatment anyway). These are standard, unchanged-for-years public API
 // signatures, reconstructed from documented behavior.
 //
 // See the engineering notes, "M2 rendering architecture"/M4 sections for how
@@ -99,7 +99,7 @@ int ALooper_addFd(ALooper* looper, int fd, int ident, int events, ALooper_callba
                   void* data);
 int ALooper_removeFd(ALooper* looper, int fd);
 
-// --- native_window.h / native_window_jni.h (declared, not implemented --
+// --- native_window.h / native_window_jni.h (declared, not implemented;
 // see NotYetSupported in android_glue.h) --------------------------------
 
 struct ANativeWindow;

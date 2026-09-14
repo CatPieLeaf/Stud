@@ -1,5 +1,5 @@
 // Real libGLESv2.so, bionic-compiled, placed at /system/lib64/
-// libGLESv2.so -- see egl_stub.cpp's own doc comment for the full real
+// libGLESv2.so; see egl_stub.cpp's own doc comment for the full real
 // mechanism (identical: real symbol names/signatures, forwarding over
 // the real Unix-socket protocol proven end-to-end this session).
 
@@ -28,7 +28,7 @@ uint64_t pack_float(GLfloat f) {
 // Every caller of this ignores the return value, so the request is pipelined
 // rather than round-tripped. This is where nearly all of Stud's per-frame IPC
 // cost lived: ~1840 blocking round-trips per frame, 16-100ms of pure wait
-// (measure it again any time with STUD_IPC_STATS=1). Ordering is unchanged --
+// (measure it again any time with STUD_IPC_STATS=1). Ordering is unchanged,
 // one stream socket, and anything that needs an answer flushes the queue
 // first.
 void call0(CallId id, uint64_t a0 = 0, uint64_t a1 = 0, uint64_t a2 = 0, uint64_t a3 = 0,
@@ -43,7 +43,7 @@ uint64_t call1(CallId id, uint64_t a0 = 0, uint64_t a1 = 0, uint64_t a2 = 0, uin
 }
 // Real GL_PIXEL_UNPACK_BUFFER/GL_PIXEL_PACK_BUFFER tracking. When one is
 // bound, every real texture upload/download's `pixels` argument is a byte
-// OFFSET into that buffer, never a client-side pointer -- dereferencing it
+// OFFSET into that buffer, never a client-side pointer, dereferencing it
 // is a hard error (live-caught: a real 1MB compressed-texture upload read
 // from a raw offset value and killed the render connection with EFAULT).
 GLuint g_pixel_unpack_buffer = 0;
@@ -51,7 +51,7 @@ GLuint g_pixel_pack_buffer = 0;
 
 // Real question this answers (the engineering notes, cursor investigation): the
 // cursor is drawn last every frame with a correct texture and healthy draw
-// state, yet never appears -- and the one documented hole in this forwarding
+// state, yet never appears, and the one documented hole in this forwarding
 // layer is that glVertexAttribPointer's `p` is treated as a VBO-relative
 // offset, which is garbage if the caller meant a genuine client-side array.
 // Counting is enough to decide whether that hole is actually being hit;
@@ -95,7 +95,7 @@ uint64_t pbo_tag(const void* pixels) {
 
 // Real GLES3 bytes-per-texel. The old version assumed 4 components for
 // anything it did not recognise, which silently over-read the caller's
-// buffer by 4x for a real GL_RED upload -- live-caught as a fatal
+// buffer by 4x for a real GL_RED upload, live-caught as a fatal
 // EFAULT on the render socket (the engine uploads 128x2048 GL_RED
 // glyph/mask atlases during real UI bring-up), which killed the render
 // connection permanently and froze the window mid-frame.
@@ -231,14 +231,14 @@ void glFramebufferTexture2D(GLenum t, GLenum a, GLenum tt, GLuint x, GLint l) { 
 void glGenerateMipmap(GLenum t) { call0(CallId::GlGenerateMipmap, t); }
 // glGetError is by far the most expensive call Stud forwards: libroblox checks
 // it after essentially every GL operation, measured at 856 blocking round-trips
-// in a single frame -- more than every other call combined, and the dominant
+// in a single frame, more than every other call combined, and the dominant
 // term in Stud's frame time.
 //
 // It cannot be made reply-free (the caller uses the value), so it is serviced
 // from a cache that the swap path refreshes with one real query per frame. That
 // is the same trade every remoting GL implementation makes: errors are reported
 // a frame late rather than costing a synchronous round-trip each time. Nothing
-// is swallowed -- a real error still surfaces, just on the next check -- and
+// is swallowed, a real error still surfaces, just on the next check, and
 // STUD_SYNC_GL_ERRORS=1 restores strict per-call querying for debugging.
 GLenum g_cached_gl_error = GL_NO_ERROR;
 
@@ -255,7 +255,7 @@ GLenum glGetError() {
     // This used to poll every 64 checks, which sounds cheap and is not: the
     // engine makes about 14,500 GL calls in a frame on this path and checks
     // the error after nearly all of them, so one poll per 64 still came to
-    // 226 blocking round-trips a frame -- measured at 25ms of pure waiting,
+    // 226 blocking round-trips a frame, measured at 25ms of pure waiting,
     // against 2ms for the other 14,300 calls put together. It WAS the frame
     // rate of the OpenGL path.
     //
@@ -267,7 +267,7 @@ GLenum glGetError() {
     return e;
 }
 
-// Not a GL entry point -- Stud's own, called by the swap path. Inside
+// Not a GL entry point. Stud's own, called by the swap path. Inside
 // the extern "C" block so it keeps a plain, unmangled name, the same way
 // the rest of this file's symbols are resolved.
 void stud_refresh_gl_error_cache() {
@@ -304,7 +304,7 @@ void glVertexAttribIPointer(GLuint i, GLint s, GLenum t, GLsizei st, const void*
           static_cast<uint64_t>(st), reinterpret_cast<uint64_t>(p));
 }
 void glVertexAttribPointer(GLuint i, GLint s, GLenum t, GLboolean n, GLsizei st, const void* p) {
-    // `p` forwarded as a raw 64-bit value -- correct when it's a VBO-
+    // `p` forwarded as a raw 64-bit value, correct when it's a VBO-
     // relative byte offset (the common, modern-GLES real case, a
     // GL_ARRAY_BUFFER bound via glBindBuffer beforehand); see
     // render-host/src/main.cpp's own matching doc comment for the
@@ -320,7 +320,7 @@ const GLubyte* glGetString(GLenum name) {
     // Big enough for the whole GL_EXTENSIONS string.
     //
     // This was 512 bytes, and ANGLE's extension list is several kilobytes
-    // -- so the engine received the first 511 characters of it and nothing
+    // so the engine received the first 511 characters of it and nothing
     // else. Alphabetically that is the GL_AMD_* and GL_ANGLE_* entries and
     // stops there, which cut off every GL_EXT_texture_compression_*
     // (s3tc, dxt1, rgtc, bptc) the driver really does support.
@@ -328,7 +328,7 @@ const GLubyte* glGetString(GLenum name) {
     // The engine believed the GPU had no block compression at all (its own
     // capability line read `Caps: Texture: DXT 0`), so textures with alpha
     // were stored uncompressed against its 64MB video-memory budget and
-    // its streamer kept them at a low mip -- transparent textures staying
+    // its streamer kept them at a low mip, transparent textures staying
     // blurry while opaque ones, which still had ETC2, were sharp.
     //
     // Truncation is still possible in principle, so it is reported rather
@@ -337,7 +337,7 @@ const GLubyte* glGetString(GLenum name) {
     //
     // Handing the engine everything ANGLE exposes changes which shader
     // permutations it asks its own pack for, and the pack shipped in the
-    // APK is an Android GLES one that does not contain them -- measured
+    // APK is an Android GLES one that does not contain them, measured
     // as `Error: shader DefaultUnifiedFlatOpaqueVS80000006 is not
     // available` for every shader, and a black window. It also made the
     // engine start calling entry points it had never used (glBufferStorage
@@ -349,7 +349,7 @@ const GLubyte* glGetString(GLenum name) {
     // engine gets exactly the capabilities it got before, and nothing it
     // has no shaders for. STUD_GL_FULL_EXTENSIONS=1 reports the whole
     // string for anyone investigating what the extra capabilities would
-    // buy -- expect a black window until the shader-pack question is
+    // buy, expect a black window until the shader-pack question is
     // answered.
     static thread_local char buf[16384];
     static const bool full = std::getenv("STUD_GL_FULL_EXTENSIONS") != nullptr;
@@ -365,7 +365,7 @@ const GLubyte* glGetString(GLenum name) {
     //
     // Reporting more changes which shader permutations the engine asks
     // its own APK-shipped pack for, and that pack does not contain them:
-    // a black window, live-confirmed twice -- once with the whole list,
+    // a black window, live-confirmed twice, once with the whole list,
     // and again with just two extensions appended
     // (GL_EXT_disjoint_timer_query, GL_EXT_buffer_storage). Two names
     // were enough to move the permutation mask, so this is not about
@@ -394,7 +394,7 @@ void glBindAttribLocation(GLuint program, GLuint index, const GLchar* name) {
 }
 void glShaderSource(GLuint shader, GLsizei count, const GLchar* const* strings, const GLint* length) {
     // Real, documented scope: concatenates into one buffer and sends as
-    // a single logical source string (count treated as 1 server-side --
+    // a single logical source string (count treated as 1 server-side;
     // see render-host/src/main.cpp's own matching doc comment). Correct
     // for the real, single-string call shape confirmed used elsewhere in
     // this project's own shader-compile probes; a genuine multi-string
@@ -491,7 +491,7 @@ void glBindVertexArray(GLuint array) {
 
 // Real GLES3 render-setup entry points the engine reaches once the full
 // app-bring-up sequence succeeds (each was previously a named no-op and
-// reported itself as called -- see the engineering notes). Uniform-buffer
+// reported itself as called; see the engineering notes). Uniform-buffer
 // binding, per-buffer clears and MRT draw-buffer selection are all
 // load-bearing for real rendering, so no-oping them cannot produce a
 // correct frame.
@@ -506,7 +506,7 @@ void glBindBufferBase(GLenum target, GLuint index, GLuint buffer) {
 }
 void glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat* value) {
     uint64_t a[8] = {buffer, static_cast<uint64_t>(drawbuffer)};
-    // Always four floats -- the widest real case (a colour buffer);
+    // Always four floats, the widest real case (a colour buffer);
     // depth/stencil clears read only the first, so sending four is
     // safe and keeps the wire format fixed.
     GLfloat local[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -525,7 +525,7 @@ void glDrawBuffers(GLsizei n, const GLenum* bufs) {
 // this resolved to a no-op the renderbuffer never got storage, so every
 // framebuffer it was attached to reported
 // GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT and the engine abandoned its main
-// render target -- only on the OpenGL path, which is why it survived
+// render target, only on the OpenGL path, which is why it survived
 // unnoticed for as long as everything ran on Vulkan.
 void glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum internalformat,
                                        GLsizei width, GLsizei height) {
@@ -535,7 +535,7 @@ void glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum int
 void glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0,
                        GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter) {
     // The header holds eight arguments and this call has ten, so the last
-    // two travel in the buffer -- same arrangement as glTexSubImage3D.
+    // two travel in the buffer, same arrangement as glTexSubImage3D.
     uint64_t a[8] = {static_cast<uint64_t>(static_cast<int64_t>(srcX0)),
                      static_cast<uint64_t>(static_cast<int64_t>(srcY0)),
                      static_cast<uint64_t>(static_cast<int64_t>(srcX1)),
@@ -555,7 +555,7 @@ void glInvalidateFramebuffer(GLenum target, GLsizei numAttachments, const GLenum
 
 // Real GLES3 sync objects. A GLsync is an opaque handle the caller
 // never dereferences, so the host's own real GLsync pointer value is
-// forwarded straight back as the client's GLsync -- no client-side
+// forwarded straight back as the client's GLsync; no client-side
 // table needed, and it round-trips unchanged on every later call.
 GLsync glFenceSync(GLenum condition, GLbitfield flags) {
     return reinterpret_cast<GLsync>(
@@ -587,7 +587,7 @@ void glGetSynciv(GLsync sync, GLenum pname, GLsizei bufSize, GLsizei* length, GL
     if (length != nullptr) *length = static_cast<GLsizei>(written / sizeof(GLint));
 }
 
-// glCopyImageSubData takes 15 real int arguments -- the wire header
+// glCopyImageSubData takes 15 real int arguments, the wire header
 // only carries 8, so all 15 ride in the in-buffer as a plain int32
 // array instead (same technique glTexSubImage3D already uses for its
 // two overflow arguments).
@@ -608,7 +608,7 @@ void glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint 
 }
 
 // Real GLES3 entry points libroblox actually calls during app bring-up
-// (confirmed live -- each one was previously resolved to a no-op stub
+// (confirmed live, each one was previously resolved to a no-op stub
 // and reported by name; see the engineering notes).
 void glTexStorage2D(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width,
                      GLsizei height) {
@@ -629,7 +629,7 @@ void glTexStorage3D(GLenum target, GLsizei levels, GLenum internalformat, GLsize
 void glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset,
                       GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type,
                       const void* pixels) {
-    // 10 real int args, but the wire header only carries 8 -- so
+    // 10 real int args, but the wire header only carries 8, so
     // `format` and `type` ride at the front of the in-buffer, ahead of
     // the real pixel data. The host unpacks them the same way.
     uint64_t a[8] = {target,
@@ -702,7 +702,7 @@ void glDeleteVertexArrays(GLsizei n, const GLuint* arrays) {
     connection().call(CallId::GlDeleteVertexArrays, a, arrays, static_cast<uint32_t>(n) * sizeof(GLuint), nullptr, 0, nullptr);
 }
 
-// Real OES aliases -- same functions, the names GLES2-era code looks
+// Real OES aliases, same functions, the names GLES2-era code looks
 // for first (libroblox probes both, confirmed live).
 void glGenVertexArraysOES(GLsizei n, GLuint* out) { glGenVertexArrays(n, out); }
 void glBindVertexArrayOES(GLuint array) { glBindVertexArray(array); }
@@ -726,7 +726,7 @@ void glGenTextures(GLsizei n, GLuint* out) {
 //
 // This is memory safety, not a nicety: the caller's buffer is sized by
 // the pname, so writing more than the pname's own count runs off the end
-// of whatever it passed -- usually a single stack GLint.
+// of whatever it passed, usually a single stack GLint.
 int gl_integerv_count(GLenum pname) {
     switch (pname) {
         case GL_MAX_VIEWPORT_DIMS:
@@ -756,11 +756,11 @@ void glGetIntegerv(GLenum pname, GLint* params) {
     // This used to write a fixed 4 ints for every pname. Live-caught as a
     // real stack smash: the engine joined a real game, hit the texture
     // path ("TextureDownloadResource ... falling back on synchronous
-    // download"), and libc's own -fstack-protector fired --
+    // download"), and libc's own -fstack-protector fired,
     // `stack corruption detected` and an abort on the render thread. That
     // thread died, GL stopped, and the window froze while the process
     // stayed alive. A caller doing `GLint n; glGetIntegerv(
-    // GL_MAX_TEXTURE_SIZE, &n);` -- one int, on the stack -- was getting
+    // GL_MAX_TEXTURE_SIZE, &n);`, one int, on the stack, was getting
     // 16 bytes.
     int count = gl_integerv_count(pname);
     uint32_t have = written / static_cast<uint32_t>(sizeof(GLint));
@@ -838,7 +838,7 @@ void glBufferStorage(GLenum target, GLsizeiptr size, const void* data, GLbitfiel
     // Immutable storage: same shape as glBufferData, plus the flags that
     // say how it may be mapped later.
     if (target == GL_PIXEL_UNPACK_BUFFER || target == GL_PIXEL_PACK_BUFFER) {
-        // Nothing special to track here -- the bound-buffer shadow that
+        // Nothing special to track here, the bound-buffer shadow that
         // the pixel paths read is maintained by glBindBuffer.
     }
     uint64_t a[8] = {target, static_cast<uint64_t>(size), flags};
@@ -855,7 +855,7 @@ void glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void
 
 // Real buffer mapping over the render-host IPC boundary. A real
 // glMapBufferRange() hands back a pointer into driver-owned memory,
-// which cannot cross a process boundary -- so map into a client-side
+// which cannot cross a process boundary, so map into a client-side
 // staging allocation and upload it on unmap via the existing, real
 // glBufferSubData path. This is the standard way to emulate mapping
 // across a transport, and it is what streaming vertex/index data
@@ -864,7 +864,7 @@ void glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void
 //
 // The staging allocation is pre-filled with the buffer's real current
 // contents (CallId::GlGetBufferSubData) whenever the caller has not told
-// GL it may discard them -- i.e. for GL_MAP_READ_BIT, and for a
+// GL it may discard them, i.e. for GL_MAP_READ_BIT, and for a
 // GL_MAP_WRITE_BIT map carrying neither GL_MAP_INVALIDATE_RANGE_BIT nor
 // GL_MAP_INVALIDATE_BUFFER_BIT, where the spec requires every byte the
 // caller does not overwrite to survive. Zeroing instead was a real,
@@ -885,7 +885,7 @@ struct BufferMapping {
 // Keyed by the real buffer OBJECT, not by the target it happens to be bound
 // to. GL's rule is one mapping per buffer object; two different buffers bound
 // to the same target can be mapped at the same time, and libroblox really
-// does that -- it double-buffers its dynamic UI geometry (live-observed:
+// does that. It double-buffers its dynamic UI geometry (live-observed:
 // GL_ARRAY_BUFFER alternating between names 9 and 10 across frames).
 //
 // Keying by target instead was a real, live-caught corruption bug: the second
@@ -895,7 +895,7 @@ struct BufferMapping {
 // the vertex buffer and vertex data into the index buffer (caught directly:
 // an UNMAP of GL_ARRAY_BUFFER whose first values were the quad index pattern
 // 0 1 2 0 3 1, and an UNMAP of GL_ELEMENT_ARRAY_BUFFER whose bytes decoded to
-// float positions), which is why draws came out fully degenerate -- six
+// float positions), which is why draws came out fully degenerate, six
 // indices all 0 pointing at a zeroed vertex.
 //
 // std::map keeps references stable across insertion, which a vector does not.
@@ -923,7 +923,7 @@ GLenum buffer_binding_query_for(GLenum target) {
 
 // Client-side shadow of the buffer bindings, so resolving one costs nothing.
 // Asking the real GL instead was measured at ~124 blocking round-trips per
-// frame -- the largest remaining term once the reply-free pipeline landed.
+// frame, the largest remaining term once the reply-free pipeline landed.
 //
 // GL_ELEMENT_ARRAY_BUFFER's binding is vertex-array-object state, so it is
 // shadowed per VAO and swapped on glBindVertexArray, exactly as GL does; every
@@ -964,7 +964,7 @@ void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitf
         // Which access bits libroblox actually uses decides whether the
         // zeroed-staging shortcut below is honest. A GL_MAP_WRITE_BIT map
         // WITHOUT an invalidate bit is required to preserve whatever the
-        // caller does not overwrite -- this emulation cannot, so it would
+        // caller does not overwrite. This emulation cannot, so it would
         // silently zero real geometry.
         static std::vector<GLbitfield> seen;
         bool known = false;
@@ -1002,7 +1002,7 @@ void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitf
                 reported = true;
                 std::fprintf(stderr,
                              "stud: glMapBufferRange: could not read back %ld bytes of the real "
-                             "buffer (got %u) -- unwritten bytes in this non-invalidating map will "
+                             "buffer (got %u), unwritten bytes in this non-invalidating map will "
                              "be zero\n",
                              static_cast<long>(length), written);
                 std::fflush(stderr);
@@ -1015,7 +1015,7 @@ void* glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitf
 
 GLboolean glUnmapBuffer(GLenum target) {
     // GL's own rule: glUnmapBuffer names a target and unmaps whichever buffer
-    // is bound to it right now -- so resolve the key exactly the way the map
+    // is bound to it right now, so resolve the key exactly the way the map
     // did. Remembering one key per target instead cannot work, because two
     // different buffers can legitimately be mapped through the same target
     // (live-caught: 2890 "already mapped" failures in one run, because the
@@ -1053,7 +1053,7 @@ GLboolean glUnmapBuffer(GLenum target) {
 void glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsizeiptr length) {
     // Ship the flushed range now, rather than waiting for unmap.
     //
-    // This was a no-op, which is only safe if unmap uploads everything --
+    // This was a no-op, which is only safe if unmap uploads everything,
     // and with GL_MAP_FLUSH_EXPLICIT_BIT that is not what the caller is
     // promised. The spec guarantees flushed ranges reach the buffer, so
     // an engine may flush a range and carry on writing elsewhere, or
@@ -1148,7 +1148,7 @@ void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format
                    void* pixels) {
     uint64_t a[8] = {static_cast<uint64_t>(x), static_cast<uint64_t>(y), static_cast<uint64_t>(width),
                       static_cast<uint64_t>(height), format, type};
-    // Same real per-format sizing as the upload path -- a 4-bytes-per-texel
+    // Same real per-format sizing as the upload path, a 4-bytes-per-texel
     // assumption here would overrun the caller's own destination buffer.
     uint32_t bytes = static_cast<uint32_t>(width) * static_cast<uint32_t>(height) *
                      gl_pixel_size(format, type);

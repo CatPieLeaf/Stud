@@ -4,7 +4,7 @@
 // engine ever reaches the point of driving GLES itself. Matches the
 // locked "ANGLE-to-Vulkan only" architecture (see the engineering notes,
 // "Rendering architecture") and reuses the already-real
-// stud::render::dev_backend_config machinery -- no parallel backend-
+// stud::render::dev_backend_config machinery; no parallel backend-
 // selection logic invented here.
 //
 // Deliberately standalone from libroblox.so/JNI entirely: this is
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
 #ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
     // Zink was removed as a backend option (it needs Vulkan, so it cannot
     // serve the hardware the option existed for). This tool always uses
-    // the configured ANGLE build -- and it has to ASK for it: leaving the
+    // the configured ANGLE build, and it has to ASK for it: leaving the
     // paths empty makes set_angle_library_paths() dlopen(""), which
     // succeeds against the main program and silently smoke-tests the
     // system's own EGL instead of ANGLE, i.e. tests nothing this tool
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
     }
 #else
     std::fprintf(stderr,
-                  "stud: built without STUD_ENABLE_DEV_RENDER_TOGGLE -- pass real ANGLE paths "
+                  "stud: built without STUD_ENABLE_DEV_RENDER_TOGGLE, pass real ANGLE paths "
                   "directly, this tool needs that option for now\n");
     return 1;
 #endif
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
 
     // Real window, same mechanism android-glue already uses for the
     // full Roblox boot path (real Wayland surface + xdg_toplevel role,
-    // real ping/pong, real configure/ack_configure sequence -- see
+    // real ping/pong, real configure/ack_configure sequence; see
     // native_window.cpp). No JNIEnv/jobject needed for this direct call.
     ANativeWindow* window = ANativeWindow_fromSurface(nullptr, nullptr);
     if (window == nullptr) {
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     if (display == nullptr || surface == nullptr) {
         std::fprintf(stderr,
                       "stud: no real Wayland compositor reachable (WAYLAND_DISPLAY unset or "
-                      "connection failed) -- nothing to render into\n");
+                      "connection failed); nothing to render into\n");
         return 1;
     }
     std::printf("stud: real Wayland window created\n");
@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
     // A spinning cube rather than a colour-cycled clear. A clear proves
     // the surface presents; the cube also exercises a shader program, two
     // vertex buffers, an index buffer, a per-frame uniform and the depth
-    // test -- which is what a smoke test is for, since those are the
+    // test, which is what a smoke test is for, since those are the
     // parts that break. See spinning_cube.h for where it came from.
     stud::tools::CubeGl cube_gl{};
     cube_gl.Enable = must_resolve<void (*)(GLenum)>("glEnable");
@@ -316,12 +316,12 @@ int main(int argc, char** argv) {
 
     stud::tools::SpinningCube cube;
     if (!cube.init(cube_gl)) {
-        std::fprintf(stderr, "stud: could not build the cube -- see the shader log above\n");
+        std::fprintf(stderr, "stud: could not build the cube; see the shader log above\n");
         return 1;
     }
 
     // wl_display_roundtrip() drives the compositor's own configure/frame
-    // protocol (map the window, process events) -- this tool doesn't use
+    // protocol (map the window, process events); this tool doesn't use
     // android-glue's ALooper machinery, so it's driven directly here.
     const int frames = 300;
     for (int i = 0; i < frames && wl_display_dispatch_pending(display) >= 0; ++i) {

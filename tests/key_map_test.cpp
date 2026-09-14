@@ -5,7 +5,7 @@
 // for a long time and it was wrong in both directions on a Brazilian
 // ABNT2 keyboard: the "/" the engine's own on-screen hint offers for
 // search sits on evdev 89, which no US layout has, so it mapped to
-// nothing at all -- while evdev 53, which types ";" on ABNT2, was
+// nothing at all: while evdev 53, which types ";" on ABNT2, was
 // reported to the engine as KEYCODE_SLASH.
 //
 // xkbcommon compiles the same layout data the compositor hands Stud at
@@ -91,7 +91,7 @@ int main() {
     check(android_key_code_for_event(89, br.keysym(89)) == kKeycodeSlash,
           "br: the key that types / reports KEYCODE_SLASH");
     // The positional table alone is what used to answer, and it has
-    // nothing here -- this is the regression guard.
+    // nothing here; this is the regression guard.
     check(android_key_code_for_scan_code(89) == 0,
           "br: the positional table genuinely cannot answer for evdev 89");
 
@@ -102,10 +102,10 @@ int main() {
           "br: the key that types ; reports KEYCODE_SEMICOLON, not SLASH");
 
     // The numpad divide also types "/", but it is a different key and
-    // must stay a numpad key -- its keysym is KP_Divide, not "/", so it
+    // must stay a numpad key: its keysym is KP_Divide, not "/", so it
     // falls through to the positional table.
     // Evdev 98 is KP_Divide by keysym, but on a real ABNT2 keyboard it is
-    // the dedicated "/" key rather than a numpad one -- confirmed from a
+    // the dedicated "/" key rather than a numpad one, confirmed from a
     // live run (scan=98, unicode=47). It reports KEYCODE_SLASH so that the
     // key people actually press opens chat and search; see key_map.h.
     check(br.keysym(98) == XKB_KEY_KP_Divide, "br: evdev 98 is KP_Divide by keysym");
@@ -210,7 +210,7 @@ int main() {
     }
 
     // What a key types, and the difference between "nothing" and
-    // "don't know" -- which is what put a spurious "[" in front of every
+    // "don't know", which is what put a spurious "[" in front of every
     // accented character.
     {
         using stud::jni_bridge::text_from_keymap;
@@ -219,7 +219,7 @@ int main() {
 
         // A dead key mid-sequence: the keymap answered, and the answer is
         // that this key types nothing yet. The caller must NOT fall back
-        // to its own layout table -- on ABNT2 the dead acute sits at the
+        // to its own layout table, on ABNT2 the dead acute sits at the
         // US "[" position and the dead tilde at the US "'" position, so
         // falling back types exactly the character the user reported
         // seeing: "[e-acute" instead of "e-acute".
@@ -246,8 +246,8 @@ int main() {
         check(!text_from_keymap(0, 0, none, sizeof(none), &text),
               "no keysym means no keymap, so the caller falls back");
 
-        // A key that types nothing and is not a dead key -- a function or
-        // arrow key -- is still answered, and still types nothing.
+        // A key that types nothing and is not a dead key, a function or
+        // arrow key, is still answered, and still types nothing.
         check(text_from_keymap(XKB_KEY_Left, 0, none, sizeof(none), &text), "an arrow key");
         check(text.empty(), "an arrow key types nothing");
     }
@@ -287,7 +287,7 @@ int main() {
         check(engine_scan_code_for_event(31, "s") == 31, "S is still S");
         check(engine_scan_code_for_event(32, "d") == 32, "D is still D");
 
-        // The keypad keeps its own identity -- a numpad digit is not the
+        // The keypad keeps its own identity, a numpad digit is not the
         // digit row.
         check(engine_scan_code_for_event(82, "0") == 82, "numpad 0 stays on the numpad");
         check(engine_scan_code_for_event(79, "1") == 79, "numpad 1 stays on the numpad");

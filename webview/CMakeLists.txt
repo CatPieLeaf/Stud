@@ -7,7 +7,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Widgets WebEngineWidgets Network)
 
 add_executable(stud-webview src/main.cpp)
-# stud/webview_user_agent.h -- the agent string has to be the same one the
+# stud/webview_user_agent.h, the agent string has to be the same one the
 # engine reports to Roblox, so both build it from the same header.
 target_include_directories(stud-webview PRIVATE
                             "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include")

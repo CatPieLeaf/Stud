@@ -2,7 +2,7 @@
 // (ui/src/launch_uri.h). Format and field casing verified live this
 // session against multiple real Play-button clicks (both a direct
 // browser default-handler launch and Firefox's portal-activated
-// "choose installed app" flow) -- these are real key names, and the
+// "choose installed app" flow). These are real key names, and the
 // synthetic values below match the real shape confirmed live.
 
 #include "launch_uri.h"
@@ -24,7 +24,7 @@ void check(bool condition, const char* what) {
 
 int main() {
     // A normal, non-launch argument (e.g. no CLI args at all, or some
-    // unrelated string) -- correctly recognized as "not a launch URI".
+    // unrelated string), correctly recognized as "not a launch URI".
     check(!stud::ui::parse_launch_uri("").has_value(), "an empty string is not a launch URI");
     check(!stud::ui::parse_launch_uri("/usr/bin/stud-ui").has_value(),
           "a plain file path is not mistaken for a launch URI");
@@ -65,7 +65,7 @@ int main() {
     check(parsed->join_attempt_origin == "PlayButton",
           "joinAttemptOrigin is parsed out of place_launcher_url's own query string");
 
-    // No placelauncherurl at all (e.g. a bare, non-game launch) -- the
+    // No placelauncherurl at all (e.g. a bare, non-game launch), the
     // deep-link-derived fields stay at their honest zero/empty defaults
     // rather than erroring.
     auto parsed_bare = stud::ui::parse_launch_uri("roblox-player://1+launchmode:app");
@@ -80,7 +80,7 @@ int main() {
     check(parsed_alt.has_value(), "the roblox: scheme (not just roblox-player:) is recognized");
     check(parsed_alt->launch_mode == "app", "roblox: scheme payload parses correctly too");
 
-    // A URI without the "//" prefix still parses -- tolerant of format
+    // A URI without the "//" prefix still parses, tolerant of format
     // variation given the real format isn't independently re-verified
     // here.
     auto parsed_no_slashes = stud::ui::parse_launch_uri("roblox-player:1+launchmode:play+gameinfo:XYZ");
@@ -108,7 +108,7 @@ int main() {
     check(parsed_web->referred_by_player_id == 0, "referredByPlayerId is read");
     check(parsed_web->launch_mode == "play", "a link naming a place is a request to play it");
 
-    // A place link with no server named is still a join -- of any server
+    // A place link with no server named is still a join, of any server
     // for that place, which is what the site sends from an experience
     // page.
     auto parsed_place_only =

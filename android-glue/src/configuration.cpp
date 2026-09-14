@@ -2,7 +2,7 @@
 
 #include "stud/system_locale.h"
 
-// AConfiguration is populated with Stud's desktop-spoof defaults --
+// AConfiguration is populated with Stud's desktop-spoof defaults,
 // deliberately consistent with PlatformParams/DeviceParams (jni-bridge)
 // rather than an independent set of spoof values: same "desktop, no touch,
 // no nav bar" story, told once, not twice.
@@ -10,7 +10,7 @@ struct AConfiguration {
     // The real system language, not a hardcoded "en". A real device
     // populates this from its own configuration; this is the desktop's
     // equivalent. Both fields are exactly two characters and are NOT
-    // NUL-terminated -- that is the NDK's own contract for
+    // NUL-terminated. That is the NDK's own contract for
     // AConfiguration_getLanguage/getCountry, whose callers pass a
     // two-byte buffer. An unknown country stays empty, as it does on a
     // device with no region set.
@@ -44,7 +44,7 @@ void AConfiguration_delete(AConfiguration* config) { delete config; }
 void AConfiguration_fromAssetManager(AConfiguration* out, AAssetManager* /*am*/) {
     // Real Android populates `out` from the AssetManager's compiled
     // resource table (the device's actual configuration). Stud has no
-    // resource table -- `out` already holds sensible desktop defaults from
+    // resource table, `out` already holds sensible desktop defaults from
     // construction, so this is a no-op beyond that.
     (void)out;
 }

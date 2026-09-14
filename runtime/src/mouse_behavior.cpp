@@ -18,7 +18,7 @@ struct Probe {
     int getter_arg = 0;
     void (*guard_enter)(void*) = nullptr;  // the scope guard the engine
     void (*guard_leave)(void*) = nullptr;  // takes around the read
-    int32_t guard_offset = 0;              // add $imm,%rax -- guard member
+    int32_t guard_offset = 0;              // add $imm,%rax, guard member
     int32_t subsystem_offset = 0;          // mov <d1>(%rbx),%rax
     int32_t behavior_offset = 0;           // cmpl $1,<d2>(%rax)
 };
@@ -31,7 +31,7 @@ int32_t read_i32(const unsigned char* p) {
     return v;
 }
 
-// The function is small and straight-line (no branches at all -- it ends
+// The function is small and straight-line (no branches at all; it ends
 // in one compare and a stack-guard check), so a linear walk over its
 // first bytes is enough; there is nothing to follow.
 constexpr size_t kScanBytes = 0x90;
@@ -45,7 +45,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
         "nativeGetMainWindowIsMouseLockedCenter"));
     if (fn == nullptr) {
         std::printf("stud: MouseBehavior probe: the engine does not export the predicate to "
-                    "decode -- the cursor falls back to following the pointer\n");
+                    "decode, the cursor falls back to following the pointer\n");
         std::fflush(stdout);
         return false;
     }
@@ -54,7 +54,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
     const unsigned char* call_after_getter = nullptr;
     for (size_t i = 0; i + 6 < kScanBytes; ++i) {
         const unsigned char* at = fn + i;
-        // mov $imm32,%edi ; call rel32   -- the singleton getter, with the
+        // mov $imm32,%edi ; call rel32  , the singleton getter, with the
         // engine's own argument rather than a guess at one.
         if (p.getter == nullptr && at[0] == 0xbf && at[5] == 0xe8) {
             p.getter_arg = read_i32(at + 1);
@@ -64,7 +64,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
             call_after_getter = next;
             continue;
         }
-        // add $imm32,%rax  -- the member the scope guard is built on.
+        // add $imm32,%rax , the member the scope guard is built on.
         if (p.getter != nullptr && p.guard_offset == 0 && at[0] == 0x48 && at[1] == 0x05) {
             p.guard_offset = read_i32(at + 2);
             continue;
@@ -87,7 +87,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
             p.subsystem_offset = read_i32(at + 3);
             continue;
         }
-        // cmpl $0x1,<d2>(%rax)  -- the MouseBehavior test itself. The
+        // cmpl $0x1,<d2>(%rax) , the MouseBehavior test itself. The
         // immediate must be LockCenter's own value, or this is not the
         // comparison this decode is looking for.
         if (p.behavior_offset == 0 && at[0] == 0x83 && at[1] == 0xb8 && at[6] == 0x01) {
@@ -105,7 +105,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
                       p.behavior_offset < (1 << 20);
     if (!sane) {
         std::printf("stud: MouseBehavior probe: the engine's predicate is not the shape this "
-                    "decodes (getter=%d guard=%d/%d off=%d/%d/%d) -- the cursor falls back to "
+                    "decodes (getter=%d guard=%d/%d off=%d/%d/%d), the cursor falls back to "
                     "following the pointer\n",
                     p.getter != nullptr ? 1 : 0, p.guard_enter != nullptr ? 1 : 0,
                     p.guard_leave != nullptr ? 1 : 0, p.guard_offset, p.subsystem_offset,
@@ -165,7 +165,7 @@ MouseBehavior read_mouse_behavior() {
         static bool said = false;
         if (!said) {
             said = true;
-            std::printf("stud: MouseBehavior probe trapped -- disabled for this run\n");
+            std::printf("stud: MouseBehavior probe trapped, disabled for this run\n");
             std::fflush(stdout);
         }
         g_probe.valid = false;

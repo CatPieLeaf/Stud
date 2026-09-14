@@ -12,13 +12,13 @@
 // through GLFW and GLEW; Stud's render path is GLES2 on EGL, which this
 // tool already sets up, so the shaders are GLSL ES 1.00 (attributes and
 // varyings rather than layout-qualified in/out) and there is no vertex
-// array object -- GLES2 has none, so the attribute pointers are bound
+// array object, GLES2 has none, so the attribute pointers are bound
 // per frame instead.
 //
 // Why a cube rather than the colour-cycling clear this replaces: a clear
 // proves the surface presents, and nothing more. A cube with depth
 // testing, an index buffer, a shader program and a per-frame uniform
-// exercises the parts of the pipeline that actually break -- which is
+// exercises the parts of the pipeline that actually break, which is
 // the whole point of a smoke test that exists to answer "is it the
 // machine, the driver or Stud?".
 

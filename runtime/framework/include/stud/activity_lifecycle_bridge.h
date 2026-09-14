@@ -14,10 +14,10 @@
 // with real "pre"/"post" variants around the actual Java-side handler)
 // fires a matching native callback on
 // com.roblox.universalapp.activitylifecyclecallbacks.
-// JNIActivityLifecycleCallbacks (confirmed against the app's own code -- a real,
+// JNIActivityLifecycleCallbacks (confirmed against the app's own code, a real,
 // `Application.ActivityLifecycleCallbacks`-implementing class, 19 native
 // methods total). Stud has no ART/real Activity, so none of these were
-// ever called -- and real, live evidence (a live backtrace and the engine's own code,
+// ever called: and real, live evidence (a live backtrace and the engine's own code,
 // taken from a genuinely stuck worker thread, StartApp path) shows
 // Roblox's own internal engine code blocks *indefinitely* (a real
 // absl::Mutex::Await with an infinite timeout) waiting on state only
@@ -50,7 +50,7 @@ struct ActivityLifecycleBridgeResult {
 // ActivityLifecycleCallbacks ordering) for a single, real Activity name.
 // `jvm` supplies the JNIEnv*; `lib` must already be successfully loaded.
 // Missing symbols are skipped individually, not treated as a hard
-// failure -- same degrade-gracefully convention as every other bridge
+// failure, same degrade-gracefully convention as every other bridge
 // in this directory.
 ActivityLifecycleBridgeResult run_activity_lifecycle_bridge(FakeJni::Jvm& jvm,
                                                               const stud::linker::LoadedLibrary& lib,
@@ -69,7 +69,7 @@ struct ActivityPauseStopBridgeResult {
 // Real, evidence-based addition (the engineering notes' real logcat
 // analysis): a real device's own `InitHelper` log shows
 // `unsetView=[ActivitySplash]` firing *before* `setView=[ActivityNativeMain]`
-// and `nativeAppBridgeAppStart` -- matching Android's own standard,
+// and `nativeAppBridgeAppStart`, matching Android's own standard,
 // documented single-task activity-switch order (old activity onPause,
 // then the new activity's own onCreate/onStart/onResume, then the old
 // activity's onStop). Dispatches the real onPause -> onStop sequence
@@ -81,29 +81,29 @@ ActivityPauseStopBridgeResult run_activity_pause_stop_bridge(FakeJni::Jvm& jvm,
 
 // Real, separate mechanism found in the app's own code (the engineering notes): completely
 // distinct from JNIActivityLifecycleCallbacks above.
-// RobloxApplication.onCreate() -- the real Application subclass's own
+// RobloxApplication.onCreate(), the real Application subclass's own
 // onCreate, the actual first real Android callback of the whole
-// process, even before any Activity's own onCreate -- registers a
+// process, even before any Activity's own onCreate, registers a
 // JNIAppLifecycleNativeAdapter as an observer on
 // ProcessLifecycleOwner (real androidx Jetpack API: process-wide
 // foreground/background, not per-Activity). Its real, no-arg native
 // methods (confirmed against the library's exported symbols): setActive() on the process's own
 // ON_RESUME (first Activity resumes), setInactive() on ON_PAUSE,
 // setHidden() on ON_STOP. Stud never called any of these either.
-// Dispatches setActive() only -- the real boot-relevant one.
+// Dispatches setActive() only, the real boot-relevant one.
 bool run_app_lifecycle_native_adapter_set_active(FakeJni::Jvm& jvm,
                                                   const stud::linker::LoadedLibrary& lib);
 
 // Real, separate finding in the app's own code (the engineering notes):
 // RobloxApplication.onCreate() also calls
 // `JNIAAssetManagerSetup.a(context)` -> `initNative(context.getAssets())`
-// -- a real native entry point (confirmed against the library's exported symbols) that hands
+// a real native entry point (confirmed against the library's exported symbols) that hands
 // libroblox.so a real Java `AssetManager` object, separate from and
 // earlier than anything Stud's own `AAssetManager_open()` stub
 // (android-glue/src/asset_manager.cpp) intercepts. Stud never called
 // this either. `AAssetManager_fromJava()`'s own Stud-side stub already
 // ignores its jobject argument entirely (returns a fixed sentinel
-// regardless), so any non-null jobject is sufficient here -- this call
+// regardless), so any non-null jobject is sufficient here; this call
 // exists to let libroblox.so's own internal code register *an* asset
 // manager reference at all, not for the specific Java object's
 // identity to matter.
@@ -112,7 +112,7 @@ bool run_asset_manager_setup_bridge(FakeJni::Jvm& jvm, const stud::linker::Loade
 // Real, confirmed (`com/roblox/client/LocalStorageManager.java`):
 // `LocalStorageManager.a(context)` -> `initStorageManagerNativeV3(
 // context.getAssets(), context.getFilesDir().getAbsolutePath(),
-// context.getCacheDir().getAbsolutePath())` -- a real, separate native
+// context.getCacheDir().getAbsolutePath())`, a real, separate native
 // entry point (confirmed against the library's exported symbols:
 // `Java_com_roblox_client_LocalStorageManager_initStorageManagerNativeV3`)
 // from the AssetManager-only bridge above; this one is real device
@@ -127,9 +127,9 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
 
 // Real, confirmed: `RobloxApplication.
 // onCreate()`'s real, confirmed-taken branch (flag `EnableGameActivity8`
-// defaults `false` -- see `the engineering notes`, "get Stud rendering the
+// defaults `false`; see `the engineering notes`, "get Stud rendering the
 // real Lua UI" plan) unconditionally calls `JNIBaseUrlProtocol.init(
-// context)` and `JNIWebLoginProtocol.init(context)` -- two real, separate
+// context)` and `JNIWebLoginProtocol.init(context)`, two real, separate
 // native entry points (confirmed against the library's exported symbols:
 // `Java_com_roblox_universalapp_linking_JNIBaseUrlProtocol_init`,
 // `Java_com_roblox_universalapp_linking_JNIWebLoginProtocol_init`), both
@@ -137,7 +137,7 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
 // called either. Same "real, functional Context object, identity mostly
 // doesn't matter but real methods like getFilesDir/getResources must
 // actually work if this native code calls them" reasoning as the asset
-// manager/storage manager bridges above -- unlike those two (which pass
+// manager/storage manager bridges above, unlike those two (which pass
 // an identity-agnostic dummy jobject), this uses a real `ActivityStub`
 // instance so any real Context method the native implementation might
 // call succeeds instead of hitting the same "class is null" bug class
@@ -147,11 +147,11 @@ bool run_web_login_protocol_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLi
 
 // Real, confirmed gap, found via a full, systematic diff of every
 // exported `Java_*` symbol in the real libroblox.so (518 total) against
-// every symbol Stud's own source actually resolves -- the first time
+// every symbol Stud's own source actually resolves, the first time
 // this project has done that comparison exhaustively rather than
 // piecemeal. `ActivitySplash.onCreate()`
 // calls `NativeReportingInterface.initAppShellReporter()`
-// unconditionally -- no flag gate, no branch -- early in the real first
+// unconditionally. No flag gate, no branch, early in the real first
 // activity Stud already replicates the lifecycle of. Stud never called
 // it. Real, no-arg static native (`Java_com_roblox_engine_jni_
 // NativeReportingInterface_initAppShellReporter`, confirmed against the library's exported symbols).
@@ -164,19 +164,19 @@ bool run_app_shell_reporter_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLi
 // replicates. Real semantics of the boolean come from the real
 // `InitHelper.z(Context)`: a real `SharedPreferences("FirstRunPrefs")`
 // `"isFreshInstall"` entry, defaulting true and flipped to false on
-// first read -- i.e. genuinely "is this the very first launch". Stud
+// first read, i.e. genuinely "is this the very first launch". Stud
 // replicates that honestly with a real marker file under its own real
 // files directory (see main.cpp), not a hardcoded guess.
 // Tells the engine the app is in the foreground and not suspended
 // (real ActivityNativeMain.onStart() pair). Its HTTP client will not
-// send requests while it believes the app is suspended -- see the
+// send requests while it believes the app is suspended; see the
 // implementation's own comment for the live join symptom that caused.
 bool run_app_foreground_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib);
 
 // Tells the engine the display's real refresh rate, and every rate it
 // supports, so it paces frames to the panel that is actually attached.
 // Without this the engine cannot retrieve screen info at all and falls
-// back to a default -- a 144Hz display was being driven at 60.
+// back to a default, a 144Hz display was being driven at 60.
 bool run_pass_display_refresh_rates(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                     float current_hz, const std::vector<float>& supported_hz);
 
@@ -196,7 +196,7 @@ bool run_set_is_first_install(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
 // every still-blocked V2 call in this project (`InitWithParams`,
 // `StartLuaAppDM`, the `UpdateSurface` pair) posts its real work to
 // that same internal scheduler and waits for a completion signal that
-// never arrives -- see the engineering notes' own hardware-watchpoint
+// never arrives; see the engineering notes' own hardware-watchpoint
 // closure on that futex. A scheduler parked in background mode not
 // running foreground work is a real, concrete, testable explanation
 // for all of them at once. Real second arg is a plain reason/tag

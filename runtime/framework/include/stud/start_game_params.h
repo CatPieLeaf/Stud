@@ -10,9 +10,9 @@
 #include "stud/platform_params.h"
 
 // com.roblox.engine.jni.autovalue.StartGameParams, reimplemented as a real
-// FakeJni object -- same approach as StartAppParams/InitParams. Field
+// FakeJni object, same approach as StartAppParams/InitParams. Field
 // layout is ground-truth, traced directly from the app's own code of
-// the class itself (24 real AutoValue getter methods -- see
+// the class itself (24 real AutoValue getter methods; see
 // the engineering notes, the "V2 app-bridge API" entry). Real getter methods,
 // not plain fields, same already-confirmed reason as InitParams.
 
@@ -75,9 +75,9 @@ public:
 
 // Real fields parsed out of a real roblox-player:// deep link's own
 // place_launcher_url query string (see ui/src/launch_uri.h's own doc
-// comment) -- passed in explicitly, rather than this file taking a
+// comment), passed in explicitly, rather than this file taking a
 // stud-ipc dependency, since jni-bridge doesn't otherwise depend on it.
-// Zero/empty fields (the default -- e.g. a bare, non-deep-link launch)
+// Zero/empty fields (the default, e.g. a bare, non-deep-link launch)
 // are passed straight through to StartGameParams' own matching fields
 // as honest zero/empty placeholders, same as before this existed.
 struct DeepLinkJoinInfo {
@@ -86,12 +86,12 @@ struct DeepLinkJoinInfo {
     long long referred_by_player_id = 0;
     std::string join_attempt_origin;
     // The real, opaque `gameinfo:` ticket from the deep link itself
-    // (LaunchUri::game_info / LaunchPayload::game_info) -- a real,
+    // (LaunchUri::game_info / LaunchPayload::game_info), a real,
     // structurally plausible try for StartGameParams' own launchData_
     // field (matching AutoValue's real naming convention for "extra
     // launch payload data"), not yet live-confirmed correct. The
     // plaintext fields above (place_id etc.) alone were already live-
-    // tested this session and did NOT trigger a real join -- this is
+    // tested this session and did NOT trigger a real join; this is
     // the next real, cheap, honest thing to try, not fabricated schema
     // guessing (a wrong string here is a no-op, same as the empty
     // placeholder it replaces, not something that could corrupt a real
@@ -99,7 +99,7 @@ struct DeepLinkJoinInfo {
     std::string launch_data;
     // The rest of the real launch request. the app's own launch-request parser reads every one of
     // these out of the same JSON and the app's own app-shell helper feeds them to
-    // StartGameParams -- sending only a place id is what a "not authorized
+    // StartGameParams, sending only a place id is what a "not authorized
     // to join this experience" answer looks like from the other side.
     std::string game_join_context;
     std::string event_id;
@@ -112,16 +112,16 @@ struct DeepLinkJoinInfo {
 // pre-seeds with "" on a real device (see StartGameParams.java's own
 // builder() factory). `deep_link` (see DeepLinkJoinInfo above) feeds
 // placeId/joinAttemptId/referredByPlayerId/joinAttemptOrigin when a
-// real deep link supplied them -- real, structurally-confirmed fields,
+// real deep link supplied them; real, structurally-confirmed fields,
 // not guessed (this project has NOT yet live-confirmed these alone are
 // sufficient for the real engine to complete a real join; see this
 // function's own .cpp doc comment for the reasoning behind trying this
 // over reimplementing Roblox's own internal join-ticket resolution
 // host-side). accessCode_/reservedServerAccessCode_ remain honest
-// empty placeholders -- no real source for those yet. `surface` must be
+// empty placeholders. No real source for those yet. `surface` must be
 // the SAME Surface object already handed to GameActivity's own
 // lifecycle (see GameActivityLifecycleResult::surface's doc comment),
-// not a fresh one -- avoids a second, real, independently-mapped window.
+// not a fresh one: avoids a second, real, independently-mapped window.
 std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<DeviceParams> device_params,
     std::shared_ptr<SurfaceStub> surface, const DeepLinkJoinInfo& deep_link = {});

@@ -4,14 +4,14 @@
 //
 // A real device does not pass an empty array here, which is what Stud
 // did for a long time. The app carries a compiled-in catalogue of flags
-// and hands that entry point the subset registered on the native side --
+// and hands that entry point the subset registered on the native side,
 // 142 of them, a fixed, build-time set rather than anything that depends
 // on install state or stored preferences.
 //
 // Stud runs no DEX, so it cannot compute the subset the way the app
 // does; the names are listed here instead. They are data the app itself
 // would supply, not a guess, and they need regenerating whenever the
-// configured APK changes -- the engineering notes record how.
+// configured APK changes, the engineering notes record how.
 //
 // Scope, honestly: this is only the input to that one call. It is not
 // the much larger FFlag/DFFlag/FInt/FString namespace reached through

@@ -58,7 +58,7 @@ END_NATIVE_DESCRIPTOR
 // A plain (non-member) function pointer registers as an INSTANCE method by
 // default in jnivm/fake-jni (its Function<> trait marks free-function
 // pointers FunctionType::None, and the default Descriptor flags for that
-// case are just PUBLIC -- the STATIC bit has to be requested explicitly,
+// case are just PUBLIC, the STATIC bit has to be requested explicitly,
 // confirmed empirically: registering these without it produced "Unable to
 // find STATIC method captionBar").
 namespace {
@@ -159,7 +159,7 @@ std::shared_ptr<PlatformSystemDialogHandlerStub> PlatformSystemDialogHandlerStub
 FakeJni::JLong IPlatformSystemDialogHandlerStub::open(
     std::shared_ptr<SystemDialogRequestStub> /*request*/,
     std::shared_ptr<ISystemDialogCallbackStub> /*callback*/) {
-    std::printf("stud: SystemDialogHandler.open() -- no Android dialog UI, nothing shown\n");
+    std::printf("stud: SystemDialogHandler.open(). No Android dialog UI, nothing shown\n");
     std::fflush(stdout);
     return 0;
 }
@@ -198,9 +198,9 @@ void FacialAgeEstimationProtocolStub::setListener(FakeJni::JLong native_listener
 
 void FacialAgeEstimationProtocolStub::startInquiry(std::shared_ptr<FakeJni::JString> inquiry_id,
                                                     std::shared_ptr<FakeJni::JString> /*token*/) {
-    // The session token is deliberately not logged -- it is a real
+    // The session token is deliberately not logged; it is a real
     // credential, same rule as the .ROBLOSECURITY cookie.
-    std::printf("stud: FacialAgeEstimationProtocol.startInquiry(id=%s) -- no face-scan SDK, "
+    std::printf("stud: FacialAgeEstimationProtocol.startInquiry(id=%s); no face-scan SDK, "
                 "nothing started\n",
                 inquiry_id ? inquiry_id->asStdString().c_str() : "(null)");
     std::fflush(stdout);
@@ -219,7 +219,7 @@ END_NATIVE_DESCRIPTOR
 
 void CookieProtocolStub::setCookie(std::shared_ptr<FakeJni::JString> name,
                                     std::shared_ptr<FakeJni::JString> value) {
-    // Name and size only -- never the value.
+    // Name and size only, never the value.
     std::printf("stud: CookieProtocol.setCookie: %s (%zu bytes)\n",
                 name ? name->asStdString().c_str() : "", value ? value->asStdString().size() : 0u);
     std::fflush(stdout);
@@ -247,16 +247,16 @@ END_NATIVE_DESCRIPTOR
 
 void JNIAppRestarterStub::restartApp(std::shared_ptr<ContextStub> /*context*/,
                                       std::shared_ptr<FakeJni::JString> url) {
-    // Deliberately does NOT exit -- see the class's own doc comment.
+    // Deliberately does NOT exit; see the class's own doc comment.
     //
     // The URL is real though. On a device this fires ACTION_VIEW before
     // exiting, and the engine uses it for links that belong to another
-    // application -- `roblox-studio:` chief among them. Handing it to the
+    // application. `Roblox-studio:` chief among them. Handing it to the
     // desktop is the honest half of what a device does; the exit is the
     // half Stud cannot do.
     const std::string target = url ? url->asStdString() : std::string();
     if (!target.empty() && on_open_external_url) on_open_external_url(target);
-    std::printf("stud: JNIAppRestarter.restartApp -- engine asked to relaunch via a URL; handed "
+    std::printf("stud: JNIAppRestarter.restartApp, engine asked to relaunch via a URL; handed "
                 "it to the desktop instead of exiting (no activity manager to relaunch us)\n");
     std::fflush(stdout);
 }
@@ -539,9 +539,9 @@ void NativeGLJavaInterfaceStub::onAppBridgeNotification(std::shared_ptr<FakeJni:
     std::printf("stud: onAppBridgeNotification: type=\"%s\" data=%s\n", type_str.c_str(),
                 data_str.c_str());
     // Real, confirmed shape for the one payload this project knows
-    // about (InitHelper's own inner callback, the AppBridge-BrowserTracker flow --
+    // about (InitHelper's own inner callback, the AppBridge-BrowserTracker flow;
     // see this class's own header doc comment). Parsed and logged, not
-    // yet acted on -- see that comment for why acting on it is deferred
+    // yet acted on; see that comment for why acting on it is deferred
     // until a real payload has actually been observed.
     try {
         nlohmann::json doc = nlohmann::json::parse(data_str);
@@ -551,7 +551,7 @@ void NativeGLJavaInterfaceStub::onAppBridgeNotification(std::shared_ptr<FakeJni:
                         doc.value("result", nlohmann::json()).dump().c_str());
         }
     } catch (const nlohmann::json::parse_error&) {
-        // Not every real notification is this JSON shape -- honest no-op,
+        // Not every real notification is this JSON shape, honest no-op,
         // not an error worth surfacing.
     }
 }
@@ -612,13 +612,13 @@ void NativeGLJavaInterfaceStub::showKeyboard(FakeJni::JLong text_box,
             g_active_text_box_style.password = input_type == 5 || input_type == 9;
         }
     }
-    // Never log the contents -- a real TextBox can be a password field.
+    // Never log the contents, a real TextBox can be a password field.
     // The flags and geometry are not secret, and they are the evidence
     // for HOW the engine expects typing to be shown: `showNativeInput`
     // arrives TRUE, and the NativeTextBoxInfo carries the box's real
     // rectangle, font size and colour. That combination only makes sense
     // if a native input widget is meant to sit over the box and draw the
-    // in-progress text -- see the text-input entry in the engineering notes.
+    // in-progress text; see the text-input entry in the engineering notes.
     std::printf("stud: showKeyboard: text box focused (%zu chars of existing text) "
                 "showNativeInput=%d editable=%d multiline=%d inputType=%d returnKey=%d "
                 "box=[%.0f,%.0f %.0fx%.0f] fontSize=%.1f textColor=%08x\n",
@@ -645,7 +645,7 @@ void log_engine_call(const char* what) {
 
 // Real methods libroblox looks up on this class. Each was a live
 // `GetMethodID MISS` before this; see the header for why that is never
-// cosmetic. Honest bodies -- Stud reports what it was told and does nothing
+// cosmetic. Honest bodies. Stud reports what it was told and does nothing
 // where it genuinely has nothing to do.
 void NativeGLJavaInterfaceStub::gameLoadedCallback(FakeJni::JLong placeId) {
     std::printf("stud: NativeGLJavaInterface.gameLoadedCallback: placeId=%lld\n",
@@ -662,7 +662,7 @@ void NativeGLJavaInterfaceStub::onAppShellReloadNeeded() {
 }
 void NativeGLJavaInterfaceStub::onDataModelNotificationCallback(
     std::shared_ptr<FakeJni::JString> type, std::shared_ptr<FakeJni::JString>) {
-    // Type only -- the payload can carry account data.
+    // Type only, the payload can carry account data.
     const std::string kind = type ? type->asStdString() : std::string();
     std::printf("stud: NativeGLJavaInterface.onDataModelNotificationCallback: type=%s\n",
                 kind.c_str());
@@ -729,7 +729,7 @@ void NativeGLJavaInterfaceStub::getWebViewUserAgent() {
     // creates a login challenge, and the page that answers the challenge
     // runs in the viewer. Saying nothing meant the challenge was created
     // against an empty client and the page failed with "something went
-    // wrong" -- live-reported, with the viewer left open because the
+    // wrong", live-reported, with the viewer left open because the
     // challenge never completed.
     log_engine_call("getWebViewUserAgent()");
     if (auto& reporter = webview_user_agent_reporter(); reporter) reporter();
@@ -867,7 +867,7 @@ BEGIN_NATIVE_DESCRIPTOR(LoggingProtocolStub)
 END_NATIVE_DESCRIPTOR
 
 FakeJni::JInt AppRtcDeviceWrapperStub::getSelectedAudioDeviceAsInt() {
-    return 1;  // WIRED_HEADSET -- an ordinary desktop output
+    return 1;  // WIRED_HEADSET, an ordinary desktop output
 }
 std::shared_ptr<FakeJni::JString> AppRtcDeviceWrapperStub::getSelectedAudioDeviceName() {
     return std::make_shared<FakeJni::JString>("Desktop Audio");
@@ -1097,7 +1097,7 @@ void register_game_activity_stubs(FakeJni::Jvm& jvm) {
     jvm.registerClass<ApplicationExitInfoCppStub>();
     jvm.registerClass<JNIAchievementStub>();
     jvm.registerClass<InputConnectionStub>();
-    // Must be registered before NativeGLJavaInterfaceStub below -- that
+    // Must be registered before NativeGLJavaInterfaceStub below; that
     // class's real getDeviceStaticParams()/setDeviceStaticParams()
     // descriptor entries use this type in their own JNI signatures, and
     // FakeJni resolves a class-typed signature against the registered
@@ -1147,7 +1147,7 @@ void register_game_activity_stubs(FakeJni::Jvm& jvm) {
     jvm.registerClass<PlatformSystemDialogHandlerStub>();
     jvm.registerClass<FacialAgeEstimationProtocolStub>();
     // Real Kotlin `object` semantics: INSTANCE exists from class-init
-    // onward, so populate it at registration rather than lazily -- native
+    // onward, so populate it at registration rather than lazily, native
     // code reads the field directly and never calls a factory.
     PlatformSystemDialogHandlerStub::instance();
     FacialAgeEstimationProtocolStub::instance();

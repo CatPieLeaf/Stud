@@ -4,7 +4,7 @@
 // it costs.
 //
 // Why this exists, measured rather than assumed. NVIDIA has no ETC2, so
-// Stud decodes every upload -- and stored the result as RGBA8, which is
+// Stud decodes every upload, and stored the result as RGBA8, which is
 // 8x an ETC2 RGB block. The engine budgets texture memory against a
 // compiled-in `caps.videoMemory` of 64MB (a bare immediate, with nothing feeding it), so 8x inflation leaves it an
 // eighth of the room it expects. What that looks like on screen: joining
@@ -13,9 +13,9 @@
 // runs out of budget, evicts it, and loads it again.
 //
 // Confirmed by direct comparison rather than reasoning: the same build,
-// same account, same game on the Intel iGPU -- which has ETC2 in
+// same account, same game on the Intel iGPU, which has ETC2 in
 // hardware, so nothing is substituted and a texture costs its real 4
-// bits per texel -- keeps its full-resolution textures and never
+// bits per texel, keeps its full-resolution textures and never
 // flickers, on a GPU that is far slower. Slower hardware ruling out the
 // frame-rate explanation is what makes that test decisive.
 //
@@ -45,8 +45,8 @@
 //
 // So the principal axis is the better starting point and is not worth its
 // cost: the refinement solves for the endpoints anyway, which is most of
-// what the axis was buying. The two hot passes -- the bounding box and
-// the projection of 16 texels onto the line -- are SSE2, since an RGBA
+// what the axis was buying. The two hot passes, the bounding box and
+// the projection of 16 texels onto the line, are SSE2, since an RGBA
 // texel is four bytes and a 16-byte load is four of them.
 //
 // Transcoding one lossy format to another does lose something; a texture
@@ -67,14 +67,14 @@ void bc4_block_from_r16(const uint16_t* r16, uint8_t* out);  // 8 bytes
 void bc5_block_from_rg16(const uint16_t* rg16, uint8_t* out);  // 16 bytes
 
 // BC7, mode 6 only: one subset, RGBA endpoints at 7 bits plus a shared
-// p-bit, and 4-bit indices -- sixteen steps along the line where BC1 has
+// p-bit, and 4-bit indices, sixteen steps along the line where BC1 has
 // four, at eight times its endpoint precision.
 //
 // Why a second colour format at all: BC1 is 4 bits per texel and holds
 // four colours per 4x4 block, which is the textbook worst case for a
 // normal map. Smooth surface normals come out as blocky per-block bands,
 // which is what "the normal maps look like pixelated noise" is. Mode 6
-// alone is chosen deliberately -- it is the single-subset mode, so
+// alone is chosen deliberately. It is the single-subset mode, so
 // encoding it is the same shape as BC1 (endpoints, then an index per
 // texel) rather than a search over partitionings, and it is the mode a
 // smooth block wants anyway.

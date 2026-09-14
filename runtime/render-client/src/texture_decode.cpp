@@ -34,8 +34,8 @@ namespace {
 // the engine reports as a 500ms frame when a new place loads and every
 // texture in it arrives at once.
 //
-// Threads are created once and parked. The pool is deliberately small --
-// this runs on the engine's own thread while the engine has work of its
+// Threads are created once and parked. The pool is deliberately small.
+// This runs on the engine's own thread while the engine has work of its
 // own to do, and taking every core would win the texture and lose the
 // frame.
 class BlockPool {
@@ -58,7 +58,7 @@ public:
         }
         // One parallel decode at a time. The engine decodes textures on
         // several threads at once (it runs eight texture-loading
-        // threads), and they were all writing the same work state --
+        // threads), and they were all writing the same work state,
         // each one clobbering the others' slice bounds, so the counter
         // this waits on never reached zero and everything stopped.
         //
@@ -214,7 +214,7 @@ bool layout_for(VkFormat f, Layout& out) {
                    VK_FORMAT_BC3_SRGB_BLOCK, 16, VK_FORMAT_BC7_SRGB_BLOCK};
             return true;
         // EAC carries 11 bits per channel, so it decodes to 16-bit rather
-        // than 8 -- rounding it to a byte would throw away precision the
+        // than 8, rounding it to a byte would throw away precision the
         // source actually has. The signed variants are deliberately absent:
         // this decoder produces unsigned data, and claiming support for a
         // format whose sign it would silently lose is worse than saying no.
@@ -341,8 +341,8 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // The work below is deterministic: the same source bytes and target
     // format always produce the same output, and Roblox's content never
     // changes. So the result is kept between runs, which is what turns
-    // the launch spike -- every texture in the place, encoded from
-    // scratch, every time -- into a file read.
+    // the launch spike. Every texture in the place, encoded from
+    // scratch, every time, into a file read.
     const uint64_t source_bytes =
         static_cast<uint64_t>(bh) * (src_row_pitch != 0 ? src_row_pitch
                                                         : static_cast<uint64_t>(bw) * l.block_bytes);
@@ -355,7 +355,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     //
     // The cache is not free: every decode that consults it pays a hash of
     // the source bytes, and every miss pays a file write. For an image
-    // that will never be asked for again that is pure loss -- and Home is
+    // that will never be asked for again that is pure loss, and Home is
     // full of them, because each thumbnail is unique. Measured directly:
     // with the cache off, scrolling Home holds a higher frame rate.
     //
@@ -363,8 +363,8 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // hashing and writing it costs more than it will ever save. A
     // 1024x1024 level is 1MB and tens of milliseconds, and those are the
     // ones that come back on the next visit. The floor is set between
-    // them, so one-shot images skip the cache entirely -- no hash, no
-    // write -- and the textures behind the loading spikes still get it.
+    // them, so one-shot images skip the cache entirely; no hash, no
+    // write, and the textures behind the loading spikes still get it.
     constexpr uint64_t kMinCacheableOutput = 512u * 1024u;
     const bool cacheable = stud::texture_cache::enabled() && output_bytes >= kMinCacheableOutput;
     if (cacheable) {
@@ -385,7 +385,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // Small levels stay on one thread: waking workers costs more than the
     // work itself, and a texture's small mips are most of its levels.
     // A codec layout_for() already validated cannot turn up here, but if
-    // it did a worker cannot return from decode() -- it records it.
+    // it did a worker cannot return from decode(); it records it.
     std::atomic<bool> failed{false};
     const auto do_rows = [&](uint32_t row_begin, uint32_t row_end) {
     uint8_t scratch[4 * 4 * 4];
@@ -400,7 +400,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
             const uint32_t h = (y0 + l.block_h <= height) ? l.block_h : height - y0;
             // detex always writes a tight 4x4 block, so a block that
             // lands whole inside the level is decoded into the scratch
-            // and copied out in four rows -- cheap next to the decode,
+            // and copied out in four rows, cheap next to the decode,
             // and it keeps one code path for both cases.
             bool ok = false;
             switch (l.codec) {

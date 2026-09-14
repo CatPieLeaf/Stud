@@ -40,7 +40,7 @@ struct ComposeResult {
 // Advances the compose state by one key press and says what it typed.
 //
 // `fallback_codepoint` is what the keymap alone says the key produces,
-// used whenever no sequence is involved. Feed presses only -- a release
+// used whenever no sequence is involved. Feed presses only, a release
 // would advance a sequence a second time.
 inline ComposeResult compose_key_press(xkb_compose_state* state, xkb_keysym_t keysym,
                                        std::uint32_t fallback_codepoint) {

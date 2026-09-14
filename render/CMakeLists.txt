@@ -3,7 +3,7 @@ set(STUD_RENDER_SOURCES src/render.cpp)
 if(STUD_ENABLE_DEV_RENDER_TOGGLE)
     include(FetchContent)
     # Same dependency jni-bridge already vendors for its own JSON config
-    # (flag_overrides.cpp) -- guarded so re-declaring it here is a no-op
+    # (flag_overrides.cpp), guarded so re-declaring it here is a no-op
     # if jni-bridge's subdirectory already made it available first.
     if(NOT TARGET nlohmann_json::nlohmann_json)
         FetchContent_Declare(

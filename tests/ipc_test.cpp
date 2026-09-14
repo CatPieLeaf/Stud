@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     }
     std::string socket_path = std::string(argv[1]) + "/launch.sock";
 
-    // No server listening yet -- connect fails clearly.
+    // No server listening yet, connect fails clearly.
     bool threw = false;
     try {
         stud::ipc::receive_launch_payload(socket_path);
@@ -52,13 +52,13 @@ int main(int argc, char** argv) {
     sent.deep_link_join_attempt_id = "f923ce81-874a-4ce8-af0d-bc365d3a2153";
     sent.deep_link_referred_by_player_id = 42;
     sent.deep_link_join_attempt_origin = "PlayButton";
-    sent.place_launcher_response = R"({"status":404,"note":"real endpoint 404s -- see the engineering notes"})";
+    sent.place_launcher_response = R"({"status":404,"note":"real endpoint 404s; see the engineering notes"})";
 
     std::thread server_thread(
         [&]() { stud::ipc::serve_launch_payload_once(socket_path, sent, /*timeout_ms=*/5000); });
 
     // Real race, resolved the honest way: the client may attempt to
-    // connect before the server has bound+listened yet -- retry briefly
+    // connect before the server has bound+listened yet, retry briefly
     // instead of an arbitrary fixed sleep guess.
     stud::ipc::LaunchPayload received;
     bool connected = false;

@@ -45,7 +45,7 @@ std::shared_ptr<DeviceParams> build_desktop_device_params(const std::string& os_
     params->networkType = std::make_shared<FakeJni::JString>("WIFI");
     // Matches the ChromeOS the User-Agent already reports. On a device
     // this comes from hasSystemFeature("org.chromium.arc.device_management")
-    // -- the same real ARC check -- and it was left false here, so the
+    // the same real ARC check, and it was left false here, so the
     // agent and the params described different machines.
     params->isChrome = true;
     params->appBuildVariant = std::make_shared<FakeJni::JString>("release");

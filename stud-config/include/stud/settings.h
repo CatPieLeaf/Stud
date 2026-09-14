@@ -5,7 +5,7 @@
 #include <string>
 
 // General settings storage (M8): the real, user-facing settings from the
-// locked decisions table (the engineering notes) -- GPU selection, HiDPI,
+// locked decisions table (the engineering notes), GPU selection, HiDPI,
 // graphics mode (Vulkan/OpenGL). Deliberately plain C++, no Qt dependency,
 // so both `ui` (reads/writes via the settings window) and `runtime`
 // (reads the saved choice to set env vars before launching, per the
@@ -14,11 +14,11 @@
 // linking Qt.
 //
 // Same JSON file every other Stud setting lives in
-// (~/.config/stud/config.json, XDG convention) -- coexists with the
+// (~/.config/stud/config.json, XDG convention), coexists with the
 // "devRenderBackend" key render/dev_backend_config.h already owns
 // (prototype-only, not part of this schema) as a sibling top-level key,
 // not a competing config path. "UI is a front-end over the JSON config
-// file, not a separate model" (locked decision) -- this struct's fields
+// file, not a separate model" (locked decision); this struct's fields
 // are exactly what the settings UI reads/writes, no separate model.
 
 namespace stud::config {
@@ -34,12 +34,12 @@ inline constexpr int kBackgroundFpsUnlimited = 240;
 
 // ...and how "unlimited" is stored. A number one past the top of a
 // slider is a UI detail, not a setting: it wrote `241` into a file meant
-// to be read by a person. Zero says the thing itself -- no limit.
+// to be read by a person. Zero says the thing itself; no limit.
 inline constexpr int kBackgroundFpsNoLimit = 0;
 
 struct GpuSelection {
-    // Index into vkEnumeratePhysicalDevices()'s own result order --
-    // that's the real, stable-for-a-given-driver-state identifier the
+    // Index into vkEnumeratePhysicalDevices()'s own result order.
+    // That's the real, stable-for-a-given-driver-state identifier the
     // settings window enumerates against; deviceName is stored purely
     // for human-readable display (e.g. showing a saved choice without
     // needing to re-enumerate), never used to re-resolve the index.
@@ -62,7 +62,7 @@ struct StudSettings {
     // how many pixels are drawn, never how big anything looks.
     //
     // It used to be a checkbox that could not do this, because one
-    // variable held both the display's scale and the buffer's -- turning
+    // variable held both the display's scale and the buffer's, turning
     // it off erased the monitor's real scale and the engine was told it
     // was on an unscaled display. Those are separate now (see
     // android-glue's g_display_scale_120 / g_render_scale_120), so the
@@ -73,7 +73,7 @@ struct StudSettings {
     //
     // Off by default, and that is a real trade rather than a taste: the
     // engine reads this one number to pick its render technique, and
-    // above 1.0 it takes the simplified path -- no SSAO, flatter
+    // above 1.0 it takes the simplified path; no SSAO, flatter
     // shadows. Measured at 1.00 (SSAO), 1.10 (none) and 1.25 (none), so
     // the boundary is exactly 1.0 and no quality setting overrides it.
     // See runtime/src/main.cpp, where the scale is decided.
@@ -89,13 +89,13 @@ struct StudSettings {
     //
     // Only meaningful with HiDPI off, and that is not a limitation so much
     // as the whole design: the engine's own scale cannot be moved (below
-    // 1.0 it draws square corners, above it drops SSAO -- both measured),
+    // 1.0 it draws square corners, above it drops SSAO, both measured),
     // so the engine is left believing nothing changed and the scaling
     // happens entirely inside Stud.
     bool upscaling = false;
     // NOTE: there is no target-resolution knob either. What the upscaler
     // writes is the window's own size in the display's pixels, which the
-    // compositor then shows 1:1 -- anything else means a second resample
+    // compositor then shows 1:1, anything else means a second resample
     // on the way to the screen.
     // How hard the sharpening pass pulls, 0-125, defaulting to 100. It runs
     // at the output resolution over the upscaled image, so it sharpens what
@@ -103,7 +103,7 @@ struct StudSettings {
     //
     // 100 is RCAS at its ordinary full strength, which is what the
     // upscaled image wants and so is the default. 0 skips the pass
-    // entirely -- no second image, no second dispatch -- and is the
+    // entirely. No second image, no second dispatch, and is the
     // baseline worth comparing against. 125 is the ceiling because that is
     // where this filter's own renormaliser reaches zero; sharpen.comp maps
     // the top of the range to just short of it.
@@ -111,7 +111,7 @@ struct StudSettings {
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;
-    // Frames per second while nobody can see the window -- minimised, on
+    // Frames per second while nobody can see the window, minimised, on
     // another workspace, or fully covered.
     //
     // Rendering a game at full rate into a window nobody is looking at is
@@ -136,7 +136,7 @@ struct StudSettings {
     // saying what you are playing.
     bool discord_join_button = false;
     // A tray icon for as long as the session runs. It is why Process A
-    // outlives a launch at all -- with this off it hands off and exits, as
+    // outlives a launch at all, with this off it hands off and exits, as
     // it always did.
     bool system_tray = true;
     // Whether Roblox's own in-game leave button ends Stud instead of
@@ -150,7 +150,7 @@ struct StudSettings {
     // Off by default, for the same reason Discord presence is: answering
     // it means one HTTPS request per join to a third-party geolocation
     // service (the datacenter's IP leaves the machine, never the user's).
-    // Anything that talks to someone else is asked for, not assumed --
+    // Anything that talks to someone else is asked for, not assumed,
     // and Sober ships this off too.
     bool server_region_notification = false;
     // The transcoded-texture cache: whether to keep one at all, and how
@@ -183,7 +183,7 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Missing file -> default-constructed StudSettings (not an error -- no
+// Missing file -> default-constructed StudSettings (not an error; no
 // settings file yet is the normal first-run state). Malformed file or
 // an invalid field value -> throws SettingsError clearly, same
 // no-silent-misbehavior policy as FlagOverrides::load_from_file.
@@ -191,13 +191,13 @@ StudSettings load_settings(const std::string& path);
 
 // Writes the full settings object as the "gpu"/"hidpi"/"graphicsMode"
 // top-level keys, preserving any other top-level keys already in the
-// file (e.g. "devRenderBackend") rather than clobbering them -- this
+// file (e.g. "devRenderBackend") rather than clobbering them; this
 // file is shared, not exclusively owned by this module. Creates the
 // file (and its parent directory) if it doesn't exist yet.
 void save_settings(const std::string& path, const StudSettings& settings);
 
 // XDG-compliant path every Stud process should use for this shared file
-// ($XDG_CONFIG_HOME/stud/config.json, or ~/.config/stud/config.json) --
+// ($XDG_CONFIG_HOME/stud/config.json, or ~/.config/stud/config.json),
 // the one real config-path helper, shared so `ui` and `runtime` can't
 // silently drift onto two different paths for what's meant to be one
 // file.
@@ -209,7 +209,7 @@ std::string default_config_path();
 // by the user, never generated from Settings UI toggles). Sibling to
 // default_config_path() ($XDG_CONFIG_HOME/stud/flags.json, or
 // ~/.config/stud/flags.json). A missing file is the common case, not
-// an error -- FlagOverrides::load_from_file() already treats it that
+// an error, FlagOverrides::load_from_file() already treats it that
 // way.
 std::string default_flag_overrides_path();
 

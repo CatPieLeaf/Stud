@@ -27,7 +27,7 @@
 #
 # The other reason a base is chosen carefully: linuxdeploy rewrites the
 # rpath of every library it bundles, and the patchelf it carries corrupts
-# libraries that use modern relocation sections (.relr.dyn) -- the result
+# libraries that use modern relocation sections (.relr.dyn), the result
 # segfaults inside its own initialiser on a plain dlopen, before any of
 # Stud's own code runs. Measured directly on Fedora 44. NO_STRIP=1 and
 # the exclude list in packaging/build-appimage.sh are what keep that away

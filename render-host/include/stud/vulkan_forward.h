@@ -4,14 +4,14 @@
 // Why forward at all, rather than loading a real Vulkan driver in
 // Process B: the vendor GPU driver must never run inside a process
 // sharing bionic or foreign TLS (see the engineering notes' non-negotiable
-// constraints -- that is the failure class this whole architecture
+// constraints. That is the failure class this whole architecture
 // exists to avoid). Process C is ordinary glibc, so the real driver is
 // at home there, and Process B only ever sees Stud's own stub.
 //
 // Vulkan suits this transport far better than GLES did. Nearly every
 // hot call is a vkCmd* that records into a command buffer and returns
 // void, which is exactly what the protocol's kNoReply pipelining is for
-// -- where GLES forced a blocking round-trip on glGetError alone 856
+// where GLES forced a blocking round-trip on glGetError alone 856
 // times a frame. The costly parts here are the ones that genuinely need
 // an answer: memory mapping, swapchain acquire, and queue submit.
 //
@@ -76,7 +76,7 @@ struct CreateInstanceHeader {
 // A pNext chain is a linked list of structs that cannot travel as
 // pointers, and its nodes cannot be sized from sType alone without a
 // table. Both processes compile this one, so they agree by construction
-// -- important because they build against different Vulkan headers (the
+// important because they build against different Vulkan headers (the
 // NDK's in Process B, the system's in Process C).
 //
 // Only the sTypes the engine is actually observed to use are listed. An
@@ -208,7 +208,7 @@ enum class CmdKind : uint32_t {
     WriteTimestamp,
     // The multisample resolve: copies an MSAA image into the single-sample
     // one the frame is actually built from. Appended so every existing
-    // kind keeps its value. Missing, it was a named no-op stub -- and the
+    // kind keeps its value. Missing, it was a named no-op stub, and the
     // engine turns MSAA on in game at small framebuffer sizes, so every
     // resolved frame came out black while Home, which does not resolve,
     // was fine.
@@ -227,7 +227,7 @@ enum class CmdKind : uint32_t {
 //
 // Writer/Reader are deliberately dumb: fixed-width little-endian scalars
 // and length-prefixed arrays, in the order written. Reader never reads
-// past the end -- a truncated or mismatched message yields zeros rather
+// past the end, a truncated or mismatched message yields zeros rather
 // than reading adjacent memory, which matters because the payload
 // crosses a process boundary.
 class Writer {
@@ -258,7 +258,7 @@ private:
 
 // The same wire format written into a fixed stack buffer.
 //
-// A command is small -- a draw is four integers -- but the engine issues
+// A command is small, a draw is four integers, but the engine issues
 // over ten thousand of them per frame, and building each one through a
 // std::vector's append path (capacity check, iterator machinery, a
 // possible reallocation) is measurable at that rate: it was the largest
@@ -288,8 +288,8 @@ private:
     // Anything too big for the stack buffer spills to the heap rather than
     // being truncated. Silently dropping the tail of a command would
     // corrupt the stream in a way that is very hard to see, and the whole
-    // point of the fixed buffer is the common small case -- a draw, a
-    // bind -- not a guarantee about the rare large one.
+    // point of the fixed buffer is the common small case, a draw, a
+    // bind, not a guarantee about the rare large one.
     void append(const void* p, size_t n) {
         if (!spilled_.empty()) {
             const auto* b = static_cast<const uint8_t*>(p);

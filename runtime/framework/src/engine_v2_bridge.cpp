@@ -34,15 +34,15 @@ struct BoundedCallOutcome {
 // Shared bounded-wait machinery for every V2 call (see
 // run_engine_v2_sequence()'s own doc comment: real evidence, Phase 5,
 // shows more than just StartAppWithParams genuinely never returns).
-// `invoke` runs on a freshly spawned, detached background thread --
-// never the calling thread -- and must resolve its own JNI locals on
+// `invoke` runs on a freshly spawned, detached background thread,
+// never the calling thread, and must resolve its own JNI locals on
 // its own frame (a jclass/jobject local reference is only valid on the
 // thread/frame that created it, so nothing JNI-related may be captured
 // from the caller). Returns true iff the call completed without
 // trapping a fatal signal; the outer bounded wait treats "still
 // running" as an honest, real report, not a guess.
 // Same reporting as run_bounded_v2_call, but runs the call on the CALLING
-// thread instead of a fresh one -- for the cases where the caller's thread
+// thread instead of a fresh one, for the cases where the caller's thread
 // identity is itself load-bearing and moving the work off it changes what
 // the engine does (see acknowledge_experience_start). There is no bound
 // here, by definition: the point is not to hand the work to someone else.
@@ -70,7 +70,7 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
     // reverted. The thread the engine designates as its own internal
     // "main" thread is one libroblox spawns ITSELF (see
     // engine_thread.h's own doc comment for the full trace), never one
-    // of Stud's caller threads -- so serialising Stud's calls cannot
+    // of Stud's caller threads, so serialising Stud's calls cannot
     // influence that designation, and it does cause real head-of-line
     // blocking (a call that blocks forever starves every later one;
     // live-observed turning a 50ms `nativeUpdateAdapterInit` into an
@@ -99,7 +99,7 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
     } else {
         outcome.still_running = true;
         std::fprintf(stderr,
-                      "stud: v2: %s still running/blocked after %dms -- its background thread "
+                      "stud: v2: %s still running/blocked after %dms; its background thread "
                       "keeps going, not waiting further\n",
                       name, kMaxPolls * kPollIntervalMs);
     }
@@ -108,21 +108,21 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
 }
 
 // Real, shared JNI plumbing for one UpdateSurfaceApp+UpdateSurfaceGame
-// pair -- factored out of the STUD_ENABLE_V2_STARTAPP-gated block below
+// pair, factored out of the STUD_ENABLE_V2_STARTAPP-gated block below
 // so run_engine_v2_sequence()'s own default path can reuse it. Real
 // evidence for calling this on the default path at all: a real, working
 // Sober session's own FLog capture (see the engineering notes) shows both
 // calls firing twice each, right after a successful
-// nativeAppBridgeV2StartGameWithParam -- a different real context than
+// nativeAppBridgeV2StartGameWithParam, a different real context than
 // the StartApp-prerequisite one this block was originally written for,
 // but the same real JNI call shape.
 //
 // Real, live-caught bug this session (not a hypothetical): calling this
 // synchronously hung the whole boot sequence forever on the direct-launch
-// path -- no crash, no STUD_TRAP, `run_engine_v2_sequence()` just never
+// path: no crash, no STUD_TRAP, `run_engine_v2_sequence()` just never
 // returned. Exactly the documented "any new V2 entry point can block
 // forever, assume it does until live-tested otherwise" rule
-// (engine_v2_bridge.h's own doc comment) -- this function itself does
+// (engine_v2_bridge.h's own doc comment); this function itself does
 // NOT protect against that; every call site MUST wrap it in
 // run_bounded_v2_call(), same as every other V2 call in this file.
 // `called_app`/`called_game` are written unconditionally (even if the
@@ -168,7 +168,7 @@ bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
     // handed over, and it precedes this call rather than following from it.
     // Fixed separately by splitting the V2 sequence so app setup and
     // InitWithParams run BEFORE the surface (the real `ASMA.E -> j -> F`
-    // order) -- see run_engine_v2_early_init(). Geometry now draws.
+    // order); see run_engine_v2_early_init(). Geometry now draws.
     //
     // The Game variant is still correctly skipped on a bare launch, for the
     // reason below, which was always the sound one.
@@ -176,13 +176,13 @@ bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
     // It matches the real device: this file's own from-scratch
     // logcat re-read found a real bare launch calls
     // `UpdateSurfaceAppWithPlatformParams` exactly ONCE and never the
-    // Game variant -- the Game surface belongs to an actual experience,
+    // Game variant, the Game surface belongs to an actual experience,
     // which a bare/home-screen launch does not have. Gated on a real
     // deep link accordingly.
     if (!update_game_surface) {
         std::fprintf(stderr,
                       "stud: engine_v2_bridge: skipping "
-                      "nativeAppBridgeV2UpdateSurfaceGameWithPlatformParams -- no real "
+                      "nativeAppBridgeV2UpdateSurfaceGameWithPlatformParams; no real "
                       "experience on a bare launch\n");
     } else if (void* update_game_addr = lib.find_symbol(
             "Java_com_roblox_engine_jni_NativeGLInterface_"
@@ -212,7 +212,7 @@ bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
 // does nativeGameGlobalInit/nativeUpdateAdapterInit, `j(d)` does
 // nativeAppBridgeV2InitWithParams, and only then does `F(surface)`
 // hand over a real Surface. Extracted here so both the normal sequence
-// and the early, pre-surface path can run exactly the same calls --
+// and the early, pre-surface path can run exactly the same calls,
 // live evidence for why that matters is in run_engine_v2_early_init()'s
 // own doc comment.
 void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
@@ -224,7 +224,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         // The real app-shell manager calls FMOD.init(context) immediately
         // before nativeGameGlobalInit (the app's own app-shell manager: `FMOD.init(context);`
         // then `NativeGLInterface.nativeGameGlobalInit();`), and Stud
-        // never did -- so org.fmod.FMOD.checkInit() answered false and
+        // never did, so org.fmod.FMOD.checkInit() answered false and
         // getAssetManager() returned null for the engine's own audio
         // system, which is the Java state native FMOD reads before it will
         // initialise its output.
@@ -312,7 +312,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 // Real, live-caught ordering bug this fixes (engine FLog, via Stud's
 // logd sink): Stud drove `onSurfaceCreatedNative` first, and the engine
 // responded by bootstrapping its own Lua app to completion
-// (`setStage: LuaApp`, `userDidLogin`) -- and only THEN did Stud's
+// (`setStage: LuaApp`, `userDidLogin`), and only THEN did Stud's
 // `nativeAppBridgeV2Init` arrive, which reset `setStage: (stage:Native)`
 // and destroyed the live SurfaceController/RenderView underneath it.
 // A real device does the reverse: init first, surface last
@@ -335,26 +335,26 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     EngineV2BridgeResult result;
 
     // Real order (ground-truth, read out of the app's own code this session against the
-    // app itself -- see engine_v2_bridge.h's own doc
+    // app itself; see engine_v2_bridge.h's own doc
     // comment): InitWithParams MUST run before StartAppWithParams, not
     // the reverse. The real Java caller of both, the app-shell singleton ((an "AppShell"
-    // singleton) -- the app shell's init step sets its own internal
+    // singleton), the app shell's init step sets its own internal
     // isInitialized flag (an internal isInitialized flag) as a side effect;
     // the app shell's start step (-> StartAppWithParams) is itself gated behind
     // that isInitialized flag and is a real, silent no-op otherwise. Every
     // real caller of the start step (its fragment's own lifecycle)
     // only runs after the init step already ran, in AppShellFragment's own
     // onCreate(). Previously ordered the other way here, based on a
-    // best-effort guess from the method names alone -- confirmed wrong.
+    // best-effort guess from the method names alone, confirmed wrong.
 
-    // Real AppShell.E()'s own two setup calls -- see this function's
+    // Real AppShell.E()'s own two setup calls; see this function's
     // own doc comment (engine_v2_bridge.h) for why these are needed
     // before Init/StartApp at all: root-caused via a real, reproducible
     // near-null SIGSEGV whose backtrace pc traced back to a lazily-
     // populated subsystem pointer these two calls are the real,
     // confirmed (the library's exported symbols) way to populate.
     // Real, live-caught bug (the engineering notes, "keep going. until now,
-    // there's no kde window at all" -- the crash-recovery fixes landed
+    // there's no kde window at all", the crash-recovery fixes landed
     // earlier this session let real execution reach this call for the
     // first time, and it hung the main thread forever, blocking
     // everything downstream including render-context setup, which is
@@ -365,7 +365,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // own established rule is "assume any new V2 call can block forever
     // until live-tested otherwise." Confirmed live via a live syscall trace on the
     // genuinely stuck main thread: blocked in a real futex wait deep
-    // inside libroblox.so, directly under this exact call --
+    // inside libroblox.so, directly under this exact call,
     // nativeGameGlobalInit had simply never been exercised long enough
     // before today's other fixes for this to be noticed. Fixed by
     // routing both calls through the same bounded-wait machinery.
@@ -378,7 +378,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         perform_early_init(jvm, lib, init_params, result);
     }
 
-    // nativeAppBridgeV2StartAppWithParams(StartAppParams) -- UPDATE,
+    // nativeAppBridgeV2StartAppWithParams(StartAppParams), UPDATE,
     // 2026-09-07, and this one is settled by a real, successful join
     // rather than by an absence of evidence.
     //
@@ -413,7 +413,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // DataModel, and the join completes (`NetworkClient:Create`,
     // `! Joining game ...`). Stud, stuck at `InitializedLuaApp`, took
     // the other branch, skipped that teardown entirely, and the
-    // submitted start-game task never produced a DataModel --
+    // submitted start-game task never produced a DataModel,
     // `stepDataModelJob: No DM yet. Continue...` forever.
     //
     // So this is unconditional on a bare launch now, in the real ASMA
@@ -426,7 +426,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // A deep link needs this every bit as much as a bare launch does.
     //
     // It used to be bare-launch only, so a browser click went straight to
-    // StartGameWithParam with the app still at `InitializedLuaApp` --
+    // StartGameWithParam with the app still at `InitializedLuaApp`,
     // which is precisely the stage `launchUGCGame` branches on (see the
     // comment above): from `LuaApp` it tears the app view down and builds
     // the experience's DataModel, and from `InitializedLuaApp` it does
@@ -436,13 +436,13 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     bool want_startapp = !startapp_disabled;
 
     // nativeAppBridgeStartLuaAppDM + the single UpdateSurfaceApp/Game
-    // pair that follows it -- real, load-bearing, unconditional part of
+    // pair that follows it: real, load-bearing, unconditional part of
     // a bare launch (confirmed identically in BOTH real captures below),
     // pulled out from under the StartAppWithParams conditional they used
     // to live inside: that nesting made both of these calls wrongly
     // depend on `force_startapp`, when real evidence shows they're
     // needed regardless of whether StartAppWithParams is ever called at
-    // all (it isn't, on this real path -- see that block's own doc
+    // all (it isn't, on this real path; see that block's own doc
     // comment right below).
     if (bare_launch) {
         if (void* dm_addr = lib.find_symbol(
@@ -452,7 +452,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
             auto* dm_fn = reinterpret_cast<V2VoidNoArgFn>(dm_addr);
             // Real, live-caught bug (the engineering notes): this call used to
             // run synchronously via a bare call_trapping_abort() on the
-            // calling thread -- but its real implementation dispatches
+            // calling thread, but its real implementation dispatches
             // the actual work (initializeLuaAppWithLoggedInUser) to a
             // separate internal worker thread and blocks the calling
             // thread waiting for a completion signal. Wrapping it in
@@ -484,7 +484,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
             // UpdateSurfaceApp and UpdateSurfaceGame back to back here,
             // ~150us apart, both at (stage:InitializedLuaApp), before
             // StartApp. Stud used to send only the App half on the
-            // reasoning that a bare launch has no experience yet -- but
+            // reasoning that a bare launch has no experience yet, but
             // the engine wants the game surface registered up front, not
             // at join time.
             auto pair_outcome = run_bounded_v2_call(
@@ -537,15 +537,15 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         std::fprintf(stderr,
                       "stud: engine_v2_bridge: nativeAppBridgeV2StartAppWithParams skipped (%s)\n",
                       startapp_disabled ? "STUD_DISABLE_V2_STARTAPP=1"
-                                        : "not a bare launch -- a deep link goes straight to "
+                                        : "not a bare launch, a deep link goes straight to "
                                           "StartGameWithParam");
     }
 
     // Real order (ground-truth, this session's read of the app's own code against the app's own app-shell helper
-    // -- a real, separate "game join" class, distinct from AppShell/
+    // a real, separate "game join" class, distinct from AppShell/
     // AppShellFragment): StartGameWithParam runs on the FIRST real
     // updateSurface() call (h0.G(), surfaceState==0), ResumeGameWithPlatformParams
-    // on the SECOND (surfaceState==2 && !graphicsStarted) -- the reverse
+    // on the SECOND (surfaceState==2 && !graphicsStarted), the reverse
     // of the order this file used before. See engine_v2_bridge.h's own
     // doc comment.
 
@@ -555,7 +555,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // StartGameWithParam only ever runs either (a) immediately, for a
     // deep link that already names a place (matches the real Sober
     // capture this file's own doc comments cite), or (b) after a real
-    // human picks a game from the home/Lua UI -- something a bare,
+    // human picks a game from the home/Lua UI, something a bare,
     // no-deep-link launch has no way to synthesize headlessly. Calling
     // it anyway, seconds after boot, races the real home-UI/Lua-side
     // state machine before it has ever settled. Gated: only for a real
@@ -593,12 +593,12 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         // capture, the engineering notes): on the SAME direct-launch path this
         // function already drives, both UpdateSurfaceApp and
         // UpdateSurfaceGame fire twice each, right after
-        // StartGameWithParam completes -- previously only ever called
+        // StartGameWithParam completes, previously only ever called
         // from the STUD_ENABLE_V2_STARTAPP-gated block below, a
         // different real context (a StartApp prerequisite), so the
         // default path never made these calls at all. Gated on the call
         // actually completing normally (not trapped, not still running)
-        // -- calling further JNI into a process that just trapped a
+        // calling further JNI into a process that just trapped a
         // fatal signal isn't a real scenario worth reproducing.
         if (!outcome.trapped_abort && !outcome.still_running) {
             auto called_app = std::make_shared<std::atomic<bool>>(false);
@@ -619,7 +619,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
                 if (pair_outcome.still_running) {
                     // Real, honest degrade: don't attempt the second pair
                     // if the first one is still blocked in the
-                    // background -- a second concurrent call into the
+                    // background, a second concurrent call into the
                     // same native entry points while the first hasn't
                     // returned isn't a real scenario worth reproducing.
                     break;
@@ -636,17 +636,17 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
             "stud: engine_v2_bridge: nativeAppBridgeV2StartGameWithParam not found, skipping\n");
     } else {
         std::fprintf(stderr,
-                      "stud: engine_v2_bridge: nativeAppBridgeV2StartGameWithParam skipped -- no "
+                      "stud: engine_v2_bridge: nativeAppBridgeV2StartGameWithParam skipped; no "
                       "real deep link (a bare/home-screen launch needs real user interaction to "
                       "pick a game, which this can't synthesize; set STUD_ENABLE_V2_STARTGAME=1 "
                       "to force it anyway)\n");
     }
 
     // nativeAppBridgeV2ResumeGameWithPlatformParams(Surface, PlatformParams, Activity)
-    // -- real evidence this session (same real Sober journalctl capture
+    // real evidence this session (same real Sober journalctl capture
     // that showed StartApp is never called): NOTHING V2-related happens
     // after StartGameWithParam in that whole real ~12s capture, from
-    // process start through the game actually loading -- no
+    // process start through the game actually loading; no
     // ResumeGameWithPlatformParams either. Matches this file's own
     // earlier doc comment (engine_v2_bridge.h): ResumeGame's real
     // trigger is h0.G()'s *second* real updateSurface() call
@@ -655,7 +655,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // Real, live-confirmed symptom this session with StartApp fixed:
     // this call now reliably crashes on a null controller pointer
     // (SingleSurfaceApp+0x20+0x450, inside its own real
-    // `pauseBeforeResume` branch) -- consistent with calling it at a
+    // `pauseBeforeResume` branch), consistent with calling it at a
     // point in the real lifecycle it isn't meant to run yet. Default
     // OFF now, opt-in via STUD_ENABLE_V2_RESUMEGAME=1, same pattern as
     // STUD_ENABLE_V2_STARTAPP above.
@@ -711,10 +711,10 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
         // Real fix (the engineering notes, "now proceed" entry, root-caused via
         // a live bisection print): FakeJni::LocalFrame(jvm)'s own ctor,
         // on a thread's FIRST-ever attach, falls through to
-        // vm.AttachCurrentThread(nullptr, nullptr) -- which dispatches
+        // vm.AttachCurrentThread(nullptr, nullptr), which dispatches
         // through the JNI invoke-interface's AttachCurrentThread slot.
         // Roblox's own compiled code overwrites that exact slot with its
-        // own function (the already-documented "JNI vtable swap" -- real,
+        // own function (the already-documented "JNI vtable swap"; real,
         // legitimate Android JNI hook-install behavior, not corruption),
         // and THAT function does real internal work that recurses into
         // the already-known, externally-gated mimalloc/protobuf bootstrap
@@ -726,8 +726,8 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
         // way, through a real patched-in jnivm method
         // (EnsureEnvForCurrentThread(), see patch_libjnivm.cmake) that
         // does the exact lock+CreateEnv()+store the default
-        // AttachCurrentThread lambda uses -- a direct C++ call, never
-        // touching the (Roblox-overwritten) JNI vtable slot at all -- so
+        // AttachCurrentThread lambda uses, a direct C++ call, never
+        // touching the (Roblox-overwritten) JNI vtable slot at all, so
         // the subsequent LocalFrame construction below finds an
         // already-populated env and never calls AttachCurrentThread,
         // sidestepping the crash entirely. Confirmed working end-to-end:
@@ -739,7 +739,7 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
         auto& env = frame.getJniEnv();
         auto* jni_env = static_cast<JNIEnv*>(&env);
 
-        // Real jclass, not nullptr -- see NativeGLInterfaceStub's own doc
+        // Real jclass, not nullptr; see NativeGLInterfaceStub's own doc
         // comment (game_activity_stubs.h): a real, reproducible SIGSEGV
         // a null jclass dereferenced a few
         // instructions into this exact function's compiled body.
@@ -753,14 +753,14 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
         // Root-caused by reading the real
         // libroblox.so (file offset 0x2152338): this call's internal
         // telemetry-logging helper dereferences a null object a few
-        // calls deep -- not our jclass/params (both confirmed real and
+        // calls deep, not our jclass/params (both confirmed real and
         // non-null at the crash), most likely a Roblox-internal
         // singleton real Android populates before this path runs that
         // Stud's bring-up doesn't yet. Out of scope to chase further
         // right now (this call is already documented as optional/
         // best-effort, on its own detached thread), so tolerate a wild
         // SIGSEGV here specifically rather than losing the whole
-        // process to it -- see call_trapping_abort_tolerating_wild_
+        // process to it; see call_trapping_abort_tolerating_wild_
         // sigsegv()'s own doc comment for why this is scoped to just
         // this one call site.
         std::fprintf(stderr, "stud: v2: calling nativeAppBridgeV2StartAppWithParams "
@@ -780,19 +780,19 @@ EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::lin
     EngineV2TeardownResult result;
 
     // Real, live-tested correction: LeaveGame/DestroyApp are NOT safe to
-    // call synchronously, same as Init/StartApp/ResumeGame above -- a
+    // call synchronously, same as Init/StartApp/ResumeGame above, a
     // real SIGTERM-triggered test this session hung the whole process
     // forever right here (no "shutting down" ever printed, STUD_TRAP
     // fired on a real background worker thread these calls spawn
     // internally, and the calling thread's own call_trapping_abort()
     // never returned because it was blocked joining that thread). Routed
     // through the same run_bounded_v2_call() machinery as every other
-    // V2 call now -- "still running" after the bound is an honest report
+    // V2 call now, "still running" after the bound is an honest report
     // Process B's own shutdown path doesn't wait further on, not a
     // guess.
 
     // Real order (see engine_v2_bridge.h's own UPDATE 2 doc comment):
-    // LeaveGame always first, even if no game was ever joined -- real,
+    // LeaveGame always first, even if no game was ever joined; real,
     // confirmed harmless no-op in that case ("leaveUGCGame: ... no-op,
     // not in-game").
     if (void* addr =
@@ -897,7 +897,7 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
         }
     }
     if (request.place_id == 0) {
-        std::fprintf(stderr, "stud: the handed-over link named no place id -- ignoring it\n");
+        std::fprintf(stderr, "stud: the handed-over link named no place id, ignoring it\n");
         std::fflush(stderr);
         return false;
     }
@@ -928,7 +928,7 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
 
     auto* fn = reinterpret_cast<V2StartGameFn>(addr);
     // Detached, because this is called from the engine's own callback
-    // thread and must not block it -- the bounded helper waits internally.
+    // thread and must not block it, the bounded helper waits internally.
     //
     // Running it INLINE on the callback thread was tried, on the theory
     // that `[FLog::ExperienceContextHolder] Unsafe call with no engine
@@ -949,12 +949,12 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
                 jclass cls = env.FindClass("com/roblox/engine/jni/NativeGLInterface");
                 // Which experience: the engine names it itself, through
                 // gameActivity_onGameLoaded(placeId), and that is what is
-                // replayed here. Sending 0 -- which is all Stud had before,
-                // with no deep link to read -- makes the server answer "not
+                // replayed here. Sending 0, which is all Stud had before,
+                // with no deep link to read, makes the server answer "not
                 // authorized to join this experience", so an acknowledgement
                 // without a real id is worse than none.
                 // The whole request the Lua app published, not just the
-                // place id -- the real client passes all of it.
+                // place id, the real client passes all of it.
                 const auto request = NativeHelperStub::last_launch_request();
                 DeepLinkJoinInfo join{};
                 join.place_id = request.place_id;
@@ -1004,7 +1004,7 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
         // ExperienceSession brings the game fragment up
         // (ExperienceSession.f0(): NativeReportingInterface.gameForegrounded()
         // then either nativeOnExperienceSessionResume() or
-        // nativeOnFragmentStart()). Stud called NONE of these -- the engine
+        // nativeOnFragmentStart()). Stud called NONE of these, the engine
         // had been handed a launch and then never told the experience was
         // actually on screen, which is where a bare-launch join stops.
         //
@@ -1065,7 +1065,7 @@ bool subscribe_to_experience_launch(FakeJni::Jvm& jvm, const stud::linker::Loade
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
 
-    // The topic is whatever the engine says it is -- no literal to guess,
+    // The topic is whatever the engine says it is; no literal to guess,
     // and nothing version-specific baked in.
     jstring topic = nullptr;
     jclass protocol_class = env.FindClass("com/roblox/universalapp/experience/JNIExperienceProtocol");
@@ -1084,7 +1084,7 @@ bool subscribe_to_experience_launch(FakeJni::Jvm& jvm, const stud::linker::Loade
     // They used to be plain locals: a shared_ptr destroyed when this
     // function returned, wrapped in a reference belonging to the
     // LocalFrame above, which is destroyed at the same moment. The engine
-    // was then holding a subscription whose callback had been freed --
+    // was then holding a subscription whose callback had been freed,
     // and the symptom was exactly what that predicts, an experience
     // launch that worked on one run, did nothing on the next, and
     // occasionally faulted. (webview_bridge.cpp subscribes the same way

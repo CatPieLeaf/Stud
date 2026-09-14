@@ -1,6 +1,6 @@
 // Standalone test client: drives stud-render-host over the real Unix
 // socket protocol, reproducing the exact same EGL/GLES sequence
-// tools/try_render_window.cpp already proved renders a real frame --
+// tools/try_render_window.cpp already proved renders a real frame,
 // proves the IPC round-trip and (now) the buffer-carrying protocol
 // extension work, independent of Process B/bionic entirely.
 

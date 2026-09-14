@@ -13,7 +13,7 @@
 // PackageManager.hasSystemFeature() results before handing it to the
 // engine. See the engineering notes, "Desktop-vs-mobile spoof: SOLVED" section,
 // for the full trace. This is a clean-room reimplementation of the *shape*
-// of that object as observed from the real APK's bytecode -- not copied
+// of that object as observed from the real APK's bytecode, not copied
 // from any of the app's source.
 //
 // See the engineering notes, milestone M4.
@@ -35,7 +35,7 @@ public:
 
 // Builds a PlatformParams reporting Stud's desktop spoof: no touchscreen,
 // mouse and keyboard present (isMouseDevice/isKeyboardDevice both key off
-// the same "android.hardware.type.pc" feature check on a real device -- see
+// the same "android.hardware.type.pc" feature check on a real device; see
 // the ground-truth trace above). `dpi_scale`/`viewport_width_mm`/
 // `viewport_height_mm` should reflect the real host display; sensible
 // desktop-monitor defaults are used if not provided.
@@ -44,7 +44,7 @@ std::shared_ptr<PlatformParams> build_desktop_platform_params(
     int viewport_height_mm = 190);
 
 // The object MainGameActivity actually hands to
-// InitParams.Builder.setPlatformParams() isn't a bare PlatformParams -- the
+// InitParams.Builder.setPlatformParams() isn't a bare PlatformParams, the
 // real APK wraps it in a subclass (internal obfuscated name "ol.a" in the
 // analyzed build) adding four more fields. Ground-truth traced from that
 // class's the app's own code: isLuaHomePageEnabled/isLuaGamesPageEnabled/
@@ -54,18 +54,18 @@ std::shared_ptr<PlatformParams> build_desktop_platform_params(
 // isTablet).
 //
 // Named descriptively here rather than replicating the real obfuscated
-// class name ("ol/a") -- that name isn't stable across Roblox versions
+// class name ("ol/a"). That name isn't stable across Roblox versions
 // (obfuscated names change per build), and "user supplies
 // any APK version they want" is a locked project decision, so hardcoding a
 // version-specific obfuscated string would be fragile. No evidence so far
 // that libroblox.so's native code relies on that specific class name
 // string (JNI field access works by field name via GetFieldID regardless
-// of the declaring class's name) -- confirmed via extensive real
+// of the declaring class's name), confirmed via extensive real
 // integration testing since (the engineering notes), no class-name-related
 // failure ever observed.
 class PlatformParamsWithLuaFlags : public PlatformParams {
 public:
-    // Distinct from PlatformParams's own class name -- registering two C++
+    // Distinct from PlatformParams's own class name, registering two C++
     // types under the identical Java class name would collide in jnivm's
     // class registry. See the comment above for why this isn't the real
     // (obfuscated, version-fragile) APK class name either.
@@ -78,7 +78,7 @@ public:
 };
 
 // Builds the augmented PlatformParams MainGameActivity actually passes to
-// InitParams -- base desktop spoof plus the four Lua-flags fields, all
+// InitParams, base desktop spoof plus the four Lua-flags fields, all
 // matching real-device values (see PlatformParamsWithLuaFlags above).
 std::shared_ptr<PlatformParamsWithLuaFlags> build_desktop_platform_params_with_lua_flags(
     const std::string& asset_folder_path, float dpi_scale = 1.0f, int viewport_width_mm = 340,

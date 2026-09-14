@@ -1,6 +1,6 @@
 // M6 test: proves stud::render's dispatch mechanism (egl*/gl* prefix
 // routing to two separately dlopen'd libraries) against portable, locally
-// built fixtures -- not a real ANGLE build, since depending on one being
+// built fixtures, not a real ANGLE build, since depending on one being
 // present at a fixed system path would break on any clean machine/CI. Real
 // validation against a genuine ANGLE build (e.g. a system's bundled
 // Chromium/CEF copy) is done manually via tools/try_load.cpp's optional

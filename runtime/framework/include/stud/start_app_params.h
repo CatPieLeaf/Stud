@@ -9,11 +9,11 @@
 #include "stud/platform_params.h"
 
 // com.roblox.engine.jni.autovalue.StartAppParams, reimplemented as a real
-// FakeJni object -- same approach as InitParams/PlatformParams/DeviceParams.
+// FakeJni object, same approach as InitParams/PlatformParams/DeviceParams.
 // Field layout is ground-truth, traced directly from the app's own code
-// of the class itself (10 real AutoValue getter methods -- see
+// of the class itself (10 real AutoValue getter methods; see
 // the engineering notes, the "V2 app-bridge API" entry). Real getter methods,
-// not plain fields -- same already-confirmed reason as InitParams (AutoValue
+// not plain fields, same already-confirmed reason as InitParams (AutoValue
 // classes expose properties as zero-arg methods, and jnivm's own field-vs-
 // method registration is determined purely by whether the wrapped pointer
 // is a data member or a real member function).
@@ -53,7 +53,7 @@ public:
 // same platform_params object the caller already built, and a real
 // ActivityStub. `surface` MUST be the same real Surface GameActivity's
 // own lifecycle already created (see GameActivityLifecycleResult::
-// surface's doc comment) -- reused here, not freshly constructed, to
+// surface's doc comment): reused here, not freshly constructed, to
 // avoid a second, real, independently-mapped window.
 std::shared_ptr<StartAppParams> build_desktop_start_app_params(
     std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<SurfaceStub> surface);

@@ -1,6 +1,6 @@
 // M4 test: FFlag overrides, including the exact graphics-API flags found
 // in libroblox.so's own strings (DebugGraphicsDisableVulkan,
-// DebugGraphicsPreferVulkan, GraphicsMode, GraphicsQualityLevel) -- proves
+// DebugGraphicsPreferVulkan, GraphicsMode, GraphicsQualityLevel), proves
 // Stud's flag system can carry Vulkan/OpenGL mode overrides end-to-end from
 // a user-editable JSON file to the wire format nativePreloadFlagOverrides
 // expects. See the engineering notes, milestone M4 and the "Nvidia stability"
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     check(parsed["DebugGraphicsDisableVulkan"] == "False",
           "DebugGraphicsDisableVulkan serializes as \"False\" in wire format");
     check(parsed["DebugGraphicsPreferVulkan"] == "True",
-          "DebugGraphicsPreferVulkan serializes as \"True\" -- the actual override that forces "
+          "DebugGraphicsPreferVulkan serializes as \"True\", the actual override that forces "
           "Roblox's engine toward Vulkan");
     check(parsed["GraphicsMode"] == "Vulkan", "GraphicsMode round-trips as a string");
     check(parsed["GraphicsQualityLevel"] == "21", "GraphicsQualityLevel serializes as a string, not a number");

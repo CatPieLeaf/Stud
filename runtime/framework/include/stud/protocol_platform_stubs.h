@@ -27,7 +27,7 @@
 // is a real, exported, static native function real DEX code is supposed
 // to call once to register that object. Stud never runs DEX, so this
 // registration call has never happened for ANY of these protocols in
-// this project's entire history -- not a missing stub class exactly,
+// this project's entire history, not a missing stub class exactly,
 // but a missing registration *call*, exactly like the already-fixed
 // `NativeGLJavaInterface.setAppBridgeNotificationListener` gap
 // (game_activity_stubs.h) was. This file's job is to make that same
@@ -35,19 +35,19 @@
 //
 // `systemdialog` is deliberately NOT implemented here: real, confirmed
 // against the library's exported symbols against the actual libroblox.so, it has NO exported
-// `setPlatformImpl` symbol at all (unlike every protocol below) --
+// `setPlatformImpl` symbol at all (unlike every protocol below),
 // `IPlatformSystemDialogHandler` itself has its own real `CppProxy`,
 // suggesting a different (constructor-injection or similar)
 // registration mechanism this session didn't trace. Real, honest open
-// item -- don't add a stub for it without first finding the real
+// item, don't add a stub for it without first finding the real
 // injection point, or it'll sit registered but never actually reached.
 namespace stud::jni_bridge {
 
 // com.roblox.protocols.appagesignalsplatforminterface.generated.
-// IPlatformAppAgeSignals -- real, confirmed against the app's own code method surface (two
+// IPlatformAppAgeSignals. Real, confirmed against the app's own code method surface (two
 // no-arg boolean queries). Honest `false` defaults for both, matching
 // the real base class's own "no platform impl" fallback bodies exactly
-// (`return false;` in the real `IPlatformAppAgeSignals`) --
+// (`return false;` in the real `IPlatformAppAgeSignals`).
 // Stud has no real app-age-signal source, so "not available" is the
 // honest answer, not a fabricated one.
 class AppAgeSignalsPlatformStub : public FakeJni::JObject {
@@ -59,7 +59,7 @@ public:
 };
 
 // com.roblox.protocols.bugreporterplatforminterface.generated.
-// IPlatformBugReporter -- real, confirmed against the app's own code: a single no-arg boolean
+// IPlatformBugReporter. Real, confirmed against the app's own code: a single no-arg boolean
 // query. Honest `false` (matches the real base class's own default).
 class BugReporterPlatformStub : public FakeJni::JObject {
 public:
@@ -69,8 +69,8 @@ public:
 };
 
 // com.roblox.protocols.pinshortcutplatforminterface.generated.
-// IPlatformPinShortcut -- real, confirmed against the app's own code: `isAvailable()` (honest
-// false) and `pinExperience(long,String,String)` (honest no-op -- Stud
+// IPlatformPinShortcut. Real, confirmed against the app's own code: `isAvailable()` (honest
+// false) and `pinExperience(long,String,String)` (honest no-op; Stud
 // has no real home-screen shortcut integration).
 class PinShortcutPlatformStub : public FakeJni::JObject {
 public:
@@ -79,13 +79,13 @@ public:
     FakeJni::JBoolean isAvailable() { return false; }
     void pinExperience(FakeJni::JLong /*universeId*/, std::shared_ptr<FakeJni::JString> /*name*/,
                         std::shared_ptr<FakeJni::JString> /*iconUrl*/) {}
-    // Real, live-caught addition -- and a real lesson about working from
+    // Real, live-caught addition, and a real lesson about working from
     // an older copy of the app. This protocol was the LAST of the six still failing to
     // register, and the engine's own Djinni glue named the cause exactly:
     //   djinni (djinni_support.cpp:339): GetMethodID returned null
     //   ... IPlatformPinShortcut.getDesiredThumbnailFormat ()Ljava/lang/String;
     // That method does not exist in the older copy of this class that
-    // this project had been reading -- that copy is of an OLDER APK,
+    // this project had been reading. That copy is of an OLDER APK,
     // while the configured libroblox.so is 2.736.1408. **A stale copy is not
     // automatically current; check it against the live binary before
     // treating "the method isn't there" as meaning it isn't
@@ -96,7 +96,7 @@ public:
         return std::make_shared<FakeJni::JString>("");
     }
     // Same shape again, one APK later: 2.738 asks for this one too.
-    // False for the same reason as isAvailable() -- there is no desktop
+    // False for the same reason as isAvailable(), there is no desktop
     // equivalent of a pinned home-screen shortcut to reveal.
     FakeJni::JBoolean isRevealPinnedExperienceAvailable() { return false; }
     // The action behind the flag above. Nothing to do: there is no
@@ -107,7 +107,7 @@ public:
     // APK's own copy of the class rather than discovered one failed
     // registration at a time: 2.738 adds a V2 pin call and a flag for
     // whether Lua should show a notification afterwards. All false/no-op
-    // for the same reason as isAvailable() -- a desktop has no home
+    // for the same reason as isAvailable(), a desktop has no home
     // screen to pin an experience to.
     FakeJni::JBoolean isPinExperienceV2Available() { return false; }
     void pinExperienceV2(FakeJni::JLong /*universeId*/, FakeJni::JLong /*placeId*/,
@@ -117,12 +117,12 @@ public:
 };
 
 // com.roblox.protocols.devicedisplayplatforminterface.generated.
-// DeviceDisplayCapability -- real Java enum (BRIGHTNESS, WAKELOCK), used
+// DeviceDisplayCapability: real Java enum (BRIGHTNESS, WAKELOCK), used
 // as a real JNI *object* parameter type (Djinni enums are real Java enum
-// instances at the JNI boundary, not raw ints) -- registered here purely
+// instances at the JNI boundary, not raw ints), registered here purely
 // so `hasCapability`'s own real parameter-type signature matches for
 // GetMethodID resolution. No enum constants modeled yet (nothing on
-// Stud's side constructs one to pass in either direction currently) --
+// Stud's side constructs one to pass in either direction currently),
 // grow against real evidence if that changes.
 class DeviceDisplayCapabilityStub : public FakeJni::JObject {
 public:
@@ -131,7 +131,7 @@ public:
 };
 
 // com.roblox.protocols.devicedisplayplatforminterface.generated.
-// IPlatformDeviceDisplayHandler -- real, confirmed against the app's own code 6-method
+// IPlatformDeviceDisplayHandler. Real, confirmed against the app's own code 6-method
 // surface. Honest defaults throughout, matching the real base class's
 // own fallback bodies exactly (0.0f brightness, false for both
 // availability queries, no-op setters).
@@ -151,25 +151,25 @@ public:
 };
 
 // com.roblox.protocols.localstorageplatforminterface.generated.
-// IPlatformLocalStorageHandler -- real, confirmed against the app's own code 13-method
+// IPlatformLocalStorageHandler. Real, confirmed against the app's own code 13-method
 // surface (secure per-user key/value storage). Honest defaults
 // throughout (false/null/0), matching the real base class's own
 // fallback bodies exactly. `getUsers()`'s real return type is
-// `HashSet<Long>` -- previously an honest-but-signature-mismatched
+// `HashSet<Long>`, previously an honest-but-signature-mismatched
 // `nullptr` (a generic `JObject` return computes a `Ljava/lang/Object;`
 // signature, not the real `Ljava/util/HashSet;` one jnivm's method
 // resolution matches against). Fixed now that `android_framework_
 // stubs.h` has a real, functional `JavaUtilHashSetStub` registered
-// under the correct name -- returns a real, empty (not fabricated-
+// under the correct name, returns a real, empty (not fabricated-
 // nonempty) HashSet, with the real, correctly-matching signature.
 // Real, live-caught gap (the engineering notes): every Djinni protocol's
 // `setPlatformImpl` call was recorded as succeeding because it returned
-// without trapping -- but each one left a PENDING JNI EXCEPTION behind,
+// without trapping, but each one left a PENDING JNI EXCEPTION behind,
 // because Djinni's own JNI glue does a real
 // `FindClass("<Interface>$CppProxy")` during registration and that inner
 // class was never registered (`raw jclass=0x0`, live-confirmed for all
 // six protocols). So none of the platform implementations were ever
-// actually installed -- which is why, for example, the real Lua app
+// actually installed: which is why, for example, the real Lua app
 // never once asked Stud's LocalStorage handler who was signed in, and
 // routed to the logged-out `Landing` screen instead of `Home`.
 //
@@ -182,7 +182,7 @@ public:
     DEFINE_CLASS_NAME("com/roblox/protocols/appagesignalsplatforminterface/generated/IPlatformAppAgeSignals$CppProxy")
 
     // Djinni's own glue caches these two off the CppProxy class during
-    // registration and throws java.lang.Error if either is missing --
+    // registration and throws java.lang.Error if either is missing,
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
@@ -202,7 +202,7 @@ public:
 // registered alongside the other six. That was invisible until
 // PlatformSystemDialogHandler.INSTANCE started resolving: with the real
 // singleton reachable, Djinni's own glue goes on to look this inner
-// class up and threw `djinni::jni_exception` when it was absent --
+// class up and threw `djinni::jni_exception` when it was absent,
 // live-caught as `RBXCRASH: UnhandledException (djinni::jni_exception)`
 // during boot, which left the Lua app never routing anywhere.
 class SystemDialogCppProxyStub : public FakeJni::JObject {
@@ -221,7 +221,7 @@ public:
     DEFINE_CLASS_NAME("com/roblox/protocols/bugreporterplatforminterface/generated/IPlatformBugReporter$CppProxy")
 
     // Djinni's own glue caches these two off the CppProxy class during
-    // registration and throws java.lang.Error if either is missing --
+    // registration and throws java.lang.Error if either is missing,
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
@@ -241,7 +241,7 @@ public:
     DEFINE_CLASS_NAME("com/roblox/protocols/designfoundationsplatforminterface/generated/IPlatformDesignFoundations$CppProxy")
 
     // Djinni's own glue caches these two off the CppProxy class during
-    // registration and throws java.lang.Error if either is missing --
+    // registration and throws java.lang.Error if either is missing,
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
@@ -261,7 +261,7 @@ public:
     DEFINE_CLASS_NAME("com/roblox/protocols/devicedisplayplatforminterface/generated/IPlatformDeviceDisplayHandler$CppProxy")
 
     // Djinni's own glue caches these two off the CppProxy class during
-    // registration and throws java.lang.Error if either is missing --
+    // registration and throws java.lang.Error if either is missing,
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
@@ -281,7 +281,7 @@ public:
     DEFINE_CLASS_NAME("com/roblox/protocols/localstorageplatforminterface/generated/IPlatformLocalStorageHandler$CppProxy")
 
     // Djinni's own glue caches these two off the CppProxy class during
-    // registration and throws java.lang.Error if either is missing --
+    // registration and throws java.lang.Error if either is missing,
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
@@ -301,7 +301,7 @@ public:
     DEFINE_CLASS_NAME("com/roblox/protocols/pinshortcutplatforminterface/generated/IPlatformPinShortcut$CppProxy")
 
     // Djinni's own glue caches these two off the CppProxy class during
-    // registration and throws java.lang.Error if either is missing --
+    // registration and throws java.lang.Error if either is missing,
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
@@ -318,7 +318,7 @@ public:
 
 // The `<X>Core$CppProxy` half of each protocol. Djinni resolves BOTH
 // the platform interface's CppProxy and the Core's during registration
-// -- live-confirmed, the Core one was the next
+// live-confirmed, the Core one was the next
 // "djinni (djinni_support.cpp:313): FindClass returned null" after the
 // platform-side proxies were added. Same real shape.
 class AppAgeSignalsCoreCppProxyStub : public FakeJni::JObject {
@@ -392,7 +392,7 @@ public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/localstorageplatforminterface/generated/"
         "IPlatformLocalStorageHandler")
-    // Real, working implementation -- not honest-default stubs any more.
+    // Real, working implementation, not honest-default stubs any more.
     //
     // Why this matters (live-traced, the engineering notes): the real Lua app
     // asks the platform who is logged in via this protocol. Returning 0
@@ -404,7 +404,7 @@ public:
     // Backed by a real in-memory store, seeded from Stud's own real
     // authenticated identity (see set_real_current_user() /
     // seed_secure_value() below, called from main.cpp). Every key the
-    // engine asks for is logged BY NAME ONLY -- never the value, which
+    // engine asks for is logged BY NAME ONLY, never the value, which
     // is a real credential.
     FakeJni::JBoolean deleteCurrentUserValues() {
         store().erase(current_user());
@@ -434,7 +434,7 @@ public:
         return lookup(static_cast<long long>(userId), key, "getSecureValueForUser");
     }
     // Every account this install knows about. This is how the app's own
-    // account switcher enumerates them -- an empty set means "no other
+    // account switcher enumerates them, an empty set means "no other
     // accounts", so a second sign-in would appear to replace the first
     // rather than sit alongside it. The store is already keyed by user
     // id and persisted that way, so the real answer is simply its keys.
@@ -470,7 +470,7 @@ public:
     //
     // Seeding never overwrites what was restored from disk. Process A
     // authenticates with the one cookie the keyring holds, so its idea of
-    // "the" user is whichever account that cookie belongs to -- but the
+    // "the" user is whichever account that cookie belongs to, but the
     // user may have switched accounts inside the app since, and the store
     // is the record of that. Letting the seed win would silently drag the
     // app back to the earlier account on every launch, and would
@@ -491,7 +491,7 @@ public:
                                    const std::string& value) {
         auto& slot = store()[user_id][key];
         if (!slot.empty()) {
-            std::printf("stud: LocalStorage already has key=\"%s\" for user=%lld -- keeping it\n",
+            std::printf("stud: LocalStorage already has key=\"%s\" for user=%lld, keeping it\n",
                         key.c_str(), user_id);
             std::fflush(stdout);
             return;
@@ -507,13 +507,13 @@ public:
     // Stud exits: the engine writes the signed-in user and its session
     // material here, and reads them back on the next launch to decide
     // whether to route to Home or to the logged-out screen (its own
-    // `cachedUserId` -- live-traced as the exact input to that
+    // `cachedUserId`, live-traced as the exact input to that
     // decision). A real device persists this the same way; keeping it in
     // memory made Stud permanently "first launch, nobody signed in".
     //
     // This holds a real session credential per account, so it does NOT
-    // go to a file of its own. It goes through Stud's safe storage --
-    // encrypted at rest, with the key in the system keyring -- via the
+    // go to a file of its own. It goes through Stud's safe storage,
+    // encrypted at rest, with the key in the system keyring, via the
     // hooks below, which the owning process wires to whatever can reach
     // the keyring from where it runs. Values are never logged.
     static void set_storage_hooks(std::function<void(const std::string&)> save,
@@ -608,7 +608,7 @@ private:
         std::string k = key->asStdString();
         auto user_it = store().find(user);
         bool found = user_it != store().end() && user_it->second.count(k) != 0;
-        // Key name only -- the value is a real credential.
+        // Key name only, the value is a real credential.
         std::printf("stud: LocalStorage.%s(key=\"%s\", user=%lld) -> %s\n", what, k.c_str(), user,
                     found ? "hit" : "MISS");
         std::fflush(stdout);
@@ -637,9 +637,9 @@ public:
 };
 
 // com.roblox.protocols.designfoundationsplatforminterface.generated.
-// DesignTokens -- real record class (RGBA/ColorTokenVariants-backed
+// DesignTokens; real record class (RGBA/ColorTokenVariants-backed
 // theming data). Registered purely for `onTokensUpdated`'s own real
-// parameter-type signature to match -- Stud has no real design-token
+// parameter-type signature to match; Stud has no real design-token
 // consumer yet, so no fields modeled (grow against real evidence).
 class DesignTokensStub : public FakeJni::JObject {
 public:
@@ -648,7 +648,7 @@ public:
 };
 
 // com.roblox.protocols.designfoundationsplatforminterface.generated.
-// IPlatformDesignFoundations -- real, confirmed against the app's own code 2-method surface,
+// IPlatformDesignFoundations: real, confirmed against the app's own code 2-method surface,
 // both honest no-ops (matches the real base class's own default body).
 class DesignFoundationsPlatformStub : public FakeJni::JObject {
 public:
@@ -659,7 +659,7 @@ public:
     void onTokensUpdated(std::shared_ptr<DesignTokensStub> /*tokens*/) {}
 };
 
-// Registers every protocol-platform stub class above onto `jvm` -- same
+// Registers every protocol-platform stub class above onto `jvm`, same
 // timing requirement as register_android_framework_stubs()/
 // register_game_activity_stubs() (before dlopen(), see
 // process-b/src/main.cpp's own doc comment on why).
@@ -680,7 +680,7 @@ struct ProtocolPlatformBootstrapResult {
     bool design_foundations_set_platform_impl_trapped_abort = false;
 };
 
-// Calls each real `<X>Core.setPlatformImpl(stub)` directly -- the real
+// Calls each real `<X>Core.setPlatformImpl(stub)` directly, the real
 // registration DEX code would normally do, once, at real app startup.
 // Symbols missing from this specific libroblox.so build are skipped
 // individually, not a hard failure, matching every other bridge in this

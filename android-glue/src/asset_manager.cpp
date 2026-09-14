@@ -14,13 +14,13 @@ namespace stud::android_glue {
 void set_asset_base_directory(const std::string& path) { g_asset_base_dir = path; }
 }  // namespace stud::android_glue
 
-// AAssetManager is opaque to callers -- Roblox's code only ever holds and
-// forwards the pointer, never dereferences it -- so an empty concrete type
+// AAssetManager is opaque to callers. Roblox's code only ever holds and
+// forwards the pointer, never dereferences it, so an empty concrete type
 // is enough; there's only ever one real manager (g_asset_base_dir above),
 // identified by this fixed sentinel address.
 struct AAssetManager {};
 
-// AAsset wraps a whole file, mmap'd read-only -- matches real Android's
+// AAsset wraps a whole file, mmap'd read-only, matches real Android's
 // AAsset_getBuffer zero-copy semantics directly, and requires no read/seek
 // bookkeeping since libroblox.so only imports getBuffer/getLength/
 // openFileDescriptor/close (confirmed via the M1 symbol survey), not
@@ -34,7 +34,7 @@ struct AAsset {
 extern "C" {
 
 AAssetManager* AAssetManager_fromJava(JNIEnv* /*env*/, jobject /*assetManager*/) {
-    // No real Java AssetManager object exists in Stud -- the jobject
+    // No real Java AssetManager object exists in Stud, the jobject
     // parameter is intentionally ignored.
     static AAssetManager sentinel{};
     return &sentinel;

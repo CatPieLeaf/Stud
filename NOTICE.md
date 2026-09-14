@@ -79,7 +79,7 @@ and no crash reporting of any kind.
   experiences you open.
 - Your login is stored on disk, encrypted with AES-256-GCM. Only the
   encryption key is held in the system keyring, through the Secret
-  Service interface -- the same arrangement Chromium calls safe storage.
+  Service interface, the same arrangement Chromium calls safe storage.
   The keyring therefore holds one opaque application key rather than a
   readable `.ROBLOSECURITY` value, and deleting that entry makes the
   stored cookie permanently unreadable.

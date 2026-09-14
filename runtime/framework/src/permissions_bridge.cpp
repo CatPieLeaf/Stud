@@ -13,7 +13,7 @@ namespace {
 
 using SetRequestHandlerRawFn = void (*)(JNIEnv*, jobject, jstring, jstring, jobject);
 
-// The app's own literals. No exported getters exist for this protocol --
+// The app's own literals. No exported getters exist for this protocol;
 // see the header.
 constexpr const char* kProtocol = "PermissionsProtocol";
 constexpr const char* kMicrophone = "MICROPHONE_ACCESS";
@@ -57,7 +57,7 @@ std::string json_array(const std::vector<std::string>& items) {
 }
 
 // AUTHORIZED when everything asked for is granted, ACCESS_DENIED
-// otherwise -- the engine's own two words, from its own log strings.
+// otherwise, the engine's own two words, from its own log strings.
 std::string status_response(const std::string& payload) {
     std::vector<std::string> missing;
     for (const auto& permission : requested_permissions(payload)) {
@@ -77,7 +77,7 @@ std::string supports_response(const std::string&) {
 
 // No upsell, ever. The upsell is Android's "you dismissed this, here is
 // why we need it" screen, which needs a permission dialog to send the
-// user to -- and there is none here.
+// user to, and there is none here.
 std::string upsell_response(const std::string&) {
     return "{\"upsellStatus\":\"HIDE_UPSELL\",\"hiddenUpsellPermissions\":[]}";
 }

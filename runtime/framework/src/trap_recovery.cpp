@@ -39,7 +39,7 @@ namespace stud::jni_bridge {
 namespace {
 
 
-// Thread-local, not a plain global -- only the thread that armed a
+// Thread-local, not a plain global, only the thread that armed a
 // checkpoint gets its SIGTRAP/SIGABRT/SIGSEGV redirected; a signal
 // delivered to a different thread while this is armed sees a null
 // checkpoint here and falls through to real default behavior.
@@ -50,22 +50,22 @@ thread_local sigjmp_buf* g_armed_checkpoint = nullptr;
 // (arm_abort_trap_tolerating_wild_sigsegv()) rather than loosening the
 // heuristic itself: the delta check exists to keep genuinely wild/null-
 // pointer bugs fatal (so they get root-caused, not silently papered
-// over) everywhere except the few call sites -- like a best-effort
-// background probe of not-yet-fully-wired Roblox internals -- where a
+// over) everywhere except the few call sites, like a best-effort
+// background probe of not-yet-fully-wired Roblox internals, where a
 // crash is expected to be survivable and shouldn't take the whole
 // process down.
 thread_local bool g_tolerate_wild_sigsegv = false;
 
 // 512KiB per-thread alt signal stack, needed because the SIGSEGV
 // recovery case (a stack-overflow guard-page hit) means the faulting
-// thread's own stack is, by definition, exhausted -- the handler can't
+// thread's own stack is, by definition, exhausted, the handler can't
 // run on it without immediately double-faulting.
 thread_local void* g_sigaltstack_mem = nullptr;
 
 void ensure_sigaltstack_for_current_thread() {
     constexpr size_t kAltStackSize = 1 << 19;
     if (g_sigaltstack_mem == nullptr) {
-        // Deliberately never freed -- one small allocation per thread
+        // Deliberately never freed, one small allocation per thread
         // for the process's whole life.
         g_sigaltstack_mem = std::malloc(kAltStackSize);
     }
@@ -75,8 +75,8 @@ void ensure_sigaltstack_for_current_thread() {
     ss.ss_flags = 0;
     // Real fix for a genuine bug: siglongjmp() out of a handler running
     // on the altstack never goes through a real sigreturn, so the
-    // kernel's own per-thread SS_ONSTACK bookkeeping is never cleared --
-    // every subsequent signal on that thread would then be delivered on
+    // kernel's own per-thread SS_ONSTACK bookkeeping is never cleared.
+    // Every subsequent signal on that thread would then be delivered on
     // whatever the CURRENT (possibly exhausted) stack is instead of the
     // dedicated altstack. Re-issuing sigaltstack() on every arm (cheap,
     // no allocation) clears the stale flag each time.
@@ -88,22 +88,22 @@ void ensure_sigaltstack_for_current_thread() {
 // that an external debugger never catches this binary's own exec, because
 // real bionic's linker64 loads it via its own internal ELF-mapping
 // logic (the same code path as a manual dlopen()), never a second,
-// real execve() -- so a debugger only ever sees linker64's own (symbol-less)
+// real execve(), so a debugger only ever sees linker64's own (symbol-less)
 // image, and named/source breakpoints for this binary's own code never
 // resolve. Rather than keep fighting that, this reads /proc/self/maps
-// directly (plain, synchronous file I/O -- not strictly async-signal-
+// directly (plain, synchronous file I/O, not strictly async-signal-
 // safe, but this handler already accepts that same tradeoff for
 // snprintf() above; a "good enough for a diagnostic that's about to
 // crash the process anyway" call, not production-hardened code) and
 // resolves a raw address to "which mapped file + what offset into it",
 // the same real, load-bearing signal this session's own static analysis static
 // analysis already used successfully (cross-referencing a raw file
-// offset against the ELF headers/nm/static analysis output) -- so a wild/fatal crash's
+// offset against the ELF headers/nm/static analysis output), so a wild/fatal crash's
 // real origin can be root-caused offline afterward without needing a
 // live debugger session at all.
 void describe_address(const char* label, uintptr_t addr) {
     // A process with libroblox.so (116MB+) and its full dependency
-    // closure mapped has a /proc/self/maps well past a few KB -- a real,
+    // closure mapped has a /proc/self/maps well past a few KB, a real,
     // confirmed-live bug this session: an earlier 4KB stack buffer
     // silently truncated before reaching the mappings this actually
     // needed to resolve, so every real address came back "no mapping
@@ -134,7 +134,7 @@ void describe_address(const char* label, uintptr_t addr) {
         const char* eol = std::strchr(line, '\n');
         unsigned long start = 0, end = 0, file_off = 0;
         char path[512] = {};
-        // sscanf is not async-signal-safe either -- same accepted
+        // sscanf is not async-signal-safe either, same accepted
         // tradeoff noted above.
         std::sscanf(line, "%lx-%lx %*4s %lx %*s %*s %511s", &start, &end, &file_off, path);
         if (addr >= start && addr < end) {
@@ -153,7 +153,7 @@ void describe_address(const char* label, uintptr_t addr) {
 }
 
 // Same real /proc/self/maps parse as describe_address(), but just a
-// yes/no answer -- used to gate a real memory dump (below) to only
+// yes/no answer, used to gate a real memory dump (below) to only
 // addresses already confirmed real and mapped, never a blind
 // dereference of stack garbage.
 bool addr_is_mapped(uintptr_t addr) {
@@ -179,12 +179,12 @@ bool addr_is_mapped(uintptr_t addr) {
     return false;
 }
 
-// Frame-pointer walk from the fault context's own RBP -- real, not a
+// Frame-pointer walk from the fault context's own RBP; real, not a
 // guess: Debug builds (this project's own default, -O0) preserve real
 // frame pointers, so [rbp] = saved caller RBP and [rbp+8] = real return
 // address, standard x86-64 SysV convention. Bounded and defensive (each
 // step's rbp must strictly increase and land in a plausible stack
-// range) since a corrupted/optimized frame can break this chain --
+// range) since a corrupted/optimized frame can break this chain:
 // real, useful data as far as it goes, not proof beyond that point.
 void print_backtrace(uintptr_t start_rbp) {
     uintptr_t rbp = start_rbp;
@@ -193,9 +193,9 @@ void print_backtrace(uintptr_t start_rbp) {
         // one already fixed in stud_trap_handler()'s own near_null rbp
         // dump loop: this doc comment used to claim "if this faults...
         // a hard crash simply ends the walk, which is an acceptable,
-        // honest stopping point" -- that's wrong. A second SIGSEGV
+        // honest stopping point"; that's wrong. A second SIGSEGV
         // while still inside this signal handler, with SIGSEGV blocked
-        // (sigaction's default), does not "end the walk" -- it
+        // (sigaction's default), does not "end the walk"; it
         // terminates the whole process, confirmed live via a real KDE
         // crash-handler notification for exactly this call site on a
         // corrupted-past-some-depth frame chain (the LuaAppDM/
@@ -229,7 +229,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     // so the MMU reports which ones the engine wrote (see
     // render-client/src/mapped_write_barrier.h). Those faults are
     // routine and can run into the tens of thousands per minute, so
-    // this has to come first -- classifying one as a crash killed the
+    // this has to come first, classifying one as a crash killed the
     // render thread (an invisible window), and merely logging one is
     // enough to drown the log and the frame budget.
     if (sig == SIGSEGV) {
@@ -242,7 +242,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
 
     // Temporary raw-syscall breadcrumb (bypasses stdio buffering
     // entirely, so it's visible even if the process dies immediately
-    // after) -- confirms definitively whether this handler is even
+    // after), confirms definitively whether this handler is even
     // entered for a given crash, vs. rejected by the SIGSEGV delta
     // heuristic below, vs. never installed/overwritten by something
     // else (e.g. libroblox.so's own bundled Crashpad). Remove once the
@@ -261,13 +261,13 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         //   - a fault reading through a genuinely null (or near-null)
         //     pointer (fault_addr under one page): a well-understood,
         //     narrow crash class distinct from an arbitrary wild write
-        //     elsewhere in memory -- real, confirmed-live instance root-
+        //     elsewhere in memory; real, confirmed-live instance root-
         //     caused by reading the real
         //     libroblox.so (see engine_v2_bridge.cpp's
         //     nativeAppBridgeV2StartAppWithParams call site): a null
         //     object read inside a non-essential internal telemetry-
         //     logging helper. Global rather than the thread-scoped
-        //     opt-in this used to be -- confirmed via a real, reproduced
+        //     opt-in this used to be, confirmed via a real, reproduced
         //     run that Roblox's own call crashes on a different,
         //     Roblox-spawned worker thread than the one that armed the
         //     checkpoint, so a thread_local "tolerate" flag set on the
@@ -283,8 +283,8 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         bool near_stack = stack_delta <= (1u << 20);
         // Real, live-caught gap (the engineering notes, "the new, current,
         // fully deterministic blocker" entry): a real, ordinary null
-        // `this` deref through a LARGE struct-field offset -- confirmed
-        // live via the compiled code, `cmpq $0x0,0x115c8(%rdi)` with `%rdi==0` --
+        // `this` deref through a LARGE struct-field offset, confirmed
+        // live via the compiled code, `cmpq $0x0,0x115c8(%rdi)` with `%rdi==0`,
         // faults at addr=0x115c8 (71624), well past the old 4096-byte
         // threshold, so this whole crash class fell through to the
         // fatal, unrecovered disposition below instead of getting the
@@ -292,7 +292,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // already gets. Real C++ objects in this binary are large enough
         // that a null-base deref can land anywhere up to a few hundred
         // KB past 0; bumped to match the already-established near_stack
-        // magnitude (1MB) in this same file -- every real, live-observed
+        // magnitude (1MB) in this same file; every real, live-observed
         // heap/ASLR pointer in this process sits at 0x7xxx_xxxx_xxxx or
         // above, so there's no real risk of misclassifying a genuine
         // wild pointer this way.
@@ -307,7 +307,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // Prefer letting the faulting instruction SUCCEED over unwinding out
         // of it. A null-base read is what a real device produces for an empty
         // slot in one of the engine's own handler tables, and the engine's
-        // very next instruction branches on the value being zero -- so mapping
+        // very next instruction branches on the value being zero, so mapping
         // a read-only zero page under the fault and retrying is closer to real
         // behaviour than abandoning the call.
         //
@@ -321,8 +321,8 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // Deliberately narrow: reads only (a second fault on the same page is
         // a write, and falls through to the old behaviour), only in the
         // near-null range, only above the kernel's own mmap_min_addr, and each
-        // page announced once. It cannot hide a wild pointer -- those are not
-        // near-null -- but it does turn a genuine null-object READ into a zero,
+        // page announced once. It cannot hide a wild pointer; those are not
+        // near-null, but it does turn a genuine null-object READ into a zero,
         // which is a real trade and the reason it says so out loud.
         if (near_null) {
             const uintptr_t page_size = 4096;
@@ -346,7 +346,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
                         char buf[192];
                         int n = std::snprintf(
                             buf, sizeof(buf),
-                            "STUD_TRAP: near-null READ at %p -- mapped a zero page and retrying "
+                            "STUD_TRAP: near-null READ at %p, mapped a zero page and retrying "
                             "(the engine's own empty-handler-slot path; see trap_recovery.cpp)\n",
                             info->si_addr);
                         ::syscall(SYS_write, 2, buf, n > 0 ? n : 0);
@@ -358,7 +358,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
 
         if (near_null) {
             // Recovered, but still real, useful evidence of exactly
-            // where -- printed even on the recovered path (not just the
+            // where, printed even on the recovered path (not just the
             // fatal one below) since a near-null fault is rare enough
             // not to spam, and knowing precisely which real libroblox.so
             // function faulted (not just "some near-null SIGSEGV
@@ -370,7 +370,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             describe_address("pc", fault_pc);
 
             // A `call *reg` through a NULL pointer faults with pc==0
-            // *after* the CPU has already pushed the return address --
+            // *after* the CPU has already pushed the return address,
             // so the top of the stack is the instruction immediately
             // following the faulting indirect call, i.e. the real call
             // site. The rbp chain below cannot show this (the callee
@@ -387,17 +387,17 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
 
             // Real, live stack scan for the caller's own saved callee-
             // registers (x86-64 SysV: `push` after `push rbp; mov
-            // rsp,rbp` stores each at successive rbp-8, rbp-16, ...) --
+            // rsp,rbp` stores each at successive rbp-8, rbp-16, ...),
             // safe (only reads already-valid stack memory, no risk of a
             // secondary fault) and far more grounded than trying to
             // reason about which register held what from a static
             // reading it alone (the analysis's own control-flow simplification
             // for this exact function produced explicit "removing
             // unreachable block"/"possible PIC construction" warnings
-            // this session -- not fully trustworthy here). Each slot is
+            // this session, not fully trustworthy here). Each slot is
             // run through describe_address(): a real heap/lib pointer
             // resolves to a real mapped region, stack garbage or a
-            // small integer won't -- lets real evidence, not a guess,
+            // small integer won't: lets real evidence, not a guess,
             // say which saved register is the struct pointer whose
             // +0x430 field faulted.
             // Real, live-caught bug (the engineering notes): this loop used
@@ -406,11 +406,11 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             // already correctly gates on addr_is_mapped(). If `rbp`
             // itself was corrupted by the original fault, this raw read
             // could fault a SECOND time while still inside the signal
-            // handler -- and a second SIGSEGV while the first is being
+            // handler, and a second SIGSEGV while the first is being
             // handled is unrecoverable: the process dies outright,
             // before ever reaching the real siglongjmp() recovery below.
             // This silently defeated trap_recovery's own entire purpose
-            // for any crash where rbp wasn't a valid stack address --
+            // for any crash where rbp wasn't a valid stack address:
             // confirmed live: a real, known, "recovered" crash
             // (initializeLuaAppWithLoggedInUser's null-field fault) was
             // actually taking the whole process down every single time,
@@ -426,7 +426,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
                 describe_address(label, value);
 
                 // Real, live struct-field dump for anything that
-                // resolved to real, mapped memory -- reads are safe
+                // resolved to real, mapped memory, reads are safe
                 // (addr_is_mapped() already confirmed it; heap pages
                 // are contiguous readable memory even a bit past one
                 // logical allocation's own bounds). Prints 0x400..0x448
@@ -447,7 +447,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // Real, live-caught bug: g_tolerate_wild_sigsegv (set by
         // arm_abort_trap_tolerating_wild_sigsegv(), see its own doc
         // comment) was defined and armed/disarmed correctly but never
-        // actually CONSULTED anywhere in this classification -- a
+        // actually CONSULTED anywhere in this classification, a
         // genuinely wild-shaped fault (neither near_stack nor near_null)
         // always took the unconditional fatal exit below regardless of
         // whether the calling thread had opted in to tolerate exactly
@@ -455,7 +455,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // crash (the engineering notes): a real, evidence-confirmed (CFI +
         // the engine's own code) C++ exception-unwind landing pad on a
         // Roblox-spawned background worker thread, garbage %rax, neither
-        // near_stack nor near_null -- exactly the class this opt-in
+        // near_stack nor near_null, exactly the class this opt-in
         // exists for, silently unable to ever take effect.
         if (!near_stack && !near_null && !g_tolerate_wild_sigsegv) {
             auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
@@ -468,7 +468,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         if (g_tolerate_wild_sigsegv && !near_stack && !near_null) {
             char buf[96];
             int n = std::snprintf(buf, sizeof(buf),
-                                   "STUD_TRAP: wild-shaped fault tolerated (opted in) -- "
+                                   "STUD_TRAP: wild-shaped fault tolerated (opted in), "
                                    "attempting recovery\n");
             ::syscall(SYS_write, 2, buf, n > 0 ? n : 0);
         }
@@ -482,20 +482,20 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
 
     // Real, live-caught structural gap (the engineering notes): g_armed_
     // checkpoint is thread_local by design (a checkpoint only makes
-    // sense to resume on the same thread's own stack -- siglongjmp
+    // sense to resume on the same thread's own stack, siglongjmp
     // across threads is not something sigsetjmp/siglongjmp support at
     // all, it would resume a different thread's saved register/stack
     // state while running on this thread's signal stack, corrupting
     // both). But several real, already-observed near_null crashes
     // (initializeLuaAppWithLoggedInUser, the UpdateSurfaceApp/Game
     // async handler) fault on Roblox's own internal "RBX Main
-    // task-queue worker" thread -- a thread OUR code never called
+    // task-queue worker" thread, a thread OUR code never called
     // call_trapping_abort()/run_bounded_v2_call() on directly, so it
     // never armed a checkpoint of its own. Confirmed live: this exact
     // path used to fall through to the default SIGSEGV disposition
     // below, which is fatal for the *whole process* (verified via a
     // real KDE crash-handler notification for the crashing thread),
-    // not just the one worker thread -- silently defeating recovery
+    // not just the one worker thread, silently defeating recovery
     // for every async, off-calling-thread instance of this crash
     // class, independent of the earlier unbounded-stack-read fix.
     //
@@ -518,7 +518,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             char buf[128];
             int n = std::snprintf(buf, sizeof(buf),
                                    "STUD_TRAP: no checkpoint on this thread for a near_null "
-                                   "fault -- exiting only this thread, not the process\n");
+                                   "fault, exiting only this thread, not the process\n");
             ::syscall(SYS_write, 2, buf, n > 0 ? n : 0);
             (void)uctx3;
             ::pthread_exit(nullptr);
@@ -526,7 +526,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     }
 
     // Nothing armed on the receiving thread, and not a recognized
-    // recoverable shape -- print real diagnostics (PC + a frame-pointer
+    // recoverable shape, print real diagnostics (PC + a frame-pointer
     // backtrace, both resolved to "which mapped file + what offset" via
     // /proc/self/maps, see describe_address()'s own doc comment for why
     // this exists instead of relying on an external debugger) before restoring this
@@ -545,7 +545,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     // threads are still live, so one of them touching a DataModel being
     // destroyed underneath it is expected, not a defect. Re-raising made
     // systemd write a 178 MB core dump of a process one line from
-    // _exit(0) -- reported as "random linker64 errors when I close Stud",
+    // _exit(0), reported as "random linker64 errors when I close Stud",
     // with si_code SI_TKILL naming this raise() as the source rather than
     // any hardware fault.
     //
@@ -561,17 +561,17 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
 // Real, confirmed-live reason this re-installs on EVERY arm rather than
 // once (std::call_once, this file's own earlier version): libroblox.so
 // bundles Google's Crashpad crash-reporting library (confirmed via its
-// own string table -- ".../CrashCallback/android/
-// ClientCrashpadCallback.inl") -- Crashpad installs its OWN SIGSEGV/
+// own string table, ".../CrashCallback/android/
+// ClientCrashpadCallback.inl"), Crashpad installs its OWN SIGSEGV/
 // SIGABRT/SIGTRAP/etc handlers, lazily, likely triggered by one of the
 // real JNI calls already observed succeeding (nativeAppBridgeAppStart,
 // JNI_OnLoad), i.e. chronologically AFTER this handler's own one-time
 // install. Whichever sigaction() call happens LAST wins (plain
-// replacement, no chaining) -- Crashpad's later install silently
+// replacement, no chaining), Crashpad's later install silently
 // overwrites this one, matching the real, observed symptom (a crash
 // that should have been trapped instead terminates the process
-// unrecovered, with "libc: failed to connect to tombstoned" -- bionic's
-// own separate, additional crash-reporting attempt -- also visible).
+// unrecovered, with "libc: failed to connect to tombstoned", bionic's
+// own separate, additional crash-reporting attempt, also visible).
 // Re-installing immediately before every risky call (cheap: three
 // sigaction() syscalls, same "re-arm every time" pattern already used
 // for the per-thread altstack above) guarantees this handler is the
@@ -621,7 +621,7 @@ bool clear_pending_jni_exception(JNIEnv* env, const char* context) {
     if (pending != nullptr) {
         // jnivm's own ThrowNew() stores the real message as a
         // std::exception_ptr on its Throwable (vm.cpp), not as a Java
-        // field -- so rethrow-and-catch is the only way to read it.
+        // field, so rethrow-and-catch is the only way to read it.
         // Worth the trouble: this is the message libroblox's own Djinni
         // glue passes when it refuses to install a platform impl.
         auto* obj = reinterpret_cast<jnivm::Object*>(pending);
@@ -638,7 +638,7 @@ bool clear_pending_jni_exception(JNIEnv* env, const char* context) {
     }
     std::fprintf(stderr,
                   "stud: %s: clearing a pending JNI exception left over from this call%s%s\n",
-                  context, detail.empty() ? "" : " -- message: ", detail.c_str());
+                  context, detail.empty() ? "" : ", message: ", detail.c_str());
     env->ExceptionClear();
     return true;
 }

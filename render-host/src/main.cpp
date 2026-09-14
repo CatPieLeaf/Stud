@@ -1,5 +1,5 @@
 // stud-render-host: a real, ordinary glibc process hosting ANGLE, the
-// real Wayland window, and the real Vulkan loader -- everything render/
+// real Wayland window, and the real Vulkan loader, everything render/
 // vulkan-wsi/android-glue's native_window.cpp already do, unmodified,
 // just running in its own process instead of linked into the main
 // runtime.
@@ -10,7 +10,7 @@
 // loader" would also require hand-loading real glibc's OWN libc.so.6/
 // libstdc++.so.6 (IFUNC resolvers selected by CPUID, GNU symbol
 // versioning, glibc's own TLS models) to satisfy ANGLE's transitive
-// imports -- dramatically harder and more fragile than anything
+// imports, dramatically harder and more fragile than anything
 // hand-loaded so far in this project. A real, separate glibc process
 // for ANGLE sidesteps that entirely: ANGLE loads via plain, ordinary,
 // fully-robust glibc dlopen(), zero hand-parsing needed. Same pattern
@@ -22,7 +22,7 @@
 //
 // Covers the full real GL/EGL symbol surface libroblox.so's own dynamic
 // symbol table imports (85 entries, confirmed via `the ELF headers --dyn-syms`,
-// not guessed). Vulkan gets a deliberately narrower treatment -- see
+// not guessed). Vulkan gets a deliberately narrower treatment; see
 // render_host_protocol.h's own doc comment for why.
 
 #include "stud/session_log.h"
@@ -87,7 +87,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 
-// Guards every read of and dispatch on the Wayland connection --
+// Guards every read of and dispatch on the Wayland connection:
 // defined further down, next to dispatch_mutex(), where its reasoning
 // lives. Declared here because the roundtrips inside dispatch() need
 // it long before that point in the file.
@@ -97,7 +97,7 @@ std::mutex& wayland_mutex();
 //
 // Two cases, and both are ordinary: the window is hidden (minimised, on
 // another workspace, fully covered), or it is visible but somebody is
-// working in another window -- alt-tabbed away. Rendering a game at full
+// working in another window, alt-tabbed away. Rendering a game at full
 // rate for either is pure waste, and on a laptop it is the difference
 // between a warm machine and a hot one. The engine has no idea any of
 // that is true, so the frame is paced here instead, in the one place
@@ -105,7 +105,7 @@ std::mutex& wayland_mutex();
 //
 // The cost of pacing on focus rather than only on visibility: a window
 // deliberately watched on a second monitor while working in another one
-// is throttled too. That is what the slider is for -- set it high, or
+// is throttled too. That is what the slider is for, set it high, or
 // past the top for Unlimited, and this does nothing.
 //
 // Sleeping in the present call rather than skipping the frame on purpose:
@@ -138,7 +138,7 @@ namespace {
 // file under `content/fonts/` and the ratio that turns a Roblox font size
 // into a pixel height. Anything not in the table falls back exactly the
 // way the real app does (RbxKeyboard.m): 4 -> Bold, 5 -> Light, otherwise
-// Regular, at 0.795 -- and bold carries the real 0.04em letter spacing.
+// Regular, at 0.795, and bold carries the real 0.04em letter spacing.
 struct RobloxFont {
     std::string path;
     float ratio = 0.795f;
@@ -157,7 +157,7 @@ const std::unordered_map<int32_t, RobloxFont>& font_table() {
         const std::string path = assets_dir() + "/android/fonts/font-mappings.json";
         std::FILE* fp = std::fopen(path.c_str(), "rb");
         if (fp == nullptr) {
-            std::printf("stud-render-host: no font mapping at %s -- the text overlay will use "
+            std::printf("stud-render-host: no font mapping at %s, the text overlay will use "
                         "the Source Sans fallback\n", path.c_str());
             std::fflush(stdout);
             return t;
@@ -200,7 +200,7 @@ const std::unordered_map<int32_t, RobloxFont>& font_table() {
 
 // The ids the APK's own mapping describes are legacy Enum.Font values,
 // which run to 51 in this build. Anything above that is a modern
-// FontFace, which the mapping says nothing about -- and, measured
+// FontFace, which the mapping says nothing about, and, measured
 // against the engine, needs no conversion at all: its TextSize IS the em.
 constexpr int32_t kLastLegacyFontEnum = 51;
 
@@ -215,7 +215,7 @@ RobloxFont roblox_font_for(int32_t font_enum) {
     }
     RobloxFont f;
     if (font_enum > kLastLegacyFontEnum) {
-        // A FontFace, not a legacy enum -- in-game chat is one (font=100,
+        // A FontFace, not a legacy enum, in-game chat is one (font=100,
         // TextSize 14 in a box exactly 14 tall). Two things follow, both
         // measured against the engine drawing the same box unfocused:
         // the em is the TextSize itself (a legacy ratio here made the
@@ -230,7 +230,7 @@ RobloxFont roblox_font_for(int32_t font_enum) {
         return f;
     }
     // A legacy id the mapping does not carry: the Source Sans family,
-    // whose own upem/(ascender - descender) really is 0.7955 -- checked
+    // whose own upem/(ascender - descender) really is 0.7955, checked
     // against the files rather than assumed.
     f.ratio = 0.795f;
     if (font_enum == 4) {
@@ -590,7 +590,7 @@ struct RealFns {
 };
 
 // Optional: an entry point the driver may genuinely not have. The
-// caller must handle a null, and does -- see GlBufferStorage, which
+// caller must handle a null, and does; see GlBufferStorage, which
 // falls back to an ordinary mutable allocation.
 template <typename Fn>
 Fn may_resolve(const char* name) {
@@ -642,7 +642,7 @@ void* g_vulkan_handle = nullptr;
 PFN_vkGetInstanceProcAddr g_real_vk_get_instance_proc_addr = nullptr;
 
 // The one real window, captured once at startup. Anything needing it
-// reads this rather than re-deriving it -- re-deriving is what created a
+// reads this rather than re-deriving it, re-deriving is what created a
 // window per call and put a hundred of them on screen.
 ANativeWindow* g_real_window = nullptr;
 
@@ -659,7 +659,7 @@ std::atomic<uint32_t> g_webview_closed{0};
 // completes and the login never does.
 std::mutex g_webview_message_mutex;
 // Deep links handed over by a second stud-ui. Bounded, because a queue
-// nothing drains must not grow for the life of the process -- and if
+// nothing drains must not grow for the life of the process, and if
 // several arrive before Process B looks, the newest is the one the person
 // actually asked for.
 std::mutex g_deep_link_mutex;
@@ -734,7 +734,7 @@ void read_web_view_output(int fd) {
 // Web-view viewers spawned by this process. They are session leaders of
 // their own (setsid, so the compositor treats the window as the viewer's
 // rather than a stray child of the game window), which means nothing
-// tears them down on their own when Stud exits -- live-reported as a
+// tears them down on their own when Stud exits, live-reported as a
 // panel left on screen after the game window closed. Tracked so shutdown
 // can close them.
 //
@@ -768,7 +768,7 @@ void forget_web_view(pid_t pid) {
 //
 // Waits briefly afterwards so the viewer is really gone before this
 // process exits. Without it, shutdown raced the reaper thread that is
-// still blocked in waitpid() -- live-caught as `terminate called without
+// still blocked in waitpid(), live-caught as `terminate called without
 // an active exception`, the runtime destroying a joinable thread while
 // it ran. `wait` is not signal-safe, so only the kill half runs from a
 // handler; the ordinary shutdown paths ask for the wait.
@@ -794,7 +794,7 @@ void close_open_web_views(bool wait_for_exit) {
     }
 }
 
-// A per-message scratch buffer, reused across calls -- avoids a fresh
+// A per-message scratch buffer, reused across calls, avoids a fresh
 // heap allocation for every single GL call (many of which have no
 // buffer payload at all).
 std::vector<uint8_t> g_in_scratch;
@@ -827,7 +827,7 @@ bool write_all(int fd, const void* data, uint32_t len) {
 
 // Real GLES3 bytes-per-texel. The old version assumed 4 components for
 // anything it did not recognise, which silently over-read the caller's
-// buffer by 4x for a real GL_RED upload -- live-caught as a fatal
+// buffer by 4x for a real GL_RED upload, live-caught as a fatal
 // EFAULT on the render socket (the engine uploads 128x2048 GL_RED
 // glyph/mask atlases during real UI bring-up), which killed the render
 // connection permanently and froze the window mid-frame.
@@ -890,13 +890,13 @@ uint32_t gl_pixel_size(GLenum format, GLenum type) {
 
 }  // namespace
 
-// Defined further down, at the main loop that usually calls it -- input
+// Defined further down, at the main loop that usually calls it, input
 // asks for it too, so that a pointer event is never older than the moment
 // it was requested. Declared out here because that definition is at file
 // scope, not in the anonymous namespace below.
 namespace { struct RealWindow; }
 void pump_display(const RealWindow& window, bool fd_readable);
-// Input's own lean dispatch -- see its definition for why it is not
+// Input's own lean dispatch; see its definition for why it is not
 // pump_display.
 void dispatch_input_queue(wl_display* display, bool fd_readable);
 
@@ -908,11 +908,11 @@ bool g_prefer_vulkan = true;
 std::string g_angle_backend;
 bool g_hidpi_enabled = true;
 // Stud's own upscaler, and how far below the screen the engine renders
-// for it -- DLSS's quality presets. The output is never a setting: it is
+// for it, DLSS's quality presets. The output is never a setting: it is
 // always the window's size in the display's own pixels.
 bool g_upscaling_enabled = false;
-// The engine's render size is NOT a setting -- it is pinned to the
-// window's logical size, because moving it moves the UI's size with it --
+// The engine's render size is NOT a setting; it is pinned to the
+// window's logical size, because moving it moves the UI's size with it,
 // and neither is the output: that is the window's own resolution, which
 // the compositor shows 1:1.
 int g_upscale_sharpness_percent = 100;
@@ -925,7 +925,7 @@ bool g_discord_join_button = false;
 // bound texture (and its real dimensions) at every draw and report, per
 // frame, how many draws used a 64x64 texture plus the full GL state and
 // buffer bindings of the last such draw. Off by default; it only reads state
-// and binds nothing -- unlike the read-back that once blacked out the window.
+// and binds nothing, unlike the read-back that once blacked out the window.
 bool cursor_trace_enabled() {
     static const bool on = std::getenv("STUD_TRACE_CURSOR") != nullptr;
     return on;
@@ -972,7 +972,7 @@ void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_
 
     // One-shot, and only under the trace: read the real geometry the cursor
     // draw is about to use. Every piece of surrounding state has repeatedly
-    // measured healthy, so the vertex data itself is the remaining suspect --
+    // measured healthy, so the vertex data itself is the remaining suspect,
     // and guessing at it from the client side is what has stalled this
     // investigation for several sessions.
     // Only sample well after start-up: the first 64x64 draws in a process are
@@ -1041,14 +1041,14 @@ void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_
 //     ERROR: '*' : wrong operand types ... 'highp uint' and 'const int'
 //
 // Real Android GL drivers accept it, which is why the pack ships this
-// way and works on a device. 35 shaders fail here without this -- the
+// way and works on a device. 35 shaders fail here without this, the
 // terrain (SmoothCluster*) and part (DefaultUnified*) shaders, i.e.
 // most of what a game looks like.
 //
 // The rewrite is deliberately narrow: ONLY inside `[...]`, and only
 // where the arithmetic follows an unsigned literal's closing paren
 // (`...255u) * 1 + 0`). A broader "suffix any int after a uint" pass was
-// tried and made things far worse -- 35 failures became 795 -- because
+// tried and made things far worse, 35 failures became 795, because
 // it also rewrote signed contexts where the int was correct. Matching
 // the generated shape exactly is what keeps it safe; anything that does
 // not match is left for ANGLE to judge.
@@ -1233,8 +1233,8 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
 // A texture that samples as though it only has its small mips is either
 // missing its big ones or being told not to use them, and those are
 // different bugs. This records, per texture name, which levels were
-// uploaded and every sampler parameter that can pin the level -- base,
-// max, min/max LOD and the min filter -- and prints one line per texture
+// uploaded and every sampler parameter that can pin the level, base,
+// max, min/max LOD and the min filter, and prints one line per texture
 // the first time it is drawn with.
 void trace_texture_upload(const char* what, GLuint texture, GLint level, GLsizei w, GLsizei h,
                           GLenum format, size_t bytes = 0, uint64_t pbo_offset_plus_one = 0,
@@ -1280,7 +1280,7 @@ void trace_texture_parameter(GLenum target, GLenum pname, GLint value) {
 // A steady 60fps and a 60fps made of alternating 8ms and 40ms frames
 // produce the same number in a counter and feel completely different.
 // Every frame-rate measurement in this project so far has been an
-// average over seconds, which cannot tell those apart -- so a report of
+// average over seconds, which cannot tell those apart, so a report of
 // "the frame rate is fine but it feels bad" had nothing to answer it.
 void note_frame_pacing() {
     static const bool on = std::getenv("STUD_FRAME_PACING") != nullptr;
@@ -1324,13 +1324,13 @@ void note_frame_pacing() {
 // ANGLE keeps a set of extensions "requestable": the driver underneath
 // supports them, but glGetString(GL_EXTENSIONS) does not list them until
 // the application asks for each by name (GL_ANGLE_request_extension).
-// Nothing asked, so the engine saw no block compression at all --
+// Nothing asked, so the engine saw no block compression at all,
 // measured from its own capability line, `Caps: Texture: DXT 0 PVR 0
 // ETC1 0 ETC2 1`.
 //
 // That costs real quality, not just memory. Opaque textures still arrive
 // as ETC2, which ANGLE emulates, but textures WITH ALPHA end up stored
-// uncompressed -- four to eight times the size -- against the engine's
+// uncompressed, four to eight times the size, against the engine's
 // compiled-in 64MB video-memory budget. Its streamer then holds some of
 // them at a low mip forever, which shows up as transparent textures
 // staying blurry while everything else is sharp.
@@ -1357,7 +1357,7 @@ void enable_requestable_extensions(const RealFns& fns) {
     const std::string requestable(available);
 
     // Block compression, in the order the engine prefers it. BPTC is
-    // BC6H/BC7, RGTC is BC4/BC5, S3TC is BC1/BC2/BC3 -- between them they
+    // BC6H/BC7, RGTC is BC4/BC5, S3TC is BC1/BC2/BC3, between them they
     // cover every format the engine asks about.
     static const char* const kWanted[] = {
         "GL_EXT_texture_compression_s3tc",     "GL_EXT_texture_compression_dxt1",
@@ -1387,7 +1387,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
     *out_len = 0;
     // Real pixel-source resolution: when a real GL_PIXEL_UNPACK_BUFFER is
     // bound on the client, `pixels` is a byte offset into it, and the client
-    // sends no pixel bytes at all -- see Header's own doc comment.
+    // sends no pixel bytes at all; see Header's own doc comment.
     auto pixels_ptr = [&]() -> const void* {
         if (hdr.pixel_buffer_offset_plus_one != 0) {
             return reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1);
@@ -1397,7 +1397,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
     // Real, temporary diagnostic answering a real, concrete question: does
     // the engine ever issue a single real draw/clear call, or does it only
     // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
-    // EglSwapBuffers alone (see that case below) -- extended here to the
+    // EglSwapBuffers alone (see that case below), extended here to the
     // three calls that actually put pixels in a frame, since "the swap
     // loop runs" and "something real gets drawn" are two different real
     // facts and this project had only ever confirmed the first one.
@@ -1414,7 +1414,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // opts into asking ANGLE for a specific backend instead, which
             // needs eglGetPlatformDisplayEXT because the platform type is an
             // attribute of display creation and nothing else can express it
-            // -- ANGLE_DEFAULT_PLATFORM was tried first and measured to have
+            // ANGLE_DEFAULT_PLATFORM was tried first and measured to have
             // no effect here, and "gl" does not mean desktop GL to it
             // anyway (it maps to native GLES).
             //
@@ -1422,7 +1422,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // display that initialised, reported success and rendered
             // nothing. That measurement was taken while the window-size
             // mismatch was making the engine rebuild its surface every
-            // frame, so it is worth re-measuring -- but only behind an
+            // frame, so it is worth re-measuring, but only behind an
             // opt-in, and only trusting a frame dump, never a log line.
             EGLDisplay d = EGL_NO_DISPLAY;
             if (!g_angle_backend.empty() && fns.eglGetPlatformDisplayEXT_ != nullptr) {
@@ -1550,7 +1550,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // ANGLE can hand back the *same* EGLSurface for repeated creates
             // against the one native window this process owns (confirmed
             // live: both calls returned 0x1). Minting a fresh handle each
-            // time would alias several handles onto one surface -- the engine
+            // time would alias several handles onto one surface, the engine
             // then destroys an older handle, the shared surface dies, and
             // every later swap fails with EGL_BAD_SURFACE (0x300d) while the
             // engine keeps drawing into nothing. Deduplicate on the real
@@ -1594,14 +1594,14 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         }
         case CallId::EglSwapBuffers: {
             note_frame_pacing();
-            // Shown on the first frame, like the Vulkan path -- so the
+            // Shown on the first frame, like the Vulkan path, so the
             // window never appears empty. No-op on Wayland.
             stud::android_glue::x11_ensure_mapped();
             // The background frame limit is applied before the dispatch
-            // lock is taken -- see throttle_before_dispatch().
+            // lock is taken; see throttle_before_dispatch().
             // Real frame-rate measurement, env-gated (STUD_FPS=1, or
             // STUD_FPS=<seconds> for a different window). Counts swaps and
-            // reports once per window -- per-swap tracing
+            // reports once per window, per-swap tracing
             // (STUD_RENDER_CALL_TRACE) is far too heavy to measure a real
             // in-game session with, since it prints for every draw call as
             // well and changes the thing being measured.
@@ -1629,7 +1629,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // Honest pixel check, env-gated and off by default: read the
             // default framebuffer back BEFORE the swap (after it the back
             // buffer is undefined). Draw counters and "the app reached Home"
-            // both look healthy while the screen is black -- this is the only
+            // both look healthy while the screen is black; this is the only
             // check that answers "did anything actually get drawn". It binds
             // nothing and changes no state; the read-back that once blacked
             // out the window bound an FBO, which this deliberately does not.
@@ -1730,7 +1730,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             if (r == 0) {
                 // A failing swap presents nothing: the engine draws a full
                 // frame and the window stays black. Report the real EGL error
-                // once -- it is the difference between "context lost" and a
+                // once. It is the difference between "context lost" and a
                 // plain bad-surface/bad-match.
                 static bool told = false;
                 if (!told) {
@@ -1833,7 +1833,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::EglTerminate:
             return fns.eglTerminate_(g_displays.at(a[0])) == EGL_TRUE;
         case CallId::EglGetProcAddress: {
-            // Real pointer, meaningful only to Process C itself --
+            // Real pointer, meaningful only to Process C itself.
             // Process B's own eglGetProcAddress stub does NOT hand this
             // raw value back to Roblox (a foreign-process function
             // pointer would be nonsense to call directly); it maps the
@@ -1923,7 +1923,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 0;
         case CallId::GlDrawElements:
             // `indices` (a[3]) is a real VBO-relative byte OFFSET here,
-            // not a client-side pointer -- see glVertexAttribPointer's
+            // not a client-side pointer; see glVertexAttribPointer's
             // own handling below for why that's the real, common case
             // this forwards correctly, and the documented limitation for
             // genuine client-side index arrays.
@@ -1974,12 +1974,12 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlUseProgram: fns.glUseProgram_(static_cast<GLuint>(a[0])); return 0;
         case CallId::GlViewport: fns.glViewport_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
         case CallId::GlVertexAttribPointer:
-            // `pointer` (a[5]) is a VBO-relative byte offset -- correct
+            // `pointer` (a[5]) is a VBO-relative byte offset, correct
             // and sufficient for the overwhelmingly common real-world
             // case (a GL_ARRAY_BUFFER bound via glBindBuffer before this
             // call, per modern GLES usage). Genuine client-side vertex
             // arrays (a real CPU pointer, no VBO bound) are NOT
-            // supported by this forwarding -- would need the pointed-to
+            // supported by this forwarding, would need the pointed-to
             // data copied into the outgoing buffer at every draw call
             // using it, not yet implemented since nothing has confirmed
             // Roblox actually relies on that (rare in modern engines;
@@ -2009,7 +2009,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlShaderSource: {
             // in-buffer shape: one NUL-terminated source string
             // (Roblox's real shader-compile call sites always pass a
-            // single concatenated source, count=1 -- the real GLES2 API
+            // single concatenated source, count=1, the real GLES2 API
             // allows a `count`-way array, but nothing has shown Roblox
             // using more than one; grown against real evidence if that
             // changes).
@@ -2067,7 +2067,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         //     nouveau: stud-render-hos: job timeout, channel 10 killed!
         //     nouveau: gsp: rc ... fault_addr:0 fault_type:0
         //     nouveau: fifo: errored - disabling channel
-        // i.e. a submitted job that never completes -- not a page fault. That
+        // i.e. a submitted job that never completes, not a page fault. That
         // kills the EGL context (eglSwapBuffers -> EGL_CONTEXT_LOST 0x300e),
         // after which glCheckFramebufferStatus returns 0 and the engine aborts
         // with "Unsupported framebuffer configuration" / RBXCRASH:
@@ -2250,7 +2250,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
         case CallId::VkQueuePresentKHR:
             note_frame_pacing();
-            // The throttle happens BEFORE the dispatch lock is taken --
+            // The throttle happens BEFORE the dispatch lock is taken;
             // see throttle_before_dispatch().
             return stud::render_host::vk_queue_present(a[0], in);
         case CallId::VkGetQueryPoolResults:
@@ -2342,7 +2342,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             const bool ok = run_ui_secret_helper("--store-secret", name, value, nullptr);
             std::printf("stud-render-host: handed secret \"%s\" to the keyring helper "
                         "(%zu bytes)%s\n",
-                        name.c_str(), value_bytes, ok ? "" : " -- could not start it");
+                        name.c_str(), value_bytes, ok ? "" : ", could not start it");
             std::fflush(stdout);
             return ok ? 1 : 0;
         }
@@ -2368,7 +2368,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 1;
         }
         case CallId::OpenWebView: {
-            // Payload: url \n title \n cookie... -- handed to the viewer
+            // Payload: url \n title \n cookie..., handed to the viewer
             // on its stdin so no credential is ever visible in a command
             // line or an environment block.
             std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
@@ -2378,7 +2378,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // args[0] != 0 means the caller already knows this belongs to
             // the desktop, not the viewer: it came from the LINKING
             // protocol (GuiService:OpenBrowserWindow), not the web-view
-            // one. Stud does not have to guess from the URL -- and must
+            // one. Stud does not have to guess from the URL, and must
             // not, since blog.roblox.com is a panel while a corp.roblox.com
             // careers page is not.
             if (a[0] != 0) {
@@ -2396,13 +2396,13 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 // NO setsid() here, deliberately. Detaching the child from
                 // this session makes the compositor treat the browser as
                 // an unrelated background launch, so the window opens
-                // behind Stud instead of coming to the front -- exactly
+                // behind Stud instead of coming to the front, exactly
                 // what the user saw. Keeping the session lets the
                 // activation token propagate and the browser raise itself.
                 // Ask the compositor for an activation token first. A
                 // Wayland compositor will not let a process raise its own
-                // window unencouraged -- that is focus-stealing
-                // prevention -- so a browser launched without one opens
+                // window unencouraged; that is focus-stealing
+                // prevention, so a browser launched without one opens
                 // BEHIND Stud. The token, minted against Stud's own
                 // surface, is how a launcher says the user asked for
                 // this. Both variable names are set because which one a
@@ -2444,19 +2444,19 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 std::printf("stud-render-host: handed %s link to the desktop (activation token: "
                             "%s)\n",
                             studio ? "a Roblox Studio" : "an external",
-                            token.empty() ? "none -- it will open unfocused" : "yes");
+                            token.empty() ? "none. It will open unfocused" : "yes");
                 std::fflush(stdout);
                 return 1;
             }
 
             // Everything the WebView protocol asks for opens in the
-            // viewer, including blog.roblox.com -- user-confirmed as the
+            // viewer, including blog.roblox.com, user-confirmed as the
             // right behaviour, and it is what a device does too.
             //
             // A domain test was tried and removed: it classified the
             // Newsroom as external because blog.roblox.com is not the
             // main site, which was wrong. The app's own `windowType`
-            // field cannot decide it either -- live-captured as EMPTY for
+            // field cannot decide it either, live-captured as EMPTY for
             // both an in-app panel (Messages) and the blog. So this
             // protocol carries no signal saying "hand this to the
             // system", and anything that really needs a browser must
@@ -2498,7 +2498,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 // MangoHud belongs to the game window, never to a web
                 // view. This process carries its environment (the layer,
                 // and on the OpenGL paths its dlopen/dlsym shim on
-                // LD_PRELOAD), and a child inherits all of it -- which
+                // LD_PRELOAD), and a child inherits all of it, which
                 // put MangoHud inside QtWebEngine, where it crashes the
                 // viewer. Live-reported: a panel that dies on open with
                 // the overlay enabled.
@@ -2598,7 +2598,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             std::thread([pid] {
                 int status = 0;
                 ::waitpid(pid, &status, 0);
-                // Reaped, so it is no longer ours to kill -- and the pid
+                // Reaped, so it is no longer ours to kill, and the pid
                 // must not be signalled again once the kernel is free to
                 // reuse it.
                 forget_web_view(pid);
@@ -2631,7 +2631,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::DeliverDeepLink: {
             std::string uri(reinterpret_cast<const char*>(in.data()), in.size());
             if (uri.empty()) return 0;
-            // Read before the string is moved into the queue below --
+            // Read before the string is moved into the queue below,
             // reading it after reported 0 bytes every time, which is what
             // a moved-from string is.
             const size_t payload_bytes = uri.size();
@@ -2646,7 +2646,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             }
             // Raise the window, if the launch carried a token to do it
             // with. Stud may well be minimised or behind the browser the
-            // link was clicked in -- joining a game into a window nobody
+            // link was clicked in, joining a game into a window nobody
             // can see is not much of an answer.
             //
             // Handled here rather than in Process B because this process
@@ -2655,8 +2655,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             {
                 const std::string key = "activationToken=";
                 // Said out loud, because the second stud-ui's own stderr
-                // goes nowhere -- it has no terminal and is not teed into
-                // the session log -- so a missing token was invisible
+                // goes nowhere. It has no terminal and is not teed into
+                // the session log, so a missing token was invisible
                 // from both ends.
                 std::printf("stud-render-host: deep link payload %zu bytes, activation token %s\n",
                             payload_bytes,
@@ -2687,7 +2687,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     // a real input event on this seat, which is the thing
                     // a compositor actually checks. It is the only
                     // in-protocol way to come forward when whatever
-                    // launched the link passed nothing -- and a launcher
+                    // launched the link passed nothing, and a launcher
                     // that passes nothing is common, since the token only
                     // exists if the entry asked for startup notification
                     // AND the launcher honoured it.
@@ -2699,7 +2699,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                         stud::android_glue::native_window_activation_token(g_real_window);
                     if (!own.empty()) {
                         stud::android_glue::native_window_activate(g_real_window, own.c_str());
-                        std::printf("stud-render-host: no token given -- raising with our own\n");
+                        std::printf("stud-render-host: no token given, raising with our own\n");
                     } else {
                         std::printf("stud-render-host: could not mint an activation token\n");
                     }
@@ -2710,7 +2710,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     // this point: measured on a real KDE session, the
                     // launcher passes NO token to a URL handler even with
                     // StartupNotify set, and a token Stud mints for
-                    // itself is refused -- correctly -- because the
+                    // itself is refused, correctly, because the
                     // serial it carries is from Stud's last input, which
                     // is stale when the user was clicking in a browser.
                     // That refusal is the protocol working as designed.
@@ -2790,9 +2790,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // A clipboard is not a store: whoever puts something on it
             // owns it and has to hand it over when a paste asks, so a
             // process that sets it and exits copies nothing. This one
-            // cannot hold it either -- on Wayland an offer needs the
+            // cannot hold it either, on Wayland an offer needs the
             // serial of a real input event and this process has no
-            // clipboard plumbing at all -- so wl-copy (Wayland) and
+            // clipboard plumbing at all, so wl-copy (Wayland) and
             // xclip/xsel (X11) do it, each of which forks and stays.
             //
             // The text is never logged: an invite link carries a
@@ -2858,14 +2858,14 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     return 1;
                 }
             }
-            std::printf("stud-render-host: nothing to copy with -- install wl-clipboard "
+            std::printf("stud-render-host: nothing to copy with, install wl-clipboard "
                         "(Wayland) or xclip (X11)\n");
             std::fflush(stdout);
             return 0;
         }
         case CallId::CloseWebView: {
             // The app asked, so the viewer's exit is not a user closing
-            // the panel -- but reporting it either way is what a real
+            // the panel, but reporting it either way is what a real
             // device does (its own activity publishes windowClosed from
             // onDestroy however it was closed), and the app ignores the
             // echo of a close it requested itself.
@@ -2944,7 +2944,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // Roblox's TextSize, turned into an em.
             //
             // `fromRbxFontRatio` is the font's own upem/(ascender -
-            // descender) -- verified against the real files (Arimo
+            // descender), verified against the real files (Arimo
             // 0.895105, HWYGOTH 0.903342, PressStart2P 0.976168, each
             // matching the APK's mapping exactly). Multiplying by it
             // makes the LINE HEIGHT equal TextSize, which is what
@@ -2982,7 +2982,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // Waits for the compositor's real fractional scale rather
             // than answering with the integer fallback. Process B asks
             // once, before the engine starts, and keeps the answer for
-            // the whole session -- so a wrong answer here is wrong
+            // the whole session, so a wrong answer here is wrong
             // everywhere, permanently.
             return static_cast<uint64_t>(
                 stud::android_glue::native_window_wait_for_display_scale_120());
@@ -2998,7 +2998,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::EndSession: {
             // Exits inside the handler, so nothing is written back. The
             // caller is quitting anyway and wants the window gone before
-            // it starts its own teardown -- see the CallId's own comment.
+            // it starts its own teardown; see the CallId's own comment.
             std::printf("stud-render-host: the session ended, shutting down\n");
             close_open_web_views(/*wait_for_exit=*/true);
             exit_now(0);
@@ -3006,7 +3006,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::SetGamePresence: {
             // "<placeId> <jobId>", or empty for the app shell. The
             // metadata lookup (name, creator, thumbnail) needs HTTPS and
-            // JSON, so it runs in stud-ui one-shot -- the same helper
+            // JSON, so it runs in stud-ui one-shot, the same helper
             // shape as the keyring and the region lookup.
             std::string body(reinterpret_cast<const char*>(in.data()), in.size());
             // The tray offers "copy server link" and is a separate
@@ -3080,7 +3080,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             //
             // A pointer event only reaches the queue when something
             // dispatches Wayland, and the main loop does that at most
-            // every STUD_WL_POLL_MS (50ms) -- and not at all while a busy
+            // every STUD_WL_POLL_MS (50ms), and not at all while a busy
             // client keeps the connection saturated, which is exactly
             // when the mouse is moving. The hand could therefore be up to
             // a twentieth of a second ahead of the queue before Process B
@@ -3096,7 +3096,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // A pointer event only enters the queue when something
             // dispatches Wayland, and the main loop does that on a
             // timeout (and not at all while a busy client keeps the
-            // connection saturated -- which is exactly when the mouse is
+            // connection saturated, which is exactly when the mouse is
             // moving). So the pump happens HERE, and rather than answer
             // "nothing yet" and be asked again a few milliseconds later,
             // the reply waits on the compositor's own fd and leaves the
@@ -3126,7 +3126,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
                     continue;
                 }
-                // Asleep until the compositor actually says something --
+                // Asleep until the compositor actually says something,
                 // one wake, and only if there is something to read.
                 pollfd wl{wl_fd, POLLIN, 0};
                 if (::poll(&wl, 1, wait_ms) > 0 && (wl.revents & POLLIN) != 0) {
@@ -3136,7 +3136,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     if (n > 0) break;
                 }
                 // A controller is evdev, not the compositor, so it is not
-                // what this waits on -- it is drained below, at most one
+                // what this waits on. It is drained below, at most one
                 // wait late, which is no worse than the timer this
                 // replaces.
             }
@@ -3352,7 +3352,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlGetIntegerv: {
             // Real, generous fixed count (16) covers every real
             // GLES2 pname's true count (the largest, GL_ALIASED_*_RANGE/
-            // viewport-shaped queries, need at most 4) -- always reading
+            // viewport-shaped queries, need at most 4), always reading
             // a few extra, harmless ints past what a given pname truly
             // uses is safe (the real driver only ever writes the pname's
             // own true count; the rest of the buffer is simply unused,
@@ -3363,7 +3363,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // implements glGetProgramBinary but NOT glProgramBinary (a no-op
             // stub), so with binaries "supported" the engine saves a real
             // binary, later believes it reloaded a program that was never
-            // actually loaded, and draws with it -- which hangs the GPU
+            // actually loaded, and draws with it, which hangs the GPU
             // (nouveau: "job timeout, channel killed") and loses the EGL
             // context, blacking out the window. Advertising no binary formats
             // is a truthful answer for this transport and makes the engine
@@ -3402,7 +3402,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlBufferData:
             // Real, live-caught bug: `usage` rides in a[3] (the client
             // leaves a[2] as a zero placeholder for the data pointer it
-            // cannot send), but this read a[2] -- so every single
+            // cannot send), but this read a[2], so every single
             // glBufferData call in this project's history passed usage=0,
             // an invalid enum, and the driver allocated no storage at
             // all. Caught by a real stud-render-host SIGSEGV inside
@@ -3454,7 +3454,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 sub.in_buffer_len = payload_len;
 
                 // Reused across the whole batch rather than allocated
-                // per call -- a batch holds thousands of them.
+                // per call, a batch holds thousands of them.
                 static thread_local std::vector<uint8_t> sub_in;
                 static thread_local std::vector<uint8_t> sub_out;
                 sub_in.assign(payload, payload + payload_len);
@@ -3523,7 +3523,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 0;
         case CallId::GlGetBufferSubData: {
             // a: target, offset, length. GLES has no glGetBufferSubData, so
-            // read the range back through a real read mapping -- the client
+            // read the range back through a real read mapping, the client
             // needs the buffer's current bytes to honour a non-invalidating
             // write map (see the CallId's own comment in the protocol header).
             const GLenum target = static_cast<GLenum>(a[0]);
@@ -3557,7 +3557,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             trace_texture_upload("compressed", g_bound_texture_2d, static_cast<GLint>(a[1]),
                                  static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
                                  static_cast<GLenum>(a[2]));
-            // a[6] is the real imageSize -- it cannot be derived from the
+            // a[6] is the real imageSize. It cannot be derived from the
             // in-buffer size when the pixels come from a real PBO instead.
             fns.glCompressedTexImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
                                          static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
@@ -3604,7 +3604,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 if (create_xlib == nullptr) {
                     std::fprintf(stderr,
                                   "stud-render-host: the Vulkan driver has no "
-                                  "vkCreateXlibSurfaceKHR -- use the OpenGL render path on X11\n");
+                                  "vkCreateXlibSurfaceKHR, use the OpenGL render path on X11\n");
                     std::fflush(stderr);
                     return kNullHandle;
                 }
@@ -3638,8 +3638,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // wl_egl_window_create, which is where the EGL path applies
             // the surface's logical-size/scale state. Do it here so the
             // surface is configured the same way on both paths.
-            // NEVER ANativeWindow_fromSurface(nullptr, nullptr) here --
-            // that is the call that once spawned a window per invocation,
+            // NEVER ANativeWindow_fromSurface(nullptr, nullptr) here.
+            // That is the call that once spawned a window per invocation,
             // and the guard added since would make it return null anyway.
             // The window this process owns is captured at startup.
             stud::android_glue::native_window_apply_surface_scale(g_real_window);
@@ -3648,7 +3648,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         }
 
         // Process C owns exactly one real window for this MVP (created
-        // once, at startup) -- a fixed sentinel handle (1) stands in for
+        // once, at startup), a fixed sentinel handle (1) stands in for
         // "the" ANativeWindow; acquire/release are real no-ops here
         // since Process C's own window lifetime isn't tied to whatever
         // refcounting Roblox's side does with it.
@@ -3656,15 +3656,15 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 1;
         // Real, live-caught regression (the engineering notes, "Three different
         // 'real' window sizes existed for one window"): these two returned
-        // hardcoded 800x600 while the same process sized its wl_egl_window --
-        // and answered CallId::GetWindowSize -- from android-glue's own real
+        // hardcoded 800x600 while the same process sized its wl_egl_window,
+        // and answered CallId::GetWindowSize, from android-glue's own real
         // ANativeWindow. libroblox.so imports ANativeWindow_getWidth/getHeight
         // directly (render-client/src/native_window_forward.cpp forwards them
         // here), so the engine believed its window was 800x600 while its EGL
         // surface really was 1280x720. DeviceGL then hit
         // "updateMainFramebuffer needs to resize" on every single frame,
         // tried to recreate the window surface, failed (only one window
-        // surface can exist), and gave up on the frame -- which is exactly
+        // surface can exist), and gave up on the frame, which is exactly
         // the black window with a handful of draw calls per frame. One
         // source of truth: android-glue's own real window.
         case CallId::ANativeWindowGetWidth:
@@ -3693,7 +3693,7 @@ std::mutex& dispatch_mutex() {
 //
 // Three different threads touch that one connection: the accept loop, the
 // primary client's own loop, and every secondary-connection thread right
-// after it presents -- and, inside dispatch(), the roundtrips around
+// after it presents: and, inside dispatch(), the roundtrips around
 // eglCreateWindowSurface and eglSwapBuffers. Only the last of those is
 // serialised by dispatch_mutex, so the pumps were free to run against a
 // roundtrip, and against each other.
@@ -3704,7 +3704,7 @@ std::mutex& dispatch_mutex() {
 // listeners, and android-glue's listeners keep ordinary non-atomic state
 // (the window size, the key-repeat timer, the resize bookkeeping). The
 // reported symptom was a SIGSEGV in stud-render-host three seconds into a
-// launch on a machine whose compositor resized the window at startup --
+// launch on a machine whose compositor resized the window at startup,
 // the one configuration that puts compositor events and presents in the
 // same instant.
 //
@@ -3723,7 +3723,7 @@ std::mutex& wayland_mutex() {
 // wl_display_dispatch() blocks until it can dispatch at least one event.
 // That is fine for a single-threaded client, but ANGLE's own Vulkan WSI
 // code reads the same default queue from whichever thread is inside
-// eglSwapBuffers -- so poll() can report the display fd readable and, by
+// eglSwapBuffers, so poll() can report the display fd readable and, by
 // the time this thread calls dispatch, another thread has already drained
 // it. dispatch() then waits for the *next* event, which may never come.
 //
@@ -3739,7 +3739,7 @@ std::mutex& wayland_mutex() {
 // The Vulkan layer is told the window size rather than deriving one
 // (see vk_set_window_size's own comment: deriving means
 // ANativeWindow_fromSurface(nullptr, nullptr), which CREATES windows).
-// It was told once, at startup -- so after a resize the engine still got
+// It was told once, at startup, so after a resize the engine still got
 // the boot size back from vkGetPhysicalDeviceSurfaceCapabilitiesKHR,
 // rebuilt its swapchain at that size, and the compositor scaled the
 // result up to the real window: blurry, and stretched to the new aspect
@@ -3783,7 +3783,7 @@ void pump_wayland(wl_display* display, bool fd_readable);
 //
 // The Wayland path is unchanged and still does the prepare_read/
 // read_events dance under wayland_mutex. X11 has no such queue
-// discipline to get wrong -- Xlib is drained from one place here -- but
+// discipline to get wrong, Xlib is drained from one place here, but
 // it takes the same lock, because the lock is what keeps two threads out
 // of the display connection at once and that is just as true of Xlib.
 void pump_display(const RealWindow& window, bool fd_readable) {
@@ -3846,8 +3846,8 @@ void pump_wayland(wl_display* display, bool fd_readable) {
     // the compositor never got a showable buffer and the window was black
     // no matter what was drawn into it.
     //
-    // read_events still distributes to every queue -- that part is shared
-    // and correct -- but the dispatching is per-queue and stays ours.
+    // read_events still distributes to every queue; that part is shared
+    // and correct, but the dispatching is per-queue and stays ours.
     wl_event_queue* queue = stud::android_glue::native_window_wl_queue();
     if (queue == nullptr) {
         // No queue means no Wayland connection; nothing to pump.
@@ -3869,7 +3869,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
     // The Vulkan driver puts its wl_buffer proxies on the default queue
     // but only dispatches it from inside its own present path, which for
     // this engine runs about once a second. Everything queued in between
-    // just accumulates -- live-caught as 46 discarded wl_buffer.release
+    // just accumulates, live-caught as 46 discarded wl_buffer.release
     // events per buffer in a WAYLAND_DEBUG trace, meaning the driver
     // never learned its buffers came back and had none free to render
     // into. Attaches and commits still looked perfect, and the window
@@ -3882,7 +3882,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 }
 
 // Services one client connection to completion, on its own thread. Used
-// for Process B's connections beyond the first -- each of its stub
+// for Process B's connections beyond the first, each of its stub
 // libraries (libGLESv2, libaaudio, ...) links its own copy of the client
 // and opens its own socket.
 
@@ -3891,7 +3891,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // Everything else is dispatched under one process-wide mutex, which is
 // what keeps concurrent connections from reaching the driver at once.
 // These four cannot be: each one waits on work that only finishes if the
-// rest of the process keeps running -- the main loop pumps the display
+// rest of the process keeps running, the main loop pumps the display
 // and the X11 event queue, and a connection thread does the presenting.
 //
 // Live-caught as a hang on X11: a drag-resize leaves presents queued
@@ -3899,7 +3899,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // vkDeviceWaitIdle to tear it down, and the driver never returns because
 // the GPU is waiting on a present that only the blocked main loop could
 // carry forward. Both threads then wait on each other forever, and it
-// grows more likely the longer the drag -- which is exactly the reported
+// grows more likely the longer the drag, which is exactly the reported
 // "freezes for good if I hold it too long".
 //
 // Vulkan's own rule makes this safe: these entry points require external
@@ -3908,7 +3908,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // The background frame limit, applied BEFORE the dispatch lock is taken.
 //
 // It used to sleep inside the dispatch handler, which holds the one
-// process-wide lock -- so throttling to a few frames a second also held
+// process-wide lock, so throttling to a few frames a second also held
 // audio, input polling and everything else on every other connection for
 // the same tens of milliseconds. Audio is fed from its own connection
 // and stutters if its writes are made to wait; the point of the setting
@@ -3927,8 +3927,8 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::VkWaitForFences:
         case stud::render_host::CallId::VkAcquireNextImageKHR:
         case stud::render_host::CallId::VkQueuePresentKHR:
-        // Audio blocks until the device has taken the samples -- that is
-        // what paces the engine's mixer -- so holding the dispatch lock
+        // Audio blocks until the device has taken the samples; that is
+        // what paces the engine's mixer, so holding the dispatch lock
         // across it makes every other connection wait on the sound card.
         case stud::render_host::CallId::AudioWriteFrames:
         case stud::render_host::CallId::AudioReadFrames:
@@ -3948,8 +3948,8 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
 //
 // The client answers glGetError from a cache refreshed once a frame, so
 // the engine's own error checks no longer say WHICH call failed. When
-// something uploads and does not appear -- a texture stuck at its
-// smallest mip, say -- that is the one thing worth knowing, and it is
+// something uploads and does not appear, a texture stuck at its
+// smallest mip, say. That is the one thing worth knowing, and it is
 // too expensive to leave on.
 void trace_gl_error_after(stud::render_host::CallId id, const RealFns& fns) {
     static const bool on = std::getenv("STUD_GL_TRACE_ERRORS") != nullptr;
@@ -3969,7 +3969,7 @@ void trace_gl_error_after(stud::render_host::CallId id, const RealFns& fns) {
 
 // Ask KWin to focus Stud's own window. See the call site for why this
 // exists at all, and why it is deliberately the last thing tried.
-// In the anonymous namespace, matching the declaration above -- both
+// In the anonymous namespace, matching the declaration above, both
 // blocks in this file are the same namespace.
 namespace {
 void raise_through_kwin() {
@@ -4042,7 +4042,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         // Presentation runs on THIS thread: the engine's Vulkan client is
         // a secondary connection, so vkQueuePresentKHR is handled here,
         // not on the main loop. A Wayland-backed driver needs the display
-        // dispatched to finish presenting -- and the main loop, the only
+        // dispatched to finish presenting, and the main loop, the only
         // thing that pumped it, spends its time blocked on the same
         // dispatch mutex this thread just held. So buffers were attached
         // and committed, every call returned VK_SUCCESS, and nothing was
@@ -4052,7 +4052,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         // on a secondary connection thread while the main loop sat
         // elsewhere. The standalone stud_try_vulkan_window test, which
         // does everything on one thread, presented 300 frames correctly
-        // on the same GPU and window -- that is what narrowed it here.
+        // on the same GPU and window. That is what narrowed it here.
         if (hdr.call_id == CallId::VkQueuePresentKHR) {
             pump_display(real_window, true);
         }
@@ -4078,13 +4078,13 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
 // context this process may no longer own, and any of it can block. While
 // it blocks the Wayland connection is still open and the surface still
 // mapped, so the compositor keeps pinging a client that has stopped
-// answering -- which is exactly KDE's "Stud is not responding". The
+// answering, which is exactly KDE's "Stud is not responding". The
 // window is going away; the kernel reclaims everything this process
 // holds, so there is nothing here worth the risk of hanging.
 // Holds the single-instance lock for as long as this process lives.
 //
 // The lock lives with render-host rather than with stud-ui because
-// stud-ui is designed to hand off and exit immediately -- a lock it held
+// stud-ui is designed to hand off and exit immediately, a lock it held
 // would be released the moment the game started. render-host lives
 // exactly as long as the session does, and the kernel releases an flock
 // when the holder dies however it dies, so there is no stale state to
@@ -4127,7 +4127,7 @@ int main(int argc, char** argv) {
     stud::logging::install_crash_reporter("stud-render-host");
 
     // A web-view viewer is a session leader of its own, so nothing takes
-    // it down with this process -- live-reported as a panel still on
+    // it down with this process, live-reported as a panel still on
     // screen after Stud had closed. The ordinary shutdown paths close
     // them explicitly; this covers being killed instead. Handler-safe:
     // kill() and _exit() are both async-signal-safe, and the pid list is
@@ -4146,7 +4146,7 @@ int main(int argc, char** argv) {
     ::sigaction(SIGHUP, &sa, nullptr);
 
     // Real Stud-level graphics-mode selection, from Process A's Settings
-    // (never an FFlag -- see the call site in ui/src/main.cpp).
+    // (never an FFlag; see the call site in ui/src/main.cpp).
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string_view(argv[i]) == "--background-fps" && i + 1 < argc) {
             // Settings' own slider. STUD_BACKGROUND_FPS still wins, since
@@ -4179,14 +4179,14 @@ int main(int argc, char** argv) {
     // HiDPI on: the buffer follows the display's scale (0 means exactly
     // that). Off: the buffer is the window's logical size and the
     // compositor upscales it. Either way the DISPLAY's own scale is left
-    // alone -- that separation is what makes the off state merely blurry
+    // alone. That separation is what makes the off state merely blurry
     // instead of also wrong.
     stud::android_glue::set_render_scale_120(g_hidpi_enabled ? 0 : 120);
 
     // Stud's own upscaler.
     //
-    // The engine renders below the screen's resolution at scale 1.0 --
-    // correct UI, rounded corners, SSAO, all of it -- and Stud builds the
+    // The engine renders below the screen's resolution at scale 1.0:
+    // correct UI, rounded corners, SSAO, all of it, and Stud builds the
     // presented frame from that image rather than letting the compositor
     // stretch it. The engine's own scale is never touched, because it
     // cannot be: below 1.0 it draws square corners, above it drops SSAO.
@@ -4195,8 +4195,8 @@ int main(int argc, char** argv) {
     // The OUTPUT is not a setting: it is always the window's size in the
     // display's own pixels, pushed on every resize by sync_vk_window_size.
     if (g_upscaling_enabled) {
-        // The engine is PINNED to the window's logical size -- what Stud
-        // renders with HiDPI off -- and never moves. That is not a
+        // The engine is PINNED to the window's logical size, what Stud
+        // renders with HiDPI off, and never moves. That is not a
         // simplification: raising it lays the UI out in more pixels and
         // makes it visibly small, lowering it makes it large, and
         // compensating through the engine's own DPI scale makes it draw
@@ -4213,20 +4213,20 @@ int main(int argc, char** argv) {
     // appear in the desktop's volume mixer from launch, like any other
     // application, so its volume can be set before anything makes noise.
     // Opening talks to the audio server and can block, so it happens on
-    // its own thread -- never on the dispatch loop.
+    // its own thread, never on the dispatch loop.
     stud::render_host::audio_start_output_device();
     // Real, live-caught diagnostic bug: this process's stdout is a
     // redirected file (stud-ui starts it detached, inheriting stdout),
     // so libc block-buffers it and nothing written after the first
     // partial block ever reaches the log while the process stays alive
-    // -- which made every per-call diagnostic here look like "the call
+    // which made every per-call diagnostic here look like "the call
     // never happened" rather than "the line is still in the buffer."
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IOLBF, 0);
     // The user's own graphics-mode choice, honoured rather than merely
     // recorded. Choosing OpenGL means this process does not offer Vulkan
     // at all, so vkCreateInstance answers VK_ERROR_INCOMPATIBLE_DRIVER
-    // and the engine takes its own GLES path -- the same thing it does
+    // and the engine takes its own GLES path, the same thing it does
     // on a device whose driver it cannot use. Nothing here names an
     // FFlag or depends on any Roblox build's internals.
     if (!acquire_single_instance_lock()) {
@@ -4235,7 +4235,7 @@ int main(int argc, char** argv) {
     }
 
     // Discord rich presence, if the user enabled it. Connecting when
-    // Discord is not running is not an error -- it retries on the next
+    // Discord is not running is not an error; it retries on the next
     // presence change.
     if (g_discord_enabled) {
         stud::render_host::discord_rpc_start(stud::render_host::kDiscordApplicationId);
@@ -4244,7 +4244,7 @@ int main(int argc, char** argv) {
     stud::render_host::vk_set_vulkan_enabled(g_prefer_vulkan);
     std::printf("stud-render-host: graphics mode: %s\n", g_prefer_vulkan ? "vulkan" : "opengl");
 
-    // The GPU chosen in Settings, which nothing read back until now -- so
+    // The GPU chosen in Settings, which nothing read back until now, so
     // picking a GPU there changed nothing on either path.
     uint32_t preferred_gpu = 0;
     try {
@@ -4257,7 +4257,7 @@ int main(int argc, char** argv) {
     std::string egl_path, gles_path;
 #ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
     // Which backend ANGLE translates GLES to. Only meaningful in OpenGL
-    // mode -- in Vulkan mode the engine makes no GLES call at all, so
+    // mode, in Vulkan mode the engine makes no GLES call at all, so
     // there is nothing for ANGLE to translate.
     std::optional<stud::render::DevRenderBackendConfig> dev_backend;
     try {
@@ -4316,7 +4316,7 @@ int main(int argc, char** argv) {
     // Hand the Vulkan layer this one window's size, once. It must never
     // derive a window itself: ANativeWindow_fromSurface(nullptr, nullptr)
     // CREATES a new Wayland window whenever the window cache is empty,
-    // and a null Surface never populates that cache -- so calling it from
+    // and a null Surface never populates that cache, so calling it from
     // a query the engine repeats spawned over a hundred real windows.
     g_real_window = window;
 
@@ -4347,7 +4347,7 @@ int main(int argc, char** argv) {
         surface = stud::android_glue::native_window_wl_surface(window);
         if (display == nullptr || surface == nullptr) {
             std::fprintf(stderr,
-                         "stud-render-host: no display server reachable -- neither a Wayland "
+                         "stud-render-host: no display server reachable, neither a Wayland "
                          "compositor nor an X server answered\n");
             return 1;
         }
@@ -4361,7 +4361,7 @@ int main(int argc, char** argv) {
     // directly: android-glue's xdg_toplevel configure handler resizes
     // `window->egl_window`, and creating the wl_egl_window behind its back
     // left that null forever. The compositor's resize requests arrived and
-    // were silently dropped -- the frame grew while the buffer stayed at its
+    // were silently dropped, the frame grew while the buffer stayed at its
     // original size, showing the desktop through the rest of the window.
     // X11 has no wl_egl_window: EGL takes the X window id directly, so
     // there is nothing to create and nothing to resize behind the
@@ -4387,7 +4387,7 @@ int main(int argc, char** argv) {
     RESOLVE(eglGetCurrentContext); RESOLVE(eglQuerySurface); RESOLVE(eglSwapInterval);
     RESOLVE(eglTerminate); RESOLVE(eglGetProcAddress);
     // Optional on purpose: only ANGLE exports it, and host Mesa (the Zink
-    // path) does not -- making it required is what killed render-host at
+    // path) does not, making it required is what killed render-host at
     // startup the first time Zink was actually selected.
     fns.eglGetPlatformDisplayEXT_ =
         reinterpret_cast<PFN_eglGetPlatformDisplayEXT>(stud::render::resolve("eglGetPlatformDisplayEXT"));
@@ -4431,7 +4431,7 @@ int main(int argc, char** argv) {
     RESOLVE(glCompressedTexImage2D); RESOLVE(glCompressedTexSubImage2D); RESOLVE(glReadPixels);
 #undef RESOLVE
 
-    // Real Vulkan loader, for the vkCreateAndroidSurfaceKHR redirect --
+    // Real Vulkan loader, for the vkCreateAndroidSurfaceKHR redirect,
     // same real system libvulkan.so.1 (or ANGLE's own bundled one) any
     // native Vulkan app on this host would load.
     g_vulkan_handle = ::dlopen("libvulkan.so.1", RTLD_NOW);
@@ -4458,7 +4458,7 @@ int main(int argc, char** argv) {
 
     // Real, user-reported bug fixed: both accept() and read_all() below
     // used to block indefinitely with nothing servicing this window's
-    // own Wayland connection in between -- so xdg_wm_base's real ping
+    // own Wayland connection in between, so xdg_wm_base's real ping
     // (which MUST be answered with a pong or the compositor marks the
     // window "not responding") went unanswered for however long Process
     // B took to send its next request (e.g. this project's own ~8s-per-
@@ -4468,7 +4468,7 @@ int main(int argc, char** argv) {
     // of blocking on the socket alone, dispatching real Wayland events
     // on every tick regardless of client activity. Same poll also
     // services xdg_toplevel's close event (see native_window.cpp's own
-    // fix -- close used to be a real no-op, so the window could never
+    // fix, close used to be a real no-op, so the window could never
     // be closed at all): checked every tick, both here and in the inner
     // per-connection loop, so a click closes the window promptly
     // whether or not a client happens to be connected.
@@ -4487,7 +4487,7 @@ int main(int argc, char** argv) {
         // STUD_WL_POLL_MS: how long this loop may block before pumping
         // Wayland again. The Vulkan driver reads the display fd itself,
         // so Stud's own queue often has events waiting while this fd
-        // never becomes readable -- meaning this timeout, not the fd, is
+        // never becomes readable: meaning this timeout, not the fd, is
         // what decides how often buffer releases get dispatched.
         static const int wl_poll_ms = [] {
             const char* v = std::getenv("STUD_WL_POLL_MS");
@@ -4495,7 +4495,7 @@ int main(int argc, char** argv) {
             return n > 0 ? n : 50;
         }();
         ::poll(pfds, 2, wl_poll_ms);
-        // Never wl_display_dispatch() here -- see pump_wayland's own
+        // Never wl_display_dispatch() here; see pump_wayland's own
         // comment: it can park this loop forever once ANGLE reads the
         // same queue from a render thread.
         pump_display(real_window, (pfds[1].revents & POLLIN) != 0);
@@ -4506,7 +4506,7 @@ int main(int argc, char** argv) {
         // Process B connects more than once: each of its stub libraries
         // (libGLESv2, libaaudio, ...) links its own copy of the client and
         // opens its own socket. This loop services one connection inline,
-        // so any further one used to sit in the accept backlog forever --
+        // so any further one used to sit in the accept backlog forever,
         // live-caught as the app freezing the instant a game started,
         // because that is when the engine's FMOD opens its audio device
         // and libaaudio's very first call blocked waiting for a reply that
@@ -4569,7 +4569,7 @@ int main(int argc, char** argv) {
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             }
             trace_gl_error_after(static_cast<stud::render_host::CallId>(hdr.call_id), fns);
-            // A pipelined request wants no answer -- writing one would desync
+            // A pipelined request wants no answer, writing one would desync
             // the stream, since the client is not going to read it.
             if ((hdr.flags & Header::kNoReply) != 0) continue;
             ResponseHeader resp{result, out_len};
@@ -4583,7 +4583,7 @@ int main(int argc, char** argv) {
         // reconnects: Process A exits right after launching, so the only
         // client that ever arrives is the Process B it started. Waiting
         // for a second one left a real window on screen with no engine
-        // behind it -- live-reported as Stud freezing when the in-game
+        // behind it, live-reported as Stud freezing when the in-game
         // leave button is used with "Close Stud when leaving a game" on,
         // which is exactly the case where Process B exits first and the
         // window is meant to go with it.

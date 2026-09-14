@@ -7,7 +7,7 @@
 
 // Real x86-64 instruction decode + emulation, split out from the signal
 // handler itself so it's directly unit-testable as pure functions against
-// real instruction bytes -- no signal/ucontext trickery needed to verify
+// real instruction bytes. No signal/ucontext trickery needed to verify
 // correctness. See cpu_compat.h for the overall module scope and honest
 // testing limitations.
 
@@ -15,7 +15,7 @@ namespace stud::cpu_compat {
 
 struct DecodedPopcnt {
     // 0 means "not a POPCNT instruction (or an addressing mode not yet
-    // supported -- memory operands aren't decoded, only register-to-
+    // supported, memory operands aren't decoded, only register-to-
     // register)". Non-zero is the real encoded instruction length in
     // bytes, needed to advance RIP past it.
     int length = 0;
@@ -25,7 +25,7 @@ struct DecodedPopcnt {
 };
 
 // Decodes a POPCNT instruction at `code` (F3 [REX] 0F B8 /r). Only the
-// register-to-register form is supported (ModRM.mod == 3) -- memory
+// register-to-register form is supported (ModRM.mod == 3), memory
 // operands aren't decoded yet, matching this module's "grow iteratively
 // against real traps" scope (see cpu_compat.h).
 DecodedPopcnt try_decode_popcnt(const uint8_t* code);
@@ -41,7 +41,7 @@ enum class Bmi1Op {
 };
 
 struct DecodedBmi1 {
-    // 0 means "not one of these (or an addressing mode not decoded --
+    // 0 means "not one of these (or an addressing mode not decoded,
     // memory operands, as with POPCNT)". Non-zero is the real encoded
     // length, needed to advance RIP past it.
     int length = 0;
@@ -60,14 +60,14 @@ struct DecodedBmi1 {
 //
 // Three things about this encoding are easy to get wrong, and each one
 // silently produces plausible-looking wrong arithmetic rather than a
-// crash -- which is worse than not emulating at all, since the engine
+// crash, which is worse than not emulating at all, since the engine
 // carries the bad value onward:
 //
 //   * The operands live in VEX.vvvv, which is stored ONE'S-COMPLEMENTED.
 //     Miss it and every one of these reads the wrong source and writes
 //     the wrong destination.
 //   * BLSR, BLSMSK and BLSI all share opcode 0xF3. They are told apart
-//     ONLY by ModRM.reg (/1, /2, /3) -- there is no distinct opcode byte
+//     ONLY by ModRM.reg (/1, /2, /3), there is no distinct opcode byte
 //     for each, and treating them as if there were makes two of the three
 //     execute as the remaining one.
 //   * Operand size comes from VEX.W alone. The 0x66 prefix does not mean
@@ -95,7 +95,7 @@ void emulate_bmi1(const DecodedBmi1& decoded, greg_t* gregs);
 // about where an operand lives, without yet knowing register contents.
 //
 // Kept separate from the instructions that use it because resolving it
-// needs a register file and decoding does not -- so decode stays a pure
+// needs a register file and decoding does not, so decode stays a pure
 // function that can be tested against instruction bytes alone.
 struct EffectiveAddress {
     int base_reg = -1;   // -1: no base register
@@ -121,7 +121,7 @@ struct DecodedMovbe {
     bool is_store = false;  // true: register -> memory (opcode F1)
 };
 
-// Decodes MOVBE at `code` ([REX] 0F 38 F0/F1 /r) -- a load or store that
+// Decodes MOVBE at `code` ([REX] 0F 38 F0/F1 /r), a load or store that
 // byte-swaps as it goes, which is why it only exists in memory forms and
 // why it needs the addressing decode above.
 //
@@ -132,7 +132,7 @@ DecodedMovbe try_decode_movbe(const uint8_t* code);
 
 // Emulates the decoded MOVBE against `gregs`. `next_rip` is needed for
 // the RIP-relative form. Reads or writes the real memory the instruction
-// names -- if that address is bad, this faults exactly where the real
+// names, if that address is bad, this faults exactly where the real
 // instruction would have.
 void emulate_movbe(const DecodedMovbe& decoded, greg_t* gregs, uint64_t next_rip);
 
@@ -145,7 +145,7 @@ int reg_to_greg_index(int reg);
 // counts set bits (32 or 64 depending on `decoded.is_64bit`), writes the
 // result to `decoded.dest_reg`, and updates EFLAGS the same way real
 // POPCNT does (clears CF/OF/SF/AF/PF, sets ZF iff the result is zero).
-// Pure function over a real gregset_t-shaped array -- no signal handling,
+// Pure function over a real gregset_t-shaped array; no signal handling,
 // directly unit-testable with a plain local array standing in for a real
 // mcontext_t's gregs.
 void emulate_popcnt(const DecodedPopcnt& decoded, greg_t* gregs);

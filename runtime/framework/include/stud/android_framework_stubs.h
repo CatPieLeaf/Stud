@@ -13,12 +13,12 @@
 #include <utility>
 #include <vector>
 
-// Real, generic Android application-framework primitives -- not a
+// Real, generic Android application-framework primitives, not a
 // one-off crash fix. the engineering notes' own history is mostly a long
 // chain of "call this one specific native entry point in this one
 // specific order" fixes; the actual structural gap those all share is
 // that Stud never gives Roblox's native code a genuinely *running*
-// framework underneath it -- no persistent message loop, no working
+// framework underneath it. No persistent message loop, no working
 // java.lang.ClassLoader, so any async dispatch or reflective class
 // lookup the real app depends on (the same public, documented Android
 // APIs a real device provides for real) either silently does nothing
@@ -27,26 +27,26 @@
 // This file implements the two real, generic, publicly-documented
 // Android APIs found in actual use by searching the app's own code:
 // android.os.Handler/Looper/HandlerThread (13 files use `new Handler`,
-// 2 use HandlerThread, 2 use Looper.myLooper -- zero use the raw
+// 2 use HandlerThread, 2 use Looper.myLooper, zero use the raw
 // Looper.prepare()/loop() idiom, so that pair is intentionally left as
 // a documented no-op below) and java.lang.ClassLoader (the Djinni
 // classloader-bootstrap idiom already documented at length in
 // the engineering notes). Neither requires reasoning about libroblox.so's own
-// internal machine code -- both are implemented purely against the
+// internal machine code, both are implemented purely against the
 // real, public Android SDK method contracts.
 namespace stud::jni_bridge {
 
-// android.os.Looper -- real semantics that matter to a caller (posted
+// android.os.Looper. Real semantics that matter to a caller (posted
 // work eventually runs, in order). Two real modes, matching two real
 // Android situations:
 //  - HandlerThread's own Looper: a genuinely separate, dedicated real
-//    thread (start() spawns it) -- matches real Android exactly, a
+//    thread (start() spawns it), matches real Android exactly, a
 //    HandlerThread's whole point is running on its own thread.
 //  - The real *main* Looper: real Android runs this ON the real
 //    process main thread, not a spawned worker (some real Android APIs
 //    check `Looper.getMainLooper() == Looper.myLooper()`, and thread
 //    identity is part of the real contract). get_or_create_main_looper()
-//    below does NOT start a dedicated thread for exactly this reason --
+//    below does NOT start a dedicated thread for exactly this reason;
 //    see activity_thread.h's own doc comment for the real driver
 //    (runtime/src/main.cpp's own real render/input loop) that pumps it
 //    on the real main thread instead, via drain_pending().
@@ -59,7 +59,7 @@ public:
     ~LooperStub() { stop(); }
 
     // Idempotent: safe to call more than once. Spawns a real, dedicated
-    // pump thread -- correct for a real HandlerThread's own Looper, NOT
+    // pump thread, correct for a real HandlerThread's own Looper, NOT
     // used for the main looper (see class doc comment above).
     void start(FakeJni::Jvm& jvm);
 
@@ -72,7 +72,7 @@ public:
     // returns immediately without waiting for more. Real use: the
     // process's own real main thread calls this once per real render/
     // input loop iteration (see activity_thread.h), making that thread
-    // genuinely the same thread a real device's main Looper runs on --
+    // genuinely the same thread a real device's main Looper runs on,
     // not a separate worker standing in for it.
     void drain_pending(FakeJni::Jvm& jvm);
 
@@ -84,7 +84,7 @@ public:
     // Real Looper.prepare()/loop() block the *calling* thread forever,
     // tying the Looper's identity to it. No real caller of this pair
     // was found in the app's own code (only Handler/
-    // HandlerThread usage) -- left as documented no-ops rather than
+    // HandlerThread usage), left as documented no-ops rather than
     // guessed at, so a caller expecting the real blocking contract
     // fails loudly/differently instead of silently misbehaving.
     static void prepare() {}
@@ -102,10 +102,10 @@ private:
     std::thread thread_;
 };
 
-// android.os.Handler -- real post()/postDelayed(Runnable) semantics:
+// android.os.Handler; real post()/postDelayed(Runnable) semantics:
 // the Runnable really runs, on the target Looper's real pump thread,
 // dispatched via a normal env->GetObjectClass/GetMethodID("run","()V")/
-// CallVoidMethod -- the same generic JNI path a real device's own
+// CallVoidMethod, the same generic JNI path a real device's own
 // Looper uses, not a Stud-specific shortcut.
 //
 // removeCallbacks/removeCallbacksAndMessages are deliberately NOT
@@ -128,10 +128,10 @@ private:
     std::shared_ptr<LooperStub> looper_;
 };
 
-// android.os.HandlerThread -- a named thread with its own real,
+// android.os.HandlerThread, a named thread with its own real,
 // running Looper, matching the real API's start()/getLooper()/quit()/
 // quitSafely() surface (quit and quitSafely are not distinguished here
-// -- no real caller found that depends on quitSafely draining pending
+// no real caller found that depends on quitSafely draining pending
 // work before stopping; both just stop the pump).
 class HandlerThreadStub : public FakeJni::JObject {
 public:
@@ -149,7 +149,7 @@ private:
     std::shared_ptr<LooperStub> looper_;
 };
 
-// java.lang.ClassLoader -- real loadClass(String)/findClass(String),
+// java.lang.ClassLoader; real loadClass(String)/findClass(String),
 // implemented against env->FindClass the same way a real
 // BaseDexClassLoader ultimately resolves a class, just without a real
 // DEX to search (Stud's FindClass already auto-vivifies/looks up
@@ -166,11 +166,11 @@ public:
     std::shared_ptr<FakeJni::JClass> findClass(std::shared_ptr<FakeJni::JString> name);
 };
 
-// java.lang.Class -- real getClassLoader(), hooked onto the SAME
+// java.lang.Class. Real getClassLoader(), hooked onto the SAME
 // canonical, name-keyed "java/lang/Class" descriptor every other
 // jclass in this process already shares (jvm.registerClass<T>() goes
 // through the identical vm->classes[name] registry InternalFindClass
-// uses, see jnivm's src/jnivm/internal/findclass.cpp) -- not a
+// uses, see jnivm's src/jnivm/internal/findclass.cpp), not a
 // separate, competing type. Registering this is what gives a real
 // method table (loadClass/findClass on ClassLoaderStub above included)
 // to a class name Stud previously never explicitly registered at all;
@@ -184,15 +184,15 @@ public:
 // that is the concrete type `GetObjectClass()` actually returns. A
 // second, unrelated C++ stub type claiming the same real Java class
 // name can never satisfy `UnpackJObject<T>`'s `dynamic_cast`, so every
-// call through it threw `Invalid Reference, Unexpected Type` -- which
+// call through it threw `Invalid Reference, Unexpected Type`, which
 // libroblox turns into `RBXCRASH: UnhandledException` and a trap,
 // killing the thread it happened on (live-confirmed: that is one of the
 // two things killing the engine's own designated internal "main"
-// thread, after which nothing drains its task queue -- see
+// thread, after which nothing drains its task queue; see
 // the engineering notes, "what drains the engine's task queue").
 //
 // Worth being precise about what was lost: nothing. `getClassLoader()`
-// never once returned successfully in this project's history -- before
+// never once returned successfully in this project's history, before
 // this stub existed the method simply wasn't registered (the
 // long-documented "class is null" diagnostic), and after it existed
 // every call threw. `register_java_lang_class_methods()` below attaches
@@ -206,19 +206,19 @@ std::shared_ptr<ClassLoaderStub> shared_class_loader();
 // real class name. Called from register_android_framework_stubs().
 void register_java_lang_class_methods(FakeJni::Jvm& jvm);
 
-// Real, live-tested, negative result -- deliberately NOT registering a
+// Real, live-tested, negative result, deliberately NOT registering a
 // stub for `com/snapchat/djinni/NativeObjectManager`, despite it being
 // a real, confirmed embedded class name (Snap's open-source
-// Djinni C++/Java interop framework, bundled by Roblox -- see this
+// Djinni C++/Java interop framework, bundled by Roblox; see this
 // file's own doc history for the classloader-idiom root-cause trace
 // through this exact class). Tried explicit registration (an empty
 // stub, same shape as every other signature-matching-only class in
 // this codebase) and live-tested it: it changes libroblox.so's own
-// internal Djinni bootstrap control flow -- the usual `[JNIVM]:
+// internal Djinni bootstrap control flow, the usual `[JNIVM]:
 // GetMethodID class is null getClassLoader` diagnostic pair disappears,
 // replaced by a real, differently-shaped `RBXCRASH: UnhandledException
 // (N6djinni13jni_exceptionE std::exception)` (recovered cleanly by
-// trap_recovery.cpp, sig=5) -- but the whole bring-up sequence then
+// trap_recovery.cpp, sig=5), but the whole bring-up sequence then
 // takes 100+ real seconds to reach the same `onAppBridgeNotification`
 // milestone instead of the usual ~10-15s, confirmed via a real,
 // bisected A/B test (reverting only this one registration restored the
@@ -226,15 +226,15 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm);
 // to jnivm's own auto-vivification path (an unregistered `FindClass()`
 // target silently gets an empty stub `Class` under this build's
 // `JNI_DEBUG`) is the actually-correct behavior here, not a gap to
-// fix -- do not re-attempt explicit registration without new evidence
+// fix, do not re-attempt explicit registration without new evidence
 // explaining *why* the slow path happens.
 
-// android.os.Build -- real, standard, static-field-only class. Values
+// android.os.Build: real, standard, static-field-only class. Values
 // match this project's own established desktop-spoof convention
 // (device_params.cpp's build_desktop_device_params(): manufacturer/
 // device name "Stud", real API level "34" passed as os_version at every
 // real call site in process-b/src/main.cpp) rather than inventing new,
-// inconsistent values -- a real caller cross-referencing Build.MODEL
+// inconsistent values, a real caller cross-referencing Build.MODEL
 // against DeviceParams.deviceName would see the same identity either
 // way. FINGERPRINT is a real, correctly-shaped (not fabricated-looking)
 // synthetic value, honestly a Stud build, not impersonating a real
@@ -261,7 +261,7 @@ public:
     static inline std::shared_ptr<FakeJni::JString> ID =
         std::make_shared<FakeJni::JString>("UPB2.230000");
     // Read by the engine during a real game launch, alongside the fields
-    // above -- live-caught as `GetFieldID MISS class=android/os/Build static
+    // above, live-caught as `GetFieldID MISS class=android/os/Build static
     // field=BOOTLOADER` (and USER). Honest values describing what Stud
     // actually is, not a fabricated handset.
     static inline std::shared_ptr<FakeJni::JString> BOOTLOADER =
@@ -274,10 +274,10 @@ public:
         std::make_shared<FakeJni::JString>("user");
 };
 
-// android.os.Build.VERSION -- real, standard, static-field-only class.
+// android.os.Build.VERSION: real, standard, static-field-only class.
 // SDK_INT=34/RELEASE="14" is the real, correct Android-version-to-API-
 // level mapping for the "34" os_version string this project's own
-// build_desktop_device_params() call sites already pass -- kept
+// build_desktop_device_params() call sites already pass, kept
 // consistent with that, not a separately-guessed value.
 class BuildVersionStub : public FakeJni::JObject {
 public:
@@ -293,11 +293,11 @@ public:
         std::make_shared<FakeJni::JString>("REL");
 };
 
-// android.os.Debug -- real, standard static-method-only class.
+// android.os.Debug; real, standard static-method-only class.
 // isDebuggerConnected() is real, honest `false` (matches this file's
 // own established convention for every other "is a debugger attached"
 // query in this codebase, e.g. NativeUserJavaInterfaceStub's own
-// isDebuggerConnected() -- same real answer, different real real class
+// isDebuggerConnected(), same real answer, different real real class
 // callers might ask instead).
 class DebugStub : public FakeJni::JObject {
 public:
@@ -305,13 +305,13 @@ public:
     static FakeJni::JBoolean isDebuggerConnected() { return false; }
 };
 
-// java.lang.Long/Integer/Boolean/Double -- real boxed-primitive types.
+// java.lang.Long/Integer/Boolean/Double; real boxed-primitive types.
 // Real signature match matters here specifically: several real Djinni
 // method signatures already found in this codebase's own real
 // `libroblox.so` (e.g. `IPlatformLocalStorageHandler.getUsers():
 // HashSet<Long>`) take/return these as raw `Object`-erased generic
 // type arguments, which are real `java/lang/Long` instances at the
-// actual JNI boundary (Java generics are type-erased -- there is no
+// actual JNI boundary (Java generics are type-erased, there is no
 // separate "HashSet<Long>" class at runtime, just `HashSet` holding
 // real `Long` objects). `<init>(J)`/`longValue()` etc are the real,
 // minimal constructor+accessor pair each of these needs to be usable
@@ -321,15 +321,15 @@ public:
 // (`FindClass(java/lang/Error) -> raw jclass=0x0`, immediately after it
 // successfully finds the protocol's `$CppProxy`). jnivm ships built-in
 // classes for `java/lang/Throwable` and friends but NOT for `Error`, so
-// that lookup returned null and left a pending JNI exception -- which
+// that lookup returned null and left a pending JNI exception, which
 // made every single `setPlatformImpl()` call fail silently, so no
 // platform implementation was ever actually installed.
-// java.lang.System -- Djinni's own proxy-cache glue calls
+// java.lang.System, Djinni's own proxy-cache glue calls
 // `System.identityHashCode(Object)` while registering a platform
 // implementation, and an unregistered class there made every
 // setPlatformImpl() fail with
 // "djinni (djinni_support.cpp:313): FindClass returned null".
-// android.graphics.Point -- real, plain int x/y pair. Needed because
+// android.graphics.Point. Real, plain int x/y pair. Needed because
 // the engine's `getViewportDisplaySize` reads `x`/`y` field IDs off a
 // Point returned by DeviceUtils below (its own error strings name that
 // exact failure mode).
@@ -344,9 +344,9 @@ public:
     FakeJni::JInt y = 0;
 };
 
-class ContextStub;  // defined in game_activity_stubs.h -- see below
+class ContextStub;  // defined in game_activity_stubs.h; see below
 
-// com.roblox.platform.util.DeviceUtils -- real class name confirmed
+// com.roblox.platform.util.DeviceUtils; real class name confirmed
 // straight out of libroblox.so's own strings, alongside the engine's
 // own error text:
 //   "[FLog::JNINativeHelper] getViewportDisplaySize: Failed to find
@@ -362,7 +362,7 @@ public:
     // the JNI signature from these C++ types, so a plain JObject here
     // registered the method as `(Ljava/lang/Object;)Landroid/graphics/Point;`
     // while the engine looks up
-    // `(Landroid/content/Context;)Landroid/graphics/Point;` -- a real,
+    // `(Landroid/content/Context;)Landroid/graphics/Point;`, a real,
     // live-caught GetMethodID MISS that persisted long after the class
     // itself was registered. ContextStub carries the right class name.
     // Forward-declared rather than included: ContextStub lives in
@@ -391,7 +391,7 @@ public:
     DEFINE_CLASS_NAME("java/lang/Error")
 };
 
-// Same class of gap, registered alongside for the same reason -- these
+// Same class of gap, registered alongside for the same reason; these
 // are the other standard throwable types Djinni-style glue commonly
 // resolves. Harmless if never looked up.
 class JavaLangExceptionStub : public FakeJni::JObject {
@@ -448,10 +448,10 @@ private:
     FakeJni::JDouble value_ = 0.0;
 };
 
-// java.util.Iterator -- real, minimal, backed by a genuine snapshot of
+// java.util.Iterator: real, minimal, backed by a genuine snapshot of
 // whatever real collection produced it (HashSetStub::iterator() below).
 // hasNext()/next() are the only two real methods any of this codebase's
-// own real callers need -- remove() deliberately unimplemented (no real
+// own real callers need, remove() deliberately unimplemented (no real
 // caller found removing via an iterator).
 class JavaUtilIteratorStub : public FakeJni::JObject {
 public:
@@ -470,9 +470,9 @@ private:
     std::size_t index_ = 0;
 };
 
-// java.util.HashSet -- real, genuinely functional (not class-name-only)
+// java.util.HashSet; real, genuinely functional (not class-name-only)
 // backing store. Real Java semantics use equals()/hashCode() for
-// membership; this uses plain object-pointer identity instead -- an
+// membership; this uses plain object-pointer identity instead, an
 // honest simplification (documented, not hidden) that's exactly
 // correct for the real, boxed-primitive contents (Long/Integer/...)
 // every currently-known real caller in this codebase actually stores,
@@ -504,7 +504,7 @@ private:
     std::vector<std::shared_ptr<FakeJni::JObject>> items_;
 };
 
-// java.util.HashMap -- same real, functional-not-just-named approach as
+// java.util.HashMap, same real, functional-not-just-named approach as
 // HashSetStub above, same identity-based-membership honest
 // simplification. put()/get()/containsKey()/size()/isEmpty() cover
 // every real usage shape found in this codebase's own real Djinni
@@ -549,7 +549,7 @@ private:
         entries_;
 };
 
-// Real, evidence-driven addition (not a @Keep guess -- found via a
+// Real, evidence-driven addition (not a @Keep guess, found via a
 // direct scan of libroblox.so's own embedded strings, cross-checked against
 // the real, exact JNI method-signature strings also embedded there):
 // `getSharedPreferences`, `edit`, `putString`, `apply`, `commit`,
@@ -561,10 +561,10 @@ private:
 // Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;`
 // (`putString`). This ties directly to a real, previously-documented
 // mystery (the engineering notes' "FlagCache" / flag-override investigation
-// -- a real device's own logcat shows `"FlagCache: Saved FFlagXxx =
+// a real device's own logcat shows `"FlagCache: Saved FFlagXxx =
 // false to SharedPreference"`): Roblox's own native flag-caching code
 // plausibly reads/writes flag state through this exact real Android
-// API, which Stud has never provided at all until now -- every such
+// API, which Stud has never provided at all until now; every such
 // call would have silently failed the same "class is null"/"method ID
 // null" way this whole session's sweep keeps finding and fixing.
 //
@@ -572,11 +572,11 @@ private:
 // per-name-singleton key/value store, matching real Android's own
 // per-file-singleton `getSharedPreferences(name, mode)` semantics (the
 // same name always returns the same live instance). String-keyed,
-// String-valued only -- the only real, evidenced value type (no
+// String-valued only, the only real, evidenced value type (no
 // putBoolean/putInt/getBoolean/getInt method-name strings were found in
 // the same scan); grown further only if real evidence shows those are
 // actually needed. Deliberately NOT persisted to disk yet (process
-// lifetime only) -- a real, honest, smaller first step; real disk
+// lifetime only): a real, honest, smaller first step; real disk
 // persistence (matching a real device's `SharedPreferences.xml` file
 // backing) is a natural, low-risk follow-up once live evidence shows
 // this path is actually exercised.
@@ -639,15 +639,15 @@ private:
     std::shared_ptr<SharedPreferencesStub> prefs_;
 };
 
-// Real, minimal placeholder for android.content.res.Resources -- same
+// Real, minimal placeholder for android.content.res.Resources, same
 // embedded-string evidence as SharedPreferences above confirms real native
 // code resolves `Context.getResources()` (`getResources` +
 // `()Landroid/content/res/Resources;` both literally embedded), but no
 // further Resources-specific method-name strings were found in the same
-// scan -- grown further only against real evidence, not guessed ahead
+// scan, grown further only against real evidence, not guessed ahead
 // of it (same discipline as SurfaceStub/WebRtcBuildInfoStub elsewhere
 // in this codebase).
-// android.util.DisplayMetrics -- real, public field surface. AGDK's own
+// android.util.DisplayMetrics. Real, public field surface. AGDK's own
 // setup calls `resources.getDisplayMetrics()` right after
 // GameActivity_initializeNativeCode returns, and ResourcesStub had no
 // such method, so the call resolved to null and the engine never got
@@ -670,7 +670,7 @@ public:
 // Seeds the real values Stud's own render surface actually uses, so the
 // engine lays out against the real window rather than a guess.
 
-// android.view.MotionEvent -- real class AGDK's own GameActivity passes
+// android.view.MotionEvent. Real class AGDK's own GameActivity passes
 // straight through to `onTouchEventNative(handle, motionEvent, ...)`, where
 // the engine reads it back field by field. Live-confirmed as the real gap:
 // a running engine resolves exactly these methods (`getSource`,
@@ -682,7 +682,7 @@ public:
 // tool type. `NativeInputInterface.nativePassMouse*` (which Stud already
 // drives) delivers coordinates but says nothing about what kind of device
 // produced them, so an engine fed only that has no way to know a mouse
-// exists -- which is why Roblox never drew its own cursor. The real app's
+// exists, which is why Roblox never drew its own cursor. The real app's
 // own SurfaceView asks Android for no system pointer at all
 // (`RBXSurfaceView.onResolvePointerIcon` returns
 // `PointerIcon.getSystemIcon(ctx, TYPE_NULL)`), so on a real device the
@@ -746,7 +746,7 @@ public:
     }
 };
 
-// android.view.KeyEvent -- same story on the key side: AGDK hands the real
+// android.view.KeyEvent, same story on the key side: AGDK hands the real
 // object to `onKeyDownNative`/`onKeyUpNative` and the engine reads it back.
 // Every one of these was a live `GetMethodID MISS`.
 class KeyEventStub : public FakeJni::JObject {
@@ -781,7 +781,7 @@ public:
 void set_real_display_metrics(int width_px, int height_px, float density);
 
 // Real geometry of the display itself, as reported by the compositor
-// (wl_output, fetched over the render IPC -- only Process C has a
+// (wl_output, fetched over the render IPC, only Process C has a
 // compositor connection). Seeds DisplayMetrics' real xdpi/ydpi, which
 // used to be synthesised as `160 * density` and therefore described no
 // real hardware. Zeroes mean the compositor reported nothing; the
@@ -790,7 +790,7 @@ void set_real_display_output_geometry(int px_w, int px_h, int mm_w, int mm_h);
 
 // The display as Stud actually measured it. Anything that has to
 // describe this screen should read these rather than keep its own
-// constants -- the User-Agent did, and every one of its numbers was
+// constants, the User-Agent did, and every one of its numbers was
 // wrong as a result.
 struct DisplayFacts {
     // The window (what the engine renders into).
@@ -820,7 +820,7 @@ void set_measured_display_density(float density);
 
 // The density DisplayMetrics actually carries, which is what the engine
 // divides raw pointer pixels by (real Android does this in the view
-// layer -- the app's own input handler, whose density divisor is exactly this density). Anything
+// layer, the app's own input handler, whose density divisor is exactly this density). Anything
 // converting between the buffer pixels the compositor reports and the
 // density-independent units the engine's own entry points expect wants
 // THIS, not DisplayFacts::measured_density: the two are equal only while the

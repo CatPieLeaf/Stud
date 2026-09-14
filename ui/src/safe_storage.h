@@ -7,7 +7,7 @@
 //
 // This is the arrangement Chromium and Electron use, and the reason to
 // prefer it here is the same: the keyring ends up with ONE long-lived
-// entry -- "Stud Safe Storage" -- holding a random encryption key,
+// entry. "Stud Safe Storage", holding a random encryption key,
 // instead of an entry per secret sitting there in plaintext under a name
 // that announces what it is. A user browsing KWallet or Seahorse sees an
 // opaque app key rather than a readable ".ROBLOSECURITY" value they
@@ -18,7 +18,7 @@
 // to decrypt rather than yielding a plausible-looking wrong value. The
 // ciphertext lives under Stud's own data directory with owner-only
 // permissions. Losing the keyring entry makes the ciphertext
-// permanently unreadable, which is the intended behaviour -- it means a
+// permanently unreadable, which is the intended behaviour; it means a
 // stolen copy of the file alone is worth nothing.
 //
 // Honest scope: this protects a secret at rest against someone reading
@@ -35,7 +35,7 @@ inline constexpr auto kSafeStorageKeyName = "Stud Safe Storage";
 
 // Encrypts `value` with the safe-storage key (creating that key on first
 // use) and writes it under `name` in Stud's data directory. Returns
-// false and sets *error_out on any failure -- a failed write must not
+// false and sets *error_out on any failure, a failed write must not
 // look like a successful one, or a login silently stops persisting.
 bool store_secret(const QString& name, const QString& value, QString* error_out = nullptr);
 

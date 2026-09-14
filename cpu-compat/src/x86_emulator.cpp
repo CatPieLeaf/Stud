@@ -35,7 +35,7 @@ DecodedPopcnt try_decode_popcnt(const uint8_t* code) {
     uint8_t modrm = code[i];
     i++;
     int mod = (modrm >> 6) & 0x3;
-    if (mod != 3) return result;  // memory operand -- not decoded yet
+    if (mod != 3) return result;  // memory operand, not decoded yet
 
     int reg = ((modrm >> 3) & 0x7) | (rex_r ? 8 : 0);
     int rm = (modrm & 0x7) | (rex_b ? 8 : 0);
@@ -66,7 +66,7 @@ bool decode_memory_operand(const uint8_t* code, size_t& i, uint8_t modrm, bool r
         const int index = ((sib >> 3) & 0x7) | (rex_x ? 8 : 0);
         const int base = (sib & 0x7) | (rex_b ? 8 : 0);
         out->scale = 1 << scale_bits;
-        // index == 100 with REX.X clear means "no index register" -- the
+        // index == 100 with REX.X clear means "no index register", the
         // encoding's way of spelling a base-only address.
         out->index_reg = (index == 4) ? -1 : index;
         if ((sib & 0x7) == 5 && mod == 0) {
@@ -118,7 +118,7 @@ DecodedMovbe try_decode_movbe(const uint8_t* code) {
     size_t i = 0;
 
     // A 0x66 prefix would make this the 16-bit form, which is not
-    // handled -- reject rather than swap the wrong number of bytes.
+    // handled, reject rather than swap the wrong number of bytes.
     if (code[i] == 0x66) return result;
 
     bool rex_w = false, rex_r = false, rex_x = false, rex_b = false;
@@ -179,7 +179,7 @@ DecodedBmi1 try_decode_bmi1(const uint8_t* code) {
     DecodedBmi1 result;
     size_t i = 0;
 
-    // 3-byte VEX only -- see the header for why the 2-byte form cannot
+    // 3-byte VEX only; see the header for why the 2-byte form cannot
     // encode these at all.
     if (code[i] != 0xC4) return result;
     i++;
@@ -268,7 +268,7 @@ void emulate_bmi1(const DecodedBmi1& decoded, greg_t* gregs) {
     gregs[reg_to_greg_index(decoded.dest_reg)] = static_cast<greg_t>(result);
 
     // EFLAGS bit positions: CF=0, ZF=6, SF=7, OF=11. AF and PF are left
-    // untouched -- the SDM leaves them undefined for all four of these.
+    // untouched, the SDM leaves them undefined for all four of these.
     const uint64_t sign_bit = decoded.is_64bit ? (uint64_t{1} << 63) : (uint64_t{1} << 31);
     const bool zero = (decoded.op == Bmi1Op::kBlsmsk) ? false : (result == 0);
     uint64_t eflags = static_cast<uint64_t>(gregs[REG_EFL]);

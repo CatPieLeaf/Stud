@@ -6,13 +6,13 @@
 #include <cstdint>
 
 // Real Android NDK media API declarations (NdkMediaCodec.h, NdkMediaFormat.h)
-// -- signatures as documented/stable in the actual NDK, same "reconstructed
+// signatures as documented/stable in the actual NDK, same "reconstructed
 // from documented behavior, not copied" approach as ndk_types.h.
 //
-// AMediaCodec itself is a deliberate stub (see media_codec.cpp) -- real
+// AMediaCodec itself is a deliberate stub (see media_codec.cpp); real
 // hardware/software video decode is out of scope for the prototype (see
 // the engineering notes, "AMediaCodec (video): stub for prototype, real shim
-// later"). AMediaFormat is a real, working implementation -- it's just a
+// later"). AMediaFormat is a real, working implementation; it's just a
 // key/value property bag, no actual codec capability needed.
 
 extern "C" {
@@ -24,7 +24,7 @@ using media_status_t = int;
 constexpr media_status_t AMEDIA_OK = 0;
 constexpr media_status_t AMEDIA_ERROR_UNSUPPORTED = -10004;
 
-// --- NdkMediaCodec.h (stub -- see media_codec.cpp) ----------------------
+// --- NdkMediaCodec.h (stub; see media_codec.cpp) ----------------------
 
 AMediaCodec* AMediaCodec_createDecoderByType(const char* mime_type);
 AMediaCodec* AMediaCodec_createEncoderByType(const char* mime_type);
@@ -39,7 +39,7 @@ uint8_t* AMediaCodec_getInputBuffer(AMediaCodec* codec, size_t idx, size_t* out_
 uint8_t* AMediaCodec_getOutputBuffer(AMediaCodec* codec, size_t idx, size_t* out_size);
 media_status_t AMediaCodec_queueInputBuffer(AMediaCodec* codec, size_t idx, off_t offset, size_t size,
                                              uint64_t time, uint32_t flags);
-// AMediaCodecBufferInfo's real layout isn't needed -- the stub never
+// AMediaCodecBufferInfo's real layout isn't needed, the stub never
 // writes through this pointer, and pointer-passing ABI doesn't depend on
 // the pointee type.
 ssize_t AMediaCodec_dequeueOutputBuffer(AMediaCodec* codec, void* info, int64_t timeoutUs);
@@ -49,9 +49,9 @@ AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
 // --- NdkMediaFormat.h key-name constants ---------------------------------
 //
 // Real, publicly documented, stable AOSP NDK ABI string constants (not
-// Roblox-specific unknowns -- see frameworks/av's NdkMediaFormat.cpp,
+// Roblox-specific unknowns; see frameworks/av's NdkMediaFormat.cpp,
 // mirrored across every NDK release). Found via a real load: libroblox.so
-// imports these as OBJECT (data) symbols -- some statically-linked
+// imports these as OBJECT (data) symbols; some statically-linked
 // component reads the key *names* through these exported pointers rather
 // than hardcoding string literals, same pattern as __sF (see
 // libc_shim.cpp). AMediaCodec being a stub doesn't make these values

@@ -4,12 +4,12 @@
 // checks read via a thread-local scratch buffer (0x29a47f0, a real
 // pthread_getspecific()-keyed helper). Static static analysis xref search for
 // the real TLS key's own storage global (0x6f4eb88) found zero other
-// references -- a known class of static analysis gap for indirect/PIC-relative
+// references, a known class of static analysis gap for indirect/PIC-relative
 // addressing, not a real "nothing else touches this" fact.
 //
 // Interposes pthread_key_create/pthread_setspecific directly, same
 // real ELF-symbol-level technique already proven in this codebase
-// (pthread_create_interpose.cpp, android_log_interpose.cpp) -- logs
+// (pthread_create_interpose.cpp, android_log_interpose.cpp), logs
 // every real key created and every real value stored into any TLS
 // slot during a live run. If the specific key this check's own reader
 // uses is ever pthread_setspecific()'d anywhere in the real process
@@ -27,7 +27,7 @@ namespace {
 // Off unless asked for. This interpose sits on a path the engine uses
 // constantly: it printed 853 lines of a single launch, none of which
 // says anything unless someone is actively chasing that TLS key. The
-// interpose itself stays in place -- it costs a branch -- so turning it
+// interpose itself stays in place. It costs a branch, so turning it
 // on is a relaunch with STUD_TLS_TRACE=1 rather than a rebuild.
 bool tls_trace_enabled() {
     static const bool enabled = [] {

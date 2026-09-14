@@ -21,7 +21,7 @@ namespace stud::jni_bridge {
 //
 // Stud runs no DEX, so none of that has ever happened: nothing answered
 // the availability request and nothing was subscribed, which is exactly
-// the reported symptom -- opening Messages leaves a grey Roblox panel
+// the reported symptom, opening Messages leaves a grey Roblox panel
 // with no web view over it and no way back.
 //
 // Every string in the protocol (its name, each message id, each JSON
@@ -37,7 +37,7 @@ struct WebViewProtocolIds {
     std::string url_key;
     std::string title_key;
     // Which KIND of window the app is asking for. This is how it tells an
-    // in-app panel apart from a link meant for the system browser --
+    // in-app panel apart from a link meant for the system browser,
     // the domain cannot, since blog.roblox.com is external and still ends
     // in .roblox.com.
     std::string window_type_key;

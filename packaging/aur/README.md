@@ -5,11 +5,11 @@ Three PKGBUILDs live here, and only one of them is published to the AUR.
 | file | package | what it does |
 |------|---------|--------------|
 | `PKGBUILD.stud-bin` + `.SRCINFO.stud-bin` | **`stud-bin`** | **the AUR package.** Installs the release archive CI built from the tag. |
-| `PKGBUILD` | `stud` | builds from source, for building on your own machine. Not publishable -- see below. |
+| `PKGBUILD` | `stud` | builds from source, for building on your own machine. Not publishable; see below. |
 | `PKGBUILD.bin` | — | CI only. Turns an install tree that already exists into a `pkg.tar.zst`. |
 
 They live here rather than only in the AUR repository so the packaging is
-versioned with the code it builds -- a dependency added to Stud and not to
+versioned with the code it builds, a dependency added to Stud and not to
 the PKGBUILDs is a broken package, and that is easier to notice in the
 same commit. `stud-bin` and `stud` carry the same `depends` list for the
 same reason.
@@ -19,7 +19,7 @@ same reason.
 `prepare()` runs `tools/setup.sh`, which downloads Google's NDK, an ANGLE
 checkout and a bionic image from AOSP. makepkg fetches what is listed in
 `source=()` and nothing else, and a clean chroot has no network once the
-build starts -- so that PKGBUILD builds on a normal machine and fails in
+build starts, so that PKGBUILD builds on a normal machine and fails in
 `extra-x86_64-build`.
 
 It cannot be fixed by listing those downloads in `source=()`: ANGLE's own

@@ -1,4 +1,4 @@
-// M4 test: same approach as jni_bridge_test.cpp -- build a DeviceParams and
+// M4 test: same approach as jni_bridge_test.cpp, build a DeviceParams and
 // an InitParams (wrapping it plus a PlatformParams) and read every field
 // back through genuine JNI accessors, not direct C++ member access.
 // See the engineering notes, milestone M4.
@@ -30,10 +30,10 @@ std::string get_string_field(FakeJni::Env& env, jobject obj, jclass cls, const c
 // Real correction (the engineering notes, "InitParams.platformParams reads
 // null" chain): InitParams's own properties are registered as real
 // zero-arg METHODS now, matching AutoValue's actual accessor convention
-// -- confirmed directly against the real libroblox.so, not guessed.
+// confirmed directly against the real libroblox.so, not guessed.
 // DeviceParams's own fields (checked separately below, nested inside a
 // method-returned InitParams.deviceParams()) are still genuine FIELDS,
-// unaffected by this -- only InitParams itself needed correcting.
+// unaffected by this, only InitParams itself needed correcting.
 std::string call_string_method(FakeJni::Env& env, jobject obj, jclass cls, const char* name) {
     jobject result = env.CallObjectMethod(
         obj, env.GetMethodID(cls, name, "()Ljava/lang/String;"));

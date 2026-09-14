@@ -9,13 +9,13 @@
 #include "stud/linker.h"
 
 // FFlag overrides: the mechanism behind Stud's "respect FFlags, unlike
-// Sober" locked decision (see the engineering notes) -- this is also how
+// Sober" locked decision (see the engineering notes); this is also how
 // graphics-API selection is actually controlled. Roblox's engine gates
 // Vulkan with its own internal device blacklist and two real FFlags,
 // confirmed present as strings in libroblox.so:
 // `DebugGraphicsDisableVulkan` and `DebugGraphicsPreferVulkan` (plus
 // `GraphicsMode`/`GraphicsQualityLevel` for the broader quality/backend
-// choice) -- none of this lives in PlatformParams/DeviceParams/InitParams
+// choice), none of this lives in PlatformParams/DeviceParams/InitParams
 // (confirmed by re-checking their own code: zero graphics-related
 // fields in either). Whatever Stud does for graphics-mode control has to
 // go through this flag system, not the params objects.
@@ -32,7 +32,7 @@
 // regardless of the flag's actual bool/int/string type), not invented
 // from nothing. `nativePreloadFlagOverrides` has since been called many
 // times against the real, patched libroblox.so with no crash (see
-// the engineering notes) -- confirms the call itself is well-formed, but
+// the engineering notes), confirms the call itself is well-formed, but
 // whether Roblox's own flag-parsing logic actually reads/applies the
 // overridden values correctly (not just tolerates receiving the string)
 // remains unconfirmed.
@@ -51,11 +51,11 @@ public:
 
     // Loads overrides from a Stud config JSON file: flat
     // {"FlagName": <bool|int|string>, ...}. Throws std::runtime_error on a
-    // malformed file (missing file is not an error -- returns empty
+    // malformed file (missing file is not an error, returns empty
     // overrides, since having no override file is the common case).
     static FlagOverrides load_from_file(const std::string& path);
 
-    // The payload for nativePreloadFlagOverrides -- see wire-format note
+    // The payload for nativePreloadFlagOverrides; see wire-format note
     // above.
     std::string to_wire_format() const;
 

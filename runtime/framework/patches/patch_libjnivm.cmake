@@ -7,7 +7,7 @@
 # Real, confirmed bug this fixes (the engineering notes, "Root cause found:
 # the conditional JNI-vtable trampoline's core assumption breaks..." and
 # its "Plan" follow-up): libroblox.so's own compiled code can overwrite
-# `javaVM.functions` -- the whole JNIInvokeInterface table pointer --
+# `javaVM.functions`, the whole JNIInvokeInterface table pointer,
 # with its own function pointers, completely bypassing every earlier
 # wrapping layer (which only ever protected the ORIGINAL table, and only
 # decided whether to swap %fs based on the CALLER's context, an
@@ -17,7 +17,7 @@
 # regardless of which table `functions` currently points to: the call
 # site itself.
 #
-# String-replace based, NOT a unified diff/line-number patch --
+# String-replace based, NOT a unified diff/line-number patch,
 # deliberately, since libjnivm is fetched against a moving branch
 # (GIT_TAG main, not a pinned commit, see jni-bridge/CMakeLists.txt) and
 # a line-number-anchored diff would silently stop applying (or apply
@@ -39,7 +39,7 @@ file(READ "${jni_h}" content)
 # script by hand), don't double-patch. Real bug fixed here (this
 # session): the original version of this check called return() at
 # top-level, which exits THIS ENTIRE SCRIPT the moment jni.h alone is
-# already patched -- silently skipping every later patch (vm.cpp,
+# already patched, silently skipping every later patch (vm.cpp,
 # method.cpp, field.cpp, fake-jni.cpp) on every subsequent invocation
 # after the first, since jni.h only ever needs patching once. Wrapped in
 # if/else like every other patch in this file instead, so this section
@@ -61,15 +61,15 @@ namespace stud_jni_dispatch_detail {
 // Real, confirmed second bug found chasing the first fix's own knock-on
 // effects (the engineering notes, \"investigate why vm is wrong\" entry): this
 // process only ever constructs one real JavaVM (`BionicAwareJvm jvm`),
-// but more than one pointer VALUE can end up referring to it -- the
+// but more than one pointer VALUE can end up referring to it, the
 // correct, ABI-safe `jvm.GetBionicSafeJavaVM()` one, and a raw,
 // ABI-non-compliant `&jvm`-derived one (multiple inheritance pushes the
-// _JavaVM base subobject to a real, non-zero offset -- confirmed live,
+// _JavaVM base subobject to a real, non-zero offset, confirmed live,
 // this exact object, via a hardware trace resolving straight to `vtable
 // for stud::jni_bridge::BionicAwareJvm`). Rather than hunt every
 // internal vendored call site that might construct the wrong variant,
 // substitute the one, registered, correct pointer for `this`
-// unconditionally at every dispatch -- correct regardless of which
+// unconditionally at every dispatch, correct regardless of which
 // value a given caller (Stud's own code, jnivm's own internals, or
 // Roblox itself) happened to pass, since there's structurally only one
 // real JavaVM either way. Falls back to the passed-in pointer if none
@@ -81,13 +81,13 @@ inline _JavaVM* stud_canonical_or(_JavaVM* fallback) {
 }
 // See the engineering notes' \"Root cause found...\"/\"Plan\" entries for the
 // real bug this exists to fix. Generic over every _JavaVM method's
-// signature -- all 5 just forward their own arguments through
+// signature, all 5 just forward their own arguments through
 // `functions`, so one small template covers all of them.
 //
 // Real, deliberate degrade-not-crash decision (the engineering notes, the
 // \"try running further\" entry): a failure in one JNI vtable call (e.g.
 // a daemon-thread attach whose `vm` value jnivm doesn't recognize)
-// should not abort the entire process via an uncaught C++ exception --
+// should not abort the entire process via an uncaught C++ exception,
 // return a real JNI error code instead and keep going, uniformly across
 // all 5 methods rather than special-casing just the one confirmed to
 // fail. %fs is restored on both the success and exception paths before
@@ -95,7 +95,7 @@ inline _JavaVM* stud_canonical_or(_JavaVM* fallback) {
 // Real, second compile-time bug caught on the first attempt at extending
 // this to _JNIEnv (the engineering notes): the exception-path failure value
 // `decltype(fn(args...)){-1}` only compiles for integer return types
-// (works for _JavaVM's jint methods) -- FindClass/GetObjectClass return
+// (works for _JavaVM's jint methods), FindClass/GetObjectClass return
 // jclass (a pointer), and a pointer can't brace-init from an int literal.
 // A small type trait picks the right failure value per return type
 // instead (nullptr for pointers, -1 for everything else) so the same
@@ -164,7 +164,7 @@ string(FIND "${content}" "${original_block}" match_pos)
 if(match_pos EQUAL -1)
     message(FATAL_ERROR
         "patch_jni_h.cmake: expected _JavaVM method bodies not found in "
-        "'${jni_h}' -- libjnivm's jni.h changed in a way this patch doesn't "
+        "'${jni_h}', libjnivm's jni.h changed in a way this patch doesn't "
         "recognize. Update this script's original_block/patched_block to "
         "match the new source before proceeding; do NOT skip this patch "
         "silently, see the file header comment for why it's load-bearing.")
@@ -174,7 +174,7 @@ endif()
 # the recurring 0x250e0c0 crash..." investigation's follow-on SIGTRAP,
 # reached via _JNIEnv::FindClass -> GetObjectClass): _JNIEnv's own
 # ~230 inline methods call `functions->X(this, ...)` directly and
-# unconditionally too, same as _JavaVM's did before the patch above --
+# unconditionally too, same as _JavaVM's did before the patch above,
 # and libroblox.so's own JNINativeInterface table (the JNIEnv-side
 # table, wrapped once at construction by
 # wrap_native_interface_for_bionic_callers()) can end up holding a real
@@ -182,15 +182,15 @@ endif()
 # wrapping hook hasn't reached yet, same collision shape as the
 # JavaVM-side bug. Only the two methods with live, confirmed crash
 # evidence (FindClass, GetObjectClass) are patched here, not the whole
-# struct -- grown against further real evidence the same way every
+# struct, grown against further real evidence the same way every
 # other fix in this project has been, not guessed at wholesale.
 #
 # _JNIEnv is defined BEFORE _JavaVM in this file, so the dispatch
 # helpers (stud_dispatch et al, shared with the _JavaVM patch above)
-# have to be inserted here instead, ahead of first use -- at true
+# have to be inserted here instead, ahead of first use, at true
 # top-level, immediately before "struct _JNIEnv {" itself, NOT inside
 # the struct body (inserting extern "C"/namespace text inside an
-# already-open struct is invalid C++ -- caught by a real build failure
+# already-open struct is invalid C++, caught by a real build failure
 # on the first attempt at this patch, fixed by anchoring here instead).
 # _JavaVM's own patch below then just replaces its method bodies
 # without re-inserting the helpers a second time.
@@ -202,7 +202,7 @@ string(FIND "${content}" "${original_jnienv_struct_open}" jnienv_open_match_pos)
 if(jnienv_open_match_pos EQUAL -1)
     message(FATAL_ERROR
         "patch_libjnivm.cmake: expected 'struct _JNIEnv {' opening not "
-        "found in '${jni_h}' -- libjnivm's jni.h changed in a way this "
+        "found in '${jni_h}', libjnivm's jni.h changed in a way this "
         "patch doesn't recognize. Update this script before proceeding.")
 endif()
 
@@ -218,7 +218,7 @@ string(FIND "${content}" "${original_jnienv_methods}" jnienv_match_pos)
 if(jnienv_match_pos EQUAL -1)
     message(FATAL_ERROR
         "patch_libjnivm.cmake: expected _JNIEnv::FindClass body not found "
-        "in '${jni_h}' -- libjnivm's jni.h changed in a way this patch "
+        "in '${jni_h}', libjnivm's jni.h changed in a way this patch "
         "doesn't recognize. Update this script before proceeding.")
 endif()
 
@@ -232,19 +232,19 @@ string(FIND "${content}" "${original_getobjectclass}" getobjectclass_match_pos)
 if(getobjectclass_match_pos EQUAL -1)
     message(FATAL_ERROR
         "patch_libjnivm.cmake: expected _JNIEnv::GetObjectClass body not "
-        "found in '${jni_h}' -- libjnivm's jni.h changed in a way this "
+        "found in '${jni_h}', libjnivm's jni.h changed in a way this "
         "patch doesn't recognize. Update this script before proceeding.")
 endif()
 string(REPLACE "${original_getobjectclass}" "${patched_getobjectclass}" content "${content}")
 
 # Real, live-tested extension of the same _JNIEnv dispatch-wrapping
-# pattern to GetMethodID/GetStaticMethodID -- tried specifically to test
+# pattern to GetMethodID/GetStaticMethodID, tried specifically to test
 # a real hypothesis about the still-open `getClassLoader`/`loadClass`
 # null-jclass bug (the engineering notes' own long-documented investigation):
 # maybe the same JNI-vtable-swap bug class this whole file exists to fix
 # also affects these two slots. Live-tested, real, honest NEGATIVE
 # result: zero effect on the "class is null" diagnostic (still fires,
-# byte-identical) -- but also zero regression, same milestone reached
+# byte-identical), but also zero regression, same milestone reached
 # just as fast.
 #
 # Root cause of the negative result, traced afterward, and a real,
@@ -252,17 +252,17 @@ string(REPLACE "${original_getobjectclass}" "${patched_getobjectclass}" content 
 # pre-compiled JNI calls go through the raw C function-pointer vtable
 # (`env->functions->GetMethodID(...)`) directly, never through these
 # inline C++ convenience methods (those only get inlined into whichever
-# TU is compiled against *this* jni.h -- Stud's own code and jnivm's own
+# TU is compiled against *this* jni.h. Stud's own code and jnivm's own
 # internal code, not libroblox.so, which was compiled against the real
 # NDK's jni.h). Separately, `stud_dispatch`'s own bionic-context-switch
 # behavior (`canonical_vm_registry.cpp`) is itself now a permanently
-# no-op stub in this codebase's CURRENT architecture --
+# no-op stub in this codebase's CURRENT architecture;
 # `stud_is_bionic_address()` unconditionally `return 0`, and
 # `stud_wrap_native_for_bionic_caller()` is a bare passthrough. That
 # machinery was real and load-bearing for an EARLIER, since-replaced
 # architecture (one glibc process manually swapping %fs around bionic
-# calls on the same OS thread -- see the engineering notes' "Why three
-# processes" entry) -- the current architecture runs Process B as a
+# calls on the same OS thread; see the engineering notes' "Why three
+# processes" entry), the current architecture runs Process B as a
 # real, standalone bionic process with no glibc/bionic mixing to guard
 # against at all, so every `stud_dispatch` call today reduces to a
 # plain try/catch (still real: it prevents an uncaught C++ exception
@@ -270,7 +270,7 @@ string(REPLACE "${original_getobjectclass}" "${patched_getobjectclass}" content 
 # patch is kept for that real, if modest, exception-safety value and
 # for consistency with FindClass/GetObjectClass above, not because it
 # fixes the bug that motivated trying it. Do not re-attempt this same
-# hypothesis on a different vtable slot expecting a different result --
+# hypothesis on a different vtable slot expecting a different result,
 # the mechanism genuinely cannot reach libroblox.so's own calls, for
 # either of the two independent reasons above.
 set(original_getmethodid "    jmethodID GetMethodID(jclass clazz, const char* name, const char* sig)
@@ -281,7 +281,7 @@ string(FIND "${content}" "${original_getmethodid}" getmethodid_h_match_pos)
 if(getmethodid_h_match_pos EQUAL -1)
     message(FATAL_ERROR
         "patch_libjnivm.cmake: expected _JNIEnv::GetMethodID body not "
-        "found in '${jni_h}' -- libjnivm's jni.h changed in a way this "
+        "found in '${jni_h}', libjnivm's jni.h changed in a way this "
         "patch doesn't recognize. Update this script before proceeding.")
 endif()
 string(REPLACE "${original_getmethodid}" "${patched_getmethodid}" content "${content}")
@@ -294,13 +294,13 @@ string(FIND "${content}" "${original_getstaticmethodid}" getstaticmethodid_h_mat
 if(getstaticmethodid_h_match_pos EQUAL -1)
     message(FATAL_ERROR
         "patch_libjnivm.cmake: expected _JNIEnv::GetStaticMethodID body "
-        "not found in '${jni_h}' -- libjnivm's jni.h changed in a way "
+        "not found in '${jni_h}', libjnivm's jni.h changed in a way "
         "this patch doesn't recognize. Update this script before "
         "proceeding.")
 endif()
 string(REPLACE "${original_getstaticmethodid}" "${patched_getstaticmethodid}" content "${content}")
 
-# Now replace the _JavaVM block -- the dispatch helpers it needs are
+# Now replace the _JavaVM block, the dispatch helpers it needs are
 # already present (inserted above, before _JNIEnv), so this is just the
 # method-body swap, no second helper insertion.
 string(REPLACE "${original_block}" "${patched_block}" content "${content}")
@@ -312,14 +312,14 @@ endif()
 # Second patch, same file, same underlying bug class: jnivm::VM's own
 # constructor (vm.cpp) directly implements AttachCurrentThread's and
 # DetachCurrentThread's real logic as two lambdas that call
-# `VM::FromJavaVM(vm)` DIRECTLY -- not through any _JavaVM C++ method,
+# `VM::FromJavaVM(vm)` DIRECTLY, not through any _JavaVM C++ method,
 # so the jni.h patch above (which only intercepts _JavaVM's own method
 # dispatch) never runs for these two specific call paths. Real, confirmed
 # bug this closes (the engineering notes, "investigate why vm is wrong"
 # entry): real Roblox code calling `functions->AttachCurrentThread(vm,
 # ...)` via raw C dispatch (bypassing _JavaVM's C++ methods entirely)
 # reaches this lambda directly with whatever `vm` value the caller
-# supplied -- if that's the ABI-non-compliant `&jvm`-derived pointer
+# supplied, if that's the ABI-non-compliant `&jvm`-derived pointer
 # rather than `jvm.GetBionicSafeJavaVM()`, `FromJavaVM(vm)` throws
 # `"Failed to get reference to jnivm::VM"` and aborts the whole process.
 # Fix: same `stud_canonical_or` substitution already used in the jni.h
@@ -341,13 +341,13 @@ else()
     if(vm_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected 'auto&& nvm = *VM::FromJavaVM(vm);' "
-            "not found in '${vm_cpp}' -- libjnivm's vm.cpp changed in a way "
+            "not found in '${vm_cpp}', libjnivm's vm.cpp changed in a way "
             "this patch doesn't recognize. Update fromjavavm_original/"
             "fromjavavm_patched to match the new source before proceeding; "
             "do NOT skip this patch silently, see this file's own header "
             "comment for why it's load-bearing.")
     endif()
-    # Plain string(REPLACE) replaces every occurrence -- deliberately,
+    # Plain string(REPLACE) replaces every occurrence, deliberately,
     # since this exact line appears identically in both the
     # AttachCurrentThread and DetachCurrentThread lambdas (confirmed:
     # exactly 2 occurrences), and both need the identical fix.
@@ -355,26 +355,26 @@ else()
     string(REPLACE "${fromjavavm_original}" "${fromjavavm_patched}" vm_content "${vm_content}")
 
     # Third patch, same file: FromJavaVM() itself derives the real
-    # jnivm::VM* from `vm->functions->reserved0` -- jnivm's own
+    # jnivm::VM* from `vm->functions->reserved0`, jnivm's own
     # constructor sets `iinterface.reserved0 = this`, but that breaks
     # the instant `vm->functions` points at a table Roblox itself
     # constructed (confirmed live: individual slots like
     # AttachCurrentThread still correctly forward to jnivm's real code,
     # but Roblox's own table never sets reserved0, since it has no
-    # reason to know jnivm's internal convention -- reserved0 reads back
+    # reason to know jnivm's internal convention, reserved0 reads back
     # null and this throws, aborting the whole process). Since there's
     # only one real jnivm::VM in this process, register it once (right
-    # here, in its own constructor -- the earliest point with a
+    # here, in its own constructor, the earliest point with a
     # legitimate jnivm::VM* to hand over) and have FromJavaVM() use it
-    # directly, bypassing the reserved0 lookup -- and therefore any
-    # table-pointer swap -- entirely.
+    # directly, bypassing the reserved0 lookup, and therefore any
+    # table-pointer swap, entirely.
     set(ctor_original "	javaVM.functions = &iinterface;
 	if(skipInit == false)")
     string(FIND "${vm_content}" "${ctor_original}" ctor_match_pos)
     if(ctor_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected VM constructor tail not found in "
-            "'${vm_cpp}' -- update ctor_original/ctor_patched to match the "
+            "'${vm_cpp}', update ctor_original/ctor_patched to match the "
             "new source before proceeding.")
     endif()
     set(ctor_patched "	javaVM.functions = &iinterface;
@@ -390,7 +390,7 @@ else()
     if(fromjavavm_fn_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected FromJavaVM() body not found in "
-            "'${vm_cpp}' -- update fromjavavm_fn_original/fromjavavm_fn_patched "
+            "'${vm_cpp}', update fromjavavm_fn_original/fromjavavm_fn_patched "
             "to match the new source before proceeding.")
     endif()
     set(fromjavavm_fn_patched "jnivm::VM *jnivm::VM::FromJavaVM(JavaVM *vm) {
@@ -405,7 +405,7 @@ else()
     # Fourth patch, same file: RegisterNatives() stores whatever raw
     # function pointer it's handed straight into Method::native, later
     # invoked by method.h's j2invoke() via a plain cast-and-call with
-    # whatever %fs context happens to be active at the call site --
+    # whatever %fs context happens to be active at the call site,
     # correct for every native method Stud's own code has ever
     # registered (glibc code, always reached from a bionic caller
     # through the already-%fs-aware JNI vtable dispatch, which swaps to
@@ -414,12 +414,12 @@ else()
     # native method Roblox itself registered (AGDK's
     # onStartNative/onResumeNative/onWindowFocusChangedNative/
     # onSurfaceCreatedNative etc, installed via GameActivity_register())
-    # -- see module_range.h's stud_wrap_native_for_bionic_caller() doc
+    # see module_range.h's stud_wrap_native_for_bionic_caller() doc
     # comment for the full real reasoning. Fixed once, here, at
     # registration time: wrap the incoming fnPtr with a conditional
     # trampoline if (and only if) it's a bionic address, so j2invoke's
     # existing, unmodified call code always invokes something already
-    # safe to call from any context -- a pure no-op for every native
+    # safe to call from any context, a pure no-op for every native
     # method this project has already registered and tested (never a
     # bionic address, so the wrapper hands the pointer back unchanged).
     set(regnatives_original "		while(i--) {
@@ -428,7 +428,7 @@ else()
     if(regnatives_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected RegisterNatives() loop head not "
-            "found in '${vm_cpp}' -- libjnivm's vm.cpp changed in a way this "
+            "found in '${vm_cpp}', libjnivm's vm.cpp changed in a way this "
             "patch doesn't recognize. Update regnatives_original/"
             "regnatives_patched to match the new source before proceeding.")
     endif()
@@ -442,14 +442,14 @@ else()
     if(regnatives_m_native_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected 'm->native = method->fnPtr;' not "
-            "found in '${vm_cpp}' -- update regnatives_m_native_original/"
+            "found in '${vm_cpp}', update regnatives_m_native_original/"
             "regnatives_m_native_patched to match the new source before "
             "proceeding.")
     endif()
     set(regnatives_m_native_patched "			m->native = stud_wrapped_fn_ptr;")
     string(REPLACE "${regnatives_m_native_original}" "${regnatives_m_native_patched}" vm_content "${vm_content}")
 
-    # Declarations for the new symbols used above -- vm.cpp doesn't
+    # Declarations for the new symbols used above, vm.cpp doesn't
     # include jni.h's dispatch_helpers block (that's only inserted into
     # jni.h itself), so these need their own forward declarations here.
     string(PREPEND vm_content "extern \"C\" {
@@ -462,13 +462,13 @@ void* stud_wrap_native_for_bionic_caller(void* fn);
     # Sixth patch, same file: real, confirmed gap found live-bisecting a
     # thread's very first LocalFrame construction (the engineering notes, "now
     # proceed" entry): `VM::GetEnv()` (`return jnienvs[pthread_t]`) does
-    # NOT lazily create an entry -- `std::unordered_map::operator[]`
+    # NOT lazily create an entry, `std::unordered_map::operator[]`
     # default-constructs an EMPTY shared_ptr for a never-seen key, and
     # `GetJNIEnv()`'s subsequent `->GetJNIEnv()` on that null shared_ptr
     # crashes. On a real device (and on Stud's own main thread, whose
     # `jnienvs` entry is populated once, during the VM's own
     # constructor) this is masked by the JNIInvokeInterface's
-    # AttachCurrentThread slot lazily creating the entry on first use --
+    # AttachCurrentThread slot lazily creating the entry on first use,
     # but that slot is exactly the one real Roblox code can (and does,
     # confirmed live) overwrite with its own function (the same
     # already-documented "JNI vtable swap" class this whole file
@@ -491,7 +491,7 @@ void* stud_wrap_native_for_bionic_caller(void* fn);
     if(getenv_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected VM::GetEnv() body not found in "
-            "'${vm_cpp}' -- update getenv_original/getenv_patched to match "
+            "'${vm_cpp}', update getenv_original/getenv_patched to match "
             "the new source before proceeding.")
     endif()
     set(getenv_patched "${getenv_original}
@@ -510,7 +510,7 @@ void VM::EnsureEnvForCurrentThread() {
 endif()
 
 # Seventh patch, a second header: vm.h needs EnsureEnvForCurrentThread()
-# (implemented above) declared as a real, public member -- otherwise
+# (implemented above) declared as a real, public member, otherwise
 # vm.cpp's own definition has no matching declaration.
 set(vm_h "${vm_h_path}")
 if(NOT EXISTS "${vm_h}")
@@ -528,14 +528,14 @@ else()
     if(vmh_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected 'GetEnv();' declaration not "
-            "found in '${vm_h}' -- update getenv_decl_original/"
+            "found in '${vm_h}', update getenv_decl_original/"
             "getenv_decl_patched to match the new source before proceeding.")
     endif()
     set(getenv_decl_patched "${getenv_decl_original}
         // Real, Stud-added (see vm.cpp's own patch, same file group):
         // ensures the calling thread has an ENV, creating and storing
         // one directly via the same lock+map logic the default
-        // AttachCurrentThread lambda uses -- bypasses the
+        // AttachCurrentThread lambda uses, bypasses the
         // JNIInvokeInterface's AttachCurrentThread slot (and therefore
         // any foreign overwrite of it) entirely.
         void EnsureEnvForCurrentThread();")
@@ -547,7 +547,7 @@ endif()
 
 # Fifth patch, a third file: internal/method.cpp's GetMethodID() template
 # has a real, confirmed asymmetry that makes the public env->GetMethodID
-# unable to find RegisterNatives()-registered methods at all -- found
+# unable to find RegisterNatives()-registered methods at all, found
 # chasing why GameActivity's own real lifecycle methods (onStartNative,
 # onResumeNative, onWindowFocusChangedNative, onSurfaceCreatedNative,
 # confirmed via a temporary diagnostic to genuinely register successfully
@@ -557,11 +557,11 @@ endif()
 # same way worked fine.
 #
 # Root cause: GetMethodID<isStatic, ReturnNull, AllowNative, trace>'s
-# search predicate requires `AllowNative == (bool)namesp->native` --
+# search predicate requires `AllowNative == (bool)namesp->native`,
 # exact equality, not "native is acceptable too". The public vtable slot
 # (vm.cpp's `GetMethodID<false, ReturnNull>`) always leaves AllowNative
 # at its default (false), so it only ever matches methods whose
-# Method::native is null -- true for FakeJni::Function<>-declared
+# Method::native is null, true for FakeJni::Function<>-declared
 # methods (dispatched via `nativehandle` instead), false for anything
 # RegisterNatives() ever installed. Real device JNI makes no such
 # distinction between "how a native method got installed" when looking
@@ -572,7 +572,7 @@ endif()
 # normal (AllowNative-matching-the-template-parameter) search and the
 # base-class search both come up empty, and the CALLER didn't
 # specifically ask for AllowNative=true already, retry once with
-# AllowNative=true before giving up. Strictly additive -- can only make
+# AllowNative=true before giving up. Strictly additive, can only make
 # GetMethodID find MORE real methods than before, never fewer, so every
 # already-registered/tested lookup in this project is unaffected.
 set(method_cpp "${method_cpp_path}")
@@ -598,7 +598,7 @@ else()
     if(getmethodid_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected GetMethodID() ReturnNull branch not "
-            "found in '${method_cpp}' -- libjnivm's method.cpp changed in a way "
+            "found in '${method_cpp}', libjnivm's method.cpp changed in a way "
             "this patch doesn't recognize. Update getmethodid_original/"
             "getmethodid_patched to match the new source before proceeding.")
     endif()
@@ -606,7 +606,7 @@ else()
             // Real Stud fix: the public env->GetMethodID always
             // instantiates AllowNative=false, so a method registered at
             // RUNTIME via RegisterNatives (Method::native set to a real
-            // fn pointer) is invisible to it -- only compile-time
+            // fn pointer) is invisible to it, only compile-time
             // FakeJni::Function<>-declared methods (Method::native left
             // null, dispatched via `nativehandle` instead) are found.
             // Real device JNI makes no such distinction. Retry once,
@@ -630,16 +630,16 @@ else()
 
     # Seventh patch, same file: MDispatchBase2<T>::CallMethod's instance
     # dispatch (the real function every env->CallVoidMethod/CallObjectMethod/
-    # etc call funnels through) only ever checks `mid->nativehandle` --
+    # etc call funnels through) only ever checks `mid->nativehandle`,
     # the compile-time FakeJni::Function<>-registered path. A method
     # RegisterNatives() installed at runtime (Method::native set,
-    # nativehandle left null -- exactly what the GetMethodID fix above
+    # nativehandle left null, exactly what the GetMethodID fix above
     # makes findable) silently falls into the "Call Unknown Member
     # Function" branch and returns a default value, WITHOUT EVER CALLING
     # THE REAL NATIVE FUNCTION. Confirmed live: GameActivity's own
     # onSurfaceCreatedNative (and every other AGDK lifecycle method Stud
     # drives via drive_game_activity_lifecycle()/the try_bootstrap.cpp
-    # probe) reports "returned" with zero exception/trap -- because
+    # probe) reports "returned" with zero exception/trap, because
     # CallMethod never actually invoked it, not because the real,
     # confirmed-present ANativeWindow_fromSurface() call inside it (see
     # AGDK's own public source, GameActivity.cpp) somehow declined to run.
@@ -647,17 +647,17 @@ else()
     # Fixed generically: if nativehandle is unset but native IS set,
     # invoke the raw native fn pointer directly, mirroring exactly how
     # Method::j2invoke (method.h) already calls it elsewhere in this
-    # library -- just driven by a runtime jvalue* array (already correctly
+    # library, just driven by a runtime jvalue* array (already correctly
     # boxed by the caller, matching CallVoidMethodA's own convention)
     # instead of a compile-time argument pack. Every JNI value type this
     # project's own real call sites use (J/Z/B/S/C/I/L) is bit-identical,
-    # 8 bytes, to how jvalue stores it -- SysV classifies all of them as
+    # 8 bytes, to how jvalue stores it, SysV classifies all of them as
     # a single INTEGER-class eightbyte, so passing a `jvalue` by value in
     # each argument slot reproduces the exact register content a
     # correctly-typed (jlong/jobject/jint/...) parameter would receive,
     # with zero knowledge of the callee's real declared parameter types
     # needed. F/D (float/double) would need SSE-class register passing
-    # instead -- not silently mishandled, explicitly detected and
+    # instead, not silently mishandled, explicitly detected and
     # rejected (falls through to the same "Unknown Member Function"
     # degrade-not-crash default already used for every other unresolved
     # case), since no real call site in this project has needed it yet;
@@ -700,7 +700,7 @@ else()
     if(callmethod_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected MDispatchBase2<T>::CallMethod(jobject) "
-            "body not found in '${method_cpp}' -- libjnivm's method.cpp changed in "
+            "body not found in '${method_cpp}', libjnivm's method.cpp changed in "
             "a way this patch doesn't recognize. Update callmethod_original/"
             "callmethod_patched to match the new source before proceeding.")
     endif()
@@ -791,7 +791,7 @@ T stud_invoke_registered_native(JNIEnv* env, jobject obj, void* native, jvalue* 
     # (the engineering notes, "A real, previously-undiscovered class-resolution
     # failure cluster" entry) proves the CALLER passed a literal null
     # jclass, but says nothing about which real code produced that null
-    # -- and a JNI_TRACE pass on FindClass() came back with zero hits,
+    # and a JNI_TRACE pass on FindClass() came back with zero hits,
     # ruling out a plain by-name lookup as the source. Live tracing
     # is separately, already documented as unreliable in this sandbox
     # for anything requiring `continue`. This adds a real, no-debugger-
@@ -810,7 +810,7 @@ T stud_invoke_registered_native(JNIEnv* env, jobject obj, void* native, jvalue* 
     if(getmethodid_diag_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected GetMethodID() 'class is null' branch "
-            "not found in '${method_cpp}' -- libjnivm's method.cpp changed in a "
+            "not found in '${method_cpp}', libjnivm's method.cpp changed in a "
             "way this patch doesn't recognize. Update getmethodid_diag_original/"
             "getmethodid_diag_patched to match the new source before proceeding.")
     endif()
@@ -859,7 +859,7 @@ endif()
 # env->GetFieldID(cl_, "dpiScale", "F") with a null cl_ argument (the
 # prior GetObjectClass/FindClass call that should have produced a real
 # class evidently failed or was never made the way MainGameActivity's
-# own V1 bootstrap path does it) -- jnivm's real GetFieldID<> never
+# own V1 bootstrap path does it), jnivm's real GetFieldID<> never
 # null-checks `cl` before `std::lock_guard<std::mutex> lock(cl->mtx)`,
 # so this crashes the WHOLE PROCESS with a genuine null-pointer
 # dereference (fault_addr near 0x60, `cl->mtx`'s real field offset),
@@ -868,7 +868,7 @@ endif()
 #
 # Real JNI semantics: a null class argument to GetFieldID is a caller
 # error real JNI implementations handle safely (undefined per spec, but
-# no real JVM segfaults the whole process over it) -- Roblox's own code
+# no real JVM segfaults the whole process over it); Roblox's own code
 # is already well-defended elsewhere in this project against JNI lookup
 # failures (logs and continues rather than assuming success), so the
 # safe fix is making this lookup FAIL CLEANLY (return a null jfieldID,
@@ -903,7 +903,7 @@ else()
 
     string(FIND "${field_content}" "${getfieldid_original}" field_match_pos)
     if(field_match_pos EQUAL -1)
-        message(FATAL_ERROR "patch_libjnivm.cmake: GetFieldID's real body not found in '${field_cpp}' -- libjnivm upstream changed, needs re-verifying")
+        message(FATAL_ERROR "patch_libjnivm.cmake: GetFieldID's real body not found in '${field_cpp}', libjnivm upstream changed, needs re-verifying")
     endif()
 
     string(REPLACE "${getfieldid_original}" "${getfieldid_patched}" field_content "${field_content}")
@@ -914,7 +914,7 @@ endif()
 # Sixth patch, internal/method.cpp and internal/field.cpp: the two "MISS"
 # diagnostics that found nearly every JNI gap this project has fixed.
 # They had been edited straight into the build tree and never mirrored
-# here, so a fresh fetch silently dropped both -- confirmed by deleting
+# here, so a fresh fetch silently dropped both, confirmed by deleting
 # the checkout and watching them disappear. A lookup that fails in
 # silence is exactly the failure mode they exist to end: libroblox's own
 # Djinni glue reports only "GetMethodID returned null" before refusing to
@@ -923,7 +923,7 @@ endif()
 #
 # The method one is guarded on `trace`. GetMethodID recurses over base
 # classes with ReturnNull=true, so without the guard every level of the
-# walk reported a miss -- a lookup that then succeeded on the derived
+# walk reported a miss, a lookup that then succeeded on the derived
 # class still printed misses for Activity, Context and Object, which
 # trains a reader to ignore the very line that matters. The recursion
 # already passes trace=false to mean "interior step, not the answer", so
@@ -967,7 +967,7 @@ else()
     if(method_miss_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: GetMethodID's ReturnNull branch not found in "
-            "'${method_miss_cpp}' -- libjnivm changed, re-verify this patch")
+            "'${method_miss_cpp}', libjnivm changed, re-verify this patch")
     endif()
     string(REPLACE "${method_miss_original}" "${method_miss_patched}" method_miss_content "${method_miss_content}")
     file(WRITE "${method_miss_cpp}" "${method_miss_content}")
@@ -1012,7 +1012,7 @@ else()
     if(field_miss_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: GetFieldID's ReturnNull branch not found in "
-            "'${field_miss_cpp}' -- libjnivm changed, re-verify this patch")
+            "'${field_miss_cpp}', libjnivm changed, re-verify this patch")
     endif()
     string(REPLACE "${field_miss_original}" "${field_miss_patched}" field_miss_content "${field_miss_content}")
     file(WRITE "${field_miss_cpp}" "${field_miss_content}")
@@ -1032,27 +1032,27 @@ endif()
 # getting this ONE call to stop crashing the whole process, but has a
 # real, now-confirmed cost: it jumps straight out of Roblox's own
 # (crashed, third-party, opaque) call stack, skipping whatever cleanup
-# that code would have done on its way out normally -- including,
+# that code would have done on its way out normally, including,
 # apparently, releasing whatever reference it took on this thread's JNI
 # env. That leaked reference is invisible until this thread actually
 # exits and ThreadContext's own thread_local destructor runs its
 # consistency check (env.lock() still succeeding after
-# DetachCurrentThread should have released the last reference) -- which
+# DetachCurrentThread should have released the last reference), which
 # jnivm's own code treats as a hard, unrecoverable bug and calls abort().
 # Confirmed via this project's own in-process crash diagnostics
 # (trap_recovery.cpp's describe_address()/print_backtrace(), added this
 # session specifically because a debugger cannot attach usefully to a binary
 # bionic's own linker64 loads via its internal ELF-mapping logic rather
-# than a real execve() -- see that file's own doc comment): the real
+# than a real execve(); see that file's own doc comment): the real
 # abort() call's PC resolves into bionic's own libc.so, reached from
 # exactly this destructor.
 #
 # Real JNI semantics point (same reasoning already applied to the
 # GetFieldID null-class fix above): a real device's JNI implementation
 # doesn't crash the whole VM over one thread's env bookkeeping being in
-# an unexpected state at exit -- and here, the thread is already in the
+# an unexpected state at exit, and here, the thread is already in the
 # process of exiting regardless. The resource genuinely leaks (a real,
-# acknowledged cost -- this is a workaround for the recovered crash's
+# acknowledged cost. This is a workaround for the recovered crash's
 # side effect, not a fix for the leak's root cause, which lives inside
 # Roblox's own opaque compiled code), but leaking one already-abandoned
 # thread's own env reference is far safer than aborting the entire
@@ -1083,7 +1083,7 @@ else()
     if(threadcontext_match_pos EQUAL -1)
         message(FATAL_ERROR
             "patch_libjnivm.cmake: expected ThreadContext::~ThreadContext() body "
-            "not found in '${fake_jni_cpp}' -- fake-jni's source changed in a way "
+            "not found in '${fake_jni_cpp}', fake-jni's source changed in a way "
             "this patch doesn't recognize. Update threadcontext_original/"
             "threadcontext_patched to match the new source before proceeding; do "
             "NOT skip this patch silently, see this block's own doc comment for "
@@ -1096,7 +1096,7 @@ else()
 		_env = nullptr;
 		if(env.lock()) {
 			// stud_thread_context_leak_guard: see patch_libjnivm.cmake's own
-			// doc comment for the full, real reasoning -- degrade (leak,
+			// doc comment for the full, real reasoning, degrade (leak,
 			// log, keep exiting normally) instead of aborting the whole
 			// process over one already-recovered-from-crash thread's own
 			// env bookkeeping.
@@ -1118,13 +1118,13 @@ endif()
 # UnpackJObject<T>() throws that when its dynamic_cast fails. That throw
 # is fatal in practice: libroblox checks for a pending JNI exception,
 # logs `RBXCRASH: JNI: Crashing due to unhandled Java exception` and
-# traps, which kills whichever thread it happened on -- including, in
+# traps, which kills whichever thread it happened on, including, in
 # two real live-caught cases, the thread the engine had designated as
 # its own internal "main" thread, after which nothing ever drained its
 # task queue again (see the engineering notes, "what drains the engine's task
 # queue"). The bare message names neither the type that arrived nor the
 # one expected, which is exactly what is needed to find the bug; both
-# real instances (ByteBufferStub, ClassMetaStub -- Stud stub classes
+# real instances (ByteBufferStub, ClassMetaStub; Stud stub classes
 # colliding with a jnivm built-in over the same real Java class name)
 # were identified immediately once this printed the two typeids.
 set(jnitypes_h "${jnitypes_h_path}")

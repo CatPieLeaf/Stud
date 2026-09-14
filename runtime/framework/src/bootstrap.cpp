@@ -33,10 +33,10 @@ PreloadBootstrapResult run_preload_bootstrap(FakeJni::Jvm& jvm, const stud::link
 
     // Real order (the engineering notes, "Sober does not patch libroblox.so
     // either" entry): nativeSetAssetPath BEFORE nativePreloadFlagOverrides
-    // -- reversed from this project's earlier, guessed order. Each call is
+    // reversed from this project's earlier, guessed order. Each call is
     // a direct, same-ABI call into Roblox's own bionic-compiled native
     // code, wrapped only in call_trapping_abort()'s abort/trap recovery
-    // (see trap_recovery.h) -- not any ABI-crossing bracket, since
+    // (see trap_recovery.h), not any ABI-crossing bracket, since
     // Process B and libroblox.so share the same ABI.
     auto* set_asset_path = find_required_symbol<SetAssetPathFn>(
         lib, "Java_com_roblox_client_startup_MainGameActivity_nativeSetAssetPath");
@@ -102,7 +102,7 @@ BootstrapResult run_bootstrap(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
                                const std::string& asset_path, const FlagOverrides& flag_overrides,
                                std::shared_ptr<InitParams> init_params) {
     // Combined convenience wrapper (tests/tools that don't need the split
-    // native-callback flow) -- same real order as the split functions.
+    // native-callback flow), same real order as the split functions.
     BootstrapResult result;
     auto preload = run_preload_bootstrap(jvm, lib, asset_path, flag_overrides);
     result.set_asset_path_called = preload.set_asset_path_called;

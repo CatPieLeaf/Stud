@@ -23,7 +23,7 @@ namespace {
 
 // Android's own keycodes and axis ids, which is what the engine's entry
 // points take. Named here rather than included because this process has
-// no NDK headers -- the values are Android's public API and fixed.
+// no NDK headers, the values are Android's public API and fixed.
 constexpr int kBtnA = 96, kBtnB = 97, kBtnX = 99, kBtnY = 100;
 constexpr int kBtnL1 = 102, kBtnR1 = 103, kBtnL2 = 104, kBtnR2 = 105;
 constexpr int kBtnThumbL = 106, kBtnThumbR = 107;
@@ -40,7 +40,7 @@ constexpr int kAxisLTrigger = 17, kAxisRTrigger = 18;
 //
 // This is the one trap in the whole file: `BTN_NORTH` is 0x133 and
 // `BTN_WEST` is 0x134, but every kernel driver for an Xbox-layout pad
-// emits 0x133 for the button labelled **X** and 0x134 for **Y** -- the
+// emits 0x133 for the button labelled **X** and 0x134 for **Y**, the
 // positional names were added as aliases over the legacy `BTN_X`/`BTN_Y`
 // and do not describe what the drivers actually send. Android maps
 // `key 0x133 BUTTON_X` / `key 0x134 BUTTON_Y`, so mapping by the
@@ -49,8 +49,8 @@ int android_button_for(uint16_t code) {
     switch (code) {
         case BTN_SOUTH: return kBtnA;
         case BTN_EAST: return kBtnB;
-        case BTN_NORTH: return kBtnX;  // 0x133 -- the X button
-        case BTN_WEST: return kBtnY;   // 0x134 -- the Y button
+        case BTN_NORTH: return kBtnX;  // 0x133, the X button
+        case BTN_WEST: return kBtnY;   // 0x134, the Y button
         case BTN_TL: return kBtnL1;
         case BTN_TR: return kBtnR1;
         case BTN_TL2: return kBtnL2;
@@ -70,7 +70,7 @@ int android_button_for(uint16_t code) {
 
 // The eight axis slots the real caller keeps, in its own order
 // (`kl/e.java`'s `float[8]`): left stick, right stick, the two triggers,
-// then the hat. Indices are load-bearing -- the emission below pairs
+// then the hat. Indices are load-bearing, the emission below pairs
 // 0 with 1 and 2 with 3 because the engine takes a stick as a vector.
 enum Slot { kSlotX = 0, kSlotY, kSlotZ, kSlotRZ, kSlotLT, kSlotRT, kSlotHatX, kSlotHatY,
             kSlotCount };
@@ -140,7 +140,7 @@ struct Device {
     // Current normalised value of each of the eight axis slots, and which
     // of them changed since the last SYN_REPORT. A stick is sent as a
     // vector, so its two components have to be emitted together from one
-    // consistent snapshot -- which is what a report boundary is.
+    // consistent snapshot, which is what a report boundary is.
     float slot[kSlotCount] = {0.0f};
     bool slot_dirty[kSlotCount] = {false};
     // The d-pad reported as a hat also has to reach the engine as DPAD
@@ -148,7 +148,7 @@ struct Device {
     // navigation listens for the keys.
     std::map<int, bool> hat_key_state;
     // Whether each trigger is currently held, for the synthesised
-    // BUTTON_L2/BUTTON_R2 presses -- see flush_axes().
+    // BUTTON_L2/BUTTON_R2 presses; see flush_axes().
     bool trigger_held[2] = {false, false};
     // Force feedback: the id the kernel gave the uploaded rumble effect,
     // -1 when this pad has none or the fd is read-only.
@@ -178,8 +178,8 @@ bool looks_like_a_gamepad(int fd) {
 }
 
 // The id the engine keys a pad by. It maps this onto a Roblox gamepad
-// slot (Gamepad1..Gamepad8), and some bindings -- tool activation, most
-// importantly -- are bound to Gamepad1 specifically, so which id the
+// slot (Gamepad1..Gamepad8), and some bindings, tool activation, most
+// importantly, are bound to Gamepad1 specifically, so which id the
 // first pad gets is load-bearing rather than cosmetic.
 // STUD_PAD_FIRST_ID exists to test that mapping without a rebuild.
 int next_device_id() {
@@ -224,7 +224,7 @@ void open_device(const std::string& path, std::vector<Event>& out) {
         // a distribution that does not put desktop users in the `input`
         // group. Said once, with the fix, rather than per device per scan.
         // Most /dev/input nodes are unreadable to an ordinary user by
-        // design, so this is not news on its own -- it is only worth
+        // design, so this is not news on its own; it is only worth
         // saying if no controller turned up at all. Counted here,
         // reported (once) by init().
         if (errno == EACCES) ++g_unreadable_nodes;
@@ -264,14 +264,14 @@ void open_device(const std::string& path, std::vector<Event>& out) {
                 device.axes.size(), device.can_rumble ? "yes" : "no");
     std::fflush(stdout);
 
-    // What this pad really has, before it is announced -- the same order
+    // What this pad really has, before it is announced, the same order
     // the real app uses. Answered from evdev rather than assumed, so a
     // pad without (say) stick clicks does not advertise them.
     unsigned long keys[(KEY_MAX / (8 * sizeof(unsigned long))) + 1]{};
     ::ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys);
     const bool has_hat = device.axes.count(ABS_HAT0X) != 0 || device.axes.count(ABS_HAT0Y) != 0;
     // Exactly the key list the real caller queries (`kl/e.java`'s own
-    // `H[]`) -- no L2/R2 and no MODE, because a real device never reports
+    // `H[]`). No L2/R2 and no MODE, because a real device never reports
     // those here either.
     const std::pair<int, bool> supported_keys[] = {
         {kBtnA, bit_set(keys, BTN_SOUTH)},
@@ -295,7 +295,7 @@ void open_device(const std::string& path, std::vector<Event>& out) {
         // real device an Xbox-layout pad reports them only as the analog
         // trigger AXES and `hasKeys()` therefore answers false for both.
         // Stud reports them present when the trigger axes exist, since
-        // that is what Stud genuinely delivers -- Roblox binds vehicle
+        // that is what Stud genuinely delivers; Roblox binds vehicle
         // throttle to ButtonR2/ButtonL2, and a pad that reports neither
         // has nothing for that binding to attach to.
         {kBtnL2, bit_set(keys, BTN_TL2) || device.axes.count(ABS_Z) != 0},
@@ -365,7 +365,7 @@ void flush_axes(Device& device, std::vector<Event>& out) {
     //
     // The engine maps axis 17/18 to KeyCode ButtonL2/ButtonR2 (confirmed
     // in its own jump table) but an analog position alone only ever
-    // produces an InputState.Change -- and Roblox binds tool activation
+    // produces an InputState.Change, and Roblox binds tool activation
     // and vehicle throttle to ButtonR2/ButtonL2 as a BUTTON, which needs
     // a real Begin. A pad that reports BTN_TL2/BTN_TR2 gives Android both
     // halves for free; one whose triggers are axes only (an Xbox-layout
@@ -419,7 +419,7 @@ void read_device(Device& device, std::vector<Event>& out, bool& died) {
                 died = true;
                 device.death_errno = errno;
             }
-            // Anything read but not yet reported still has to go out --
+            // Anything read but not yet reported still has to go out,
             // a batch can end on a report boundary the loop never sees.
             flush_axes(device, out);
             return;
@@ -471,7 +471,7 @@ void scan(std::vector<Event>& out) {
 //
 // init() runs at startup, long before Process B has connected and begun
 // polling, so a controller that was already plugged in produced its
-// connect event into nothing and the engine was never told it existed --
+// connect event into nothing and the engine was never told it existed,
 // only ones plugged in AFTER launch worked. They are held here and handed
 // over on the first poll instead.
 std::vector<Event>& pending() {
@@ -484,7 +484,7 @@ void init() {
     if (!devices().empty()) return;
     if (g_unreadable_nodes > 0) {
         std::printf("stud-render-host: no game controllers found (%d input device(s) could not "
-                    "be read -- if a controller is connected, this user needs read access to "
+                    "be read, if a controller is connected, this user needs read access to "
                     "/dev/input, usually via the `input` group)\n",
                     g_unreadable_nodes);
     } else {
@@ -495,8 +495,8 @@ void init() {
 
 // Plays a rumble on one pad, or stops it when both magnitudes are zero.
 //
-// The kernel's own rumble effect takes two magnitudes -- the heavy and
-// light motors a real pad has -- so an effect is uploaded once per pad
+// The kernel's own rumble effect takes two magnitudes, the heavy and
+// light motors a real pad has, so an effect is uploaded once per pad
 // and re-uploaded (same id) whenever the strength changes, which is what
 // the API is for. Playing it is an ordinary write of an EV_FF event.
 bool set_rumble(int device_id, float strong, float weak, int duration_ms) {
@@ -560,7 +560,7 @@ void poll(std::vector<Event>& out) {
 
     for (auto it = devices().begin(); it != devices().end();) {
         bool died = false;
-        // A pad that goes away usually takes its device node with it --
+        // A pad that goes away usually takes its device node with it,
         // a wireless receiver destroys the node when the pad powers off.
         // Reading it may not fail for a while, so the node's own absence
         // is what says the pad is gone. Without this the engine keeps

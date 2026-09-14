@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # RelWithDebInfo, not Debug. Stud is a renderer: every GL and Vulkan call
 # the engine makes crosses this codebase, hundreds of times a frame, so
-# an unoptimised build is not merely slower to develop against -- it is
+# an unoptimised build is not merely slower to develop against; it is
 # the frame rate. Profiling the render thread in a real game with a Debug
 # build put a third of the frame inside std::vector's own iterator
 # machinery in Stud's Vulkan client, code that vanishes entirely at -O2.
@@ -27,7 +27,7 @@ option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
 #
 # This exists for the Flatpak. Copying a binary built on one distribution
 # into a runtime carrying a different Qt is what made the Flatpak crash
-# inside Qt's own startup before a line of Stud ran -- so there, the Qt
+# inside Qt's own startup before a line of Stud ran, so there, the Qt
 # side is compiled in the runtime and the rest (ANGLE, the bionic
 # runtime, the render host) is installed prebuilt, which needs no Qt and
 # would otherwise cost an hour of ANGLE per build.
@@ -39,7 +39,7 @@ option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 # Without glslc the upscaler is built with an empty shader array: FSR is
 # offered in Settings and does nothing. That is a reasonable degrade for
 # someone who only wants the rest of Stud, and unacceptable in a package
-# -- so the release workflow turns this on and a plain build does not.
+# so the release workflow turns this on and a plain build does not.
 option(STUD_REQUIRE_SHADERS
        "Fail the configure if glslc is missing, instead of building without the upscaler" OFF)
 
@@ -48,7 +48,7 @@ option(STUD_REQUIRE_SHADERS
 # Position-independent executables and immediate binding with a read-only
 # GOT are what a distribution's own build flags supply by default, and an
 # Arch packaging analyser reports their absence (`lacks PIE`, `lacks FULL
-# RELRO`) on binaries built without them -- which a prebuilt release is,
+# RELRO`) on binaries built without them, which a prebuilt release is,
 # since it never passes through makepkg's flags.
 #
 # Deliberately NOT applied to the bionic sub-build: that one is compiled
@@ -57,7 +57,7 @@ option(STUD_REQUIRE_SHADERS
 # POSITION_INDEPENDENT_CODE alone only reaches the COMPILER (-fPIE); the
 # link needs -pie as well, which CMP0083 is what makes CMake add. Without
 # the policy the binaries still come out ET_EXEC and the analyser is
-# right to say so -- checked, before this line existed.
+# right to say so, checked, before this line existed.
 cmake_policy(SET CMP0083 NEW)
 include(CheckPIESupported)
 check_pie_supported(LANGUAGES CXX)
@@ -69,7 +69,7 @@ option(STUD_ENABLE_DEV_RENDER_TOGGLE "Enable the prototype-only dev render-backe
 #
 # This is what a desktop entry is named, what AppStream keys its
 # component on, and what both of Stud's windows report as their Wayland
-# app_id -- a compositor ties a window back to its launcher by matching
+# app_id, a compositor ties a window back to its launcher by matching
 # those, and a store lists an application by it. They have to agree, so
 # they all come from here.
 set(STUD_APP_ID "io.github.catpieleaf.Stud" CACHE STRING
@@ -87,7 +87,7 @@ set(STUD_PRIVATE_LIB_DIR "lib/stud")
 # the Android NDK, the from-source ANGLE build, and a real extracted
 # bionic (libc/linker64/...). tools/setup.sh puts all three here.
 #
-# One root, overridable, defaulting INSIDE the repo -- an earlier layout
+# One root, overridable, defaulting INSIDE the repo, an earlier layout
 # resolved these relative to the parent directory of the checkout, which
 # only worked on the one machine the tree was developed in.
 set(STUD_THIRD_PARTY_DIR "${CMAKE_SOURCE_DIR}/third_party" CACHE PATH
@@ -102,13 +102,13 @@ endif()
 # (the engineering notes' own "nuke stud, recreate sober 1:1" entry): real
 # bionic ELF loading/sandboxing, real ANGLE render-host + its IPC
 # transport, real asset/APK extraction, real login/settings UI. None of
-# this is "wiring libroblox" -- it's OS/rendering plumbing, proven
+# this is "wiring libroblox"; it's OS/rendering plumbing, proven
 # working via extensive live testing before the reset, and rebuilding
 # it from scratch would be pure waste.
 
 # Host-side jni.h only (JNIEnv/jobject types used by AAssetManager_
 # fromJava/ANativeWindow_fromSurface's signatures in android-glue and
-# render-host) -- the real jnivm/FakeJni JNIEnv *implementation* now
+# render-host), the real jnivm/FakeJni JNIEnv *implementation* now
 # lives only in runtime/'s own separate bionic-toolchain FetchContent
 # (runtime/CMakeLists.txt), never built for the host. This host-side
 # fetch exists purely so android-glue/render-host/tools can see the
@@ -130,7 +130,7 @@ unset(CMAKE_POLICY_VERSION_MINIMUM)
 # NDK's own glslc through it to compile the upscale shaders. Declared
 # after add_subdirectory(render-host) it was still empty at the point
 # that search ran, so a FRESH configure never found glslc and silently
-# built an upscaler with no shader in it -- while an incremental
+# built an upscaler with no shader in it, while an incremental
 # reconfigure found it in the cache and worked. That is why every locally
 # built package had FSR and the one CI produced did not.
 set(STUD_ANDROID_NDK_ROOT "${STUD_THIRD_PARTY_DIR}/android-ndk-r28c" CACHE PATH
@@ -148,7 +148,7 @@ if(NOT STUD_BUILD_QT_ONLY)
 endif()
 
 # runtime/: the real replacement for the old jni-bridge+process-b pair.
-# Real bionic ELF output, built with the Android NDK's own toolchain --
+# Real bionic ELF output, built with the Android NDK's own toolchain,
 # same real reason as before (Process B's own code must be real
 # bionic-ABI code to call directly into libroblox.so's real bionic JNI
 # exports on the same thread/ABI, no glibc-forwarding trampoline).
@@ -170,7 +170,7 @@ elseif(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
         DEPENDS stud_android_glue
     )
 else()
-    message(WARNING "Stud: NDK not found at ${STUD_ANDROID_NDK_ROOT} -- "
+    message(WARNING "Stud: NDK not found at ${STUD_ANDROID_NDK_ROOT}, "
                      "the real bionic runtime process will not be built. "
                      "Set -DSTUD_ANDROID_NDK_ROOT=<path> to fix.")
 endif()
@@ -178,7 +178,7 @@ endif()
 if(STUD_BUILD_UI)
     add_subdirectory(ui)
     # The web-view panel. Gated with the UI because it is the same kind
-    # of thing -- a desktop window built on Qt -- and a headless build
+    # of thing, a desktop window built on Qt, and a headless build
     # wants neither.
     add_subdirectory(webview)
 endif()
@@ -196,8 +196,8 @@ endif()
 # packaging exactly what `cmake --install` lays down, and the AppImage is
 # linuxdeploy bundling the same tree (packaging/build-appimage.sh).
 #
-# The layout is deliberately relocatable -- every binary finds bionic,
-# ANGLE and its sibling processes relative to its own path -- because an
+# The layout is deliberately relocatable; every binary finds bionic,
+# ANGLE and its sibling processes relative to its own path, because an
 # AppImage is mounted somewhere different on every run, so nothing may be
 # compiled in as absolute.
 #
@@ -225,8 +225,8 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.metainfo.xml
 # Every size, not just the master.
 #
 # A single 512x512 icon is what a desktop scales down when it has nothing
-# better, and several things that draw small icons -- a window's titlebar
-# among them -- do not look for one at all if the theme has no entry at
+# better, and several things that draw small icons, a window's titlebar
+# among them, do not look for one at all if the theme has no entry at
 # their size. The smaller ones are pre-rendered and committed rather than
 # generated here, so building Stud needs no image tooling.
 foreach(icon_size 16 24 32 48 64 128 256)
@@ -250,7 +250,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
 # Debian policy requires /usr/share/doc/<package>/copyright, in the
 # machine-readable DEP-5 format, naming every component and its licence
 # (lintian: no-copyright-file). It is installed everywhere rather than
-# only in the deb -- an rpm or an Arch package carrying it too costs a
+# only in the deb, an rpm or an Arch package carrying it too costs a
 # few kilobytes and one fewer thing that differs between formats.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian-copyright"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/stud"
@@ -261,7 +261,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian-copyright"
 # It is compressed here rather than left to the packaging tools: rpm's own
 # brp scripts would do it, but Stud switches every one of them off
 # (__os_install_post) to keep them from stripping a bionic ELF, so the
-# page would ship uncompressed. Doing it once suits every format -- man
+# page would ship uncompressed. Doing it once suits every format, man
 # reads a .gz directly, and dpkg and makepkg both expect one.
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/man/stud.1"
                "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1" @ONLY)
@@ -279,12 +279,12 @@ if(STUD_GZIP)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1.gz"
             DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 else()
-    message(WARNING "no gzip found -- the man page will ship uncompressed")
+    message(WARNING "no gzip found, the man page will ship uncompressed")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
             DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 endif()
 # AMD's FSR1 reference headers are vendored, and render-host's upscaler is
-# EASU and RCAS ported from them -- so MIT's notice travels with the build
+# EASU and RCAS ported from them, so MIT's notice travels with the build
 # output, not just with the source tree.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/fidelityfx-fsr1"
@@ -293,14 +293,14 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1/LICENSE"
 # The dependencies setup.sh fetched. They are not Stud's own code, but a
 # package has to carry them or the application cannot start: ANGLE is the
 # GL translation layer, and the bionic set is the real linker and libc
-# that load Roblox's engine. Both are redistributable -- ANGLE is BSD,
-# the bionic set is BSD and Apache-2.0 from AOSP -- and both licences
+# that load Roblox's engine. Both are redistributable; ANGLE is BSD,
+# the bionic set is BSD and Apache-2.0 from AOSP, and both licences
 # require their text and copyright to travel with the binaries.
 #
 # `tools/setup.sh` puts them in a `licenses/` directory beside each set,
 # so installing the directory carries them; they are ALSO installed under
 # share/licenses/stud/, which is where a distribution looks. If setup
-# could not fetch them it says so loudly -- a package built from a tree
+# could not fetch them it says so loudly, a package built from a tree
 # without them is one that cannot legally be distributed.
 set(STUD_PREBUILT_DEPS angle android-bionic)
 if(STUD_BUILD_QT_ONLY)
@@ -322,7 +322,7 @@ foreach(stud_dep ${STUD_PREBUILT_DEPS})
                 DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/${stud_dep}")
     else()
         message(WARNING
-            "no ${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses -- a package built from "
+            "no ${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses, a package built from "
             "this tree would redistribute ${stud_dep} with no licence text. "
             "Run tools/setup.sh to fetch them.")
     endif()

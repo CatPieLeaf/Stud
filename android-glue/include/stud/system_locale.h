@@ -22,8 +22,8 @@
 namespace stud::android_glue {
 
 struct SystemLocale {
-    std::string language;   // "pt" -- ISO 639, lower case
-    std::string country;    // "BR" -- ISO 3166, upper case; may be empty
+    std::string language;   // "pt", ISO 639, lower case
+    std::string country;    // "BR", ISO 3166, upper case; may be empty
     // java.util.Locale.toString(): "pt_BR", or just "pt" with no country.
     // This is exactly what the real implementation of
     // NativeLocaleJavaInterface.getLocale() returns
@@ -93,7 +93,7 @@ inline const char* env_or_null(const char* name) {
 // Which locale string the environment actually names, following the rule
 // gettext documents and every desktop toolkit implements: the POSIX
 // chain decides, except that an explicitly-set LANGUAGE takes precedence
-// over it -- unless the POSIX chain says "C" or "POSIX", which means
+// over it, unless the POSIX chain says "C" or "POSIX", which means
 // "no localisation" and where LANGUAGE is deliberately ignored.
 inline std::string locale_from_environment() {
     // Stud's own override comes first, so a language can be tried

@@ -8,7 +8,7 @@
 // This process reads them for the same reason it owns the window: Process
 // B runs inside a sandbox with a synthetic /dev and cannot see input
 // devices at all, by design. What comes out of here is already in
-// Android's own vocabulary -- keycodes and axis ids -- so the bridge on
+// Android's own vocabulary, keycodes and axis ids, so the bridge on
 // the other side only has to call the engine's entry points.
 //
 // Hot-plugging is handled by re-scanning, not by libudev: a scan is a
@@ -29,7 +29,7 @@ struct Event {
         // THIRD float. See the real caller in the app's own
         // `onGenericMotion` (jadx, `kl/e.java:278-299`).
         kAxis = 4,
-        // What this pad actually has, answered before it is announced --
+        // What this pad actually has, answered before it is announced,
         // the real device does the same thing (`E(deviceId, type)` runs
         // before `nativeGamepadConnectEventWithGamepadType`), and a pad
         // that reports no keys is a pad with no bindings.
@@ -48,7 +48,7 @@ struct Event {
 };
 
 // Opens what is already plugged in. Safe to call when nothing is, and
-// when /dev/input cannot be read at all -- which is the ordinary case on
+// when /dev/input cannot be read at all, which is the ordinary case on
 // a distribution that does not put users in the `input` group, and is
 // reported once rather than per device.
 void init();
@@ -58,17 +58,17 @@ void init();
 void poll(std::vector<Event>& out);
 
 // Rumble on one pad, by the device id its events carry. Both magnitudes
-// are 0..1 -- the heavy and light motors a real pad has -- and zero for
+// are 0..1, the heavy and light motors a real pad has, and zero for
 // both stops it. `duration_ms` of 0 means "until told otherwise".
 // Returns false when that pad has no force feedback, or when its device
 // node could only be opened read-only.
 bool set_rumble(int device_id, float strong, float weak, int duration_ms);
 
-// Whether any open pad can rumble at all -- what the engine is told when
+// Whether any open pad can rumble at all, what the engine is told when
 // it asks whether this platform supports haptics.
 bool any_rumble_capable();
 
-// How many controllers are open right now -- for the diagnostics command
+// How many controllers are open right now, for the diagnostics command
 // and the startup line.
 int device_count();
 

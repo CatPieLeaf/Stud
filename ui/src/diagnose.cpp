@@ -106,7 +106,7 @@ void report_controllers() {
     if (found == 0) {
         line("controllers", unreadable > 0
                                 ? "none (" + std::to_string(unreadable) +
-                                      " device(s) unreadable -- this user may need the `input` group)"
+                                      " device(s) unreadable. This user may need the `input` group)"
                                 : "none");
     }
 }
@@ -137,7 +137,7 @@ void report_cpu() {
     const long threads = ::sysconf(_SC_NPROCESSORS_ONLN);
     line("cpu threads", threads > 0 ? std::to_string(threads) : std::string());
     // Only the sets that decide whether a build can run at all or take
-    // a wider path -- the raw flag line is over 200 entries and says
+    // a wider path, the raw flag line is over 200 entries and says
     // nothing useful in a report.
     {
         const std::string flags = " " + proc_field("/proc/cpuinfo", "flags") + " ";
@@ -164,7 +164,7 @@ void report_cpu() {
     }
 }
 
-// Every GPU the real Vulkan loader reports, not just the selected one --
+// Every GPU the real Vulkan loader reports, not just the selected one,
 // a hybrid laptop is the common case and which one Stud picked is
 // usually the first question.
 void report_gpus(const stud::config::StudSettings& settings) {
@@ -185,7 +185,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
         } else {
             line("gpu in use", "[" + std::to_string(settings.gpu.device_index) + "] " +
                                    settings.gpu.device_name +
-                                   " -- NOT FOUND now; the loader reports " +
+                                   ", NOT FOUND now; the loader reports " +
                                    std::to_string(gpus.size()) + " device(s)");
         }
         bool first = true;
@@ -217,7 +217,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
 // Roblox ships its Android content in ETC2/EAC, which no desktop GPU can
 // sample. Stud decodes those blocks on the CPU (detex) and re-encodes
 // them into a BC format the device does support, so this line explains
-// both a chunk of CPU use and any complaint about texture quality --
+// both a chunk of CPU use and any complaint about texture quality,
 // BC7 keeps normal maps clean where BC1 turns them blocky.
 void report_texture_formats(const stud::config::StudSettings& settings) {
     const auto support = stud::ui::query_texture_formats(settings.gpu.device_index);
@@ -249,10 +249,10 @@ void report_texture_formats(const stud::config::StudSettings& settings) {
              "ETC2/EAC decoded on the CPU, re-encoded to BC7 (colour) and BC4/BC5");
     } else if (support.bc1) {
         line("texture handling",
-             "ETC2/EAC decoded on the CPU, re-encoded to BC1/BC3 -- no BC7 on this device");
+             "ETC2/EAC decoded on the CPU, re-encoded to BC1/BC3; no BC7 on this device");
     } else {
         line("texture handling",
-             "ETC2/EAC decoded on the CPU and stored UNCOMPRESSED -- no BC support, expect "
+             "ETC2/EAC decoded on the CPU and stored UNCOMPRESSED; no BC support, expect "
              "high texture memory use");
     }
 }
@@ -284,7 +284,7 @@ void write_diagnostics() {
         // differently because of this, and hardened_malloc in
         // particular is strict enough to matter.
         std::printf("  %-22s %s\n", "",
-                    "note: this replaces the allocator in Stud's glibc processes only -- "
+                    "note: this replaces the allocator in Stud's glibc processes only, "
                     "Process B keeps bionic's");
     }
     line("appimage", qEnvironmentVariable("APPIMAGE").toStdString());
@@ -343,7 +343,7 @@ void write_diagnostics() {
     // The login is reported as present or absent only. The value is a
     // real credential and has no business in a report meant to be
     // pasted into an issue.
-    std::printf("Logs from the last few sessions are in %s -- the Settings window's\n"
+    std::printf("Logs from the last few sessions are in %s, the Settings window's\n"
                 "\"Export logs\" button packs them into a single archive.\n",
                 stud::paths::log_dir().c_str());
     std::printf("\n=== end of diagnostics ===\n\n");

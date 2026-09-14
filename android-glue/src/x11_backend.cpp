@@ -26,7 +26,7 @@ namespace {
 
 // Every Xlib entry point this backend uses, resolved from libX11 at
 // runtime. Declared with the real header's own types, so the compiler
-// checks each signature -- what dlopen buys here is only that a machine
+// checks each signature, what dlopen buys here is only that a machine
 // without libX11 still runs Stud on Wayland, not a hand-written ABI.
 struct Xlib {
     void* handle = nullptr;
@@ -96,7 +96,7 @@ Display* g_display = nullptr;
 Window g_window = 0;
 std::atomic<bool> g_pointer_locked{false};
 // Set while a warp of our own is in flight, so the MotionNotify it
-// generates is not read as the user moving the mouse -- without this the
+// generates is not read as the user moving the mouse, without this the
 // camera receives the warp back to centre as a second, opposite delta
 // and mouse look cancels itself out.
 bool g_ignore_next_motion = false;
@@ -262,7 +262,7 @@ bool create_window(int32_t width, int32_t height) {
     //
     // By default X fills the window with its background colour on every
     // configure, and the engine only overwrites that when it next
-    // presents -- which during a drag-resize it largely cannot, because
+    // presents, which during a drag-resize it largely cannot, because
     // the swapchain is being invalidated as fast as the size changes.
     // The result is a window that goes black for as long as the mouse
     // button is held. With no background the previous frame simply stays
@@ -275,7 +275,7 @@ bool create_window(int32_t width, int32_t height) {
     g_height.store(height);
 
     // The engine draws its own cursor, in-frame, on the app shell and
-    // in-game alike -- the same reason the Wayland path passes a null
+    // in-game alike, the same reason the Wayland path passes a null
     // cursor surface. Without this X11 shows the desktop's arrow on top
     // of Roblox's own, which is two cursors.
     //
@@ -299,7 +299,7 @@ bool create_window(int32_t width, int32_t height) {
 
     // The taskbar/titlebar icon. WM_CLASS above is enough for a desktop
     // that can find Stud's .desktop file, but nothing guarantees one is
-    // installed -- an AppImage run straight from a download has none --
+    // installed, an AppImage run straight from a download has none,
     // and then the window has no icon at all. _NET_WM_ICON carries the
     // pixels themselves, so it works either way.
     {
@@ -312,7 +312,7 @@ bool create_window(int32_t width, int32_t height) {
         }
     }
 
-    // Deliberately NOT mapped here -- see ensure_mapped(). The window is
+    // Deliberately NOT mapped here; see ensure_mapped(). The window is
     // shown when there is something in it.
     x.Flush(g_display);
 
@@ -366,8 +366,8 @@ void set_pointer_locked(bool locked) {
                           GrabModeAsync, g_window, None, CurrentTime);
         if (result != GrabSuccess) return;
         g_pointer_locked.store(true);
-        // Measure the first delta from where the drag actually began --
-        // no warp here. Moving the pointer at the moment of the lock is
+        // Measure the first delta from where the drag actually began.
+        // No warp here. Moving the pointer at the moment of the lock is
         // visible as the cursor jumping, and there is no reason for it.
         g_locked_last_x = static_cast<int>(g_pointer_x);
         g_locked_last_y = static_cast<int>(g_pointer_y);
@@ -379,7 +379,7 @@ void set_pointer_locked(bool locked) {
     g_ignore_next_motion = false;
     if (x.UngrabPointer != nullptr) x.UngrabPointer(g_display, CurrentTime);
     // Put the pointer back where the drag started, which is where the
-    // engine's own cursor has stayed -- the Wayland path gets this from
+    // engine's own cursor has stayed, the Wayland path gets this from
     // the compositor, which does not move a locked pointer at all.
     if (x.WarpPointer != nullptr) {
         x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, static_cast<int>(g_pointer_x),
@@ -394,7 +394,7 @@ unsigned long window() { return g_window; }
 
 
 // X11 input, translated into the same HostInputEvent queue the Wayland
-// listeners push onto -- so everything downstream (Process B's bridge,
+// listeners push onto, so everything downstream (Process B's bridge,
 // the engine's own entry points) is identical on both backends and
 // nothing had to learn about X11.
 //
@@ -526,7 +526,7 @@ void on_motion(int x_pos, int y_pos) {
             // first absolute position afterwards still being the anchor.
             push(ev);
         }
-        // Only warp when the pointer is about to run out of window --
+        // Only warp when the pointer is about to run out of window,
         // the grab confines it, so it would stop dead at the edge and
         // the camera with it. Recentring here rather than on every
         // motion is what keeps the pointer where the user left it.
@@ -557,7 +557,7 @@ void on_motion(int x_pos, int y_pos) {
 //
 // X11 stops delivering key and button events the moment focus moves, so a
 // key released after clicking another window is one this client is never
-// told about -- and the engine goes on holding it, which in an experience
+// told about, and the engine goes on holding it, which in an experience
 // means walking forever. The Wayland backend has done this since it was
 // written; this side never did.
 //
@@ -602,7 +602,7 @@ void push_window_focus(bool focused) {
 void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
     // While locked, every event reports the anchor. The pointer really
     // has moved (X11 has no way to hold it still), but saying so would
-    // hand the engine the warped position and move its cursor there --
+    // hand the engine the warped position and move its cursor there,
     // which is exactly the jump to the middle of the screen this had.
     if (!g_pointer_locked.load()) {
         g_pointer_x = static_cast<float>(x_pos);
@@ -777,7 +777,7 @@ namespace {
 //    part is standard.
 //  - A compositing manager only blends TOP-LEVEL windows. A child window
 //    with an ARGB visual is simply drawn into its parent with the alpha
-//    ignored, which is a black box behind the text -- exactly what this
+//    ignored, which is a black box behind the text, exactly what this
 //    first did. So the overlay is an override-redirect top-level,
 //    positioned in root coordinates over the game window, which is what
 //    every tooltip and IME candidate window on X11 already is.
@@ -817,7 +817,7 @@ bool ensure_overlay_window() {
     attributes.border_pixel = 0;
     attributes.background_pixel = 0;
     // Override-redirect: no window manager decoration, no focus stealing,
-    // no placement of its own -- it goes exactly where it is put, which
+    // no placement of its own. It goes exactly where it is put, which
     // is over the text box.
     attributes.override_redirect = True;
     // No input: a click inside the text box belongs to the engine
@@ -837,7 +837,7 @@ bool ensure_overlay_window() {
     // box is how the caret is placed. An empty INPUT shape makes the
     // server treat the window as not being there for pointer purposes
     // while still drawing it. XShape lives in libXext, loaded the same
-    // optional way as everything else here -- without it the overlay
+    // optional way as everything else here, without it the overlay
     // still draws, it just eats clicks, so this is not fatal.
     if (void* xext = ::dlopen("libXext.so.6", RTLD_NOW | RTLD_LOCAL); xext != nullptr) {
         using CombineRectanglesFn = void (*)(Display*, Window, int, int, int, XRectangle*, int,
@@ -871,7 +871,7 @@ void present_text_overlay(const void* argb, int width, int height, int x_pos, in
     if (g_overlay_image == nullptr || g_overlay_w != width || g_overlay_h != height) {
         if (g_overlay_image != nullptr) {
             // Created with XCreateImage over a buffer this code does not
-            // own, so only the header is freed -- XDestroyImage would
+            // own, so only the header is freed, XDestroyImage would
             // free the caller's pixels too.
             if (x.Free != nullptr) x.Free(g_overlay_image);
             g_overlay_image = nullptr;
@@ -888,7 +888,7 @@ void present_text_overlay(const void* argb, int width, int height, int x_pos, in
     g_overlay_image->data = const_cast<char*>(static_cast<const char*>(argb));
 
     // A top-level window is placed in ROOT coordinates, so where the box
-    // is inside the game window has to be translated first -- and again
+    // is inside the game window has to be translated first, and again
     // on every update, because the game window can be moved or resized
     // under it.
     int root_x = x_pos;

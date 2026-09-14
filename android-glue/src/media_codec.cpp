@@ -7,7 +7,7 @@
 #include <variant>
 #include <vector>
 
-// AMediaFormat: a real, working key/value property bag -- no actual codec
+// AMediaFormat: a real, working key/value property bag; no actual codec
 // capability needed for this half of the API.
 struct AMediaFormat {
     using Value = std::variant<int32_t, float, std::string, std::pair<std::vector<uint8_t>, size_t>>;
@@ -34,7 +34,7 @@ const char* AMEDIAFORMAT_KEY_STRIDE = "stride";
 // AMediaCodec: deliberate stub. Real hardware/software video decode is out
 // of scope for the prototype (see the engineering notes). Creation always
 // returns nullptr ("codec unavailable for this MIME type"), matching a
-// real device's behavior when no matching codec exists -- callers are
+// real device's behavior when no matching codec exists, callers are
 // already expected to null-check per the real API's own documented
 // contract, so this doesn't introduce a new failure mode.
 extern "C" {
@@ -42,12 +42,12 @@ extern "C" {
 AMediaCodec* AMediaCodec_createDecoderByType(const char* mime_type) {
     // Which MIME the engine asks for is the first thing any real
     // implementation needs to know, and nothing recorded it before.
-    std::fprintf(stderr, "stud: AMediaCodec_createDecoderByType(\"%s\") -- no decoder\n",
+    std::fprintf(stderr, "stud: AMediaCodec_createDecoderByType(\"%s\"); no decoder\n",
                  mime_type != nullptr ? mime_type : "(null)");
     return nullptr;
 }
 AMediaCodec* AMediaCodec_createEncoderByType(const char* mime_type) {
-    std::fprintf(stderr, "stud: AMediaCodec_createEncoderByType(\"%s\") -- no encoder\n",
+    std::fprintf(stderr, "stud: AMediaCodec_createEncoderByType(\"%s\"); no encoder\n",
                  mime_type != nullptr ? mime_type : "(null)");
     return nullptr;
 }

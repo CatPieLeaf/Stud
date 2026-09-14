@@ -9,24 +9,24 @@
 // sets an internal "a native input widget is showing my text" flag on
 // focus, and from then on its text-drawing path substitutes an empty
 // string until focus is lost. That is why `NativeTextBoxInfo` carries a
-// rectangle, a font, a font size, a colour and alignments at all -- on a
+// rectangle, a font, a font size, a colour and alignments at all, on a
 // real device the app lays a real Android EditText over the GL view and
 // that widget is what the user sees. Stud is the Android layer here, so
 // supplying that widget is Stud's job; without it, typing lands in the
-// engine (it does -- the text really is delivered) and simply never
+// engine (it does, the text really is delivered) and simply never
 // appears until the box is unfocused. See the text-input entry in
 // the engineering notes for the full trace.
 //
 // This draws it as a real wl_subsurface above the game surface, in the
-// engine's OWN font -- resolved from the same
-// `assets/android/fonts/font-mappings.json` the real app uses -- so it
+// engine's OWN font, resolved from the same
+// `assets/android/fonts/font-mappings.json` the real app uses, so it
 // looks like the TextBox it is standing in for rather than like a
 // foreign widget.
 namespace stud::android_glue {
 
 struct TextOverlaySpec {
     bool visible = false;
-    // The box, in engine/buffer pixels -- the same space
+    // The box, in engine/buffer pixels, the same space
     // ANativeWindow_getWidth/getHeight report and the engine renders in.
     // Fractional on purpose: a box at y=10 in the engine's own
     // density-independent units is at 12.5 real pixels, and rounding that
@@ -39,7 +39,7 @@ struct TextOverlaySpec {
     // `fromRbxFontRatio` (see font-mappings.json) exactly as the real
     // app does before calling setTextSize().
     float pixel_size = 0.0f;
-    // Roblox's own line box, which is its TextSize -- the height one line
+    // Roblox's own line box, which is its TextSize, the height one line
     // of text occupies, and what every vertical alignment is measured
     // against. Separate from pixel_size (the em the glyphs are drawn at)
     // because the two are NOT the same number: measured against the

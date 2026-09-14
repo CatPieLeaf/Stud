@@ -39,7 +39,7 @@ QString share_root() {
 // What the entry should run.
 //
 // $APPIMAGE is set by the AppImage runtime and is the path to the single
-// file the user actually has -- the mount point the executable lives on
+// file the user actually has, the mount point the executable lives on
 // disappears when Stud exits, so the executable's own path is useless in
 // an entry that has to work tomorrow.
 QString launcher_command() {
@@ -166,7 +166,7 @@ void set_default_application(const QString& mime_type, const QString& entry) {
 // It still claims the same URL schemes, with an Exec pointing at wherever
 // that build happened to live, so leaving it behind means two entries
 // competing to open a roblox:// link and one of them is stale. Removed
-// only when it really is Stud's own -- the name, and an Exec naming
+// only when it really is Stud's own, the name, and an Exec naming
 // Stud's own binary.
 void remove_legacy_entry(const QString& apps_dir) {
     const QString path = apps_dir + QStringLiteral("/stud.desktop");
@@ -270,15 +270,15 @@ int install_desktop_entry() {
     //
     // Written straight into mimeapps.list rather than shelled out to
     // xdg-mime, which is a script that reads the desktop environment out
-    // of the environment it is handed -- and this one may be an
+    // of the environment it is handed, and this one may be an
     // AppImage's. The file's own format is stable and small.
     for (const char* scheme : {"x-scheme-handler/roblox", "x-scheme-handler/roblox-player"}) {
         set_default_application(QString::fromLatin1(scheme), app_id + QStringLiteral(".desktop"));
     }
 
     // Best-effort index refreshes. KDE in particular keeps its own
-    // service index, and a new entry is invisible to the launcher -- and
-    // to window-to-icon matching -- until that is rebuilt.
+    // service index, and a new entry is invisible to the launcher, and
+    // to window-to-icon matching, until that is rebuilt.
     run_best_effort(QStringLiteral("gtk-update-icon-cache"),
                     {QStringLiteral("-q"), QStringLiteral("-f"), QStringLiteral("-t"), icons_dir});
     run_best_effort(QStringLiteral("update-desktop-database"), {QStringLiteral("-q"), apps_dir});

@@ -21,7 +21,7 @@ namespace stud::texture_cache {
 namespace {
 
 // Entries are spread over 256 directories by the first byte of the key,
-// so no single directory ends up with tens of thousands of files --
+// so no single directory ends up with tens of thousands of files,
 // which is what makes a cache slower than the work it saves.
 std::string cache_root() {
     static const std::string root = stud::paths::cache_dir() + "/textures";
@@ -43,7 +43,7 @@ std::atomic<uint64_t> g_max_bytes{500ull * 1024ull * 1024ull};
 
 // Bytes stored since the last prune. The cap used to be enforced only at
 // startup, which is not a cap at all for anyone who leaves Stud running
-// -- a long session could grow the cache without limit. Counting what
+// a long session could grow the cache without limit. Counting what
 // has been added since gives a cheap trigger to check again, without
 // stat()ing the whole tree on every store.
 std::atomic<uint64_t> g_stored_since_prune{0};
@@ -133,13 +133,13 @@ bool ensure_ready() {
             g_max_bytes.store(static_cast<uint64_t>(std::atoll(megabytes)) * 1024ull * 1024ull);
         }
         if (g_max_bytes.load() == 0) return false;
-        // Created before asking what it sits on -- the question is about
+        // Created before asking what it sits on, the question is about
         // the directory, so it has to exist first.
         ::mkdir(stud::paths::cache_dir().c_str(), 0700);
         ::mkdir(cache_root().c_str(), 0700);
         static const bool forced = std::getenv("STUD_TEX_CACHE_FORCE") != nullptr;
         if (!forced && on_rotational_disk()) {
-            std::printf("stud: texture cache off -- %s is on a spinning disk, where re-encoding "
+            std::printf("stud: texture cache off, %s is on a spinning disk, where re-encoding "
                         "is about as cheap as reading it back (textureCacheMB in config.json, or "
                         "STUD_TEX_CACHE_FORCE=1, overrides)\n",
                         cache_root().c_str());
@@ -167,7 +167,7 @@ bool enabled() { return ensure_ready(); }
 void key_for(const void* src, uint64_t src_bytes, uint32_t format, uint32_t target_format,
              uint32_t width, uint32_t height, uint64_t* key_high, uint64_t* key_low) {
     // Two FNV-1a streams with different offsets, giving 128 bits. Not a
-    // cryptographic hash and does not need to be -- but it does need to
+    // cryptographic hash and does not need to be, but it does need to
     // be wide, because a collision here is not a slow texture, it is the
     // WRONG texture, silently.
     uint64_t h1 = 0xcbf29ce484222325ull;
@@ -250,7 +250,7 @@ void store(uint64_t key_high, uint64_t key_low, const void* src, uint64_t bytes)
         return;
     }
 
-    // Enforce the cap during the session, not only at startup -- but
+    // Enforce the cap during the session, not only at startup, but
     // never on the thread that is storing.
     //
     // Pruning walks the whole tree and stats every entry, and the caller

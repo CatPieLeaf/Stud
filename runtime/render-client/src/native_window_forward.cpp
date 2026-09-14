@@ -1,12 +1,12 @@
 // Real, confirmed-live gap (this session): libroblox.so's own dynamic
 // symbol table directly references ANativeWindow_fromSurface/getWidth/
 // getHeight/acquire/release (an eager/data-bound import, same class as
-// AMediaFormat_delete) -- these must be real, exported libandroid.so
+// AMediaFormat_delete). These must be real, exported libandroid.so
 // symbols, not just entries in android-glue's old resolver table.
 // Process C owns the real ANativeWindow implementation entirely (see
 // android-glue/src/native_window.cpp, deliberately excluded from this
 // bionic build for the same glibc-only-Wayland reason ANGLE itself is)
-// -- forwards over the same proven IPC mechanism as the GL/EGL stubs.
+// forwards over the same proven IPC mechanism as the GL/EGL stubs.
 
 #include "render_client_common.h"
 

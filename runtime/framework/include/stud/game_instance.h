@@ -6,7 +6,7 @@
 //
 // The place id arrives through a real JNI callback
 // (`gameActivity_onGameLoaded`), but nothing in the Java-facing surface
-// ever reports the instance -- a normal join has no instance id until
+// ever reports the instance, a normal join has no instance id until
 // the backend picks a server, and the only place that answer is stated
 // is the engine's own log:
 //

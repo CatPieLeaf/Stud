@@ -18,7 +18,7 @@ std::string percent_decode(std::string_view value) {
         .toStdString();
 }
 
-// Case-insensitive key match -- the real format's exact key casing
+// Case-insensitive key match, the real format's exact key casing
 // isn't confirmed against a live click (see launch_uri.h's caveat), and
 // different public documentation of this format disagrees on casing
 // (e.g. "robloxLocale" vs "robloxlocale"). Matching case-insensitively
@@ -52,7 +52,7 @@ void assign_field(LaunchUri& result, std::string_view key, std::string_view valu
     } else if (key_equals(key, "channel")) {
         result.channel = decoded;
     }
-    // Unknown keys are ignored, not an error -- the real format may
+    // Unknown keys are ignored, not an error, the real format may
     // carry fields this struct doesn't track yet; ignoring unknowns
     // rather than failing keeps this forward-compatible.
 }
@@ -76,7 +76,7 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
     }
 
     // Real format has a "//" prefix before the "1+launchmode:play+..."
-    // payload -- tolerate its absence too rather than requiring an
+    // payload, tolerate its absence too rather than requiring an
     // exact match, since this is a best-effort parse of a
     // publicly-documented-but-not-locally-verified format.
     if (rest.size() >= 2 && rest.substr(0, 2) == "//") {
@@ -96,7 +96,7 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
     //   roblox://experiences/start?placeId=10518166490&gameInstanceId=...
     //     &joinAttemptId=...&joinAttemptOrigin=PlayButton
     // An ordinary URL with an ordinary query string. Nothing in the loop
-    // below can read it -- there is no "+" and no "key:value" -- so every
+    // below can read it, there is no "+" and no "key:value", so every
     // field stayed at its default, place_id stayed 0, and Stud treated a
     // browser click as a bare launch and opened the home screen. Stud
     // even builds a link of this shape itself, for the Discord join
@@ -143,7 +143,7 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
             assign_field(result, segment.substr(0, colon), segment.substr(colon + 1));
         }
         // Segments without a colon (e.g. the leading "1" protocol
-        // version marker) are silently skipped -- not every "+"-
+        // version marker) are silently skipped, not every "+"-
         // separated token is a key:value pair.
 
         if (next_plus == std::string_view::npos) {
@@ -154,7 +154,7 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
 
     // See launch_uri.h's own UPDATE 2 doc comment: real join-relevant
     // fields sitting in cleartext in place_launcher_url's own query
-    // string. Best-effort -- an unparseable or field-less URL just
+    // string. Best-effort, an unparseable or field-less URL just
     // leaves these at their honest zero/empty defaults, same treatment
     // as every other field here.
     if (!result.place_launcher_url.empty()) {

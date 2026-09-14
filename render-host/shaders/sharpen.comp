@@ -56,7 +56,7 @@ void main() {
     //
     // The top of the range maps to 0.24 rather than 0.25, and that bound is
     // arithmetic rather than taste: at exactly 0.25 the denominator
-    // (1 + 4w) is zero and the result is infinite -- which the clamp below
+    // (1 + 4w) is zero and the result is infinite, which the clamp below
     // swallows, so the strongest setting would look like it did nothing at
     // all. At 0.24 the denominator is 0.04: extreme, finite, and still
     // bounded by the neighbourhood.

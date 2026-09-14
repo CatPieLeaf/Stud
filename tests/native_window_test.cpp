@@ -1,6 +1,6 @@
 // M6 test: ANativeWindow's real Wayland backing (see
 // android-glue/src/native_window.cpp). Portable to a headless/CI
-// environment with no compositor -- checks honest degradation (null
+// environment with no compositor, checks honest degradation (null
 // surface, no crash) there instead of requiring a live session, but
 // prints which case it actually exercised so a real desktop run (this
 // development machine has a live Wayland session) is visibly verified,
@@ -32,7 +32,7 @@ int main() {
     wl_display* display = stud::android_glue::native_window_wl_display(window);
 
     if (const char* wayland_display = std::getenv("WAYLAND_DISPLAY")) {
-        std::printf("WAYLAND_DISPLAY=%s set -- expecting a real compositor connection\n",
+        std::printf("WAYLAND_DISPLAY=%s set, expecting a real compositor connection\n",
                     wayland_display);
         check(surface != nullptr,
               "real Wayland session detected: ANativeWindow got a real wl_surface");
@@ -40,7 +40,7 @@ int main() {
               "real Wayland session detected: native_window_wl_display() returns the real "
               "wl_display");
     } else {
-        std::printf("WAYLAND_DISPLAY not set -- expecting honest degradation, not a crash\n");
+        std::printf("WAYLAND_DISPLAY not set, expecting honest degradation, not a crash\n");
         check(surface == nullptr, "no compositor: wl_surface is null, not garbage");
         check(display == nullptr, "no compositor: wl_display is null, not garbage");
     }
@@ -50,7 +50,7 @@ int main() {
     check(stud::android_glue::native_window_wl_display(nullptr) == nullptr,
           "native_window_wl_display(nullptr) returns null instead of crashing");
 
-    // Real, standard NDK usage pattern -- getWidth/getHeight/acquire/
+    // Real, standard NDK usage pattern, getWidth/getHeight/acquire/
     // release all still work exactly as before this change.
     check(ANativeWindow_getWidth(window) > 0, "ANativeWindow_getWidth reports a positive value");
     check(ANativeWindow_getHeight(window) > 0, "ANativeWindow_getHeight reports a positive value");

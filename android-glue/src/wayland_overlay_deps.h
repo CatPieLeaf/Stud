@@ -8,7 +8,7 @@
 
 // The handful of Wayland objects the text overlay needs from
 // native_window.cpp, which owns the connection and the game window.
-// Internal to android-glue -- the public overlay API (stud/text_overlay.h)
+// Internal to android-glue, the public overlay API (stud/text_overlay.h)
 // deliberately exposes no Wayland types.
 namespace stud::android_glue {
 

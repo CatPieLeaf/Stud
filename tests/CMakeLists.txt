@@ -1,6 +1,6 @@
 # jni_bridge_test/device_params_test/flag_overrides_test: real, still-
 # valid tests for the framework's portable logic (JSON serialization,
-# param-building) -- moved with the rest of jni-bridge into
+# param-building), moved with the rest of jni-bridge into
 # runtime/framework/ (now bionic-only, no host-side build target).
 # Not wired back into the host-side test suite yet; revisit once the
 # new runtime's own bring-up is proven, not blocking it.
@@ -48,7 +48,7 @@ target_link_libraries(stud_cpu_compat_test PRIVATE stud_cpu_compat)
 add_test(NAME cpu_compat_test COMMAND stud_cpu_compat_test)
 
 # Key mapping, checked against real compiled keymaps (see the test's own
-# header comment). Header-only, so it needs no runtime target -- only the
+# header comment). Header-only, so it needs no runtime target, only the
 # same xkbcommon the compositor's keymap is read with.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XkbcommonTest REQUIRED IMPORTED_TARGET xkbcommon)
@@ -60,7 +60,7 @@ target_link_libraries(stud_key_map_test PRIVATE PkgConfig::XkbcommonTest)
 add_test(NAME key_map_test COMMAND stud_key_map_test)
 set_tests_properties(key_map_test PROPERTIES SKIP_RETURN_CODE 77)
 
-# Which language Stud reports to Roblox. Header-only, no dependencies --
+# Which language Stud reports to Roblox. Header-only, no dependencies,
 # the table it checks is transcribed from the real app's own code.
 add_executable(stud_locale_test locale_test.cpp)
 target_include_directories(stud_locale_test PRIVATE "${CMAKE_SOURCE_DIR}/android-glue/include")

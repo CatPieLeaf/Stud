@@ -36,7 +36,7 @@
 
 #include <unistd.h>
 
-// Defined in main.cpp -- the session this window may have to stop and
+// Defined in main.cpp, the session this window may have to stop and
 // put back.
 namespace stud::ui {
 void terminate_stud_session();
@@ -136,7 +136,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     // Size, not sharpness: lay the app out at the display's own scale so
     // it matches the rest of the desktop. The warning is not decoration
-    // -- the engine reads this same scale to pick its render technique
+    // the engine reads this same scale to pick its render technique
     // and drops SSAO above 1.0, which is measured and unavoidable from
     // here (runtime/src/main.cpp says why).
     followDpiCheck_ = new QCheckBox("Follow DPI", this);
@@ -151,8 +151,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     connect(hidpiCheck_, &QCheckBox::toggled, followDpiCheck_, &QWidget::setEnabled);
 
     // Stud's own upscaler. The engine renders at the window's logical size
-    // -- what HiDPI off already does, at scale 1.0, so its UI size,
-    // rounded corners and SSAO are all untouched -- and Stud builds the
+    // what HiDPI off already does, at scale 1.0, so its UI size,
+    // rounded corners and SSAO are all untouched, and Stud builds the
     // presented frame from that image instead of letting the compositor
     // stretch it.
     //
@@ -168,12 +168,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     graphics->addWidget(upscalingCheck_);
 
     // Sharpening strength. Its own control because the right amount is a
-    // matter of taste and of content -- too much looks scratched.
+    // matter of taste and of content, too much looks scratched.
     auto* sharpRow = new QHBoxLayout();
     sharpRow->addWidget(new QLabel("Sharpening", this));
     upscaleSharpnessSlider_ = new QSlider(Qt::Horizontal, this);
     // 0 to 125, defaulting to 100: 0 skips the pass, 100 is full strength,
-    // and 125 is where the filter's own renormaliser would reach zero --
+    // and 125 is where the filter's own renormaliser would reach zero,
     // the top of the range is mapped to just short of it.
     upscaleSharpnessSlider_->setRange(0, 125);
     upscaleSharpnessSlider_->setSingleStep(5);
@@ -182,7 +182,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscaleSharpnessSlider_->setToolTip(
         "How hard the upscaler sharpens what it produces. 100% is full strength and the\n"
         "default; 0 turns the pass off entirely; above 100 is extra bite, which can look\n"
-        "scratched on flat art -- and Roblox UI is mostly flat art.\n"
+        "scratched on flat art, and Roblox UI is mostly flat art.\n"
         "Applies on the next start, so use the restart button beside Save.");
     sharpRow->addWidget(upscaleSharpnessSlider_);
     sharpnessValueLabel_ = new QLabel(this);
@@ -207,7 +207,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         sync_upscale_controls();
     });
 
-    // Enabled or greyed out by the render path -- see onRenderPathChanged,
+    // Enabled or greyed out by the render path; see onRenderPathChanged,
     // which also owns the tooltip and says why when it is unavailable.
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
     graphics->addWidget(mangohudCheck_);
@@ -234,7 +234,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     backgroundFpsSlider_->setSingleStep(1);
     backgroundFpsSlider_->setPageStep(10);
     backgroundFpsSlider_->setToolTip(
-        "Frames per second while Stud is not the window you are using -- minimised,\n"
+        "Frames per second while Stud is not the window you are using, minimised,\n"
         "on another workspace, covered, or simply alt-tabbed away. Rendering a game\n"
         "at full rate for a window nobody is looking at wastes GPU and CPU.\n"
         "All the way right is Unlimited.");
@@ -279,7 +279,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* buttonRow = new QHBoxLayout();
     // Restart, for comparing two settings without a trip through the tray:
     // save, restart, look, repeat. Only meaningful while a session is
-    // actually running, so it appears only then -- there is nothing to
+    // actually running, so it appears only then, there is nothing to
     // restart otherwise, and Save already starts one when it has to.
     restartButton_ = new QPushButton(this);
     // The desktop's own refresh icon, and Qt's built-in one when there is
@@ -287,7 +287,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     //
     // fromTheme() returns nothing at all where no theme is installed, and
     // a themed FALLBACK is no help because it fails for the same reason.
-    // This button carries no text -- it is 36px of icon -- so that left a
+    // This button carries no text. It is 36px of icon, so that left a
     // blank square in the AppImage, which bundles no icon theme. Qt's
     // standard icons come from the style and ship inside Qt itself, so
     // they are there whatever the desktop has.
@@ -327,7 +327,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     // Ask GitHub whether there is a newer Stud. The tray may have asked
     // already, in which case this costs nothing and the answer is
-    // remembered -- see UpdateCheck.
+    // remembered; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this,
             [this] { showIdleStatus(); });
     UpdateCheck::start();
@@ -336,7 +336,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     installResets();
     // Ask now, rather than only on the signal. The tray starts the same
     // check at launch, so by the time this window is opened the answer is
-    // usually already known and `updateFound` has long since fired --
+    // usually already known and `updateFound` has long since fired,
     // connecting to it and waiting meant Settings never showed the notice
     // at all.
     showIdleStatus();
@@ -345,7 +345,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 // Right-click a control to put it back to its default.
 //
 // The defaults come from a default-constructed StudSettings, which is
-// where they are already defined -- writing them out again here would be a
+// where they are already defined, writing them out again here would be a
 // second copy to drift out of step with the first.
 //
 // The APK picker is deliberately absent: its "default" is having no APK,
@@ -418,7 +418,7 @@ void SettingsWindow::loadFromDisk() {
     }
 
     // An empty name means nobody has ever picked one, which is not the
-    // same as having picked device 0 -- see default_gpu_index().
+    // same as having picked device 0; see default_gpu_index().
     const uint32_t wanted = settings.gpu.device_name.empty()
                                 ? default_gpu_index()
                                 : settings.gpu.device_index;
@@ -453,7 +453,7 @@ void SettingsWindow::loadFromDisk() {
     // Carried through untouched: the window offers no field for it, but a
     // hand-edited id must survive a save.
     // The version of the APK Stud actually has, read out of its own
-    // manifest -- not a path, and not the name of whatever file it was
+    // manifest, not a path, and not the name of whatever file it was
     // copied from. That name is shown only while the user is picking;
     // after import the useful fact is which Roblox build this is.
     pickedApkPath_.clear();
@@ -461,7 +461,7 @@ void SettingsWindow::loadFromDisk() {
 
     // Vulkan wins outright: the backend key is about which GL library to
     // load, and Vulkan mode loads none, so a saved "zink" alongside
-    // Vulkan is not a third state -- it is a leftover.
+    // Vulkan is not a third state; it is a leftover.
     int path_index = kRenderPathVulkan;
     if (settings.graphics_mode != stud::config::GraphicsMode::kVulkan) {
         path_index = kRenderPathAngleVulkan;
@@ -494,7 +494,7 @@ void SettingsWindow::loadFromDisk() {
 //
 // Vulkan is render-host's own real driver calls, which its Vulkan layer
 // hooks. OpenGL reaches the system EGL through ANGLE's desktop-GL
-// backend, which its OpenGL hook catches once its shim is preloaded --
+// backend, which its OpenGL hook catches once its shim is preloaded,
 // live-confirmed, libMangoHud_opengl.so really is mapped into
 // render-host there. The other two present through ANGLE's own private
 // Vulkan and touch neither: its GL hook never loads, and its Vulkan
@@ -571,7 +571,7 @@ void SettingsWindow::setStatusMessage(const QString& text) {
 // It lives here rather than in a banner of its own because this is the
 // one line in the window that is already about "what just happened", and
 // an update is news of exactly that kind. Anything the user actually does
-// -- saving, restarting -- replaces it, and it comes back when that
+// saving, restarting, replaces it, and it comes back when that
 // message is cleared.
 void SettingsWindow::showIdleStatus() {
     if (!UpdateCheck::updateAvailable()) {
@@ -600,7 +600,7 @@ void SettingsWindow::onRenderPathChanged(int index) {
             "Use the Vulkan or OpenGL render path for the overlay.");
     }
     // The signal is blocked so restoring the box does not overwrite what
-    // the user actually asked for -- switching away and back keeps it.
+    // the user actually asked for, switching away and back keeps it.
     const QSignalBlocker block(mangohudCheck_);
     mangohudCheck_->setChecked(can_overlay && mangohudWanted_);
 }
@@ -647,7 +647,7 @@ void SettingsWindow::onBrowseApkClicked() {
 // restarting without saving would relaunch the old ones and look like the
 // change did nothing.
 void SettingsWindow::onRestartClicked() {
-    // Save first, through the ordinary path -- settings are read when a
+    // Save first, through the ordinary path, settings are read when a
     // session STARTS, so restarting without saving would relaunch the old
     // ones and look like the change did nothing.
     onSaveClicked();
@@ -693,7 +693,7 @@ void SettingsWindow::onSaveClicked() {
     // and then clears Downloads should not discover weeks later that
     // Stud will no longer launch. Stud keeps exactly one APK of its own,
     // under one fixed name in its data directory, and importing another
-    // overwrites it -- so nothing points at the user's own file and
+    // overwrites it, so nothing points at the user's own file and
     // there is never a second copy quietly aging on disk.
     const QString stored = QString::fromStdString(stud::paths::stored_apk_path());
     bool imported = false;
@@ -704,7 +704,7 @@ void SettingsWindow::onSaveClicked() {
         //
         // A running Stud has the extracted libroblox.so mapped and the
         // engine's caches open; importing over them while it runs takes
-        // it down -- live-reported as "if someone loads Stud's APK while
+        // it down, live-reported as "if someone loads Stud's APK while
         // Stud is open, Stud crashes". The runtime also clears everything
         // derived from the previous build on the next launch, which is
         // not a thing to do to a live process either.
@@ -732,7 +732,7 @@ void SettingsWindow::onSaveClicked() {
             (QFile::exists(stored) && !QFile::remove(stored)) ||
             !QFile::rename(partial, stored)) {
             QFile::remove(partial);
-            statusLabel_->setText(QString("Could not copy the APK into %1 -- is there room?")
+            statusLabel_->setText(QString("Could not copy the APK into %1, is there room?")
                                        .arg(QString::fromStdString(stud::paths::apk_dir())));
             return;
         }
@@ -749,11 +749,11 @@ void SettingsWindow::onSaveClicked() {
     const std::string apk = stored.toStdString();
 
     // Real, once-per-import work: extract libroblox.so from the chosen
-    // APK, once, right here at APK-selection time -- not on every game
+    // APK, once, right here at APK-selection time, not on every game
     // launch. Only runs when the APK path actually changed (or no
     // cached extraction exists yet at all); an unrelated settings
     // change (GPU, HiDPI, ...) with the same APK re-saves without
-    // touching this. No patching -- real bionic Process B loads the
+    // touching this. No patching. Real bionic Process B loads the
     // extracted file completely unmodified (confirmed this session:
     // real bionic dlopen() resolves libroblox.so's entire real
     // dependency graph natively, zero byte patches needed).

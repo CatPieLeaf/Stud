@@ -92,8 +92,8 @@ int main(int argc, char** argv) {
               sw_cfg->mode == stud::render::DevRenderBackendMode::kAngleSwiftShader,
           "angle-swiftshader selects the software backend");
 
-    // A config still naming the removed Zink backend is not an error --
-    // it means the default now, so an existing install keeps working
+    // A config still naming the removed Zink backend is not an error.
+    // It means the default now, so an existing install keeps working
     // instead of refusing to open its own settings.
     std::string zink_path = dir + "/zink.json";
     {

@@ -55,7 +55,7 @@ BIONIC_FILES=(
 # Taken when a source has them, never required: Stud builds its own and
 # binds them over /system/lib64 inside the sandbox, so whatever a real
 # Android has under these names is shadowed and unused. ld-android.so is
-# here for a different reason -- the linker answers that soname from
+# here for a different reason, the linker answers that soname from
 # itself, so the file is never opened.
 BIONIC_OPTIONAL_FILES=(
     ld-android.so libandroid.so libmediandk.so libnativewindow.so
@@ -64,7 +64,7 @@ BIONIC_OPTIONAL_FILES=(
 )
 
 # Which AOSP release everything bionic-side comes from. Android 15 is
-# SDK 35, which is the newest the pinned NDK can compile against --
+# SDK 35, which is the newest the pinned NDK can compile against,
 # AOSP main is already on 37, and liblog there uses symbols no released
 # NDK has.
 AOSP_BRANCH="${STUD_AOSP_BRANCH:-android15-release}"
@@ -114,7 +114,7 @@ setup_ndk() {
 # -------------------------------------------------------------- ANGLE
 
 # Stud loads ANGLE's own libEGL/libGLESv2 in the render host, never the
-# system ones -- the whole point is that the translation layer is a known
+# system ones, the whole point is that the translation layer is a known
 # quantity. These are the files it actually opens at runtime; the rest of
 # an ANGLE build tree (24 GB of source and objects) is not needed.
 ANGLE_RUNTIME_FILES=(
@@ -137,18 +137,18 @@ copy_angle_runtime() {
     # Optional, and worth saying when it is missing rather than letting
     # the Settings window offer a backend that cannot load.
     [ -f "$ANGLE_DIR/libvk_swiftshader.so" ] ||
-        warn "no libvk_swiftshader.so -- the Software rendering entry will not work"
+        warn "no libvk_swiftshader.so, the Software rendering entry will not work"
     say "ANGLE runtime in $ANGLE_DIR"
     # $from is the build directory (out/Release); the licences live at the
     # checkout root, two levels up.
     copy_angle_licenses "$from/../.." ||
-        warn "no LICENSE at $from/../.. -- ANGLE's licences were not copied"
+        warn "no LICENSE at $from/../..; ANGLE's licences were not copied"
 }
 
 # The licences for the binaries above.
 #
 # Every one of these .so files is someone else's work, redistributed in
-# binary form by every package Stud builds -- and both licences involved
+# binary form by every package Stud builds, and both licences involved
 # require their text and copyright to travel with the binary. Shipping the
 # libraries without them is not a paperwork slip, it is the one thing BSD
 # and Apache-2.0 actually ask for.
@@ -165,7 +165,7 @@ copy_angle_licenses() {
     [ -f "$root/AUTHORS" ] && cp -a "$root/AUTHORS" "$dest/AUTHORS-ANGLE.txt"
 
     # Each of these is one shipped library. A missing one is reported
-    # rather than skipped quietly -- the library it belongs to is very
+    # rather than skipped quietly, the library it belongs to is very
     # likely being shipped anyway.
     local pair from to
     for pair in \
@@ -178,7 +178,7 @@ copy_angle_licenses() {
         if [ -f "$root/$from" ]; then
             cp -a "$root/$from" "$dest/$to"
         else
-            warn "no $from in $root -- $to will be missing from packages"
+            warn "no $from in $root, $to will be missing from packages"
         fi
     done
 
@@ -205,7 +205,7 @@ EOF
     say "ANGLE licences in $dest"
 }
 
-# Used when ANGLE is already present but its licences are not -- an
+# Used when ANGLE is already present but its licences are not, an
 # install from before this existed. Neither source may still be around,
 # and that has to be said out loud rather than silently producing a
 # package that cannot legally be distributed.
@@ -235,12 +235,12 @@ setup_angle() {
         return
     fi
 
-    warn "no prebuilt ANGLE given (STUD_ANGLE_SRC) -- building from source."
+    warn "no prebuilt ANGLE given (STUD_ANGLE_SRC), building from source."
     warn "this downloads several GB and takes upwards of an hour."
     need git; need python3
     # xz is not used by anything here directly. ANGLE's own hooks download
     # the Chromium sysroot as a .tar.xz and shell out to `tar mxf`, which
-    # needs the xz binary on PATH -- and tar's failure for a missing one is
+    # needs the xz binary on PATH, and tar's failure for a missing one is
     # `tar (child): xz: Cannot exec: No such file or directory`, seventeen
     # minutes into a gclient sync. Checking it here fails in a second
     # instead, with a name worth searching for.
@@ -254,7 +254,7 @@ setup_angle() {
 
     # depot_tools ships its own Python and CIPD packages, and unpacks them
     # the first time one of its commands runs. DEPOT_TOOLS_UPDATE=0 below
-    # switches that off -- which is what we want for the self-update, and
+    # switches that off, which is what we want for the self-update, and
     # not what we want for the very first unpack. On a machine where
     # depot_tools had been used before, this had already happened and the
     # difference never showed; on a clean checkout it fails outright:
@@ -267,7 +267,7 @@ setup_angle() {
     if [ ! -f "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt" ]; then
         say "bootstrapping depot_tools"
         (cd "$DEPOT_TOOLS_DIR" && ./ensure_bootstrap) ||
-            warn "depot_tools bootstrap reported an error -- continuing, since it may still have done enough"
+            warn "depot_tools bootstrap reported an error, continuing, since it may still have done enough"
         [ -f "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt" ] ||
             die "depot_tools did not bootstrap; ANGLE cannot be built from source here"
     fi
@@ -280,7 +280,7 @@ setup_angle() {
     # Current depot_tools writes a gclient solution named "." and checks
     # ANGLE out into the directory fetch was run from; older recipes used
     # an `angle/` subdirectory. Hardcoding the second one is what broke
-    # CI -- a clean machine, where this path runs for real:
+    # CI, a clean machine, where this path runs for real:
     #
     #   tools/setup.sh: line 187: cd: angle: No such file or directory
     #
@@ -306,7 +306,7 @@ setup_angle() {
     fi
     angle_src="$(angle_checkout)"
     [ -n "$angle_src" ] ||
-        die "ANGLE did not check out into $ANGLE_SRC_DIR -- nothing there has a DEPS file"
+        die "ANGLE did not check out into $ANGLE_SRC_DIR. Nothing there has a DEPS file"
     (cd "$angle_src" && python3 scripts/bootstrap.py)
     (
         cd "$angle_src"
@@ -324,7 +324,7 @@ is_component_build = false'
         autoninja -C out/Release libEGL libGLESv2
         # ...and SwiftShader, which is the "Software rendering" entry in
         # the Settings window. Its target has been renamed across ANGLE
-        # revisions -- `vk_swiftshader` in the tree this project was
+        # revisions, `vk_swiftshader` in the tree this project was
         # developed against, plain `swiftshader` at tip, where asking for
         # the old name fails the whole build:
         #
@@ -336,7 +336,7 @@ is_component_build = false'
         # takes whichever files are actually there.
         autoninja -C out/Release swiftshader ||
             autoninja -C out/Release vk_swiftshader ||
-            warn "no SwiftShader target in this ANGLE -- software rendering will be unavailable"
+            warn "no SwiftShader target in this ANGLE, software rendering will be unavailable"
     )
     copy_angle_runtime "$angle_src/out/Release"
 }
@@ -367,7 +367,7 @@ copy_bionic_from_dir() {
             missing=1
         fi
     done
-    [ "$missing" = 0 ] || warn "some files were missing -- Stud will say so at launch if it needs one"
+    [ "$missing" = 0 ] || warn "some files were missing. Stud will say so at launch if it needs one"
     [ -f "$BIONIC_DIR/linker64" ] && chmod 0755 "$BIONIC_DIR/linker64"
     say "bionic in $BIONIC_DIR"
     verify_bionic || true
@@ -375,13 +375,13 @@ copy_bionic_from_dir() {
 
 # Where bionic comes from: AOSP itself.
 #
-# Google publishes the Runtime APEX -- the module that IS bionic on a
-# modern Android -- as a prebuilt inside the AOSP tree, per architecture,
+# Google publishes the Runtime APEX, the module that IS bionic on a
+# modern Android: as a prebuilt inside the AOSP tree, per architecture,
 # per release branch. It is 13 MB and holds exactly what Stud needs:
 # bin/linker64, lib64/bionic/{libc,libm,libdl,libdl_android}.so and
 # lib64/libc++.so, as one self-consistent set. tzdata ships the same way
 # in its own APEX. An APEX is a zip around an ext4 image, so debugfs
-# reads it -- no root, no loop mount, and nothing to unpack but 13 MB.
+# reads it: no root, no loop mount, and nothing to unpack but 13 MB.
 #
 # Since Android 10 none of this is in /system/lib64 any more: those paths
 # are symlinks into the APEX, which is why pulling bionic out of a system
@@ -389,7 +389,7 @@ copy_bionic_from_dir() {
 #
 # liblog is the one piece not in either APEX (it is a platform library,
 # not a module), so it is built here from its own AOSP source with the
-# NDK -- ~14 files, AOSP's own cflags and version script.
+# NDK, ~14 files, AOSP's own cflags and version script.
 RUNTIME_APEX_PATH="mainline/runtime/apex/com.android.runtime-x86_64.apex"
 TZDATA_APEX_PATH="mainline/tzdata/apex/com.android.tzdata-x86_64.apex"
 
@@ -430,7 +430,7 @@ apex_payload() {
 }
 
 # liblog, built from AOSP source. The flags are AOSP's own, copied from
-# system/logging/liblog/Android.bp, including the version script -- so
+# system/logging/liblog/Android.bp, including the version script, so
 # the result exports the same surface a device's does.
 #
 # -static-libstdc++ because the NDK's libc++ and the platform's are
@@ -442,7 +442,7 @@ build_liblog() {
     local clang="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
     local strip="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
     if [ ! -x "$clang" ]; then
-        warn "no NDK at $NDK_DIR -- run 'tools/setup.sh ndk' first"
+        warn "no NDK at $NDK_DIR, run 'tools/setup.sh ndk' first"
         return 1
     fi
     need curl; need tar
@@ -534,15 +534,15 @@ fetch_bionic_from_aosp() {
 
 # What Stud actually resolves out of these libraries at runtime, by name.
 # An image from the wrong Android version can be missing one of them and
-# the failure would otherwise be a puzzling runtime one -- DNS silently
-# not resolving, or the property area never mapping -- a long way from
+# the failure would otherwise be a puzzling runtime one, DNS silently
+# not resolving, or the property area never mapping, a long way from
 # the image that caused it.
 verify_bionic() {
     local nm=""
     command -v nm >/dev/null 2>&1 && nm="nm -D --defined-only"
     if [ -z "$nm" ] && command -v readelf >/dev/null 2>&1; then nm="readelf -W --dyn-syms"; fi
     if [ -z "$nm" ]; then
-        warn "cannot list the extracted libc's exported symbols -- skipping the check"
+        warn "cannot list the extracted libc's exported symbols, skipping the check"
         return 0
     fi
 
@@ -563,7 +563,7 @@ verify_bionic() {
 
     if [ -n "$missing" ]; then
         warn "this bionic does not export:$missing"
-        warn "Stud resolves those by name at runtime -- DNS or the property"
+        warn "Stud resolves those by name at runtime, DNS or the property"
         warn "area will not work against this image. Try a different build"
         warn "(STUD_AOSP_BRANCH=<branch>) or a different source."
         return 1
@@ -576,7 +576,7 @@ verify_bionic() {
 # Unlike ANGLE, these do not arrive with the binaries: what setup extracts
 # is a Runtime APEX image, which carries the libraries and no licence text
 # at all. AOSP publishes a NOTICE per component, and that is what a package
-# redistributing these has to carry -- bionic is largely inherited BSD libc
+# redistributing these has to carry, bionic is largely inherited BSD libc
 # code, so its NOTICE is several hundred copyright notices rather than one.
 #
 # Fetched once. Everything already present is left alone, so this is a
@@ -607,7 +607,7 @@ fetch_bionic_notices() {
     done
 
     # liblog comes from platform/system/logging, which has no NOTICE of
-    # its own -- it is plain Apache-2.0, so the licence itself is what
+    # its own. It is plain Apache-2.0, so the licence itself is what
     # travels with it.
     if [ ! -s "$dest/LICENSE-Apache-2.0.txt" ]; then
         if curl -sfL --max-time 60 "https://www.apache.org/licenses/LICENSE-2.0.txt" \
@@ -666,7 +666,7 @@ setup_bionic() {
 setup: could not assemble bionic from AOSP.
 
 Stud runs the real Roblox Android library against a real bionic, and
-takes it from AOSP's own prebuilt Runtime APEX -- that download is what
+takes it from AOSP's own prebuilt Runtime APEX; that download is what
 just failed. Check the network, or point this at a directory that
 already holds the libraries:
 
@@ -692,9 +692,9 @@ done
 [ ${#steps[@]} -eq 0 ] && steps=(ndk angle bionic)
 
 # Say what this will fetch, where from, and how big, before fetching any
-# of it -- these are large downloads and one of them is a source build.
+# of it. These are large downloads and one of them is a source build.
 print_plan() {
-    printf '\n\033[1mStud setup plan\033[0m -- everything lands in %s\n\n' "$third_party"
+    printf '\n\033[1mStud setup plan\033[0m, everything lands in %s\n\n' "$third_party"
     local step
     for step in "${steps[@]}"; do
         case "$step" in
@@ -759,7 +759,7 @@ for step in "${steps[@]}"; do
 done
 
 if [ "$failed" = 0 ]; then
-    say "done -- now: cmake -S . -B build -G Ninja && cmake --build build"
+    say "done, now: cmake -S . -B build -G Ninja && cmake --build build"
 else
     warn "finished with something missing (see above); Stud will not run until it is there"
 fi

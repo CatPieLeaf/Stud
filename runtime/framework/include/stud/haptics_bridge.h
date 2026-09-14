@@ -25,7 +25,7 @@
 // Stud runs no DEX, so none of that ever happened and every experience
 // that asks for haptics was told the platform has none. The motors here
 // are a connected controller's own force-feedback motors rather than a
-// phone's vibrator, which is the honest equivalent on a desktop -- a
+// phone's vibrator, which is the honest equivalent on a desktop, a
 // real device names them "vibrator_<n>", so a pad is named the same way.
 namespace stud::jni_bridge {
 
@@ -47,7 +47,7 @@ bool run_haptics_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 void set_haptics_device(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib, int device_id,
                         bool can_rumble);
 
-// Stops any rumble in progress -- on shutdown, and when the pad the
+// Stops any rumble in progress, on shutdown, and when the pad the
 // waveform was playing on disappears.
 void stop_haptics();
 

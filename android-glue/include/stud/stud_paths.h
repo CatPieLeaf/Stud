@@ -21,7 +21,7 @@
 // The split is not cosmetic. Everything under the cache directory is
 // something a cache cleaner (or `rm -rf ~/.cache`) is entitled to delete
 // at any moment, and Stud used to keep the device identity and the
-// engine's settings there -- so a cache clean silently changed the
+// engine's settings there, so a cache clean silently changed the
 // machine's identity and reset the user's own graphics settings.
 namespace stud::paths {
 
@@ -44,7 +44,7 @@ inline std::string data_dir() { return detail::xdg_dir("XDG_DATA_HOME", "/.local
 inline std::string cache_dir() { return detail::xdg_dir("XDG_CACHE_HOME", "/.cache/stud"); }
 
 // Logs are neither config, data nor cache: XDG names this one
-// specifically, and it is where a log belongs -- losing it costs
+// specifically, and it is where a log belongs, losing it costs
 // nothing, but a cache cleaner has no business taking it mid-session.
 inline std::string state_dir() { return detail::xdg_dir("XDG_STATE_HOME", "/.local/state/stud"); }
 inline std::string log_dir() { return state_dir() + "/logs"; }
@@ -59,7 +59,7 @@ inline std::string log_dir() { return state_dir() + "/logs"; }
 // is copied here and used from here forever after, so moving, renaming
 // or deleting the file that was picked cannot break a launch. Exactly
 // one is kept, under one fixed name, and importing another overwrites
-// it -- the name the user picked is a label in the window, not a thing
+// it, the name the user picked is a label in the window, not a thing
 // on disk. The extractor works out a merged .apk from a split bundle by
 // content, so the extension carries no meaning here either.
 inline std::string apk_dir() { return data_dir() + "/apk"; }
