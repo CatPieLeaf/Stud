@@ -1,4 +1,4 @@
-# Maintainer: Stud contributors <https://github.com/CatPieLeaf/Stud>
+# Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
 # Builds Stud from the release source. Be warned in advance: most of the
 # build time is ANGLE, which is compiled from source because Stud needs

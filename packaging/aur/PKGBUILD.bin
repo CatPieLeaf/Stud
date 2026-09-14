@@ -1,4 +1,4 @@
-# Maintainer: Stud contributors <https://github.com/CatPieLeaf/Stud>
+# Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
 # Not for the AUR. This is what CI uses to turn an already-built install
 # tree into a pkg.tar.zst, so Arch users can install Stud without the
