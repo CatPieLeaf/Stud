@@ -1870,6 +1870,22 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     std::fflush(stdout);
                 }
             }
+            // The first keys of a session, one line each, so a run can say
+            // exactly what the engine was handed rather than leaving it to
+            // be inferred. Bounded so it cannot fill a log, and off unless
+            // asked for -- see STUD_INPUT_TRACE.
+            {
+                static const bool trace_keys = std::getenv("STUD_INPUT_TRACE") != nullptr;
+                static int traced = 0;
+                if (trace_keys && traced < 40) {
+                    ++traced;
+                    std::printf("stud: key: %s scan=%u->%d keycode=%d repeat=%d textbox=%d "
+                                "held=%zu\n",
+                                down ? "down" : "up  ", ev.code, scan_code, key_code,
+                                ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0, held_keys().size());
+                    std::fflush(stdout);
+                }
+            }
             if (fns.key_event == nullptr) return;
             // A held key repeats, and says so: real Android reports the
             // same through KeyEvent.getRepeatCount(), which is exactly
@@ -2296,6 +2312,12 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 static jlong previous_text_box = 0;
                 const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
                 if (text_box != 0 && previous_text_box == 0) {
+                    // Unconditional: whether this fires, and how many keys
+                    // it found held, is the first thing to check when a
+                    // walk does not stop.
+                    std::printf("stud: input bridge: a text box took focus with %zu key(s) held\n",
+                                held_keys().size());
+                    std::fflush(stdout);
                     for (uint32_t code : held_keys()) {
                         android_glue::HostInputEvent up{};
                         up.type = android_glue::HostInputEvent::kKey;
@@ -2307,14 +2329,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // follow cannot press them back down.
                     keys_released_into_text_entry() = held_keys();
                     held_keys().clear();
-                    if (!released.empty()) {
-                        // Worth a line in every log: this is the moment a
-                        // walk is supposed to stop, and its absence is the
-                        // first thing to check if one does not.
-                        std::printf("stud: input bridge: a text box took focus -- released %zu "
-                                    "held key(s)\n", released.size());
-                        std::fflush(stdout);
-                    }
+
                 }
                 previous_text_box = text_box;
             }
