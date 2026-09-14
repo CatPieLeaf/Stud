@@ -117,6 +117,17 @@ set(CPACK_DEBIAN_PACKAGE_SECTION "games")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
+# Set explicitly, NOT left to CPack. Unset, CPack asks
+# `dpkg --print-architecture` -- and the release builds in a Fedora
+# container, which has no dpkg. It cannot fail loudly there, so it
+# produced a package with an EMPTY Architecture field, named
+# `stud_1.1.0_.deb`, that dpkg refuses to install ("missing 'Architecture'
+# field"). It shipped in a green release.
+#
+# amd64 rather than derived: everything Stud redistributes -- the bionic
+# runtime, ANGLE, the engine itself -- is x86_64 only, which the rpm, the
+# AUR package and the Flatpak manifest all pin too.
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # The same reasoning as the rpm's own list: bubblewrap because Process B
 # is launched inside it and Stud will not start without one, and
