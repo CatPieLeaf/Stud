@@ -155,7 +155,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     //
     // So it belongs to HiDPI being OFF: with HiDPI on the engine already
     // draws every real pixel and there is nothing to upscale from.
-    upscalingCheck_ = new QCheckBox("Upscaling", this);
+    upscalingCheck_ = new QCheckBox("FSR Upscaler", this);
     upscalingCheck_->setToolTip(
         "Rebuild the frame at full resolution instead of letting the compositor stretch it.\n"
         "Needs HiDPI off, which is where the game renders below the screen's resolution.");
