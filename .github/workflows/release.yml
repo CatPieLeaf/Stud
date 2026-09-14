@@ -71,12 +71,20 @@ jobs:
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
       - name: Restore the Android NDK
+        # One key for both jobs: the NDK is downloaded, not built, so the
+        # container that extracted it makes no difference -- it compiles
+        # Process B with its own toolchain rather than the host's. Caching
+        # it per-container stored 2.2 GB twice against a 10 GB limit and
+        # made the AppImage job re-download what this one had just fetched.
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
-          key: ndk-fedora42-${{ hashFiles('tools/setup.sh') }}
+          key: ndk-${{ hashFiles('tools/setup.sh') }}
 
       - name: Restore ANGLE and bionic
+        # Per-container, unlike the NDK above: ANGLE is COMPILED here,
+        # against this container's glibc, so a Fedora build and an Ubuntu
+        # one are not interchangeable.
         uses: actions/cache@v6
         with:
           path: |
@@ -206,10 +214,11 @@ jobs:
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
       - name: Restore the Android NDK
+        # The same key the packages job uses -- see the comment there.
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
-          key: ndk-ubuntu2504-${{ hashFiles('tools/setup.sh') }}
+          key: ndk-${{ hashFiles('tools/setup.sh') }}
 
       - name: Restore ANGLE and bionic
         uses: actions/cache@v6
