@@ -237,7 +237,26 @@ for pattern in "${exclude_libs[@]}"; do exclude_args+=("--exclude-library=$patte
 # be in the bundle, linuxdeploy-plugin-qt deploys only libqxcb.so
 # unless it is told otherwise, and a bundle with no Wayland plugin falls
 # back to XWayland (or, with no X at all, refuses to start).
-export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqwayland-egl.so"
+#
+# Its file name is not stable across Qt versions. Up to 6.9 there was one
+# plugin per integration (libqwayland-generic.so, libqwayland-egl.so);
+# 6.10 merged them into a single libqwayland.so advertising the same
+# keys, so naming either set outright is a build that breaks on the next
+# base image, which is exactly how this broke on ubuntu:26.04. They are
+# discovered from the Qt this build is deploying from instead.
+qt_plugin_dir="$("${QMAKE}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
+[ -d "$qt_plugin_dir/platforms" ] ||
+    die "$QMAKE reports no plugin directory, there is no Qt to take a platform plugin from"
+wayland_platform_plugins=()
+for plugin in "$qt_plugin_dir"/platforms/libqwayland*.so; do
+    [ -e "$plugin" ] || continue
+    wayland_platform_plugins+=("$(basename "$plugin")")
+done
+[ "${#wayland_platform_plugins[@]}" -gt 0 ] ||
+    die "no Wayland platform plugin in $qt_plugin_dir/platforms, the bundle would fall back to XWayland"
+EXTRA_PLATFORM_PLUGINS="$(IFS=';'; printf '%s' "${wayland_platform_plugins[*]}")"
+export EXTRA_PLATFORM_PLUGINS
+say "deploying the Wayland platform plugin: $EXTRA_PLATFORM_PLUGINS"
 
 
 say "bundling dependencies"
@@ -289,7 +308,6 @@ done
 # only way an AppImage looks like the desktop it is running on is to
 # carry a matching one. That is why this image is built on a base that
 # has KF6 at all (see packaging/Containerfile.appimage).
-qt_plugin_dir="$("${QMAKE}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
 # kf6/kwindowsystem is Breeze's own way of asking the compositor about a
 # window; without it KWindowSystem says `Could not find any platform
 # plugin` on every launch and answers its callers with nothing.
