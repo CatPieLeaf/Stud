@@ -515,9 +515,6 @@ std::set<uint32_t>& keys_released_into_text_entry() {
     return k;
 }
 
-// Set when a text box has just taken focus with keys held, so the window
-// focus the engine was told it lost can be given back on the next round.
-bool g_restore_window_focus_next_round = false;
 
 // Real Android meta-state bits, tracked from the physical modifier keys so
 // every KeyEvent Stud synthesizes reports them the way a real OTG keyboard
@@ -1573,16 +1570,25 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // the character kept walking while its owner typed.
             {
                 auto& released_into_text = keys_released_into_text_entry();
-                const auto it = released_into_text.find(ev.code);
-                if (it != released_into_text.end()) {
-                    const bool is_a_repeat = ev.b != 0.0f;
-                    if (down && is_a_repeat) return;  // the repeat of a key already let go
-                    // A real release, or a deliberate fresh press: either
-                    // ends the suppression, and both are forwarded. The
-                    // release especially -- the one sent at focus time was
-                    // discarded by the engine, so this is not a duplicate
-                    // of anything that landed.
-                    released_into_text.erase(it);
+                if (released_into_text.count(ev.code) != 0) {
+                    // Everything about this key is dropped until the text
+                    // box lets go, releases included.
+                    //
+                    // An earlier version erased the key here on a real
+                    // release, on the reasoning that the user had let go so
+                    // the suppression was done. That was the bug: while a
+                    // text box has focus the engine discards key events, so
+                    // that release never landed either -- and with the key
+                    // no longer in this set there was nothing left to
+                    // re-send when the box let go, which is the one moment
+                    // a release can actually be heard. Live-caught: the
+                    // "text box let go" line never printed because this set
+                    // was already empty.
+                    //
+                    // The set is cleared in exactly one place now, at the
+                    // moment focus is released, right after the real
+                    // releases are sent.
+                    return;
                 }
             }
             // Track modifiers locally: Wayland reports them in a separate
@@ -2314,7 +2320,6 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             // usually arrives from a MOUSE click and the engine reports it
             // asynchronously, with no key event anywhere near it.
             std::vector<android_glue::HostInputEvent> released;
-            bool pulse_on_focus = false;
             {
                 static jlong previous_text_box = 0;
                 const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
@@ -2335,7 +2340,6 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // Held until really let go, so the repeats that
                     // follow cannot press them back down.
                     keys_released_into_text_entry() = held_keys();
-                    pulse_on_focus = !held_keys().empty();
                     held_keys().clear();
 
                 }
@@ -2374,7 +2378,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 previous_text_box = text_box;
             }
 
-            if (count > 0 || !released.empty() || g_restore_window_focus_next_round) {
+            if (count > 0 || !released.empty()) {
                 // One-shot confirmation that the real seat is actually
                 // reaching this process -- silent afterwards.
                 // Temporary, low-rate diagnostic: which real event types
@@ -2411,48 +2415,6 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     dispatch_event(up, fns, jni_env, last_x, last_y);
                 }
 
-                // ...and then tell the engine the window lost focus, and
-                // give it back on the next round.
-                //
-                // Those releases above are not enough on their own, and
-                // this was measured rather than assumed: a live run showed
-                // "a text box took focus with 1 key(s) held", so the
-                // release really was sent -- and the character carried on
-                // walking. Once one of its own text boxes has focus the
-                // engine stops treating key events as gameplay, so neither
-                // Stud's release nor the user's own physical one is acted
-                // on. It does not type them either (chat shows no doubled
-                // characters), so they are discarded outright and no key
-                // event can clear what is already held.
-                //
-                // Window focus is the one lever the engine demonstrably
-                // honours -- it is what produces APP_CMD_LOST_FOCUS in
-                // every log -- and it is what a real device does here too:
-                // the IME takes window focus when it opens, and an Android
-                // app drops held input when it loses focus. Restoring it a
-                // round later keeps the window genuinely focused for the
-                // typing that follows, rather than leaving the engine
-                // believing it is in the background while someone types.
-                static const bool pulse_focus =
-                    std::getenv("STUD_NO_TEXTBOX_FOCUS_PULSE") == nullptr;
-                const bool can_pulse = pulse_focus && g_agdk_env != nullptr &&
-                                       g_agdk_activity_ref != nullptr &&
-                                       g_agdk.on_window_focus_changed != nullptr;
-                if (g_restore_window_focus_next_round && can_pulse) {
-                    g_restore_window_focus_next_round = false;
-                    g_agdk_env->CallVoidMethod(g_agdk_activity_ref,
-                                               g_agdk.on_window_focus_changed, g_agdk.handle,
-                                               static_cast<jboolean>(JNI_TRUE));
-                }
-                if (pulse_on_focus && can_pulse) {
-                    g_agdk_env->CallVoidMethod(g_agdk_activity_ref,
-                                               g_agdk.on_window_focus_changed, g_agdk.handle,
-                                               static_cast<jboolean>(JNI_FALSE));
-                    g_restore_window_focus_next_round = true;
-                    std::printf("stud: input bridge: told the engine the window lost focus, to "
-                                "make it let go of the held key(s)\n");
-                    std::fflush(stdout);
-                }
                 for (size_t i = 0; i < count; ++i) {
                     dispatch_event(batch[i], fns, jni_env, last_x, last_y);
                 }
