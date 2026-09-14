@@ -88,7 +88,7 @@
  - MangoHud overlay toggle, HiDPI and UI scaling, GPU picker, system tray
  - Caps the frame rate while nothing can see the window — minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
- - Ships as an **rpm**, a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, and a **Flatpak** — plus an [AUR](https://aur.archlinux.org/packages/stud) package and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
+ - Ships as an **rpm**, a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, and a **Flatpak** — plus an [AUR](https://aur.archlinux.org/packages/stud-bin) package and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
 
 <br>
 
@@ -247,12 +247,17 @@ that matches its own Qt rather than one that refuses to install.
 sudo pacman -U stud-*-x86_64.pkg.tar.zst
 ```
 
-Or build it from source with the [AUR](https://aur.archlinux.org/packages/stud)
-package — `paru -S stud`, and expect around an hour, almost all of it ANGLE:
+Or from the [AUR](https://aur.archlinux.org/packages/stud-bin) — `paru -S stud-bin`,
+which installs the same prebuilt package:
 
 ```bash
-git clone https://aur.archlinux.org/stud.git && cd stud && makepkg -si
+git clone https://aur.archlinux.org/stud-bin.git && cd stud-bin && makepkg -si
 ```
+
+To build from source instead, use the PKGBUILD in this repository at
+`packaging/aur/` and expect around an hour, almost all of it ANGLE. It is not
+the AUR package because it downloads ANGLE's own dependencies while it builds,
+which a clean chroot cannot do — `packaging/aur/README.md` explains.
 
 ## 🔶 F L A T P A K
 
@@ -325,7 +330,7 @@ That last one is the file to read when something goes wrong, and the one to atta
 
 Every binary Stud redistributes carries its own licence and copyright notice. `tools/setup.sh` fetches them, and a package installs them to `/usr/share/licenses/stud/` and beside the libraries themselves.
 
-Stud itself is **AGPLv3**. Stud is and always will be Open Source.
+Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox engine Stud loads but never distributes. Stud is and always will be Open Source.
 
 ---
 <br>
