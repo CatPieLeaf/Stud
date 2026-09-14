@@ -11,25 +11,29 @@
 # every ref, tags included. So this workflow does one job -- populate them.
 #
 # It is deliberately not part of the release pipeline and builds no
-# packages. It runs only when the file that defines the dependencies
-# changes, which is rare, plus a button for when something needs
-# refreshing by hand.
+# packages. Run it after changing tools/setup.sh, or whenever a release
+# reports a cold cache.
 #
 # Not warmed here: the AppImage job's linuxdeploy/appimagetool cache. Those
 # are two small downloads, not an hour of compiling, so a cold one costs a
 # release almost nothing and is not worth a third job to avoid.
 
-name: Warm the dependency cache
+name: Dependency cache
 
 on:
-  push:
-    branches: [main]
-    paths:
-      # The only file that decides what the dependencies are. A change to
-      # Stud's own source cannot invalidate them, so it must not trigger
-      # an hour of ANGLE.
-      - 'tools/setup.sh'
-      - '.github/workflows/warm-cache.yml'
+  # By hand only. Nothing here should ever start itself: it is an hour of
+  # compiling, and nothing about a normal push needs it.
+  #
+  # RUN IT FROM main. That is not a style preference -- a run's caches are
+  # scoped to the ref it ran on, and only the default branch's are visible
+  # to every other ref. Run this from a tag or a side branch and the caches
+  # it writes cannot be read by anything else, which is the exact problem
+  # it exists to solve.
+  #
+  # Deliberately NOT triggered by a release: the release workflow already
+  # fetches these dependencies itself, so a release trigger here would
+  # build the same thing twice at once -- and it would do it on a tag ref,
+  # where the resulting caches help nothing.
   workflow_dispatch:
 
 permissions:
@@ -38,7 +42,7 @@ permissions:
 concurrency:
   # One at a time, and a newer push wins: two of these racing would just
   # build the same thing twice.
-  group: warm-cache
+  group: dependency-cache
   cancel-in-progress: true
 
 jobs:
