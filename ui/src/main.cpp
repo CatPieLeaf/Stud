@@ -1257,8 +1257,15 @@ int main(int argc, char** argv) {
     if (argc > 2 && std::string(argv[1]) == "--notify-region") {
         const QString ip = QString::fromUtf8(argv[2]);
         QNetworkAccessManager net;
+        // Over TLS, and only ever the game server's address -- never the
+        // user's. ip-api.com was here first and served this exactly as
+        // well, but its free tier is plaintext HTTP only: an unencrypted
+        // request on every join, telling anyone on the path which server
+        // was joined. ipwho.is answers the same query shape over HTTPS
+        // with no key, so the only thing that changed is that it is
+        // encrypted ("status" is "success" there, a boolean).
         QNetworkRequest request(QUrl(
-            "http://ip-api.com/json/" + ip + "?fields=status,country,countryCode,city"));
+            "https://ipwho.is/" + ip + "?fields=success,country,country_code,city"));
         request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Stud"));
         QNetworkReply* reply = net.get(request);
         QEventLoop loop;
@@ -1270,9 +1277,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object();
-        if (json.value("status").toString() != "success") return 1;
+        if (!json.value("success").toBool()) return 1;
         const QString country = json.value("country").toString();
-        const QString code = json.value("countryCode").toString();
+        const QString code = json.value("country_code").toString();
         const QString city = json.value("city").toString();
         // A flag emoji is the country's two letters as regional indicator
         // symbols -- U+1F1E6 is 'A' -- so any ISO code becomes one with no
