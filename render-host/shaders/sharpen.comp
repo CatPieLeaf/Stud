@@ -49,16 +49,20 @@ void main() {
     // RCAS's own weight: negative, so the cross is subtracted and the
     // centre pulled up, then renormalised by (1 + 4w).
     //
-    // `sharpness` arrives as 1.0-1.25, where 1.0 is RCAS's ordinary full
-    // strength (weight 0.20, denominator 0.20) and 1.25 is as far as this
-    // formulation can be pushed. The mapping stops at 0.24 rather than
-    // running to 0.25, and that bound is arithmetic rather than taste: at
-    // exactly 0.25 the denominator (1 + 4w) is zero and the result is
-    // infinite -- which the clamp below swallows, so the strongest setting
-    // would look like it did nothing at all. At 0.24 the denominator is
-    // 0.04: extreme, finite, and still bounded by the neighbourhood.
-    float strength = clamp(p.sharpness, 1.0, 1.25);
-    float weight = -limit * (0.20 + 0.16 * (strength - 1.0));
+    // `sharpness` arrives as 0.0-1.25. 1.0 is RCAS's ordinary full strength
+    // (weight 0.20, denominator 0.20) and is the default; below it the
+    // effect scales down to nothing, above it the filter is pushed as far
+    // as it can go.
+    //
+    // The top of the range maps to 0.24 rather than 0.25, and that bound is
+    // arithmetic rather than taste: at exactly 0.25 the denominator
+    // (1 + 4w) is zero and the result is infinite -- which the clamp below
+    // swallows, so the strongest setting would look like it did nothing at
+    // all. At 0.24 the denominator is 0.04: extreme, finite, and still
+    // bounded by the neighbourhood.
+    float strength = clamp(p.sharpness, 0.0, 1.25);
+    float weight = -limit * (strength <= 1.0 ? 0.20 * strength
+                                             : 0.20 + 0.16 * (strength - 1.0));
     vec3 sharpened = (e + weight * (n + s + w + d)) / (1.0 + 4.0 * weight);
 
     // Never outside what the neighbourhood already spans: that is what

@@ -3980,7 +3980,7 @@ int main(int argc, char** argv) {
             g_upscaling_enabled = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--upscale-sharpness") {
             const int percent = std::atoi(argv[i + 1]);
-            if (percent >= 100 && percent <= 125) g_upscale_sharpness_percent = percent;
+            if (percent >= 0 && percent <= 125) g_upscale_sharpness_percent = percent;
         }
     }
     // Latch the scale before any window or surface exists, so the very

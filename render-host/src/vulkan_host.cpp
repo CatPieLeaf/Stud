@@ -95,7 +95,7 @@ float upscale_sharpness() {
 }
 
 void vk_set_upscale_sharpness_percent(int32_t percent) {
-    const int32_t clamped = percent < 100 ? 100 : (percent > 125 ? 125 : percent);
+    const int32_t clamped = percent < 0 ? 0 : (percent > 125 ? 125 : percent);
     g_upscale_sharpness_percent.store(clamped, std::memory_order_relaxed);
 }
 
@@ -2462,8 +2462,9 @@ bool build_upscale_compute(UpscaleChain& c) {
     // The sharpening pass, if it is wanted. Its own image, pipeline and
     // descriptor set -- a compute pass cannot read and write one image, so
     // EASU's output and RCAS's output are different images.
-    // Always built now: the strength floor is 100%, so there is no "off"
-    // for this pass short of turning upscaling off altogether.
+    // Zero means no sharpening at all: no second image, no second
+    // dispatch, and the upscale's own output goes straight to the
+    // swapchain.
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"
