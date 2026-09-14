@@ -4,7 +4,7 @@
 Every package Stud ships wraps the same install tree, and
 compare-package-contents.py proves a package carries that tree faithfully.
 This answers the other half: whether the tree is any good in the first
-place. A package can be a perfect copy of something broken -- FSR shipped
+place. A package can be a perfect copy of something broken, FSR shipped
 that way, the upscaler present in Settings with an empty shader behind it,
 because nothing ever looked inside the binary.
 
@@ -31,7 +31,7 @@ BIONIC_OVERLAY = [
 ]
 
 # The real bionic, extracted from an Android system image. linker64 is
-# Process B's PT_INTERP -- without it nothing bionic runs at all.
+# Process B's PT_INTERP, without it nothing bionic runs at all.
 BIONIC_RUNTIME = [
     "ld-android.so", "libc++.so", "libc.so", "libdl.so", "libdl_android.so",
     "liblog.so", "libm.so", "linker64",
@@ -162,7 +162,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
             # one: stud-webview is legitimately ~70 KB, because it is a
             # thin wrapper and its weight is all in shared libraries.
             r.check(p.stat().st_size > 16_384, f"{name} is truncated ({p.stat().st_size} bytes)")
-            r.check(elf_has_dynamic_deps(p), f"{name} links no libraries -- not a real build")
+            r.check(elf_has_dynamic_deps(p), f"{name} links no libraries, not a real build")
 
     # ---- Process B really is a bionic binary ----------------------------
     runtime = private / "stud-runtime-bionic"
@@ -181,7 +181,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         modules = host.read_bytes().count(SPIRV_MAGIC)
         r.check(modules >= 3,
                 f"stud-render-host carries {modules} SPIR-V module(s), not the 3 a build "
-                f"with the upscale and sharpening shaders has -- FSR would do nothing")
+                f"with the upscale and sharpening shaders has, FSR would do nothing")
         r.note(f"embedded SPIR-V modules: {modules}")
 
     # ---- the libraries Stud brings with it ------------------------------

@@ -1,11 +1,11 @@
 // Real libaaudio.so, bionic-compiled, placed where the real bionic linker
-// resolves the engine's own dlopen("libaaudio.so") -- exactly the same
+// resolves the engine's own dlopen("libaaudio.so"), exactly the same
 // shape as this project's libEGL/libGLESv2 stubs, and for the same
 // reason: Process B cannot talk to the host's audio server, so the real
 // device work happens in Process C and this forwards to it.
 //
 // Why audio is not optional: the engine's own FMOD initialises an Android
-// audio device when a game starts, and with no device at all it fails --
+// audio device when a game starts, and with no device at all it fails,
 // live-caught in the engine's own log, immediately before a join stalls:
 //   Error [FLog::FMOD] FMOD API error, FMOD_RESULT:51, functionname:System::init
 //   Error [FLog::Audio] FMOD initialization failed with error code 51!
@@ -15,8 +15,8 @@
 // confirmed by name against the real libroblox.so rather than guessed at:
 // builder create/delete/open plus its setters, and the stream's own
 // start/pause/stop/close/read and getters. AAudio's real model here is
-// callback-driven -- the app installs a data callback and AAudio pulls
-// from it on its own thread -- which is what the feeder thread below
+// callback-driven, the app installs a data callback and AAudio pulls
+// from it on its own thread, which is what the feeder thread below
 // does, with the host's blocking write as the only clock.
 
 #include "render_client_common.h"
@@ -68,7 +68,7 @@ using AAudioErrorCallback = void (*)(void* stream, void* userData, int32_t error
 struct Builder {
     // Float unless the engine asks otherwise. A real Android device picks
     // the device's own format when none is requested, and on anything
-    // modern that is float -- and this build's engine never calls
+    // modern that is float, and this build's engine never calls
     // setFormat at all (confirmed live: three streams opened, no format
     // request). Defaulting to 16-bit therefore imposed a ceiling nothing
     // asked for, and a hot mix clipped against it: loud, bassy passages
@@ -98,7 +98,7 @@ struct Stream {
 };
 
 // The engine converts to whatever the stream reports, so 16-bit is the
-// one format that has to be produced here -- float is converted on this
+// one format that has to be produced here, float is converted on this
 // side rather than asking the host to handle two layouts.
 void feed(Stream* s) {
     const size_t frames = static_cast<size_t>(kFramesPerBurst);
@@ -106,7 +106,7 @@ void feed(Stream* s) {
     std::vector<int16_t> pcm(frames * kChannels);
 
     // Real-time pacing lives here, on this side. The host used to pace the
-    // feeder by blocking in its device write -- but that write happens on
+    // feeder by blocking in its device write, but that write happens on
     // the shared render dispatch thread, so it stalled every GL call
     // behind the audio clock and froze the app outright (live-caught).
     // The host now queues and returns immediately, so this thread keeps
@@ -136,7 +136,7 @@ void feed(Stream* s) {
             // never imports. Silence is the honest output.
             std::memset(pcm.data(), 0, pcm.size() * sizeof(int16_t));
         }
-        // The host takes float. When the engine asked for 16-bit, widen --
+        // The host takes float. When the engine asked for 16-bit, widen,
         // never the other way round, which is what used to clip the mix.
         if (s->format != AAUDIO_FORMAT_PCM_FLOAT) {
             for (size_t i = 0; i < pcm.size(); ++i) {
@@ -192,7 +192,7 @@ void feed(Stream* s) {
         // burst-duration, but the audio device consumes at its own real
         // sample rate. Those two clocks are never identical, so an
         // open-loop feeder slowly separates from the device and the
-        // host's ring alternately starves and backs up -- small, regular
+        // host's ring alternately starves and backs up, small, regular
         // gaps in the waveform, which is what "compressed"-sounding audio
         // actually is here rather than any codec or bit depth.
         //
@@ -221,7 +221,7 @@ void feed(Stream* s) {
         // Refill immediately rather than waiting out the deadline when the
         // host is nearly dry. Nudging the clock alone can only correct by
         // a fraction of a burst per burst, which cannot recover from one
-        // long scheduling gap before the ring runs out -- so a burst that
+        // long scheduling gap before the ring runs out, so a burst that
         // arrives late is followed by a second one straight away.
         constexpr uint64_t kLowWater = static_cast<uint64_t>(kFramesPerBurst) * kChannels * 2 * 2;
         if (fill > 0 && fill < kLowWater) {
@@ -294,7 +294,7 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
     auto* b = static_cast<Builder*>(builder);
     if (b->direction != AAUDIO_DIRECTION_OUTPUT) {
         // Voice chat. The host opens the real microphone here and only
-        // here -- never at startup -- and says so in the log.
+        // here, never at startup, and says so in the log.
         const uint64_t args[8] = {static_cast<uint64_t>(kSampleRate), 1, 0, 0, 0, 0, 0, 0};
         if (audio_connection().call(CallId::AudioOpenInputStream, args, nullptr, 0, nullptr, 0,
                                     nullptr) == 0) {
@@ -344,7 +344,7 @@ int32_t AAudioStream_requestStart(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
     s->state.store(AAUDIO_STREAM_STATE_STARTED, std::memory_order_relaxed);
-    // A capture stream has nothing to feed -- the engine reads from it,
+    // A capture stream has nothing to feed, the engine reads from it,
     // and the host is already capturing from the moment it opened.
     if (!s->is_input && !s->running.exchange(true)) {
         s->feeder = std::thread(feed, s);
@@ -394,7 +394,7 @@ int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames, int64_t ti
     int32_t got = 0;
     // A real AAudio read blocks until it has the frames asked for or the
     // timeout runs out. The host never blocks, so the waiting is done
-    // here -- and with a zero timeout this returns whatever is already
+    // here, and with a zero timeout this returns whatever is already
     // captured, which is the same contract.
     for (;;) {
         uint32_t written = 0;
@@ -443,9 +443,9 @@ int32_t AAudioStream_getState(void* stream) {
 // fabricated count would misinform the engine's own latency tuning.
 int32_t AAudioStream_getXRunCount(void*) { return 0; }
 
-// Real state-change wait. Stud's own state transitions are immediate --
+// Real state-change wait. Stud's own state transitions are immediate,
 // there is no device handshake to wait on, since the host side owns the
-// real stream -- so the current state is reported straight back rather
+// real stream, so the current state is reported straight back rather
 // than sleeping out the timeout.
 int32_t AAudioStream_waitForStateChange(void* stream, int32_t /*inputState*/, int32_t* nextState,
                                          int64_t /*timeoutNanoseconds*/) {

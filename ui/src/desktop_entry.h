@@ -10,7 +10,7 @@ namespace stud::ui {
 // windows back to an icon: Wayland has no window-icon protocol, and a
 // compositor finds an application's icon by matching the surface's app_id
 // against a .desktop file. Without an entry the taskbar shows a
-// placeholder however correct the app_id is -- and `roblox://` links from
+// placeholder however correct the app_id is, and `roblox://` links from
 // a browser have nothing to open either.
 //
 // Writes only under $XDG_DATA_HOME, never system-wide, and only when

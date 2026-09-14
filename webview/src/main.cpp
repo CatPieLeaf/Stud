@@ -1,4 +1,4 @@
-// stud-webview -- the web-view panel the Roblox app asks for.
+// stud-webview, the web-view panel the Roblox app asks for.
 //
 // The Lua app opens real web pages for parts of the experience that were
 // never native (Messages and several menus). On Android those are shown
@@ -6,7 +6,7 @@
 // went unanswered and left a dead grey panel with no way back.
 //
 // This is a viewer, never a login window. Stud's session is established
-// inside the real Roblox app exactly as before -- this process is handed
+// inside the real Roblox app exactly as before; this process is handed
 // the cookies the engine itself produced (see webview_cookies.h) so the
 // page opens already signed in as that same session. It never asks for
 // credentials and has no way to.
@@ -95,7 +95,7 @@ public:
     // for every URL: the app asks the engine (the LINKING protocol's
     // isURLRegistered) whether it wants it, hands it over with detectURL
     // if so, and otherwise loads it in the WebView itself. That is not a
-    // detail -- it is the ONLY way a private server is joined from this
+    // detail. It is the ONLY way a private server is joined from this
     // panel. The server list only calls the JavaScript bridge's
     // `joinPrivateGame` when the device reports itself a computer; on a
     // phone or tablet it sets `window.location.href` to
@@ -174,7 +174,7 @@ protected:
         // Everything else the page says, on this process's own stdout so
         // it lands in Stud's session log. Qt's default handler routes
         // through QLoggingCategory, which on this desktop goes to
-        // journald instead -- so a challenge page failing was invisible
+        // journald instead, so a challenge page failing was invisible
         // in the one file a user can actually be asked for.
         const QByteArray text = message.toUtf8();
         const QByteArray where = source.toUtf8();
@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
     // WebView, so roblox.com serves the mobile view: /my/messages is a
     // message list, with none of the desktop site's navigation, sidebar
     // or footer wrapped around it. QtWebEngine identifies as desktop
-    // Chrome by default, so the same URL returns the full website --
+    // Chrome by default, so the same URL returns the full website,
     // which is exactly the difference between Stud's panel and Sober's.
     //
     // This is an honest description of the context rather than a spoof:
@@ -214,7 +214,7 @@ int main(int argc, char** argv) {
     // measured from this machine (runtime/framework, app_bridge.h's
     // build_web_view_user_agent). It carries the "ROBLOX Android App"
     // token, which is what makes roblox.com serve a page its in-app
-    // version -- the login-challenge page enables its native transport
+    // version, the login-challenge page enables its native transport
     // only then, and without it a completed OTP is announced to nobody.
     //
     // The fallback is a plain Android web-view agent (Chrome on
@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
     QMainWindow window;
     // Deliberately the one-argument constructor: the overload taking a
     // profile arrived in Qt 6.4, and this builds against 6.2 on the
-    // oldest distribution Stud targets. It makes no difference here --
+    // oldest distribution Stud targets. It makes no difference here,
     // the profile reaches the view through the page set below, which is
     // what binds it either way.
     auto* view = new QWebEngineView(&window);
@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
     // single `executeRoblox(json)` method (the app's own hybrid JS bridge's own
     // addJavascriptInterface call), and the page calls it. Without the
     // object being there at all, an OTP or a captcha completes and
-    // nothing is ever told -- the login just stops.
+    // nothing is ever told, the login just stops.
     //
     // The message leaves this process as a console line, picked up by
     // the page subclass below. A console message is a real channel Qt
@@ -323,7 +323,7 @@ int main(int argc, char** argv) {
     }
     if (!icon.isNull()) window.setWindowIcon(icon);
     // These panels are a single page of the site (a message list, one
-    // settings section), not a browser -- so they open at a size that
+    // settings section), not a browser, so they open at a size that
     // suits that rather than filling the screen.
     window.resize(720, 620);
     // The page's own title is better than the one the app guessed, when
@@ -333,7 +333,7 @@ int main(int argc, char** argv) {
                          if (!title.isEmpty()) window.setWindowTitle(title);
                      });
     // A challenge page that fails to load at all looks identical, from
-    // the outside, to one that loads and then cannot finish -- so say
+    // the outside, to one that loads and then cannot finish, so say
     // which it is.
     QObject::connect(view, &QWebEngineView::loadFinished, view, [view](bool ok) {
         std::printf("stud-webview: page load %s\n", ok ? "finished" : "FAILED");
@@ -342,7 +342,7 @@ int main(int argc, char** argv) {
         // What the page has to talk to the app with. A Roblox page picks
         // its transport from what exists on the window: the Android
         // bridge object, or Roblox.Hybrid's own navigation helper. Names
-        // and types only -- never any page content.
+        // and types only, never any page content.
         view->page()->runJavaScript(
             QStringLiteral(
                 "(function(){var r=window.Roblox||{};return JSON.stringify({"

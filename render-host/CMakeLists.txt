@@ -10,7 +10,7 @@ pkg_check_modules(GlesV2 REQUIRED IMPORTED_TARGET glesv2)
 
 # The upscale shader, compiled to SPIR-V at build time and embedded, so
 # render-host carries no runtime file dependency for it. glslc comes with
-# the NDK this project already vendors -- no new tool.
+# the NDK this project already vendors; no new tool.
 set(UpscaleShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/upscale.comp")
 set(UpscaleShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/upscale_spv.h")
 set(SharpenShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sharpen.comp")
@@ -44,7 +44,7 @@ else()
     # Said out loud, because silence is how a release shipped with FSR
     # quietly doing nothing: the setting was there, the option was in
     # Settings, and the shader behind it was an empty array. A package
-    # build should never take this branch -- STUD_REQUIRE_SHADERS makes
+    # build should never take this branch; STUD_REQUIRE_SHADERS makes
     # it fatal, and the release workflow sets it.
     if(STUD_REQUIRE_SHADERS)
         message(FATAL_ERROR
@@ -54,19 +54,19 @@ else()
             "build without the upscaler on purpose.")
     endif()
     message(WARNING
-        "Stud: glslc not found -- building WITHOUT the upscale and sharpening "
+        "Stud: glslc not found, building WITHOUT the upscale and sharpening "
         "shaders. The FSR setting will exist and do nothing.")
     add_custom_command(
         OUTPUT "${UpscaleShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${UpscaleShaderHeader}"
-        COMMENT "glslc not found -- building without the upscale shader"
+        COMMENT "glslc not found, building without the upscale shader"
     )
     add_custom_command(
         OUTPUT "${SharpenShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SharpenShaderHeader}"
-        COMMENT "glslc not found -- building without the sharpening shader"
+        COMMENT "glslc not found, building without the sharpening shader"
     )
 endif()
 
@@ -92,7 +92,7 @@ endif()
 # about which window is Stud's.
 target_compile_definitions(stud-render-host PRIVATE STUD_APP_ID="${STUD_APP_ID}")
 
-# MVP proof-of-mechanism client, independent of Process B/bionic --
+# MVP proof-of-mechanism client, independent of Process B/bionic,
 # proves the IPC protocol itself renders a real frame before wiring the
 # bionic-side stub library that will be Process B's real client.
 add_executable(stud_render_host_test_client src/test_client.cpp)
@@ -102,5 +102,5 @@ install(TARGETS stud-render-host RUNTIME DESTINATION "${STUD_LIBEXEC_DIR}")
 
 # Exports this binary's own symbols to the dynamic table, which is what
 # lets the crash reporter print function names instead of bare addresses
-# -- see install_crash_reporter in session_log.h.
+# see install_crash_reporter in session_log.h.
 set_target_properties(stud-render-host PROPERTIES ENABLE_EXPORTS ON)

@@ -1,10 +1,10 @@
 // M7 test: real APK asset extraction (android-glue/src/apk_extract.cpp),
-// and that AAssetManager correctly serves an extracted file end-to-end --
+// and that AAssetManager correctly serves an extracted file end-to-end,
 // closing the gap between "AAssetManager works" (tested with synthetic
 // data elsewhere) and "AAssetManager serves Roblox's real files."
 //
 // Uses a real, small, hand-built zip fixture (not the real 100+MB Roblox
-// APK -- portable to CI/any machine, doesn't depend on the user having
+// APK, portable to CI/any machine, doesn't depend on the user having
 // supplied an APK) containing an "assets/ssl/cacert.pem"-shaped entry, a
 // nested-directory entry, and a non-assets entry that must NOT be
 // extracted.
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     }
 
     // End-to-end through AAssetManager itself, not just raw filesystem
-    // checks -- this is the actual consumer.
+    // checks; this is the actual consumer.
     stud::android_glue::set_asset_base_directory(dest_dir);
     AAssetManager* mgr = AAssetManager_fromJava(nullptr, nullptr);
     AAsset* asset = AAssetManager_open(mgr, "ssl/cacert.pem", 0);
@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     check(len > 0, "AAsset_getLength reports the real extracted file's size");
 
     const void* buf = AAsset_getBuffer(asset);
-    // 27 bytes -- the literal string's own length, not counting its
+    // 27 bytes, the literal string's own length, not counting its
     // implicit trailing NUL (the real file's 28th byte is '\n', not 0).
     check(buf != nullptr && std::memcmp(buf, "-----BEGIN CERTIFICATE-----", 27) == 0,
           "AAsset_getBuffer's zero-copy mapping shows the real cacert.pem bytes");
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
     //
     // .apkm/.apks name the base "base.apk"; .xapk names it after the
     // package and describes the set in a manifest.json. Both are treated
-    // as bundles, and in both the base must be read first -- every other
+    // as bundles, and in both the base must be read first; every other
     // split is an overlay on it.
     // The bundle fixtures are built beside the plain APK.
     const std::string fixture_dir = apk_path.substr(0, apk_path.find_last_of('/'));

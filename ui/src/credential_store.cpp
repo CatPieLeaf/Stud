@@ -52,7 +52,7 @@ void delete_credential(const QString& key) {
     job.start();
     loop.exec();
     // Errors here (e.g. key didn't exist) are not actionable for callers
-    // -- "log out" should succeed either way.
+    // "log out" should succeed either way.
 }
 
 }  // namespace stud::ui

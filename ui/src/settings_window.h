@@ -15,10 +15,10 @@ class QSlider;
 
 namespace stud::ui {
 
-// Real settings window (M8): GPU picker, HiDPI toggle, graphics mode --
+// Real settings window (M8): GPU picker, HiDPI toggle, graphics mode,
 // the first real, non-placeholder piece of Stud's Qt6 UI. Backed
 // directly by stud-config's JSON file ("UI is a front-end over the JSON
-// config file, not a separate model" -- locked decision): loads on
+// config file, not a separate model", locked decision): loads on
 // construction, writes on Save. Plain Qt6 Widgets, no libplasma (see
 // the engineering notes' locked-decisions table for why that decision was
 // revised at M8).
@@ -30,7 +30,7 @@ public:
 
     // The one settings window, wherever the request came from.
     //
-    // Two of these can disagree -- both loaded the same file, both write
+    // Two of these can disagree, both loaded the same file, both write
     // the whole of it on Save, so whichever is saved last silently undoes
     // the other. It is also the window that stops and restarts the
     // session to replace the APK, which two of cannot do at once. So
@@ -41,7 +41,7 @@ public:
     // The desktop entry's Settings action starts a new stud-ui, which
     // knows nothing about the one already running the session. If that
     // one is listening, hand the request over and let it raise its own
-    // window -- opening Settings from the shortcut then behaves exactly
+    // window, opening Settings from the shortcut then behaves exactly
     // like opening it from the tray, because it IS that window.
     //
     // True when the request was handed off and this process should exit.
@@ -71,7 +71,7 @@ private slots:
     void onBackgroundFpsChanged(int value);
 
 protected:
-    // Right-click resets the control under the pointer -- see
+    // Right-click resets the control under the pointer; see
     // installResets().
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -101,7 +101,7 @@ private:
     QLabel* backgroundFpsLabel_;
     QCheckBox* mangohudCheck_;
     // What the user last asked for, kept across a render path that cannot
-    // show the overlay -- switching to ANGLE and back should not silently
+    // show the overlay, switching to ANGLE and back should not silently
     // lose the setting.
     bool mangohudWanted_ = false;
     QCheckBox* closeOnLeaveCheck_;

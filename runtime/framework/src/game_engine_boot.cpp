@@ -20,7 +20,7 @@ std::function<void(const stud::linker::LoadedLibrary&)> make_post_constructor_ho
     // so_path is unused now that unwind-info registration (a Stud-owned
     // glibc-side unwinder's concern, moot now that Process B's own
     // unwinder is real bionic code, exactly like a real device) is gone
-    // -- kept as a parameter for call-site compatibility.
+    // kept as a parameter for call-site compatibility.
     (void)so_path;
     return [&jvm, &out_result](const stud::linker::LoadedLibrary& lib) {
         using JniOnLoadFn = jint (*)(JavaVM*, void*);
@@ -65,7 +65,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     jstring obb_dir_jstr = env.NewStringUTF(obb_dir.c_str());
     jstring external_data_dir_jstr = env.NewStringUTF(external_data_dir.c_str());
     // Real MainGameActivity subclass, not bare GameActivityStub (see
-    // game_activity_stubs.h's doc comment) -- the engine's own real
+    // game_activity_stubs.h's doc comment), the engine's own real
     // bootstrapTheApp() callback needs a real, dispatchable method on
     // whatever jobject it receives as `thiz` here.
     auto main_game_activity = std::make_shared<MainGameActivityStub>();
@@ -76,12 +76,12 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     ALooper* looper_on_this_thread = ALooper_forThread();
     std::fprintf(stderr, "stud: ALooper_forThread() on the calling thread = %p%s\n",
                  static_cast<void*>(looper_on_this_thread),
-                 looper_on_this_thread == nullptr ? " -- NULL" : "");
+                 looper_on_this_thread == nullptr ? ", NULL" : "");
     int probe_pipe_fds[2];
     int probe_pipe_result = ::pipe(probe_pipe_fds);
     std::fprintf(stderr, "stud: real pipe() probe (matches AGDK's own initializeNativeCode_native "
                           "internal call) = %d%s\n",
-                 probe_pipe_result, probe_pipe_result != 0 ? " -- FAILED" : " -- ok");
+                 probe_pipe_result, probe_pipe_result != 0 ? ", FAILED" : ", ok");
     if (probe_pipe_result == 0) {
         ::close(probe_pipe_fds[0]);
         ::close(probe_pipe_fds[1]);
@@ -102,20 +102,20 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     // Real, live-caught gap (the engineering notes): the real AGDK
     // initializeNativeCode_native() returns a real, valid NativeCode*
     // on success but returns a plain 0 (no crash, no trap) if
-    // ALooper_forThread() is null on the calling thread -- a real,
+    // ALooper_forThread() is null on the calling thread, a real,
     // silent early-return this code never checked for, meaning every
     // "ok" lifecycle call below could have been dispatched with a null
     // `J` (game_activity_ptr) argument the whole time without Stud ever
-    // knowing. This is a diagnostic only, not (yet) a behavior change --
+    // knowing. This is a diagnostic only, not (yet) a behavior change,
     // never observed to actually be null in testing so far, but no
     // prior test explicitly checked, either.
     std::fprintf(stderr, "stud: GameActivity_initializeNativeCode real return value (NativeCode*) = 0x%lx%s\n",
                  static_cast<unsigned long>(out.game_activity_ptr),
-                 out.game_activity_ptr == 0 ? " -- NULL, real AGDK early-return (see doc comment)" : "");
+                 out.game_activity_ptr == 0 ? ", NULL, real AGDK early-return (see doc comment)" : "");
 
     // Real, permanent: Stud plays the "Java side" role directly, calling
     // AGDK's own real, RegisterNatives()-installed lifecycle methods via
-    // ordinary JNI reflection -- see game_engine_boot.h's doc comment for
+    // ordinary JNI reflection; see game_engine_boot.h's doc comment for
     // the two real jnivm bugs (patched permanently in
     // jni-bridge/patches/patch_libjnivm.cmake) this depends on.
     jclass game_activity_class = env.GetObjectClass(game_activity_instance);
@@ -125,18 +125,18 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     // symptom): with a real, valid NativeCode* now flowing through (the
     // fix above), these calls invoke libroblox.so's own real
     // onNativeWindowCreated/etc. engine callbacks for the first time in
-    // this project's history -- previously-unexercised code whose real
+    // this project's history, previously-unexercised code whose real
     // blocking behavior was unknown. A real, full launch hung here
     // (confirmed live: process alive, near-zero CPU, log stops growing,
     // never reaches run_engine_v2_sequence()) the first time this fix
     // was tested. Same real fix pattern as every other real V2 entry
     // point already known to be able to block forever
     // (engine_v2_bridge.cpp's own run_bounded_v2_call(), "Calls that
-    // might block forever" in this file's own Methodology) -- run each
+    // might block forever" in this file's own Methodology), run each
     // call on its own detached background thread with its own fresh
     // JNI frame (a jmethodID/jclass/jobject local reference is only
     // valid on the thread/frame that resolved it, so nothing JNI-
-    // related may cross threads directly -- re-resolved fresh inside
+    // related may cross threads directly, re-resolved fresh inside
     // the lambda, same as engine_v2_bridge.cpp's own established
     // pattern), bounded wait, honest "still running" report instead of
     // blocking the rest of boot forever.
@@ -152,7 +152,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
 
         auto completed = std::make_shared<std::atomic<bool>>(false);
         auto trapped = std::make_shared<std::atomic<bool>>(false);
-        // Fresh detached thread per call, deliberately -- see the note
+        // Fresh detached thread per call, deliberately; see the note
         // in engine_v2_bridge.cpp's run_bounded_v2_call() for why a
         // single shared engine thread was tried here and reverted.
         std::thread([&jvm, main_game_activity, name, sig, invoke_with_fresh_frame, completed,
@@ -172,7 +172,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
         }).detach();
 
         constexpr int kPollIntervalMs = 50;
-        constexpr int kMaxPolls = 60;  // 3s total -- simple callbacks, not full engine bring-up
+        constexpr int kMaxPolls = 60;  // 3s total, simple callbacks, not full engine bring-up
         int polls = 0;
         while (!completed->load(std::memory_order_relaxed) && polls < kMaxPolls) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kPollIntervalMs));
@@ -181,7 +181,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
         if (completed->load(std::memory_order_relaxed)) {
             *trapped_flag = trapped->load(std::memory_order_relaxed);
         } else {
-            std::fprintf(stderr, "stud: %s still running/blocked after %dms -- not waiting further\n",
+            std::fprintf(stderr, "stud: %s still running/blocked after %dms, not waiting further\n",
                          name, kPollIntervalMs * kMaxPolls);
         }
     };
@@ -224,7 +224,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
                               static_cast<jint>(1));
         });
 
-    // Real Android delivers window focus AFTER the surface exists -- the
+    // Real Android delivers window focus AFTER the surface exists, the
     // window is not focusable until it has been added and its surface
     // created. This used to run before onSurfaceCreated, which meant the
     // engine evaluated focus against a window it did not yet have, and
@@ -245,13 +245,13 @@ bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResu
     if (lifecycle.activity == nullptr || lifecycle.surface == nullptr) return false;
     // Deliberately inline on the caller's thread, unlike the boot-time
     // lifecycle calls. Those hand the work to a fresh detached thread, and a
-    // first attempt here did the same -- which failed: GetObjectClass on a
+    // first attempt here did the same, which failed: GetObjectClass on a
     // reference created inside that thread's own frame resolved to
     // java/lang/Object, so the method lookup missed every time
     // (`STUD_DIAG GetMethodID MISS class=\`java/lang/Object\`
     // method=\`onSurfaceChangedNative\``, once per resize). Resolving and
     // calling on one thread avoids that entirely, and this callback is a plain
-    // geometry notification -- it has never been observed to block, unlike the
+    // geometry notification. It has never been observed to block, unlike the
     // engine bring-up calls the bounded-thread pattern exists for.
     FakeJni::LocalFrame frame(jvm);
     auto& e = frame.getJniEnv();

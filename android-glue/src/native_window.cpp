@@ -42,7 +42,7 @@ namespace {
 // configure callback being a no-op below, meant it could never be
 // resized either. 1280x720 is a much safer real default; real resizing
 // (drag, maximize) now actually works via xdg_toplevel_configure.
-// Stud's own default window size, in LOGICAL units -- what the window
+// Stud's own default window size, in LOGICAL units, what the window
 // should measure on the user's desktop before the compositor sends a
 // real configure.
 constexpr int32_t kDefaultLogicalWidth = 1280;
@@ -63,25 +63,25 @@ std::atomic<int32_t> g_window_height{kDefaultLogicalHeight};
 
 // Real Wayland connection state, established lazily on first use (the
 // first ANativeWindow_fromSurface() call) and kept for the process's
-// lifetime -- matches how a real Android app's single native window
+// lifetime, matches how a real Android app's single native window
 // backing works, one compositor connection reused for every
 // ANativeWindow Stud ever creates.
 struct WaylandConnectionState {
     wl_display* display = nullptr;
     wl_compositor* compositor = nullptr;
-    // Real xdg-shell global (the engineering notes' M6 entry -- Vulkan surface
+    // Real xdg-shell global (the engineering notes' M6 entry; Vulkan surface
     // *creation* never needed this; giving a wl_surface an actual
     // xdg_toplevel role, the real mechanism that makes it a visible,
     // mapped window rather than an inert client-side buffer target,
     // does). Null in a compositor that somehow doesn't advertise
     // xdg-shell (nonstandard today, but real Wayland clients still check
-    // rather than assume) -- ANativeWindow_fromSurface degrades to a
+    // rather than assume), ANativeWindow_fromSurface degrades to a
     // plain, unmapped wl_surface in that case, same honest-degradation
     // pattern as a missing wl_compositor already uses.
     xdg_wm_base* wm_base = nullptr;
     // Real xdg-decoration global (the engineering notes, real user report:
     // "must have titlebar"). Null in a compositor that doesn't
-    // implement it -- Stud draws no decorations of its own, so the
+    // implement it. Stud draws no decorations of its own, so the
     // window is simply left compositor-default (no titlebar) in that
     // case, same honest-degradation pattern as every other optional
     // Wayland global here.
@@ -91,7 +91,7 @@ struct WaylandConnectionState {
     // Real wl_subcompositor: how the text overlay (stud/text_overlay.h)
     // gets a surface of its own stacked above the game window. Null on a
     // compositor that somehow lacks it, in which case the overlay simply
-    // does not appear -- same honest-degradation pattern as every other
+    // does not appear, same honest-degradation pattern as every other
     // optional global here.
     wl_subcompositor* subcompositor = nullptr;
     // Real clipboard: a data device is obtained per-seat from this.
@@ -103,8 +103,8 @@ struct WaylandConnectionState {
     // physical size. Real Android reports DisplayMetrics.xdpi/ydpi from
     // the panel's actual dimensions; Stud used to synthesise them from
     // its density guess (160 * density), which makes every real
-    // physical-size query -- DeviceUtils.getScreenPhysicalSizeInMillimeters(),
-    // which the engine's own getViewportDisplaySize() calls -- an
+    // physical-size query, DeviceUtils.getScreenPhysicalSizeInMillimeters(),
+    // which the engine's own getViewportDisplaySize() calls, an
     // invented number. The compositor already knows the truth and hands
     // it over in wl_output.geometry, in millimetres, for free.
     // Real fractional-scale + viewporter globals. Present on any
@@ -116,18 +116,18 @@ struct WaylandConnectionState {
     // Real xdg-output: the only source of the display's LOGICAL size that
     // does not need a mapped surface. wl_output gives physical pixels and
     // an integer scale (2 on a 1.25x desktop), and the fractional scale
-    // is per-surface and only arrives once a surface is mapped -- far too
+    // is per-surface and only arrives once a surface is mapped, far too
     // late to size the first window with.
     zxdg_output_manager_v1* xdg_output_manager = nullptr;
     // Mints the activation tokens that let a launched application raise
     // its own window. Null on a compositor without the protocol, in
-    // which case a launch simply opens unfocused -- the old behaviour.
+    // which case a launch simply opens unfocused, the old behaviour.
     xdg_activation_v1* activation = nullptr;
     // Mouse look. The compositor stops moving the physical pointer while a
     // lock is held and reports raw motion deltas separately, which is the
     // only way to turn a camera without the real cursor walking off across
     // the desktop. Null on a compositor without the protocols, in which
-    // case rotation still works and the cursor still wanders -- the old
+    // case rotation still works and the cursor still wanders, the old
     // behaviour, not a crash.
     zwp_pointer_constraints_v1* pointer_constraints = nullptr;
     zwp_relative_pointer_manager_v1* relative_pointer_manager = nullptr;
@@ -144,7 +144,7 @@ struct WaylandConnectionState {
     wp_pointer_warp_v1* pointer_warp = nullptr;
     // The pointer kept inside the window for a camera drag. Unlike a
     // lock, it keeps its real position and keeps producing ordinary
-    // motion -- it just cannot leave -- so the engine's cursor is driven
+    // motion. It just cannot leave, so the engine's cursor is driven
     // by the pointer itself, exactly as when nothing is constrained.
     zwp_confined_pointer_v1* confined_pointer = nullptr;
     zxdg_output_v1* xdg_output = nullptr;
@@ -155,7 +155,7 @@ struct WaylandConnectionState {
     // Refresh rates the compositor reports for this output, in mHz.
     // Read from wl_output.mode rather than assumed: the engine paces
     // frames to what it believes the display can do, and with nothing
-    // to read it settles for 60 on a panel that may be far faster --
+    // to read it settles for 60 on a panel that may be far faster,
     // or far slower. Whatever this machine actually has is what gets
     // reported.
     int32_t output_refresh_mhz = 0;
@@ -165,21 +165,21 @@ struct WaylandConnectionState {
     int32_t output_transform = 0;
     int32_t output_scale = 1;
     // Stud's own event queue. The default queue is deliberately left to
-    // the Vulkan driver -- see ensure_wayland_connection().
+    // the Vulkan driver; see ensure_wayland_connection().
     ::wl_event_queue* queue = nullptr;
     bool attempted = false;
 };
 
 // Real buffer scale for Stud's own surface. A Wayland client that
 // ignores the compositor's scale renders at logical size and is upscaled
-// by the compositor -- visibly blurry on any HiDPI output. Honouring it
+// by the compositor, visibly blurry on any HiDPI output. Honouring it
 // means: render into a buffer `scale` times larger, tell the compositor
 // so with wl_surface_set_buffer_scale(), and report the larger size to
 // the engine as the real surface size. 1 disables all of that, which is
 // exactly right on a non-scaled output.
 // Scale is tracked in 120ths, which is the unit the fractional-scale
 // protocol itself uses: 120 = 1x, 150 = 1.25x, 240 = 2x. Integer-only
-// wl_output.scale cannot express 1.25 at all -- it rounds up to 2, which
+// wl_output.scale cannot express 1.25 at all. It rounds up to 2, which
 // is why a 1.25x desktop made Stud render 60% more pixels than needed
 // and still guess wrong about its own window size.
 constexpr int32_t kScaleUnit = 120;
@@ -195,12 +195,12 @@ std::atomic<int32_t> g_display_scale_120{kScaleUnit};
 // same variable the display scale was read from, so the monitor's real
 // 1.25 was destroyed for the rest of the session. The engine was then
 // told it was on a 1.0 display while the compositor still scaled the
-// surface -- which is exactly the reported "HiDPI off, window starts
+// surface, which is exactly the reported "HiDPI off, window starts
 // stretched, still high DPI".
 std::atomic<int32_t> g_render_scale_120{kScaleUnit};
 // The window's last known LOGICAL size. Latched here because the size
 // itself lives on the window object and the upscaler needs it from
-// elsewhere -- see native_window_display_pixel_size().
+// elsewhere; see native_window_display_pixel_size().
 std::atomic<int32_t> g_logical_width{0};
 std::atomic<int32_t> g_logical_height{0};
 // What the user asked for, in 120ths. 0 means "follow the display",
@@ -225,7 +225,7 @@ WaylandConnectionState& wayland_state() {
 // the exact fractional value once the compositor has sent one; falls
 // back to integer wl_output.scale until then (and on a compositor with
 // no fractional-scale protocol at all).
-// The DISPLAY's scale, as the system reports it -- 150/120 on a 1.25x
+// The DISPLAY's scale, as the system reports it, 150/120 on a 1.25x
 // desktop. Always the real value, whatever the HiDPI setting says.
 //
 // This is deliberately separate from the buffer scale below. They are
@@ -238,7 +238,7 @@ int32_t display_scale_120() {
     const int32_t reported = g_display_scale_120.load();
     if (reported != kScaleUnit) return reported;
     // No integer fallback. wl_output.scale cannot express a fractional
-    // desktop and KDE advertises 2 on a 1.25x one -- taking that told the
+    // desktop and KDE advertises 2 on a 1.25x one, taking that told the
     // engine it was on a 2x display, and because the scale is now read
     // exactly once it stayed wrong for the whole session. An unknown
     // scale is reported as 1.0, which is at least self-consistent with a
@@ -255,13 +255,13 @@ stud::android_glue::DisplayBackend display_backend_impl();
 int32_t effective_scale_120() {
     // X11 has no logical/buffer split: a window's size IS its size in
     // device pixels, and the server scales nothing. So there is no
-    // buffer to multiply -- rendering is already 1:1 with the panel, and
+    // buffer to multiply, rendering is already 1:1 with the panel, and
     // treating Xft.dpi as a buffer scale here would render 1.25x the
     // pixels and then have nothing scale them back down.
     //
     // The display scale is still recorded (display_scale_120 above), and
     // still reaches the engine as DisplayMetrics density when "Follow
-    // DPI" asks for it -- that is a layout decision, not a buffer one.
+    // DPI" asks for it. That is a layout decision, not a buffer one.
     if (display_backend_impl() == stud::android_glue::DisplayBackend::X11) return kScaleUnit;
     const int32_t requested = g_requested_render_scale_120.load();
     if (requested > 0) return requested;
@@ -270,19 +270,19 @@ int32_t effective_scale_120() {
 
 // Real fix for a real, user-observed bug: ANativeWindow_fromSurface()
 // used to ignore its `surface` argument entirely and unconditionally
-// create a brand-new real Wayland surface/xdg_toplevel on every call --
+// create a brand-new real Wayland surface/xdg_toplevel on every call,
 // matching real Android's OWN semantics for a *first-ever* call on a
 // given Surface, but wrong the moment the SAME real Surface jobject is
 // handed in again (confirmed: GameActivity's real lifecycle drive,
 // jni-bridge/src/game_engine_boot.cpp, correctly reuses one
 // SurfaceStub jobject across both onSurfaceCreatedNative and
 // onSurfaceChangedNative, exactly matching real AGDK/native_app_glue
-// convention -- both real entry points independently call
+// convention, both real entry points independently call
 // ANativeWindow_fromSurface() internally per the real AGDK contract,
 // so this function itself needs to be the one place idempotency is
 // enforced). Without this, two real, independently-mapped windows
 // appeared on screen for a single real launch. Keyed by the raw
-// jobject pointer's identity, not its content -- matches how real
+// jobject pointer's identity, not its content, matches how real
 // Android's own native window cache works (tied to the Surface
 // object's own identity/lifetime, not anything about its contents).
 std::unordered_map<jobject, ANativeWindow*>& window_cache() {
@@ -292,7 +292,7 @@ std::unordered_map<jobject, ANativeWindow*>& window_cache() {
 
 // xdg_wm_base requires every ping to be answered with a pong, or the
 // compositor is free to consider the client unresponsive and kill the
-// connection -- real, standard xdg-shell protocol requirement, not
+// connection: real, standard xdg-shell protocol requirement, not
 // optional.
 void xdg_wm_base_ping(void*, xdg_wm_base* wm_base, uint32_t serial) {
     xdg_wm_base_pong(wm_base, serial);
@@ -325,11 +325,11 @@ void push_input_event(stud::android_glue::HostInputEvent ev) {
     // already do (a MotionEvent carries its own batched history rather
     // than one event per sample). A drag produces motion far faster than
     // anything downstream consumes it, and Process B's poll is
-    // best-effort -- it skips a round rather than block the render thread.
+    // best-effort. It skips a round rather than block the render thread.
     // Without this the queue builds a backlog and then replays positions
     // seconds old, which reads as a cursor that has stuck. Only ever
-    // merges with the event immediately behind, so anything in between --
-    // a button, a key -- keeps its ordering with the motion around it.
+    // merges with the event immediately behind, so anything in between,
+    // a button, a key, keeps its ordering with the motion around it.
     if (!q.empty() && q.back().type == ev.type) {
         auto& back = q.back();
         if (ev.type == stud::android_glue::HostInputEvent::kPointerMotion) {
@@ -366,7 +366,7 @@ void push_input_event(stud::android_glue::HostInputEvent ev) {
 
 // Last pointer position, in real surface-local pixels. Button and scroll
 // events carry no coordinates of their own in Wayland, but libroblox's
-// own real callers (the app's own input handler) pass the last known position with both --
+// own real callers (the app's own input handler) pass the last known position with both,
 // so track it here exactly as that real code does.
 float g_pointer_x = 0.0f;
 float g_pointer_y = 0.0f;
@@ -376,11 +376,11 @@ float g_pointer_y = 0.0f;
 // Established from the app's own code, not assumed: the only class that
 // suppresses Android's pointer (`RBXSurfaceView.onResolvePointerIcon`
 // returning `PointerIcon.getSystemIcon(ctx, TYPE_NULL)`) has ZERO
-// references anywhere in this build -- it is dead code. The app runs on
+// references anywhere in this build. It is dead code. The app runs on
 // AGDK's `GameActivity`, whose own surface view does not suppress
 // anything, so on a real device (and on Waydroid) **Android draws its
 // ordinary white system pointer** over Roblox's window. Roblox does not
-// draw a cursor of its own on the app shell at all -- confirmed directly
+// draw a cursor of its own on the app shell at all, confirmed directly
 // by reading back the real framebuffer, which renders the full logged-in
 // Home UI and contains no cursor pixels anywhere.
 //
@@ -454,12 +454,12 @@ wl_surface* ensure_cursor_surface() {
 
 // Wayland reports surface-local pointer coordinates in LOGICAL units,
 // but the engine works in buffer pixels (it renders into the scaled
-// buffer and its own hit-testing is in that space) -- so every incoming
+// buffer and its own hit-testing is in that space), so every incoming
 // coordinate has to be multiplied by the same scale the buffer uses.
 // Missing this puts the cursor at half position on a 2x output.
 // ...and back. Pointer events arrive in surface-local coordinates and are
 // scaled up to buffer pixels, because that is the space the engine works
-// in -- but every request that takes a position back (a warp, a cursor
+// in, but every request that takes a position back (a warp, a cursor
 // hint) wants the surface-local one. Warping with a buffer pixel puts the
 // pointer 1.25x away on a scaled display: live-caught as a drag anchored
 // at 885 that warped to 1106 every time.
@@ -477,8 +477,8 @@ float unscale_pointer_coord(float v) {
 }
 
 // The serial of the most recent real input event from the compositor.
-// A compositor will not let a client raise a window -- its own or one it
-// launches -- off nothing: xdg_activation_v1 tokens must carry the serial
+// A compositor will not let a client raise a window; its own or one it
+// launches, off nothing: xdg_activation_v1 tokens must carry the serial
 // of an input event the user actually produced, which is what separates a
 // user asking for a browser from an application stealing focus on a timer.
 // Without it KWin issues a token and then ignores it, which is exactly why
@@ -488,12 +488,12 @@ std::atomic<uint32_t> g_last_input_serial{0};
 // Whether the pointer is currently locked in place for mouse look.
 std::atomic<bool> g_pointer_locked{false};
 // The serial of the last pointer ENTER, which is what a warp request
-// takes -- and specifically not `g_last_input_serial`, which every button
+// takes, and specifically not `g_last_input_serial`, which every button
 // and key event overwrites. A warp with the wrong serial is rejected.
 std::atomic<uint32_t> g_pointer_enter_serial{0};
 std::atomic<bool> g_pointer_confined{false};
 // A surface may have exactly ONE pointer constraint. Asking for a second
-// is a protocol error and the compositor kills the client -- live-caught
+// is a protocol error and the compositor kills the client, live-caught
 // as `zwp_pointer_constraints_v1: error 1: the surface is already
 // constrained` the moment first person (a lock) began while a camera drag
 // still had the pointer confined, followed by VK_ERROR_SURFACE_LOST_KHR
@@ -515,15 +515,15 @@ void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_
     // compositor's cursor entirely.
     //
     // A Wayland client owns the pointer image over its own surface and must
-    // set it on every enter. Roblox draws its own cursor in-frame -- on the
-    // app shell and in-game alike, and identically on Windows -- and its own
+    // set it on every enter. Roblox draws its own cursor in-frame, on the
+    // app shell and in-game alike, and identically on Windows, and its own
     // SurfaceView asks Android for no system pointer at all, so hiding the
     // compositor's is the correct behaviour, not a workaround. Pass a null
     // surface.
     //
     // This was a stand-in Android arrow for several sessions, because the
     // engine's own cursor never reached the composited frame. That is fixed
-    // (a buffer-mapping key bug corrupted the dynamic UI geometry -- see
+    // (a buffer-mapping key bug corrupted the dynamic UI geometry; see
     // the engineering notes), and drawing one here now just puts a second, wrong
     // cursor on screen next to the real one. `STUD_STUD_CURSOR=1` brings the
     // stand-in back, which is only useful if the engine's own cursor
@@ -595,7 +595,7 @@ void pointer_button(void*, wl_pointer*, uint32_t serial, uint32_t, uint32_t butt
 // `axis` carries a continuous, surface-local distance whose scale is the
 // compositor's own choice (KWin sends 15 per detent, others send 10), so
 // dividing it by a constant makes one wheel notch mean a different amount of
-// zoom on different desktops -- the "steps are too wide" this used to have.
+// zoom on different desktops, the "steps are too wide" this used to have.
 // `axis_discrete` (v5) is an exact integer notch count, and `axis_value120`
 // (v8) is the same thing scaled by 120, which lets a high-resolution wheel
 // report a genuine fraction of a notch. A v8 compositor sends value120
@@ -662,7 +662,7 @@ const wl_pointer_listener kPointerListener = {
 
 // The compositor's own keymap, which is the only authority on what any
 // key actually produces. This used to close the fd and throw it away,
-// leaving a US layout compiled into Stud as the only answer -- wrong for
+// leaving a US layout compiled into Stud as the only answer, wrong for
 // every other layout on earth, and the reason "/" did nothing on a
 // Brazilian ABNT2 keyboard (it sits on evdev 89, which US has no key at).
 //
@@ -680,7 +680,7 @@ struct XkbState {
     //
     // The sequences come from the system's own Compose file for the
     // user's locale, so this is the same table every other application on
-    // the desktop composes with -- not a list Stud invented.
+    // the desktop composes with, not a list Stud invented.
     xkb_compose_table* compose_table = nullptr;
     xkb_compose_state* compose_state = nullptr;
 };
@@ -703,7 +703,7 @@ void setup_compose(XkbState* x) {
     x->compose_table =
         xkb_compose_table_new_from_locale(x->context, locale, XKB_COMPOSE_COMPILE_NO_FLAGS);
     if (x->compose_table == nullptr) {
-        std::printf("stud: no compose table for locale \"%s\" -- dead keys will not compose\n",
+        std::printf("stud: no compose table for locale \"%s\", dead keys will not compose\n",
                     locale);
         std::fflush(stdout);
         return;
@@ -768,12 +768,12 @@ void keyboard_keymap(void*, wl_keyboard*, uint32_t format, int32_t fd, uint32_t 
 // Composition only ever changes the CHARACTER, never whether the key
 // event happens: the press is always delivered, so a dead key pressed
 // mid-game is still a key the engine hears about. Only a press feeds the
-// compose state -- a release would advance the sequence a second time.
+// compose state, a release would advance the sequence a second time.
 void resolve_key_from_keymap(uint32_t evdev_code, bool pressed,
                              stud::android_glue::HostInputEvent* ev) {
     auto& x = xkb();
     if (x.state == nullptr) return;
-    // XKB keycodes are evdev codes plus 8 -- the X11 offset, which
+    // XKB keycodes are evdev codes plus 8, the X11 offset, which
     // Wayland keeps.
     const xkb_keycode_t keycode = evdev_code + 8;
     const xkb_keysym_t sym = xkb_state_key_get_one_sym(x.state, keycode);
@@ -810,7 +810,7 @@ void keyboard_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
     //
     // The compositor stops sending key events the moment the surface
     // loses keyboard focus, so a key released after alt-tabbing is one
-    // this client never hears about -- and the engine goes on holding it,
+    // this client never hears about, and the engine goes on holding it,
     // which in an experience means walking forever. Real Android ends the
     // gesture when a window loses focus; this does the same.
     release_all_held_keys();
@@ -826,7 +826,7 @@ void keyboard_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
 // and a release and nothing in between, and tells the client the rate and
 // delay to synthesise the rest at (wl_keyboard.repeat_info). Nothing did,
 // so holding a key produced exactly one character. Real Android repeats
-// too, and marks the synthesised events as repeats -- which is what
+// too, and marks the synthesised events as repeats, which is what
 // KeyEvent.getRepeatCount() reports and why nativePassKeyEvent takes an
 // isRepeat flag at all.
 struct KeyRepeat {
@@ -878,7 +878,7 @@ void release_all_held_keys() {
 }
 
 // The same for mouse buttons. Holding a button and clicking away leaves
-// the engine holding it too -- a stuck camera drag rather than a stuck
+// the engine holding it too, a stuck camera drag rather than a stuck
 // walk, but the identical bug.
 void release_all_held_buttons() {
     for (uint32_t button : buttons_down()) {
@@ -979,7 +979,7 @@ void relative_pointer_motion(void*, zwp_relative_pointer_v1*, uint32_t, uint32_t
 // A touchpad pinch. The app's own handler has a mouse branch for exactly
 // this (`nativePassMousePinch(x, y, (scale - last) * 3.5)`), so the
 // event carries the position and the change in scale since the previous
-// update -- an absolute factor would make the camera jump every time a
+// update, an absolute factor would make the camera jump every time a
 // pinch began.
 void pinch_begin(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, uint32_t, wl_surface*,
                  uint32_t) {
@@ -996,7 +996,7 @@ void pinch_update(void* data, zwp_pointer_gesture_pinch_v1*, uint32_t, wl_fixed_
     stud::android_glue::HostInputEvent ev{};
     ev.type = stud::android_glue::HostInputEvent::kPointerPinch;
     // The pointer does not move during a pinch, so the last known
-    // position is the gesture's position -- which is what the real
+    // position is the gesture's position, which is what the real
     // handler passes too (the first touch point's own coordinates).
     ev.x = g_pointer_x;
     ev.y = g_pointer_y;
@@ -1075,7 +1075,7 @@ void output_mode(void* data, wl_output*, uint32_t flags, int32_t width, int32_t 
 }
 void output_done(void*, wl_output*) {}
 void output_scale(void* data, wl_output*, int32_t factor) {
-    // Real integer scale the compositor applies to this output -- the
+    // Real integer scale the compositor applies to this output, the
     // actual meaning of "HiDPI" for a Wayland client. A client that
     // ignores it renders at logical size and gets upscaled (blurry);
     // one that honours it renders at factor x and stays sharp.
@@ -1113,7 +1113,7 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
     auto* state = static_cast<WaylandConnectionState*>(data);
     if (std::string_view(interface) == wl_shm_interface.name) {
         // Needed to hand the compositor a real cursor image (see
-        // ensure_cursor_surface() -- Stud draws the pointer Android itself
+        // ensure_cursor_surface(). Stud draws the pointer Android itself
         // would otherwise draw).
         state->shm = static_cast<wl_shm*>(wl_registry_bind(registry, name, &wl_shm_interface, 1));
     } else if (std::string_view(interface) == wl_subcompositor_interface.name) {
@@ -1127,9 +1127,9 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
             wl_registry_bind(registry, name, &wl_data_device_manager_interface, bind_version));
     } else if (std::string_view(interface) == wl_seat_interface.name) {
         // Real seat, the compositor's own pointer/keyboard source. Bind at
-        // 8 -- the version wl_pointer.axis_value120 arrived in, which is the
+        // 8, the version wl_pointer.axis_value120 arrived in, which is the
         // only way to learn a real, high-resolution wheel's exact fraction
-        // of a detent (see the axis handlers above) -- or lower if the
+        // of a detent (see the axis handlers above), or lower if the
         // compositor advertises less. Everything the listener implements
         // beyond that degrades on its own: a v5 compositor simply sends
         // axis_discrete instead, and a pre-v5 one only sends `axis`.
@@ -1164,7 +1164,7 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
             wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, bind_version));
     } else if (std::string_view(interface) == wl_compositor_interface.name) {
         // Bind the lowest version this build's wayland-client headers
-        // know about that the compositor also advertises -- real
+        // know about that the compositor also advertises; real
         // wl_compositor has been ABI-stable at version 4+ for years, no
         // real feature Stud needs depends on a specific version here.
         uint32_t bind_version = version < 4 ? version : 4;
@@ -1193,8 +1193,8 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
         // Up to version 6, for xdg_toplevel's `suspended` state.
         //
         // That state is the compositor saying this surface's content is
-        // not visible to anyone -- minimised, on another workspace, or
-        // fully covered -- and it is the only honest answer to "is
+        // not visible to anyone: minimised, on another workspace, or
+        // fully covered, and it is the only honest answer to "is
         // anybody looking at this", which is what the background frame
         // limit needs. Bound at 1 before, so the state was never sent.
         // The two events versions 4 and 5 add (configure_bounds,
@@ -1214,11 +1214,11 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
 void registry_global_remove(void*, wl_registry*, uint32_t) {
     // A compositor global disappearing mid-session isn't a case Stud
     // needs to handle for a single short-lived registry round-trip at
-    // startup -- nothing to do.
+    // startup; nothing to do.
 }
 
 // Real, standard integration of a foreign (non-ALooper-native) event
-// source into a real Android-style event loop -- the same technique
+// source into a real Android-style event loop, the same technique
 // real apps use to fold e.g. a socket or timerfd into ALooper_pollOnce()
 // (the engineering notes, "real event loop" entry: runtime/main.cpp's own
 // loop only ever pumps ALooper directly; without this, a live
@@ -1226,7 +1226,7 @@ void registry_global_remove(void*, wl_registry*, uint32_t) {
 // since nothing would ever call wl_display_dispatch() to process it).
 // wl_display_dispatch() is safe to call unconditionally here: ALooper
 // only invokes this callback when the fd is actually readable
-// (ALOOPER_EVENT_INPUT), so there's always real data waiting -- no
+// (ALOOPER_EVENT_INPUT), so there's always real data waiting; no
 // blocking-forever risk. wl_display_flush() alongside it sends any
 // requests queued since the last flush (e.g. a pong reply produced by
 // dispatching the ping above) immediately, rather than waiting for
@@ -1239,8 +1239,8 @@ int wayland_looper_callback(int /*fd*/, int /*events*/, void* data) {
 }
 
 // Real, honest degradation: if no ALooper has been prepared on this
-// thread yet (ALooper_prepare() not called -- see runtime/main.cpp),
-// there's no real loop to register with. Not an error -- matches the
+// thread yet (ALooper_prepare() not called; see runtime/main.cpp),
+// there's no real loop to register with. Not an error, matches the
 // same "connect if possible, work correctly either way" pattern
 // ensure_wayland_connection() already uses for a missing compositor.
 void register_wayland_fd_with_looper(wl_display* display) {
@@ -1261,15 +1261,15 @@ const wl_registry_listener kRegistryListener = {
 // (via WAYLAND_DISPLAY/XDG_RUNTIME_DIR, same as any other Wayland
 // client), then one registry round-trip to bind wl_compositor and
 // xdg_wm_base. Honest degradation, not a crash, if no compositor is
-// reachable (e.g. a headless test/CI environment) -- logs once and
+// reachable (e.g. a headless test/CI environment), logs once and
 // leaves display/compositor/wm_base null; callers (ANativeWindow_
 // fromSurface below) check for null rather than assuming success.
 // Which display server Stud is actually running on.
 //
 // Decided once, by what the session offers rather than by what the user
 // asked for: a Wayland compositor if one answers, otherwise an X server.
-// Wayland stays the preferred backend -- everything in this file, and
-// every measurement behind it, was built against it -- and X11 is what
+// Wayland stays the preferred backend, everything in this file, and
+// every measurement behind it, was built against it, and X11 is what
 // keeps Stud usable on a session that has no compositor at all.
 //
 // STUD_DISPLAY_BACKEND=x11|wayland forces one, which is how the X11 path
@@ -1306,7 +1306,7 @@ stud::android_glue::DisplayBackend display_backend_impl() {
     if (wayland_state().display != nullptr) {
         backend = DisplayBackend::Wayland;
     } else if (stud::android_glue::x11::available()) {
-        std::printf("stud: android-glue: no Wayland compositor -- using X11\n");
+        std::printf("stud: android-glue: no Wayland compositor, using X11\n");
         std::fflush(stdout);
         backend = DisplayBackend::X11;
     } else {
@@ -1326,14 +1326,14 @@ void ensure_wayland_connection() {
     if (state.display == nullptr) {
         std::fprintf(stderr,
                       "stud: android-glue: no Wayland compositor reachable (wl_display_connect "
-                      "failed) -- ANativeWindow objects will have no real surface backing\n");
+                      "failed), ANativeWindow objects will have no real surface backing\n");
         return;
     }
 
     // Stud's own objects go on their own event queue, and the DEFAULT
     // queue is left alone.
     //
-    // This is not tidiness -- it is the difference between a working
+    // This is not tidiness. It is the difference between a working
     // window and a black one. A Vulkan driver puts its own proxies
     // (wl_buffer, the explicit-sync timeline objects) on the default
     // queue and dispatches them itself, from inside vkQueuePresentKHR
@@ -1343,7 +1343,7 @@ void ensure_wayland_connection() {
     //   discarded wl_buffer#48.release()
     // right beside the driver's own
     //   wp_linux_drm_syncobj_surface_v1.set_acquire_point(...)
-    // -- so the driver never learned its buffers were released, the
+    // so the driver never learned its buffers were released, the
     // compositor never got a buffer it could show, and the window stayed
     // black even when every render pass was forced to clear to magenta.
     //
@@ -1359,7 +1359,7 @@ void ensure_wayland_connection() {
     wl_registry_add_listener(registry, &kRegistryListener, &state);
     // Round-trip: blocks until the compositor has answered every
     // outstanding request, including the registry's initial global
-    // advertisements -- the standard, minimal way to synchronously
+    // advertisements, the standard, minimal way to synchronously
     // discover globals in a Wayland client.
     wl_display_roundtrip_queue(state.display, state.queue);
     // A second round-trip: the first one only guarantees the *globals*
@@ -1380,13 +1380,13 @@ void ensure_wayland_connection() {
     if (state.compositor == nullptr) {
         std::fprintf(stderr,
                       "stud: android-glue: connected to the Wayland compositor but it never "
-                      "advertised wl_compositor -- ANativeWindow objects will have no real "
+                      "advertised wl_compositor, ANativeWindow objects will have no real "
                       "surface backing\n");
     }
     if (state.wm_base == nullptr) {
         std::fprintf(stderr,
                       "stud: android-glue: connected to the Wayland compositor but it never "
-                      "advertised xdg_wm_base -- ANativeWindow objects will have no visible, "
+                      "advertised xdg_wm_base, ANativeWindow objects will have no visible, "
                       "mapped window\n");
     }
 
@@ -1406,8 +1406,8 @@ void set_native_window_size(int32_t width, int32_t height) {
 }  // namespace stud::android_glue
 
 // Real opaque handle with proper refcounting, now genuinely backed by a
-// real wl_surface -- with a real xdg_toplevel role, not just a bare
-// client-side buffer target -- when a compositor is reachable (see
+// real wl_surface, with a real xdg_toplevel role, not just a bare
+// client-side buffer target, when a compositor is reachable (see
 // ensure_wayland_connection() above). `surface`/`xdg_surface`/
 // `xdg_toplevel` are null if it wasn't (headless environment), checked
 // by native_window_wl_surface() below, never dereferenced
@@ -1419,7 +1419,7 @@ struct ANativeWindow {
     xdg_toplevel* toplevel = nullptr;
     zxdg_toplevel_decoration_v1* decoration = nullptr;
     // Real, lazily-created EGL window backing (native_window_get_or_
-    // create_egl_window() below) -- shared between whoever first
+    // create_egl_window() below), shared between whoever first
     // creates the render context (runtime/main.cpp) and this file's own
     // xdg_toplevel_configure handler, so a real compositor-driven
     // resize (drag, maximize) can actually call wl_egl_window_resize()
@@ -1438,20 +1438,20 @@ struct ANativeWindow {
     bool configured = false;
     // The real Surface jobject this window is cached under (window_cache(),
     // below), so ANativeWindow_release() can clean up its cache entry when
-    // the window is genuinely destroyed -- null if this window was never
+    // the window is genuinely destroyed, null if this window was never
     // associated with a real jobject (surface==nullptr at creation time).
     jobject surface_key = nullptr;
 };
 
 namespace {
 // Real xdg-shell requirement: the FIRST wl_surface_commit() after
-// creating an xdg_toplevel only requests a configure -- the surface
+// creating an xdg_toplevel only requests a configure, the surface
 // isn't actually mapped/visible until the client acks that configure
 // and commits again (real protocol state machine, not optional
 // bookkeeping; a compositor is free to never map a surface that skips
 // this). xdg_toplevel's own configure (size/state) is informational
 // only for Stud's purposes right now (no real resize handling built
-// yet) -- the ack+recommit is what matters here.
+// yet), the ack+recommit is what matters here.
 void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     auto* window = static_cast<ANativeWindow*>(data);
     xdg_surface_ack_configure(surface, serial);
@@ -1468,9 +1468,9 @@ const xdg_surface_listener kShellSurfaceListener = {
 // Real resize handling (the engineering notes, real user report: "can't be
 // resized"). Per real xdg-shell semantics, width/height of 0 means "you
 // choose" (the initial configure, and some compositors' own "no
-// specific size" case) -- only act on a real, positive suggestion (a
+// specific size" case), only act on a real, positive suggestion (a
 // user drag-resize, maximize, or fullscreen request). Resizes the real
-// wl_egl_window backing (if one has been created yet -- see
+// wl_egl_window backing (if one has been created yet; see
 // native_window_get_or_create_egl_window() below) and keeps
 // ANativeWindow_getWidth/getHeight in sync via the same
 // set_native_window_size() this module already exposes.
@@ -1511,7 +1511,7 @@ void apply_window_geometry(ANativeWindow* window, const char* reason) {
     std::fflush(stdout);
 }
 
-// Real exact scale for the output this surface is actually on -- which
+// Real exact scale for the output this surface is actually on, which
 // is the whole point of the protocol: it follows the window when it is
 // dragged between differently-scaled monitors, where a single global
 // output scale cannot.
@@ -1548,7 +1548,7 @@ std::atomic<bool> g_window_visible{true};
 // they are not the same question: a window can be fully visible on a
 // second monitor while somebody types in another one (activated false,
 // suspended false), and that is the case the background frame limit is
-// really for -- alt-tabbing away.
+// really for, alt-tabbing away.
 std::atomic<bool> g_window_activated{true};
 
 void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t height,
@@ -1602,9 +1602,9 @@ extern "C" {
 
 ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     // No real Java Surface object exists in Stud's model (Stud's own
-    // process owns the window, not a Java-side Surface) -- the jobject
+    // process owns the window, not a Java-side Surface), the jobject
     // itself carries no real content Stud reads, same pattern as
-    // AAssetManager_fromJava's. Its IDENTITY still matters, though --
+    // AAssetManager_fromJava's. Its IDENTITY still matters, though;
     // see window_cache()'s own doc comment above for the real bug this
     // fixes (two windows appearing for one launch).
     if (surface != nullptr) {
@@ -1621,11 +1621,11 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
         // (window_cache() non-empty), Roblox's own compiled code
         // sometimes calls this real, exported NDK symbol directly with
         // a genuinely null Surface (some internal defensive/fallback
-        // path, not a Stud call site -- every one of Stud's own real
+        // path, not a Stud call site. Every one of Stud's own real
         // call sites always passes the real, non-null surface jobject).
         // Treating that as "create a fresh standalone window" (the
         // right behavior for the null-surface case BEFORE any real
-        // window exists -- see below) spawned a second, real,
+        // window exists; see below) spawned a second, real,
         // independently-mapped, never-fully-configured (hence
         // invisible) window. A null Surface once a real one already
         // exists has no legitimate window to create; degrade honestly
@@ -1635,7 +1635,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
 
     // Hard guard against creating a second real window from a null
     // Surface. The cache is keyed by jobject identity, so a null Surface
-    // never populates it -- which used to mean every null-Surface call
+    // never populates it, which used to mean every null-Surface call
     // fell through here and mapped a brand new Wayland window. One
     // caller repeating that in a loop put over a hundred windows on the
     // user's desktop. Exactly one window is ever legitimate from this
@@ -1645,7 +1645,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     if (surface == nullptr) {
         if (created_null_surface_window) {
             std::fprintf(stderr,
-                         "stud: ANativeWindow_fromSurface(null) called again -- refusing to "
+                         "stud: ANativeWindow_fromSurface(null) called again, refusing to "
                          "create a second window\n");
             std::fflush(stderr);
             return nullptr;
@@ -1656,8 +1656,8 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     // Hard cap, by construction rather than by correct logic.
     //
     // Stud maps exactly one real window. Every mechanism that is supposed
-    // to guarantee that -- the jobject cache, the null-Surface guard
-    // above -- is logic that can be wrong, and when it was wrong the
+    // to guarantee that, the jobject cache, the null-Surface guard
+    // above, is logic that can be wrong, and when it was wrong the
     // result was over a hundred real windows on the user's desktop
     // before anyone could react. A runaway window loop is not something
     // to detect politely and continue through: it is unusable, and every
@@ -1673,7 +1673,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     }();
     if (windows_created >= max_windows) {
         std::fprintf(stderr,
-                     "stud: refusing to create window #%d (cap %d) -- something is looping. "
+                     "stud: refusing to create window #%d (cap %d), something is looping. "
                      "Set STUD_MAX_WINDOWS to raise the cap if this is genuinely needed.\n",
                      windows_created + 1, max_windows);
         std::fflush(stderr);
@@ -1738,7 +1738,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
             std::fflush(stdout);
             // Real, explicit request for a server-side (compositor-drawn)
             // titlebar (the engineering notes, real user report: "must have
-            // titlebar") -- Stud draws no client-side decorations of its
+            // titlebar"). Stud draws no client-side decorations of its
             // own, so without this the compositor is free to leave the
             // window fully undecorated (observed on this real
             // compositor). Honest degradation if the global isn't
@@ -1750,7 +1750,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
                 zxdg_toplevel_decoration_v1_set_mode(
                     window->decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
             }
-            // Triggers the compositor's first xdg_surface.configure --
+            // Triggers the compositor's first xdg_surface.configure,
             // handled by xdg_surface_configure() above, which acks it
             // and commits again, completing the real map sequence.
             wl_surface_commit(window->surface);
@@ -1847,7 +1847,7 @@ void display_output_geometry(int32_t* px_w, int32_t* px_h, int32_t* mm_w, int32_
     ensure_wayland_connection();
     const auto& state = wayland_state();
     // A rotated output reports its mode in the panel's own orientation
-    // while geometry's millimetres describe the physical panel -- so for
+    // while geometry's millimetres describe the physical panel, so for
     // a 90/270 transform the two disagree about which axis is which.
     // Swap the pixel axes to match, which keeps dots-per-inch correct on
     // a rotated monitor instead of transposing it.
@@ -1873,7 +1873,7 @@ void set_render_scale_120(int32_t requested_scale_120) {
     // Learn the display's real scale BEFORE sizing anything. The default
     // window size is worked out just below, in logical units, and
     // converting the output's physical mode into logical units needs the
-    // scale -- without it the desktop looked like 1920x1080 logical
+    // scale, without it the desktop looked like 1920x1080 logical
     // instead of 1536x864, so Stud asked for a 1728x972 window on an
     // 864-tall desktop and the compositor immediately configured it back
     // down. That configure is a resize, and resizes are what made the DPI
@@ -1881,13 +1881,13 @@ void set_render_scale_120(int32_t requested_scale_120) {
     native_window_wait_for_display_scale_120();
     g_render_scale_120.store(effective_scale_120());
     // Pick the real default window size now that both the scale and the
-    // output's own size are known -- in LOGICAL units, which is what a
+    // output's own size are known, in LOGICAL units, which is what a
     // window is measured in.
     //
     // Always derived from the actual desktop. It used to keep a fixed
     // 1280x720 unless the computed size was LARGER, which meant the one
-    // case the computation exists for -- a display too small for
-    // 1280x720 -- was the one case it did not cover, and Stud opened a
+    // case the computation exists for, a display too small for
+    // 1280x720, was the one case it did not cover, and Stud opened a
     // window bigger than the screen. The floor is now a genuinely small
     // window rather than a guess at a common desktop.
     const int32_t scale_120 = display_scale_120();
@@ -1977,7 +1977,7 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
         }
         // PERSISTENT, not ONESHOT: mouse look lasts as long as the button is
         // held, and a oneshot lock ends itself the first time the pointer
-        // would have left the surface -- which under a lock is immediately
+        // would have left the surface, which under a lock is immediately
         // the point of the exercise.
         state.locked_pointer = zwp_pointer_constraints_v1_lock_pointer(
             state.pointer_constraints, window->surface, state.pointer, nullptr,
@@ -1991,7 +1991,7 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
         if (state.locked_pointer != nullptr) {
             // Deliberately no set_cursor_position_hint. The compositor
             // does not move the pointer while it is locked, so when the
-            // lock ends it is still where the drag began -- which is where
+            // lock ends it is still where the drag began, which is where
             // the engine's own pinned cursor is. Placing it anywhere else
             // is a guess about engine state this process does not have.
             zwp_locked_pointer_v1_destroy(state.locked_pointer);
@@ -2021,7 +2021,7 @@ void native_window_warp_pointer(ANativeWindow* window, float x, float y) {
         return;
     }
     // The compositor honours this while the surface has pointer focus,
-    // "including when it has an implicit pointer grab" -- which is
+    // "including when it has an implicit pointer grab", which is
     // exactly the case that matters here, a button held down mid-drag.
     // It rejects a position outside the surface, so clamp rather than
     // hand it something it will throw away.
@@ -2029,7 +2029,7 @@ void native_window_warp_pointer(ANativeWindow* window, float x, float y) {
     const float h = static_cast<float>(g_window_height.load());
     const float cx = w > 0.0f ? std::min(std::max(x, 0.0f), w - 1.0f) : x;
     const float cy = h > 0.0f ? std::min(std::max(y, 0.0f), h - 1.0f) : y;
-    // Surface-local, not buffer pixels -- see unscale_pointer_coord().
+    // Surface-local, not buffer pixels; see unscale_pointer_coord().
     wp_pointer_warp_v1_warp_pointer(state.pointer_warp, window->surface, state.pointer,
                                      wl_fixed_from_double(unscale_pointer_coord(cx)),
                                      wl_fixed_from_double(unscale_pointer_coord(cy)),
@@ -2046,7 +2046,7 @@ bool native_window_can_warp_pointer() {
 
 void native_window_set_pointer_confined(ANativeWindow* window, bool confined) {
     if (display_backend() == DisplayBackend::X11) {
-        // X11 confines with the grab it already takes for mouse look --
+        // X11 confines with the grab it already takes for mouse look,
         // XGrabPointer's confine_to is this same window.
         x11::set_pointer_confined(confined);
         g_pointer_confined.store(confined);
@@ -2066,7 +2066,7 @@ void native_window_set_pointer_confined(ANativeWindow* window, bool confined) {
         if (g_pointer_locked.load()) return;
         // No region: the whole surface. PERSISTENT, because a camera drag
         // lasts as long as the button is held and a oneshot confinement
-        // ends itself the first time the pointer reaches the boundary --
+        // ends itself the first time the pointer reaches the boundary,
         // which is exactly when it is needed.
         state.confined_pointer = zwp_pointer_constraints_v1_confine_pointer(
             state.pointer_constraints, window->surface, state.pointer, nullptr,
@@ -2087,8 +2087,8 @@ void native_window_activate(ANativeWindow* window, const char* token) {
     // The other direction: a token MINTED by whoever launched us, spent
     // here to raise this window.
     //
-    // Wayland gives a client no way to raise itself -- that is the whole
-    // point of the protocol -- so the only thing that can bring Stud
+    // Wayland gives a client no way to raise itself; that is the whole
+    // point of the protocol, so the only thing that can bring Stud
     // forward is a token from the process the user actually acted in. A
     // browser click travels as XDG_ACTIVATION_TOKEN to the second
     // stud-ui, which hands it here along with the link.
@@ -2117,7 +2117,7 @@ std::string native_window_activation_token(ANativeWindow* window) {
     // The serial is what makes the token count. A compositor treats
     // activation as a transfer of focus the user asked for, so it wants the
     // input event that asked: xdg_activation_v1 says the serial "should" be
-    // set, and KWin reads it as "must" -- a token minted without one is
+    // set, and KWin reads it as "must", a token minted without one is
     // issued, handed over, and then quietly ignored as focus stealing. That
     // is the whole reason links opened behind Stud, and passing the serial
     // of the click that hit the link is both what fixes it and what is
@@ -2205,7 +2205,7 @@ int32_t native_window_wait_for_display_scale_120() {
     // The scale is wanted ONCE, before the engine starts, so that every
     // number derived from it is decided together and none of them can
     // change later. But the real window does not exist yet at that point
-    // -- it is created when the engine asks for a surface -- and a
+    // it is created when the engine asks for a surface, and a
     // fractional scale is a property the compositor reports PER SURFACE.
     // With nothing to report about, the answer was the integer
     // wl_output.scale, which is 2 on a 1.25x desktop.
@@ -2231,7 +2231,7 @@ int32_t native_window_wait_for_display_scale_120() {
     wl_surface_destroy(probe);
     const int32_t answer = display_scale_120();
     std::printf("stud: android-glue: display scale probed: %d/120%s\n", answer,
-                answer == kScaleUnit ? " (compositor reported none -- treating as 1.0)" : "");
+                answer == kScaleUnit ? " (compositor reported none, treating as 1.0)" : "");
     std::fflush(stdout);
     return answer;
 }
@@ -2245,7 +2245,7 @@ int32_t native_window_wait_for_display_scale_120() {
 
 // Marks the whole surface opaque.
 //
-// Vulkan's swapchain images on this driver are AR24 -- an alpha format --
+// Vulkan's swapchain images on this driver are AR24, an alpha format,
 // even when the swapchain asks for VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
 // (live-confirmed: compositeAlpha=0x1, and the buffer still arrives as
 // DRM format 875709016/AR24 where a working reference used
@@ -2304,7 +2304,7 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
     // `width`/`height` already arrive in buffer pixels: the caller reads
     // them from ANativeWindow_getWidth/getHeight, which this module keeps
     // in buffer space. What the compositor still needs told is what
-    // logical size that buffer represents -- otherwise it takes the
+    // logical size that buffer represents, otherwise it takes the
     // buffer's own pixel count as the window size and the window comes
     // out the wrong size on screen.
     if (window->viewport != nullptr) {
@@ -2360,7 +2360,7 @@ bool window_close_requested() {
 
 // Drains the X server's event queue, when that is the backend in use.
 //
-// Called from render-host's own display pump, beside the Wayland one --
+// Called from render-host's own display pump, beside the Wayland one,
 // a resize arrives here as ConfigureNotify and has to reach the size
 // ANativeWindow_getWidth/getHeight report, which is what the engine, the
 // swapchain and DisplayMetrics all read.

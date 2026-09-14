@@ -11,17 +11,17 @@
 //   - SIGABRT/SIGTRAP: Roblox's own native bootstrap code calling
 //     abort() (or hitting a debug trap) on an unmet precondition during
 //     Stud's still-imperfect bring-up (a missing flag, unexpected state,
-//     ...) -- lets a caller observe "did this call complete or trigger
+//     ...), lets a caller observe "did this call complete or trigger
 //     an abort" as a diagnostic signal instead of losing the whole
 //     process to one bootstrap call's internal assertion.
 //   - SIGSEGV, narrowly: only a fault landing within ~1MB of the current
 //     stack pointer (a real, previously-characterized stack-overflow
 //     guard-page hit inside Roblox's own code, not a null/wild-pointer
-//     bug -- that shape falls straight through to the normal, fatal
+//     bug. That shape falls straight through to the normal, fatal
 //     default disposition, unaffected by this).
 //
 // This is orthogonal to the old glibc/bionic ABI-crossing problem this
-// project used to have (deleted along with tls-compat) -- it's plain
+// project used to have (deleted along with tls-compat); it's plain
 // POSIX sigsetjmp/siglongjmp plus a per-thread alt signal stack, and
 // applies identically to Process B's real, single-ABI bionic execution.
 namespace stud::jni_bridge {
@@ -36,7 +36,7 @@ void arm_abort_trap(sigjmp_buf& checkpoint);
 // it is treated as recoverable, not just a stack-overflow-shaped one.
 // Only for call sites that are genuinely best-effort probes of
 // not-yet-fully-wired Roblox internals on their own background thread
-// (see call_trapping_abort_tolerating_wild_sigsegv()'s doc comment) --
+// (see call_trapping_abort_tolerating_wild_sigsegv()'s doc comment),
 // using this elsewhere would hide real, unrelated null/wild-pointer
 // bugs that should stay fatal so they get root-caused.
 void arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint);
@@ -54,7 +54,7 @@ bool call_trapping_abort(Fn fn, Args... args) {
     sigjmp_buf checkpoint;
     bool completed = true;
     // arm_abort_trap() must run AFTER sigsetjmp() has actually
-    // initialized `checkpoint`, not before -- arming first leaves a real
+    // initialized `checkpoint`, not before, arming first leaves a real
     // window where a signal firing between the arm and the sigsetjmp
     // call itself would siglongjmp into an uninitialized buffer.
     if (sigsetjmp(checkpoint, 1) == 0) {
@@ -85,19 +85,19 @@ bool call_trapping_abort_with_result(Fn fn, Result& result, Args... args) {
 
 // Same as call_trapping_abort(), but for call sites where a genuinely
 // wild/null-pointer SIGSEGV (not just a stack-overflow-shaped one) is
-// expected to be survivable and shouldn't take the whole process down --
+// expected to be survivable and shouldn't take the whole process down,
 // e.g. a best-effort background probe of a Roblox code path Stud's
 // bring-up doesn't fully support yet, running on its own detached
 // thread where losing that one call has no effect on the rest of the
 // process. Confirmed, real crash this exists for: nativeAppBridgeV2
 // StartAppWithParams's internal telemetry-logging helper dereferences a
 // null object a few calls deep (root-caused live,
-// not a guess) -- likely a
+// not a guess), likely a
 // Roblox-internal singleton real Android populates before this path
 // runs that Stud's bring-up doesn't yet, out of scope to chase further
 // right now since this call is already documented as optional/
 // best-effort. Do NOT reach for this at other call sites just because a
-// crash is inconvenient -- see arm_abort_trap_tolerating_wild_sigsegv()'s
+// crash is inconvenient; see arm_abort_trap_tolerating_wild_sigsegv()'s
 // own doc comment.
 template <typename Fn, typename... Args>
 bool call_trapping_abort_tolerating_wild_sigsegv(Fn fn, Args... args) {
@@ -118,7 +118,7 @@ bool call_trapping_abort_tolerating_wild_sigsegv(Fn fn, Args... args) {
 // (confirmed: zero calls anywhere to ExceptionCheck/ExceptionClear/
 // ExceptionOccurred before this). Any pending exception left on `env`
 // after one bootstrap call is visible to the NEXT, unrelated JNI call's
-// own internal ExceptionCheck() -- real, standard JNI/Android code
+// own internal ExceptionCheck(); real, standard JNI/Android code
 // commonly guards its own FindClass/GetMethodID calls this way. Live-
 // observed cascading exactly this way in this project's own capture: an
 // "Invalid Reference, Unexpected Type" exception thrown deep inside a
@@ -126,7 +126,7 @@ bool call_trapping_abort_tolerating_wild_sigsegv(Fn fn, Args... args) {
 // and the real WebRTC helpers_android.cc code's own
 // `Check failed: !jni->ExceptionCheck()` fired on an entirely
 // unrelated, later `FindClass("org/webrtc/voiceengine/BuildInfo")`
-// call, taking the process down via a real, deliberate `abort()` --
+// call, taking the process down via a real, deliberate `abort()`,
 // not a bug in the WebRTC lookup itself, just Stud never having
 // cleared the earlier exception the way a real, disciplined JNI caller
 // would. Call this after any bootstrap phase that might throw, before
@@ -138,7 +138,7 @@ bool clear_pending_jni_exception(JNIEnv* env, const char* context);
 //
 // After this, a fault the handler would otherwise treat as fatal exits
 // quietly instead of re-raising. Teardown runs while the engine's own
-// threads are still live, so a fault there is the shutdown itself -- and
+// threads are still live, so a fault there is the shutdown itself, and
 // a core dump of a process that is about to _exit(0) helps nobody.
 void note_shutting_down();
 
@@ -153,7 +153,7 @@ extern "C" {
 // render-client/src/mapped_write_barrier.h). Those faults must be
 // handled BEFORE any crash classification, or a perfectly normal write
 // is read as a wild-shaped fault and the recovery kills the render
-// thread -- live-caught exactly that way, as a window that never
+// thread, live-caught exactly that way, as a window that never
 // appeared.
 //
 // Chaining sigaction from the client is not sufficient: this file

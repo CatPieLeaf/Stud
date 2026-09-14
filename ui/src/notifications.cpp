@@ -18,9 +18,9 @@ bool send_notification(const QString& summary, const QString& body, const QStrin
 
     // Real Notify(app_name, replaces_id, app_icon, summary, body,
     // actions, hints, expire_timeout) signature per the freedesktop.org
-    // spec -- app_name "Stud" (real, our own app identity, not
+    // spec: app_name "Stud" (real, our own app identity, not
     // impersonating anything), replaces_id 0 (always a new
-    // notification, not replacing a prior one -- this mechanism doesn't
+    // notification, not replacing a prior one; this mechanism doesn't
     // track IDs across calls yet, no real caller needs that yet),
     // expire_timeout -1 (respect the notification server's own default
     // duration).
@@ -30,12 +30,12 @@ bool send_notification(const QString& summary, const QString& body, const QStrin
     if (options.transient) hints.insert("transient", true);
     if (options.suppress_sound) hints.insert("suppress-sound", true);
     // Names the desktop entry this notification belongs to, and this is
-    // what puts Stud's icon on it -- as the small application badge in
+    // what puts Stud's icon on it, as the small application badge in
     // the header, which is the whole point. A server ties the
     // notification back to the application from this: Plasma draws the
     // entry's icon beside the app name, groups by it, and honours any
     // per-application settings the user has set for Stud. It must be the
-    // entry's own basename, which is the application id -- the same
+    // entry's own basename, which is the application id, the same
     // identity the window carries via its app_id.
     //
     // It used to be the literal "stud", from back when the entry was

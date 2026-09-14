@@ -1,7 +1,7 @@
 # Flatpak manifest for Flathub.
 #
 # It installs a prebuilt archive rather than building from source, and
-# that is not a shortcut -- it is the only thing that can work. Stud needs
+# that is not a shortcut. It is the only thing that can work. Stud needs
 # ANGLE with both its Vulkan and its SwiftShader backends, which no
 # distribution ships, so it is compiled from source; and ANGLE's own build
 # uses `gclient sync`, which downloads dozens of dependencies while it
@@ -9,7 +9,7 @@
 # source tarball to pin instead.
 #
 # The precedent is Sober (org.vinegarhq.Sober), which is the same kind of
-# application -- the real Roblox Android app on Linux -- and which ships
+# application, the real Roblox Android app on Linux, and which ships
 # its own prebuilt archive from its own server with a sha256. Every
 # permission below follows theirs, for the same reasons.
 #
@@ -17,10 +17,10 @@
 # what ships here is the same binary as the rpm, the deb and the AppImage.
 # If Flathub would rather have a from-source build, the way to give them
 # one is a vendored ANGLE checkout published as a source bundle (post
-# `gclient sync`, a few GB) -- possible, and a much larger build.
+# `gclient sync`, a few GB), possible, and a much larger build.
 
 app-id: io.github.catpieleaf.Stud
-# QtWebEngine, which org.kde.Platform does NOT ship -- checked directly:
+# QtWebEngine, which org.kde.Platform does NOT ship, checked directly:
 # there is no libQt6WebEngine* anywhere in 6.10 or 6.11, and stud-webview
 # could not even load ("libQt6WebEngineWidgets.so.6: cannot open shared
 # object file"), so every web panel and every login challenge was dead.
@@ -31,7 +31,7 @@ base-version: '6.11'
 runtime: org.kde.Platform
 # The current runtime. This used to sit on 6.10 because the release
 # workflow builds in ghcr.io/flathub-infra/flatpak-github-actions, whose
-# tag list still stops at kde-6.10 -- so the container has no 6.11 SDK of
+# tag list still stops at kde-6.10, so the container has no 6.11 SDK of
 # its own. That only mattered while the Qt executables were built
 # elsewhere and copied in; now they are compiled here, the workflow
 # installs the runtime it needs with `--install-deps-from=flathub` and
@@ -45,8 +45,8 @@ finish-args:
   # Rendering. Stud's whole reason to exist is that the GPU driver runs in
   # its own process; it still needs the device to do it.
   - --device=dri
-  # Process B runs inside its own bwrap, with its own user namespace --
-  # that is the architecture, not an optional hardening step. A nested
+  # Process B runs inside its own bwrap, with its own user namespace.
+  # That is the architecture, not an optional hardening step. A nested
   # sandbox needs this. (Sober requires the same, for ptrace.)
   - --allow=devel
   # The engine expects a shared IPC namespace for X11 shared memory.
@@ -62,7 +62,7 @@ finish-args:
   - --socket=pulseaudio
   # No filesystem access is requested. The APK is chosen through a
   # QFileDialog, which Qt routes to the file chooser portal inside a
-  # sandbox -- the portal hands back a path under /run/user/<uid>/doc/
+  # sandbox, the portal hands back a path under /run/user/<uid>/doc/
   # that stays readable on later launches, so a static grant on
   # xdg-download and xdg-documents would only widen what Stud can read
   # without letting it read anything it needs.
@@ -70,8 +70,8 @@ finish-args:
   # Verify on the first real Flatpak build: pick an APK in Settings, then
   # relaunch and confirm it is still readable. If the portal path does not
   # survive, the honest fix is --filesystem=xdg-download:ro, not a wider
-  # grant -- and config.json takes a path by hand either way.
-  # The keyring, which holds the key the login is encrypted with -- not
+  # grant, and config.json takes a path by hand either way.
+  # The keyring, which holds the key the login is encrypted with, not
   # the login itself. Without it that encrypted file cannot be read, so
   # Stud would have to fall back to storing the cookie in the clear.
   - --talk-name=org.freedesktop.secrets
@@ -87,7 +87,7 @@ modules:
     buildsystem: meson
     config-opts:
       # These are bubblewrap 0.11.0's real meson options, checked against
-      # the tarball this manifest pins. There is no "setuid" option -- it
+      # the tarball this manifest pins. There is no "setuid" option; it
       # was passed here once and the build died with `Unknown option:
       # "setuid"`. A plain build is already non-setuid, which is what a
       # Flatpak needs.
@@ -107,8 +107,8 @@ modules:
   - name: portaudio
     buildsystem: cmake-ninja
     config-opts:
-      # PortAudio 19.7.0 asks for CMake 2.8, and CMake 4 -- which the
-      # runtime ships -- removed compatibility below 3.5 outright:
+      # PortAudio 19.7.0 asks for CMake 2.8, and CMake 4, which the
+      # runtime ships, removed compatibility below 3.5 outright:
       # `Compatibility with CMake < 3.5 has been removed from CMake.`
       # Reproduced locally against CMake 4.3 and confirmed this is what
       # clears it. Upstream's own fix is a newer release; this pins the
@@ -141,7 +141,7 @@ modules:
   # Deliberately does NOT install usr/bin/stud or stud-webview from this
   # archive. Those two are the Qt executables, and a Qt binary built
   # against another distribution's Qt is what made this Flatpak crash
-  # inside Qt's own startup before a line of Stud ran -- the module below
+  # inside Qt's own startup before a line of Stud ran, the module below
   # compiles them against the runtime's own Qt instead.
   - name: stud-prebuilt
     buildsystem: simple
@@ -173,8 +173,8 @@ modules:
 
   # The Qt half, compiled here against the runtime's own Qt.
   #
-  # STUD_BUILD_QT_ONLY builds just the two executables that link Qt --
-  # stud and stud-webview -- and skips the render host, the bionic
+  # STUD_BUILD_QT_ONLY builds just the two executables that link Qt.
+  # Stud and stud-webview, and skips the render host, the bionic
   # runtime and ANGLE, which the module above supplies prebuilt.
   #
   # The three dependencies CMake would otherwise fetch over the network
@@ -196,7 +196,7 @@ modules:
       # Stud's own source, for the tag this manifest describes. The
       # release workflow replaces this with the checkout it already has
       # (see "Point the manifest at what this run built"), so CI never
-      # depends on this digest -- which matters, because a re-cut tag
+      # depends on this digest, which matters, because a re-cut tag
       # changes it and the build failed exactly that way once.
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz

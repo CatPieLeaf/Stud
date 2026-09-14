@@ -1,6 +1,6 @@
 // M8 test: real QtKeychain-backed credential storage (ui/src/credential_store.h).
 // Runs against this machine's real keychain backend (KWallet, under this
-// live Plasma session) -- not a mock. Uses a distinct test key so it
+// live Plasma session), not a mock. Uses a distinct test key so it
 // doesn't collide with any real stored Roblox cookie.
 
 #include "credential_store.h"
@@ -24,14 +24,14 @@ void check(bool condition, const char* what) {
 
 int main(int argc, char** argv) {
     // QtKeychain's Job classes need a running Qt event loop (QCoreApplication)
-    // to dispatch their real, async D-Bus-backed (libsecret/KWallet) calls --
+    // to dispatch their real, async D-Bus-backed (libsecret/KWallet) calls,
     // even though stud::ui's wrapper blocks synchronously via a nested
     // QEventLoop per call.
     QCoreApplication app(argc, argv);
 
     const QString kTestKey = "stud-credential-store-test-key";
 
-    // Clean slate -- delete anything left over from a previous run.
+    // Clean slate, delete anything left over from a previous run.
     stud::ui::delete_credential(kTestKey);
     check(!stud::ui::load_credential(kTestKey).has_value(),
           "no stored value for the test key after a clean delete");
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
     check(loaded.value() == "test-cookie-value-12345",
           "loaded value matches exactly what was stored");
 
-    // Overwrite -- real keychains support updating an existing key.
+    // Overwrite. Real keychains support updating an existing key.
     stud::ui::store_credential(kTestKey, "updated-value-67890");
     auto reloaded = stud::ui::load_credential(kTestKey);
     check(reloaded.has_value() && reloaded.value() == "updated-value-67890",

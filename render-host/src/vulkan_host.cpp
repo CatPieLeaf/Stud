@@ -1,5 +1,5 @@
 // Real Vulkan, host side. Process C is ordinary glibc, so the vendor
-// driver is at home here -- which is exactly why the driver must never
+// driver is at home here, which is exactly why the driver must never
 // be loaded in Process B (see the engineering notes' non-negotiable
 // constraints, and vulkan_forward.h for the transport's own rationale).
 //
@@ -44,25 +44,25 @@ namespace stud::render_host {
 // a window as a side effect of a query.
 namespace {
 // The extent each live swapchain was actually created with. Recorded so
-// a resize can be seen; NOT used to force VK_ERROR_OUT_OF_DATE_KHR --
+// a resize can be seen; NOT used to force VK_ERROR_OUT_OF_DATE_KHR;
 // see swapchain_is_out_of_date's own comment for the live result of
 // trying that.
 std::map<uint64_t, VkExtent2D> g_swapchain_extents;
 
 // Atomic because they are written by whichever thread pumps Wayland and
-// read by whichever thread is answering a surface-capabilities query --
+// read by whichever thread is answering a surface-capabilities query,
 // and after the secondary-connection change those are routinely
 // different threads. Relaxed is enough: each is read on its own, and a
 // reader that catches a resize one query late simply asks again.
 std::atomic<uint32_t> g_window_width{0};
 std::atomic<uint32_t> g_window_height{0};
 
-// Whether this process offers Vulkan at all -- see the header. Set once,
+// Whether this process offers Vulkan at all; see the header. Set once,
 // from main(), before any client can connect.
 bool g_vulkan_enabled = true;
 
 // The GPU the user picked in Settings, as an index into
-// vkEnumeratePhysicalDevices' own order -- the same identifier the
+// vkEnumeratePhysicalDevices' own order, the same identifier the
 // settings window enumerated against. Until now nothing read it back,
 // so the choice did nothing at all.
 uint32_t g_preferred_device_index = 0;
@@ -158,7 +158,7 @@ struct Loader {
         nullptr;
 
     // Device-level commands, resolved from the device itself once it
-    // exists -- the spec's own requirement, and what reaches the
+    // exists, the spec's own requirement, and what reaches the
     // driver's real implementations rather than loader trampolines.
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkGetDeviceProcAddr get_device_proc_addr = nullptr;
@@ -171,7 +171,7 @@ struct Loader {
     PFN_vkGetPipelineCacheData get_pipeline_cache_data = nullptr;
     PFN_vkDestroyPipelineCache destroy_pipeline_cache = nullptr;
     // The rest of the destroy family. Without these the objects the
-    // engine creates for every pipeline it builds were never freed --
+    // engine creates for every pipeline it builds were never freed,
     // measured at 2668 unimplemented destroy calls across a few
     // sessions, which is GPU memory that grows with every join.
     PFN_vkDestroySampler destroy_sampler = nullptr;
@@ -274,7 +274,7 @@ struct Loader {
     std::map<uint64_t, void*> mapped;
 
     // Which objects lead to the screen. A frame can look perfectly busy
-    // -- thousands of draws, successful presents -- and still be black if
+    // thousands of draws, successful presents, and still be black if
     // nothing the engine renders ever targets a swapchain image, so this
     // follows image -> view -> framebuffer and reports whether any render
     // pass or blit actually writes to one.
@@ -287,7 +287,7 @@ struct Loader {
     // to one that has since been destroyed.
     //
     // vkDestroySwapchainKHR frees its images with it. An application is
-    // not supposed to use them afterwards -- but a resize makes the
+    // not supposed to use them afterwards, but a resize makes the
     // engine do exactly that: vkAcquireNextImageKHR fails with
     // VK_ERROR_OUT_OF_DATE_KHR, the engine tears the swapchain down, and
     // a command buffer already in flight still records a barrier against
@@ -384,7 +384,7 @@ uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& 
     const char* layer_ptr = layer.empty() ? nullptr : layer.c_str();
 
     // Always ask the driver for the true count first, so the reply can
-    // report it even when the caller's array is too small -- that is what
+    // report it even when the caller's array is too small; that is what
     // the real two-call idiom needs in order to work.
     uint32_t count = 0;
     VkResult r = l.enumerate_instance_extension_properties(layer_ptr, &count, nullptr);
@@ -454,9 +454,9 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
         // The user asked for OpenGL, so this process does not offer
         // Vulkan. VK_ERROR_INCOMPATIBLE_DRIVER is exactly what a device
         // with no usable Vulkan driver returns, and it is what makes the
-        // engine fall back to its own GLES path -- no flag, no knowledge
+        // engine fall back to its own GLES path; no flag, no knowledge
         // of the engine's internals.
-        std::printf("stud-render-host: vkCreateInstance refused -- graphics mode is OpenGL\n");
+        std::printf("stud-render-host: vkCreateInstance refused, graphics mode is OpenGL\n");
         std::fflush(stdout);
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INCOMPATIBLE_DRIVER));
     }
@@ -494,7 +494,7 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     // VK_KHR_android_surface. This process presents to Wayland, where
     // that extension does not exist and its absence would fail instance
     // creation outright. Substituting the Wayland surface extension is
-    // the same interposition the surface-creation path already does --
+    // the same interposition the surface-creation path already does,
     // the window belongs to Process C either way, and the engine never
     // sees which WSI is underneath.
     for (std::string& e : extensions) {
@@ -535,7 +535,7 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
 
     // Resolve the instance-level commands now, from the instance itself
-    // -- the spec's own requirement, and the only way to reach a driver's
+    // the spec's own requirement, and the only way to reach a driver's
     // real implementations rather than the loader's trampolines.
     l.instance = instance;
     auto inst = [&l](const char* n) { return l.get_instance_proc_addr(l.instance, n); };
@@ -636,7 +636,7 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
 
     // Honour the GPU chosen in Settings by putting it first. The engine
     // picks from this list itself and takes the first device it can use,
-    // so ordering is the honest way to express a preference -- every
+    // so ordering is the honest way to express a preference; every
     // device is still offered, exactly as the driver reported it, and a
     // stale index simply leaves the order alone.
     if (g_preferred_device_index != 0 && g_preferred_device_index < devices.size()) {
@@ -669,8 +669,8 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
 std::string vk_device_select_token_for_index(uint32_t index) {
     // Mesa selects its Vulkan device from MESA_VK_DEVICE_SELECT, which
     // names a GPU by vendor and device id rather than by position. Ask
-    // the real loader what is at the position the user chose -- the same
-    // enumeration order the settings window listed -- and translate.
+    // the real loader what is at the position the user chose, the same
+    // enumeration order the settings window listed, and translate.
     Loader& l = loader();
     if (l.create_instance == nullptr) return {};
     VkApplicationInfo app{};
@@ -753,19 +753,19 @@ uint64_t vk_get_physical_device_memory_properties(uint64_t device, std::vector<u
     // ZERO.
     //
     // Proven by its own log rather than assumed. This machine's host
-    // heap is 24933841920 bytes and the engine reports 3459005440 --
+    // heap is 24933841920 bytes and the engine reports 3459005440,
     // exactly the low 32 bits. Its device heap is 4294967296
     // (0x100000000), whose low 32 bits are 0, and the engine duly logs
     // `heapIndex = 0, heapFlags = 1 (device), heapSize = 0` and then
     // falls back to `caps.videoMemory = 67108864`: it believes a 4GiB
-    // GPU has 64MB. That is the worst possible answer -- it drives
+    // GPU has 64MB. That is the worst possible answer; it drives
     // texture and shadow resolution down and makes the engine stream and
     // evict constantly, which costs CPU every frame.
     //
     // Reporting 0xFFFFFFFF instead of the true size is the honest
     // choice here: it is the largest value the engine can actually
     // represent, so it is far closer to the truth than the zero it
-    // derives on its own, and heap size is informational -- the driver,
+    // derives on its own, and heap size is informational, the driver,
     // not this number, enforces what can really be allocated. Only
     // sizes that would truncate are touched; anything already under
     // 4GiB is passed through exactly.
@@ -774,7 +774,7 @@ uint64_t vk_get_physical_device_memory_properties(uint64_t device, std::vector<u
         if (mem.memoryHeaps[i].size > kMax32) {
             static std::set<uint32_t> announced_heaps;
             if (announced_heaps.insert(i).second) {
-                std::printf("stud-render-host: heap %u is %llu bytes, reporting %llu -- the engine "
+                std::printf("stud-render-host: heap %u is %llu bytes, reporting %llu, the engine "
                             "truncates heap sizes to 32 bits and would read the real value as "
                             "%llu\n",
                             i, static_cast<unsigned long long>(mem.memoryHeaps[i].size),
@@ -786,7 +786,7 @@ uint64_t vk_get_physical_device_memory_properties(uint64_t device, std::vector<u
         }
     }
     // The device's memory layout does not change, and the engine asks
-    // for it on every renderer rebuild -- 86 times in one session, three
+    // for it on every renderer rebuild, 86 times in one session, three
     // lines each. Said once.
     static bool announced_memory = false;
     if (!announced_memory) {
@@ -1044,7 +1044,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // process that writes them: Stud maps a file in the runtime directory,
     // hands the engine that pointer, and imports the same pages here as
     // real device memory. Without it every byte the engine writes has to
-    // be copied across the socket -- measured at 197 MB/s in a real game,
+    // be copied across the socket, measured at 197 MB/s in a real game,
     // which is most of what the render thread was doing.
     if (device_supports_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
         bool already = false;
@@ -1079,7 +1079,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
 
     // Resolve every device-level command from the device itself, now that
-    // one exists. The spec requires this -- vkGetDeviceProcAddr reaches
+    // one exists. The spec requires this, vkGetDeviceProcAddr reaches
     // the driver's real implementations, where vkGetInstanceProcAddr
     // would only give loader trampolines.
     //
@@ -1514,9 +1514,9 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     VkImage image = VK_NULL_HANDLE;
     VkResult r = l.create_image(l.device, &ci, nullptr, &image);
     // Only a failure, unless someone asked for the running commentary.
-    // A real game creates images constantly -- measured at 14k of these
+    // A real game creates images constantly, measured at 14k of these
     // in one session, next to 18k memory-requirement lines, which was
-    // 84% of the whole log -- and "it worked" for the 14000th time says
+    // 84% of the whole log, and "it worked" for the 14000th time says
     // nothing. The failure line is what mattered, and it was the one
     // buried.
     if (r != VK_SUCCESS || vk_object_trace_enabled()) {
@@ -1529,7 +1529,7 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     // The driver recycles handles, and a retired swapchain image's handle
     // can come back here as an ordinary image. Without this, that image
     // stays "retired" for the rest of the process and EVERY barrier
-    // against it is dropped -- a real layout transition, thrown away
+    // against it is dropped, a real layout transition, thrown away
     // silently. Live-measured before this line existed: 8450 dropped
     // barriers in 30 seconds, every one of them against a retired handle
     // and not one against a null one, i.e. all of them wrong.
@@ -1570,7 +1570,7 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         from_u64<VkSurfaceKHR>(surface), &caps);
 
     // Wayland has no inherent surface size, so the driver reports
-    // currentExtent = 0xFFFFFFFF x 0xFFFFFFFF -- the spec's "the
+    // currentExtent = 0xFFFFFFFF x 0xFFFFFFFF, the spec's "the
     // swapchain chooses" sentinel. On Android currentExtent is ALWAYS the
     // real window size, so an Android client trusts it without handling
     // the sentinel: live-caught as the engine logging
@@ -1585,7 +1585,7 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         caps.currentExtent.height == kUndefinedExtent) {
         // NEVER call ANativeWindow_fromSurface(nullptr, nullptr) here.
         // With a null Surface it only returns the existing window while
-        // the window cache is non-empty -- and a null Surface never
+        // the window cache is non-empty, and a null Surface never
         // populates that cache, so each call creates a brand new Wayland
         // window. Doing that on a query the engine repeats in a retry
         // loop spawned over a hundred real windows (live-caught, by the
@@ -1603,9 +1603,9 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
             if (caps.maxImageExtent.width < w) caps.maxImageExtent.width = w;
             if (caps.maxImageExtent.height < h) caps.maxImageExtent.height = h;
             // Once per size, not once per query. The engine asks for
-            // surface capabilities constantly -- measured at 5100 lines
+            // surface capabilities constantly, measured at 5100 lines
             // of one 9700-line session log, so half the log was this
-            // sentence -- and the answer only carries information when
+            // sentence, and the answer only carries information when
             // it changes.
             static uint32_t announced_w = 0;
             static uint32_t announced_h = 0;
@@ -1736,7 +1736,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
 
     // Shared host memory, when the client asked for it (`shared_path` is
     // the file it already mapped). Importing those same pages as device
-    // memory means the engine's writes are the device's memory -- nothing
+    // memory means the engine's writes are the device's memory; nothing
     // is copied, and the whole dirty-page tracking and flush path stops
     // being needed for this allocation.
     VkImportMemoryHostPointerInfoEXT import{};
@@ -1756,7 +1756,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         // The driver decides which memory types can back an imported host
         // pointer, and on this hardware that excludes the DEVICE_LOCAL |
         // HOST_VISIBLE type (BAR memory) the engine picks for its
-        // streaming buffers -- which is exactly the memory it rewrites
+        // streaming buffers, which is exactly the memory it rewrites
         // every frame, and so exactly what was still being copied.
         //
         // STUD_SHARE_ALL_HOST_MEMORY=1 allocates those from an importable
@@ -1764,7 +1764,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         // the GPU then reads that memory across PCIe rather than from
         // VRAM. On this workload the CPU is the constraint (17 ms against
         // 6 ms of GPU), so paying the GPU to stop the CPU copying is the
-        // right way round -- but it is a trade, not a free win, which is
+        // right way round: but it is a trade, not a free win, which is
         // why it is a switch.
         uint32_t use_type = type_index;
         if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 &&
@@ -1792,7 +1792,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             static std::set<uint32_t> reported;
             if (reported.insert(type_index).second) {
                 std::printf("stud-render-host: memory type %u is not host-importable "
-                            "(driver allows types 0x%x) -- this one is copied\n",
+                            "(driver allows types 0x%x); this one is copied\n",
                             type_index, pr == VK_SUCCESS ? props.memoryTypeBits : 0u);
                 std::fflush(stdout);
             }
@@ -1804,7 +1804,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     VkResult r = l.allocate_memory(l.device, &ai, nullptr, &memory);
     if (r != VK_SUCCESS && import.pHostPointer != nullptr) {
         // The driver said this memory type can back an imported host
-        // pointer and then refused the import anyway -- live-caught on
+        // pointer and then refused the import anyway, live-caught on
         // Intel, which answers VK_ERROR_INVALID_EXTERNAL_HANDLE
         // (-1000072003) for a type its own
         // vkGetMemoryHostPointerPropertiesEXT had just allowed. The
@@ -1816,7 +1816,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         static std::set<uint32_t> reported;
         if (reported.insert(type_index).second) {
             std::printf("stud-render-host: memory type %u was allowed for import and then "
-                        "refused it (%d) -- this one is copied\n",
+                        "refused it (%d); this one is copied\n",
                         type_index, static_cast<int>(r));
             std::fflush(stdout);
         }
@@ -1851,7 +1851,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     }
     // The client must be told whether the import actually happened: it
     // only hands the engine the shared pointer if the device really is
-    // reading those pages. Getting this wrong is silent and total -- the
+    // reading those pages. Getting this wrong is silent and total, the
     // engine writes into memory nothing renders from, and the screen is
     // black.
     out.resize(sizeof(uint64_t) * 2);
@@ -2024,7 +2024,7 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // The engine asks for FIFO, which is v-sync: one frame per refresh, and a
 // hard ceiling at the display's rate however much headroom the machine
 // has. MAILBOX renders as fast as it can and shows the newest finished
-// frame at each refresh -- no tearing, no ceiling -- and IMMEDIATE is the
+// frame at each refresh. No tearing, no ceiling, and IMMEDIATE is the
 // uncapped fallback that every driver has, at the cost of tearing.
 //
 // Only ever a substitution among modes the driver advertises FOR THIS
@@ -2089,7 +2089,7 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
 // why the engine's own scale cannot be used instead.
 //
 // Phase one is a linear blit, which is what the compositor was already
-// doing to the same image -- so it must look identical to not upscaling
+// doing to the same image, so it must look identical to not upscaling
 // at all. The pass is replaced with EASU+RCAS once this sync is proven.
 struct UpscaleChain {
     VkSwapchainKHR real = VK_NULL_HANDLE;
@@ -2111,7 +2111,7 @@ struct UpscaleChain {
     // The real upscale: one compute dispatch per frame, reading the
     // engine's image through a sampler and writing the swapchain's.
     // Absent (VK_NULL_HANDLE) when the pass could not be built, in which
-    // case the recorded command buffers hold a plain blit instead -- an
+    // case the recorded command buffers hold a plain blit instead, an
     // honest degrade rather than a black window.
     bool compute = false;
     // Whether the sharpening pass is in the chain at all. Off when
@@ -2140,7 +2140,7 @@ struct UpscaleChain {
     // The compute pass writes HERE, not straight into the swapchain.
     //
     // A swapchain image on this driver is B8G8R8A8_UNORM, and storage-image
-    // writes are not guaranteed for BGRA formats -- nor does a swapchain
+    // writes are not guaranteed for BGRA formats, nor does a swapchain
     // image carry STORAGE usage unless asked, which the surface need not
     // support. Writing into a plain R8G8B8A8_UNORM image (where storage
     // support IS mandatory) and then blitting 1:1 into the swapchain costs
@@ -2286,7 +2286,7 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
 }
 
 // Records one command buffer per image, once. Each is the same work every
-// frame -- read the engine's image, write the real one -- so nothing needs
+// frame, read the engine's image, write the real one, so nothing needs
 // re-recording and no command buffer ever has to be reset.
 //
 // The layouts are what a real swapchain image would be in at these
@@ -2297,7 +2297,7 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
 // The upscale pass: FSR1's algorithm (edge-adaptive resample, then
 // contrast-adaptive sharpening) as one compute dispatch per frame.
 //
-// Vendor-neutral by construction -- it is ordinary compute maths and runs
+// Vendor-neutral by construction. It is ordinary compute maths and runs
 // the same on any GPU with Vulkan. There is deliberately no DLSS path:
 // that needs motion vectors, depth and a jitter matrix from the renderer,
 // which Stud cannot see (it forwards draw calls, not a G-buffer), plus a
@@ -2471,7 +2471,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     c.compute = true;
 
     // The sharpening pass, if it is wanted. Its own image, pipeline and
-    // descriptor set -- a compute pass cannot read and write one image, so
+    // descriptor set, a compute pass cannot read and write one image, so
     // EASU's output and RCAS's output are different images.
     // Zero means no sharpening at all: no second image, no second
     // dispatch, and the upscale's own output goes straight to the
@@ -2596,7 +2596,7 @@ bool build_upscale_compute(UpscaleChain& c) {
         }
         c.sharpen = true;
     } else {
-        std::printf("stud-render-host: sharpening pass unavailable -- upscaling without it\n");
+        std::printf("stud-render-host: sharpening pass unavailable, upscaling without it\n");
         std::fflush(stdout);
     }
     return true;
@@ -2847,8 +2847,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
 
     // Stud's own upscale: the real swapchain is bigger than the engine
     // asked for, and the engine is given offscreen images of its own
-    // requested size instead. Everything about the engine's view -- the
-    // extent it asked for, its scale, its UI -- is left exactly as it
+    // requested size instead. Everything about the engine's view, the
+    // extent it asked for, its scale, its UI, is left exactly as it
     // would have been.
     const uint32_t out_w = g_upscale_output_w.load(std::memory_order_relaxed);
     const uint32_t out_h = g_upscale_output_h.load(std::memory_order_relaxed);
@@ -2865,7 +2865,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         pending.present = {out_w, out_h};
         pending.format = ci.imageFormat;
         // The real swapchain is what reaches the compositor, so it is the
-        // one that carries the full resolution -- and it has to be a blit
+        // one that carries the full resolution, and it has to be a blit
         // destination, which a swapchain image is not asked to be
         // otherwise.
         ci.imageExtent = pending.present;
@@ -2946,13 +2946,13 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
             if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
             pending.fence.push_back(fence);
         }
-        // The real pass. If it cannot be built -- an old driver, a format
+        // The real pass. If it cannot be built, an old driver, a format
         // that will not take a storage image, a machine with no glslc at
-        // build time -- the recorded command buffers fall back to a plain
+        // build time, the recorded command buffers fall back to a plain
         // blit, which is what the compositor was doing anyway. Never a
         // black window.
         if (ok && !build_upscale_compute(pending)) {
-            std::printf("stud-render-host: the upscale shader could not be set up -- falling back "
+            std::printf("stud-render-host: the upscale shader could not be set up, falling back "
                         "to a plain scaled blit\n");
             std::fflush(stdout);
             pending.compute = false;
@@ -2962,7 +2962,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
             // An honest degrade: tear the half-built chain down and let
             // the engine render straight into the real swapchain, which
             // is exactly today's behaviour.
-            std::printf("stud-render-host: upscale unavailable for this swapchain -- presenting "
+            std::printf("stud-render-host: upscale unavailable for this swapchain, presenting "
                         "the engine's own image instead\n");
             std::fflush(stdout);
             destroy_upscale_chain(pending);
@@ -2986,13 +2986,13 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
 // Deliberately NOT wired into vkAcquireNextImageKHR or vkQueuePresentKHR.
 // A Wayland surface never goes out of date on its own (the buffer defines
 // the size), so returning VK_ERROR_OUT_OF_DATE_KHR on a resize looks like
-// the textbook fix -- and it was live-tested and is wrong for this engine:
+// the textbook fix, and it was live-tested and is wrong for this engine:
 // it logs `VULKAN ERROR: vkAcquireNextImageKHR ... returned -1000001004`
 // and stops presenting entirely (frozen at the same frame, confirmed by a
 // present counter that stopped advancing). The engine rebuilds its
 // swapchain from its own resize path instead, which only needs
 // vkGetPhysicalDeviceSurfaceCapabilitiesKHR to report the window's real
-// current size -- that is what sync_vk_window_size() in render-host's main
+// current size. That is what sync_vk_window_size() in render-host's main
 // loop keeps true. Kept because "did this swapchain outlive its window
 // size" is the question a future resize bug will ask first.
 bool swapchain_is_out_of_date(uint64_t swapchain) {
@@ -3118,7 +3118,7 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
     VkBuffer buffer = VK_NULL_HANDLE;
     VkResult r = l.create_buffer(l.device, &ci, nullptr, &buffer);
     // Deliberately no per-call print here. The engine creates buffers
-    // sixteen times a frame, so a line each -- with a flush -- is a write
+    // sixteen times a frame, so a line each, with a flush, is a write
     // syscall per creation and a log that grows without bound. Failures
     // still say so, below. (Fourth time in this project that a diagnostic
     // was found still armed in a normal run; the others are recorded in
@@ -3198,7 +3198,7 @@ uint64_t vk_create_shader_module(const std::vector<uint8_t>& in, std::vector<uin
     // SPIR-V is a stream of 32-bit words starting with magic 0x07230203.
     // A module that arrives truncated or misaligned can still create
     // successfully on some drivers and then draw nothing, which is
-    // indistinguishable from every other cause of a black frame -- so
+    // indistinguishable from every other cause of a black frame, so
     // check the shape here rather than trusting the byte count.
     if (in.size() < 20 || (in.size() % 4) != 0) {
         std::printf("stud-render-host: SHADER suspicious size %zu\n", in.size());
@@ -3259,7 +3259,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
         case K::Image:
             // Forget it as well as destroying it. A Vulkan handle is only
             // unique while the object lives, and drivers reuse values
-            // aggressively -- so an offscreen image created after a
+            // aggressively, so an offscreen image created after a
             // swapchain was torn down (which is exactly what a resize
             // does) can land on a dead swapchain image's handle and be
             // mistaken for one. These sets drive "does anything render to
@@ -3377,7 +3377,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::DescriptorPool: {
             // Destroying a pool destroys every set allocated from it, so
-            // the ids naming those sets must stop resolving -- the same
+            // the ids naming those sets must stop resolving, the same
             // bookkeeping vkResetDescriptorPool already does, for the
             // same reason: a later use would hand the driver a freed
             // handle.
@@ -3500,7 +3500,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
     // STUD_VK_FORCE_LOAD_CLEAR=1 turns every attachment's loadOp into
     // CLEAR. Combined with STUD_VK_FORCE_CLEAR's magenta clear value,
     // this paints through the render pass itself rather than relying on
-    // any draw succeeding -- the one way to colour the screen that does
+    // any draw succeeding, the one way to colour the screen that does
     // not depend on pipelines, descriptors or vertex data being right.
     static const bool force_load_clear = std::getenv("STUD_VK_FORCE_LOAD_CLEAR") != nullptr;
     if (force_load_clear) {
@@ -3700,8 +3700,8 @@ uint64_t vk_create_descriptor_pool(const std::vector<uint8_t>& in, std::vector<u
 // Descriptor sets are named by ids the CLIENT invents, not by the real
 // handles this process gets back.
 //
-// The engine allocates descriptor sets constantly -- measured at 738 calls
-// a frame in a real game -- and a handle that has to be returned makes
+// The engine allocates descriptor sets constantly, measured at 738 calls
+// a frame in a real game, and a handle that has to be returned makes
 // every one of those a synchronous round trip. Together with the template
 // update that follows each, they were 90% of all IPC round trips and 20ms
 // of a 33ms frame, which is most of the gap against a client that talks to
@@ -3767,7 +3767,7 @@ uint64_t vk_reset_descriptor_pool(uint64_t pool, uint32_t flags) {
     }
     {
         // Every set allocated from this pool is destroyed by the reset, so
-        // its id must stop resolving -- otherwise a later use would hand
+        // its id must stop resolving, otherwise a later use would hand
         // the driver a freed handle.
         std::lock_guard<std::mutex> lock(descriptor_set_mutex());
         auto& sets = descriptor_sets();
@@ -3826,11 +3826,11 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     // The blob is laid out by the template's own entries, and every
-    // descriptor in it carries handles. Those are already host handles --
+    // descriptor in it carries handles. Those are already host handles.
     // Process B never invents one, it only ever echoes back what this
-    // process gave it -- so the blob passes through unchanged.
+    // process gave it, so the blob passes through unchanged.
     // What the template says it needs versus what arrived. A blob that is
-    // short leaves the driver reading whatever follows it -- descriptors
+    // short leaves the driver reading whatever follows it, descriptors
     // that point nowhere, and draws that sample nothing.
     static const bool trace = std::getenv("STUD_VK_TRACE_DESC") != nullptr;
     if (trace) {
@@ -4237,7 +4237,7 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
 
 
 // Reads one swapchain image back and reports whether it is all black.
-// Uses its own command buffer and a full queue wait -- slow and only ever
+// Uses its own command buffer and a full queue wait, slow and only ever
 // run a few times behind STUD_VK_PROBE_PIXELS, since the question it
 // answers is worth a stall.
 void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
@@ -4376,7 +4376,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // STUD_VK_PROBE_PIXELS=1: before presenting, copy the swapchain image
     // to a host-visible buffer and report whether it holds anything but
     // black. This is the difference between "the engine renders nothing"
-    // and "it renders and the compositor never shows it" -- the two
+    // and "it renders and the compositor never shows it", the two
     // halves of a black window, which nothing upstream of here can tell
     // apart.
     static const bool probe = std::getenv("STUD_VK_PROBE_PIXELS") != nullptr;
@@ -4390,7 +4390,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // present it asked for.
     //
     // The engine's wait semaphores become the pass's wait semaphores, and
-    // the present then waits on the pass instead -- so the chain is
+    // the present then waits on the pass instead, so the chain is
     // engine render -> blit -> present, with nothing running early. The
     // per-image fence is what makes re-submitting the same pre-recorded
     // command buffer legal: it says the previous submit of it has
@@ -4422,7 +4422,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 if (sr == VK_SUCCESS) {
                     c.in_flight[index] = true;
                     // The present now waits on the pass, not on the
-                    // engine -- the engine's own semaphores have already
+                    // engine, the engine's own semaphores have already
                     // been consumed by the submit above, and waiting on
                     // them twice would hang.
                     upscaled_waits.push_back(c.done[index]);
@@ -4432,7 +4432,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     static bool said = false;
                     if (!said) {
                         said = true;
-                        std::printf("stud-render-host: upscale submit failed (%d) -- presenting "
+                        std::printf("stud-render-host: upscale submit failed (%d), presenting "
                                     "without it\n", static_cast<int>(sr));
                         std::fflush(stdout);
                     }
@@ -4446,7 +4446,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // Which thread presents matters: only the main loop pumps Wayland,
     // and a driver completing a present may need the display dispatched.
     // So it is worth saying when it CHANGES, not once every two seconds
-    // for the life of the session -- these two lines were 615 of one
+    // for the life of the session. These two lines were 615 of one
     // in-game log.
     // The window is shown on the first frame rather than at creation,
     // so it never sits empty through the engine's bring-up. No-op on
@@ -4487,7 +4487,7 @@ uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count
 }
 
 // One entry point for the whole vkCmd* family. Every member takes a
-// command buffer, returns nothing, and differs only in payload -- so
+// command buffer, returns nothing, and differs only in payload, so
 // they share a call id and, on the client side, the reply-free path.
 uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
     Loader& l = loader();
@@ -4751,7 +4751,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 b.offset = r.u64();
                 b.size = r.u64();
             }
-            // Same treatment for buffers, for the same reason -- a
+            // Same treatment for buffers, for the same reason, a
             // barrier on no buffer is meaningless and the driver has no
             // reason to tolerate one.
             buf.erase(std::remove_if(buf.begin(), buf.end(),
@@ -4778,7 +4778,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             }
             // Drop barriers against images that died with their
             // swapchain. See Loader::retired_images for why the engine
-            // records these at all -- in short, a resize makes the
+            // records these at all, in short, a resize makes the
             // acquire fail and the frame already in flight carries on
             // regardless. Passing the freed handle through crashes the
             // driver inside render-host, taking the whole session with
@@ -4790,7 +4790,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 // things. A null handle is the engine's own doing and
                 // dropping it is free. A RETIRED image means Stud
                 // decided that image was dead while the engine still
-                // thought otherwise -- and then a real layout transition
+                // thought otherwise, and then a real layout transition
                 // is being silently thrown away, which is Stud's bug.
                 static uint64_t dropped_null = 0;
                 static uint64_t dropped_retired = 0;
@@ -4820,7 +4820,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                     static uint64_t dropped = 0;
                     dropped += before - img.size();
                     // Armed by default this wrote a line every 64 drops
-                    // -- 2.1 million of them in one real session. It is
+                    // 2.1 million of them in one real session. It is
                     // investigation output; it says so now.
                     static const bool trace = std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr;
                     static uint64_t announced = 0;
@@ -4851,7 +4851,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // STUD_VK_TRACE_PASSES also reports layout transitions on the
             // swapchain images. A swapchain image presented in the wrong
             // layout shows as black, and the transition is the engine's
-            // job to record -- so it is worth knowing whether it does.
+            // job to record, so it is worth knowing whether it does.
             static const bool trace_barriers = std::getenv("STUD_VK_TRACE_PASSES") != nullptr;
             if (trace_barriers) {
                 static int reported = 0;
@@ -4943,7 +4943,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             }
             // The result is only visible to the engine if the buffer's
             // memory is one of the allocations this process imported from
-            // it -- then the GPU writes straight into the pages the
+            // it, then the GPU writes straight into the pages the
             // engine has mapped. A copied allocation has no path back, so
             // say so instead of leaving the engine to read stale bytes.
             {
@@ -4963,7 +4963,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                     if (!warned) {
                         warned = true;
                         std::printf("stud-render-host: vkCmdCopyImageToBuffer reads back into "
-                                    "memory this process does not share with the engine -- the "
+                                    "memory this process does not share with the engine, the "
                                     "copy runs, but the engine cannot see the result\n");
                         std::fflush(stdout);
                     }

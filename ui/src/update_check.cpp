@@ -14,7 +14,7 @@ namespace {
 
 // GitHub's own API for "what is the newest release". It answers with the
 // release marked latest, which is what a user clicking through would
-// land on -- a pre-release does not count as an update.
+// land on, a pre-release does not count as an update.
 constexpr const char* kLatestApi = "https://api.github.com/repos/CatPieLeaf/Stud/releases/latest";
 
 bool g_started = false;

@@ -22,7 +22,7 @@ class EngineThread {
 public:
     static EngineThread& instance() {
         // Function-local static: constructed on first real use, never
-        // destroyed (deliberate -- the thread must outlive everything
+        // destroyed (deliberate, the thread must outlive everything
         // that could still submit to it, and the engine holds a raw
         // pthread_t reference to it for the whole process lifetime).
         static EngineThread* self = new EngineThread();
@@ -39,7 +39,7 @@ public:
 
 private:
     EngineThread() {
-        // Detached, never joined -- see instance()'s own comment. The
+        // Detached, never joined; see instance()'s own comment. The
         // existing pthread_create interpose attaches every thread this
         // process spawns to the JVM, so work submitted here can make
         // real JNI calls exactly like the old per-call threads could.
@@ -81,7 +81,7 @@ EngineThreadOutcome run_on_engine_thread(std::function<bool()> work, int timeout
     auto result = task.result;
     EngineThread::instance().submit(std::move(task));
 
-    // Real, bounded, condition-based wait -- polls the real completion
+    // Real, bounded, condition-based wait, polls the real completion
     // flag rather than assuming an elapsed time, same discipline as the
     // per-call bounded wait this replaces.
     constexpr int kPollIntervalMs = 50;

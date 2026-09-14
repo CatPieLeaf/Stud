@@ -1,18 +1,18 @@
 // Process B's real entry point: a genuine bionic ELF executable, booted
 // by real bionic's own linker64 (see bionic-runtime/'s process
-// bootstrapper -- this binary is what it execve()s). Loads the real,
+// bootstrapper. This binary is what it execve()s). Loads the real,
 // unmodified libroblox.so via real bionic dlopen() (no Stud-authored
-// ELF parsing needed for this anymore -- real linker64 already did the
+// ELF parsing needed for this anymore; real linker64 already did the
 // hard part). dlopen() itself is wrapped in trap_recovery below (see
 // the doc comment at its call site): libroblox.so's own DT_INIT_ARRAY
 // constructors run synchronously inside this call, and a real,
 // evidence-based SIGSEGV during that phase was root-caused and is now
-// handled (own SIGSEGV handler installed before dlopen() runs -- see
+// handled (own SIGSEGV handler installed before dlopen() runs; see
 // the call site's own doc comment for why bionic's own fatal-signal
 // path can't be trusted to surface it). Drives its JNI bootstrap and
 // GameActivity lifecycle (jni-bridge/, ported to bionic this session),
 // and renders through real bionic libEGL.so/libGLESv2.so (this
-// session's own render-client stubs, forwarding to stud-render-host --
+// session's own render-client stubs, forwarding to stud-render-host:
 // a separate, real glibc process hosting ANGLE, see render-host/src/
 // main.cpp's own doc comment for why).
 //
@@ -26,7 +26,7 @@
 // (same-ABI calls throughout).
 //
 // run_client_settings_bridge() IS called (below, gated on a real
-// launch_payload being present) -- resolved differently than this
+// launch_payload being present), resolved differently than this
 // comment used to claim: not a bionic-cross-built curl, but real
 // content Process A already pre-fetched over HTTP and handed off via
 // stud-ipc's own launch payload (see client_settings_bridge.h's own doc
@@ -109,7 +109,7 @@ constexpr const char* kSessionCookieSecretName = "roblosecurity";
 constexpr const char* kLocalStorageSecretName = "localstorage";
 // The account switcher's own cookie. It carries the SET of signed-in
 // accounts, so without persisting it only the last active account comes
-// back after a restart -- every other one the user added is gone.
+// back after a restart. Every other one the user added is gone.
 constexpr const char* kAccountListSecretName = "rbxas";
 
 
@@ -126,14 +126,14 @@ std::string cache_subdir(const char* leaf) {
 
 // The engine's files directory is Android's getFilesDir(): what an app is
 // expected to KEEP. Its own user settings and local storage live there,
-// so it belongs in Stud's data directory, not the cache -- it used to sit
+// so it belongs in Stud's data directory, not the cache; it used to sit
 // in the cache, where a cache clean silently reset the user's graphics
 // settings and forgot the signed-in account.
 //
 // The bulk of what the engine writes there is not settings, though: its
 // asset store, the over-the-air app-shell patches and its logs ran to
 // well over 100MB on this machine. Those are caches by nature, so each
-// one is a symlink into the cache directory -- the engine writes through
+// one is a symlink into the cache directory, the engine writes through
 // it without knowing, and `rm -rf ~/.cache/stud` reclaims the space
 // while the settings and the login survive.
 //
@@ -184,7 +184,7 @@ void handle_shutdown_signal(int) {
 // own forwarding stub always answers with Process C's one real window,
 // so this and Roblox's own later real calls converge on the exact same
 // object without any extra wiring). Direct, ordinary linked calls
-// against real libEGL.so/libGLESv2.so -- no resolver needed, these ARE
+// against real libEGL.so/libGLESv2.so; no resolver needed, these ARE
 // the real, exported bionic symbols now (this session's render-client
 // stubs), the same ones Roblox's own compiled code calls.
 struct RealRenderContext {
@@ -249,7 +249,7 @@ std::optional<RealRenderContext> create_real_render_context(ANativeWindow* windo
 // All four names are present in this build (checked with `strings`), and
 // they are what every other launcher uses for the same purpose. Stud
 // sends them through ClientSettings rather than the preload path,
-// because that is the channel the engine genuinely applies -- the same
+// because that is the channel the engine genuinely applies, the same
 // reasoning as the hand-edited overrides below.
 //
 // This does NOT weaken flag_overrides.h's locked decision. That rule is
@@ -258,11 +258,11 @@ std::optional<RealRenderContext> create_real_render_context(ANativeWindow* windo
 // that has no other way to be honoured, and the user's file is merged
 // AFTER them, so anything they set by hand still wins.
 
-// ClientSettings names a flag with its TYPE PREFIX -- a real response
+// ClientSettings names a flag with its TYPE PREFIX, a real response
 // from clientsettingscdn spells them `FFlagX`, `DFFlagX`, `FIntX`,
 // `DFIntX`, `FStringX`, `FLogX`, ... (checked against a live response:
 // 22392 keys, every one prefixed). The engine's own getter takes the
-// BARE name, which is why Stud's override file uses bare names -- but
+// BARE name, which is why Stud's override file uses bare names, but
 // the merge wrote those bare names straight into applicationSettings,
 // where nothing ever looked for them. That is why every flag merged
 // this way has read back as unchanged.
@@ -287,12 +287,12 @@ std::string client_settings_key(const std::string& name, const std::string& valu
 
 // Stud's own engine defaults, as already-serialised ClientSettings
 // values. Merged BEFORE the user's hand-edited file, so anything they
-// set by hand still wins -- the same rule as the renderer flags below.
+// set by hand still wins, the same rule as the renderer flags below.
 std::map<std::string, std::string> stud_default_flags() {
     return {
         // Highest texture quality, always. The engine's own quality
         // control is tuned for a phone's memory budget, and Stud is not
-        // running on one -- a desktop GPU has no reason to be served
+        // running on one, a desktop GPU has no reason to be served
         // reduced textures. 4 is the top of the range.
         {"TextureQualityOverride", "4"},
         {"DFFlagTextureQualityOverrideEnabled", "True"},
@@ -310,8 +310,8 @@ std::map<std::string, std::string> stud_default_flags() {
         // registers with a byte-identical signature and appears in the
         // live settings as FFlagHideCursorForNonMouseUsers.
         //
-        // Roblox ships this flag in NONE of its own settings channels --
-        // checked against PC, Mac, Android, iOS and Xbox -- so it sits at
+        // Roblox ships this flag in NONE of its own settings channels:
+        // checked against PC, Mac, Android, iOS and Xbox, so it sits at
         // its compiled-in default and every client that does not override
         // it gets the old art. Overriding it is a real improvement Stud
         // can make rather than a workaround for something Stud broke.
@@ -347,12 +347,12 @@ int main(int argc, char** argv) {
     // this process's whole bring-up is in it (stud/session_log.h).
     stud::logging::start_session_log_from_env();
     // Process B's own fatal-signal handling is trap_recovery's, which
-    // recovers rather than reports -- it installs itself later and must
+    // recovers rather than reports. It installs itself later and must
     // win, so nothing is installed here.
 
     // Unbuffered: a fatal, uncaught signal skips atexit/stdio-flush
     // handlers entirely, so any buffered stdout written before it is
-    // silently lost -- real, repeated cost this session when a crash
+    // silently lost. Real, repeated cost this session when a crash
     // happened early enough that stdout's ~4KB buffer never filled.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
 
@@ -360,16 +360,16 @@ int main(int argc, char** argv) {
     // own abort() (and Scudo/dlmalloc heap-corruption/double-free
     // detection, and assertion failures) logs a real explanatory
     // message via liblog, at ANDROID_LOG_FATAL, BEFORE calling abort()
-    // -- the actual reason for a crash, not just "SIGABRT happened".
+    // the actual reason for a crash, not just "SIGABRT happened".
     // liblog's default backend targets logd over a /dev/socket/logdw
     // Unix socket, which doesn't exist in this bwrap sandbox (no init,
-    // no logd) -- every one of these diagnostic messages was being
+    // no logd). Every one of these diagnostic messages was being
     // silently dropped, matching this session's own repeated "libc:
     // failed to connect to tombstoned" observation. liblog exposes a
     // real, public API for exactly this case,
     // __android_log_set_logger(__android_log_stderr_logger), redirecting
     // every log message (this process's own and bionic's internal ones
-    // alike) straight to stderr instead, no logd required -- confirmed
+    // alike) straight to stderr instead, no logd required, confirmed
     // exported by the real, extracted liblog.so (the library's exported symbols liblog.so).
     // Resolved via dlsym rather than declared/called directly: both
     // symbols are __INTRODUCED_IN(30) in the NDK headers, but
@@ -391,7 +391,7 @@ int main(int argc, char** argv) {
 
     // Real logd sink (the engineering notes, "FLog output has never
     // appeared"). Live-caught via a live syscall trace: this process repeatedly calls
-    // connect("/dev/socket/logdw") and gets ENOENT, over and over --
+    // connect("/dev/socket/logdw") and gets ENOENT, over and over,
     // i.e. libroblox's own logging really is being emitted, straight to
     // Android's logd write socket, bypassing the public
     // __android_log_* API entirely (which is exactly why interposing
@@ -400,7 +400,7 @@ int main(int argc, char** argv) {
     // dropped by the kernel.
     //
     // Creating a real SOCK_DGRAM socket at that path and reading it
-    // gives Stud the engine's own real log stream -- the single most
+    // gives Stud the engine's own real log stream, the single most
     // valuable diagnostic this project has lacked for its whole
     // history. Bound before libroblox.so is ever dlopen()'d so nothing
     // is missed.
@@ -458,17 +458,17 @@ int main(int argc, char** argv) {
 
     // Real, live-caught gap: on a real Android device, __system_properties_init()
     // is called once by Zygote/app_process during real system boot, long
-    // before any app process is even forked -- Stud has no Zygote/
+    // before any app process is even forked; Stud has no Zygote/
     // app_process layer at all, so nothing ever called it, meaning every
     // __system_property_get() anywhere in libroblox.so (not just the
-    // real, live-traced DNS case that found this whole gap -- see
+    // real, live-traced DNS case that found this whole gap; see
     // the engineering notes) was silently returning empty regardless of
     // whether a real, correctly-formatted property area file existed at
     // /dev/__properties__ (confirmed live: even with a byte-verified
     // real file bind-mounted there, /proc/<pid>/maps showed it was
-    // never even mmap'd -- the real function that would do that was
+    // never even mmap'd, the real function that would do that was
     // simply never invoked). Real, confirmed-exported symbol (the library's exported symbols:
-    // __system_properties_init@@LIBC_Q) -- called here, as early as
+    // __system_properties_init@@LIBC_Q), called here, as early as
     // possible, same dlsym pattern as __android_log_set_logger above
     // (real reason for dlsym over a direct call: this project's own
     // NDK headers guard newer API-level symbols behind
@@ -494,7 +494,7 @@ int main(int argc, char** argv) {
     std::string ipc_socket_path = find_named_arg(argc, argv, "--ipc-connect");
     std::string flag_overrides_path = find_named_arg(argc, argv, "--flag-overrides");
     // How large the app draws everything, in 120ths (120 = 1.0). Absent or
-    // 0 means "follow the display" -- which, with HiDPI off, means 1.0
+    // 0 means "follow the display": which, with HiDPI off, means 1.0
     // rather than the desktop's scale: the buffer is then the window's
     // logical size, so laying out at 1.25 would draw everything a quarter
     // too large into a buffer that is not being scaled to match.
@@ -517,11 +517,11 @@ int main(int argc, char** argv) {
     // Real fix for the DNS/join investigation documented at length in
     // the engineering notes' gap #1: net.dns1/net.dns2 (this project's
     // earlier guess) don't exist as literal strings anywhere in this
-    // libc.so -- ground-truth-traced in the real,
+    // libc.so, ground-truth-traced in the real,
     // exported _resolv_set_nameservers_for_net instead. Real signature
     // confirmed from the library itself (matches AOSP's own documented
     // convention): int(unsigned netid, const char** servers, unsigned
-    // numservers, const char* domains, const res_params* params) --
+    // numservers, const char* domains, const res_params* params),
     // params==NULL takes the real default-timeout/retry path (seen in
     // its own param_5==NULL branch). netid=0 (NETID_UNSET)
     // is what an unspecified-network resolver lookup uses. This is the
@@ -564,7 +564,7 @@ int main(int argc, char** argv) {
 
     // Real, env-gated end-to-end proof for the fix above: registering a
     // nameserver via _resolv_set_nameservers_for_net succeeding (rc==0)
-    // only proves the resolver cache accepted the entry -- it doesn't by
+    // only proves the resolver cache accepted the entry; it doesn't by
     // itself prove a real hostname lookup actually reaches that
     // nameserver and gets a real answer. Roblox's own real join-related
     // DNS lookups only happen deep inside an async, opaque task-queue
@@ -572,7 +572,7 @@ int main(int argc, char** argv) {
     // launch never reaches, so this is the direct, narrow way to
     // live-test the resolver path itself in isolation, independent of
     // login/APK-config state this environment doesn't have. Off by
-    // default -- real getaddrinfo() against an attacker-uncontrolled env
+    // default. Real getaddrinfo() against an attacker-uncontrolled env
     // var would be a poor default to ship.
     if (const char* dns_test_host = std::getenv("STUD_DNS_TEST_HOST")) {
         struct addrinfo hints {};
@@ -600,7 +600,7 @@ int main(int argc, char** argv) {
     }
 
     // Real UI-process handoff (the session cookie plus base URLs Process
-    // A already owns) -- optional: every diagnostic/manual invocation of
+    // A already owns), optional: every diagnostic/manual invocation of
     // this binary omits it, same as the old architecture's own
     // --ipc-connect convention.
     std::optional<stud::ipc::LaunchPayload> launch_payload;
@@ -625,12 +625,12 @@ int main(int argc, char** argv) {
     // Real, confirmed-live gap: Roblox's own code calls
     // boost::filesystem::canonical() on a real "android" directory,
     // expected to already exist as a sibling of the cache/files/assets
-    // dirs below (all sharing $HOME/.cache/stud as their parent) --
+    // dirs below (all sharing $HOME/.cache/stud as their parent),
     // canonical() throws on a missing directory (confirmed via a real
     // crash: "No such file or directory"). Distinct from, and NOT
     // subsumed by, the real --chdir fix elsewhere in this project (that
     // one fixed a wrong/read-only *cwd*; this is a specific *named*
-    // directory Roblox expects regardless of cwd) -- directly
+    // directory Roblox expects regardless of cwd), directly
     // reverified this session by removing this exact block and
     // reproducing the identical crash string on a clean run, then
     // restoring it. Real provenance still not pinned to a specific
@@ -647,7 +647,7 @@ int main(int argc, char** argv) {
     //
     // It starts EMPTY on purpose. This used to be seeded with a version
     // string, which meant a failed manifest read silently reported a
-    // build the user is not running -- indistinguishable, everywhere it
+    // build the user is not running, indistinguishable, everywhere it
     // is sent, from a real reading. An empty version is visibly wrong,
     // which is what an unreadable APK should look like.
     std::string real_app_version;
@@ -657,7 +657,7 @@ int main(int argc, char** argv) {
             real_app_version = manifest_version;
         } else {
             std::fprintf(stderr,
-                         "stud: warning: could not read versionName from %s -- reporting no "
+                         "stud: warning: could not read versionName from %s, reporting no "
                          "version rather than inventing one\n",
                          apk_path.c_str());
         }
@@ -672,7 +672,7 @@ int main(int argc, char** argv) {
         // Clear everything derived from the previous APK when the user
         // picks a different one. Extraction alone only overwrites files
         // that still exist in the new build, so assets deleted between
-        // versions used to linger forever, mixed in with the new ones --
+        // versions used to linger forever, mixed in with the new ones:
         // and the engine's own caches (rbx-storage, the flag cache, the
         // decompressed-model cache) are keyed to the build that wrote
         // them. Live-reported: "stud is still using roblox 2.733. it is
@@ -687,7 +687,7 @@ int main(int argc, char** argv) {
             if (!fingerprint.empty() && previous != fingerprint) {
                 std::error_code ec;
                 if (!previous.empty()) {
-                    std::printf("stud: configured APK changed -- clearing extracted assets and "
+                    std::printf("stud: configured APK changed, clearing extracted assets and "
                                 "engine caches, keeping your Roblox settings\n");
                     std::fflush(stdout);
                 }
@@ -698,8 +698,8 @@ int main(int argc, char** argv) {
                 // did.
                 //
                 // This used to delete files/ whole, which took the real
-                // Roblox preferences with it -- graphics quality, volume,
-                // the signed-in account -- every time a new APK was
+                // Roblox preferences with it, graphics quality, volume,
+                // the signed-in account. Every time a new APK was
                 // saved. Live-reported, and the reason those files are
                 // kept under ~/.local/share rather than in the cache in
                 // the first place.
@@ -707,8 +707,8 @@ int main(int argc, char** argv) {
                 // What is listed here is state keyed to the build that
                 // wrote it: the fetched flag cache, the asset store and
                 // its index, and the CA bundle this launch re-provisions
-                // anyway. Everything else in appData -- the settings
-                // XMLs, LocalStorage, frm.cfg -- is the user's and stays.
+                // anyway. Everything else in appData, the settings
+                // XMLs, LocalStorage, frm.cfg, is the user's and stays.
                 {
                     const std::string files = stud::paths::engine_files_dir();
                     const std::string app_data = files + "/appData";
@@ -733,8 +733,8 @@ int main(int argc, char** argv) {
             // which beat the later copy: live-caught as a single
             // `SSL certificate ... unable to get local issuer certificate`
             // at 0.099s, with every later request fine. The copy down
-            // there stays -- it is the one that runs when the engine is
-            // driven without an APK path -- and both are idempotent.
+            // there stays. It is the one that runs when the engine is
+            // driven without an APK path, and both are idempotent.
             {
                 std::error_code cert_ec;
                 const std::string early_exe_dir = stud::paths::engine_files_dir() + "/exe";
@@ -765,8 +765,8 @@ int main(int argc, char** argv) {
     // Djinni classloader-bootstrap idiom (FindClass(NativeObjectManager)
     // -> GetObjectClass -> getClassLoader() -> loadClass/findClass)
     // fires from inside libroblox.so's own real DT_INIT_ARRAY static
-    // constructors -- i.e. DURING dlopen() itself, before dlopen() even
-    // returns -- so registering FakeJni stub classes (including
+    // constructors, i.e. DURING dlopen() itself, before dlopen() even
+    // returns, so registering FakeJni stub classes (including
     // ClassLoaderStub/ClassMetaStub, see android_framework_stubs.h) only
     // after dlopen() returns is structurally too late for this specific
     // idiom, even though it was already correctly timed for
@@ -793,21 +793,21 @@ int main(int argc, char** argv) {
 
     // Real, live-caught ordering bug: libroblox reads
     // `NativeGLJavaInterface.getDeviceStaticParams()` during its OWN
-    // JNI_OnLoad/static-constructor phase -- i.e. inside dlopen() below,
+    // JNI_OnLoad/static-constructor phase, i.e. inside dlopen() below,
     // long before any Stud bring-up call runs. Setting it later (which is
     // where this used to live, next to the V2 params) was always too late:
     // the engine logged `W/JNIMain: DeviceStaticParams is null.` on line
     // 39 of every capture and cached that null. Set it here, before
     // dlopen(), so the engine's very first read gets the real object.
-    // These builders are pure value construction -- they need neither the
-    // loaded library nor a live JNI call -- so running them this early is
+    // These builders are pure value construction; they need neither the
+    // loaded library nor a live JNI call, so running them this early is
     // safe.
     stud::jni_bridge::NativeGLJavaInterfaceStub::setDeviceStaticParams(
         stud::jni_bridge::build_desktop_device_static_params(
             stud::jni_bridge::build_desktop_device_params("34", "Stud", real_app_version, "1920x1080",
                                                            1920, 1080, 16384)));
 
-    // Real dlopen() -- real bionic's own linker64 resolves libroblox.so's
+    // Real dlopen(). Real bionic's own linker64 resolves libroblox.so's
     // entire dependency graph natively. No Stud-authored ELF
     // parsing/resolver chain involved for this anymore.
     //
@@ -818,7 +818,7 @@ int main(int argc, char** argv) {
     // unhandled, real bionic's own built-in fatal-signal handler catches
     // it first, fails to reach tombstoned (sandboxed, no such service),
     // and its own fallback unwindstack-based backtrace logic then
-    // SIGSEGVs a second time walking Process B's stack -- so a naive
+    // SIGSEGVs a second time walking Process B's stack, so a naive
     // coredump capture shows only that secondary crash (inside
     // unwindstack::MapInfo::CreateMemory, confirmed via `coredumpctl
     // debug` + `add-symbol-file` against the real linker64 binary), not
@@ -845,13 +845,13 @@ int main(int argc, char** argv) {
     post_ctor_hook(lib);
     if (on_load_result.found) {
         std::printf(on_load_result.trapped_abort
-                        ? "stud: JNI_OnLoad() called abort() mid-call -- trapped, continuing\n"
+                        ? "stud: JNI_OnLoad() called abort() mid-call, trapped, continuing\n"
                         : "stud: JNI_OnLoad() returned %d\n",
                     on_load_result.result);
     }
 
     // Real display facts, asked once of the process that owns the window
-    // (Process C -- the only one with a compositor connection) and reused
+    // (Process C, the only one with a compositor connection) and reused
     // for every params build below. These used to be hardcoded
     // `1.0f, 340, 190`: a dpi scale that ignored the desktop's own
     // scaling, and a viewport size in millimetres that described no real
@@ -869,14 +869,14 @@ int main(int argc, char** argv) {
     // sharpness win of HiDPI comes from the buffer being scaled (the
     // compositor maps it 1:1 to physical pixels); the engine's own UI
     // scale is a separate, independent choice, and 1.0 is the one that
-    // matches the reference client. Keep the two apart -- raising this
+    // matches the reference client. Keep the two apart, raising this
     // does not make anything sharper, only larger.
     // Set from the display's real scale, just below, once it is known.
     //
     // This is the Lua app's own UI scale, and it has to match the buffer
     // upscale or Home comes out the wrong physical size. With a 1.25x
     // buffer and a 1.0 dpiScale the app lays its UI out for 1728 device
-    // pixels as if they were 1728 points -- sharp, but visibly smaller
+    // pixels as if they were 1728 points, sharp, but visibly smaller
     // than the same UI in-game, which does not go through this path.
     // Live-reported exactly that way: "in-game dpi is correct, home is
     // sharper and smaller".
@@ -921,14 +921,14 @@ int main(int argc, char** argv) {
         // 1.0 unless "Follow DPI" is on, in both HiDPI modes.
         //
         // The engine picks its render technique from this one number: at
-        // a screen DPI scale above 1.0 it takes its simplified path --
-        // no SSAO, flatter shadows -- and the graphics-quality level is
+        // a screen DPI scale above 1.0 it takes its simplified path.
+        // No SSAO, flatter shadows, and the graphics-quality level is
         // read and then discarded by that branch, so nothing else brings
         // them back (the engineering notes, "HiDPI turned SSAO off"). The same
         // number is the size of a UI point, so raising it to match a
         // scaled desktop is exactly what costs the SSAO.
         //
-        // Live-measured at 1.00 (SSAO), 1.10 (none) and 1.25 (none) --
+        // Live-measured at 1.00 (SSAO), 1.10 (none) and 1.25 (none),
         // the boundary is exactly 1.0, and no graphics-quality setting
         // overrides it. So the default keeps the render path (the thing
         // the reference client does not have at all) and "Follow DPI"
@@ -937,7 +937,7 @@ int main(int argc, char** argv) {
         // pixel, which also makes the input conversions the identity
         // whichever way HiDPI is set.
         // Only "Follow DPI" moves this off 1.0, and only while HiDPI is
-        // on -- the setting is greyed out otherwise. With HiDPI off the
+        // on, the setting is greyed out otherwise. With HiDPI off the
         // buffer is the window's logical size and the compositor scales
         // it, so the engine is left at 1.0 there.
         layout_density = (follow_dpi && hidpi_enabled) ? real_density : 1.0f;
@@ -965,7 +965,7 @@ int main(int argc, char** argv) {
     // Real, confirmed against the app's own code, previously-missing call (the engineering notes,
     // "instantiate controllers" investigation): the real
     // setInitParamsForEngine calls this FIRST, strictly before
-    // building InitParams -- see bootstrap.h's own doc comment on
+    // building InitParams; see bootstrap.h's own doc comment on
     // run_native_set_device_info() for the full real trace. Matching
     // that exact real order here, not just calling it somewhere.
     try {
@@ -979,12 +979,12 @@ int main(int argc, char** argv) {
     // The real app's own User-Agent, not a Stud placeholder. This is the
     // agent the engine's own HTTP client sends on every request it makes,
     // including the join. Stud hosts the real, unmodified app, so this is
-    // an honest description of what is running -- see
+    // an honest description of what is running; see
     // build_real_user_agent().
     // Seed the display metrics BEFORE building the User-Agent.
     //
-    // The agent describes this screen -- size in pixels, dpi, and size in
-    // density-independent pixels -- and it is built here because
+    // The agent describes this screen: size in pixels, dpi, and size in
+    // density-independent pixels, and it is built here because
     // nativeAppBridgeAppStart needs it. The metrics used to be seeded
     // several hundred lines later, so the agent reported the 800x600
     // pre-window default and every screen number in it was wrong.
@@ -1001,7 +1001,7 @@ int main(int argc, char** argv) {
             // several hundred lines later, so DisplayMetrics genuinely
             // changed underneath a running app: everything laid out
             // during bring-up used one DPI and anything that re-laid out
-            // afterwards -- switching accounts re-inits the Lua app --
+            // afterwards, switching accounts re-inits the Lua app,
             // used another. That is the "DPI changes on events, and
             // differs between launches" the user reported, and it was
             // Stud's own doing.
@@ -1034,7 +1034,7 @@ int main(int argc, char** argv) {
     // then falls back to the glsles3 shader pack. a live syscall trace shows it really
     // does open /system/lib64/libvulkan.so.1 successfully and then tries
     // the "libvulkan.so" fallback, which means dlopen opened the file and
-    // failed to *load* it -- and bionic puts that reason in dlerror(),
+    // failed to *load* it, and bionic puts that reason in dlerror(),
     // which never reaches any log. Doing the same dlopen here surfaces it.
     if (const char* vk_trace = std::getenv("STUD_VULKAN_CALL_TRACE");
         vk_trace != nullptr && std::string_view(vk_trace) == "1") {
@@ -1055,18 +1055,18 @@ int main(int argc, char** argv) {
     // much later (after run_app_bridge_start()/run_preload_bootstrap()),
     // matching neither a real device nor real Sober. A real device sets
     // up Context.getCacheDir()/getFilesDir() before any native call at
-    // all; a real Sober capture confirms this too -- its own log shows
+    // all; a real Sober capture confirms this too; its own log shows
     // `RbxStorage::init [INIT]`/`[DONE]` succeeding within ~1ms of
     // `nativeAppBridgeAppStart`, immediately after `SingleSurfaceApp::
     // initializeSingleton`/`instantiate controllers`. Running this block
     // after run_app_bridge_start() instead (the old order) meant
     // AppStart's own internal `initializeSingleton` call ran with no
-    // cache directory configured yet -- live-caught, real, and
+    // cache directory configured yet, live-caught, real, and
     // previously undocumented: `RbxStorage::getStorageInterface failed
     // to initialize RbxStorage subsystem` / `Failed to get cache
     // directory: Path does not exist: ""`, immediately followed (same
     // test) by a real SIGSEGV inside `nativeAppBridgeV2InitWithParams`
-    // -- consistent with later code assuming a working storage layer
+    // consistent with later code assuming a working storage layer
     // that was never actually initialized. Moved here, before every
     // other native call, to match real device/Sober ordering.
     stud::jni_bridge::NativeSettingsConfig native_settings_config;
@@ -1078,7 +1078,7 @@ int main(int argc, char** argv) {
         // `session_cookie` is the raw cookie VALUE only (see
         // ui/src/main.cpp, which prepends the name itself for its own
         // real HTTP requests). The engine's own real caller for
-        // `nativeSetMultipleCookies` passes a full cookie string --
+        // `nativeSetMultipleCookies` passes a full cookie string,
         // confirmed against the app's own code (its HTTP/cookie layer), which builds it from
         // the real cookie manager and even sanity-checks it with
         // `contains(".ROBLOSECURITY=_")`. Passing the bare value here
@@ -1103,14 +1103,14 @@ int main(int argc, char** argv) {
     // material through the LocalStorage platform protocol, and reads them
     // back next launch to decide Home vs the logged-out screen. With
     // several accounts added, it holds one session credential per
-    // account -- so it goes through Stud's safe storage (encrypted at
+    // account, so it goes through Stud's safe storage (encrypted at
     // rest, key in the system keyring), never a file of its own.
     //
     // This process is sandboxed away from the Secret Service, so both
     // directions go through render-host, which runs stud-ui one-shot.
     // Restore the account switcher's own cookie. Without it the engine
     // comes back knowing only the account whose .ROBLOSECURITY was
-    // stored, and every other account the user added is gone -- which is
+    // stored, and every other account the user added is gone, which is
     // exactly what "the 2nd account's login disappears" was.
     {
         std::vector<char> buffer(64 * 1024);
@@ -1125,7 +1125,7 @@ int main(int argc, char** argv) {
             if (!native_settings_config.cookies.empty()) native_settings_config.cookies += "; ";
             native_settings_config.cookies += "rbxas=" + value;
             stud::jni_bridge::seed_current_session_cookie("rbxas", value);
-            std::printf("stud: restored the account-list cookie (%zu bytes) -- every signed-in "
+            std::printf("stud: restored the account-list cookie (%zu bytes); every signed-in "
                         "account should come back, not just the active one\n",
                         value.size());
             std::fflush(stdout);
@@ -1231,27 +1231,27 @@ int main(int argc, char** argv) {
 
         // Deliberately NOT setting the engine's own "FramerateCap" here.
         // A working Sober install has 144 in that field of
-        // GlobalBasicSettings_13.xml, which made it look load-bearing --
+        // GlobalBasicSettings_13.xml, which made it look load-bearing,
         // but tested directly, with the file set to 30 the engine still
         // ran at 57fps. It does not read that value on this path.
 
         // Real, live-caught, load-bearing fix: the engine's own internal
         // HTTP client looks for a CA bundle at `<filesDir>/exe/cacert.pem`
-        // (confirmed via a real `DFLog::HttpTraceError` capture -- the
-        // exact path it logged, not a guess) -- NOT relative to cwd, and
+        // (confirmed via a real `DFLog::HttpTraceError` capture, the
+        // exact path it logged, not a guess), NOT relative to cwd, and
         // NOT the `assets/ssl/cacert.pem` path Stud already extracts from
         // the APK. Without this file present at exactly this path, EVERY
         // real outbound HTTPS request the engine makes fails at the TLS
         // trust-anchor stage (`error:12`/`HttpError: Unknown url`,
         // confirmed live for mobile-client-version, browser-tracker-api,
-        // ecsv2, experience-signals-ingest, ephemeralcounters -- a real,
-        // total networking blackout, not one endpoint) -- directly
+        // ecsv2, experience-signals-ingest, ephemeralcounters, a real,
+        // total networking blackout, not one endpoint), directly
         // implicating this as a root cause (or a major contributor to)
         // gap #1's "no real game join" mystery, since whatever internal
         // call resolves a join ticket is exactly this kind of HTTPS
         // request. Sourced from the same real, already-extracted APK
         // asset (`assets/ssl/cacert.pem`) `run_preload_bootstrap()`'s own
-        // `asset_dir` already points at -- just copied to the second real
+        // `asset_dir` already points at, just copied to the second real
         // path the engine separately expects it at.
         std::string exe_dir = files_dir + "/exe";
         std::filesystem::create_directories(exe_dir, ec);
@@ -1267,7 +1267,7 @@ int main(int argc, char** argv) {
     // Real ordering fix (live-caught via the engine's own FLog, now
     // visible through Stud's logd sink): the engine logs
     // `[FLog::LocalStorageHandler] Not available on the current
-    // platform.` at ~0.16s -- BEFORE this registration used to run
+    // platform.` at ~0.16s, BEFORE this registration used to run
     // (it sat much later, after asset-manager setup). A platform impl
     // registered after the engine has already asked whether the
     // platform supports local storage is too late to matter. On a real
@@ -1277,7 +1277,7 @@ int main(int argc, char** argv) {
     // The system-theme protocol, registered here for the same reason as
     // the platform implementations below: the Lua app settles on a theme
     // while it starts, and anything registered after that is too late to
-    // decide what the app opens in. Measured -- with this block where it
+    // decide what the app opens in. Measured, with this block where it
     // used to be (next to the web-view protocol, far down this function)
     // the app had already reached Home ~650 lines of log earlier, so the
     // first thing the user saw was light on a dark desktop.
@@ -1332,8 +1332,8 @@ int main(int argc, char** argv) {
     // Real device order (see client_settings_bridge.h's own doc
     // comment): nativeInitClientSettings runs before
     // nativeAppBridgeAppStart. Content was pre-fetched by the UI process
-    // before this process even started (no launch_payload -- e.g. a
-    // manual/diagnostic invocation without --ipc-connect -- just skips
+    // before this process even started (no launch_payload, e.g. a
+    // manual/diagnostic invocation without --ipc-connect, just skips
     // this, same degrade-gracefully treatment every other launch_payload-
     // derived value already gets in this file).
     if (launch_payload) {
@@ -1344,14 +1344,14 @@ int main(int argc, char** argv) {
         // runtime value in this project's history (the engineering notes' own
         // "third independent data point"): it only stashes the JSON for a
         // lazy getFlags() consumer, and anything read before that consumer
-        // fires keeps its compiled-in default. Re-confirmed live today --
+        // fires keeps its compiled-in default. Re-confirmed live today,
         // `loaded 4 FFlag override(s)` and `preload_flag_overrides=1`, and
         // still zero observable effect.
         //
         // ClientSettings is the path the engine genuinely does apply, so
         // the overrides ride in there instead. This does NOT change the
         // locked decision in flag_overrides.h: overrides still come only
-        // from the raw, hand-edited file, never from a Settings toggle --
+        // from the raw, hand-edited file, never from a Settings toggle,
         // only how they reach the engine changes.
         std::string client_settings_body = launch_payload->client_settings_body;
 
@@ -1380,7 +1380,7 @@ int main(int argc, char** argv) {
                 size_t merged = 0;
                 for (auto it = wire.begin(); it != wire.end(); ++it) {
                     // Real responses carry every value as a string, and
-                    // booleans are capitalised -- checked against a live
+                    // booleans are capitalised, checked against a live
                     // clientsettingscdn response, which spells them
                     // exactly "True"/"False". Stud used to write "true"/
                     // "false", which is a different string to any parser
@@ -1424,7 +1424,7 @@ int main(int argc, char** argv) {
     // device's Application dispatches a full Activity-lifecycle callback
     // sequence (19 real native methods on JNIActivityLifecycleCallbacks,
     // confirmed against the app's own code) as real Activities are created/shown/torn
-    // down -- Stud had never called any of them, since it has no
+    // down. Stud had never called any of them, since it has no
     // ART/real Activity to generate them. Real, live evidence a worker
     // thread genuinely blocks forever (an absl::Mutex::Await with an
     // infinite timeout, found by live inspection) waiting on
@@ -1432,7 +1432,7 @@ int main(int argc, char** argv) {
     //
     // Real, corrected order: RobloxApplication.onCreate() (confirmed against the app's own code
     // real Application subclass) is the actual first real callback of
-    // the whole process, before any Activity -- it calls
+    // the whole process, before any Activity; it calls
     // JNIAAssetManagerSetup (hands libroblox.so a real AssetManager
     // reference) before registering anything else. Dispatched first here
     // to match.
@@ -1456,12 +1456,12 @@ int main(int argc, char** argv) {
     // call each protocol's own `<X>Core.setPlatformImpl(...)` once at
     // real app startup; Stud never runs DEX, so this makes that same
     // real call itself. Not boot-critical (peripheral features, not on
-    // the render/join critical path) -- placed here, non-blocking,
+    // the render/join critical path), placed here, non-blocking,
     // rather than gating anything on it.
     // Real WebView cookie-jar sync registration (the engineering notes'
     // CookieProtocol entry): same "real DEX would call this once at
     // startup, Stud calls it itself instead" shape as the Djinni
-    // protocols above. Not boot-critical -- non-blocking.
+    // protocols above. Not boot-critical, non-blocking.
     try {
         auto cookie_result = stud::jni_bridge::run_cookie_protocol_bootstrap(jvm, lib);
         std::printf("stud: run_cookie_protocol_bootstrap() complete: called=%d trapped_abort=%d\n",
@@ -1475,7 +1475,7 @@ int main(int argc, char** argv) {
     // answer back asynchronously on its own setter. Installed here, well
     // before anything can ask: the engine reports this string to Roblox
     // when it creates a login challenge, and the page that answers the
-    // challenge runs in Stud's own viewer -- so both sides have to name
+    // challenge runs in Stud's own viewer, so both sides have to name
     // the same client. Saying nothing left the challenge attached to an
     // empty one, and the page failed with "something went wrong" while
     // the viewer stayed open waiting for a completion that never came.
@@ -1492,12 +1492,12 @@ int main(int argc, char** argv) {
     //
     // Real, corrected order and activity names (this project's own real
     // logcat, `~/Stud/roblox_logcat2.txt`'s `InitHelper` tag output,
-    // analyzed properly this session -- an earlier attempt guessed a
+    // analyzed properly this session, an earlier attempt guessed a
     // wrong activity name, "MainGameActivity", which doesn't exist, and
     // dispatched it in the wrong position): `InitHelper` logs
     // `setView=[ActivitySplash]` at real app start, then
     // `unsetView=[ActivitySplash]` followed by `setView=[ActivityNativeMain]`
-    // -- and only *after* that does `nativeAppBridgeAppStart` ever fire.
+    // and only *after* that does `nativeAppBridgeAppStart` ever fire.
     // `ActivityNativeMain` (confirmed: a real class with a real
     // SurfaceView + NativeGLInterface/NativeGLJavaInterface fields) is
     // the real activity the app bridge actually runs under, not the
@@ -1520,7 +1520,7 @@ int main(int argc, char** argv) {
         // Real position: `ActivitySplash.onCreate()` calls this right
         // after its own `super.onCreate()` (which is what drives the
         // real lifecycle callbacks dispatched just above), before
-        // anything else in that method -- unconditional on a real
+        // anything else in that method, unconditional on a real
         // device, no flag gate. See activity_lifecycle_bridge.h.
         bool app_shell_reporter_ok = stud::jni_bridge::run_app_shell_reporter_init(jvm, lib);
         std::printf("stud: run_app_shell_reporter_init() complete: ok=%d\n", app_shell_reporter_ok);
@@ -1560,7 +1560,7 @@ int main(int argc, char** argv) {
         // Real `startAppBridge` order: setIsFirstInstall()
         // immediately before the real nativeAppBridgeAppStart call below.
         // Real first-run semantics replicated honestly via a real marker
-        // file under Stud's own real files directory -- matching the real
+        // file under Stud's own real files directory, matching the real
         // InitHelper's first-run check's own SharedPreferences flag (default
         // true, flipped false once read), not a hardcoded value.
         std::string first_run_marker = files_dir + "/.stud_first_run_done";
@@ -1596,7 +1596,7 @@ int main(int argc, char** argv) {
         }
         float current_hz = static_cast<float>(current_mhz) / 1000.0f;
         // STUD_FORCE_REFRESH_HZ=<n>: report a rate the display does not
-        // have. Purely a test lever -- if frames follow it, the engine
+        // have. Purely a test lever, if frames follow it, the engine
         // is pacing to what Stud reports; if they do not, it is pacing
         // to something else and reporting is not the lever.
         if (const char* forced = std::getenv("STUD_FORCE_REFRESH_HZ")) {
@@ -1625,7 +1625,7 @@ int main(int argc, char** argv) {
     // Real fix for the onSurfaceCreatedNative hang (proven under the old
     // architecture, still needed): native_app_glue's own android_main()
     // returns without looping, so its own looper is never polled again
-    // by anyone unless something else drains it -- a dedicated
+    // by anyone unless something else drains it, a dedicated
     // background thread, started before drive_game_activity_lifecycle()
     // blocks on it below, is required.
     // The 20ms interval here was measured and is NOT the frame-rate cap,
@@ -1633,7 +1633,7 @@ int main(int argc, char** argv) {
     // engine's render loop waits on, and it was the only thread in the
     // process sleeping on a timer (a live syscall trace: nanosleep(20ms) in a tight
     // loop, and 20ms is exactly the ~50fps being observed). Tested by
-    // polling continuously instead -- the frame rate did not move and
+    // polling continuously instead, the frame rate did not move and
     // the process went from 36% to 64% CPU, so the engine is not waiting
     // on this. Left at 20ms; do not "fix" it again without a measurement
     // showing frames actually gated on it.
@@ -1659,7 +1659,7 @@ int main(int argc, char** argv) {
     // j(d)/initializeDataModel = nativeAppBridgeV2InitWithParams, and
     // only THEN F(surface) = StartAppWithParams. Stud used to run the
     // whole V2 sequence after drive_game_activity_lifecycle() had
-    // already handed the engine a surface via onSurfaceCreatedNative --
+    // already handed the engine a surface via onSurfaceCreatedNative,
     // live-caught in the engine's own FLog (logd sink): the Lua app
     // reached `setStage: (stage:LuaApp)` + `userDidLogin` at 2.034s, and
     // `nativeAppBridgeV2Init` only arrived at 2.115s, resetting
@@ -1670,7 +1670,7 @@ int main(int argc, char** argv) {
         asset_dir, engine_dpi_scale, real_viewport_mm_w, real_viewport_mm_h);
     auto v2_device_params = stud::jni_bridge::build_desktop_device_params(
         "34", "Stud", real_app_version, "1920x1080", 1920, 1080, 16384);
-    // setDeviceStaticParams is NOT called here any more -- it has to run
+    // setDeviceStaticParams is NOT called here any more; it has to run
     // before dlopen(), see the call site up by register_game_activity_stubs().
     try {
         bool base_url_ok = stud::jni_bridge::run_base_url_protocol_init(jvm, lib);
@@ -1718,7 +1718,7 @@ int main(int argc, char** argv) {
             real_window_height = static_cast<int32_t>(packed & 0xffffffffu);
         }
     }
-    // Size only -- the density was decided once during bring-up and must
+    // Size only, the density was decided once during bring-up and must
     // not move. Re-seeding it here is what made the DPI change mid-session.
     stud::jni_bridge::set_real_display_metrics(real_window_width, real_window_height, layout_density);
 
@@ -1727,8 +1727,8 @@ int main(int argc, char** argv) {
     // the panel, so a window occupying part of it has the same pixel
     // pitch. DisplayMetrics.xdpi/ydpi used to be synthesised as
     // `160 * density`, which described no real hardware and made
-    // DeviceUtils.getScreenPhysicalSizeInMillimeters() -- which the
-    // engine's own getViewportDisplaySize() calls -- an invented number.
+    // DeviceUtils.getScreenPhysicalSizeInMillimeters(), which the
+    // engine's own getViewportDisplaySize() calls, an invented number.
     {
         uint64_t geom_args[8] = {};
         uint64_t packed = stud::render_client::connection().call(
@@ -1746,7 +1746,7 @@ int main(int argc, char** argv) {
     //   [FLog::NativeDM]     initialize: state:1 / bootstrapTheApp_ /
     //                        initEngine_ / startLuaApp_ /
     //                        listenForExperienceLaunchRequest_
-    // -- Roblox's newer standalone GameActivity path, with its own
+    // Roblox's newer standalone GameActivity path, with its own
     // DataModel bindings and its own experience-launch listener, running
     // alongside the legacy app-bridge sequence Stud also drives.
     //
@@ -1754,7 +1754,7 @@ int main(int argc, char** argv) {
     // FLog::NativeDM and ZERO FLog::NativeEngine lines: it uses the
     // legacy path only. STUD_SKIP_GAME_ACTIVITY=1 drops Stud to that
     // same single path, to test whether running both is what leaves a
-    // launch stuck at `stepDataModelJob: No DM yet` -- the surface still
+    // launch stuck at `stepDataModelJob: No DM yet`, the surface still
     // reaches the engine through UpdateSurfaceApp, and android-glue's
     // ANativeWindow_fromSurface returns the real window regardless of
     // which jobject it is handed.
@@ -1764,12 +1764,12 @@ int main(int argc, char** argv) {
     bool init_params_delivered = false;
     stud::jni_bridge::GameActivityLifecycleResult lifecycle{};
     if (skip_game_activity) {
-        std::printf("stud: STUD_SKIP_GAME_ACTIVITY=1 -- not starting the engine's own "
+        std::printf("stud: STUD_SKIP_GAME_ACTIVITY=1, not starting the engine's own "
                     "android_main/NativeEngine; legacy app-bridge path only\n");
         std::fflush(stdout);
         init_params_delivered = true;
         // Everything downstream keys off lifecycle.surface, and there is
-        // exactly one real window either way -- android-glue's
+        // exactly one real window either way; android-glue's
         // ANativeWindow_fromSurface ignores the jobject and returns it.
         lifecycle.surface = std::make_shared<stud::jni_bridge::SurfaceStub>();
         try {
@@ -1798,7 +1798,7 @@ int main(int argc, char** argv) {
         });
     if (lifecycle.initialize_native_code_found && !init_params_delivered) {
         std::fprintf(stderr,
-                      "stud: bootstrapTheApp() callback was never invoked by the engine -- "
+                      "stud: bootstrapTheApp() callback was never invoked by the engine, "
                       "delivering InitParams directly as a fallback\n");
         try {
             stud::jni_bridge::run_init_params_bootstrap(jvm, lib, init_params);
@@ -1825,23 +1825,23 @@ int main(int argc, char** argv) {
                     lifecycle.on_surface_created_trapped_abort ? "trapped" : lifecycle.on_surface_created_called ? "ok" : "not-found",
                     lifecycle.on_surface_changed_trapped_abort ? "trapped" : lifecycle.on_surface_changed_called ? "ok" : "not-found");
     } else {
-        std::printf("stud: GameActivity_initializeNativeCode not found -- skipping lifecycle\n");
+        std::printf("stud: GameActivity_initializeNativeCode not found, skipping lifecycle\n");
     }
 
-    // V2 app-bridge sequence -- the real mechanism that boots Roblox's
+    // V2 app-bridge sequence, the real mechanism that boots Roblox's
     // own engine/UI (nativeAppBridgeV2StartAppWithParams triggers
     // startLuaApp/setStage(LuaApp), confirmed via real FLog output).
     // Defaults ON now: a real, evidence-based reversal of the old
     // "default off, matching the old architecture's proven-safest
     // default" stance (that reasoning predates two real fixes made this
-    // session -- the ThreadContext-abort-leak patch and every one of
+    // session, the ThreadContext-abort-leak patch and every one of
     // these four calls running through run_bounded_v2_call()'s
     // background-thread + bounded-wait machinery, see
-    // engine_v2_bridge.cpp -- and is stale). Proven crash-free across
+    // engine_v2_bridge.cpp, and is stale). Proven crash-free across
     // several full, real end-to-end runs this session (real
     // stud-render-host, real fetched ClientSettings, a real stored
     // session cookie). Without this, Process B never does anything but
-    // sit in a blank, cleared render loop forever -- confirmed live,
+    // sit in a blank, cleared render loop forever, confirmed live,
     // not theoretical (a real user report: "stud is not responding,
     // and its only a black window" was exactly this). STUD_ENABLE_V2=0
     // to disable, for isolating a regression.
@@ -1867,7 +1867,7 @@ int main(int argc, char** argv) {
 
     if (lifecycle.surface && v2_enabled) {
         // Real deep-link join fields (see start_game_params.h's own
-        // DeepLinkJoinInfo doc comment) -- zero/empty if this launch
+        // DeepLinkJoinInfo doc comment), zero/empty if this launch
         // wasn't a real roblox-player:// deep link (e.g. a bare
         // already-logged-in launch), same honest-degradation pattern as
         // every other launch_payload-derived value in this function.
@@ -1917,25 +1917,25 @@ int main(int argc, char** argv) {
         // time. Confirmed live: when Roblox's own engine (via its own,
         // separate, async "app thread") creates its real surface FIRST,
         // this fallback's own later attempt correctly, harmlessly fails
-        // (EGL_BAD_ALLOC, already-documented, expected) -- but the
+        // (EGL_BAD_ALLOC, already-documented, expected), but the
         // reverse is NOT harmless: if THIS call reaches the surface
         // first, Roblox's own engine's later attempt fails instead, and
         // since only one surface can ever exist, Roblox's own engine is
         // then PERMANENTLY blocked from ever rendering for the rest of
         // that process's life, not just delayed. This fallback exists to
         // prove the render pipeline works when Roblox's engine could
-        // never reach real render setup at all -- now that it's
+        // never reach real render setup at all, now that it's
         // confirmed capable of that (this same session), racing ahead of
         // it here is actively harmful, not just redundant. A real,
-        // bounded delay -- giving Roblox's own async render thread a
-        // genuine head start -- is a simple, safe mitigation: this
+        // bounded delay, giving Roblox's own async render thread a
+        // genuine head start, is a simple, safe mitigation: this
         // fallback still eventually runs if Roblox's engine truly never
         // gets there, but no longer wins a race it has no business
         // winning.
         // Removed, deliberately: Stud used to create its OWN fallback EGL
         // window surface here (behind a 15s delay, to avoid winning a race
         // it had no business winning). Roblox's own engine now reliably
-        // creates and owns the real window surface itself, every run --
+        // creates and owns the real window surface itself, every run,
         // there is only ever one, so this fallback could at best fail with
         // EGL_BAD_ALLOC and at worst permanently lock the engine out of
         // rendering. Its original purpose (proving the pipeline works when
@@ -1945,12 +1945,12 @@ int main(int argc, char** argv) {
 
         // A separate, older, single-call path to the same
         // nativeAppBridgeV2StartAppWithParams the V2 sequence above
-        // already calls as its first of four (now default-on -- see
+        // already calls as its first of four (now default-on; see
         // that block's own doc comment). Stays opt-in and default OFF
         // deliberately: with STUD_ENABLE_V2 now on by default, enabling
         // this too would invoke StartAppWithParams a second, redundant
         // time on its own separate background thread, racing the V2
-        // sequence's own call into Roblox's internal LuaApp-shell init --
+        // sequence's own call into Roblox's internal LuaApp-shell init,
         // untested and not worth the risk when the V2 sequence already
         // covers this. Only meaningful with STUD_ENABLE_V2=0.
         if (std::getenv("STUD_ENABLE_STARTAPP") != nullptr &&
@@ -1975,14 +1975,14 @@ int main(int argc, char** argv) {
     // then does the engine create its NetworkClient and join; without it a game
     // picked from the Home screen sits on the loading screen forever. See
     // acknowledge_experience_start()'s own doc comment for the Sober evidence.
-    // OFF by default, and deliberately so. Acknowledging works -- the engine
-    // acts on it immediately -- but Stud cannot yet fill in WHICH experience:
+    // OFF by default, and deliberately so. Acknowledging works, the engine
+    // acts on it immediately, but Stud cannot yet fill in WHICH experience:
     // build_desktop_start_game_params() has no launch request to read, so it
     // sends placeId 0 and the server answers "not authorized to join this
     // experience". That is a worse, more misleading outcome than the loading
     // screen simply waiting. The real place id lives in the experience-launch
     // request the Lua app publishes on the MessageBus, which Stud does not
-    // subscribe to yet -- that is the next piece of work, and once it lands
+    // subscribe to yet. That is the next piece of work, and once it lands
     // this becomes unconditional.
     // Learn WHICH experience the Lua app is launching, straight from the
     // request it publishes on the engine's own MessageBus. This is the
@@ -1991,15 +1991,15 @@ int main(int argc, char** argv) {
     // it is what the acknowledgement below needs: without it Stud could
     // only send placeId 0, which the server rejects as "not authorized to
     // join this experience".
-    // Starting the game is the platform's answer to the launch request --
-    // that is exactly what the real client does (the app's own launch-request parser parses the
+    // Starting the game is the platform's answer to the launch request.
+    // That is exactly what the real client does (the app's own launch-request parser parses the
     // request, the app's own app-shell helper calls nativeAppBridgeV2StartGameWithParam with
     // it), and it is why the engine sets stage:UGCGame on receiving the
     // request and then waits.
     //
     // Driven from the request itself, ONCE. It used to hang off
     // gameActivity_onExperienceStart(), which fires again for every launch
-    // attempt -- so the second call arrived when the engine was already in
+    // attempt, so the second call arrived when the engine was already in
     // UGCGame, which it handles by leaving the experience and relaunching:
     // live-caught as an endless leaveUGCGameInternal/launchUGCGameInternal
     // loop and a "not authorized to join this experience" in the UI, both
@@ -2013,7 +2013,7 @@ int main(int argc, char** argv) {
     stud::jni_bridge::MessageBusRawCallbackStub::on_message =
         [&start_game_for_launch_request](const std::string& json) {
         // Parsed with the same field name the real handler reads
-        // (the app's own launch-request parser: jSONObject.optLong("placeId")). Logged by id only --
+        // (the app's own launch-request parser: jSONObject.optLong("placeId")). Logged by id only,
         // the request also carries join tickets, which are credentials.
         try {
             const auto doc = nlohmann::json::parse(json);
@@ -2033,7 +2033,7 @@ int main(int argc, char** argv) {
 
             // Key names only, never values: this JSON carries join
             // tickets, which are credentials. Which fields the Lua app
-            // actually sends is the open question -- Sober's successful
+            // actually sends is the open question, Sober's successful
             // join has the instance id and server address in hand at
             // NetworkClient:Create, so that data has to arrive here.
             {
@@ -2071,7 +2071,7 @@ int main(int argc, char** argv) {
                 // Stud does NOT start the game itself here. The engine's
                 // own listener (`listenForExperienceLaunchRequest_`) is
                 // subscribed to this same topic and launches the
-                // experience on its own -- a second
+                // experience on its own, a second
                 // nativeAppBridgeV2StartGameWithParam arrives while the
                 // first launch is still coming up, and the engine's
                 // `launchUGCGame: (stage:UGCGame)` branch responds by
@@ -2100,7 +2100,7 @@ int main(int argc, char** argv) {
         }
     };
     // Send a refreshed login to the keyring. Only the value changes hands
-    // -- it is never logged, and never written to Stud's own config or
+    // it is never logged, and never written to Stud's own config or
     // cache. render-host does the actual storing because this process is
     // sandboxed away from the Secret Service and Process A has already
     // exited by the time anyone logs in.
@@ -2113,7 +2113,7 @@ int main(int argc, char** argv) {
         stud::render_client::connection().call(
             stud::render_host::CallId::StoreSecret, args, payload.data(),
             static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-        std::printf("stud: engine produced a refreshed account-list cookie (%zu bytes) -- "
+        std::printf("stud: engine produced a refreshed account-list cookie (%zu bytes), "
                     "persisting so every signed-in account survives a restart\n",
                     value.size());
         std::fflush(stdout);
@@ -2127,13 +2127,13 @@ int main(int argc, char** argv) {
         stud::render_client::connection().call(
             stud::render_host::CallId::StoreSecret, args, payload.data(),
             static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-        std::printf("stud: engine produced a refreshed session cookie (%zu bytes) -- persisting\n",
+        std::printf("stud: engine produced a refreshed session cookie (%zu bytes), persisting\n",
                     value.size());
         std::fflush(stdout);
     });
     stud::jni_bridge::subscribe_to_experience_launch(jvm, lib);
     // Android's runtime permissions, which nothing in this process has
-    // ever answered -- see permissions_bridge.h. Voice chat asks for the
+    // ever answered; see permissions_bridge.h. Voice chat asks for the
     // microphone through this protocol before it starts, and an
     // unanswered request resolves as ACCESS_DENIED.
     stud::jni_bridge::run_permissions_bridge(jvm, lib);
@@ -2143,7 +2143,7 @@ int main(int argc, char** argv) {
     // at all; until a real viewer window exists the request is reported
     // and nothing is opened, which is no worse than the current silence
     // and tells us the real URL the app wants.
-    // "Open this in a browser" -- the Settings footer links (About Us,
+    // "Open this in a browser", the Settings footer links (About Us,
     // Careers, Parents) and anything else calling
     // GuiService:OpenBrowserWindow. These are NOT web-view panels, and
     // nothing was subscribed to the protocol they use, so clicking one
@@ -2163,7 +2163,7 @@ int main(int argc, char** argv) {
 
     // "Copy link" inside an experience: the engine publishes the text
     // and the platform owns the clipboard, which here means render-host
-    // -- Process B is sandboxed and has no display connection at all.
+    // Process B is sandboxed and has no display connection at all.
     stud::jni_bridge::run_content_sharing_bridge(jvm, lib, [](const std::string& text) {
         uint64_t args[8] = {};
         stud::render_client::connection().call(
@@ -2173,13 +2173,13 @@ int main(int argc, char** argv) {
 
     // The other half of the same protocol: a URL the web-view panel was
     // about to navigate to, offered to the engine first. This is how a
-    // private server is joined -- see linking_bridge.h.
+    // private server is joined; see linking_bridge.h.
     stud::jni_bridge::run_linking_url_detection_bootstrap(
         jvm, lib, [&jvm, &lib](const std::string& url, bool registered) {
             if (registered) {
                 stud::jni_bridge::hand_url_to_engine(jvm, lib, url);
                 // The panel exists for the page the user was on, and the
-                // app has just moved past it -- a private-server join
+                // app has just moved past it, a private-server join
                 // leaves the experience loading behind a server list
                 // nobody can act on any more. A device does the same: the
                 // web activity is finished as the launch takes over.
@@ -2189,7 +2189,7 @@ int main(int argc, char** argv) {
                     nullptr);
             }
             // Either way the viewer is told: it loads the page when the
-            // engine declined, and drops it when the engine took it --
+            // engine declined, and drops it when the engine took it,
             // without the second, its own "nobody answered" deadline
             // would load the page on top of a launching experience.
             uint64_t args[8] = {};
@@ -2203,22 +2203,22 @@ int main(int argc, char** argv) {
         jvm, lib,
         [&jvm, &lib, web_view_agent = stud::jni_bridge::build_web_view_user_agent()](
             const std::string& url, const std::string& title) {
-            // url \n title \n app token \n cookie... -- the viewer reads
+            // url \n title \n app token \n cookie..., the viewer reads
             // this on its stdin.
             //
             // The cookies are read out of the engine's own jar right
             // now, not replayed from a copy taken at login. Roblox lets
             // the user switch between several signed-in accounts inside
-            // the app, and a switch replaces the session in that jar --
+            // the app, and a switch replaces the session in that jar,
             // so asking at open time is what makes a panel show the
             // account the user is actually on. Stud never logs in
             // anywhere itself.
-            // Line 3 is the whole User-Agent the panel sends -- the
+            // Line 3 is the whole User-Agent the panel sends, the
             // real app's own web-view agent, built from this machine's
             // own measurements (app_bridge.h's
             // build_web_view_user_agent). Roblox serves these pages without the site's
             // header and footer when the request identifies the Roblox
-            // app rather than a plain browser -- which is why the same
+            // app rather than a plain browser, which is why the same
             // URL looks like a bare message list inside the real app and
             // like the whole website in an ordinary web view. The
             // version is the real one read from the configured APK, not
@@ -2260,7 +2260,7 @@ int main(int argc, char** argv) {
             // Roblox domain and the site renders itself in that theme.
             // Without it a panel opens light inside a dark app, which is
             // exactly what Stud did before it answered this protocol at
-            // all. `RBXHideThemeSetting` matches the real client too --
+            // all. `RBXHideThemeSetting` matches the real client too,
             // the account page stops offering a theme picker that the app
             // is already driving.
             const std::string theme = stud::jni_bridge::current_theme_name();
@@ -2282,7 +2282,7 @@ int main(int argc, char** argv) {
                 static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
         },
         [] {
-            // The engine is finished with the panel -- a login challenge
+            // The engine is finished with the panel, a login challenge
             // that has just been answered, most often. Nothing acted on
             // this before, so the challenge window stayed on screen after
             // a completed OTP with the app already signed in behind it.
@@ -2292,19 +2292,19 @@ int main(int argc, char** argv) {
         });
 
     // gameActivity_onExperienceStart() is deliberately NOT used to start
-    // the game any more -- see start_game_for_launch_request above for why
+    // the game any more; see start_game_for_launch_request above for why
     // (it fires per attempt, and a second start makes the engine leave and
     // relaunch forever).
 
     // The engine's task scheduler runs at a low BACKGROUND frequency unless it
-    // is told otherwise, and Stud only ever told it once -- during bring-up,
+    // is told otherwise, and Stud only ever told it once, during bring-up,
     // long before the app was actually up. Measured: 2 swaps in a 50s idle run
     // without this, 267 with it. That is the real reason the app felt slow and
     // why animations only advanced while the mouse moved (each input event woke
     // the engine to render one frame).
     //
     // Asserted here, now that the app really is up, and again whenever the Lua
-    // app comes back to the foreground -- leaving a game or an experience
+    // app comes back to the foreground, leaving a game or an experience
     // ending, both of which are real signals Stud already receives. A real
     // device would also flip it back to background on pause; Stud has no pause
     // yet, so it does not claim to.
@@ -2319,20 +2319,20 @@ int main(int argc, char** argv) {
     //
     // Only after a real experience: this same callback fires while the app
     // shell is starting, so acting on it unconditionally would quit during
-    // launch. The engine's own experience flag is what tells them apart --
-    // it is still set at this point and cleared by onExperienceStop.
+    // launch. The engine's own experience flag is what tells them apart.
+    // It is still set at this point and cleared by onExperienceStop.
     const bool close_on_leave = find_named_arg(argc, argv, "--close-on-leave") == "on";
     stud::jni_bridge::NativeHelperStub::on_returned_to_app = [assert_foreground, close_on_leave]() {
         assert_foreground();
         if (!close_on_leave) return;
         if (!stud::jni_bridge::NativeHelperStub::experience_is_loaded()) return;
-        std::printf("stud: left the experience and closeOnLeave is set -- shutting down\n");
+        std::printf("stud: left the experience and closeOnLeave is set, shutting down\n");
         std::fflush(stdout);
         // Close the window here, not after teardown.
         //
         // Setting the flag alone left the home screen on screen for about
         // half a second: the main loop takes up to its own poll interval
-        // to notice, then LeaveGame and DestroyApp run -- and through all
+        // to notice, then LeaveGame and DestroyApp run, and through all
         // of it the engine is already back on its app shell and rendering
         // it. Measured on a real leave: decision at t+332.972, teardown
         // started at t+333.176, finished around t+333.4, window gone only
@@ -2354,11 +2354,11 @@ int main(int argc, char** argv) {
     // Unconditional, unlike closeOnLeave above: this is the user pressing
     // Exit, not the engine passing through its app shell, so there is
     // nothing to disambiguate and nothing to gate it on. Same teardown as
-    // closing the window -- the window goes first, because the engine
+    // closing the window, the window goes first, because the engine
     // carries on rendering its shell through the seconds LeaveGame and
     // DestroyApp take.
     stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit = []() {
-        std::printf("stud: the app asked to exit -- shutting down\n");
+        std::printf("stud: the app asked to exit, shutting down\n");
         std::fflush(stdout);
         uint64_t end_args[8] = {};
         stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
@@ -2366,7 +2366,7 @@ int main(int argc, char** argv) {
         g_should_keep_running.store(false, std::memory_order_relaxed);
     };
 
-    // Links the engine wants another application to handle -- Roblox
+    // Links the engine wants another application to handle; Roblox
     // Studio above all. render-host decides what is a Roblox page (its
     // own panel) and what belongs to the desktop.
     stud::jni_bridge::JNIAppRestarterStub::on_open_external_url = [](const std::string& url) {
@@ -2383,22 +2383,22 @@ int main(int argc, char** argv) {
     // only ever carries the account Stud booted with), and a second
     // account's login does not survive a restart.
     //
-    // Names and counts only -- these are real credentials.
+    // Names and counts only; these are real credentials.
     stud::jni_bridge::NativeHelperStub::on_account_changed = [&jvm, &lib](const char* what) {
         const auto cookies = stud::jni_bridge::engine_cookies_for_url(jvm, lib,
                                                                        "https://www.roblox.com");
-        std::printf("stud: account %s -- engine jar now holds %zu cookie(s) (names: %s)\n", what,
+        std::printf("stud: account %s: engine jar now holds %zu cookie(s) (names: %s)\n", what,
                     cookies.size(), stud::jni_bridge::cookie_names(cookies).c_str());
         std::fflush(stdout);
     };
 
     // Whether to name the game server's region on a join, and the last
-    // one reported -- so a single join notifies once rather than every
+    // one reported, so a single join notifies once rather than every
     // 250ms loop iteration.
     const bool notify_server_region = find_named_arg(argc, argv, "--notify-region") != "off";
     bool reported_server_region = false;
     // Whether to report the current experience to Discord, and the last
-    // one reported -- so one join updates the presence once rather than
+    // one reported, so one join updates the presence once rather than
     // every 250ms loop iteration.
     const bool discord_presence_enabled = find_named_arg(argc, argv, "--discord-presence") == "on";
     long long reported_place_id = -1;
@@ -2410,7 +2410,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, handle_shutdown_signal);
     // Whether the loop ended because render-host went away, rather
     // than because Stud was asked to stop. The two need different
-    // shutdowns -- see where it is read, below.
+    // shutdowns; see where it is read, below.
     bool render_host_gone = false;
     while (g_should_keep_running.load(std::memory_order_relaxed)) {
         int fd = 0, events = 0;
@@ -2419,7 +2419,7 @@ int main(int argc, char** argv) {
         // Real ActivityThread-equivalent driver (see stud/
         // activity_thread.h's own doc comment): this real process main
         // thread is the real main Looper's own thread now, not a
-        // separate spawned worker -- drains any real Handler.post()/
+        // separate spawned worker, drains any real Handler.post()/
         // runOnUiThread() work Roblox's own native code queued, right
         // here, interleaved with real native-window-event polling and
         // rendering, matching real Android's own single-main-thread
@@ -2429,7 +2429,7 @@ int main(int argc, char** argv) {
         // the engine's task scheduler it is in the foreground exactly once, at
         // bring-up, long before the app is actually up. If anything flips it
         // back to background mode afterwards, the scheduler runs at its low
-        // background frequency -- which is exactly what "the animation only
+        // background frequency, which is exactly what "the animation only
         // advances while the mouse moves" looks like.
 
         // The Discord presence, once per experience change. The place id
@@ -2471,7 +2471,7 @@ int main(int argc, char** argv) {
         //
         // The engine's own join line names a 10.x UDMUX address that
         // locates nothing, so the routable server is read off the engine's
-        // own UDP socket instead -- and only once it has actually
+        // own UDP socket instead, and only once it has actually
         // connected, which is why this is polled rather than done at the
         // join callback. Rechecked while an experience is loaded so a
         // server hop within one session is reported too.
@@ -2488,7 +2488,7 @@ int main(int argc, char** argv) {
                     // game is not instant, so for a moment the game socket
                     // is gone while the experience still reads as loaded,
                     // and whatever OTHER public UDP peer the engine happens
-                    // to hold then becomes the only candidate -- which was
+                    // to hold then becomes the only candidate, which was
                     // reported as the "server region" on the way back to
                     // the home screen, naming somewhere the user never
                     // joined and sending an unrelated address to be looked
@@ -2506,7 +2506,7 @@ int main(int argc, char** argv) {
         // talks to it, so this side has to ask; the protocol is deliberately
         // client-initiated, and once per 250ms loop iteration is far cheaper
         // than a second channel. Real Android re-delivers onSurfaceChanged on
-        // every geometry change -- without it the engine keeps rendering at
+        // every geometry change, without it the engine keeps rendering at
         // the size it was told at boot while the window has already grown,
         // which showed up as the old, smaller image sitting in a larger frame
         // with the desktop visible through the rest of it.
@@ -2522,7 +2522,7 @@ int main(int argc, char** argv) {
                     real_window_width = w;
                     real_window_height = h;
                     stud::jni_bridge::set_real_display_metrics(w, h, layout_density);
-                    // AGDK's own callback, for correctness -- a real device
+                    // AGDK's own callback, for correctness, a real device
                     // sends it on every geometry change. Live-measured, the
                     // engine ignores it for sizing: its surface handling is
                     // entirely in the V2 app bridge, so the call below is what
@@ -2606,17 +2606,17 @@ int main(int argc, char** argv) {
         // (stud-render-host, Process C) used to leave this process
         // running forever. Treat a lost render connection as this
         // process's own real shutdown signal, same as SIGINT/SIGTERM.
-        // Checked unconditionally now -- it used to sit inside Stud's
+        // Checked unconditionally now. It used to sit inside Stud's
         // own fallback-render-context block, which no longer exists.
         if (!stud::render_client::connection().connected()) {
             // Before anything else. The engine's threads start faulting
-            // the instant the host goes away -- their next GL or Vulkan
-            // call has nothing to talk to -- and that happens BEFORE this
+            // the instant the host goes away, their next GL or Vulkan
+            // call has nothing to talk to, and that happens BEFORE this
             // loop comes round to notice. Setting the flag only after the
             // loop exits (as this used to) left exactly that window, and
             // a core dump landed in it.
             stud::jni_bridge::note_shutting_down();
-            std::printf("stud: render-host connection lost -- shutting down\n");
+            std::printf("stud: render-host connection lost, shutting down\n");
             g_should_keep_running.store(false, std::memory_order_relaxed);
             render_host_gone = true;
         }
@@ -2627,7 +2627,7 @@ int main(int argc, char** argv) {
     // if the render host has gone that work runs against a dead
     // connection: the engine's own threads are still mid-frame, their GL
     // and Vulkan calls fail, and one of them faults. The trap handler
-    // then re-raises to produce a core -- which is why killing
+    // then re-raises to produce a core, which is why killing
     // render-host left a trail of linker64 SIGSEGV cores with si_code
     // SI_TKILL (a signal Stud sent itself, not a fault the CPU took),
     // while closing the window never did.
@@ -2638,7 +2638,7 @@ int main(int argc, char** argv) {
         // Same reasoning as the teardown below: the engine's threads are
         // still live and are about to lose the process under them.
         stud::jni_bridge::note_shutting_down();
-        std::printf("stud: no render host to shut down against -- exiting\n");
+        std::printf("stud: no render host to shut down against, exiting\n");
         std::fflush(stdout);
         std::fflush(stderr);
         ::_exit(0);
@@ -2646,7 +2646,7 @@ int main(int argc, char** argv) {
 
     // Real graceful shutdown pair (see engine_v2_bridge.h's own UPDATE 2
     // doc comment: four real Sober journalctl captures all show this as
-    // the real titlebar-close sequence) -- LeaveGame then DestroyApp,
+    // the real titlebar-close sequence), LeaveGame then DestroyApp,
     // both real, confirmed-safe to call even if no game was ever
     // joined. Previously this process just exited raw here.
     // From here the engine is being destroyed under its own still-running
@@ -2661,7 +2661,7 @@ int main(int argc, char** argv) {
     // Leave immediately instead of returning through main().
     //
     // The engine's own threads are still running here and there is no way
-    // to ask them to stop -- LeaveGame and DestroyApp above are the only
+    // to ask them to stop, LeaveGame and DestroyApp above are the only
     // shutdown contract the engine offers, and they are bounded calls
     // precisely because they do not reliably return. Returning from main
     // then runs static destructors underneath those threads, which tears

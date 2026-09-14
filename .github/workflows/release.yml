@@ -2,14 +2,14 @@
 #
 # It runs when a release is PUBLISHED, and at no other time: no push
 # builds, no pull-request builds. (workflow_dispatch is here so the
-# pipeline can be exercised without cutting a release -- it only ever
+# pipeline can be exercised without cutting a release; it only ever
 # runs when someone presses the button.)
 #
 # The long pole is ANGLE, which builds from source and takes about an
 # hour. It is cached, so that happens once per container image and every
 # later release restores it in seconds. The NDK and the extracted bionic
 # are cached the same way. Caching works because tools/setup.sh skips any
-# dependency that is already present -- a cache hit makes it a no-op.
+# dependency that is already present, a cache hit makes it a no-op.
 
 name: Release
 
@@ -41,13 +41,13 @@ env:
 jobs:
   packages:
     # Built on fedora:44, matching the Fedora this is developed and
-    # tested on -- so an installed package is the same build that was
+    # tested on, so an installed package is the same build that was
     # proven to work, rather than one compiled against an older glibc
     # and hoped to behave the same.
     #
     # The cost, stated plainly: glibc 2.43 becomes the floor. The rpm
-    # needs Fedora 44 or newer, and the deb -- which is produced here
-    # too -- needs a distribution at least that new. Building on an
+    # needs Fedora 44 or newer, and the deb, which is produced here
+    # too, needs a distribution at least that new. Building on an
     # older base is the usual way to keep that floor low; this trades
     # that for the packages matching the build that actually works.
     #
@@ -59,7 +59,7 @@ jobs:
     # tree this job produces, so they cannot hold different binaries.
     #
     # The AppImage is the exception and builds its own, because it links
-    # against an older glibc than this container has -- which is also why
+    # against an older glibc than this container has, which is also why
     # it keeps a separate ANGLE cache.
     name: Build and package
     permissions:
@@ -93,7 +93,7 @@ jobs:
 
       - name: Cache Android NDK
         # One key for both jobs: the NDK is downloaded, not built, so the
-        # container that extracted it makes no difference -- it compiles
+        # container that extracted it makes no difference; it compiles
         # Process B with its own toolchain rather than the host's. Caching
         # it per-container stored 2.2 GB twice against a 10 GB limit and
         # made the AppImage job re-download what this one had just fetched.
@@ -115,8 +115,8 @@ jobs:
 
       - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
-        # about an hour. Its sources are no use afterwards -- only the two
-        # libraries it produced, which is all the cache keeps -- so they go
+        # about an hour. Its sources are no use afterwards, only the two
+        # libraries it produced, which is all the cache keeps, so they go
         # straight back to the disk the rest of the build needs.
         run: |
           df -h /__w | tail -1
@@ -127,8 +127,8 @@ jobs:
       - name: Build
         run: |
           # /usr, not CMake's own /usr/local default. The rpm and the
-          # deb were never affected -- CPACK_PACKAGING_INSTALL_PREFIX
-          # pins those -- but the install tree every OTHER package is
+          # deb were never affected, CPACK_PACKAGING_INSTALL_PREFIX
+          # pins those, but the install tree every OTHER package is
           # built from comes from `cmake --install`, which honours this
           # and nothing else. Left unset it produced usr/local/bin/stud,
           # which namcap rejects outright ("outside of a valid path") and
@@ -142,7 +142,7 @@ jobs:
 
       # One build, several wrappers. Building each format separately would
       # mean several builds of ANGLE and no guarantee the packages contain
-      # the same binaries -- so the install tree is produced once here and
+      # the same binaries, so the install tree is produced once here and
       # every package is made from it.
       - name: Verify embedded shaders
         # A build with no glslc silently produces an empty shader array,
@@ -160,7 +160,7 @@ jobs:
           modules = blob.count(b"\x03\x02\x23\x07")
           print(f"{p}: {modules} SPIR-V module(s)")
           if modules < 3:
-              print("::error::the render host is missing embedded shaders -- "
+              print("::error::the render host is missing embedded shaders, "
                     "the upscale and sharpening shaders are built by glslc, "
                     "which the configure step should have found in the NDK")
               sys.exit(1)
@@ -174,11 +174,11 @@ jobs:
           DESTDIR="$PWD/install-tree" cmake --install build
           # The layout every package below assumes. Checked here so a
           # wrong install prefix fails immediately, with the reason, at
-          # the step that produced it -- rather than surfacing much later
+          # the step that produced it, rather than surfacing much later
           # as a namcap error or a Flatpak "cannot stat usr/bin/.".
           for required in usr/bin/stud usr/lib/stud usr/libexec/stud usr/share/metainfo; do
             if [ ! -e "install-tree/$required" ]; then
-              echo "::error::the install tree has no $required -- check CMAKE_INSTALL_PREFIX" >&2
+              echo "::error::the install tree has no $required, check CMAKE_INSTALL_PREFIX" >&2
               find install-tree -maxdepth 3 -type d | head -20 >&2
               exit 1
             fi
@@ -195,7 +195,7 @@ jobs:
         # then looked at file names rather than inside the binary.
         #
         # compare-package-contents asks whether the package is a faithful
-        # copy of that tree -- so a package can never quietly lack a file
+        # copy of that tree, so a package can never quietly lack a file
         # that the tree has. That was always found by someone installing
         # a package and noticing, one missing piece at a time.
         run: |
@@ -220,7 +220,7 @@ jobs:
   # minute of the release starting rather than waiting on the build.
   #
   # It used to live in the `containers` job purely because that job has
-  # podman and does not itself run inside a container -- which is a
+  # podman and does not itself run inside a container, which is a
   # convenience, not a reason, and left the Flatpak manifest being
   # checked by the job that builds the Arch package and the cpak image.
   flatpak-manifest:
@@ -244,7 +244,7 @@ jobs:
           python3 - <<'PY'
           import json, sys
           # A manifest with nothing to report produces NO output at all,
-          # not an empty JSON object -- so this cannot go straight to
+          # not an empty JSON object, so this cannot go straight to
           # json.load. Confirmed both ways against the real linter: the
           # 6.10 manifest prints a warning object, the 6.11 one prints
           # nothing.
@@ -285,7 +285,7 @@ jobs:
 
       - name: Unpack install tree
         # stud-<version>-x86_64.tar.zst IS the install tree, rooted at
-        # usr/ -- the same archive the Flatpak and stud-bin install. No
+        # usr/, the same archive the Flatpak and stud-bin install. No
         # second copy is made for this.
         run: |
           mkdir -p install-tree
@@ -295,7 +295,7 @@ jobs:
           test -d install-tree/usr
 
       - name: Verify .SRCINFO is current
-        # The AUR serves .SRCINFO, not the PKGBUILD -- so a stale one
+        # The AUR serves .SRCINFO, not the PKGBUILD, so a stale one
         # advertises dependencies the package does not actually declare.
         # It is generated, never hand-edited, and drifted once already
         # (a dependency added to both PKGBUILDs and to neither .SRCINFO).
@@ -312,7 +312,7 @@ jobs:
             install -o builder -m644 "$pkgbuild" /home/builder/PKGBUILD
             su builder -c "cd /home/builder && makepkg --printsrcinfo" > /tmp/generated
             if ! diff -u "$srcinfo" /tmp/generated; then
-              echo "::error::${pair##*:} is stale -- regenerate it with: makepkg --printsrcinfo > ${pair##*:}"
+              echo "::error::${pair##*:} is stale, regenerate it with: makepkg --printsrcinfo > ${pair##*:}"
               status=1
             fi
           done
@@ -324,7 +324,7 @@ jobs:
 
       - name: Validate deb metadata
         # dpkg is not in the Fedora container that builds it, so nothing
-        # there can check its own output -- and CPack, asked to detect the
+        # there can check its own output, and CPack, asked to detect the
         # architecture with no dpkg to ask, quietly produced an EMPTY
         # Architecture field and a package called `stud_1.1.0_.deb` that
         # dpkg refuses to install. It shipped in a green release.
@@ -371,7 +371,7 @@ jobs:
           cat > /tmp/makepkg.sh <<'SCRIPT'
           #!/bin/bash
           # The shebang matters: this file is mounted into the container
-          # and exec'd directly, and without one the kernel refuses it --
+          # and exec'd directly, and without one the kernel refuses it,
           # `exec container process /makepkg.sh: Exec format error`. It
           # went unnoticed because the step never ran this far before;
           # podman was missing from the container entirely.
@@ -464,7 +464,7 @@ jobs:
   appimage:
     # Bumped alongside the packages job, with the same trade: an
     # AppImage's whole promise is running anywhere, and building on
-    # ubuntu:26.04 raises its glibc floor to 2.43 -- so it now needs a
+    # ubuntu:26.04 raises its glibc floor to 2.43, so it now needs a
     # 2026-era distribution rather than any of the last few years'. The
     # base to lower it again is an older Ubuntu here and in
     # packaging/Containerfile.appimage, which pins the same image.
@@ -506,7 +506,7 @@ jobs:
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
       - name: Cache Android NDK
-        # The same key the packages job uses -- see the comment there.
+        # The same key the packages job uses; see the comment there.
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
@@ -528,8 +528,8 @@ jobs:
 
       - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
-        # about an hour. Its sources are no use afterwards -- only the two
-        # libraries it produced, which is all the cache keeps -- so they go
+        # about an hour. Its sources are no use afterwards, only the two
+        # libraries it produced, which is all the cache keeps, so they go
         # straight back to the disk the rest of the build needs.
         run: |
           df -h /__w | tail -1
@@ -544,7 +544,7 @@ jobs:
 
       - name: Validate AppImage contents
         # This one is its OWN build, in a different container, so it can
-        # drift from every other package independently -- and has: the
+        # drift from every other package independently, and has: the
         # release whose rpm was missing the FSR shaders had an AppImage
         # that carried them. Validated on its own terms rather than
         # compared, since nothing here shares that build's install tree.
@@ -585,7 +585,7 @@ jobs:
 
       - name: Prepare manifest for local sources
         # The manifest in the tree names the release URL, which does not
-        # exist until this release is published -- so for the bundle it is
+        # exist until this release is published, so for the bundle it is
         # rewritten to the local file. Same archive either way; only where
         # flatpak-builder reads it from differs.
         run: |
@@ -598,7 +598,7 @@ jobs:
           s = open(p).read()
           # Matches whatever checksum the manifest carries, not one literal
           # placeholder. The manifest holds the REAL sha256 of the published
-          # archive so Flathub can build it as committed -- keying this on a
+          # archive so Flathub can build it as committed, keying this on a
           # placeholder meant that the moment the real value went in, the
           # substitution silently stopped matching and the build fetched the
           # release URL instead of the archive this run just produced.
@@ -641,7 +641,7 @@ jobs:
           grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
 
       - name: Verify no placeholders remain
-        # The dependency checksums are real in the tree -- Flathub builds
+        # The dependency checksums are real in the tree, Flathub builds
         # from the manifest as committed, so a manifest that only works
         # after CI has rewritten it is not one they can build at all. The
         # only substitution left is the archive path above.
@@ -651,7 +651,7 @@ jobs:
       - name: Build and bundle
         run: |
           # The container image is built around one KDE SDK and the
-          # manifest may name a newer one -- there is no kde-6.11 image
+          # manifest may name a newer one, there is no kde-6.11 image
           # yet. --install-deps-from lets flatpak-builder fetch the
           # runtime, SDK and base app the manifest actually asks for,
           # instead of the build being pinned to whatever the image
@@ -715,17 +715,17 @@ jobs:
           gh release upload "$TAG" "${packages[@]}" --clobber
 
       # The checksums the AUR PKGBUILD and the Flatpak manifest need. Both
-      # carry a placeholder in the tree on purpose -- a checksum belongs to
+      # carry a placeholder in the tree on purpose, a checksum belongs to
       # one specific archive, and a stale one is worse than an obvious gap
-      # -- so the values are printed here, where whoever updates those two
+      # so the values are printed here, where whoever updates those two
       # repositories can copy them.
       - name: Print downstream checksums
         run: |
-          echo "Source tarball -- for the source PKGBUILD, which is NOT the"
+          echo "Source tarball, for the source PKGBUILD, which is NOT the"
           echo "published one (see packaging/aur/README.md):"
           curl -fsSL "https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz" \
             | sha256sum | cut -d' ' -f1
           echo
-          echo "Release archive -- this is the one stud-bin and the Flatpak"
+          echo "Release archive. This is the one stud-bin and the Flatpak"
           echo "manifest both name, so both take this checksum:"
           find artifacts -name 'stud-*-x86_64.tar.zst' -exec sha256sum {} + | cut -d' ' -f1

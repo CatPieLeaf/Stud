@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Real epoll-based event loop -- the same underlying mechanism Android's
+// Real epoll-based event loop, the same underlying mechanism Android's
 // own ALooper uses, not a fake. Built on epoll_create1/epoll_ctl/epoll_wait
 // (already in libc-shim's safe-forward set).
 struct ALooper {
@@ -33,24 +33,24 @@ namespace {
 thread_local ALooper* t_looper = nullptr;
 
 // Real registry of every ALooper ever created, independent of t_looper's
-// per-thread lifetime -- see poll_orphaned_loopers_once()'s own doc
+// per-thread lifetime; see poll_orphaned_loopers_once()'s own doc
 // comment (android_glue.h) for the full real reasoning: a thread that
 // created a looper can exit (as native_app_glue's android_app_entry
 // thread does, confirmed via its real source never calling
 // ALooper_release()) while leaving a perfectly valid, still-open epoll
-// fd behind -- this list is what lets a *different* thread find and
+// fd behind. This list is what lets a *different* thread find and
 // poll it. Mutex-protected: ALooper_prepare() can run concurrently on
-// different real bionic threads (already true in this codebase --
+// different real bionic threads (already true in this codebase,
 // nativeAppBridgeAppStart() alone spawns four).
 std::mutex g_all_loopers_mutex;
 std::vector<ALooper*> g_all_loopers;
 
 // Real, stable, public NDK ABI shape (android_native_app_glue.h's
-// `struct android_poll_source`, unchanged for over a decade) --
+// `struct android_poll_source`, unchanged for over a decade),
 // reimplemented here from its documented layout, not copied from any
 // vendored source, since poll_orphaned_loopers_once() needs to interpret
 // a raw void* this shape without depending on the whole header. `app`
-// and `source` are passed back to `process` as plain void* -- the real
+// and `source` are passed back to `process` as plain void*, the real
 // header's more specific `struct android_app*`/`struct
 // android_poll_source*` types are opaque to Stud anyway, and process()
 // itself (real native_app_glue code) does the real, correctly-typed
@@ -74,19 +74,19 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
     // thread"): a real Roblox-internal worker thread calls this with
     // timeoutMillis=0 in a tight loop expecting some OTHER call each
     // iteration (a real vsync-paced swap, on a real device) to naturally
-    // throttle it -- confirmed live via a live syscall trace pegging ~100% CPU on one
+    // throttle it, confirmed live via a live syscall trace pegging ~100% CPU on one
     // core indefinitely, calling epoll_pwait(fd,[],1,0,...) back-to-back
     // with nothing ready. A real Android device's own scheduler never
     // guarantees true zero-latency for a 0ms poll either, so a real app
     // requesting timeoutMillis=0 already has to tolerate *some* real
-    // delay -- passing a tiny, still-effectively-"immediate" 1ms floor to
+    // delay, passing a tiny, still-effectively-"immediate" 1ms floor to
     // the real epoll_wait() here instead of a literal 0 turns an
     // unthrottled spin into a bounded, low-CPU poll, with no observable
     // behavioral difference to any caller (still returns
     // ALOOPER_POLL_TIMEOUT correctly the moment nothing is ready; every
-    // other caller of this function -- e.g. poll_orphaned_loopers_once()'s
+    // other caller of this function, e.g. poll_orphaned_loopers_once()'s
     // own already-documented 0-timeout call, itself only run once per
-    // Stud's own ~250ms outer loop iteration -- is unaffected by an extra
+    // Stud's own ~250ms outer loop iteration, is unaffected by an extra
     // millisecond of latency here).
     const int effective_timeout = (timeoutMillis == 0) ? 1 : timeoutMillis;
 
@@ -131,7 +131,7 @@ extern "C" {
 namespace {
 
 // Every thread the engine spawns prepares a looper, so this is one line
-// per thread -- 157 of them in one session, and they only matter while
+// per thread, 157 of them in one session, and they only matter while
 // chasing which looper a call bound to (the duplicate-libandroid bug).
 bool looper_trace_enabled() {
     static const bool enabled = std::getenv("STUD_LOOPER_TRACE") != nullptr;
@@ -176,11 +176,11 @@ void ALooper_release(ALooper* looper) {
     // adds, e.g. a raw clone()-based thread pool a statically-linked
     // dependency spawns) ends up calling ALooper_release(
     // ALooper_forThread()) with a genuinely-null looper (t_looper is
-    // thread_local and was never prepared on that thread) -- confirmed
+    // thread_local and was never prepared on that thread), confirmed
     // live: fault address 0x4 exactly matches nullptr + offsetof(
     // ALooper, ref_count). Guarding here, in Stud's own reimplementation
     // (not a patch to Roblox's code), is the correct fix regardless of
-    // which specific thread/call-site is responsible -- a real,
+    // which specific thread/call-site is responsible, a real,
     // well-behaved ALooper_release should tolerate this rather than
     // requiring every caller to null-check first.
     if (looper == nullptr) return;
@@ -225,7 +225,7 @@ int ALooper_pollOnce(int timeoutMillis, int* outFd, int* outEvents, void** outDa
 namespace stud::android_glue {
 
 bool poll_orphaned_loopers_once() {
-    // Snapshot under the lock, then poll outside it -- process() below
+    // Snapshot under the lock, then poll outside it; process() below
     // (real native_app_glue code) can itself legitimately call back into
     // ALooper_prepare()/other real android_glue functions that also take
     // g_all_loopers_mutex, so holding it across the dispatch would risk
@@ -244,7 +244,7 @@ bool poll_orphaned_loopers_once() {
         int out_fd = -1;
         int out_events = 0;
         void* out_data = nullptr;
-        // Zero timeout -- this function is meant to be called once per
+        // Zero timeout. This function is meant to be called once per
         // iteration of Stud's own real event loop, alongside that loop's
         // own (blocking-with-a-real-timeout) poll of its own looper; a
         // blocking wait here would stall that loop for orphaned loopers
@@ -255,7 +255,7 @@ bool poll_orphaned_loopers_once() {
         auto* source = static_cast<AndroidPollSourceShape*>(out_data);
         if (source->process != nullptr) {
             // This file is itself real bionic code now (compiled by the
-            // NDK toolchain, linked into Process B) -- source->process
+            // NDK toolchain, linked into Process B), source->process
             // (native_app_glue's own process_cmd, statically linked in
             // libroblox.so) is just another same-ABI, same-process
             // function pointer, called directly like any other.

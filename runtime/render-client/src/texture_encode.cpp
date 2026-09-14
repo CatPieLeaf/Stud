@@ -89,7 +89,7 @@ void project_block(const uint8_t* rgba, const int* base, const int* dir, int* ou
 }
 
 // The block's per-channel minimum and maximum. Only used when no texel is
-// excluded, which is every block outside the punch-through mode -- one
+// excluded, which is every block outside the punch-through mode, one
 // 16-byte load is four texels, so the whole block is four loads and a
 // reduction rather than 48 compares.
 void bounds_block(const uint8_t* rgba, int* mn, int* mx) {
@@ -135,7 +135,7 @@ void bounds_block(const uint8_t* rgba, int* mn, int* mx) {
 // channels rise together; when two of them move in opposite directions
 // the endpoints end up on the wrong diagonal and every index is chosen
 // against a line the block's colours never lie on. That is not a corner
-// case here -- it is exactly what a normal map does, X rising while Y
+// case here. It is exactly what a normal map does, X rising while Y
 // falls, and it is why normal maps came out as blocky noise.
 //
 // The sign of each channel's covariance with the first says which corner
@@ -180,7 +180,7 @@ void unpack565(uint16_t c, int* rgb) {
 
 // The line through the block's colours that loses the least: the
 // principal axis of their covariance, found by power iteration. A
-// bounding box is cheaper and worse -- it is the diagonal of the box
+// bounding box is cheaper and worse. It is the diagonal of the box
 // whatever the colours do inside it, so a block whose colours run along
 // some other direction gets endpoints that are not on their line at all.
 // Eight iterations is well past convergence for a 3x3 matrix.
@@ -252,8 +252,8 @@ void encode_colour(const uint8_t* rgba, uint8_t* out, bool four_colour,
     // principle and was measured here: worth 1.2 dB on its own, at 7.7x
     // the decode against the bounding box's 2.6x, because a power
     // iteration over a 3x3 covariance runs per block. Choosing the right
-    // diagonal captures most of what the axis was for -- it is the same
-    // covariance, reduced to its sign -- and the refinement does the
+    // diagonal captures most of what the axis was for; it is the same
+    // covariance, reduced to its sign, and the refinement does the
     // rest.
     int e0[3], e1[3];
     orient_box(rgba, 3, transparent, mn, mx, e0, e1);
@@ -289,7 +289,7 @@ void encode_colour(const uint8_t* rgba, uint8_t* out, bool four_colour,
 
     if (four_colour && c0 == c1) {
         // A flat block cannot keep c0 > c1 and stay in this mode, so it
-        // falls into the other one -- index 0 is endpoint 0 either way and
+        // falls into the other one, index 0 is endpoint 0 either way and
         // reproduces the colour exactly.
         std::memset(out + 4, 0, 4);
         return;
@@ -310,7 +310,7 @@ void encode_colour(const uint8_t* rgba, uint8_t* out, bool four_colour,
     // One least-squares refinement, in integers.
     //
     // With indices chosen, the endpoints that minimise the error are no
-    // longer the two ends of the bounding box -- solving for them and
+    // longer the two ends of the bounding box, solving for them and
     // re-quantising recovers most of what an endpoint search would find,
     // for one extra pass over the block rather than a search over
     // candidate pairs. Worth 1.3 dB here, which takes this past stb_dxt.
@@ -478,7 +478,7 @@ void bc5_block_from_rg16(const uint16_t* rg16, uint8_t* out) {
 
 namespace {
 
-// Sixteen interpolation weights, out of 64 -- the 4-bit index table BC7
+// Sixteen interpolation weights, out of 64, the 4-bit index table BC7
 // mode 6 uses.
 const int kWeight4[16] = {0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64};
 
@@ -497,7 +497,7 @@ struct BitWriter {
 
 void bc7_mode6_block(const uint8_t* rgba, uint8_t* out) {
     // Endpoints from the block's bounding box over all four channels,
-    // then the same least-squares step the BC1 encoder uses -- with
+    // then the same least-squares step the BC1 encoder uses, with
     // sixteen index steps the endpoints matter more, not less.
     int mn[4] = {255, 255, 255, 255};
     int mx[4] = {0, 0, 0, 0};

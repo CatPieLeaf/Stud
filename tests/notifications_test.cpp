@@ -1,6 +1,6 @@
 // M8 test: real freedesktop Notifications via QtDBus
 // (ui/src/notifications.h). Sends a genuine notification through this
-// machine's real, live D-Bus session bus and notification daemon --
+// machine's real, live D-Bus session bus and notification daemon,
 // not a mock. If this passes, a real notification popup appeared on
 // screen during this test run.
 

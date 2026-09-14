@@ -2,13 +2,13 @@
 #
 # It exists because of how GitHub scopes caches. The release workflow only
 # ever runs on a tag, and a cache created for one tag is not visible to
-# another -- GitHub's own words: "a run cannot restore caches from
+# another, GitHub's own words: "a run cannot restore caches from
 # arbitrary sibling branches, child branches, or a different tag". So
 # every release was rebuilding ANGLE from source, an hour at a time, and
 # the caches it wrote could only ever help a re-run of that same release.
 #
 # A run on the DEFAULT BRANCH is the exception: those caches are visible to
-# every ref, tags included. So this workflow does one job -- populate them.
+# every ref, tags included. So this workflow does one job, populate them.
 #
 # It is deliberately not part of the release pipeline and builds no
 # packages. Run it after changing tools/setup.sh, or whenever a release
@@ -24,7 +24,7 @@ on:
   # By hand only. Nothing here should ever start itself: it is an hour of
   # compiling, and nothing about a normal push needs it.
   #
-  # RUN IT FROM main. That is not a style preference -- a run's caches are
+  # RUN IT FROM main. That is not a style preference, a run's caches are
   # scoped to the ref it ran on, and only the default branch's are visible
   # to every other ref. Run this from a tag or a side branch and the caches
   # it writes cannot be read by anything else, which is the exact problem
@@ -32,7 +32,7 @@ on:
   #
   # Deliberately NOT triggered by a release: the release workflow already
   # fetches these dependencies itself, so a release trigger here would
-  # build the same thing twice at once -- and it would do it on a tag ref,
+  # build the same thing twice at once, and it would do it on a tag ref,
   # where the resulting caches help nothing.
   workflow_dispatch:
 

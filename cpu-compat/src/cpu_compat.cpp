@@ -14,7 +14,7 @@ CpuFeatures detect_cpu_features() {
     CpuFeatures features;
     unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
     if (__get_cpuid(1, &eax, &ebx, &ecx, &edx) == 0) {
-        return features;  // CPUID leaf 1 unavailable -- report nothing supported
+        return features;  // CPUID leaf 1 unavailable, report nothing supported
     }
     // Standard, documented Intel/AMD CPUID leaf 1 ECX bit positions.
     features.ssse3 = (ecx & (1u << 9)) != 0;
@@ -58,7 +58,7 @@ void sigill_handler(int /*signum*/, siginfo_t* /*info*/, void* ucontext_raw) {
     }
 
     std::fprintf(stderr,
-                  "stud: SIGILL at %p -- instruction not recognized or not yet "
+                  "stud: SIGILL at %p, instruction not recognized or not yet "
                   "emulated (bytes: %02x %02x %02x %02x). This CPU is missing an "
                   "instruction Stud doesn't emulate yet.\n",
                   static_cast<const void*>(rip), rip[0], rip[1], rip[2], rip[3]);

@@ -4,7 +4,7 @@
 #include <pthread.h>
 #include <signal.h>
 // execinfo.h is glibc's. bionic has no backtrace(), and Process B
-// does not use this reporter anyway -- it has trap_recovery, which
+// does not use this reporter anyway; it has trap_recovery, which
 // recovers rather than reports.
 #if defined(__GLIBC__)
 #include <execinfo.h>
@@ -36,9 +36,9 @@
 //
 // Why each process opens the file rather than inheriting one pipe from
 // Process A: Process A exits within a second of launching the other two
-// (by design -- see its own "hand off and get out of the way" note), so
+// (by design; see its own "hand off and get out of the way" note), so
 // a pipe it owned would be dead for the rest of the session. O_APPEND
-// makes concurrent writers safe -- the kernel places each write at the
+// makes concurrent writers safe, the kernel places each write at the
 // current end of file, so lines from three processes interleave but
 // never overwrite each other.
 namespace stud::logging {
@@ -48,7 +48,7 @@ namespace detail {
 // The real stdout, saved before the tee replaced fd 1. Children must be
 // given THIS rather than inheriting the pipe: the pipe's only reader is
 // this process's tee thread, and Process A exits within a second of
-// spawning the other two -- after which their writes would hit a pipe
+// spawning the other two, after which their writes would hit a pipe
 // nobody reads, and their output would vanish from the terminal and the
 // journal. They open the log file themselves.
 inline int& passthrough_fd_storage() {
@@ -73,7 +73,7 @@ inline void* tee_thread(void* arg) {
         }
         if (got == 0) break;
         // Both destinations get every byte. A short or failed write to
-        // one is not worth losing the other over -- this is a logger,
+        // one is not worth losing the other over; this is a logger,
         // and it must never be the reason a process stalls or dies.
         for (int fd : {state->passthrough_fd, state->log_fd}) {
             if (fd < 0) continue;
@@ -98,7 +98,7 @@ inline void* tee_thread(void* arg) {
 
 // Tees this process's stdout and stderr into `path`. Safe to call with an
 // empty path (does nothing) and safe to call when the file cannot be
-// opened -- output simply keeps going where it already went.
+// opened, output simply keeps going where it already went.
 inline bool start_session_log(const std::string& path) {
     if (path.empty()) return false;
     const int log_fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
@@ -132,7 +132,7 @@ inline bool start_session_log(const std::string& path) {
     ::close(pipe_fds[1]);
 
     // Line buffering, so a crash cannot swallow the last few hundred
-    // lines still sitting in libc's buffer -- stdout is a pipe now, and
+    // lines still sitting in libc's buffer, stdout is a pipe now, and
     // a pipe is block-buffered by default. This project has already been
     // misled once by a long-lived process whose diagnostics never
     // appeared because of exactly that.
@@ -161,7 +161,7 @@ inline const char*& crash_process_name() {
 
 // Async-signal-safe: write(2) and _exit/raise only, no allocation, no
 // printf. Anything else here would be a second crash inside the handler
-// for the first one -- a mistake this project has already made once, in
+// for the first one, a mistake this project has already made once, in
 // its own backtrace walker.
 inline void write_hex(unsigned long long value) {
     char buf[19] = {'0', 'x'};
@@ -217,7 +217,7 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
     }
 
     // backtrace() can allocate the first time it runs, which is not
-    // allowed here -- install_crash_reporter() calls it once up front so
+    // allowed here, install_crash_reporter() calls it once up front so
     // that by now it cannot. backtrace_symbols_fd writes with write(2)
     // and allocates nothing, unlike backtrace_symbols.
 #if defined(__GLIBC__)

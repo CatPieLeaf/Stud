@@ -3,8 +3,8 @@
 # Builds Stud as an AppImage: one file that runs on any distribution
 # without installing anything.
 #
-# It bundles what a distribution's package would depend on -- Qt, the
-# Vulkan loader, and the libraries those pull in -- alongside what Stud
+# It bundles what a distribution's package would depend on; Qt, the
+# Vulkan loader, and the libraries those pull in, alongside what Stud
 # ships either way: ANGLE, the bionic set, and Process B.
 #
 # Usage:
@@ -48,7 +48,7 @@ if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" != 1 ] && [ "${STUD_APPIMAGE_NO_CONTAINE
         -t stud-appimage-build "$repo_root" >&2
     # tools/setup.sh links rather than copies anything it was pointed at
     # (STUD_NDK_SRC and friends), so an entry of third_party/ can be a
-    # symlink out of the repository -- which resolves to nothing inside a
+    # symlink out of the repository, which resolves to nothing inside a
     # container that only has the repository mounted, and the build then
     # quietly produces no Process B. Mount each such target at its own
     # path so the link resolves there too.
@@ -80,7 +80,7 @@ if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" = 1 ]; then
     # before tools/setup.sh ran keeps producing an image without them
     # until it is configured again.
     printf '\033[1mappimage:\033[0m configuring\n' >&2
-    # STUD_CMAKE_ARGS passes anything else through -- release automation
+    # STUD_CMAKE_ARGS passes anything else through, release automation
     # uses it to set -DSTUD_VERSION from the tag being built, so the
     # AppImage's own metadata says what the release says.
     # shellcheck disable=SC2086
@@ -98,7 +98,7 @@ tools="${STUD_APPIMAGE_TOOLS:-$repo_root/third_party/appimage-tools}"
 say() { printf '\033[1mappimage:\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mappimage:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ -d "$build_dir" ] || die "no build directory at $build_dir -- configure and build first"
+[ -d "$build_dir" ] || die "no build directory at $build_dir, configure and build first"
 
 app_id="$(grep -m1 '^set(STUD_APP_ID' "$repo_root/CMakeLists.txt" | cut -d'"' -f2)"
 [ -n "$app_id" ] || die "could not read STUD_APP_ID out of CMakeLists.txt"
@@ -136,7 +136,7 @@ DESTDIR="$appdir" cmake --install "$build_dir" --prefix /usr >/dev/null
 # Everything Stud cannot run without, checked before anything is packed.
 #
 # A build with third_party/ missing configures, compiles and links
-# perfectly well -- it just silently produces no Process B, no ANGLE and
+# perfectly well. It just silently produces no Process B, no ANGLE and
 # no bionic, because those targets and install rules are conditional on
 # the dependency being present. The result is an AppImage that starts,
 # shows its window, and cannot run Roblox at all. That is exactly the
@@ -149,11 +149,11 @@ for required in \
     usr/lib/stud/android-bionic/libc.so
 do
     [ -e "$appdir/$required" ] ||
-        die "the install produced no $required -- run tools/setup.sh first"
+        die "the install produced no $required, run tools/setup.sh first"
 done
 
 # The helper processes are not on PATH inside an AppImage, and
-# linuxdeploy only follows the libraries of what it is given -- so each
+# linuxdeploy only follows the libraries of what it is given, so each
 # one is passed explicitly to have its dependencies bundled too.
 extra_exes=()
 for exe in stud-render-host stud-webview; do
@@ -163,7 +163,7 @@ done
 export QMAKE="${QMAKE:-qmake6}"
 
 # linuxdeploy ships its own binutils, and that copy is older than the
-# relocation format a current distribution's Qt is built with -- it
+# relocation format a current distribution's Qt is built with; it
 # refuses every library with a .relr.dyn section, which on Fedora is all
 # of them, and the Qt plugin then fails outright. Stripping only saves
 # space, so it is turned off rather than worked around.
@@ -174,8 +174,8 @@ export NO_STRIP=1
 #
 # linuxdeploy walks every ELF file it finds and resolves each one's
 # dependencies against the host. For bionic that is wrong in principle
-# and fails in practice -- libc.so needs "ld-android.so", a soname the
-# Android linker answers from itself and no host has -- and for ANGLE it
+# and fails in practice, libc.so needs "ld-android.so", a soname the
+# Android linker answers from itself and no host has, and for ANGLE it
 # is unnecessary, since that build is self-contained. Neither needs
 # patching, deploying or interpreting; they only need to be in the
 # finished image at the path the binaries look for them at.
@@ -199,7 +199,7 @@ trap restore_private EXIT
 # without FUSE cannot mount one. They both understand being unpacked
 # instead, which costs nothing here.
 if [ ! -e /dev/fuse ]; then
-    say "no /dev/fuse -- running the tools unpacked"
+    say "no /dev/fuse, running the tools unpacked"
     export APPIMAGE_EXTRACT_AND_RUN=1
 fi
 
@@ -210,13 +210,13 @@ fi
 # other one. libxcb-util is the concrete case: bundling it segfaults
 # inside its own initialiser on a machine whose xcb differs, before any
 # of Stud's code runs. The rule of thumb is the AppImage project's own
-# excludelist -- anything X, xcb, GL, or glibc-adjacent stays outside.
+# excludelist: anything X, xcb, GL, or glibc-adjacent stays outside.
 #
 # There is a second reason, which is what libxkbcommon and libffi are
 # doing here. AppRun puts this bundle's own lib directory on
 # LD_LIBRARY_PATH so that hand-copied Qt plugins can find what they need,
 # and that path is inherited by the HOST code the graphics stack loads
-# into render-host -- a Vulkan implicit layer such as MangoHud, most
+# into render-host, a Vulkan implicit layer such as MangoHud, most
 # obviously. A bundled copy of a library that layer also needs is then
 # shadowing the host's, in a process neither of them is prepared for.
 # Stud ships no MangoHud and never should; the least it can do is stay
@@ -234,7 +234,7 @@ exclude_args=()
 for pattern in "${exclude_libs[@]}"; do exclude_args+=("--exclude-library=$pattern"); done
 
 # Stud is a Wayland application, so the Wayland platform plugin has to
-# be in the bundle -- linuxdeploy-plugin-qt deploys only libqxcb.so
+# be in the bundle, linuxdeploy-plugin-qt deploys only libqxcb.so
 # unless it is told otherwise, and a bundle with no Wayland plugin falls
 # back to XWayland (or, with no X at all, refuses to start).
 export EXTRA_PLATFORM_PLUGINS="libqwayland-generic.so;libqwayland-egl.so"
@@ -263,7 +263,7 @@ done
 
 # Two plugin directories linuxdeploy-plugin-qt does not deploy, copied
 # straight out of the Qt it just deployed from. EXTRA_PLUGINS is not a
-# variable this plugin honours -- tried, and it changed nothing.
+# variable this plugin honours, tried, and it changed nothing.
 #
 # wayland-graphics-integration-client holds the client buffer
 # integrations. Without it the Wayland platform plugin loads and then
@@ -273,8 +273,8 @@ done
 #
 # platformthemes is what makes a Qt application look like the desktop it
 # runs on rather than like bare Qt. Native Breeze is out of reach here by
-# construction -- it is a KF6 plugin built against the host's own Qt, and
-# this bundle carries a different one -- but the XDG portal theme needs
+# construction. It is a KF6 plugin built against the host's own Qt, and
+# this bundle carries a different one, but the XDG portal theme needs
 # nothing except the portal and gives the desktop's real colours, fonts
 # and icon theme.
 #
@@ -282,10 +282,10 @@ done
 # library either needs is already in the bundle and already loaded by the
 # time Qt dlopens them (the Wayland platform plugin has libQt6WaylandClient
 # open before it looks for a buffer integration), and patchelf is exactly
-# what has to be kept away from these -- see NO_STRIP above.
+# what has to be kept away from these; see NO_STRIP above.
 # styles is the real Breeze widget style. A widget style is a Qt plugin
 # and can only load into the Qt it was built against, so the host's own
-# Breeze can never load into this bundle whatever version it is -- the
+# Breeze can never load into this bundle whatever version it is, the
 # only way an AppImage looks like the desktop it is running on is to
 # carry a matching one. That is why this image is built on a base that
 # has KF6 at all (see packaging/Containerfile.appimage).
@@ -301,14 +301,14 @@ for plugin_dir in wayland-graphics-integration-client platformthemes styles kf6/
     fi
 done
 [ -e "$appdir/usr/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so" ] ||
-    die "no wayland-egl client buffer integration -- the window would never get a buffer"
+    die "no wayland-egl client buffer integration, the window would never get a buffer"
 [ -e "$appdir/usr/plugins/platformthemes/libqxdgdesktopportal.so" ] ||
-    die "no XDG portal platform theme -- Stud would not follow the desktop's theme"
+    die "no XDG portal platform theme. Stud would not follow the desktop's theme"
 [ -e "$appdir/usr/plugins/styles/breeze6.so" ] ||
-    die "no Breeze style -- Stud would look like bare Qt next to the same build from an rpm"
+    die "no Breeze style. Stud would look like bare Qt next to the same build from an rpm"
 
 # Those plugins were copied, not deployed, so nothing has brought their
-# own libraries along -- Breeze alone pulls a good deal of KF6. Walked
+# own libraries along, Breeze alone pulls a good deal of KF6. Walked
 # here with ldd, skipping anything on the exclude list above (which must
 # come from the host) and anything already bundled.
 say "bundling what the copied plugins need"
@@ -344,8 +344,8 @@ for _ in 1 2 3 4 5 6; do
 done
 
 # Qt's OpenSSL backend is built to dlopen libssl rather than link it
-# (Ubuntu configures Qt with openssl-runtime), so linuxdeploy -- which
-# follows DT_NEEDED and nothing else -- cannot see it and does not bring
+# (Ubuntu configures Qt with openssl-runtime), so linuxdeploy, which
+# follows DT_NEEDED and nothing else, cannot see it and does not bring
 # it. libcrypto arrives anyway, pulled in by something that does link it,
 # and the result is a bundle that has half of OpenSSL, a TLS plugin that
 # cannot load, and every HTTPS request failing with
@@ -358,16 +358,16 @@ for libssl in /usr/lib/x86_64-linux-gnu/libssl.so.3 /lib/x86_64-linux-gnu/libssl
     [ -e "$libssl" ] || continue
     cp -n "$libssl" "$appdir/usr/lib/" && break
 done
-[ -e "$appdir/usr/lib/libssl.so.3" ] || die "no libssl.so.3 to bundle -- Stud could not log in"
+[ -e "$appdir/usr/lib/libssl.so.3" ] || die "no libssl.so.3 to bundle; Stud could not log in"
 
 # A real AppRun, replacing the symlink to the binary linuxdeploy leaves.
 #
 # linuxdeploy's apprun-hooks mechanism needs an AppRun that sources them,
-# and it does not write one when the entry point is a plain symlink --
+# and it does not write one when the entry point is a plain symlink,
 # so the one thing that has to happen before Qt starts is done here.
 #
 # Qt picks a platform theme by looking for the plugin its own desktop
-# would use, which on KDE is a KF6 plugin built against the host's Qt --
+# would use, which on KDE is a KF6 plugin built against the host's Qt,
 # deliberately not in this bundle, and not loadable in it. Asking for the
 # portal theme by name gets the desktop's real colours, fonts and icon
 # theme with nothing but the portal, which every modern desktop runs.
@@ -387,8 +387,8 @@ here="$(dirname "$(readlink -f "$0")")"
 # only the bundle's own Qt.
 #
 # STUD_HOST_LD_LIBRARY_PATH carries the original across, so anything Stud
-# runs that belongs to the host -- kbuildsycoca6, update-desktop-database,
-# a browser -- can be given its own environment back instead of this Qt.
+# runs that belongs to the host, kbuildsycoca6, update-desktop-database,
+# a browser, can be given its own environment back instead of this Qt.
 export STUD_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
@@ -416,7 +416,7 @@ restore_private
 # A PortAudio of Stud's own, for machines that have none.
 #
 # render-host loads the HOST's PortAudio first and only falls back to this
-# one -- the system copy is built against the audio stack that machine
+# one, the system copy is built against the audio stack that machine
 # actually runs (Fedora's has a real PipeWire host API; one built here
 # does not), and using it is what makes Stud appear in the volume mixer as
 # an ordinary application. So this lives outside usr/lib, deliberately, to
@@ -424,8 +424,8 @@ restore_private
 #
 # It is copied rather than deployed for the same reason libssl is below:
 # nothing links PortAudio, render-host dlopens it, so linuxdeploy cannot
-# see it at all. Its own dependencies -- libasound, libjack, libpipewire
-# -- are excluded above and come from the host, which is the whole point:
+# see it at all. Its own dependencies, libasound, libjack, libpipewire
+# are excluded above and come from the host, which is the whole point:
 # an ALSA library from another distribution looks for its plugins at that
 # distribution's paths, finds no pipewire or pulse plugin, and falls back
 # to talking to the hardware directly. That is exactly the reported
@@ -438,7 +438,7 @@ for candidate in /usr/lib/x86_64-linux-gnu/libportaudio.so.2 /usr/lib64/libporta
     break
 done
 [ -e "$appdir/usr/lib/stud/audio/libportaudio.so.2" ] ||
-    die "no libportaudio.so.2 to fall back on -- a machine without PortAudio would be silent"
+    die "no libportaudio.so.2 to fall back on, a machine without PortAudio would be silent"
 
 
 say "packing the image"

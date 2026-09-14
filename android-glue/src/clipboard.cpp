@@ -17,7 +17,7 @@
 // The real system clipboard, for the text box Stud draws itself.
 //
 // Stud owns text editing while a Lua TextBox is focused (see
-// stud/text_overlay.h), so copy and paste are Stud's job too -- exactly
+// stud/text_overlay.h), so copy and paste are Stud's job too, exactly
 // as they are the Android EditText's job on a device. This is ordinary
 // wl_data_device work: the process that owns the seat is the only one
 // that can hold a selection, so it lives here.
@@ -59,7 +59,7 @@ void source_send(void* /*data*/, wl_data_source* source, const char* /*mime*/, i
         payload = c.offered;
     }
     // The reader may go away mid-write (a paste that is cancelled), which
-    // arrives as SIGPIPE on a plain write -- MSG_NOSIGNAL is not available
+    // arrives as SIGPIPE on a plain write, MSG_NOSIGNAL is not available
     // on a pipe, so the write is simply allowed to fail.
     size_t written = 0;
     while (written < payload.size()) {

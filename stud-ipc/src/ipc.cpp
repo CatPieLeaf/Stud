@@ -114,7 +114,7 @@ LaunchPayload from_json(const nlohmann::json& doc) {
 
 // Fills `addr` for a real AF_UNIX socket at `path`. Throws IpcError if
 // `path` is too long for sockaddr_un's fixed-size buffer (a real,
-// standard Unix domain socket constraint, ~108 bytes on Linux) --
+// standard Unix domain socket constraint, ~108 bytes on Linux),
 // caught here explicitly rather than silently truncating a path.
 sockaddr_un make_sockaddr(const std::string& path) {
     sockaddr_un addr{};
@@ -139,7 +139,7 @@ void serve_launch_payload_once(const std::string& socket_path, const LaunchPaylo
                                 int timeout_ms) {
     make_directories(parent_directory(socket_path));
     // A stale socket file from a previous, uncleanly-terminated run
-    // would make bind() fail with EADDRINUSE -- remove it first. Not an
+    // would make bind() fail with EADDRINUSE, remove it first. Not an
     // error if it doesn't exist.
     ::unlink(socket_path.c_str());
 
@@ -154,7 +154,7 @@ void serve_launch_payload_once(const std::string& socket_path, const LaunchPaylo
         ::close(listen_fd);
         throw IpcError("stud::ipc: bind(" + socket_path + ") failed: " + error);
     }
-    // Owner-only -- this socket carries a real session cookie.
+    // Owner-only. This socket carries a real session cookie.
     ::chmod(socket_path.c_str(), 0600);
 
     if (::listen(listen_fd, 1) != 0) {
@@ -190,7 +190,7 @@ void serve_launch_payload_once(const std::string& socket_path, const LaunchPaylo
         }
         total_written += static_cast<size_t>(written);
     }
-    // Shutdown, not just close -- signals real EOF to the client's
+    // Shutdown, not just close, signals real EOF to the client's
     // blocking read loop below rather than leaving it to time out.
     ::shutdown(conn_fd, SHUT_WR);
     ::close(conn_fd);

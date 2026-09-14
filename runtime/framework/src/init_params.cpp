@@ -5,7 +5,7 @@ namespace stud::jni_bridge {
 // Real, version-agnostic fix (the engineering notes): registers InitParams's
 // properties as real METHODS, matching AutoValue's actual zero-arg
 // getter convention (confirmed directly against the real libroblox.so,
-// not guessed) -- see init_params.h's doc comment for the full trace.
+// not guessed); see init_params.h's doc comment for the full trace.
 BEGIN_NATIVE_DESCRIPTOR(InitParams)
 { FakeJni::Function<&InitParams::platformParams>{}, "platformParams" },
 { FakeJni::Function<&InitParams::deviceParams>{}, "deviceParams" },
@@ -29,8 +29,8 @@ std::shared_ptr<InitParams> build_desktop_init_params(std::shared_ptr<PlatformPa
     params->userAgent_ = std::make_shared<FakeJni::JString>(user_agent);
     // Tablet, matching the form factor the User-Agent reports (see
     // build_real_user_agent()). The real app derives both from the same
-    // flag -- the app's own User-Agent builder calls a device a Phone only when isTablet
-    // is false -- so reporting Tablet here and Phone there would be
+    // flag, the app's own User-Agent builder calls a device a Phone only when isTablet
+    // is false, so reporting Tablet here and Phone there would be
     // internally inconsistent. Stud is a large-display, mouse-and-
     // keyboard, no-touchscreen device, which is the tablet/desktop-class
     // side of that split, not the phone side.

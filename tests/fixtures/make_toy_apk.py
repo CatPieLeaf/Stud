@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Builds a small, real zip fixture standing in for the Roblox APK's real
 # structure (assets/ tree plus non-assets entries that must NOT be
-# extracted) -- used by apk_extract_test.cpp. Deterministic, no external
+# extracted), used by apk_extract_test.cpp. Deterministic, no external
 # tools beyond the stdlib.
 import sys
 import zipfile
@@ -14,12 +14,12 @@ with zipfile.ZipFile(out_path, "w") as z:
         "-----BEGIN CERTIFICATE-----\nFAKE_BUT_REAL_BYTES\n-----END CERTIFICATE-----\n",
     )
     z.writestr("assets/top_level.txt", "hello from a top-level asset\n")
-    # Real APKs have plenty of non-assets/ entries -- must NOT be
+    # Real APKs have plenty of non-assets/ entries, must NOT be
     # extracted by extract_apk_assets().
     z.writestr("AndroidManifest.xml", "<manifest/>")
     z.writestr("classes.dex", b"\x00fake-dex-bytes")
     # Real Roblox APKs ship this exact path (lib/x86_64/libroblox.so,
-    # confirmed via `unzip -l` against the real APK) -- used by
+    # confirmed via `unzip -l` against the real APK), used by
     # extract_apk_native_library_test.
     z.writestr("lib/x86_64/libroblox.so", b"FAKE_ELF_BYTES_NOT_A_REAL_SHARED_OBJECT")
     z.writestr("lib/arm64-v8a/libroblox.so", b"WRONG_ABI_MUST_NOT_BE_EXTRACTED")
@@ -69,6 +69,6 @@ with zipfile.ZipFile(os.path.join(base_dir, "toy_bundle.xapk"), "w") as z:
     z.writestr("manifest.json", '{"package_name": "com.roblox.client"}')
     z.writestr("config.arm64_v8a.apk", arm_member)
     z.writestr("config.x86_64.apk", x86_member)
-    # Named after the package, the way an .xapk does it -- no "base.apk"
+    # Named after the package, the way an .xapk does it; no "base.apk"
     # anywhere in the archive.
     z.writestr("com.roblox.client.apk", base_member)

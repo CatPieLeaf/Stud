@@ -114,7 +114,7 @@ std::string default_shipped_bionic_directory() {
 
 // Real, XDG-scoped path for the generated DNS property area (see
 // property_area.h's own doc comment for the real, ground-truth-traced
-// mechanism this backs) -- same convention as stud-ipc's own launch
+// mechanism this backs), same convention as stud-ipc's own launch
 // socket path.
 std::string default_property_area_path() {
     if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
@@ -123,7 +123,7 @@ std::string default_property_area_path() {
     return "/tmp/stud-dns-property-area";
 }
 
-// Real, minimal /etc/resolv.conf parse -- just real "nameserver <ip>"
+// Real, minimal /etc/resolv.conf parse, just real "nameserver <ip>"
 // lines, in the real order they appear, up to the two real properties
 // (net.dns1/net.dns2) this project currently has any use for. No other
 // resolv.conf directive (search/options/etc.) matters for this.
@@ -142,13 +142,13 @@ std::vector<std::string> real_host_nameservers() {
 }
 
 // Real, best-effort generation of the DNS property area from the host's
-// own real resolver config -- see property_area.h's own doc comment for
+// own real resolver config; see property_area.h's own doc comment for
 // why this exists (real, live-traced: bionic's DNS resolver reads
 // net.dns1/net.dns2 via __system_property_get(), not /etc/resolv.conf
-// as a plain text file, so bind-mounting resolv.conf alone -- real and
-// still worth doing, see build_process_b_argv() -- isn't sufficient by
+// as a plain text file, so bind-mounting resolv.conf alone; real and
+// still worth doing, see build_process_b_argv(), isn't sufficient by
 // itself). Returns false (and leaves no stale file behind) if the host
-// has no real nameservers configured, or the file couldn't be written --
+// has no real nameservers configured, or the file couldn't be written,
 // honest degradation, matching every other "optional host file" pattern
 // in this file, not a hard failure.
 bool generate_property_area_if_possible() {
@@ -181,7 +181,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
                                                const std::string& linker64_path) {
     // Real bionic linker64's own hardcoded namespace-fallback search order
     // (confirmed via a live syscall trace against the actual extracted binary, not
-    // assumed from AOSP source of an unconfirmed vintage -- see
+    // assumed from AOSP source of an unconfirmed vintage; see
     // docs/bionic-process-b.md): with no /system/etc/ld.config.txt present,
     // it tries /system/lib64, /odm/lib64, /vendor_extra/lib64, /vendor/
     // lib64 in that order for every needed library. Only /system/lib64
@@ -195,23 +195,23 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // host devtmfs): a real syscall trace of a full, working run showed
     // Process B itself (the real bionic linker64 process specifically,
     // isolated from Process C/stud-render-host's own, separate, much
-    // larger real GPU device access -- confirmed live: 155 real
+    // larger real GPU device access, confirmed live: 155 real
     // /dev/nvidia*+/dev/dri/* opens all came from render-host's own
     // PID, zero from Process B's) only ever touches /dev/urandom and
-    // /dev/pmsg0 -- it never touches the GPU directly at all, exactly
+    // /dev/pmsg0. It never touches the GPU directly at all, exactly
     // matching this project's own real architecture goal (the vendor
     // driver never runs inside a process sharing bionic/foreign TLS).
     // `--dev /dev` (bwrap's own synthetic minimal /dev: null/zero/full/
     // random/urandom/tty/ptmx/pts/shm) covers /dev/urandom for free and,
     // critically, stays a real bwrap-managed tmpfs rather than a live
-    // bind of the actual host devtmfs -- which is what makes a new
+    // bind of the actual host devtmfs, which is what makes a new
     // synthetic entry (the DNS property area bound in below) creatable
     // under it at all (a real, live-caught blocker with the old
     // --dev-bind /dev /dev: "Permission denied" trying to create a new
     // mount point under the real, root-owned host devtmfs). /dev/pmsg0
     // (a real Android pstore/persistent-log device, not part of bwrap's
     // synthetic set, and not present on this non-Android host at all)
-    // is bound best-effort via --dev-bind-try -- real, tolerates
+    // is bound best-effort via --dev-bind-try; real, tolerates
     // absence, matching every other optional-host-path pattern in this
     // file.
     argv_storage.push_back("--dev");
@@ -223,7 +223,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back("/proc");
 
     // Real /sys, read-only. The sandbox root is a --tmpfs, so /sys did
-    // not exist inside it at all -- and that is how many CPUs the engine
+    // not exist inside it at all, and that is how many CPUs the engine
     // thinks this machine has. Android's own CPU detection reads
     // /sys/devices/system/cpu/{possible,present,online}; with none of
     // them readable the count comes back as 1, and the engine sizes its
@@ -238,7 +238,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // (`stepDataModelJob: No DM yet` forever) and no NetworkClient was
     // ever created.
     //
-    // Read-only, and it grants no device access -- that lives in /dev,
+    // Read-only, and it grants no device access; that lives in /dev,
     // which stays a synthetic bwrap tmpfs above, so the "vendor GPU
     // driver never runs inside Process B" constraint is untouched.
     argv_storage.push_back("--ro-bind-try");
@@ -251,7 +251,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // It used to be `--bind bionic_lib_dir /system/lib64`, and the
     // overlay below then created its own mount points inside that bind.
     // Creating a mount point is a write, so that only ever worked
-    // because the bionic directory happened to be one this user owns --
+    // because the bionic directory happened to be one this user owns:
     // true of a build tree, false of an installed package, where it is
     // root-owned and the sandbox's uid 0 is this unprivileged user. The
     // real symptom was `bwrap: Can't create file /system/lib64/
@@ -260,13 +260,13 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     //
     // A tmpfs is writable regardless of who owns what on the host, so
     // this works the same from a build tree, an rpm, a deb or an
-    // AppImage -- and every real library under it is now read-only,
+    // AppImage, and every real library under it is now read-only,
     // which the whole-directory bind was not.
     argv_storage.push_back("--tmpfs");
     argv_storage.push_back("/system/lib64");
 
     // The overlay's own names win, so they are bound instead of (not on
-    // top of) the bionic file of the same name -- one mount per
+    // top of) the bionic file of the same name, one mount per
     // destination, rather than relying on mount stacking order.
     std::set<std::string> overlay_names;
     const std::string overlay_lib64_dir =
@@ -298,7 +298,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // Real bionic tzdata lookup path, confirmed via strings in the
     // extracted libc.so itself (__bionic_open_tzdata_path): tries
     // /apex/com.android.tzdata/etc/tz/tzdata first, then falls back to
-    // this path -- no /apex in this sandbox, so this is the one that
+    // this path. No /apex in this sandbox, so this is the one that
     // must resolve. Needed for anything touching java.util.TimeZone-
     // adjacent native code; its absence was a real, confirmed crash
     // cause earlier in this project's history.
@@ -311,7 +311,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // Process B's own build output (libEGL.so/libGLESv2.so render-client
     // stubs, libandroid.so/libmediandk.so android-glue implementations,
     // and the empty libOpenSLES.so/libOpenMAXAL.so/libnativewindow.so
-    // dead-link stand-ins -- see process-b/CMakeLists.txt's own doc
+    // dead-link stand-ins; see process-b/CMakeLists.txt's own doc
     // comments) lives in a lib64/ directory sibling to executable_path,
     // and must overlay bionic_lib_dir's /system/lib64 bind above (real
     // bionic's linker64 checks /system/lib64 first in its fallback
@@ -328,7 +328,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
                 //
                 // Real, live-caught bug: libvulkan.so.1's extension is
                 // ".1", so it was the one file in this directory the
-                // overlay silently skipped -- Stud's real Vulkan library
+                // overlay silently skipped; Stud's real Vulkan library
                 // was never bound into the sandbox at all. What the
                 // engine found instead was the ZERO-BYTE libvulkan.so.1
                 // that ships in the bionic lib dir, so dlopen failed with
@@ -349,7 +349,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     }
 
     // The executable itself and its containing directory, made visible at
-    // the identical absolute path inside the sandbox as outside it --
+    // the identical absolute path inside the sandbox as outside it,
     // same transparent-passthrough convention as extra_binds below, so
     // relative/logged paths mean the same thing on both sides.
     {
@@ -362,20 +362,20 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     }
 
     // Real, live-caught gap: this sandbox's root is `--tmpfs /`, so
-    // /etc/resolv.conf genuinely doesn't exist inside it at all --
+    // /etc/resolv.conf genuinely doesn't exist inside it at all,
     // confirmed via a real syscall trace capture showing bionic's own DNS
     // resolver worker connect()ing to a broken 0.0.0.0 "nameserver"
     // (its real fallback when it can't find real resolver config) and
     // exiting immediately, and separately trying to open
     // "/system/etc/hosts" (bionic's own real hosts-file search path,
     // distinct from glibc's /etc/hosts) and getting ENOENT. This means
-    // ANY real hostname libroblox.so's own engine needs to resolve --
+    // ANY real hostname libroblox.so's own engine needs to resolve,
     // very plausibly including whatever a real game-server join
-    // ultimately connects to -- fails silently at the DNS layer before
+    // ultimately connects to, fails silently at the DNS layer before
     // a single real outbound connection is ever attempted. `--ro-bind`
     // on a symlink source (this host's own /etc/resolv.conf is a real
     // systemd-resolved stub symlink) binds the resolved real file's
-    // content, not a dangling symlink -- transparent regardless of the
+    // content, not a dangling symlink, transparent regardless of the
     // host's own resolver setup. Best-effort: a host without one of
     // these files just doesn't get that specific bind, not a hard
     // failure (matches this project's own established pattern for
@@ -395,12 +395,12 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // any real CA certificate store at all. Process A's own HTTP fetches
     // (ClientSettings, PlaceLauncher, authenticated-user identity) all
     // run in glibc Process A, outside this sandbox entirely, and were
-    // never evidence that Roblox's own native code -- running inside
+    // never evidence that Roblox's own native code, running inside
     // Process B, doing its own real internal networking (the
     // `StartupController`/BrowserTrackerId async task documented at
-    // length in this file's own gap #1) -- can complete a real TLS
+    // length in this file's own gap #1), can complete a real TLS
     // handshake at all. A missing trust store is exactly the kind of
-    // failure that wouldn't show up as an obvious crash or error log --
+    // failure that wouldn't show up as an obvious crash or error log,
     // BoringSSL/OpenSSL-style TLS libraries generally just fail (or
     // hang, depending on retry logic) the handshake silently from the
     // caller's perspective. `SSL_CERT_FILE` is the real, standard env
@@ -427,7 +427,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // can't have new mount points created under it without real
     // privileges). Fixed by switching /dev itself to bwrap's own
     // synthetic --dev above (see that block's own doc comment for the
-    // real a live syscall trace evidence backing the switch) -- /dev stays a real
+    // real a live syscall trace evidence backing the switch), /dev stays a real
     // bwrap-managed tmpfs now, so a new synthetic entry under it can be
     // created normally.
     if (fs::exists(default_property_area_path())) {
@@ -447,7 +447,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back(config.working_directory);
     }
 
-    // Real, live-caught, fixed (not configurable) requirement -- not an
+    // Real, live-caught, fixed (not configurable) requirement, not an
     // optional diagnostic like config.extra_env below. traced in the engine
     // (symbol resolution against the real, unstripped extracted libc.so
     // resolved the exact crash site by name): a real SIGFPE
@@ -458,11 +458,11 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // own code (see the engineering notes gap #1): when creating a new
     // resolver-cache entry, it reads real env var ANDROID_DNS_MODE, and
     // ONLY allocates a real, nonzero-sized entry pool
-    // (`calloc(0x50, 0x280)`, 640 entries -- real Android's own actual
+    // (`calloc(0x50, 0x280)`, 640 entries; real Android's own actual
     // cache size) if it's exactly "local"; any other value (including
     // unset, this sandbox's real prior state) allocates a **zero-entry**
     // pool (`calloc(0x50, 0)`) instead, and the real cache-lookup code
-    // then divides by that pool size somewhere inside _cache_lookup_p --
+    // then divides by that pool size somewhere inside _cache_lookup_p:
     // a real, silent zero-size allocation "succeeding" (calloc(x, 0) is
     // valid, non-null) followed by a real crash the first time it's used
     // is exactly the kind of failure this project's "live-test
@@ -474,7 +474,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back("ANDROID_DNS_MODE");
     argv_storage.push_back("local");
 
-    // See the real CA-bundle bind above -- SSL_CERT_FILE is the real,
+    // See the real CA-bundle bind above, SSL_CERT_FILE is the real,
     // standard OpenSSL/BoringSSL env var for this, set unconditionally
     // when a real bundle was found and bound.
     if (!real_ca_bundle_path.empty()) {
@@ -498,8 +498,8 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     }
     // Real, live-caught, real root cause of the DNS property-area fix
     // (see property_area.h's own doc comment): bionic's own real
-    // prop_area::map_fd_ro() -- confirmed via this project's own
-    // reading of the actual extracted libc.so -- requires the mapped
+    // prop_area::map_fd_ro(), confirmed via this project's own
+    // reading of the actual extracted libc.so, requires the mapped
     // file's real st_uid/st_gid to both be 0 (real Android's own
     // security model: only privileged system processes are meant to
     // write property files). Confirmed live: __system_properties_init()
@@ -509,7 +509,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // and rootless Docker use) fixes this WITHOUT any real host
     // privilege escalation: a new user namespace can remap the real,
     // unprivileged calling uid to appear as uid/gid 0 *only inside that
-    // namespace's own view* -- Process B still has zero real capabilities
+    // namespace's own view*. Process B still has zero real capabilities
     // on the host, this only changes what stat() reports for files it
     // already, really owns. Not yet live-verified past this point; see
     // this project's own the engineering notes for the real, honest caveat about
@@ -527,19 +527,19 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // process", same as a magnet link doesn't need its torrent client's
     // launcher to stay open). As long as stud-ui exited promptly right
     // after this posix_spawn() (the correct, intended behavior, and the
-    // ACTUAL behavior once a separate real bug -- QApplication::quit()
-    // being a no-op before app.exec() started -- got fixed), this flag
+    // ACTUAL behavior once a separate real bug, QApplication::quit()
+    // being a no-op before app.exec() started, got fixed), this flag
     // made bwrap kill Process B the moment its immediate parent (stud-ui)
     // exited, seconds into every real launch, before it ever printed a
     // single line. Silently masked for a long time by the other bug
     // (stud-ui never actually exiting kept Process B's parent alive by
     // accident); surfaced immediately, live, the moment that bug was
     // fixed. Process B is meant to run fully independently of Process A's
-    // lifetime -- no die-with-parent semantics belong here at all.
+    // lifetime. No die-with-parent semantics belong here at all.
 
     // Invoke linker64 directly as the loader helper (its own documented
     // "linker64 PROGRAM [ARGS]" mode), rather than relying on the
-    // kernel's own PT_INTERP-driven exec of executable_path -- verified
+    // kernel's own PT_INTERP-driven exec of executable_path, verified
     // end-to-end this way (real "hello from bionic" output, exit 0)
     // during Phase 1 bring-up; doesn't require executable_path's own
     // PT_INTERP string to resolve to any particular path.
@@ -552,11 +552,11 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // Real, direct follow-up once net.dns1/net.dns2 (the property-area
     // approach above) were confirmed absent from this libc.so's actual
     // resolver code (see the engineering notes gap #1): threads the same real host
-    // nameservers into Process B's own real argv (not a bwrap flag --
-    // this must come after config.args, in Process B's own command
+    // nameservers into Process B's own real argv (not a bwrap flag.
+    // This must come after config.args, in Process B's own command
     // line) so its bootstrap can call the real, exported
     // _resolv_set_nameservers_for_net directly. Kept additive alongside
-    // the property-area bind above rather than replacing it -- property
+    // the property-area bind above rather than replacing it, property
     // propagation may still matter for other, unrelated
     // __system_property_get() callers even though it didn't pan out for
     // DNS specifically.
@@ -587,7 +587,7 @@ pid_t launch_process_b(const ProcessBConfig& config) {
                                   config.executable_path);
     }
 
-    // Best-effort -- see generate_property_area_if_possible()'s own
+    // Best-effort; see generate_property_area_if_possible()'s own
     // doc comment. A failure here just means build_process_b_argv()
     // won't find the file to bind (it checks fs::exists itself), same
     // honest degradation as a host with no real /etc/hosts.

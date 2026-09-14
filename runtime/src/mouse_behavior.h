@@ -11,7 +11,7 @@ namespace stud::runtime {
 // it is rotating the view, and the engine then PINS its own cursor and
 // ignores every position it is given. Over an in-game UI that never
 // happens and the engine follows the positions instead. The two look
-// identical from outside -- same button, same motion -- so a cursor rule
+// identical from outside, same button, same motion, so a cursor rule
 // that cannot tell them apart is wrong for one of them, always: freezing
 // the cursor pins it on a UI, and letting it follow makes it jump at the
 // end of a rotation. Every attempt at a heuristic (travel, speed, flick)
@@ -29,9 +29,9 @@ namespace stud::runtime {
 // nothing about LockCurrentPosition, which is the case that matters.
 //
 // This reads the same field, and finds it the same way the engine's own
-// code does: by DECODING that exported function at startup -- the
+// code does: by DECODING that exported function at startup, the
 // getter's address and argument, the guard object it takes, and the two
-// field displacements -- out of whichever libroblox.so is actually
+// field displacements, out of whichever libroblox.so is actually
 // loaded. Nothing here is a constant taken from one build; if
 // the function's shape changes, the decode fails, the probe reports
 // "unknown", and the caller falls back to its own behaviour. That is the

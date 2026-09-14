@@ -9,8 +9,8 @@ namespace stud::ui {
 // Hand a deep link to a Stud that is already playing.
 //
 // Clicking a game in a browser starts a SECOND stud-ui. That process
-// cannot talk to the engine -- it is a fresh process, and Process B runs
-// inside its own bwrap sandbox -- but it can reach render-host over the
+// cannot talk to the engine. It is a fresh process, and Process B runs
+// inside its own bwrap sandbox, but it can reach render-host over the
 // same socket Process B is already using. So the link is left there and
 // Process B collects it.
 //

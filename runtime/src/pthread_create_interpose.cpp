@@ -1,18 +1,18 @@
 // Real, confirmed-live gap (this session): trap_recovery.h's abort/trap
 // protection was only ever armed around ONE specific call (the main
-// thread's JNI_OnLoad invocation) -- any background thread Roblox's own
+// thread's JNI_OnLoad invocation), any background thread Roblox's own
 // code spawns (confirmed live: a real, named "RBX Worker A" thread hit
 // an unrecovered SIGTRAP/int3, killing the whole process, with none of
 // the main thread's own recovery machinery ever engaged for it) gets no
 // protection at all.
 //
-// Fix: interpose pthread_create at the ELF symbol level -- a real,
+// Fix: interpose pthread_create at the ELF symbol level, a real,
 // exported `pthread_create` symbol in this executable's own global
 // scope takes priority over real bionic libc.so's own definition for
 // every call any loaded library (including libroblox.so) makes,
 // standard ELF symbol resolution behavior on bionic same as glibc.
 // Every new thread's entire body runs inside call_trapping_abort()'s
-// own sigsetjmp/trap bracket -- if it hits an abort()/int3/stack-guard-
+// own sigsetjmp/trap bracket, if it hits an abort()/int3/stack-guard-
 // fault anywhere during its run, that ONE thread exits cleanly instead
 // of taking the whole process down with it, exactly mirroring the
 // protection the main thread's JNI_OnLoad call already has.
@@ -41,7 +41,7 @@ void* stud_thread_trampoline(void* raw) {
     // GameActivity_initializeNativeCode() spawns an internal "app
     // thread" to run its native code on, and that thread later calls
     // ALooper_release() on ALooper_forThread()'s result without ever
-    // calling ALooper_prepare() on itself first -- looper.cpp's own
+    // calling ALooper_prepare() on itself first, looper.cpp's own
     // t_looper is thread_local, so that call sees a null looper and
     // crashes dereferencing looper->ref_count (confirmed live: fault
     // address 0x4 exactly matches ALooper::ref_count's real struct
@@ -56,7 +56,7 @@ void* stud_thread_trampoline(void* raw) {
     // initializeNativeCode returns NULL" fix / follow-up crash inside a
     // libroblox.so-spawned thread): now that the ALooper fix above lets
     // real engine callbacks actually fire for the first time, threads
-    // libroblox.so spawns itself make real JNI calls -- but were never
+    // libroblox.so spawns itself make real JNI calls, but were never
     // attached to the JVM first (every other Stud-spawned background
     // thread in this codebase already does this: engine_v2_bridge.cpp's
     // run_bounded_v2_call(), game_engine_boot.cpp's bounded lifecycle
@@ -73,16 +73,16 @@ void* stud_thread_trampoline(void* raw) {
     // describes (the engineering notes, "fix the landing pad crash"): this
     // used the strict call_trapping_abort() (recoverable only for a
     // stack-overflow-shaped or near-null fault), so a genuinely wild-
-    // shaped SIGSEGV on any Roblox-spawned background thread -- e.g. the
+    // shaped SIGSEGV on any Roblox-spawned background thread, e.g. the
     // real, evidence-confirmed (unwind tables plus the engine's own code) C++ exception-
     // unwind landing pad this project spent significant effort root-
-    // causing -- always took the whole process down with it, even though
+    // causing, always took the whole process down with it, even though
     // Roblox's own internal worker threads are numerous and this
     // project's own already-established reasoning elsewhere in this file
     // applies equally here: a real device survives losing one internal
     // worker thread; it does not survive this process dying outright.
     // Using the wild-tolerant variant here (not at some narrower,
-    // address-specific call site -- there isn't one to hang this on,
+    // address-specific call site, there isn't one to hang this on,
     // since Roblox's own internal task-queue dispatch is what spawns
     // this thread and calls into whatever code faults, not any call Stud
     // itself makes) is a deliberate, one-time architectural choice for

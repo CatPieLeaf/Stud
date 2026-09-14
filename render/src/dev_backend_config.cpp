@@ -11,14 +11,14 @@
 #include <vector>
 
 // For M8: the Qt settings UI's graphics-backend dropdown (prototype-only,
-// alongside the real "OpenGL / Vulkan" mode picker -- NOT the same
+// alongside the real "OpenGL / Vulkan" mode picker, NOT the same
 // control) should read/write exactly the "devRenderBackend" JSON key this
-// file loads, in Stud's normal ~/.config/stud/config.json -- three options
+// file loads, in Stud's normal ~/.config/stud/config.json, three options
 // ("Prebuilt ANGLE", "Stud's own build", "Zink (experimental)") map onto
 // {"mode":"angle","eglPath":...,"glesPath":...} for the first two (the UI
 // just changes which path pair it writes) and {"mode":"zink"} for the
 // third. Delete this whole dropdown (and this module) before any public
-// release build -- same removal marker as the Zink decision itself in
+// release build, same removal marker as the Zink decision itself in
 // the engineering notes.
 
 namespace stud::render {
@@ -62,7 +62,7 @@ std::optional<DevRenderBackendConfig> load_dev_render_backend_config(const std::
         // all on the hardware this setting exists for, and where Vulkan
         // does work ANGLE was measured to do the same frame at a third of
         // the CPU. An existing config that still names it is not an error
-        // -- it just means the default now.
+        // it just means the default now.
         result.mode = DevRenderBackendMode::kAngleVulkan;
     } else {
         throw std::runtime_error("stud: config '" + path +
@@ -74,7 +74,7 @@ std::optional<DevRenderBackendConfig> load_dev_render_backend_config(const std::
 }
 
 namespace {
-// Mirrors stud-config's own make_directories() -- this module doesn't
+// Mirrors stud-config's own make_directories(); this module doesn't
 // link stud-config (would be a real, unwanted cross-module dependency
 // just for one helper), so a small local copy is the cleaner call than
 // introducing that link for four lines of mkdir -p logic.
@@ -108,7 +108,7 @@ void save_dev_render_backend_config(const std::string& path, const DevRenderBack
                     doc = existing_doc;
                 }
             } catch (const nlohmann::json::parse_error&) {
-                // Fall through with a fresh object -- an unrelated malformed
+                // Fall through with a fresh object, an unrelated malformed
                 // file shouldn't block saving this setting.
             }
         }
@@ -119,7 +119,7 @@ void save_dev_render_backend_config(const std::string& path, const DevRenderBack
                                 ? "angle-swiftshader"
                                 : "angle";
     // The mode, and nothing else. Any eglPath/glesPath an older build
-    // left behind is dropped here rather than carried forward -- that is
+    // left behind is dropped here rather than carried forward; that is
     // what repairs a config poisoned by an AppImage's own temporary
     // mount path, without asking the user to know any of this.
     doc["devRenderBackend"] = {{"mode", mode_name}};
@@ -137,7 +137,7 @@ void save_dev_render_backend_config(const std::string& path, const DevRenderBack
 }
 
 ShippedAnglePaths shipped_angle_paths() {
-    // Stud's own ANGLE, always -- the one it was built and tested with,
+    // Stud's own ANGLE, always, the one it was built and tested with,
     // shipped beside its binaries. There is deliberately no way to point
     // it at another: the render path is Stud's, and a mismatched ANGLE is
     // a class of bug reported as Stud's without being Stud's.

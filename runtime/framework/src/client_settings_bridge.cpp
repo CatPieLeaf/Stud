@@ -76,7 +76,7 @@ ClientSettingsBridgeResult run_client_settings_bridge(FakeJni::Jvm& jvm,
             auto* post_fn = reinterpret_cast<PostInitFn>(post_addr);
             result.post_init_called = true;
             // Real bug found and fixed (the engineering notes): passing raw
-            // null here trapped -- a real device always passes a real
+            // null here trapped, a real device always passes a real
             // (possibly empty) List<ApplicationExitInfoCpp>
             // (the app's own exit-info list), never null. A real, empty
             // ArrayList (no fabricated ApplicationExitInfo content,

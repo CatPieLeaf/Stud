@@ -11,7 +11,7 @@ Terminal=false
 # already running cannot be brought forward when a game link is clicked:
 # Wayland lets no application raise itself, so the ONLY thing that can do
 # it is a token from the process the user acted in. The portal passes that
-# token to the handler it spawns in XDG_ACTIVATION_TOKEN -- but only when
+# token to the handler it spawns in XDG_ACTIVATION_TOKEN, but only when
 # the entry asks for startup notification. Live-caught: the link arrived
 # and the game joined, with the window still behind the browser.
 StartupNotify=true

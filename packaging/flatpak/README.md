@@ -37,7 +37,7 @@ convenience.
 `PLACEHOLDER_STUD_SHA256` is Stud's own release archive, and it is the
 only value CI fills in: that archive does not exist until the release it
 belongs to is published. Every dependency checksum is real and committed,
-because Flathub builds the manifest exactly as it stands in the tree -- a
+because Flathub builds the manifest exactly as it stands in the tree, a
 manifest that only works once CI has rewritten it is one they cannot
 build at all.
 
@@ -50,7 +50,7 @@ build rather than installing the wrong thing.
 None is requested. The APK is chosen through a `QFileDialog`, which Qt
 routes to the file chooser portal inside a sandbox; the portal returns a
 path under `/run/user/<uid>/doc/` that stays readable afterwards. Confirm
-that on the first real build -- pick an APK, relaunch, and check it is
+that on the first real build: pick an APK, relaunch, and check it is
 still readable. If it is not, the fix is `--filesystem=xdg-download:ro`,
 never a wider grant.
 

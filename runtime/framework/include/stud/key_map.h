@@ -4,8 +4,8 @@
 //
 // Two questions, and they have different answers: which Android key code
 // this is (KEYCODE_SLASH), and which character it types ("/"). Wayland
-// reports only an evdev scan code -- the same thing real Android reports
-// as KeyEvent.getScanCode() -- plus, from the compositor's own keymap, the
+// reports only an evdev scan code, the same thing real Android reports
+// as KeyEvent.getScanCode(): plus, from the compositor's own keymap, the
 // keysym and code point that scan code actually produces on the layout the
 // user really has.
 //
@@ -102,7 +102,7 @@ inline std::int32_t android_key_code_for_scan_code(uint32_t scan) {
         // A Brazilian ABNT2 keyboard has a dedicated "/" key that is not
         // on the numpad, and the kernel reports it as KEY_KPSLASH. The
         // xkb layout data says ABNT2's slash is <AB11> (evdev 89), which
-        // describes a DIFFERENT physical key -- so a previous pass
+        // describes a DIFFERENT physical key, so a previous pass
         // "corrected" this to KEYCODE_NUMPAD_DIVIDE on the strength of
         // that data and broke the key it was trying to fix. A real run on
         // a real ABNT2 keyboard settles it:
@@ -110,7 +110,7 @@ inline std::int32_t android_key_code_for_scan_code(uint32_t scan) {
         //   input bridge: nativePassKeyEvent path active
         //       (scan=98 keycode=154 unicode=47)
         //
-        // -- evdev 98, typing "/" (U+002F). Evdev 89 is handled too, via
+        // evdev 98, typing "/" (U+002F). Evdev 89 is handled too, via
         // the keymap, for the keyboards that do report it.
         //
         // The cost is that a real numpad divide also reports as a slash.
@@ -134,7 +134,7 @@ inline std::int32_t android_key_code_for_scan_code(uint32_t scan) {
         case 82: return 144;   // KP0 -> KEYCODE_NUMPAD_0
         // Deliberately absent: evdev 89 (<AB11>), the extra key some
         // layouts have. It types "/" on one and "\\" on another, so there
-        // is no correct positional answer -- it has to come from the
+        // is no correct positional answer. It has to come from the
         // keymap, which is what android_key_code_for_event() is for.
         default: return 0;
     }
@@ -144,7 +144,7 @@ inline std::int32_t android_key_code_for_scan_code(uint32_t scan) {
 //
 // The table above is positional, so it can only ever describe one layout,
 // and it describes a US one. A Brazilian ABNT2 keyboard puts "/" on evdev
-// 89 -- a key US layouts do not have -- so the table returns 0, the engine
+// 89, a key US layouts do not have, so the table returns 0, the engine
 // receives keycode 0, and the "/" the engine's own on-screen hint offers
 // for search does nothing at all. The same is true of every key any
 // non-US layout moves.
@@ -162,7 +162,7 @@ inline std::int32_t android_key_code_for_keysym(uint32_t keysym) {
     if (keysym >= 'A' && keysym <= 'Z') return static_cast<std::int32_t>(29 + (keysym - 'A'));
     if (keysym >= '0' && keysym <= '9') return static_cast<std::int32_t>(7 + (keysym - '0'));
     switch (keysym) {
-        case '/': return 76;    // KEYCODE_SLASH -- the one this exists for
+        case '/': return 76;    // KEYCODE_SLASH, the one this exists for
         case '?': return 76;    // its shifted level, same physical key
         case ',': return 55;    // KEYCODE_COMMA
         case '.': return 56;    // KEYCODE_PERIOD
@@ -192,7 +192,7 @@ inline std::int32_t android_key_code_for_keysym(uint32_t keysym) {
 // evdev 89 "RO"), and the layout only decides the character afterwards.
 // Follow that and a Brazilian ABNT2 keyboard reports KEYCODE_RO for the
 // key its own keycap prints "/" on, and the engine's own offer of "/" to
-// search can never be taken -- which is exactly the behaviour this
+// search can never be taken, which is exactly the behaviour this
 // replaces. Worse, the positional table would keep insisting that ABNT2's
 // evdev 53 is a slash when that key really types ";".
 //
@@ -200,8 +200,8 @@ inline std::int32_t android_key_code_for_keysym(uint32_t keysym) {
 // names, which is also how Roblox behaves on Windows. So the keymap wins
 // wherever it has an answer.
 //
-// Everything the keysym table does not cover -- function and arrow keys,
-// modifiers, the numpad (KP_Divide is not "/"), dead keys, AltGr output --
+// Everything the keysym table does not cover, function and arrow keys,
+// modifiers, the numpad (KP_Divide is not "/"), dead keys, AltGr output,
 // falls through to the positional table untouched, so no mapping that
 // already worked changes. Letters and digits resolve identically either
 // way on any layout that keeps them where US does.
@@ -215,7 +215,7 @@ inline std::int32_t android_key_code_for_event(uint32_t scan_code, uint32_t keys
 
 // One code point as UTF-8. The engine takes a real string, and a
 // Portuguese speaker's own keyboard produces plenty that does not fit in
-// a byte -- "ç", every accented vowel.
+// a byte, "ç", every accented vowel.
 inline std::string utf8_from_codepoint(uint32_t cp) {
     std::string out;
     if (cp == 0) return out;
@@ -241,7 +241,7 @@ inline std::string utf8_from_codepoint(uint32_t cp) {
 //
 // Returns false when there is no keymap answer at all, which is the
 // caller's cue to fall back to its own layout table. Returns true with
-// `out` set to what to type -- and that may legitimately be EMPTY: a dead
+// `out` set to what to type, and that may legitimately be EMPTY: a dead
 // key mid-sequence types nothing, and the character arrives with the key
 // that completes the sequence.
 //
@@ -271,14 +271,14 @@ inline bool text_from_keymap(uint32_t keysym, uint32_t codepoint, const char* co
 }
 
 // Real evdev scan code -> the character it produces, unshifted and
-// shifted, for a US layout -- the FALLBACK only.
+// shifted, for a US layout, the FALLBACK only.
 //
 // The compositor hands over its own keymap and android-glue resolves the
 // real character from it (HostInputEvent::codepoint), so this is reached
 // only where there is no keymap to read: the X11 backend, and the moment
 // before wl_keyboard.keymap arrives. It describes a US layout and cannot
 // describe any other, which is exactly why it is no longer the primary
-// answer -- on a Brazilian ABNT2 keyboard it claims evdev 53 types "/"
+// answer, on a Brazilian ABNT2 keyboard it claims evdev 53 types "/"
 // when it really types ";".
 //
 // Anything not listed produces no character (the key is still delivered
@@ -292,12 +292,12 @@ inline bool char_for_scan_code(uint32_t scan, bool shift, char* out) {
         *out = ' ';
         return true;
     }
-    // The keypad, which this table never covered -- every one of these
+    // The keypad, which this table never covered; every one of these
     // reached the engine as character 0.
     //
     // 98 is KEY_KPSLASH, and it is not only the numpad: a Brazilian ABNT2
-    // keyboard's own "/ ?" key -- the ordinary one beside the right shift,
-    // not a numpad at all -- is reported by the kernel as KPSLASH too.
+    // keyboard's own "/ ?" key, the ordinary one beside the right shift,
+    // not a numpad at all, is reported by the kernel as KPSLASH too.
     // Live-caught: pressing "/" on such a keyboard produced scan=98,
     // keycode=0, unicode=0, and Roblox cannot open chat on a key it was
     // never told about.
@@ -375,7 +375,7 @@ inline bool is_keypad_scan_code(uint32_t scan) {
 // open chat on that than on any other key nobody bound.
 //
 // Only ever moves a key to the position that types the same character, so
-// a US keyboard is unaffected -- every one of its keys already sits where
+// a US keyboard is unaffected. Every one of its keys already sits where
 // the character says.
 inline uint32_t engine_scan_code_for_event(uint32_t reported_scan, const std::string& typed_text) {
     // Nothing typed (a dead key, a function key, a modifier) means there

@@ -71,7 +71,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // Real, exact order from the app's own settings bootstrap (the engineering notes,
     // "instantiate controllers" investigation): exception-reason
     // filename first, then base URL/channel/platform name, then cache/
-    // files directories, then FastLog init, then Roblox version --
+    // files directories, then FastLog init, then Roblox version,
     // matched exactly here rather than an arbitrary order, since the bootstrap's
     // own real callers depend on this sequence (e.g. its directory
     // calls explicitly null-check that field first, gated on running after
@@ -87,11 +87,11 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     clear_pending_jni_exception(jni_env, "nativeSetExceptionReasonFilename");
 
     // Real, optional, called first when a real files directory is
-    // configured -- matches try_bootstrap.cpp's own established probe
+    // configured, matches try_bootstrap.cpp's own established probe
     // ordering ("nativeSetFilesDirectory, early"). Skipped (not just a
     // no-op empty-string call) when files_directory is empty, since an
     // empty path isn't a real directory Roblox's engine could actually
-    // write into -- callers without a real persistent directory yet get
+    // write into, callers without a real persistent directory yet get
     // the previous, unchanged behavior rather than a call that would
     // just fail silently on Roblox's own side.
     if (!config.files_directory.empty()) {
@@ -107,7 +107,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
 
     // Real gap closed (the engineering notes, "verify the 2D shell renders"
     // entry): a real device's RbxStorage subsystem needs this to
-    // initialize its local-storage layer at all -- confirmed via real
+    // initialize its local-storage layer at all, confirmed via real
     // FLog output ("Failed to get cache directory: Path does not exist:
     // \"\"") that omitting it isn't a silent no-op, it's a real,
     // observable failure blocking Roblox's own storage init.
@@ -156,14 +156,14 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // `nativeSetPreferencesFile(<preferences name>)` immediately after
     // nativeSetBaseDataDirectories above, and the app's own getter returns the plain
     // preferences NAME `"prefs"` (the app's own preferences helper -> `"prefs"`)
-    // -- not a path; the engine resolves it against the data directories
+    // not a path; the engine resolves it against the data directories
     // just set. Stud never called this.
     //
     // Why it matters (live-confirmed via the engine's own FLog, now
     // visible through Stud's logd sink): the engine logs
     // `initializeLuaApp_: ... cachedUserId:-1` and the Lua app's
     // PlatformAccountRouter therefore routes to the logged-out
-    // `Landing` screen -- `userDidLogin` only arrives ~0.8s LATER, well
+    // `Landing` screen, `userDidLogin` only arrives ~0.8s LATER, well
     // after routing already happened. On a real device the cached user
     // id is read back from this preferences store, written by a
     // previous run, so the router goes straight to `Home`. Without a
@@ -249,7 +249,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // is really in the engine's jar. `nativeGetCookiesForDomain` is a
     // real exported entry point that reads it straight back out.
     //
-    // Presence and length only -- never the value, which is a real
+    // Presence and length only, never the value, which is a real
     // credential.
     {
         const std::string jar = read_raw_cookie_jar(env, jni_env, lib, config.base_url);
@@ -257,7 +257,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
             std::printf("stud: nativeGetCookiesForDomain returned nothing for %s\n",
                         config.base_url.c_str());
         } else {
-            // Names only -- values are real credentials. The format is
+            // Names only, values are real credentials. The format is
             // tab-separated records, so the name is the second-to-last
             // field of each line.
             std::string names;

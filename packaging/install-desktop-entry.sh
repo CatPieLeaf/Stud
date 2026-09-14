@@ -3,7 +3,7 @@
 # ~/.local/share tree. Re-runnable; safe to run after every build.
 #
 # The icon has to land in the hicolor theme under the exact name the desktop
-# entry's Icon= key uses (the application id), at real sizes -- a bare Icon=stud with
+# entry's Icon= key uses (the application id), at real sizes, a bare Icon=stud with
 # nothing installed silently renders as no icon at all, which is what Stud
 # shipped with.
 set -euo pipefail
@@ -59,7 +59,7 @@ fi
 # Icon= is written as an ABSOLUTE PATH rather than the theme name "stud".
 # The themed name does resolve (verified with a real icon-theme lookup), but it
 # depends on every consumer picking up a newly-added user icon directory, and
-# an absolute path is what actually shows up reliably -- it is also what other
+# an absolute path is what actually shows up reliably; it is also what other
 # user-installed entries on this system do. The hicolor copies above are still
 # installed, because that is the correct thing for anything that does use the
 # theme.

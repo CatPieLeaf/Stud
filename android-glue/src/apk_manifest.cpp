@@ -1,7 +1,7 @@
 // Reads real metadata out of an APK's own compiled AndroidManifest.xml.
 //
 // Stud used to report a hardcoded "2.733.988" as the app version, in
-// seven separate places, to an engine binary that could be any build --
+// seven separate places, to an engine binary that could be any build,
 // exactly the kind of guessed-but-plausible value this project's own
 // rules forbid. The real version is sitting in the APK the user chose;
 // this reads it.
@@ -121,7 +121,7 @@ std::vector<uint8_t> read_manifest_bytes(const std::string& apk_path) {
 
 std::string apk_version_name(const std::string& apk_path) {
     // For a bundle, the manifest that carries the app's own version is
-    // the base module's -- the splits have their own, and they describe
+    // the base module's, the splits have their own, and they describe
     // the split, not the app.
     std::vector<std::string> sources;
     try {
@@ -154,7 +154,7 @@ std::string apk_version_name(const std::string& apk_path) {
                 pool_strings_start = read_u32(data.data() + at + 20);
             } else if (chunk_type == kChunkStartElement && pool_count != 0) {
                 // Element chunk body: ns(4) name(4) attributeStart(2)
-                // attributeSize(2) attributeCount(2) ... -- verified
+                // attributeSize(2) attributeCount(2) ..., verified
                 // against the real manifest of the configured build
                 // rather than assumed.
                 const uint16_t header_size = read_u16(data.data() + at + 2);

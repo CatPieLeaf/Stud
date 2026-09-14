@@ -10,7 +10,7 @@
 pkgname=stud
 pkgver=1.1.0
 pkgrel=1
-pkgdesc="Play Roblox on Linux -- runs the real, unmodified Roblox Android app"
+pkgdesc="Play Roblox on Linux, runs the real, unmodified Roblox Android app"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
 license=('AGPL-3.0-or-later')
@@ -38,11 +38,11 @@ optdepends=(
 options=(!strip !debug emptydirs)
 
 package() {
-  # Stripping a bionic ELF or ANGLE is neither useful nor safe -- the same
+  # Stripping a bionic ELF or ANGLE is neither useful nor safe, the same
   # reason the rpm turns it off.
   cp -a "${STUD_DESTDIR:?set STUD_DESTDIR to the install tree}"/. "$pkgdir"/
 
-  # Arch does not use /usr/libexec -- a package's own executables belong
+  # Arch does not use /usr/libexec, a package's own executables belong
   # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
   # misplaced (12 errors on this package before this moved). stud-ui
   # probes both layouts, so the binaries need no rebuild for this.

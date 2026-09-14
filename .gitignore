@@ -1,7 +1,7 @@
 # What a clone should NOT carry.
 #
 # Everything here is either regenerable, someone else's, or the user's
-# own. Nothing in this file is deleted from a working tree -- it is only
+# own. Nothing in this file is deleted from a working tree; it is only
 # kept out of the repository.
 
 # Build output. `build-*` covers the trees the packaging scripts make

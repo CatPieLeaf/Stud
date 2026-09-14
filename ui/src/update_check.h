@@ -8,7 +8,7 @@ namespace stud::ui {
 // Whether a newer Stud has been released, asked of GitHub once per run.
 //
 // One GET to the releases API, at startup, in the background. It sends
-// nothing about the machine or the user -- the request carries no
+// nothing about the machine or the user, the request carries no
 // identity, and the reply is one version string that is compared with
 // this build's own. A failure of any kind (offline, rate-limited,
 // unparseable) is silence: the check exists to be helpful, and an
@@ -23,8 +23,8 @@ public:
     static QString releasesUrl();
 
     // Starts the check. Safe to call more than once; the result is
-    // remembered for the life of the process, so the second caller --
-    // Settings, when the tray has already asked -- costs nothing.
+    // remembered for the life of the process, so the second caller,
+    // Settings, when the tray has already asked, costs nothing.
     static void start();
 
     // What the check found, for a window opened after it finished.

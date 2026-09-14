@@ -11,7 +11,7 @@
 // For ContextStub: DeviceUtilsStub::getScreenPhysicalSizeInMillimeters takes a
 // real android.content.Context, and FakeJni computes the JNI signature from
 // the C++ type, so the complete type is needed here (the header can only
-// forward-declare it -- game_activity_stubs.h includes that header).
+// forward-declare it, game_activity_stubs.h includes that header).
 #include "stud/game_activity_stubs.h"
 
 #include <jnivm/class.h>
@@ -63,7 +63,7 @@ constexpr int kStaticPublicMethod = FakeJni::JMethodID::PUBLIC | FakeJni::JMetho
 }  // namespace
 
 // android.os.Build's fields are all `public static final`. Registering them
-// without STATIC meant every real lookup missed -- live-caught during a game
+// without STATIC meant every real lookup missed, live-caught during a game
 // launch as `GetFieldID MISS class=android/os/Build static field=BOARD` (and
 // BOOTLOADER, BRAND, DEVICE, FINGERPRINT, HARDWARE, MANUFACTURER, MODEL,
 // PRODUCT, TAGS, USER), each followed by jnivm's own `GetField field is null`.
@@ -83,7 +83,7 @@ BEGIN_NATIVE_DESCRIPTOR(BuildStub)
 { FakeJni::Field<&BuildStub::USER>{}, "USER", kStaticPublicField },
 END_NATIVE_DESCRIPTOR
 
-// android.os.Build$VERSION's fields are `public static final` too -- the
+// android.os.Build$VERSION's fields are `public static final` too, the
 // same fix as BuildStub above, which was applied there and missed here.
 // Live-caught during a game launch as `GetFieldID MISS
 // class=android/os/Build$VERSION static field=SDK_INT sig=I`, repeatedly.
@@ -95,7 +95,7 @@ BEGIN_NATIVE_DESCRIPTOR(BuildVersionStub)
 { FakeJni::Field<&BuildVersionStub::CODENAME>{}, "CODENAME", kStaticPublicField },
 END_NATIVE_DESCRIPTOR
 
-// Also `public static` -- same live-caught miss during a game launch.
+// Also `public static`, same live-caught miss during a game launch.
 BEGIN_NATIVE_DESCRIPTOR(DebugStub)
 { FakeJni::Function<&DebugStub::isDebuggerConnected>{}, "isDebuggerConnected", kStaticPublicMethod },
 END_NATIVE_DESCRIPTOR
@@ -122,7 +122,7 @@ std::shared_ptr<PointStub> DeviceUtilsStub::getScreenPhysicalSizeInMillimeters(
     auto point = std::make_shared<PointStub>(to_mm(metrics->widthPixels, metrics->xdpi),
                                               to_mm(metrics->heightPixels, metrics->ydpi));
     // The panel does not change size. Said once, rather than once per
-    // call -- the engine asks on every renderer rebuild.
+    // call, the engine asks on every renderer rebuild.
     static bool announced_screen_mm = false;
     if (!announced_screen_mm) {
         announced_screen_mm = true;
@@ -299,7 +299,7 @@ std::shared_ptr<LooperStub> LooperStub::get_or_create_main_looper(FakeJni::Jvm& 
     if (!instance) {
         // Real Android semantics: the main Looper runs ON the real
         // process main thread, never a spawned worker (see this
-        // class's own header doc comment) -- deliberately does NOT
+        // class's own header doc comment), deliberately does NOT
         // call start() here. The real main thread drains it directly
         // via drain_pending() (see activity_thread.h).
         instance = std::make_shared<LooperStub>("main");
@@ -316,7 +316,7 @@ std::shared_ptr<LooperStub> LooperStub::myLooper() {
     // Real semantics: null unless the calling thread has its own
     // prepared Looper. No real caller of this codebase's own bring-up
     // was found relying on that distinction (see class-level comment on
-    // prepare()/loop()) -- returning the main looper is a safe,
+    // prepare()/loop()), returning the main looper is a safe,
     // documented simplification, not a silent lie about a case that
     // matters here.
     return getMainLooper();
@@ -387,13 +387,13 @@ std::shared_ptr<ClassLoaderStub> shared_class_loader() {
 // Real java.lang.String methods the engine actually calls, attached to
 // jnivm's own canonical String class rather than a competing stub of the
 // same name (that collision is exactly what killed the engine's own
-// designated thread twice before -- see ByteBuffer/ClassMeta).
+// designated thread twice before; see ByteBuffer/ClassMeta).
 //
 // Live-caught on the typing path, once per keystroke:
 //   STUD_DIAG GetMethodID MISS class=`java/lang/String`
 //       method=`getBytes` sig=`(Ljava/lang/String;)[B`
 // The engine converts the text it is handed into bytes with
-// String.getBytes(charsetName) -- and jnivm ships no getBytes at all, so
+// String.getBytes(charsetName), and jnivm ships no getBytes at all, so
 // the lookup returned null and the text could never be read. Text
 // delivery was reaching the engine the whole time; this is where it was
 // being dropped.
@@ -429,7 +429,7 @@ void register_java_lang_string_methods(FakeJni::Jvm& jvm) {
             return to_bytes(e, self);
         });
     // The no-argument overload means "the platform default charset",
-    // which on Android is always UTF-8 -- the same answer.
+    // which on Android is always UTF-8, the same answer.
     java_lang_string->HookInstanceFunction(
         env, "getBytes",
         [to_bytes](jnivm::ENV* e, jnivm::Object* self) -> std::shared_ptr<FakeJni::JByteArray> {
@@ -438,7 +438,7 @@ void register_java_lang_string_methods(FakeJni::Jvm& jvm) {
 }
 
 void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
-    // jnivm's own canonical java/lang/Class object -- the real type
+    // jnivm's own canonical java/lang/Class object, the real type
     // GetObjectClass() returns. Attach the real getClassLoader() here
     // instead of declaring a competing stub class for the same name.
     auto* vm = jnivm::VM::FromJavaVM(&jvm);
@@ -447,7 +447,7 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
     if (env == nullptr) return;
     auto java_lang_class = jnivm::InternalFindClass(env, "java/lang/Class");
     if (!java_lang_class) return;
-    // HookInstanceFunction, not Hook -- the same trap that kept
+    // HookInstanceFunction, not Hook, the same trap that kept
     // WeakReference.get() missing (see its comment below): Hook() takes its
     // binding from Function<T>::type, which for a plain lambda is
     // FunctionType::None, so the method lands as STATIC and the engine's
@@ -455,7 +455,7 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
     //
     // First attempt at this was reverted because answering getClassLoader sends
     // the engine down its reflective loadClass path, which then resolves
-    // classes Stud did not have -- the app stopped short of Home and the idle
+    // classes Stud did not have, the app stopped short of Home and the idle
     // frame rate collapsed. Those classes are registered now
     // (PlatformSystemDialogHandlerStub, FacialAgeEstimationProtocolStub), so
     // the path has somewhere to land. If this ever regresses again, the symptom
@@ -466,7 +466,7 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
             return shared_class_loader();
         });
 
-    // java.lang.ref.WeakReference.get() -- jnivm has its own real
+    // java.lang.ref.WeakReference.get(), jnivm has its own real
     // `jnivm::Weak` registered under this exact class name (so a
     // competing stub would collide, per the ByteBuffer/Class lesson),
     // but it exposes no methods. Djinni's proxy cache calls get() on
@@ -477,7 +477,7 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
     if (weak_reference) {
         // HookInstanceFunction, not Hook: `Class::Hook` takes its binding
         // from `Function<T>::type`, which for a plain lambda is
-        // `FunctionType::None` -- so a lambda hooked with Hook() lands as
+        // `FunctionType::None`, so a lambda hooked with Hook() lands as
         // a STATIC method and an instance lookup never finds it. That is
         // exactly why `get()` stayed missing through two earlier attempts.
         // HookInstanceFunction forces `FunctionType::Instance`, and the
@@ -493,7 +493,7 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
         // `class=java/lang/ref/WeakReference method=<init>
         //  sig=(Ljava/lang/Object;)Ljava/lang/ref/WeakReference;`).
         // jnivm rewrites `<init>` into a static returning the class, so
-        // it is hooked in that shape -- a Class* first parameter.
+        // it is hooked in that shape, a Class* first parameter.
         weak_reference->Hook(
             env, "<init>",
             [](jnivm::ENV*, jnivm::Class*,
@@ -612,7 +612,7 @@ std::string read_sysfs_line(const char* path) {
 
 // The real machine's vendor and model, from DMI.
 //
-// android.os.Build.MANUFACTURER/MODEL stay "Stud" -- that is the honest
+// android.os.Build.MANUFACTURER/MODEL stay "Stud"; that is the honest
 // answer for the Android layer, which genuinely is not running on a
 // phone. But the User-Agent's device field describes the HARDWARE, and
 // Roblox uses it for real device analytics, so reporting the actual
@@ -624,13 +624,13 @@ std::string real_hardware_name() {
         std::string product = read_sysfs_line("/sys/devices/virtual/dmi/id/product_name");
         // "ASUSTeK COMPUTER INC." is how DMI spells a name humans write
         // as "ASUS", and the product string usually already carries the
-        // brand -- so prefer the product alone when it does.
+        // brand, so prefer the product alone when it does.
         if (product.empty()) return std::string();
         if (vendor.empty()) return product;
         // DMI vendor strings carry legal suffixes a device name never
         // would ("ASUSTeK COMPUTER INC."), so compare on the first word
         // and, when the product already leads with the brand, use the
-        // product alone -- which is what the app's device-info helper does on a device.
+        // product alone, which is what the app's device-info helper does on a device.
         std::string brand = vendor.substr(0, vendor.find(' '));
         // "ASUSTeK" vs the product's "ASUS": match on the shorter of the
         // two prefixes so a stylised vendor spelling still counts.
@@ -662,7 +662,7 @@ int real_total_memory_mb() {
 // MANUFACTURER + " " + MODEL, matching the model is not
 // repeated when it already starts with the manufacturer, and the first
 // letter is upper-cased. Both come from android.os.Build, which Stud
-// fills in from the real machine -- the User-Agent used to send the
+// fills in from the real machine, the User-Agent used to send the
 // literal string "Stud", which describes no device at all.
 std::string real_device_name() {
     // Prefer the real hardware; fall back to the Build values.
@@ -734,7 +734,7 @@ void set_real_display_output_geometry(int px_w, int px_h, int mm_w, int mm_h) {
     g_display_phys_mm_h = mm_h;
     const bool usable = px_w > 0 && px_h > 0 && mm_w > 0 && mm_h > 0;
     std::printf("stud: real display output: %dpx x %dpx, %dmm x %dmm%s\n", px_w, px_h, mm_w, mm_h,
-                usable ? "" : " (incomplete -- density-derived dpi used)");
+                usable ? "" : " (incomplete, density-derived dpi used)");
     std::fflush(stdout);
 }
 
@@ -756,7 +756,7 @@ std::shared_ptr<DisplayMetricsStub> ResourcesStub::getDisplayMetrics() {
     metrics->scaledDensity = g_display_density;
     // Real dots-per-inch, from the display's own physical size when the
     // compositor reported one. Note this is the whole OUTPUT's dpi, not
-    // the window's -- which is exactly right: dpi is a property of the
+    // the window's, which is exactly right: dpi is a property of the
     // panel, and a window occupying part of it has the same pixel pitch.
     // Falls back to the old density-derived synthesis only when the
     // compositor reported no physical size at all.

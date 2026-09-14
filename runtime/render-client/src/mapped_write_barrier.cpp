@@ -19,7 +19,7 @@ std::size_t page_size() {
 }
 
 // Fixed-capacity registry. A signal handler must not take a lock that
-// ordinary code could already hold, and must not allocate -- so this is
+// ordinary code could already hold, and must not allocate, so this is
 // a flat array of atomics scanned linearly. The engine keeps a handful
 // of mappings live at a time, so the scan is short.
 constexpr int kMaxBarriers = 256;
@@ -33,7 +33,7 @@ std::atomic<bool> g_installed{false};
 unsigned long long g_fault_count = 0;
 
 // Called by Stud's own trap handler before it classifies anything as a
-// crash -- see stud_set_write_fault_handler in trap_recovery.h for why
+// crash; see stud_set_write_fault_handler in trap_recovery.h for why
 // chaining sigaction from here is not enough.
 bool dispatch_write_fault(void* addr) {
     for (auto& slot : g_barriers) {
@@ -132,14 +132,14 @@ void MappedWriteBarrier::mark_all_clean_and_protect() {
     //
     // This used to mprotect() the whole allocation on every flush, and a
     // flush happens on every vkQueueSubmit. Measured in-game: ~22MB of
-    // mapped memory asked about per submit to send ~420KB -- a 47x
+    // mapped memory asked about per submit to send ~420KB, a 47x
     // overscan, 38.7GB scanned for 818MB transferred over one session.
     // At 4KB pages that is ~5,500 pages re-protected per submit, each
     // one a kernel VMA operation plus a TLB shootdown across every
     // thread, whether or not a single byte changed.
     //
-    // Clean pages are still protected from the last arm -- nothing wrote
-    // to them, which is precisely why they are clean -- so re-arming
+    // Clean pages are still protected from the last arm; nothing wrote
+    // to them, which is precisely why they are clean, so re-arming
     // them is pure waste. Only the dirty ones were made writable by the
     // fault handler and need protecting again.
     if (!armed_) {
@@ -220,7 +220,7 @@ bool MappedWriteBarrier::handle_write_fault(void* addr) {
     // One page per fault is exact but pathological for the access
     // pattern the engine actually has. A staging buffer is filled by a
     // memcpy, so a 4MB upload took 1024 signals and 1024 mprotect calls
-    // -- and an mprotect is a kernel VMA operation plus a TLB shootdown
+    // and an mprotect is a kernel VMA operation plus a TLB shootdown
     // across every one of the engine's ~67 threads. Measured at Home:
     // 109,638 minor faults a second, on a static screen.
     //
@@ -228,7 +228,7 @@ bool MappedWriteBarrier::handle_write_fault(void* addr) {
     // immediately after the last window doubles the window (capped);
     // anything else resets it to one page. The pages opened ahead are
     // marked dirty without having been written yet, which costs sending
-    // bytes that did not change -- never correctness, since the staging
+    // bytes that did not change, never correctness, since the staging
     // buffer is the authority and re-sending an unchanged page sends
     // identical bytes. The growth only happens once a sequential run is
     // already in progress, which is exactly when those pages are about
@@ -280,7 +280,7 @@ void unregister_barrier(MappedWriteBarrier* barrier) {
 bool install_write_barrier() {
     if (g_installed.load(std::memory_order_acquire)) return true;
     // libvulkan.so is its own object and does not link the framework, so
-    // the hook is resolved by name at runtime -- the same
+    // the hook is resolved by name at runtime, the same
     // dlsym(RTLD_DEFAULT, ...) pattern Stud already uses for every other
     // cross-object entry point. If it is not there, the barrier stays
     // off and the caller keeps the compare-based path rather than

@@ -31,7 +31,7 @@ int32_t read_i32(const unsigned char* p) {
     return v;
 }
 
-// The function is small and straight-line (no branches at all -- it ends
+// The function is small and straight-line (no branches at all; it ends
 // in one compare and a stack-guard check), so a linear walk over its
 // first bytes is enough; there is nothing to follow.
 constexpr size_t kScanBytes = 0x90;
@@ -45,7 +45,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
         "nativeGetMainWindowIsMouseLockedCenter"));
     if (fn == nullptr) {
         std::printf("stud: MouseBehavior probe: the engine does not export the predicate to "
-                    "decode -- the cursor falls back to following the pointer\n");
+                    "decode, the cursor falls back to following the pointer\n");
         std::fflush(stdout);
         return false;
     }
@@ -105,7 +105,7 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
                       p.behavior_offset < (1 << 20);
     if (!sane) {
         std::printf("stud: MouseBehavior probe: the engine's predicate is not the shape this "
-                    "decodes (getter=%d guard=%d/%d off=%d/%d/%d) -- the cursor falls back to "
+                    "decodes (getter=%d guard=%d/%d off=%d/%d/%d), the cursor falls back to "
                     "following the pointer\n",
                     p.getter != nullptr ? 1 : 0, p.guard_enter != nullptr ? 1 : 0,
                     p.guard_leave != nullptr ? 1 : 0, p.guard_offset, p.subsystem_offset,
@@ -165,7 +165,7 @@ MouseBehavior read_mouse_behavior() {
         static bool said = false;
         if (!said) {
             said = true;
-            std::printf("stud: MouseBehavior probe trapped -- disabled for this run\n");
+            std::printf("stud: MouseBehavior probe trapped, disabled for this run\n");
             std::fflush(stdout);
         }
         g_probe.valid = false;

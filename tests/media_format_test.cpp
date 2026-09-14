@@ -1,5 +1,5 @@
 // M4/android-glue test: AMediaFormat is a real key/value property bag
-// implementation (unlike AMediaCodec, a deliberate stub) -- verifies it
+// implementation (unlike AMediaCodec, a deliberate stub), verifies it
 // actually works, not just that it links. See the engineering notes.
 
 #include "stud/media_ndk_types.h"
@@ -51,7 +51,7 @@ int main() {
 
     AMediaFormat_delete(format);
 
-    // AMediaCodec is a deliberate stub -- confirms it fails cleanly
+    // AMediaCodec is a deliberate stub, confirms it fails cleanly
     // (nullptr, matching real Android's own "no codec for this MIME type"
     // behavior) rather than crashing or silently pretending to work.
     AMediaCodec* codec = AMediaCodec_createDecoderByType("video/avc");

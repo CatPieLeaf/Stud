@@ -80,7 +80,7 @@ bool TextEditor::del() {
 
 void TextEditor::move_left(bool select) {
     // Without shift, a selection collapses to its near edge rather than
-    // moving the caret -- what every real text field does.
+    // moving the caret, what every real text field does.
     if (!select && has_selection()) {
         caret_ = selection_begin();
     } else {

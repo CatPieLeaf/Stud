@@ -11,7 +11,7 @@ namespace stud::bionic_runtime {
 namespace {
 
 // Real, confirmed in the engine constants (see property_area.h's own doc
-// comment) -- both written together as one real 8-byte immediate in the
+// comment), both written together as one real 8-byte immediate in the
 // actual extracted libc.so's own prop_area::map_prop_area_rw.
 constexpr uint32_t kPropAreaMagic = 0x504f5250;
 constexpr uint32_t kPropAreaVersion = 0xfc6ed0ab;
@@ -22,7 +22,7 @@ constexpr size_t kPropInfoFixedSize = 4 + kPropValueMax;  // serial + value[92]
 // Real, confirmed in the engine ordering (prop_area::find_prop_trie_node, this
 // project's own reading of the actual extracted libc.so): siblings at
 // each trie level are compared by LENGTH first (shorter = "less"), and
-// only by lexicographic byte content when lengths are equal -- NOT the
+// only by lexicographic byte content when lengths are equal, NOT the
 // plain lexicographic order std::less<std::string> would give (e.g.
 // "b" sorts before "ab" here, the reverse of plain string comparison).
 // Getting this wrong wouldn't crash anything (real bionic's own search
@@ -38,10 +38,10 @@ struct ByLengthThenLex {
 };
 
 // Real in-memory trie build tree, keyed by dotted-name segment at each
-// level -- serialized to the real on-disk format afterward. The
+// level, serialized to the real on-disk format afterward. The
 // comparator above keeps children sorted the same way real bionic's own
 // find_prop_trie_node compares siblings, which serialize_children()
-// below turns into a real, valid (if not perfectly balanced -- doesn't
+// below turns into a real, valid (if not perfectly balanced, doesn't
 // need to be for correctness, only a handful of real properties ever go
 // through this) binary search tree via recursive midpoint selection.
 struct TrieBuildNode {
@@ -51,7 +51,7 @@ struct TrieBuildNode {
     std::map<std::string, std::unique_ptr<TrieBuildNode>, ByLengthThenLex> children;
 };
 
-// Bump allocator over a growable byte buffer -- every real prop_area
+// Bump allocator over a growable byte buffer; every real prop_area
 // offset (trie-node/prop-info positions) is relative to data_ (i.e. to
 // this buffer's own start), matching the real, confirmed in the engine
 // semantics documented in property_area.h.
@@ -83,7 +83,7 @@ private:
 
 // Real prop_info layout: serial(4) value[92], then name bytes (not
 // null-terminated in the file, matching prop_trie_node's own
-// convention -- real code re-derives the name from the trie path, not
+// convention. Real code re-derives the name from the trie path, not
 // from this copy, so its exact length here isn't load-bearing, but a
 // real name is included anyway for any real tooling that dumps the
 // area to inspect).
@@ -93,7 +93,7 @@ uint32_t serialize_prop_info(Arena& arena, const std::string& full_name, const s
     // project's own reading of the actual extracted libc.so): the
     // top 8 bits of serial are the real value length; bit 0 selects the
     // short-inline-value path (vs. a long-property callback this
-    // project never needs -- see property_area.h's own doc comment).
+    // project never needs; see property_area.h's own doc comment).
     uint32_t serial = static_cast<uint32_t>(value.size()) << 24;
     arena.write_u32(info_offset + 0, serial);
     // value[92], real null-terminated C string within the fixed field.
@@ -131,7 +131,7 @@ uint32_t serialize_siblings(Arena& arena, const std::vector<const TrieBuildNode*
     std::string full_name = prefix.empty() ? node.token : prefix + "." + node.token;
 
     // Reserve this node's own slot first (so its offset is known before
-    // recursing), then patch in prop/left/right/children afterward --
+    // recursing), then patch in prop/left/right/children afterward,
     // matches the "allocate, then fill in real cross-references" bump-
     // allocator pattern the whole format needs, since offsets can only
     // point at already-reserved space.
@@ -163,7 +163,7 @@ bool write_property_area(const std::string& output_path,
     TrieBuildNode root;
     for (const auto& [name, value] : properties) {
         if (name.empty() || value.size() > kPropValueMax - 1) {
-            // Real, honest failure -- see property_area.h's own doc
+            // Real, honest failure; see property_area.h's own doc
             // comment: never silently truncate/corrupt a value into a
             // wrong-but-plausible-looking one.
             return false;
@@ -184,13 +184,13 @@ bool write_property_area(const std::string& output_path,
     }
 
     // Real prop_area header (128 bytes), then the trie starting at
-    // data_+0 -- the arena's own offset 0 IS the real root, no separate
+    // data_+0, the arena's own offset 0 IS the real root, no separate
     // "root pointer" field exists in the format (confirmed via this
     // project's own reading of it: prop_area::find_property starts its walk
     // from data_ directly).
     Arena arena;
     // Real root level: root.children are the actual top-level property
-    // segments (e.g. "net" for "net.dns1") -- root itself carries no
+    // segments (e.g. "net" for "net.dns1"), root itself carries no
     // value.
     serialize_children_of(arena, root, "");
 
@@ -200,7 +200,7 @@ bool write_property_area(const std::string& output_path,
     std::vector<uint8_t> file(total_size, 0);
     uint32_t bytes_used = static_cast<uint32_t>(data_size);
     std::memcpy(file.data() + 0, &bytes_used, 4);
-    // serial_ (offset 4) left at 0 -- no real concurrent writer exists
+    // serial_ (offset 4) left at 0; no real concurrent writer exists
     // for this static, generated-once file.
     std::memcpy(file.data() + 8, &kPropAreaMagic, 4);
     std::memcpy(file.data() + 12, &kPropAreaVersion, 4);

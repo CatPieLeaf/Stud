@@ -1,11 +1,11 @@
 // Minimal Vulkan presentation test against the same real Wayland window
-// Stud uses. No engine, no IPC, no bionic -- just: create a window,
+// Stud uses. No engine, no IPC, no bionic, just: create a window,
 // build a swapchain, clear it to a solid colour, present.
 //
 // This exists to answer one question that reasoning could not settle:
 // when Stud's Vulkan path renders a full frame, reports success at every
 // call, attaches and commits real dmabuf buffers, and the window is
-// still black -- is the fault in Stud, or in this machine's
+// still black, is the fault in Stud, or in this machine's
 // Vulkan/Wayland presentation path itself?
 //
 // If this shows colour, presentation works and Stud is doing something
@@ -75,7 +75,7 @@ int main() {
     vkEnumeratePhysicalDevices(instance, &n, devices.data());
     // STUD_VK_GPU=<substring> picks a specific GPU by name. The default
     // is whichever device presents first, which on a hybrid laptop is the
-    // integrated one -- and the whole question here is whether the
+    // integrated one, and the whole question here is whether the
     // discrete GPU behaves the same, since that is the one Stud's engine
     // selects.
     const char* want = std::getenv("STUD_VK_GPU");
@@ -179,7 +179,7 @@ int main() {
     vkCreateSemaphore(device, &semi, nullptr, &rendered);
 
     // 300 frames of solid magenta, cleared straight into the swapchain
-    // image with vkCmdClearColorImage -- no render pass, no pipeline, the
+    // image with vkCmdClearColorImage: no render pass, no pipeline, the
     // least machinery that can put a colour on screen.
     for (int frame = 0; frame < 300; ++frame) {
         uint32_t index = 0;

@@ -13,14 +13,14 @@ void* g_gles_handle = nullptr;
 void set_angle_library_paths(const std::string& egl_path, const std::string& gles_path) {
     // Real, previously-missing piece of the locked "Vulkan by default on
     // first launch" decision (the engineering notes, "Rendering architecture"):
-    // ANGLE does NOT default to its Vulkan backend on this platform --
+    // ANGLE does NOT default to its Vulkan backend on this platform,
     // confirmed directly, real testing (tools/try_render_window.cpp):
     // without this env var, ANGLE silently picks a GL-passthrough-shaped
     // backend (GL_RENDERER mentions raw Mesa, no "Vulkan" in the
     // string); with it, GL_RENDERER genuinely reports "ANGLE (..., Vulkan
     // 1.4...)". Matches the exact mechanism the engineering notes' own "Nvidia
     // stability" section already documents from mcpelauncher-client's
-    // precedent (`setenv("ANGLE_DEFAULT_PLATFORM", "vulkan", true)`) --
+    // precedent (`setenv("ANGLE_DEFAULT_PLATFORM", "vulkan", true)`),
     // never actually wired into Stud's own code until now. Harmless for
     // the Zink dev-backend path too: Zink's own Mesa/EGL stack has no
     // knowledge of this ANGLE-specific variable, so setting it

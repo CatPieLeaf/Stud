@@ -48,7 +48,7 @@ ActivityLifecycleBridgeResult run_activity_lifecycle_bridge(FakeJni::Jvm& jvm,
     // Real Android order: each real transition's "pre" native callback
     // fires immediately before the app's own onActivityXxx() Java code
     // would run, the real (unprefixed) one alongside it, and "post"
-    // immediately after -- see JNIActivityLifecycleCallbacks (the app's own code).
+    // immediately after; see JNIActivityLifecycleCallbacks (the app's own code).
     // Only the boot-relevant onCreate/onStart/onResume trio is dispatched
     // here; onPause/onStop/onDestroy/onSaveInstanceState are real
     // teardown/backgrounding events this bring-up sequence doesn't reach.
@@ -133,7 +133,7 @@ bool run_asset_manager_setup_bridge(FakeJni::Jvm& jvm, const stud::linker::Loade
     FakeJni::LocalFrame frame(jvm);
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
-    // Any real, non-null jobject works here -- see this function's own
+    // Any real, non-null jobject works here; see this function's own
     // doc comment for why the object's actual identity doesn't matter.
     jobject dummy_asset_manager = env.NewStringUTF("stud-dummy-asset-manager");
     using AssetManagerFn = void (*)(JNIEnv*, jclass, jobject);
@@ -164,13 +164,13 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
     // INSTANCE native method on a Kotlin `object` ( `private final
     // native void initStorageManagerNativeV3(...)`), and the same class
     // carries a real `@Keep public final long getAllocatableBytes()`
-    // that exists for exactly one reason -- for the native side to call
+    // that exists for exactly one reason, for the native side to call
     // back on this object to ask how much disk it may use. Passing null
     // left it nothing to call back on.
     //
     // Honest about what this did NOT fix: live-tested, the engine still
     // logs `[DFLog::RbxmFileManager] LocalStorageManager is not
-    // available`, and it never calls getAllocatableBytes at all -- so
+    // available`, and it never calls getAllocatableBytes at all, so
     // whatever decides "available" is not this object. Kept because it
     // matches the real declaration; do not re-test it as a fix for that
     // warning.
@@ -197,7 +197,7 @@ bool run_context_init_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrar
     FakeJni::LocalFrame frame(jvm);
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
-    // Real ActivityStub instance (not an identity-agnostic dummy) -- its
+    // Real ActivityStub instance (not an identity-agnostic dummy); its
     // real Context methods (getFilesDir/getCacheDir/getResources/
     // getPackageName/getSharedPreferences) are all already implemented,
     // so this works whether or not the real native init() call reaches
@@ -249,7 +249,7 @@ bool run_set_task_scheduler_foreground(FakeJni::Jvm& jvm, const stud::linker::Lo
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
     // Real reason-string argument, matching the real call sites' own
-    // convention ("ASMA.start", "ES.onSurfaceCreated") -- honest about
+    // convention ("ASMA.start", "ES.onSurfaceCreated"), honest about
     // being Stud's own bring-up, not impersonating a real Java caller.
     jstring reason = env.NewStringUTF("stud.start");
     using SchedulerModeFn = void (*)(JNIEnv*, jclass, jboolean, jstring);
@@ -263,7 +263,7 @@ bool run_set_task_scheduler_foreground(FakeJni::Jvm& jvm, const stud::linker::Lo
 // applicationForegrounded() and setAppSuspended(false).
 //
 // This is not bookkeeping. The engine's own HTTP client refuses to send
-// while it believes the app is suspended -- libroblox carries the
+// while it believes the app is suspended, libroblox carries the
 // matching messages verbatim:
 //   [DFLog::HttpTraceError] Network not available while the app is suspended!
 //   [DFLog::HttpTraceError] App successfully foregrounded! Resuming HTTP requests.
@@ -271,7 +271,7 @@ bool run_set_task_scheduler_foreground(FakeJni::Jvm& jvm, const stud::linker::Lo
 // in the foreground at all. Live symptom: a game launch reached
 // submitStartGameTask and then sat forever with the in-game network
 // diagnostics reading "Placelauncher (Load Time, Total Time, Retries):
-// Waiting..." and "JoinStart (loading stage) Waiting..." -- the join
+// Waiting..." and "JoinStart (loading stage) Waiting...", the join
 // request queued, never sent, so no NetworkClient and no "Joining game".
 bool run_app_foreground_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib) {
     FakeJni::LocalFrame frame(jvm);
@@ -323,7 +323,7 @@ bool run_set_is_first_install(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
 // nativePassCurrentDisplayRefreshRate(current rate)), and with
 // nothing answering it logs
 // `getPrimaryDisplayRefreshRate FAILED: Could not retrieve screen info`
-// and settles for a default -- which is why a 144Hz panel was being
+// and settles for a default, which is why a 144Hz panel was being
 // driven at 60. Both rates come from the compositor at runtime, so this
 // reports whatever display is actually attached rather than a number
 // baked in here.

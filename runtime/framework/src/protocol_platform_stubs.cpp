@@ -160,7 +160,7 @@ namespace {
 
 using SetPlatformImplFn = jobject (*)(JNIEnv*, jclass, jobject);
 
-// Shared helper for every `<X>Core.setPlatformImpl(stub)` call below --
+// Shared helper for every `<X>Core.setPlatformImpl(stub)` call below,
 // same find-symbol/call/degrade-gracefully shape repeated 6 times
 // otherwise. `called`/`trapped_abort` mirror this file's own existing
 // per-protocol result-struct field pair.
@@ -185,7 +185,7 @@ void call_set_platform_impl(FakeJni::Env& env, JNIEnv* jni_env, const stud::link
 }  // namespace
 
 void register_protocol_platform_stubs(FakeJni::Jvm& jvm) {
-    // Real Djinni `$CppProxy` inner classes -- see the header. Without
+    // Real Djinni `$CppProxy` inner classes; see the header. Without
     // these, every setPlatformImpl() below fails with a pending JNI
     // exception and no platform implementation is actually installed.
     jvm.registerClass<AppAgeSignalsCoreCppProxyStub>();

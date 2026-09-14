@@ -11,7 +11,7 @@
 // is a no-op on a Wayland session.
 //
 // Xlib is loaded with dlopen rather than linked, so a machine with no
-// libX11 at all still runs Stud on Wayland -- the same treatment ANGLE,
+// libX11 at all still runs Stud on Wayland, the same treatment ANGLE,
 // the Vulkan loader and PortAudio already get. The headers are used for
 // types only; nothing here is resolved at link time.
 namespace stud::android_glue::x11 {
@@ -48,7 +48,7 @@ int connection_fd();
 
 // Mouse look. X11 has no pointer-constraints protocol, so the lock is
 // the classic pointer grab plus a warp back to the centre after every
-// motion -- the pointer never reaches an edge and the deltas keep
+// motion, the pointer never reaches an edge and the deltas keep
 // coming. Reports relative motion instead of positions while held, the
 // same as the Wayland path.
 void set_pointer_locked(bool locked);
@@ -69,7 +69,7 @@ std::string clipboard_get();
 // that is an ARGB child window blitted with XPutImage.
 // Maps the window, if it is not mapped yet. Deferred until the first
 // frame is presented so the window appears WITH content, the way a
-// Wayland surface does -- a Wayland window does not exist until a buffer
+// Wayland surface does, a Wayland window does not exist until a buffer
 // is committed to it, while X11 would happily show an empty one for the
 // whole of the engine's bring-up.
 void ensure_mapped();
@@ -79,8 +79,8 @@ void hide_text_overlay();
 
 // The desktop's scale, in 120ths, from X11's own answer: the Xft.dpi
 // resource against a 96-dpi baseline. X11 has no fractional-scale
-// protocol -- Xft.dpi is what every toolkit reads and what a desktop's
-// own scale setting writes -- so this is the equivalent measurement, not
+// protocol, Xft.dpi is what every toolkit reads and what a desktop's
+// own scale setting writes, so this is the equivalent measurement, not
 // a guess. Returns 120 when nothing says otherwise.
 int32_t display_scale_120();
 

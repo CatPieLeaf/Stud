@@ -118,7 +118,7 @@ bool run_linking_protocol_bootstrap(FakeJni::Jvm& jvm, const stud::linker::Loade
                                      std::function<bool(const std::string&)> on_open_url) {
     const LinkingIds ids = read_linking_ids(jvm, lib);
     if (!ids.resolved) {
-        std::fprintf(stderr, "stud: linking: protocol identifiers unavailable -- not registering\n");
+        std::fprintf(stderr, "stud: linking: protocol identifiers unavailable, not registering\n");
         return false;
     }
 
@@ -178,7 +178,7 @@ bool run_linking_protocol_bootstrap(FakeJni::Jvm& jvm, const stud::linker::Loade
             return "{\"" + success_key + "\":" + (handled ? "true" : "false") + "}";
         });
 
-    // "Is this URL registered to an app on this device?" -- answered
+    // "Is this URL registered to an app on this device?", answered
     // false, which is true of Stud: it registers no URL schemes of its
     // own. Left unanswered, a request handler the app expects can stall
     // whatever asked.
@@ -232,7 +232,7 @@ std::string json_escaped(const std::string& value) {
 // Some of this protocol's own getters return an id that is ALREADY
 // qualified ("Linking.detectURL") while others return a bare method
 // name ("openURL"), so running every one through MessageBus.getMessageId
-// produces "Linking.Linking.detectURL" for half of them -- a topic
+// produces "Linking.Linking.detectURL" for half of them, a topic
 // nothing publishes to and nothing hears. Live-caught exactly that way:
 // the subscription reported ok and never fired.
 std::string topic_for(FakeJni::Env& env, const stud::linker::LoadedLibrary& lib,

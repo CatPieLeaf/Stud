@@ -1,8 +1,8 @@
 // Which language Stud tells Roblox the user runs in.
 //
-// Every locale answer used to be a hardcoded English literal -- "en_us"
+// Every locale answer used to be a hardcoded English literal, "en_us"
 // from the Roblox locale interface, "en"/"US" from the Java Locale stub,
-// "en" from AConfiguration -- so the app came up in English whatever the
+// "en" from AConfiguration, so the app came up in English whatever the
 // desktop was set to. The mapping below is transcribed from the real
 // app's own supported-locale table, and these checks pin both halves of
 // it: reading the environment, and turning that into a locale id Roblox
@@ -77,7 +77,7 @@ int main() {
     // matches the whole "<language>_<COUNTRY>" or just the language.
     check_eq(roblox_locale_for("pt", "BR"), "pt_br", "Brazilian Portuguese");
     // Roblox ships one Portuguese, so European Portuguese resolves to it
-    // rather than falling back to English -- the language alone matches.
+    // rather than falling back to English, the language alone matches.
     check_eq(roblox_locale_for("pt", "PT"), "pt_br", "European Portuguese gets the one Portuguese");
     check_eq(roblox_locale_for("fr", "CA"), "fr_fr", "Canadian French gets the one French");
     check_eq(roblox_locale_for("de", "AT"), "de_de", "Austrian German gets the one German");

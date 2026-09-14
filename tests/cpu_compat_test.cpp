@@ -5,7 +5,7 @@
 //
 // Honest limitation, not hidden: this development host has every relevant
 // ISA extension present, so a genuine SIGILL-triggered emulation (missing
-// hardware) can't be exercised here -- see cpu_compat.h. What's tested
+// hardware) can't be exercised here; see cpu_compat.h. What's tested
 // instead: the decode+emulate logic is unit-tested directly and
 // exhaustively against real POPCNT-encoded bytes (not through a trap), and
 // the signal handler installs/uninstalls correctly.
@@ -34,7 +34,7 @@ void test_feature_detection() {
     auto features = stud::cpu_compat::detect_cpu_features();
 
     // Cross-check against GCC's own independent CPUID-based implementation
-    // -- not testing our detection against itself.
+    // not testing our detection against itself.
     __builtin_cpu_init();
     check(features.ssse3 == static_cast<bool>(__builtin_cpu_supports("ssse3")),
           "SSSE3 detection matches GCC's own __builtin_cpu_supports");
@@ -80,7 +80,7 @@ void test_bmi1_decode_and_emulate() {
     // blsmsk eax, ebx      C4 E2 78 F3 D3   (/2)
     // blsi eax, ebx        C4 E2 78 F3 DB   (/3)
     //
-    // All three share opcode F3 and differ ONLY in ModRM.reg -- this is
+    // All three share opcode F3 and differ ONLY in ModRM.reg; this is
     // the distinction that, if missed, silently runs all three as one.
     {
         const uint8_t blsr[]   = {0xC4, 0xE2, 0x78, 0xF3, 0xCB};
@@ -121,7 +121,7 @@ void test_bmi1_decode_and_emulate() {
         check((f & (1u << 6)) != 0, "BLSI sets ZF when the result is zero");
     }
 
-    // The 64-bit form, which differs only in VEX.W -- byte 2 becomes 0xF0.
+    // The 64-bit form, which differs only in VEX.W, byte 2 becomes 0xF0.
     // Every encoding in this test was taken from the assembler's own
     // output rather than hand-derived, so a decoder that agrees with
     // them is agreeing with the architecture, not with whoever wrote
@@ -259,12 +259,12 @@ void test_popcnt_decode_and_emulate() {
     check(d_ext.dest_reg == 8 && d_ext.src_reg == 9,
           "REX.R/REX.B correctly extend ModRM fields to r8/r9 (register numbers 8 and 9)");
 
-    // Not POPCNT at all -- must not falsely decode.
+    // Not POPCNT at all, must not falsely decode.
     const uint8_t not_popcnt[] = {0x90, 0x90, 0x90, 0x90};  // NOPs
     check(stud::cpu_compat::try_decode_popcnt(not_popcnt).length == 0,
           "non-POPCNT bytes (NOPs) correctly fail to decode");
 
-    // Memory operand (mod != 3) -- not supported yet, must report as such
+    // Memory operand (mod != 3), not supported yet, must report as such
     // rather than mis-decode.
     const uint8_t mem_operand[] = {0xF3, 0x0F, 0xB8, 0x03};  // mod=00 -> [rbx]
     check(stud::cpu_compat::try_decode_popcnt(mem_operand).length == 0,

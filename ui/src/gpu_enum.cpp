@@ -20,7 +20,7 @@ std::vector<GpuInfo> enumerate_gpus() {
 
     VkInstance instance = VK_NULL_HANDLE;
     if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) {
-        // Honest empty result -- no usable Vulkan loader/driver on this
+        // Honest empty result. No usable Vulkan loader/driver on this
         // host. The settings window shows "no GPUs found" rather than
         // crashing.
         return result;
@@ -48,7 +48,7 @@ std::vector<GpuInfo> enumerate_gpus() {
 namespace {
 
 // A format is usable for a texture if it can be sampled from an optimal-
-// tiled image -- the same question the render client asks before deciding
+// tiled image, the same question the render client asks before deciding
 // to transcode into it (see runtime/render-client/src/vulkan_stub.cpp),
 // so the two cannot disagree about what this machine can do.
 bool sampleable(VkPhysicalDevice device, VkFormat format) {

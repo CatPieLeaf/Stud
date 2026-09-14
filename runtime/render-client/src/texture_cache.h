@@ -9,8 +9,8 @@
 // blocks, and a place loading its content delivers a flood of them at
 // once. That is the CPU spike on launch and on teleporting somewhere new.
 //
-// The work is perfectly deterministic -- the same source bytes and the
-// same target format always produce the same output -- and Roblox's
+// The work is perfectly deterministic, the same source bytes and the
+// same target format always produce the same output, and Roblox's
 // content is immutable, so the result is worth keeping. A hit turns tens
 // of milliseconds of encoding into a file read.
 //
@@ -24,7 +24,7 @@ namespace stud::texture_cache {
 // returns true only on an exact size match.
 bool load(uint64_t key_high, uint64_t key_low, void* dst, uint64_t bytes);
 
-// Stores one. Failures are silent and harmless -- a cache that cannot be
+// Stores one. Failures are silent and harmless, a cache that cannot be
 // written is a cache that misses.
 void store(uint64_t key_high, uint64_t key_low, const void* src, uint64_t bytes);
 
@@ -34,7 +34,7 @@ void key_for(const void* src, uint64_t src_bytes, uint32_t format, uint32_t targ
              uint32_t width, uint32_t height, uint64_t* key_high, uint64_t* key_low);
 
 // How much of it to keep, in megabytes. 0 disables the cache entirely.
-// Set once, at startup, from the config file -- see
+// Set once, at startup, from the config file; see
 // `textureCacheMB` in config.json. Deliberately not in the settings
 // window: it is a disk-space trade, not a thing to tune by feel.
 void configure(uint64_t megabytes);

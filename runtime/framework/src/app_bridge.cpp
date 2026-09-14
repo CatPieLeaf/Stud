@@ -19,7 +19,7 @@ using AppBridgeAppStartFn = void (*)(JNIEnv*, jclass, jstring, jstring, jboolean
 // Real Settings.Secure.ANDROID_ID format: a 64-bit value, rendered as 16
 // lowercase hex characters. Stud has no real Android device to read one
 // from, so this generates a real-format, persistent-per-install value
-// once and caches it -- honest in the sense that matters here (real
+// once and caches it, honest in the sense that matters here (real
 // format, stable across launches, not silently regenerated every run,
 // which native code receiving a *different* ID on every call would be a
 // much stranger thing to hand it than a stable synthetic one) rather
@@ -57,7 +57,7 @@ std::string real_persistent_android_id() {
 // Real, confirmed against the app's own code format string and field wiring, traced through
 // the app's own HTTP/cookie layer -> the app's own User-Agent builder ->
 // its real builder class and its format method (~/Stud/
-// the engineering notes, "instantiate controllers" investigation -- found by
+// the engineering notes, "instantiate controllers" investigation, found by
 // reading a real, fresh Sober log the user pointed at directly, which
 // showed real, successful `instantiate controllers`/`instantiate
 // experience coordinator` FLog lines firing right after
@@ -72,34 +72,34 @@ std::string real_persistent_android_id() {
 // sanitized device-class string, Android release, "AppleWebKit/537.36",
 // Roblox version, form factor ("Phone"/"Tablet"/"VR"/"TV"), then a
 // nested "%s RobloxApp/%s (%s; %s)" (distributorType, version,
-// storeType, distributorType) -- plus a real, confirmed quirk: a
+// storeType, distributorType), plus a real, confirmed quirk: a
 // literal " ChromeOS" suffix is appended whenever `Build.VERSION.
-// SDK_INT >= 29` (the app's own User-Agent builder's flag for it) --
+// SDK_INT >= 29` (the app's own User-Agent builder's flag for it),
 // genuinely present in the real logic regardless of whether
 // the device is actually a phone, not a Stud-specific guess. Stud's own
 // BuildVersionStub.SDK_INT is 34, so this real condition is true here
 // too.
 //
-// Two sub-fields (distributorType, storeType -- real Java constants
+// Two sub-fields (distributorType, storeType; real Java constants
 // BuildConfig.DISTRIBUTOR_TYPE/BuildConfig.STORE_TYPE) are NOT
-// confirmed against the app's own code -- this app's own real BuildConfig class isn't present
+// confirmed against the app's own code. This app's own real BuildConfig class isn't present
 // in this build (the optimiser typically inlines these at every use site
 // rather than keeping a real class with fields). "google_play" is a
 // real, publicly-documented value for Roblox's actual Play Store
 // distribution channel, used here as a reasonable, clearly-labeled
-// best-effort default -- everything else in this string is real,
+// best-effort default, everything else in this string is real,
 // traced through the app's own code, not guessed.
 // One builder, two callers. `android_app_token` picks the client token
 // the agent carries: the engine's own HTTP wants a desktop-class client
 // (see the long note further down), while the app's WEB VIEW is
-// genuinely the Android app's web view and must say so -- roblox.com
+// genuinely the Android app's web view and must say so; roblox.com
 // classifies the request from this string and serves the hybrid page
 // accordingly.
 std::string build_user_agent(bool android_app_token) {
     // STUD_USER_AGENT overrides the whole string.
     //
     // The agent is not just device analytics: it decides which
-    // experiences Roblox lists. Observed directly -- with the old
+    // experiences Roblox lists. Observed directly, with the old
     // placeholder "Stud/0.1" the catalogue included PC-only titles but
     // the join was rejected as invalid; with a real Android agent the
     // join works and those titles disappear. So the two behaviours are
@@ -121,20 +121,20 @@ std::string build_user_agent(bool android_app_token) {
         return override_agent;
     }
 
-    // Default: "Roblox/Linux" -- the honest one.
+    // Default: "Roblox/Linux", the honest one.
     //
     // Both halves of this problem are agent-driven, and both were
     // established by testing rather than reasoning:
     //   - "Stud/0.1"        PC-only experiences listed, join REJECTED as
     //                       an invalid client
     //   - the Android agent join works, PC-only experiences hidden
-    //   - "Roblox/WinInet"  both work -- but claims to be Windows
+    //   - "Roblox/WinInet"  both work, but claims to be Windows
     //   - "Roblox/Linux"    both work, and is true
     //
     // "Roblox/WinInet" is the literal the real Windows desktop client
     // sends, and it is the only "Roblox/<platform>" string that appears
     // in libroblox.so itself (checked). "Roblox/Linux" is NOT in the
-    // binary -- but the platform-name list inside it does include
+    // binary, but the platform-name list inside it does include
     // "Linux" alongside "Windows"/"Android"/"XBoxOne", the server
     // accepts it, and a live launch with it reached Home, listed
     // desktop-targeted experiences and joined a real game. So Stud
@@ -150,15 +150,15 @@ std::string build_user_agent(bool android_app_token) {
     //   Tablet Hybrid() GooglePlayStore RobloxApp/... (GlobalDist; GooglePlayStore)
     //
     // The shape is the answer: an ANDROID DEVICE ENVELOPE carrying a
-    // DESKTOP client token. That is why every earlier attempt failed --
+    // DESKTOP client token. That is why every earlier attempt failed.
     // "Roblox/Linux" and "Roblox/WinInet" bare have the token but no
     // envelope (no switcher), and the full Android agent has the
     // envelope but an "ROBLOX Android App" token (no PC-targeted
     // experiences). Neither half works alone; both together do.
     //
-    // Stud sends the same shape with its own honest values -- real
+    // Stud sends the same shape with its own honest values; real
     // memory, the real DISPLAY size (not the window's), real dpi, real
-    // app version -- and "Roblox/Linux" as the token, which is true and
+    // app version, and "Roblox/Linux" as the token, which is true and
     // live-confirmed to work exactly as Sober's "Roblox/WinInet" does.
     // Two deliberate differences from Sober: it does not claim to be a
     // Pixel 6, and it does not claim a device model at all. The field is
@@ -194,9 +194,9 @@ std::string build_user_agent(bool android_app_token) {
     //
     // What the three pairs are, and where this deviates from the
     // builder (the app's own User-Agent builder):
-    //   1st  Display.getSize() -- the display in pixels
+    //   1st  Display.getSize(), the display in pixels
     //   2nd  xdpi/ydpi in the real builder
-    //   3rd  widthPixels/density -- density-independent size
+    //   3rd  widthPixels/density, density-independent size
     //
     // The 2nd really is a dpi, not a third resolution. Sober sends a
     // resolution there ("1080x2340; 1080x2340; 412x892") only because
@@ -209,18 +209,18 @@ std::string build_user_agent(bool android_app_token) {
     const DisplayFacts display = real_display_facts();
     // The compositor's own output is the screen. Falling back to the
     // window is falling back to another real measurement, not to a
-    // constant -- there is no number here to invent if neither exists.
+    // constant, there is no number here to invent if neither exists.
     const int screen_w = display.output_width_px > 0 ? display.output_width_px : display.width_px;
     const int screen_h = display.output_height_px > 0 ? display.output_height_px : display.height_px;
     // The measured density, not the one DisplayMetrics was seeded with
-    // (that one is deliberately 1.0 -- see set_measured_display_density).
+    // (that one is deliberately 1.0; see set_measured_display_density).
     const float density = display.measured_density > 0.0f  ? display.measured_density
                           : (display.density > 0.0f ? display.density : 1.0f);
     // Truncated, not rounded, matching the real builder's own `(int)` cast.
     // real_display_facts() derives these from the compositor's reported
     // pixel and millimetre size; when it reports no physical size there
     // is no honest dot pitch to state, and it falls back to 160 * density
-    // -- which is the definition of density, not a guessed number.
+    // which is the definition of density, not a guessed number.
     const int dpi_x = static_cast<int>(display.xdpi);
     const int dpi_y = static_cast<int>(display.ydpi);
     const int dip_w = static_cast<int>(static_cast<float>(screen_w) / density);
@@ -230,8 +230,8 @@ std::string build_user_agent(bool android_app_token) {
     const int memory_mb = real_total_memory_mb();
 
     // MANUFACTURER + " " + MODEL. Deliberately NOT this
-    // machine's DMI model. The server does not check this field --
-    // Sober sends an invented "Pixel_6" and everything works -- so
+    // machine's DMI model. The server does not check this field,
+    // Sober sends an invented "Pixel_6" and everything works, so
     // putting a real model number here would identify the user's exact
     // hardware to no functional end. "Linux PC" is true of every
     // machine Stud runs on and adds no entropy.
@@ -250,7 +250,7 @@ std::string build_user_agent(bool android_app_token) {
         static bool warned = false;
         if (!warned) {
             warned = true;
-            std::printf("stud: the app version is empty -- the User-Agent will say so\n");
+            std::printf("stud: the app version is empty, the User-Agent will say so\n");
             std::fflush(stdout);
         }
     }
@@ -260,7 +260,7 @@ std::string build_user_agent(bool android_app_token) {
     const char* store_type = "GooglePlayStore";
     // The app's own User-Agent builder: VR, then Phone (isTablet false), then TV, else
     // Tablet. The app derives this from the same isTablet the params
-    // carry, so it follows that flag rather than being chosen here --
+    // carry, so it follows that flag rather than being chosen here,
     // reporting one and sending the other is the inconsistency this
     // used to have.
     const char* form_factor = "Tablet";
@@ -271,7 +271,7 @@ std::string build_user_agent(bool android_app_token) {
 
     // The client token.
     //
-    //   Roblox/WinInet      default -- the literal the real Windows
+    //   Roblox/WinInet      default, the literal the real Windows
     //                       client sends, and what Sober ships.
     //   ROBLOX Android App  the mobile client (STUD_ANDROID_USER_AGENT=1).
     //
@@ -287,7 +287,7 @@ std::string build_user_agent(bool android_app_token) {
     // NOT ESTABLISHED. Whether "Roblox/Linux" works. It was defaulted
     // to for a long time, then blamed for the missing switcher, then
     // cleared when a run with a corrected density-independent size
-    // showed the button -- but every one of those comparisons is
+    // showed the button, but every one of those comparisons is
     // suspect, because the engine's cache carries state across runs and
     // the tests did not all clear it. Runs that differed only in this
     // token did not reproduce consistently. Settling it needs repeated
@@ -297,13 +297,13 @@ std::string build_user_agent(bool android_app_token) {
     // So the default is the string that is known to work in the same
     // shape on the same machine. Worth being honest that it is also the
     // one field in this agent that is not literally true: everything
-    // else -- memory, screen, dpi, density-independent size, version --
+    // else: memory, screen, dpi, density-independent size, version,
     // is measured, and the device field is deliberately generic rather
     // than this machine's DMI model.
     //
     // Checked against the binary: "Roblox/WinInet" really is in
     // libroblox.so and "Roblox/Linux" is not ("Roblox/libmp" is a false
-    // positive -- the repo path in mimalloc's banner). The standalone
+    // positive, the repo path in mimalloc's banner). The standalone
     // platform-name list does contain "Linux", which is what the
     // earlier invented token was reasoned from.
     const char* client_token = use_android_app_token ? "ROBLOX Android App" : "Roblox/WinInet";
@@ -339,7 +339,7 @@ std::string build_user_agent(bool android_app_token) {
 std::string build_real_user_agent() { return build_user_agent(/*android_app_token=*/false); }
 
 // What Stud's own web-view viewer sends. The real app's WebView uses the
-// app's own agent (built by the same builder as everything else), and that agent carries "ROBLOX Android App" -- the
+// app's own agent (built by the same builder as everything else), and that agent carries "ROBLOX Android App", the
 // literal in the app's own User-Agent builder's own format string.
 //
 // This is load-bearing, not cosmetic. roblox.com decides from the
@@ -348,7 +348,7 @@ std::string build_real_user_agent() { return build_user_agent(/*android_app_toke
 // against the live challenge page: every desktop-token agent gets
 // "false", "ROBLOX Android App" gets "true". With "false" the challenge
 // page never enables its native transport, so a completed OTP is
-// announced to nobody -- live-observed as "Sending hybrid call:
+// announced to nobody, live-observed as "Sending hybrid call:
 // challengeCompleted to origin: undefined" and a login that never
 // finishes.
 std::string build_web_view_user_agent() { return build_user_agent(/*android_app_token=*/true); }
@@ -370,7 +370,7 @@ AppBridgeResult run_app_bridge_start(FakeJni::Jvm& jvm, const stud::linker::Load
     }
 
     // Real values for all five real params (see app_bridge.h's own doc
-    // comment for the real traced through the app's own code call site these come from) --
+    // comment for the real traced through the app's own code call site these come from),
     // userAgent was the one remaining empty placeholder; now built via
     // build_real_user_agent() (see its own doc comment for the full
     // real trace and the two honestly-labeled best-effort sub-fields).
@@ -380,7 +380,7 @@ AppBridgeResult run_app_bridge_start(FakeJni::Jvm& jvm, const stud::linker::Load
     jstring user_agent_ref = env.NewStringUTF(user_agent.c_str());
     jstring android_id_ref = env.NewStringUTF(real_persistent_android_id().c_str());
     // Real, confirmed constant (com/roblox/client/personasdk/
-    // BuildConfig in the app itself) -- not
+    // BuildConfig in the app itself), not
     // guessed, but a real per-package build value that could go stale
     // on a future Roblox release, same category of risk as the FFlag
     // names already hardcoded elsewhere in this project.

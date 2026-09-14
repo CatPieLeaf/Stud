@@ -161,7 +161,7 @@ std::optional<QString> load_secret(const QString& name) {
     }
     int final_len = 0;
     if (ok) {
-        // Fails when the file was tampered with or the key is wrong --
+        // Fails when the file was tampered with or the key is wrong,
         // which is the point of GCM: no plausible-looking wrong answer.
         ok = EVP_DecryptFinal_ex(ctx, reinterpret_cast<unsigned char*>(plain.data()) + len,
                                  &final_len) == 1;

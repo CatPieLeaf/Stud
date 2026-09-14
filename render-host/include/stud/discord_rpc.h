@@ -24,7 +24,7 @@ namespace stud::render_host {
 inline constexpr const char* kDiscordApplicationId = "1547140974948520026";
 
 // Opens the connection, if rich presence is enabled and an application id
-// is configured. Safe to call when Discord is not running -- it fails
+// is configured. Safe to call when Discord is not running; it fails
 // quietly and every later call is a no-op, because Discord being closed is
 // an ordinary condition rather than an error.
 void discord_rpc_start(const std::string& application_id);

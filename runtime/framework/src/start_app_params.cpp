@@ -31,13 +31,13 @@ std::shared_ptr<StartAppParams> build_desktop_start_app_params(
     params->platformParams_ = std::move(platform_params);
     // The desktop's own setting, not a fixed "Light". The real app sends
     // whichever theme it is running in, and the engine takes this at face
-    // value -- so hardcoding one meant the app started light on a dark
+    // value, so hardcoding one meant the app started light on a dark
     // desktop no matter what the system-theme protocol said afterwards.
     params->selectedTheme_ =
         std::make_shared<FakeJni::JString>(system_dark_mode() ? "Dark" : "Light");
     // Real, user-reported bug fixed (the engineering notes, "two windows,
     // one invisible" entry): this used to construct a brand-new
-    // SurfaceStub of its own -- Roblox's own ANativeWindow_fromSurface()
+    // SurfaceStub of its own; Roblox's own ANativeWindow_fromSurface()
     // call on THAT jobject creates a genuinely separate, second real
     // Wayland window. Reuse the SAME real surface GameActivity's own
     // lifecycle already created, matching every other real V2 call

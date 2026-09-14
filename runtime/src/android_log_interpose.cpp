@@ -3,7 +3,7 @@
 // __android_log_set_logger(__android_log_stderr_logger) (main.cpp) was
 // confirmed working, based on real linker warnings and [JNIVM] diagnostic
 // lines appearing in Stud's own captured output, turns out to be a false
-// correlation -- checked directly this session: [JNIVM] lines are a
+// correlation, checked directly this session: [JNIVM] lines are a
 // plain printf() (libjnivm's own internal/log.h, no HAVE_LOGGER defined
 // in this build), nothing to do with liblog at all. Whether the
 // registered logger callback ever actually receives libroblox.so's own
@@ -12,7 +12,7 @@
 // verified independently.
 //
 // This interposes the real __android_log_write/print/buf_write/vprint
-// family at the ELF symbol level -- same real technique already proven
+// family at the ELF symbol level, same real technique already proven
 // by pthread_create_interpose.cpp in this same directory: a real,
 // exported symbol in this executable's own global scope takes priority
 // over real liblog.so's own definition for every call any loaded
@@ -26,7 +26,7 @@
 //
 // This directly answers the long-open question: does libroblox.so's own
 // FLog machinery call these functions at all, and if so, with what
-// priority/tag/content -- something no prior technique in this project
+// priority/tag/content, something no prior technique in this project
 // (planted breakpoints) could observe
 // without it either already being visible in liblog's own output.
 
@@ -40,7 +40,7 @@
 
 namespace {
 
-// Real android/log.h priority levels (public NDK header values) --
+// Real android/log.h priority levels (public NDK header values),
 // duplicated here rather than included since process-b's headers target
 // ANDROID_PLATFORM=26 and some of the real symbols below are guarded by
 // __INTRODUCED_IN in a way that's easier to sidestep entirely, same

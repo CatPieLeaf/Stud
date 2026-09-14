@@ -2,7 +2,7 @@
 # Zink) -> real Wayland window pipeline actually renders visible frames,
 # standalone from libroblox.so/JNI. Still real, still useful under the
 # bionic-native/render-host architecture (see render-host/src/main.cpp)
-# -- exercises the exact same render.cpp/android-glue code render-host
+# exercises the exact same render.cpp/android-glue code render-host
 # itself reuses unchanged.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WaylandEgl REQUIRED IMPORTED_TARGET wayland-egl)
@@ -18,7 +18,7 @@ if(STUD_ENABLE_DEV_RENDER_TOGGLE)
     target_compile_definitions(stud_try_render_window PRIVATE STUD_ENABLE_DEV_RENDER_TOGGLE)
 endif()
 
-# Real, temporary diagnostic driver -- see diag_launch_direct.cpp's own
+# Real, temporary diagnostic driver; see diag_launch_direct.cpp's own
 # doc comment. Not meant to survive long-term; remove once the
 # trap_recovery.cpp live-verification it exists for is done.
 add_executable(stud_diag_launch_direct diag_launch_direct.cpp)
@@ -30,7 +30,7 @@ target_link_libraries(stud_diag_launch_direct PRIVATE stud_bionic_runtime stud_i
 #
 # It compiles detex/PVRTDecompress straight out of the bionic runtime
 # sub-build's own FetchContent checkout, which only exists once that
-# sub-build has run at least once -- so on a fresh configure this target
+# sub-build has run at least once, so on a fresh configure this target
 # is skipped rather than failing the whole generate step. Re-run cmake
 # after a first successful build to get it.
 find_package(PkgConfig REQUIRED)

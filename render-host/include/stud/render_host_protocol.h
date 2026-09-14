@@ -24,15 +24,15 @@
 // Wire protocol between Process B (real bionic, running Roblox's own
 // code) and stud-render-host (Process C: a real, separate, ordinary
 // glibc process hosting ANGLE, the real Vulkan loader, and the Wayland
-// window -- see render-host/src/main.cpp's own doc comment for why this
+// window; see render-host/src/main.cpp's own doc comment for why this
 // is a separate process rather than hand-loading ANGLE's glibc runtime
 // into Process B directly).
 //
 // Covers the full real GL/EGL symbol surface libroblox.so's own dynamic
 // symbol table imports (confirmed via `the ELF headers --dyn-syms`, not
-// guessed) -- 85 entries. Native Vulkan calls Roblox makes directly
+// guessed), 85 entries. Native Vulkan calls Roblox makes directly
 // (not through this ANGLE/GLES path) get a deliberately narrower
-// treatment -- see vulkan_wsi's own doc comment for why a full Vulkan
+// treatment; see vulkan_wsi's own doc comment for why a full Vulkan
 // struct marshaller isn't attempted here: nothing has driven Roblox far
 // enough yet to know whether it actually goes deep into native Vulkan
 // calls, and guessing a large, unverified marshalling surface for an
@@ -40,12 +40,12 @@
 // real evidence" discipline.
 //
 // EGLDisplay/EGLSurface/EGLContext/EGLConfig and Vulkan handles are
-// never sent as real pointers -- Process C owns the real objects
+// never sent as real pointers. Process C owns the real objects
 // entirely; Process B only ever holds small opaque integer IDs.
 //
 // Buffer-carrying calls (shader source, vertex/texture data, glGet*
 // output arrays, info logs) send a variable-length payload immediately
-// after the fixed-size header, in each direction as needed -- simplest-
+// after the fixed-size header, in each direction as needed, simplest-
 // correct-thing-first, not yet chunked for buffers over kMaxBufferBytes
 // (large single texture uploads could exceed this; a real, flagged
 // limitation for follow-on work once actual Roblox texture sizes are
@@ -58,7 +58,7 @@ std::string default_socket_path();
 // Where a shared host-visible allocation is backed, named by the id the
 // client chose. Both processes derive the same path from the same id, so
 // nothing but the id has to travel. It lives beside the socket, in the
-// runtime directory, which is a tmpfs -- these pages are memory, not disk.
+// runtime directory, which is a tmpfs. These pages are memory, not disk.
 std::string shared_memory_path(uint64_t id);
 
 enum class CallId : uint32_t {
@@ -83,7 +83,7 @@ enum class CallId : uint32_t {
     EglTerminate,
     EglGetProcAddress,
 
-    // GLES2 -- state/scalar
+    // GLES2, state/scalar
     GlActiveTexture,
     GlAttachShader,
     GlBindBuffer,
@@ -133,7 +133,7 @@ enum class CallId : uint32_t {
     GlViewport,
     GlVertexAttribPointer,
 
-    // GLES2 -- string in/out
+    // GLES2, string in/out
     GlGetString,
     GlGetUniformLocation,
     GlBindAttribLocation,
@@ -142,7 +142,7 @@ enum class CallId : uint32_t {
     GlGetShaderInfoLog,
     GlGetActiveUniform,
 
-    // GLES2 -- fixed-count-N id arrays
+    // GLES2, fixed-count-N id arrays
     GlDeleteBuffers,
     GlDeleteFramebuffers,
     GlDeleteRenderbuffers,
@@ -159,7 +159,7 @@ enum class CallId : uint32_t {
     GlGetUniformBlockIndex,
     GlUniformBlockBinding,
     GlGetActiveUniformBlockiv,
-    // Real GLES3 sync objects + image copy -- libroblox calls all of
+    // Real GLES3 sync objects + image copy, libroblox calls all of
     // these during real render bring-up (live-confirmed by the
     // "CALLED unimplemented GL function" diagnostic). A GLsync is an
     // opaque pointer the engine never dereferences, so the host's own
@@ -177,13 +177,13 @@ enum class CallId : uint32_t {
     GlGenRenderbuffers,
     GlGenTextures,
 
-    // GLES2 -- small out-param arrays (count derived from pname)
+    // GLES2, small out-param arrays (count derived from pname)
     GlGetIntegerv,
     GlTexParameterfv,
     GlGetProgramiv,
     GlGetShaderiv,
 
-    // GLES2 -- bulk buffer transfer
+    // GLES2, bulk buffer transfer
     GlBufferData,
     GlBufferSubData,
     GlTexImage2D,
@@ -192,17 +192,17 @@ enum class CallId : uint32_t {
     GlCompressedTexSubImage2D,
     GlReadPixels,
 
-    // Vulkan (narrow surface-creation interposition only -- see this
+    // Vulkan (narrow surface-creation interposition only; see this
     // header's own doc comment)
     VkCreateWaylandSurfaceForAndroidSurface,
 
-    // ANativeWindow -- Process C owns the real window entirely (see
+    // ANativeWindow. Process C owns the real window entirely (see
     // android-glue/src/native_window.cpp, excluded from Process B's own
     // bionic build for the same glibc-only-Wayland reason ANGLE itself
     // is). Confirmed, live, this session: libroblox.so directly
     // references these (an eager/data-bound import, same class as
     // AMediaFormat_delete), not just android-glue's own old resolver
-    // table -- real, not speculative.
+    // table; real, not speculative.
     ANativeWindowFromSurface,
     ANativeWindowGetWidth,
     ANativeWindowGetHeight,
@@ -220,17 +220,17 @@ enum class CallId : uint32_t {
     // whatever is queued right now). A wait costs nothing and removes a
     // whole polling interval from the cursor's latency: the reply leaves
     // the moment the compositor delivers the event, instead of on the
-    // next tick of a timer. Only ever asked on input's own connection --
+    // next tick of a timer. Only ever asked on input's own connection,
     // waiting on the shared one would park every GL call behind it.
     PollInputEvents,
 
     // Real window size, from the process that owns the actual window.
     // Process B has its own android-glue copy whose size is only ever
     // updated by a compositor configure it never receives, so it used to
-    // guess -- three different sizes existed for one window. Returns
+    // guess, three different sizes existed for one window. Returns
     // (width << 32) | height.
     // Real GLES3 indexed buffer binding. glBindBufferRange was already
-    // implemented but its far more common sibling was not -- and it is
+    // implemented but its far more common sibling was not, and it is
     // genuinely called (live-caught by the "CALLED unimplemented GL
     // function" diagnostic). A no-op here leaves a shader's uniform block
     // unbound, so everything it draws gets zeroed uniforms: geometry
@@ -250,17 +250,17 @@ enum class CallId : uint32_t {
     // Real geometry of the display itself (not the window), straight
     // from the compositor's own wl_output. Only Process C has a
     // compositor connection, so this is the only place the truth lives.
-    // Together these give real dots-per-inch -- output pixels divided by
-    // output millimetres -- which is what DisplayMetrics.xdpi/ydpi
+    // Together these give real dots-per-inch, output pixels divided by
+    // output millimetres, which is what DisplayMetrics.xdpi/ydpi
     // actually mean and what Stud used to synthesise from its density
     // guess.
     // Returns (px_w << 48) | (px_h << 32) | (mm_w << 16) | mm_h. 16 bits
     // each is genuinely enough: no real display is 65536 pixels or 65
-    // metres across. All four are 0 when no compositor reported them --
+    // metres across. All four are 0 when no compositor reported them,
     // an honest "unknown", not a value to invent around.
     GetDisplayOutputGeometry,
     // Real HiDPI scale in effect for Stud's own window, in 120ths
-    // (120 = 1x, 150 = 1.25x, 240 = 2x) -- the unit Wayland's own
+    // (120 = 1x, 150 = 1.25x, 240 = 2x), the unit Wayland's own
     // fractional-scale protocol uses, and the only one that can express a
     // fractionally-scaled desktop. Process B divides it by 120 to get
     // Android's DisplayMetrics density, which is exactly the same
@@ -268,7 +268,7 @@ enum class CallId : uint32_t {
     GetWindowBufferScale,
 
     // Real audio output. The engine's own FMOD initialises an Android
-    // audio device at game start, and with no device at all it fails --
+    // audio device at game start, and with no device at all it fails,
     // live-caught in the engine's own log, immediately before the join
     // stalls:
     //   Error [FLog::FMOD] FMOD API error, FMOD_RESULT:51,
@@ -284,7 +284,7 @@ enum class CallId : uint32_t {
     // Write: args[0] is the stream handle, the in-buffer carries
     // interleaved PCM in the format the stream was opened with. The host
     // write blocks until the device has taken the data, which is what
-    // paces the client's feeder thread -- there is no separate clock.
+    // paces the client's feeder thread, there is no separate clock.
     AudioWriteFrames,
     // Close: args[0] is the stream handle.
     AudioCloseStream,
@@ -292,7 +292,7 @@ enum class CallId : uint32_t {
     // Vulkan, instance level. Roblox resolves every Vulkan command by
     // name through vkGetInstanceProcAddr (never a second dlsym), so the
     // client hands back a real function per name and forwards it here,
-    // where the real driver lives -- Process C, never Process B, exactly
+    // where the real driver lives: Process C, never Process B, exactly
     // as the GL path already works. That isolation is the point: the
     // vendor driver never runs in a process sharing bionic or foreign
     // TLS.
@@ -316,7 +316,7 @@ enum class CallId : uint32_t {
     VkCreateInstance,
     // Physical-device level. args[0] is the instance or physical-device
     // handle (the host's own real pointer, passed through as an opaque
-    // token -- Process B never dereferences one).
+    // token; Process B never dereferences one).
     //
     // The reply structs here are pure POD with no pNext and no embedded
     // pointers, so they travel as a plain byte copy, prefixed with the
@@ -356,7 +356,7 @@ enum class CallId : uint32_t {
     // Device memory. Mapped memory cannot cross a process boundary, so
     // vkMapMemory maps for real on the host and hands the client a size;
     // the client backs the mapping with its own staging allocation and
-    // ships the bytes over on flush/unmap -- the same shape the GL path
+    // ships the bytes over on flush/unmap, the same shape the GL path
     // already uses for glMapBufferRange.
     VkDeviceWaitIdle,
     VkAllocateMemory,
@@ -413,7 +413,7 @@ enum class CallId : uint32_t {
     VkGetQueryPoolResults,
 
     // Recording. All of these return nothing, so they ride the
-    // reply-free path -- which is what makes Vulkan cheaper to forward
+    // reply-free path, which is what makes Vulkan cheaper to forward
     // than GLES was, where glGetError alone forced hundreds of blocking
     // round-trips a frame.
     VkCmdRecord,
@@ -425,7 +425,7 @@ enum class CallId : uint32_t {
     // Process B is sandboxed and cannot spawn a desktop window; Process C
     // is the only unsandboxed process in the architecture, so it owns the
     // viewer the same way it owns the game window. The in-buffer carries
-    // the URL, the title and the engine's own cookies, one per line --
+    // the URL, the title and the engine's own cookies, one per line,
     // never argv, because /proc/<pid>/cmdline is readable by anything
     // running as this user and a session cookie is a real credential.
     OpenWebView,
@@ -443,9 +443,9 @@ enum class CallId : uint32_t {
     // The native text input the engine asks Stud to draw over a focused
     // Lua TextBox. Appended last so every existing id keeps its value.
     //
-    // A focused TextBox stops drawing its own text on Android -- the
+    // A focused TextBox stops drawing its own text on Android, the
     // engine sets an internal "a native widget is showing my text" flag
-    // and substitutes an empty string until focus is lost -- because a
+    // and substitutes an empty string until focus is lost, because a
     // real device lays an Android EditText over the GL view. Process C
     // owns the window, so it owns that widget too. The in-buffer carries
     // the text as UTF-8; the args carry the box, the font and the caret.
@@ -453,8 +453,8 @@ enum class CallId : uint32_t {
     // the engineering notes.
     SetTextOverlay,
     // The real system clipboard, for the text box Stud draws itself.
-    // Copy and paste belong to the platform's text widget -- an Android
-    // EditText owns them on a device -- and only the process holding the
+    // Copy and paste belong to the platform's text widget, an Android
+    // EditText owns them on a device, and only the process holding the
     // seat can hold a Wayland selection. SetClipboardText takes the text
     // in the in-buffer; GetClipboardText returns it in the out-buffer.
     SetClipboardText,
@@ -479,7 +479,7 @@ enum class CallId : uint32_t {
     //
     // Process B is sandboxed and cannot reach the Secret Service, and
     // Process A has long since exited by the time a login happens, so
-    // this process -- the only unsandboxed one still alive -- does the
+    // this process, the only unsandboxed one still alive, does the
     // handoff, by running stud-ui in a one-shot mode.
     //
     // StoreSecret's in-buffer is "<name>\n<value>"; LoadSecret's is the
@@ -491,8 +491,8 @@ enum class CallId : uint32_t {
     LoadSecret,
     // Many recorded commands in one request.
     //
-    // A command's wire header is 88 bytes -- eight argument slots and the
-    // lengths -- while a draw's payload is sixteen. At ten thousand
+    // A command's wire header is 88 bytes, eight argument slots and the
+    // lengths, while a draw's payload is sixteen. At ten thousand
     // commands a frame that framing is several times the size of the data,
     // and every one costs its own append into the send queue. A batch
     // carries them as [u64 command buffer][u32 kind][u32 length][payload]
@@ -518,12 +518,12 @@ enum class CallId : uint32_t {
     GlRenderbufferStorageMultisample,
     // A pure hint: it tells the driver the named attachments' contents are
     // no longer needed, which lets a tiler skip writing them back. Wrong
-    // to leave as a no-op even so -- on a tiler (and Zink over a tiler)
+    // to leave as a no-op even so, on a tiler (and Zink over a tiler)
     // it is the difference between discarding a render target and
     // resolving it every frame.
     GlInvalidateFramebuffer,
     // Resolves the multisampled colour buffer into the framebuffer that
-    // is actually presented -- so on the OpenGL path nothing reaches the
+    // is actually presented, so on the OpenGL path nothing reaches the
     // screen without it. Ten arguments where the header carries eight, so
     // `mask` and `filter` ride in the in-buffer, the same shape
     // glTexSubImage3D already uses for its overflow.
@@ -550,22 +550,22 @@ enum class CallId : uint32_t {
     // the client to finish and disconnect.
     //
     // Only "Close Stud when leaving a game" uses this. That setting had
-    // Process B decide to quit and then run its ordinary teardown --
-    // LeaveGame, DestroyApp -- while the engine, already back on its app
+    // Process B decide to quit and then run its ordinary teardown:
+    // LeaveGame, DestroyApp, while the engine, already back on its app
     // shell, went on rendering it. The result was the home screen visibly
     // flashing up for half a second on the way out, which is not what the
     // setting promises.
     //
     // This process never replies: it exits inside the handler, so the
     // caller sees the connection drop rather than an answer, which is
-    // exactly what it wants -- the window is gone the moment the decision
+    // exactly what it wants, the window is gone the moment the decision
     // is made and Process B tears down behind a closed window.
     EndSession,
     // One message from a web view's page to the engine, or nothing.
     //
     // A Roblox page inside a web view talks to its host through a
-    // JavaScript bridge -- the real Android client exposes
-    // `__globalRobloxAndroidBridge__.executeRoblox(json)` -- and that is
+    // JavaScript bridge, the real Android client exposes
+    // `__globalRobloxAndroidBridge__.executeRoblox(json)`, and that is
     // how a login challenge reports back that it is done. Without it the
     // page completes an OTP or a captcha and the app never hears, so the
     // login simply never finishes.
@@ -577,7 +577,7 @@ enum class CallId : uint32_t {
     // Close whatever web-view panel is open, because the app asked.
     //
     // The engine publishes its own closeWindow when it is finished with a
-    // panel -- a login challenge that has just been answered, for
+    // panel, a login challenge that has just been answered, for
     // instance. Without this the panel stayed on screen after a completed
     // OTP, with the app already signed in behind it. Appended last: every
     // existing id keeps its value.
@@ -590,7 +590,7 @@ enum class CallId : uint32_t {
     // existing id keeps its value.
     SetGamepadRumble,
     // Voice chat. The microphone is opened only when the engine asks for
-    // an input stream, never at startup -- a[0] is the sample rate and
+    // an input stream, never at startup, a[0] is the sample rate and
     // a[1] the channel count; returns 1 when it opened. Appended last:
     // every existing id keeps its value.
     AudioOpenInputStream,
@@ -603,7 +603,7 @@ enum class CallId : uint32_t {
     // any.
     //
     // The engine only started calling this once Stud stopped truncating
-    // the extension string at 511 bytes -- GL_EXT_buffer_storage sits
+    // the extension string at 511 bytes, GL_EXT_buffer_storage sits
     // past that cutoff, so it had never been offered before. Without a
     // real implementation the buffer is never allocated and the first
     // map of it crashes ANGLE. Appended last: every existing id keeps
@@ -611,8 +611,8 @@ enum class CallId : uint32_t {
     GlBufferStorage,
     // GL timer queries (GLES3 core + GL_EXT_disjoint_timer_query).
     //
-    // Without these the engine's own MicroProfiler reports GPU 0.00ms --
-    // every query resolved to a no-op stub and answered zero -- so the
+    // Without these the engine's own MicroProfiler reports GPU 0.00ms.
+    // Every query resolved to a no-op stub and answered zero, so the
     // engine has no idea how long the GPU is taking and its adaptive
     // work scheduling runs blind. Appended last: every existing id keeps
     // its value.
@@ -624,9 +624,9 @@ enum class CallId : uint32_t {
     GlGetQueryObjectui64v,
     // Many pipelined calls in one request.
     //
-    // A reply-free call still carried a full Header -- call id, eight
+    // A reply-free call still carried a full Header, call id, eight
     // 64-bit arguments, a PBO offset, flags and two lengths, about 100
-    // bytes -- for calls that mostly use two or three arguments. On the
+    // bytes, for calls that mostly use two or three arguments. On the
     // OpenGL path the engine issues around 17,700 of them per frame, so
     // that is ~1.7MB of header per frame to build, copy and write.
     //
@@ -637,7 +637,7 @@ enum class CallId : uint32_t {
     // keeps its value.
     GlCommandBatch,
     // A URL the web view was about to navigate to and did NOT, because
-    // the app has first refusal on it -- exactly what a real device's
+    // the app has first refusal on it, exactly what a real device's
     // WebView does (`shouldOverrideUrlLoading` returns true for every
     // URL, then routes it through the LINKING protocol). Returns the
     // number of bytes written to the out-buffer, 0 when the queue is
@@ -645,7 +645,7 @@ enum class CallId : uint32_t {
     PollWebViewNavigation,
     // ...and the answer. The in-buffer is the URL; a[0] is 0 for "the
     // engine does not want it, load it after all" and 1 for "the engine
-    // took it, drop it" -- the viewer needs the second because it gives
+    // took it, drop it", the viewer needs the second because it gives
     // an unanswered question a short deadline and then loads the page
     // itself rather than leaving a dead link.
     WebViewLoadUrl,
@@ -660,7 +660,7 @@ enum class CallId : uint32_t {
     // Keep the pointer inside the window for the duration of a camera
     // drag, a[0] != 0 to confine. Not a lock: the pointer keeps its real
     // position and its ordinary motion, so the engine's cursor is driven
-    // exactly as it is when nothing is constrained -- it simply cannot
+    // exactly as it is when nothing is constrained; it simply cannot
     // leave the window, and relative motion keeps arriving at the
     // boundary so a spin does not stop there. Appended last: every
     // existing id keeps its value.
@@ -677,7 +677,7 @@ enum class CallId : uint32_t {
     // A deep link that arrived while Stud was already running.
     //
     // Clicking a game in a browser starts a SECOND stud-ui. It used to
-    // find the lock held and answer with "Stud is already running --
+    // find the lock held and answer with "Stud is already running,
     // close the existing window", which is the wrong answer to someone
     // who just asked to play something. That process cannot reach the
     // engine itself (it is a fresh process; Process B is inside its own
@@ -693,7 +693,7 @@ enum class CallId : uint32_t {
     // keeps its value.
     PollDeepLink,
 };
-// Every CallId's own name, for diagnostics -- STUD_IPC_TOP used to print
+// Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
 // off-by-one names a completely unrelated call) sent a whole measurement
 // down the wrong path. Index 0 is unused because EglGetDisplay is 1.
@@ -948,7 +948,7 @@ inline const char* call_id_name(CallId id) {
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
                       static_cast<size_t>(CallId::PollDeepLink) + 1,
-                  "a CallId was added without its name -- append it to kNames");
+                  "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
     return kNames[i];
@@ -964,7 +964,7 @@ struct Header {
     // Real GLES pixel-buffer-object support. When a real GL_PIXEL_UNPACK_BUFFER
     // (or GL_PIXEL_PACK_BUFFER, for reads) is bound, the `pixels`/`data`
     // argument of every real texture upload/download is a byte OFFSET into
-    // that buffer, not a client-side pointer -- so it must NOT be dereferenced
+    // that buffer, not a client-side pointer, so it must NOT be dereferenced
     // or sent as an in-buffer. Live-caught: with buffer allocation finally
     // working, libroblox started streaming compressed textures through a real
     // PBO, and the client faithfully tried to read 1MB from the raw offset
@@ -990,25 +990,25 @@ struct ResponseHeader {
 
 // Thin, shared (portable POSIX, works identically compiled bionic or
 // glibc) client used both by Process B's real forwarding stubs and this
-// module's own test client -- owns exactly one blocking, synchronous
+// module's own test client, owns exactly one blocking, synchronous
 // request/response round-trip.
 //
 // Real, live-caught bug fixed (the engineering notes): this doc comment used
 // to say "no connection pooling/threading" as if that were a documented
-// constraint on the *caller* -- but render_client_common.cpp's own
+// constraint on the *caller*, but render_client_common.cpp's own
 // connection() returns one process-wide, shared Client instance, and
 // several real call sites (run_bounded_v2_call's own detached background
 // threads for InitWithParams/StartAppWithParams/StartGameWithParam/etc.)
 // can genuinely call into GL/EGL concurrently, each forwarding over this
 // exact same socket. With no serialization, two threads' requests (or a
-// request and a response) can interleave on the wire -- the protocol
+// request and a response) can interleave on the wire, the protocol
 // has no per-call ID to resync with, so a reply meant for thread A can
 // get consumed by thread B's read_all(), leaving A blocked in read_all()
 // forever waiting for a reply that already went to someone else. Live-
 // confirmed via a live syscall trace: a real, freshly-spawned worker thread for
 // `nativeAppBridgeV2StartApp` sent one real request/response pair over
 // this socket then blocked on a futex indefinitely, with no
-// corresponding response ever unblocking it -- consistent with exactly
+// corresponding response ever unblocking it, consistent with exactly
 // this race, not a hang inside Roblox's own code. Fixed by serializing
 // the whole round-trip with a mutex, so `call()` is atomic with respect
 // to other threads sharing the same Client.
@@ -1040,7 +1040,7 @@ public:
         // behind each other for this one connection.
         //
         // Vulkan is designed for several threads to record commands at
-        // once, and the engine does exactly that -- but every one of those
+        // once, and the engine does exactly that, but every one of those
         // calls comes through here, so they serialise on a single mutex
         // that a real driver does not have. A thread waiting on a mutex
         // burns no CPU, so this cost is invisible to a profiler: it shows
@@ -1088,8 +1088,8 @@ public:
                          uint32_t in_len, void* out_buffer, uint32_t out_capacity,
                          uint32_t* out_len_written, uint64_t pixel_buffer_offset_plus_one) {
         // STUD_IPC_STATS=1: how many round-trips a frame really costs, and how
-        // much wall time they take. Every call here is synchronous -- write a
-        // request, block for a reply -- so this is the number that decides
+        // much wall time they take. Every call here is synchronous, write a
+        // request, block for a reply, so this is the number that decides
         // Stud's frame rate ceiling, and it should be measured before the
         // protocol is changed to chase it.
         static const bool stats = std::getenv("STUD_IPC_STATS") != nullptr;
@@ -1228,7 +1228,7 @@ public:
 private:
     // Real, user-reported bug fixed: `connected()` used to just report
     // whether connect_to() ever succeeded, never whether the connection
-    // was still alive -- so a client had no way to notice stud-render-
+    // was still alive, so a client had no way to notice stud-render-
     // host had exited (e.g. the user closing the real window) short of
     // every individual call() already having failed. A failed write/read
     // here now marks the connection dead for real, so connected()
@@ -1242,7 +1242,7 @@ private:
     // is a heavily-signalled process (trap_recovery's own SIGSEGV/SIGTRAP
     // handling, plus whatever timers libroblox arms), and a single
     // interrupted read()/write() here permanently killed the render
-    // connection -- silently, since mark_dead() said nothing and every
+    // connection, silently, since mark_dead() said nothing and every
     // later GL/EGL call then just returned 0. Live-observed as the engine
     // logging "eglMakeCurrent failed with '0'" forever while the host had
     // stopped receiving any traffic at all. EINTR is not a connection
@@ -1282,7 +1282,7 @@ private:
     void report_death(const char* which) {
         if (fd_ < 0) return;  // already reported
         // The render host going away IS the shutdown, and this is the
-        // earliest anything in this process learns of it -- earlier than
+        // earliest anything in this process learns of it, earlier than
         // the main loop, which only looks every 250ms and was still
         // sleeping while the engine's own threads faulted on the same
         // dead socket.
@@ -1315,10 +1315,10 @@ public:
     // Fire-and-forget request for a call whose return value the caller does
     // not use. Appended to a buffer and sent in bulk, so a frame's worth of
     // state and draw calls costs a handful of writes instead of ~1840 blocking
-    // round-trips. Ordering is preserved -- it is one stream socket -- and
+    // round-trips. Ordering is preserved. It is one stream socket, and
     // anything that does need an answer flushes this queue first.
     // Appends one recorded command to the current batch. Same stream, same
-    // order -- the batch is emitted into the send queue before anything
+    // order, the batch is emitted into the send queue before anything
     // else is written, so nothing can overtake it.
     void append_command(uint64_t cb, uint32_t kind, const void* payload, uint32_t len) {
         std::lock_guard<std::mutex> lock(call_mutex_);
@@ -1346,8 +1346,8 @@ public:
         // Built straight into the queue rather than on the stack and
         // copied in.
         //
-        // This runs about 17,700 times a frame on the OpenGL path -- the
-        // engine's own call rate -- so what it does per call is the
+        // This runs about 17,700 times a frame on the OpenGL path, the
+        // engine's own call rate, so what it does per call is the
         // frame budget. The old version zero-initialised a ~100-byte
         // header (`Header hdr{}`), filled every field, then copied the
         // whole thing into the queue through an iterator-range insert.
@@ -1407,7 +1407,7 @@ public:
     // Best-effort variant for a caller that would rather skip this round than
     // wait: takes the connection only if it is free. PollInputEvents uses it,
     // because it runs on its own timer and blocking there is actively harmful
-    // -- it holds the connection for a whole round-trip, and every GL call the
+    // it holds the connection for a whole round-trip, and every GL call the
     // render thread issues in that window queues up behind it (live-measured:
     // a single frame spent 642ms blocked this way). Skipping one poll costs
     // nothing; the next one is 8ms away.
@@ -1436,7 +1436,7 @@ private:
 
     // Moves the accumulated commands into the send queue as one request.
     // Packs whatever reply-free calls have accumulated into one request.
-    // Called before anything that must be ordered after them -- a call
+    // Called before anything that must be ordered after them, a call
     // that waits for a reply, or a flush.
     void emit_gl_batch_locked() {
         if (batch_.empty()) return;
@@ -1483,7 +1483,7 @@ private:
     // Sized once, for a whole flush window, so appending a command never
     // grows the buffer. Without this the queue reallocates its way up to
     // the flush threshold repeatedly, copying everything already queued
-    // each time -- on a path that queues 17,700 commands a frame.
+    // each time, on a path that queues 17,700 commands a frame.
     void reserve_queue_once() {
         if (queue_.capacity() >= kQueueFlushBytes + 64u * 1024u) return;
         queue_.reserve(kQueueFlushBytes + 64u * 1024u);

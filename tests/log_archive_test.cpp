@@ -2,7 +2,7 @@
 // against the format rather than against itself: the gzip framing, the
 // ustar headers, their checksums, and every file's contents.
 //
-// Where a real `tar` is on the machine, it is asked too -- an archive
+// Where a real `tar` is on the machine, it is asked too, an archive
 // that only Stud can read is not an export.
 
 #include "log_archive.h"

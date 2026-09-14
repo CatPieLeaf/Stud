@@ -10,7 +10,7 @@
 //   ! Joining game '<jobId>' place <placeId> at 10.34.8.86
 //
 // 10.x is Roblox's internal UDMUX addressing, so it locates nothing. The
-// real, routable server is only visible on the engine's own UDP socket --
+// real, routable server is only visible on the engine's own UDP socket,
 // which is how this project's earlier ping investigation identified a
 // session's server as 128.116.44.33 in Frankfurt.
 //

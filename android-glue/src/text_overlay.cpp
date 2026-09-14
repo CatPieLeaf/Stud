@@ -282,13 +282,13 @@ void draw(const TextOverlaySpec& spec, Overlay& o, const WaylandOverlayDeps& dep
     }
 
     // Vertical placement comes from the font's DESIGN metrics, scaled
-    // exactly -- not from face->size->metrics, which FreeType grid-fits
+    // exactly, not from face->size->metrics, which FreeType grid-fits
     // (the ascender is rounded up to a whole pixel). That rounding makes
     // the line box taller than it really is and lifts centred text by
     // about a pixel, which is visible next to the engine's own.
     //
     // The line box is the font's ascender-to-descender span, which at
-    // this em is exactly Roblox's own TextSize -- see the ratio note
+    // this em is exactly Roblox's own TextSize; see the ratio note
     // above.
     const auto upem = static_cast<float>(face->units_per_EM);
     float asc_px = size_px * static_cast<float>(face->ascender) / upem;
@@ -298,7 +298,7 @@ void draw(const TextOverlaySpec& spec, Overlay& o, const WaylandOverlayDeps& dep
     // this em. The two are different once the em is TextSize (see
     // TextOverlaySpec::line_height): the font's own span is then taller
     // than TextSize, so centring against it dropped the baseline a pixel
-    // or two below the engine's -- visible as text sitting low against a
+    // or two below the engine's, visible as text sitting low against a
     // caret that was in the right place. The box is split by the font's
     // own ascent fraction, which is what puts the baseline back where it
     // was before the em changed.
@@ -400,7 +400,7 @@ void draw(const TextOverlaySpec& spec, Overlay& o, const WaylandOverlayDeps& dep
     (void)deps;
 }
 
-// Logical (surface-local) units from buffer pixels -- a subsurface is
+// Logical (surface-local) units from buffer pixels, a subsurface is
 // positioned in the parent's coordinate space, which is logical, while
 // everything the engine hands over is in buffer pixels.
 double from_logical(int32_t logical, int32_t scale_120) {
@@ -414,8 +414,8 @@ int32_t to_logical(int32_t buffer_px, int32_t scale_120) {
                                 scale_120);
 }
 
-// X11's half. The drawing below is shared -- only where the pixels end
-// up differs -- so this is the same sequence with the Wayland surface
+// X11's half. The drawing below is shared, only where the pixels end
+// up differs, so this is the same sequence with the Wayland surface
 // work replaced by a child window, and without the logical-unit rounding
 // (an X11 window is placed in real pixels, so there is no residual).
 void apply_locked_x11(const TextOverlaySpec& spec) {
@@ -485,7 +485,7 @@ void apply_locked(const TextOverlaySpec& spec) {
     }
 
     // A subsurface can only be positioned on whole LOGICAL units, and one
-    // logical unit is 1.25 real pixels here -- so the surface is placed at
+    // logical unit is 1.25 real pixels here, so the surface is placed at
     // the largest logical position that does not overshoot, and whatever
     // fraction of a pixel is left over is carried into the drawing. That
     // is what makes the overlay land on the engine's own baseline instead

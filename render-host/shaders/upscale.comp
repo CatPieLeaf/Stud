@@ -4,21 +4,21 @@
 // 1, ported out of the real reference rather than paraphrased.
 //
 // The reference is vendored at third_party/fidelityfx-fsr1 (MIT). Its own
-// variable names are kept here -- pp, dir, len, len2, lob, clp, the b/c/
-// e/f/g/h/i/j/k/l/n/o tap letters -- so FsrEasuF and this shader can be
+// variable names are kept here: pp, dir, len, len2, lob, clp, the b/c/
+// e/f/g/h/i/j/k/l/n/o tap letters, so FsrEasuF and this shader can be
 // read side by side. Everything arithmetic below is theirs; what is not
 // carried over is the packed 16-bit path and the preprocessor
 // configuration layer, neither of which one compute pass needs.
 //
 // Why the reference and not memory: the first version of this shader was
 // written from a recollection of the algorithm, and the recollection was
-// wrong in two specific places -- the tap weight's polynomial pair, and
+// wrong in two specific places, the tap weight's polynomial pair, and
 // how `len` is derived from the gradients. It looked like scratched edges,
 // blocky patches and badly distorted text. A directional kernel with the
 // wrong weights is worse than no direction at all.
 //
 // The sharpening half of FSR1 (RCAS) is a separate pass over this pass's
-// output -- sharpen.comp -- because it judges contrast from the pixels
+// output, sharpen.comp, because it judges contrast from the pixels
 // either side of the one it writes and so must run at the OUTPUT
 // resolution.
 
@@ -108,7 +108,7 @@ void main() {
     #undef TAP
 
     // The reference's luma: blue*0.5 + (red*0.5 + green). Not a
-    // perceptual luminance -- it is what EASU's gradients are defined
+    // perceptual luminance. It is what EASU's gradients are defined
     // against, so it stays exactly this.
     #define LUMA(x) ((x).b * 0.5 + ((x).r * 0.5 + (x).g))
     float bL = LUMA(b), cL = LUMA(c), eL = LUMA(e), fL = LUMA(f);

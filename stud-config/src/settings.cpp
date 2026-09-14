@@ -98,7 +98,7 @@ StudSettings load_settings(const std::string& path) {
                                 "' has a non-integer \"upscaleSharpnessPercent\"");
         }
         const int percent = doc.at("upscaleSharpnessPercent").get<int>();
-        // 0 skips the pass, 100 is full strength, 125 is the ceiling -- see
+        // 0 skips the pass, 100 is full strength, 125 is the ceiling; see
         // the field's own comment for why that ceiling and not another.
         result.upscale_sharpness_percent = percent < 0 ? 0 : (percent > 125 ? 125 : percent);
     }
@@ -118,7 +118,7 @@ StudSettings load_settings(const std::string& path) {
         // rather than an error that stops Stud starting.
         const int value = doc.at("backgroundFps").get<int>();
         // 0 means no limit. Anything above the top of the range means
-        // the same thing -- including the `241` older builds wrote,
+        // the same thing, including the `241` older builds wrote,
         // which is why that is read back as unlimited rather than
         // clamped to a number.
         result.background_fps =
@@ -198,9 +198,9 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     nlohmann::json doc = nlohmann::json::object();
 
     // Preserve any other top-level keys already in the file (e.g.
-    // render/dev_backend_config.h's "devRenderBackend") -- this file is
+    // render/dev_backend_config.h's "devRenderBackend"); this file is
     // shared, not exclusively owned by this module. A missing or
-    // malformed existing file is not fatal here -- start fresh rather
+    // malformed existing file is not fatal here, start fresh rather
     // than blocking a save on an unrelated pre-existing problem.
     {
         std::ifstream existing(path);
@@ -212,7 +212,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
                     doc = existing_doc;
                 }
             } catch (const nlohmann::json::parse_error&) {
-                // Fall through with a fresh object -- an unrelated
+                // Fall through with a fresh object, an unrelated
                 // malformed file shouldn't block saving real settings.
             }
         }
@@ -245,7 +245,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     // Keys that are nobody's setting any more. Erased rather than left
     // alone, because a file that still lists them reads as if they do
     // something: apkPath/apkName (Stud keeps one APK of its own, at a
-    // fixed path -- see settings.h), uiScale (there is no such control;
+    // fixed path; see settings.h), uiScale (there is no such control;
     // the layout density is fixed at 1.0), needsBionicFallback (from an
     // architecture that no longer exists), and renderScale (split into
     // hidpi and followDpi).

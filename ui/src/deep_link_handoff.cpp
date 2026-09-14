@@ -11,8 +11,8 @@ namespace stud::ui {
 bool hand_deep_link_to_running_stud(const LaunchUri& link) {
     if (link.place_id == 0) return false;
     // One key=value per line: small, obvious on the wire, and trivially
-    // extended without a version field. Values never contain a newline --
-    // they come out of a URI's own query string.
+    // extended without a version field. Values never contain a newline.
+    // They come out of a URI's own query string.
     std::string payload;
     payload += "placeId=" + std::to_string(link.place_id) + "\n";
     if (!link.join_attempt_id.empty()) payload += "joinAttemptId=" + link.join_attempt_id + "\n";
@@ -28,7 +28,7 @@ bool hand_deep_link_to_running_stud(const LaunchUri& link) {
     }
     // The token that lets the running Stud come forward.
     //
-    // A compositor will not let an application raise itself -- so the
+    // A compositor will not let an application raise itself, so the
     // only thing that can bring Stud to the front is a token minted by
     // the process the user actually clicked in. The browser (or the
     // portal) hands it to THIS process in the environment, and this
@@ -50,7 +50,7 @@ bool hand_deep_link_to_running_stud(const LaunchUri& link) {
         // or a direct invocation from a terminal, which has no token to
         // give.
         std::fprintf(stderr,
-                     "stud: no activation token in the environment -- the running Stud will "
+                     "stud: no activation token in the environment, the running Stud will "
                      "join the game but stay in the background\n");
     }
     const std::string& uri = payload;

@@ -8,11 +8,11 @@
 // decode the same bytes and be believed.
 //
 // It found the answer in one run: every ETC2 colour format matches
-// hardware byte for byte -- including ETC1, which has no Vulkan format of
+// hardware byte for byte, including ETC1, which has no Vulkan format of
 // its own because it is a strict subset of ETC2_RGB, and whose legacy
 // block modes random blocks exercise. So the decoder was never the bug,
 // and the corruption was in the plumbing around it (stale handle
-// bookkeeping and unaligned buffer offsets -- see vulkan_stub.cpp).
+// bookkeeping and unaligned buffer offsets; see vulkan_stub.cpp).
 //
 // EAC R11/RG11 differ from hardware in the low bit of ~9% of 16-bit
 // values: a rounding difference in the 11-to-16-bit expansion, far below
@@ -139,7 +139,7 @@ int main() {
     phys=VK_NULL_HANDLE;
     for(auto pd : d){ VkPhysicalDeviceFeatures f; vkGetPhysicalDeviceFeatures(pd,&f);
         if(f.textureCompressionETC2){ phys=pd; break; } }
-    if(!phys){ printf("no device with hardware ETC2 -- cannot establish ground truth\n"); return 2; }
+    if(!phys){ printf("no device with hardware ETC2, cannot establish ground truth\n"); return 2; }
     VkPhysicalDeviceProperties pp; vkGetPhysicalDeviceProperties(phys,&pp);
     printf("ground truth device: %s\n", pp.deviceName);
     uint32_t qn=0; vkGetPhysicalDeviceQueueFamilyProperties(phys,&qn,0);

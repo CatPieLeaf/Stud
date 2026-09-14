@@ -23,14 +23,14 @@ std::shared_ptr<PlatformParams> build_desktop_platform_params(const std::string&
     //   isMouseDevice = hasSystemFeature("android.hardware.type.pc")
     //   isKeyboardDevice = hasSystemFeature("android.hardware.type.pc")
     // On a real phone or tablet that is touch=true, mouse=false,
-    // keyboard=false -- and such a device with an OTG mouse attached still
+    // keyboard=false, and such a device with an OTG mouse attached still
     // shows Roblox's own in-frame cursor, so the cursor is NOT gated on
     // these flags; it follows from real SOURCE_MOUSE input events.
     //
     // Stud used to claim the exact opposite (touch=false, mouse=true), i.e.
     // "I am a PC". That is a real behavioural difference, not a cosmetic
     // one: on a PC the engine delegates the cursor to the host window
-    // system instead of drawing one itself -- and Stud's surface has no
+    // system instead of drawing one itself, and Stud's surface has no
     // system pointer (the real app's own SurfaceView asks Android for
     // PointerIcon TYPE_NULL), so nothing was drawn at all. Report what a
     // real Android device reports.
@@ -42,7 +42,7 @@ std::shared_ptr<PlatformParams> build_desktop_platform_params(const std::string&
     //
     // Live-caught regression this pass: these were briefly flipped to a
     // phone's values (touch=true, mouse/keyboard=false) while chasing the
-    // missing cursor. It did not affect the cursor -- but it DID break
+    // missing cursor. It did not affect the cursor, but it DID break
     // keyboard input, because `isKeyboardDevice` is what makes the engine
     // treat a keyboard as present at all; with it false, keys are delivered
     // and then ignored. Do not flip these to mimic a phone again.
@@ -73,14 +73,14 @@ std::shared_ptr<PlatformParamsWithLuaFlags> build_desktop_platform_params_with_l
     //   isMouseDevice = hasSystemFeature("android.hardware.type.pc")
     //   isKeyboardDevice = hasSystemFeature("android.hardware.type.pc")
     // On a real phone or tablet that is touch=true, mouse=false,
-    // keyboard=false -- and such a device with an OTG mouse attached still
+    // keyboard=false, and such a device with an OTG mouse attached still
     // shows Roblox's own in-frame cursor, so the cursor is NOT gated on
     // these flags; it follows from real SOURCE_MOUSE input events.
     //
     // Stud used to claim the exact opposite (touch=false, mouse=true), i.e.
     // "I am a PC". That is a real behavioural difference, not a cosmetic
     // one: on a PC the engine delegates the cursor to the host window
-    // system instead of drawing one itself -- and Stud's surface has no
+    // system instead of drawing one itself, and Stud's surface has no
     // system pointer (the real app's own SurfaceView asks Android for
     // PointerIcon TYPE_NULL), so nothing was drawn at all. Report what a
     // real Android device reports.
@@ -92,7 +92,7 @@ std::shared_ptr<PlatformParamsWithLuaFlags> build_desktop_platform_params_with_l
     //
     // Live-caught regression this pass: these were briefly flipped to a
     // phone's values (touch=true, mouse/keyboard=false) while chasing the
-    // missing cursor. It did not affect the cursor -- but it DID break
+    // missing cursor. It did not affect the cursor, but it DID break
     // keyboard input, because `isKeyboardDevice` is what makes the engine
     // treat a keyboard as present at all; with it false, keys are delivered
     // and then ignored. Do not flip these to mimic a phone again.
@@ -107,7 +107,7 @@ std::shared_ptr<PlatformParamsWithLuaFlags> build_desktop_platform_params_with_l
     params->isLuaChatEnabled = true;
     // Mirrors InitParams' own isTablet, which this field is documented
     // to duplicate. Measured: neither value changes the app shell's home
-    // layout -- both were live-tested -- so this is consistency between
+    // layout, both were live-tested, so this is consistency between
     // the two structs, not a behaviour switch.
     params->isTablet = true;
     return params;

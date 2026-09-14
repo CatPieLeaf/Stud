@@ -8,7 +8,7 @@ and the manifest that says how it may be run.
 ## Building the image
 
 The build context needs `third_party/` populated (`tools/setup.sh`),
-the same as any other build of Stud -- ANGLE builds from source and
+the same as any other build of Stud; ANGLE builds from source and
 takes hours, so it is not fetched inside the image build.
 
 ```sh
@@ -31,32 +31,32 @@ from (`cpak install github.com/CatPieLeaf/Stud`).
 
 ## Why each permission is in the manifest
 
-Nothing here is granted "just in case" -- every entry is something Stud
+Nothing here is granted "just in case"; every entry is something Stud
 demonstrably does:
 
-- **`userNamespaces`** -- the one that is not obvious. Process B is a
+- **`userNamespaces`**, the one that is not obvious. Process B is a
   real bionic ELF and Stud runs it inside its own mount, PID and IPC
   namespaces via `bwrap`, including `--unshare-user --uid 0 --gid 0`
   (the Android property area refuses to map a file this process does not
   own as root). That sandbox has to nest inside cpak's own, so cpak has
   to allow this one to create user namespaces. Without it Stud starts
   and Process B cannot.
-- **`socketWayland`, `deviceDri`** -- the render host owns the real
+- **`socketWayland`, `deviceDri`**, the render host owns the real
   Wayland surface and talks to the GPU directly. There is no X11 path:
   `displayX11` is deliberately absent.
-- **`deviceShm`** -- the Vulkan client backs host-visible allocations
+- **`deviceShm`**, the Vulkan client backs host-visible allocations
   with shared memory.
-- **`network`** -- Roblox.
-- **`socketPulseAudio`** -- audio output.
-- **`notification`** -- the server-region notification on joining a game
+- **`network`**; Roblox.
+- **`socketPulseAudio`**, audio output.
+- **`notification`**, the server-region notification on joining a game
   (which the user can turn off in Settings), and Stud's own test
   notification.
-- **`openURI`** -- the About tab's repository link.
-- **`clipboard`** -- text boxes in the app.
-- **`filePicker` + `xdg-download` read-only** -- Stud does not
+- **`openURI`**, the About tab's repository link.
+- **`clipboard`**, text boxes in the app.
+- **`filePicker` + `xdg-download` read-only**; Stud does not
   distribute Roblox; the user supplies the APK, and Downloads is where a
   downloaded one lands. Nothing else of the host's home is visible.
-- **`sessionBus.talk`** -- the login cookie is stored encrypted under
+- **`sessionBus.talk`**, the login cookie is stored encrypted under
   Stud's own data directory, and the key that decrypts it is held
   through the Secret Service (and KWallet on KDE). Without the keyring
   the stored cookie cannot be read at all.
@@ -65,7 +65,7 @@ demonstrably does:
 
 Stud stores the session cookie through QtKeychain, which after
 `SearchItems` calls `GetSecret`/`Delete` on the *item* object the
-keyring returns -- `/org/freedesktop/secrets/collection/<name>/<n>`,
+keyring returns, `/org/freedesktop/secrets/collection/<name>/<n>`,
 a path that only exists at runtime.
 
 cpak's `DBusCallGrant` takes an exact object path, so that call cannot

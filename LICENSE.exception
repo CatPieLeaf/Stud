@@ -17,7 +17,7 @@ The permission
 
   "The Roblox Engine" means the software contained in the Roblox
   application package published by Roblox Corporation, and any library
-  loaded from it -- software under terms incompatible with the GNU
+  loaded from it, software under terms incompatible with the GNU
   Affero General Public License, which Stud neither includes nor
   distributes, and which the person running Stud supplies themselves.
 
@@ -42,8 +42,8 @@ In Stud's case there is a good argument that it never arises. Stud does
 not ship the engine, mirror it, or download it. The person running Stud
 supplies the application package themselves, so whatever combination
 happens, happens on their own machine and is never conveyed to anyone.
-Every binary Stud does redistribute -- ANGLE, SwiftShader, the Vulkan
-loader and validation layers, Android's libc, libm, libdl and linker --
+Every binary Stud does redistribute: ANGLE, SwiftShader, the Vulkan
+loader and validation layers, Android's libc, libm, libdl and linker,
 is under a permissive licence, and each ships with its own notice.
 
 This permission is here so that argument does not have to be made. A

@@ -21,8 +21,8 @@ namespace stud::jni_bridge {
 namespace {
 
 // The inode of every socket this process currently holds. /proc/net/udp
-// lists every UDP socket in the whole network namespace -- which Process
-// B shares with the host -- so the inode set is what narrows it to ours.
+// lists every UDP socket in the whole network namespace, which Process
+// B shares with the host, so the inode set is what narrows it to ours.
 std::set<unsigned long long> own_socket_inodes() {
     std::set<unsigned long long> inodes;
     DIR* dir = ::opendir("/proc/self/fd");

@@ -21,7 +21,7 @@ void vk_set_window_size(uint32_t width, uint32_t height);
 //
 // This is Stud's own upscaler, and it exists because the engine's own
 // scale cannot be touched: below 1.0 it switches to a simplified UI with
-// square corners, and above 1.0 it drops SSAO -- both measured. So the
+// square corners, and above 1.0 it drops SSAO, both measured. So the
 // engine is left believing its window is exactly the size it asked for,
 // at scale 1.0, and renders into an offscreen image of that size; Stud
 // presents a full-resolution image built from it. The engine learns
@@ -30,11 +30,11 @@ void vk_set_window_size(uint32_t width, uint32_t height);
 //
 // The ratio is the display's own scale in the non-HiDPI configuration,
 // where the engine already renders at the window's logical size and the
-// compositor stretches the result -- this replaces that stretch with a
+// compositor stretches the result. This replaces that stretch with a
 // real pass, at exactly the performance non-HiDPI already has.
 // The size Stud's upscaler writes, in the display's own pixels. Always
 // the window's real size, so the presented image matches the screen
-// exactly and is shown 1:1 -- and it follows a resize. 0x0 disables the
+// exactly and is shown 1:1, and it follows a resize. 0x0 disables the
 // whole path.
 void vk_set_upscale_output_size(uint32_t width, uint32_t height);
 
@@ -48,7 +48,7 @@ void vk_set_on_x11(bool on_x11);
 
 // Whether this process offers Vulkan at all. The user's own graphics-mode
 // setting decides it: choosing OpenGL means Stud does not provide Vulkan,
-// and vkCreateInstance then answers VK_ERROR_INCOMPATIBLE_DRIVER -- the
+// and vkCreateInstance then answers VK_ERROR_INCOMPATIBLE_DRIVER, the
 // same answer a device with no Vulkan driver gives. That is an honest
 // report of what Stud is offering, not a spoof, and it needs no FFlag
 // (see flag_overrides.h: overrides come only from the hand-edited file)
@@ -66,7 +66,7 @@ void vk_set_preferred_device_index(uint32_t index);
 // Translates that same index into the "vendorId:deviceId" token Mesa's
 // MESA_VK_DEVICE_SELECT expects, by asking the real loader what is at
 // that position. Empty when it cannot be determined. Used on the OpenGL
-// path, where Zink -- not the engine -- is the one choosing a GPU.
+// path, where Zink, not the engine, is the one choosing a GPU.
 std::string vk_device_select_token_for_index(uint32_t index);
 
 uint64_t vk_enumerate_instance_version(std::vector<uint8_t>& out, uint32_t* out_len);

@@ -4,11 +4,11 @@
 // of the three-process design (see bionic-runtime/include/stud/
 // bionic_runtime.h's own doc comment) is that the vendor GPU driver
 // only ever runs in Process C (stud-render-host), a plain glibc
-// process, never inside a bionic/foreign-TLS process -- accidentally
+// process, never inside a bionic/foreign-TLS process, accidentally
 // binding a real driver path into Process B's sandbox (e.g. a future
 // change naively trying to give it "direct" GPU access) would silently
-// defeat that guarantee. Tests build_process_b_argv() -- the real argv-
-// building logic launch_process_b() itself spawns bwrap with -- as a
+// defeat that guarantee. Tests build_process_b_argv(), the real argv-
+// building logic launch_process_b() itself spawns bwrap with, as a
 // pure function, so this doesn't need bwrap or a real bionic install
 // present to run.
 
@@ -31,7 +31,7 @@ void check(bool condition, const char* what) {
 }
 
 // Real, known host paths a real Linux system's GPU driver stack lives
-// under -- if any of these show up as a *bind source* (the host-side
+// under, if any of these show up as a *bind source* (the host-side
 // path bwrap is told to expose), that's exactly the mistake this test
 // exists to catch. Deliberately broad (covers Mesa/DRI, NVIDIA's own
 // installer paths, and the Vulkan ICD/loader config real apps use to
@@ -60,7 +60,7 @@ int main() {
                     "/home/testuser/game.apk", "--ipc-connect",
                     "/run/user/1000/stud/launch.sock"};
     // Real extra_binds shape, matching what ui/src/main.cpp's own
-    // launch_game() actually constructs -- the so_path's parent dir
+    // launch_game() actually constructs, the so_path's parent dir
     // (writable), $XDG_RUNTIME_DIR (writable), the APK's containing
     // directory (read-only). None of these are ever real driver paths
     // in normal operation, but the whole point of this test is to catch
@@ -84,7 +84,7 @@ int main() {
             bool found = arg.find(forbidden) != std::string::npos;
             if (found) {
                 std::fprintf(stderr,
-                              "FAILED: bwrap argv contains a real host driver path -- arg='%s' "
+                              "FAILED: bwrap argv contains a real host driver path, arg='%s' "
                               "matched forbidden substring '%s'\n",
                               arg.c_str(), forbidden);
                 std::exit(1);
@@ -94,7 +94,7 @@ int main() {
     std::printf("ok: no bwrap argv entry references a known real host GPU driver path\n");
 
     // Real, specific check on top of the substring scan: /dev is bound
-    // as a whole (device *nodes*, not driver code -- see this test's
+    // as a whole (device *nodes*, not driver code; see this test's
     // own doc comment for why that's an accepted, understood tradeoff,
     // not this test's concern) but must never ALSO get a real driver
     // library directory bound over it via --bind/--ro-bind.
@@ -109,7 +109,7 @@ int main() {
     // Real, live-caught regression coverage for this session's own DNS
     // fix chain (see the engineering notes gap #1): ANDROID_DNS_MODE=local is
     // a fixed, unconditional requirement (real SIGFPE inside libc.so's
-    // own _cache_lookup_p otherwise -- a zero-size resolver-cache pool
+    // own _cache_lookup_p otherwise, a zero-size resolver-cache pool
     // allocated when this env var is anything else, including unset),
     // so it must always appear via a real --setenv pair, regardless of
     // host state.
@@ -126,9 +126,9 @@ int main() {
     }
 
     // --dns-servers is real-host-state-dependent (real_host_nameservers()
-    // parses the actual /etc/resolv.conf, not a mockable seam) -- only
+    // parses the actual /etc/resolv.conf, not a mockable seam), only
     // assert it's present, as Process B's own real trailing argv (after
-    // config.args, not a bwrap flag -- a real, live-caught ordering bug
+    // config.args, not a bwrap flag, a real, live-caught ordering bug
     // this session, see bionic_runtime.cpp's own doc comment), when this
     // test's own real host actually has a nameserver configured, so this
     // stays meaningful without being flaky on a resolv.conf-less CI box.
@@ -145,7 +145,7 @@ int main() {
         }
         if (!real_nameservers.empty()) {
             // Find so_path's position (config.args[0], the first entry
-            // after config.executable_path in the real, resolved argv --
+            // after config.executable_path in the real, resolved argv,
             // easier to just locate "--dns-servers" directly and confirm
             // it comes after "--ipc-connect" launch.sock, the last of
             // config.args in this test's own fixture).

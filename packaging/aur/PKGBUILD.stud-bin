@@ -2,7 +2,7 @@
 #
 # The prebuilt package. It installs the release archive CI built from the
 # tag, so it needs no ANGLE build and no network beyond fetching that one
-# file -- which makepkg does itself, before build() ever runs.
+# file, which makepkg does itself, before build() ever runs.
 #
 # This is the one that belongs in the AUR. The source PKGBUILD beside it
 # fetches Google's NDK, an ANGLE checkout and a bionic image from inside
@@ -14,7 +14,7 @@ pkgname=stud-bin
 _pkgname=stud
 pkgver=1.1.0
 pkgrel=1
-pkgdesc="Play Roblox on Linux -- runs the real, unmodified Roblox Android app"
+pkgdesc="Play Roblox on Linux, runs the real, unmodified Roblox Android app"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
 license=('AGPL-3.0-or-later')
@@ -43,14 +43,14 @@ depends=(
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
-# Stripping a bionic ELF or ANGLE is neither useful nor safe -- the same
+# Stripping a bionic ELF or ANGLE is neither useful nor safe, the same
 # reason the rpm turns it off. These are also already-built binaries, so
 # there is nothing here for makepkg to strip that upstream did not mean.
 options=(!strip !debug emptydirs)
-# The tag carries no leading "v" -- match what is actually published.
+# The tag carries no leading "v", match what is actually published.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst")
 # Filled in at publish time from the archive the release actually
-# serves -- `updpkgsums`, or the value the release workflow prints at the
+# serves, `updpkgsums`, or the value the release workflow prints at the
 # end of its run. A checksum belongs to one specific archive, so a stale
 # one is worse than an obvious gap: this carried the digest of a release
 # that was later deleted, which would have failed every install with a
@@ -62,7 +62,7 @@ package() {
   # a package is. Nothing is rebuilt, only relocated below.
   cp -a usr "$pkgdir"/
 
-  # Arch does not use /usr/libexec -- a package's own executables belong
+  # Arch does not use /usr/libexec, a package's own executables belong
   # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
   # misplaced (12 errors on this package before this moved). stud-ui
   # probes both layouts, so the binaries need no rebuild for this.

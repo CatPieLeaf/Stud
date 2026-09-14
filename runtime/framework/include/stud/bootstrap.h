@@ -12,25 +12,25 @@
 // Real orchestration of MainGameActivity's real bootstrap sequence, via
 // real JNI-convention exported symbols
 // (`Java_com_roblox_client_startup_MainGameActivity_native*`) resolved
-// through stud::linker::LoadedLibrary::find_symbol -- no real JNI dispatch,
+// through stud::linker::LoadedLibrary::find_symbol; no real JNI dispatch,
 // direct C function calls, matching the "these are plain exported ELF
 // symbols" reasoning already established for the whole JNI bridge (see
 // the engineering notes' "libroblox.so native symbol survey").
 //
 // Real, ground-truth call order (the engineering notes, "Sober does not
-// patch libroblox.so either" entry -- corrects the earlier, guessed
+// patch libroblox.so either" entry, corrects the earlier, guessed
 // order this file previously documented), traced from the actual
 // the real MainGameActivity.onCreate() and setInitParamsForEngine:
 //
-//   1. nativeSetAssetPath(String)             -- BEFORE GameActivity's
+//   1. nativeSetAssetPath(String)            , BEFORE GameActivity's
 //      own native init (called before super.onCreate() in
 //      onCreate()). See run_preload_bootstrap().
-//   2. nativePreloadFlagOverrides(String)     -- also from native init, also
+//   2. nativePreloadFlagOverrides(String)    , also from native init, also
 //      before super.onCreate(), and on a real device only called
-//      conditionally (a real gate this project has no equivalent for --
+//      conditionally (a real gate this project has no equivalent for.
 //      Stud always calls it, matching the locked "FFlags are always
 //      user-JSON-driven" product decision). See run_preload_bootstrap().
-//   3. nativeAppBridgeSetInitParams(InitParams) -- NOT called eagerly by
+//   3. nativeAppBridgeSetInitParams(InitParams), NOT called eagerly by
 //      Java at a fixed point at all. Reached via setInitParamsForEngine from
 //      bootstrapTheApp(), a real @Keep native-to-Java callback (confirmed:
 //      "bootstrapTheApp"/"[FLog::NativeDM] bootstrapTheApp_:" strings in
@@ -72,7 +72,7 @@ struct BootstrapResult {
 // `jvm` supplies the JNIEnv* passed to each native call (FakeJni::Env
 // publicly inherits from the real JNIEnv, so no conversion is needed).
 // `lib` must already be successfully loaded. Missing exported symbols are
-// treated as fatal (throws stud::linker::LoadError naming the symbol) --
+// treated as fatal (throws stud::linker::LoadError naming the symbol),
 // if MainGameActivity's real bootstrap entry points aren't present, that's
 // a real problem worth failing loudly on, not silently skipping.
 BootstrapResult run_bootstrap(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
@@ -86,7 +86,7 @@ struct PreloadBootstrapResult {
     bool preload_flag_overrides_trapped_abort = false;
 };
 
-// nativeSetAssetPath then nativePreloadFlagOverrides -- real order, see
+// nativeSetAssetPath then nativePreloadFlagOverrides; real order, see
 // this header's own doc comment above. Call BEFORE
 // GameActivity_initializeNativeCode() (real Android runs its native init before
 // super.onCreate()).
@@ -101,7 +101,7 @@ struct InitParamsBootstrapResult {
 
 // nativeAppBridgeSetInitParams only. Call from inside
 // MainGameActivityStub::bootstrapTheApp()'s real callback (see
-// game_activity_stubs.h), not eagerly -- matches setInitParamsForEngine's real trigger.
+// game_activity_stubs.h), not eagerly, matches setInitParamsForEngine's real trigger.
 InitParamsBootstrapResult run_init_params_bootstrap(FakeJni::Jvm& jvm,
                                                      const stud::linker::LoadedLibrary& lib,
                                                      std::shared_ptr<InitParams> init_params);
@@ -110,16 +110,16 @@ InitParamsBootstrapResult run_init_params_bootstrap(FakeJni::Jvm& jvm,
 // investigating why Roblox's Lua-driven app UI never renders anything,
 // the engineering notes' "instantiate controllers" investigation): the real
 // setInitParamsForEngine calls `NativeSettingsInterface.
-// nativeSetDeviceInfo(DeviceParams)` -- confirmed against the library's exported symbols as a real,
+// nativeSetDeviceInfo(DeviceParams)`, confirmed against the library's exported symbols as a real,
 // exported symbol (`Java_com_roblox_engine_jni_NativeSettingsInterface_
-// nativeSetDeviceInfo`) -- as its very first action, BEFORE building or
+// nativeSetDeviceInfo`), as its very first action, BEFORE building or
 // setting InitParams at all. Stud has never called this at any point in
 // this project's history (confirmed via a grep across the whole
 // codebase before adding this). Real, plausible significance: this is
 // the engine's one dedicated entry point for its own internal
 // "device info" global state, and setInitParamsForEngine's own ordering (this call
 // strictly precedes InitParams) suggests later initialization code may
-// read that state -- a real, concrete candidate for what's missing
+// read that state, a real, concrete candidate for what's missing
 // upstream of the never-triggered "instantiate controllers" vtable
 // chain, not confirmed yet, but real and previously untested.
 struct SetDeviceInfoResult {

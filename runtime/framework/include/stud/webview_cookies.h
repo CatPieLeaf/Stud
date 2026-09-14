@@ -17,7 +17,7 @@ namespace stud::jni_bridge {
 //
 //   .ROBLOSECURITY  the signed-in session
 //   rbxas           the account switcher's own cookie, which is what
-//                   carries the SET of signed-in accounts -- observed
+//                   carries the SET of signed-in accounts, observed
 //                   live on apis.roblox.com/account-switcher/v1/
 //                   getLoggedInUsersMetadata and reissued by
 //                   auth.roblox.com/v2/login on every switch
@@ -25,18 +25,18 @@ namespace stud::jni_bridge {
 // This is NOT the login-time snapshot that was removed earlier: it is
 // overwritten on every Set-Cookie, so after switching accounts it holds
 // the account the user is now on, not the one they started with. That
-// distinction is the whole point -- Roblox supports several signed-in
+// distinction is the whole point; Roblox supports several signed-in
 // accounts and a panel must open as the current one.
 //
 // Why it is needed at all, when the engine can be asked directly: after
 // a switch, `nativeGetCookiesForDomain("https://www.roblox.com")`
-// returns only `GuestData` -- the engine files the new session under the
+// returns only `GuestData`, the engine files the new session under the
 // auth/apis domains instead, so reading one domain's jar is not enough.
 // Live-confirmed, and it is why web-view panels opened after a switch
 // were signed out.
 //
 // These are real credentials. Nothing here logs a value, and callers
-// must not either -- name and count only.
+// must not either, name and count only.
 void set_session_cookie_sink(std::function<void(const std::string&)> sink);
 
 // Where a refreshed `rbxas` is sent so every signed-in account, not just

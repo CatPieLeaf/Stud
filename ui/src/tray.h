@@ -10,7 +10,7 @@ class QAction;
 // Stud's system-tray presence, and the reason Process A now outlives a
 // launch at all.
 //
-// Process A was built to hand off and exit -- "a magnet link launcher
+// Process A was built to hand off and exit, "a magnet link launcher
 // does not need to stay open". A tray icon has to belong to a process
 // that lives as long as the session does, and of the three only Process A
 // is a Qt application: render-host holds the window and Process B is
@@ -30,7 +30,7 @@ class Tray : public QObject {
 public:
     explicit Tray(QObject* parent = nullptr);
 
-    // False when no system tray is available -- a desktop without a
+    // False when no system tray is available, a desktop without a
     // status-notifier host, which is an ordinary condition rather than an
     // error. The caller then quits as it always did.
     bool show();

@@ -10,7 +10,7 @@
 // Android system image, see third_party/android-bionic/), inside an
 // unprivileged bubblewrap (bwrap) sandbox that synthesizes /system/lib64
 // and /system/bin/linker64 (paths real bionic's dynamic linker hardcodes,
-// confirmed via a live syscall trace against the actual extracted linker64 -- see
+// confirmed via a live syscall trace against the actual extracted linker64; see
 // docs/bionic-process-b.md) while leaving the rest of the host filesystem
 // (or the specific subtrees this process needs: GPU device nodes, the
 // Wayland socket, DNS/TLS config, Stud's own install tree) visible.
@@ -21,12 +21,12 @@
 // specific extracted binary, correct only for that exact build).
 // That design required every glibc<->bionic call boundary (every JNI
 // vtable slot, every pthread call) to manually swap the %fs segment
-// register via stud::tls_compat -- fragile by construction, since ANY
+// register via stud::tls_compat, fragile by construction, since ANY
 // thread anything in the shared process spawns (including driver-internal
 // worker threads Stud can't enumerate) is exposed to the same TLS-
 // ambiguity crash class. Booting a genuine, separate bionic process
 // instead means bionic-compiled code's TLS is set up once, natively, by
-// real bionic code, for every thread it ever has -- there's no "other
+// real bionic code, for every thread it ever has, there's no "other
 // ABI" to swap to/from inside this process for bionic-native code at all.
 //
 // bwrap is a deliberate dependency, not hand-rolled pivot_root/mount-
@@ -42,14 +42,14 @@ struct BionicNotFound : std::runtime_error {
         : std::runtime_error(
               "stud: could not find Stud's own extracted bionic runtime files "
               "(libc.so/libm.so/libdl.so/liblog.so/libandroid.so/libc++.so/"
-              "tzdata) -- extract them from a Waydroid system image first "
+              "tzdata), extract them from a Waydroid system image first "
               "(see docs/bionic-process-b.md)") {}
 };
 
 struct LinkerNotFound : std::runtime_error {
     LinkerNotFound()
         : std::runtime_error(
-              "stud: could not find a real bionic linker64 binary -- extract "
+              "stud: could not find a real bionic linker64 binary, extract "
               "it from a Waydroid system image's com.android.runtime APEX "
               "(system/apex/com.android.runtime.apex, apex_payload.img:/bin/"
               "linker64) first (see docs/bionic-process-b.md)") {}
@@ -59,7 +59,7 @@ struct BwrapNotFound : std::runtime_error {
     BwrapNotFound()
         : std::runtime_error("stud: bwrap (bubblewrap) is required to launch "
                               "Stud's bionic runtime process but was not found "
-                              "on PATH -- install the bubblewrap package") {}
+                              "on PATH, install the bubblewrap package") {}
 };
 
 // Directory containing the extracted real bionic .so set (see
@@ -85,7 +85,7 @@ struct HostBind {
 struct ProcessBConfig {
     // The bionic ELF executable to run as Process B's entry point (a
     // real bionic build of stud-runtime, produced by the NDK toolchain
-    // -- see runtime/CMakeLists.txt's bionic-target build).
+    // see runtime/CMakeLists.txt's bionic-target build).
     std::string executable_path;
     std::vector<std::string> args;
 
@@ -102,12 +102,12 @@ struct ProcessBConfig {
     std::string bionic_lib_dir;
     std::string linker64_path;
 
-    // Real bwrap `--chdir` target -- must be one of extra_binds' writable
+    // Real bwrap `--chdir` target, must be one of extra_binds' writable
     // paths (or otherwise real and writable inside the sandbox). Real,
     // confirmed hazard if left empty: bwrap has no cwd of its own, so it
     // fchdir()s the child into whatever cwd the launching process (Process
     // A) happened to have, which is frequently one of the *read-only*
-    // ro-binds (e.g. Stud's own install tree) -- and real Roblox code does
+    // ro-binds (e.g. Stud's own install tree), and real Roblox code does
     // real relative-path writes (confirmed via a live syscall trace: a real, blocking
     // `openat("_memProfStorage2.json", O_CREAT|O_TRUNC, ...)` on one of
     // its own worker threads) that fail with EROFS there and can stall
@@ -122,7 +122,7 @@ struct ProcessBConfig {
     // Process B, passed via bwrap's own real `--setenv NAME VALUE`.
     // Before this field existed, launch_process_b() had no way at all
     // to set anything like STUD_VULKAN_CALL_TRACE/STUD_RENDER_CALL_TRACE
-    // for a real production launch -- every env-gated diagnostic this
+    // for a real production launch; every env-gated diagnostic this
     // project has built stayed permanently off outside a hand-run
     // bwrap test script, so e.g. real evidence of whether libroblox.so
     // ever even attempts dlopen("libvulkan.so.1") was never actually
@@ -132,7 +132,7 @@ struct ProcessBConfig {
     // The file descriptor Process B should use as its stdout and stderr,
     // or -1 to inherit this process's. Process A tees its own output into
     // the session log, which replaces its fd 1 with a pipe only its own
-    // thread reads -- and Process A exits long before Process B does, so
+    // thread reads, and Process A exits long before Process B does, so
     // inheriting that pipe would throw away everything Process B ever
     // says. It opens the session log itself (stud/session_log.h).
     int stdout_fd = -1;
@@ -141,11 +141,11 @@ struct ProcessBConfig {
 };
 
 // Spawns Process B inside the bwrap sandbox described above and returns
-// immediately with its PID (the caller -- Process A / stud-ui -- owns
+// immediately with its PID (the caller. Process A / stud-ui, owns
 // waiting on it and relaying lifecycle over stud-ipc). Throws
 // BionicNotFound / LinkerNotFound / BwrapNotFound if a prerequisite is
 // missing, or std::runtime_error if spawning itself fails (fork/exec
-// failure) -- does NOT swallow-and-retry; a failure here is a real,
+// failure), does NOT swallow-and-retry; a failure here is a real,
 // actionable error for the caller to surface, not something to loop on.
 pid_t launch_process_b(const ProcessBConfig& config);
 
@@ -153,7 +153,7 @@ pid_t launch_process_b(const ProcessBConfig& config);
 // its own pure, side-effect-free function purely so it's testable
 // without actually needing bwrap/a real bionic install present (a real
 // gap this project's own plan flagged: nothing regression-tests that
-// the sandbox never ends up binding a real host GPU driver path --
+// the sandbox never ends up binding a real host GPU driver path,
 // exactly the class of mistake that would defeat this project's whole
 // point, isolating the vendor driver from any process sharing bionic/
 // foreign TLS). argv[0] is the bwrap binary path.

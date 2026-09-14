@@ -8,7 +8,7 @@
 #include <string>
 
 // Real, general infrastructure for driving a loaded libroblox.so through
-// its actual post-load boot sequence -- promoted out of
+// its actual post-load boot sequence, promoted out of
 // tools/try_bootstrap.cpp once proven against the real binary, shared by
 // the diagnostic tool and the real stud-runtime binary so both stay in
 // sync. See the engineering notes, "run_bootstrap() completes end-to-end" and
@@ -18,7 +18,7 @@
 //
 // Deliberately NOT included here: any Roblox-build-specific byte offset
 // or address. Every function in this header works the same way regardless
-// of which Roblox APK version produced the loaded library -- matching the
+// of which Roblox APK version produced the loaded library, matching the
 // project's locked "works with any given Roblox APK" requirement. (One
 // real, known limitation of the *diagnostic tool*, not promoted here: an
 // exploratory direct call to one specific build's internal flag-registry
@@ -36,11 +36,11 @@ struct JniOnLoadResult {
 // after_constructors argument: calls JNI_OnLoad(vm, nullptr) if the
 // library exports one, with the same abort-trap protection as every
 // other native call in this module (see trap_recovery.h's
-// arm_abort_trap()) -- a trapped abort leaves *out_result.trapped_abort
+// arm_abort_trap()), a trapped abort leaves *out_result.trapped_abort
 // true and the process running, not a crash. Real bionic's own linker64
 // (not Stud's own former in-process loader) handles module registration
 // and unwind-info for real C++ exception unwinding across this load
-// natively, exactly like a real device -- no separate registration step
+// natively, exactly like a real device; no separate registration step
 // needed here anymore. `out_result` is only meaningful after
 // load_library() itself has returned.
 std::function<void(const stud::linker::LoadedLibrary&)> make_post_constructor_hook(
@@ -56,7 +56,7 @@ struct GameActivityLifecycleResult {
     // (the engineering notes, "two windows" entry): any other caller that
     // needs to hand Roblox a Surface (e.g. the V2 app-bridge's
     // ResumeGameWithPlatformParams/StartGameWithParam) must reuse THIS
-    // SAME object, not construct a fresh SurfaceStub -- android-glue's
+    // SAME object, not construct a fresh SurfaceStub; android-glue's
     // ANativeWindow dedup cache (added for the exact same reason) is
     // keyed by jobject identity, so a different object means a second,
     // real, independently-mapped Wayland window.
@@ -64,7 +64,7 @@ struct GameActivityLifecycleResult {
 
     // The real GameActivity instance every lifecycle call above was made
     // on. The input bridge needs it to deliver real MotionEvent/KeyEvent
-    // objects through AGDK's own onTouchEventNative/onKeyDownNative -- the
+    // objects through AGDK's own onTouchEventNative/onKeyDownNative, the
     // only input path that carries a real InputDevice source and tool type.
     std::shared_ptr<MainGameActivityStub> activity;
 
@@ -84,14 +84,14 @@ struct GameActivityLifecycleResult {
 //
 // Real Android sends this on every surface geometry change, not just once at
 // startup; without it the engine keeps rendering at the size it was told at
-// boot while the compositor has already resized the window underneath it --
+// boot while the compositor has already resized the window underneath it,
 // live-observed as the window growing on a drag with the old, smaller image
 // still in it and the rest of the frame showing straight through to the
 // desktop.
 //
 // Runs on its own detached thread with a bounded wait, for the same reason
 // every other lifecycle call here does (a real one can block), and refuses to
-// overlap itself -- a drag delivers a configure per pixel.
+// overlap itself, a drag delivers a configure per pixel.
 bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResult& lifecycle,
                               int32_t width, int32_t height);
 
@@ -106,7 +106,7 @@ bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResu
 // (game_activity_stubs.h) called on it and jvm.attachLibrary("") already
 // called (both one-time FakeJni::Jvm setup, unrelated to any specific
 // call here), and ALooper_prepare(0) already called on the calling thread
-// (android-glue's ALooper -- real device precondition GameActivity's own
+// (android-glue's ALooper; real device precondition GameActivity's own
 // init code depends on; without it, real init code crashes
 // dereferencing a null ALooper). internal_data_dir/
 // obb_dir/external_data_dir are plain scratch directory path strings
@@ -115,7 +115,7 @@ bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResu
 //
 // `on_bootstrap_the_app`, if given, is set on the MainGameActivityStub
 // instance (game_activity_stubs.h) BEFORE calling
-// GameActivity_initializeNativeCode() -- real Android's bootstrapTheApp()
+// GameActivity_initializeNativeCode(); real Android's bootstrapTheApp()
 // is a native-to-Java callback the engine invokes when it's ready for
 // setInitParamsForEngine (see bootstrap.h's run_init_params_bootstrap()
 // doc comment), not something called at a fixed point from here. Default

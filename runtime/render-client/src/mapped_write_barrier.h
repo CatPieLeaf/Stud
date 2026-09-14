@@ -10,7 +10,7 @@ namespace stud::render_client {
 // Page-granular dirty tracking for Vulkan's mapped device memory.
 //
 // Why this exists: a HOST_COHERENT mapping is defined as needing no
-// explicit flush -- the app writes and the device sees it. Stud's
+// explicit flush, the app writes and the device sees it. Stud's
 // "mapping" is a staging buffer in another process, so every submit has
 // to ship whatever the engine wrote. The first version compared the
 // staging buffer against a shadow copy to find that out, which was a
@@ -64,7 +64,7 @@ public:
 
     // How many pages one fault unprotects at most. A sequential write
     // through a large mapping otherwise costs one signal plus one
-    // mprotect per 4KB, which is what this cap exists to bound -- see
+    // mprotect per 4KB, which is what this cap exists to bound; see
     // the growth logic in handle_write_fault().
     static constexpr std::size_t kMaxFaultWindowPages = 64;
 
@@ -91,7 +91,7 @@ private:
 };
 
 // Total write faults taken since the process started, across every
-// barrier. Reported by STUD_VK_MEM_STATS -- each one is a signal
+// barrier. Reported by STUD_VK_MEM_STATS, each one is a signal
 // delivery plus an mprotect (a VMA operation and a TLB shootdown across
 // every thread), so it is the cost this whole mechanism trades against
 // the bytes it saves sending.

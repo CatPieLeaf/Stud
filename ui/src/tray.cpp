@@ -6,7 +6,7 @@
 
 #include "stud/stud_paths.h"
 
-// Ends a running session -- defined in main.cpp, declared here because
+// Ends a running session, defined in main.cpp, declared here because
 // the tray is the only other caller.
 namespace stud::ui { void terminate_stud_session(); }
 
@@ -45,7 +45,7 @@ namespace {
 
 // Where render-host records the link to the server the player is
 // currently in, so the tray can offer it without needing to speak the
-// render protocol. A real https link to that one server -- not an
+// render protocol. A real https link to that one server, not an
 // invite: minting one of those needs the Lua SocialService inside an
 // experience (see ui/src/main.cpp's --game-info). Written on every presence change and removed on the
 // way back to the app shell, so its absence means "not in a game".
@@ -66,7 +66,7 @@ QString read_server_link() {
 //
 // Tested with the same flock render-host holds for its whole life, not by
 // looking for its socket file. A socket file outlives a SIGKILLed process
-// -- nothing unlinks it -- so the tray would have sat there forever
+// nothing unlinks it, so the tray would have sat there forever
 // believing a dead session was alive. The kernel releases a lock however
 // the holder dies, so this cannot go stale.
 bool session_is_running() {
@@ -90,7 +90,7 @@ bool Tray::show() {
 
     // A tray-only process has no windows, and Qt quits an application
     // when its last window closes. So opening Settings from the tray and
-    // closing it again ended the process -- taking the tray icon with it,
+    // closing it again ended the process, taking the tray icon with it,
     // for the rest of the session, while the game carried on running with
     // no way back to the menu.
     //
@@ -116,7 +116,7 @@ bool Tray::show() {
     icon_->show();
 
     // Ask GitHub whether there is a newer Stud, once, in the background.
-    // Nothing appears unless there is -- see UpdateCheck.
+    // Nothing appears unless there is; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this, &Tray::showUpdateAvailable);
     if (UpdateCheck::updateAvailable()) showUpdateAvailable(UpdateCheck::latestVersion());
     UpdateCheck::start();
@@ -160,7 +160,7 @@ void Tray::checkSessionAlive() {
 
 void Tray::openSettings() {
     // One window, whether the request came from here or from the desktop
-    // entry's own Settings action -- see SettingsWindow::showSingleton().
+    // entry's own Settings action; see SettingsWindow::showSingleton().
     SettingsWindow::showSingleton();
 }
 
@@ -173,7 +173,7 @@ void Tray::copyServerLink() {
         return;
     }
     // On Wayland a clipboard offer is only accepted with the serial of a
-    // real input event on one of the application's own surfaces -- and
+    // real input event on one of the application's own surfaces, and
     // this application has no window at all while it sits in the tray
     // (the menu is the desktop's, over D-Bus, not a Qt surface). So
     // QClipboard::setText was silently ignored and the entry copied
@@ -214,7 +214,7 @@ void Tray::exportLogs() {
     // Every session, not just this one.
     //
     // A problem worth reporting is often visible in the run BEFORE the
-    // one the user noticed it in -- a crash, a setting that did not take,
+    // one the user noticed it in: a crash, a setting that did not take,
     // a launch that went to the home screen. Exporting only the current
     // session made the user pick which run mattered, from a directory
     // they have no reason to know exists, before they knew.
@@ -262,7 +262,7 @@ void Tray::exportLogs() {
 void Tray::showAbout() {
     // One card, however many times the entry is clicked. QMessageBox::about
     // builds a new dialog every call, so a few clicks left a stack of
-    // identical windows -- the same reason Settings is a singleton.
+    // identical windows, the same reason Settings is a singleton.
     static QPointer<QMessageBox> about;
     if (about.isNull()) {
         about = new QMessageBox(QMessageBox::NoIcon, QStringLiteral("About Stud"),
@@ -276,7 +276,7 @@ void Tray::showAbout() {
         about->setTextFormat(Qt::RichText);
         about->setTextInteractionFlags(Qt::TextBrowserInteraction);
         // The ICON, not the wordmark. A dialog's icon slot is square, and
-        // stud-logo.png is the wide 3840x2160 logo -- fitting that into 96
+        // stud-logo.png is the wide 3840x2160 logo, fitting that into 96
         // square leaves a sliver a few pixels tall. stud-logo-color.png is
         // the square one, and is already what the tray and the window use.
         const QPixmap icon(QStringLiteral(":/stud-logo-color.png"));

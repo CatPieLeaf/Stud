@@ -3,7 +3,7 @@
 #
 # CI produces exactly one build of Stud and wraps it as an rpm, a deb, an
 # Arch package, an AppImage and a Flatpak archive. Building the cpak image
-# from source as well would mean a second compile of ANGLE -- an hour --
+# from source as well would mean a second compile of ANGLE, an hour:
 # and, worse, no guarantee that the image holds the same binaries as every
 # other package from that release.
 #
@@ -15,7 +15,7 @@ FROM fedora:44
 # bubblewrap is a real runtime dependency, not a packaging detail:
 # Process B is a bionic ELF that runs inside its own mount, PID and IPC
 # namespaces, and Stud creates them with bwrap. cpak's own sandbox does
-# not replace it -- the manifest grants userNamespaces so this one can
+# not replace it, the manifest grants userNamespaces so this one can
 # nest inside it.
 RUN dnf install -y --setopt=install_weak_deps=False \
         bubblewrap \

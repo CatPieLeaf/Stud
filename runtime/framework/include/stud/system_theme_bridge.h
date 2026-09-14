@@ -2,7 +2,7 @@
 
 // The real system-theme protocol
 // (`com.roblox.universalapp.systemtheme.SystemThemeProtocol`), which Stud
-// has never answered -- so the Lua app was told nothing about the desktop's
+// has never answered, so the Lua app was told nothing about the desktop's
 // light/dark setting and every web-view panel opened in the site's light
 // theme regardless.
 //
@@ -15,7 +15,7 @@
 //     SYSTEM_DARK 4.
 //   * The platform answers by setting a **cookie** on the Roblox site:
 //     `RBXThemeOverride=light|dark; Path=/`. That cookie is the whole
-//     mechanism behind "the website is in dark mode" -- it is not a
+//     mechanism behind "the website is in dark mode"; it is not a
 //     rendering trick, it is the site's own theme, which is why this is
 //     the only way to get a genuinely dark panel rather than an inverted
 //     one. It also sets `RBXHideThemeSetting=True; Path=/my/account`, so
@@ -23,7 +23,7 @@
 //     already driving.
 //   * The platform publishes a **themeUpdated** message whenever the
 //     system theme changes, and the app then reads it back through
-//     `SystemThemeProtocol.getSystemTheme()` -- the static the engine
+//     `SystemThemeProtocol.getSystemTheme()`, the static the engine
 //     calls into Java, which on a real device reads
 //     `Configuration.uiMode & UI_MODE_NIGHT_MASK`.
 //
@@ -53,7 +53,7 @@ int system_theme_value();
 // Subscribes to the app's setTheme message and publishes the initial
 // themeUpdated, so the app asks for the system theme at all. `on_theme`
 // receives the real theme name ("light" or "dark") whenever the app
-// settles on one -- that is what the web view needs for its cookie.
+// settles on one. That is what the web view needs for its cookie.
 bool run_system_theme_bootstrap(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                 std::function<void(const std::string& theme_name)> on_theme);
 

@@ -1,7 +1,7 @@
 // Real audio output for Process C.
 //
 // Process B is bionic and cannot talk to the host's audio server, exactly
-// as it cannot talk to the GPU -- so audio crosses the same narrow,
+// as it cannot talk to the GPU, so audio crosses the same narrow,
 // enumerable boundary the GL calls already do, and the device work happens
 // here, in ordinary glibc code.
 //
@@ -13,7 +13,7 @@
 //
 // PortAudio is the backend: it is the portable abstraction over
 // ALSA/PulseAudio/PipeWire/JACK, so one implementation covers every host
-// this targets, and its callback model is exactly the shape needed --
+// this targets, and its callback model is exactly the shape needed,
 // PortAudio runs its own realtime thread and pulls, so nothing here has to
 // invent a clock. It is resolved at runtime with dlsym (using its real
 // header for types, so no ABI is hand-declared) rather than linked, so it
@@ -21,7 +21,7 @@
 //
 // The device work must stay off the render dispatch thread. Opening a
 // device talks to the audio server and blocks; doing that inline froze the
-// app the instant a game started -- the engine opens its device exactly
+// app the instant a game started, the engine opens its device exactly
 // then, and every GL call queued behind it. Live-caught, twice.
 
 #include "stud/audio_output.h"
@@ -64,7 +64,7 @@ struct PortAudio {
 };
 
 // ALSA writes its own diagnostics straight to stderr, and PortAudio's
-// initialisation probes every PCM the system defines -- so a normal
+// initialisation probes every PCM the system defines, so a normal
 // launch printed `Unknown PCM cards.pcm.rear`, `...center_lfe`,
 // `...side` and a `find_matching_chmap` complaint every time, about
 // devices this machine simply does not have. None of it is a Stud error
@@ -164,7 +164,7 @@ PortAudio& portaudio() {
     // Present this stream as "Stud", with Stud's icon, in the desktop's
     // volume mixer. PortAudio reaches PipeWire/PulseAudio through their
     // ALSA compatibility layer, which otherwise labels the entry with
-    // this process's own name ("PipeWire ALSA [stud-render-host]") -- an
+    // this process's own name ("PipeWire ALSA [stud-render-host]"), an
     // implementation detail no user should have to recognise as Roblox.
     //
     // Every spelling is set because which one applies depends on which
@@ -184,7 +184,7 @@ PortAudio& portaudio() {
     ::setenv("PULSE_PROP_media.role", "game", /*overwrite=*/0);
     // node.description is the one that actually shows. PipeWire's ALSA
     // plugin builds its own label as "PipeWire ALSA [<program name>]"
-    // from the process name, and that is what a mixer displays -- so
+    // from the process name, and that is what a mixer displays, so
     // application.name alone never replaced it (live-confirmed: the icon
     // set through these same props DID appear, proving the props are
     // applied, while the label stayed "PipeWire ALSA [stud-render-host]").
@@ -196,7 +196,7 @@ PortAudio& portaudio() {
     // perfectly on the JACK-side nodes (application.name = Stud,
     // node.description = Stud, icon and all) while the playback node
     // read `application.name = PipeWire ALSA [stud-render-host]` and
-    // `node.name = alsa_playback.stud-render-host` -- built by the
+    // `node.name = alsa_playback.stud-render-host`, built by the
     // plugin from this process's own name, which no amount of
     // PIPEWIRE_PROPS could reach. PIPEWIRE_ALSA is that plugin's own
     // property channel.
@@ -218,9 +218,9 @@ PortAudio& portaudio() {
     silence_alsa_probe_noise();
     // The host's own PortAudio first, always.
     //
-    // It is built against the audio stack that machine actually runs --
+    // It is built against the audio stack that machine actually runs:
     // Fedora's, for instance, has a real PipeWire host API, which a copy
-    // built elsewhere would not -- so using the system one is what makes
+    // built elsewhere would not, so using the system one is what makes
     // Stud appear in the volume mixer as an ordinary application rather
     // than as a raw ALSA client.
     //
@@ -279,7 +279,7 @@ constexpr size_t kMaxQueuedBursts = 20;   // ~200ms at 48 kHz in 10ms bursts
 // One process-wide output device, opened when Stud starts and kept open
 // for its lifetime, playing silence until the engine has something to
 // feed it. That is what makes Stud appear in the desktop's volume mixer
-// from launch rather than only once a game happens to start a sound --
+// from launch rather than only once a game happens to start a sound,
 // which is how every other desktop application behaves, and what the user
 // expects when looking for Stud's volume slider.
 //
@@ -294,7 +294,7 @@ struct Device {
     // 32-bit float, which is what the engine actually produces and what a
     // real Android device hands an AAudio stream that does not ask for a
     // format. Stud used to convert to 16-bit here, and that ceiling is
-    // audible: a hot mix -- loud, bassy content -- hard-clips against full
+    // audible: a hot mix, loud, bassy content, hard-clips against full
     // scale instead of keeping its headroom until the system mixer has
     // applied the user's volume. Measured before changing anything:
     // samples pinned at full scale on exactly the passages that sounded
@@ -307,7 +307,7 @@ struct Device {
     // Two real defects in that arrangement made audio sound bad, and
     // both were in the realtime callback. It took the lock with
     // `try_to_lock` and, whenever the producer happened to hold it,
-    // filled the ENTIRE period with silence -- so ordinary lock
+    // filled the ENTIRE period with silence, so ordinary lock
     // contention became an audible dropout rather than a slightly late
     // sample. And on a partial take it did `erase(begin(), ...)`, an
     // O(n) memmove, in the same callback whose own comment says it must
@@ -332,7 +332,7 @@ struct Device {
     std::thread opener;
 
     // This lives in a function-local static, so its destructor really does
-    // run at exit -- and destroying a joinable std::thread calls
+    // run at exit, and destroying a joinable std::thread calls
     // std::terminate(). Live-caught as `terminate called without an active
     // exception` on every shutdown that had started audio. The thread only
     // opens the device and returns, so joining is a genuine wait for it to
@@ -372,7 +372,7 @@ int portaudio_callback(const void*, void* output, unsigned long frames,
     if (take < wanted) {
         std::memset(out + take, 0, wanted - take);
         // Silence padded because the producer had not published enough.
-        // Counted rather than logged here -- this runs on the realtime
+        // Counted rather than logged here; this runs on the realtime
         // thread. A steady trickle of these is what an open-loop feeder
         // clock sounds like: small, regular gaps in the waveform.
         s->underruns.fetch_add(1, std::memory_order_relaxed);
@@ -403,7 +403,7 @@ void open_device(Device* s) {
             }
         }
         if (stream == nullptr) {
-            std::printf("stud-render-host: audio: could not open a device (%s) -- this stream is "
+            std::printf("stud-render-host: audio: could not open a device (%s); this stream is "
                         "silent\n",
                         pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
             std::fflush(stdout);
@@ -514,7 +514,7 @@ uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes)
 
 void audio_close_stream(uint64_t stream) {
     // The device itself stays open for the process's lifetime (see
-    // Device's own comment) -- what ends here is the engine feeding it, so
+    // Device's own comment), what ends here is the engine feeding it, so
     // anything still queued is dropped rather than played after the sound
     // that produced it is gone.
     Device& d = device();
@@ -621,7 +621,7 @@ uint64_t audio_open_input_stream(int sample_rate, int channels) {
         return 0;
     }
     c.open = true;
-    std::printf("stud-render-host: audio: MICROPHONE OPEN (%d Hz, %d channel(s)) -- the engine "
+    std::printf("stud-render-host: audio: MICROPHONE OPEN (%d Hz, %d channel(s)), the engine "
                 "asked for an input stream\n",
                 c.rate, c.channels);
     std::fflush(stdout);

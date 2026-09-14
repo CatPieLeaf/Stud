@@ -12,7 +12,7 @@
 
 namespace {
 
-// mkdir -p equivalent -- miniz's mz_zip_reader_extract_to_file() doesn't
+// mkdir -p equivalent, miniz's mz_zip_reader_extract_to_file() doesn't
 // create parent directories on its own, and the APK's assets/ tree is
 // genuinely nested (e.g. "assets/ExtraContent/places/Mobile.rbxl",
 // "assets/ssl/cacert.pem").
@@ -43,7 +43,7 @@ std::string base_name(const std::string& path) {
 // split-APK bundle: a base.apk with the app's assets and dex, plus one
 // split per ABI/density/language. Google Play has shipped Roblox as a
 // bundle for a long time, so a monolithic .apk is the thing that is
-// getting harder to find, not the bundle -- supporting bundles directly
+// getting harder to find, not the bundle, supporting bundles directly
 // is what stops Stud depending on someone republishing a merged APK.
 constexpr std::string_view kBundleMarker = "base.apk";
 
@@ -55,7 +55,7 @@ bool zip_contains(mz_zip_archive& zip, const char* entry) {
 //
 // APKMirror's .apkm and SAI's .apks both call the base split "base.apk",
 // which is what kBundleMarker looks for. An .xapk (APKPure and friends)
-// names it after the package instead -- `com.roblox.client.apk` -- and
+// names it after the package instead, `com.roblox.client.apk`, and
 // describes the set in a `manifest.json` beside it. So an .xapk holds a
 // perfectly ordinary split-APK bundle that the base.apk check alone
 // would miss, and Stud would then try to read the outer zip as if it
@@ -63,7 +63,7 @@ bool zip_contains(mz_zip_archive& zip, const char* entry) {
 //
 // The manifest is the honest marker: it is what makes this file a
 // bundle rather than a zip that happens to contain an apk. Its contents
-// are not parsed -- the split members are already found by walking the
+// are not parsed, the split members are already found by walking the
 // archive, and a format that can rename the base can rename anything
 // else in the JSON too.
 constexpr std::string_view kXapkManifest = "manifest.json";
@@ -89,7 +89,7 @@ bool looks_like_bundle(mz_zip_archive& zip) {
 // The base split of a bundle, whatever it is called.
 //
 // It is the one that carries the app's own assets and manifest, and it
-// has to be read first -- every later split is an overlay on it. "base"
+// has to be read first. Every later split is an overlay on it. "base"
 // for an .apkm/.apks; for an .xapk, the member with no `config.` or
 // `split_` in its name, which is how those tools name every non-base
 // split.
@@ -100,9 +100,9 @@ bool is_base_split(std::string_view name) {
            name.find("split.") == std::string_view::npos;
 }
 
-// Splits for ABIs Stud cannot run. Everything else in the bundle -- the
+// Splits for ABIs Stud cannot run. Everything else in the bundle, the
 // base, the x86_64 split, feature splits like gmasdk, language and
-// density splits -- is kept, since any of them may legitimately carry
+// density splits, is kept, since any of them may legitimately carry
 // assets.
 bool is_foreign_abi_split(std::string_view name) {
     return name.find("arm64_v8a") != std::string_view::npos ||
@@ -162,7 +162,7 @@ std::vector<std::string> unpack_bundle_members(const std::string& bundle_path,
         }
         // An .apkm/.apks says which member is the base by name, and that
         // always wins. An .xapk does not, so the first member that looks
-        // like one stands in until a real base.apk turns up -- feature
+        // like one stands in until a real base.apk turns up, feature
         // splits (gmasdk.apk and friends) carry neither marker either, so
         // without the exact match taking precedence one of them could be
         // read first.
@@ -230,7 +230,7 @@ void extract_apk_assets(const std::string& apk_path, const std::string& dest_dir
 void extract_apk_native_library(const std::string& apk_path, const std::string& library_name,
                                  const std::string& dest_path) {
     // The x86_64 native library lives in its own ABI split in a bundle,
-    // and in the single file for a monolithic APK -- try each source and
+    // and in the single file for a monolithic APK, try each source and
     // take the first that actually carries it.
     const std::vector<std::string> sources = resolve_apk_sources_impl(apk_path);
     for (const std::string& source : sources) {

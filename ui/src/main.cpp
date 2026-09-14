@@ -1,8 +1,8 @@
 // Auth/launcher UI process, separate from the game runtime (mirrors
-// Sober's service/runtime split -- confirmed against reference/sober-oss's
+// Sober's service/runtime split, confirmed against reference/sober-oss's
 // own architecture notes, see the engineering notes' M8 writeup: architecture
 // read only, no code copied). Plain Qt6 Widgets (revised from the
-// original "Qt6 + libplasma" decision -- see the engineering notes'
+// original "Qt6 + libplasma" decision; see the engineering notes'
 // locked-decisions table), QtWebEngine for the Roblox web login flow.
 // See the engineering notes, milestone M8.
 //
@@ -12,7 +12,7 @@
 //  - "Magnet link" launch: the OS invokes `stud-ui <uri>` because the
 //    user clicked Play on roblox.com in their browser and the browser
 //    handed off a real roblox-player:/roblox: launch URI to whichever
-//    app is registered for it (packaging/stud.desktop) -- the exact
+//    app is registered for it (packaging/stud.desktop), the exact
 //    same mechanism qBittorrent uses for magnet: links. Skips straight
 //    to launching the specific game the link names (after login, if
 //    needed), no settings window shown.
@@ -78,15 +78,15 @@ namespace {
 
 // A previous game session (from an earlier launch the user never fully
 // closed, or a crashed/leftover process) left running blocks the new
-// one's window from being the only one on screen -- real, observed
+// one's window from being the only one on screen; real, observed
 // behavior under the old architecture (two windows appearing on a
 // relaunch), not theoretical; the same risk applies to the new two-
 // process (Process B + stud-render-host) design. Both are meant to be
 // single-instance per user (like Sober). Scans /proc directly rather
-// than shelling out to pkill -- no assumption that procps is installed
+// than shelling out to pkill. No assumption that procps is installed
 // on every target distro.
 //
-// stud-render-host is a plain process -- /proc/[pid]/exe resolves to it
+// stud-render-host is a plain process, /proc/[pid]/exe resolves to it
 // directly. Process B is NOT: it's execve()'d by bwrap inside a real,
 // separate PID namespace (bionic_runtime::launch_process_b()'s own
 // --unshare-pid), so the PID visible from here is bwrap's own, and
@@ -140,14 +140,14 @@ void terminate_stale_processes() {
     }
     for (pid_t pid : victims) {
         if (::kill(pid, 0) == 0) {
-            ::kill(pid, SIGKILL);  // still alive after the grace period -- force it
+            ::kill(pid, SIGKILL);  // still alive after the grace period, force it
         }
     }
 }
 
 
 // Key under stud::ui::kKeychainService this app's real session cookie
-// is stored as -- distinct from the cookie's own literal name
+// is stored as, distinct from the cookie's own literal name
 // (".ROBLOSECURITY", which has characters not worth carrying into a
 // keychain key name).
 constexpr auto kSessionCookieKey = "roblosecurity";
@@ -155,7 +155,7 @@ constexpr auto kSessionCookieKey = "roblosecurity";
 // Real, best-effort search for a sibling binary: first where this dev
 // build's own layout puts it, then PATH, matching however a real
 // install eventually lays these out. No formal install step exists yet
-// (M11/packaging) -- this is the honest, current state, not a permanent
+// (M11/packaging): this is the honest, current state, not a permanent
 // design.
 QString find_render_host_binary() {
     QString sibling = QCoreApplication::applicationDirPath() + "/../render-host/stud-render-host";
@@ -170,7 +170,7 @@ QString find_render_host_binary() {
     if (QFile::exists(libexec)) {
         return libexec;
     }
-    // Some distributions do not use libexec at all -- Arch puts a
+    // Some distributions do not use libexec at all, Arch puts a
     // package's private executables in lib/<pkg>/, and its own packaging
     // analyser treats anything under libexec as misplaced. Both layouts
     // are checked so one build works either way.
@@ -182,9 +182,9 @@ QString find_render_host_binary() {
 }
 
 // Process B (stud-runtime-bionic) is built as a nested ExternalProject
-// (see the top-level CMakeLists.txt's own doc comment for why -- a real
+// (see the top-level CMakeLists.txt's own doc comment for why, a real
 // bionic NDK-toolchain build can't share one CMake configure with this
-// host/glibc one) -- its dev-build output lives under runtime-prefix/,
+// host/glibc one). Its dev-build output lives under runtime-prefix/,
 // not a plain sibling directory the way every other Stud binary does.
 QString find_process_b_binary() {
     QString nested = QCoreApplication::applicationDirPath() +
@@ -207,7 +207,7 @@ QString find_process_b_binary() {
     return QStandardPaths::findExecutable("stud-runtime-bionic");
 }
 
-// $XDG_RUNTIME_DIR/stud/render-host.sock -- same convention stud-ipc's
+// $XDG_RUNTIME_DIR/stud/render-host.sock, same convention stud-ipc's
 // own default_socket_path() uses, matching stud::render_host::
 // default_socket_path()'s real implementation (render-host/) without
 // pulling that module into stud-ui just for one path string.
@@ -218,14 +218,14 @@ std::string render_host_socket_path() {
     return "/tmp/stud-" + std::to_string(::getuid()) + "/render-host.sock";
 }
 
-// Real, bounded, condition-based wait -- not a guessed timing window
+// Real, bounded, condition-based wait, not a guessed timing window
 // (this project's own hard-won debugging discipline, see BOOT_PROGRESS.md's
 // "no arbitrary timing windows" lesson): polls for the real socket FILE
 // stud-render-host's own bind()/listen() creates, so Process B's first
 // connection attempt (its render-client stubs lazily connect on first
 // real EGL/GLES call) doesn't race a render-host that hasn't started
 // listening yet. Returns false (caller decides what to do) if it never
-// appears within a generous, real bound -- render-host's own real
+// appears within a generous, real bound, render-host's own real
 // startup work (dlopen'ing ANGLE, opening a Wayland connection) is fast
 // in practice, so 10s is slack, not a tight guess.
 // True when a live Stud already owns the session.
@@ -254,7 +254,7 @@ bool another_instance_is_running() {
 // MangoHud, pointed at the API Stud actually presents with.
 //
 // MangoHud instruments the process that talks to the driver, which is
-// render-host -- but which API that process presents with depends on the
+// render-host, but which API that process presents with depends on the
 // render path, and MangoHud has a separate hook for each.
 //
 // * Vulkan path: render-host calls the real driver itself, so MangoHud's
@@ -265,7 +265,7 @@ bool another_instance_is_running() {
 //   Vulkan layer is the wrong hook and an actively harmful one: ANGLE's
 //   use of Vulkan is an implementation detail, and ANGLE recreates its
 //   swapchain whenever the engine tears down and rebuilds its EGL window
-//   surface -- which it does on joining a game. MangoHud has a
+//   surface, which it does on joining a game. MangoHud has a
 //   long-standing crash on swapchain recreation
 //   (flightlessmango/MangoHud#1259, #1774), and that is the live-reported
 //   "Stud crashed with MangoHud on the ANGLE path when joining a game".
@@ -284,8 +284,8 @@ bool another_instance_is_running() {
 //   preloaded the ANGLE desktop-GL backend really does load
 //   libMangoHud_opengl.so and MangoHud logs real per-frame FPS for it
 //   (that path presents through the system EGL, which the shim can hook).
-//   The ANGLE-to-Vulkan and SwiftShader backends do not -- they present
-//   through their own vkQueuePresentKHR and never touch the system EGL --
+//   The ANGLE-to-Vulkan and SwiftShader backends do not; they present
+//   through their own vkQueuePresentKHR and never touch the system EGL,
 //   so on those two there is no overlay to offer once the crashing layer
 //   is off. That is the honest trade: the Vulkan render path and the
 //   OpenGL one show the HUD, the two in between do not crash.
@@ -298,7 +298,7 @@ bool g_layers_disable_was_set = false;
 //
 // It belongs to render-host, which is the process that talks to the
 // driver and draws the frames worth measuring. Stud's UI uses Vulkan too
-// -- it enumerates the machine's GPUs with it -- and that is enough to
+// it enumerates the machine's GPUs with it, and that is enough to
 // load the layer, which then starts its own sampling threads inside a Qt
 // widgets application that has no frames at all.
 //
@@ -331,14 +331,14 @@ void keep_mangohud_out_of_this_process() {
 // Vulkan enumerates every device and Stud picks one by index, so the
 // Vulkan path already runs where it was told. GLX has no such thing: it
 // hands out the system default, which on a hybrid laptop is the
-// integrated GPU -- measured here as ANGLE coming up on "Mesa Intel(R)
+// integrated GPU, measured here as ANGLE coming up on "Mesa Intel(R)
 // Iris(R) Xe Graphics" while the setting said RTX 3050, at a third of
 // the frame rate. That is not a tuning problem, it is the wrong GPU.
 //
 // Which variable moves it depends on whose driver answers: NVIDIA's
 // PRIME offload for their proprietary stack, DRI_PRIME for Mesa. Both
 // are the documented, supported way to do this, and both are ignored on
-// a machine with one GPU -- so this is safe to set whenever a discrete
+// a machine with one GPU, so this is safe to set whenever a discrete
 // device is selected.
 void apply_gpu_selection_environment(QProcessEnvironment& env,
                                      const stud::config::StudSettings& settings,
@@ -379,8 +379,8 @@ void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vul
 
     // MangoHud's picmip rewrites every sampler's mip LOD bias
     // (overlay_CreateSampler: `if (picmip > -17 && picmip < 17)
-    // mipLodBias = picmip`). A MangoHud.conf carrying picmip=-16 -- as this
-    // machine's does -- makes every texture in Roblox ultra sharp and
+    // mipLodBias = picmip`). A MangoHud.conf carrying picmip=-16, as this
+    // machine's does, makes every texture in Roblox ultra sharp and
     // aliased, and it is not a choice Stud's user made for Stud. -17 is
     // MangoHud's own default, the value that means "leave the sampler
     // alone", so it is forced here whenever MangoHud will run at all,
@@ -421,7 +421,7 @@ void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vul
     const QString shim = QStringLiteral("/usr/$LIB/mangohud/libMangoHud_shim.so");
     // Where distributions actually put it: lib64 (Fedora/Arch), plain lib,
     // and Debian/Ubuntu multiarch. $LIB above expands correctly on all of
-    // them -- this check only has to answer "is it installed at all", so
+    // them. This check only has to answer "is it installed at all", so
     // do not preload a file that is not there.
     static const char* const kShimDirs[] = {
         "/usr/lib64/mangohud", "/usr/lib/mangohud",
@@ -449,7 +449,7 @@ bool wait_for_render_host_socket() {
     // render-host killed rather than shut down leaves its socket file
     // behind, so this returned true on the previous run's leftover and
     // Process B could reach a render-host started with the PREVIOUS
-    // settings -- which is what "I chose OpenGL and it stayed on Zink"
+    // settings, which is what "I chose OpenGL and it stayed on Zink"
     // looks like from outside. The leftover is removed before the new one
     // starts (see remove_stale_render_host_socket), so the file appearing
     // now can only be the new render-host's own bind().
@@ -466,7 +466,7 @@ bool wait_for_render_host_socket() {
 // left to hold them.
 //
 // These are the Vulkan client's host-visible allocations, unlinked as
-// soon as the host imports them now -- but a build without that fix, or a
+// soon as the host imports them now, but a build without that fix, or a
 // hard kill mid-allocation, leaves them behind, and nothing else ever
 // removes them. They live in $XDG_RUNTIME_DIR, which is a tmpfs that also
 // holds the Wayland socket, D-Bus and the session's own state, so filling
@@ -516,10 +516,10 @@ void remove_stale_render_host_socket() {
 // curl for bionic would be substantial standalone work for one fixed-
 // URL GET. QNetworkAccessManager + a local QEventLoop gives a real,
 // synchronous-from-the-caller's-perspective wait without blocking on a
-// raw socket read -- ordinary Qt idiom, no new dependency (Qt6::Network
+// raw socket read, ordinary Qt idiom, no new dependency (Qt6::Network
 // is already pulled in transitively by Qt6::WebEngineWidgets, linked
 // explicitly below for clarity).
-// Must match what Process B hands nativeInitClientSettings -- fetching
+// Must match what Process B hands nativeInitClientSettings, fetching
 // one group and declaring another would apply the wrong policy silently.
 QString client_settings_group_name() {
     const QByteArray env = qgetenv("STUD_CLIENT_SETTINGS_GROUP");
@@ -547,7 +547,7 @@ void fetch_client_settings(stud::ipc::LaunchPayload& payload) {
 }
 
 // Roblox's own real, public, widely-used-by-third-party-tools endpoint
-// for "who is this .ROBLOSECURITY cookie logged in as" -- real JSON
+// for "who is this .ROBLOSECURITY cookie logged in as"; real JSON
 // `{"id":..., "name":..., "displayName":...}` on success. Investigated
 // this session as the likely real fix for a native crash traced
 // to UserController::didLogin() dereferencing a null
@@ -556,7 +556,7 @@ void fetch_client_settings(stud::ipc::LaunchPayload& payload) {
 // cookie was supplied, which real native code is very plausibly
 // reading as "not logged in" and never constructing UserController as
 // a result. No-ops (leaves payload's authenticated_* fields at their
-// zero/empty defaults) if there's no cookie or the fetch fails --
+// zero/empty defaults) if there's no cookie or the fetch fails,
 // same honest-degradation pattern as fetch_client_settings() above.
 void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
     if (payload.session_cookie.empty()) {
@@ -565,7 +565,7 @@ void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
     QNetworkAccessManager manager;
     QNetworkRequest request(QUrl("https://users.roblox.com/v1/users/authenticated"));
     // payload.session_cookie is just the raw cookie VALUE (see
-    // login_window.cpp's extractSessionCookieValue()) -- needs the real
+    // login_window.cpp's extractSessionCookieValue()), needs the real
     // cookie name prefixed back on for a real Cookie header.
     request.setRawHeader("Cookie",
                           QByteArray::fromStdString(".ROBLOSECURITY=" + payload.session_cookie));
@@ -595,7 +595,7 @@ void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
 // Real, public, community-documented Roblox endpoint
 // (PlaceLauncher.ashx?request=RequestGame) that every real third-party
 // Roblox launcher uses to turn a deep link's opaque join ticket into
-// real server-join info -- confirmed real this session from a real,
+// real server-join info, confirmed real this session from a real,
 // live roblox-player:// URI's own placelauncherurl field (a complete,
 // ready-to-call URL Roblox's own client embeds in the deep link).
 // Deliberately just fetches and logs the raw response rather than
@@ -631,19 +631,19 @@ void fetch_place_launcher_info(stud::ipc::LaunchPayload& payload) {
 
 // Real launch flow: extracts the native library + assets from the
 // user's configured APK (already done once, in Settings), launches
-// stud-render-host (Process C: real glibc, hosts ANGLE -- see
+// stud-render-host (Process C: real glibc, hosts ANGLE; see
 // render-host/src/main.cpp), waits for it to be ready, then launches
 // the real bionic Process B (stud-runtime-bionic, sandboxed via
 // bionic_runtime::launch_process_b()) and hands off the real session
 // cookie over stud-ipc, exactly as before.
 
 // One log file per session, named for when it started, kept where a log
-// belongs (~/.local/state/stud/logs -- stud/stud_paths.h). All three
+// belongs (~/.local/state/stud/logs; stud/stud_paths.h). All three
 // processes append to the same file: Process B and render-host read the
 // path out of STUD_LOG_FILE, which is exported here before either is
 // spawned.
 //
-// Written for the case Stud is actually used in -- a desktop launch,
+// Written for the case Stud is actually used in, a desktop launch,
 // where the only record today is the systemd journal, which a user
 // cannot be asked to produce and which keeps nothing at all on a system
 // without persistent journald.
@@ -667,7 +667,7 @@ void start_session_log() {
                              .arg(QDateTime::currentDateTime().toString(
                                  QStringLiteral("yyyyMMdd-hhmmss"))));
     // Exported before anything is spawned, so both other processes
-    // inherit it -- render-host through its QProcess environment, and
+    // inherit it, render-host through its QProcess environment, and
     // Process B through bwrap's own --setenv (see config.extra_env).
     qputenv("STUD_LOG_FILE", path.toUtf8());
     stud::logging::start_session_log(path.toStdString());
@@ -680,24 +680,24 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
     } catch (const stud::config::SettingsError&) {
-        // Fall through with defaults -- apk_path will be empty, caught below.
+        // Fall through with defaults, apk_path will be empty, caught below.
     }
 
     // A launch that has never seen the settings window still gets a real
-    // GPU choice rather than whatever the driver enumerated first --
+    // GPU choice rather than whatever the driver enumerated first,
     // same rule the window applies, see default_gpu_index().
     if (settings.gpu.device_name.empty()) {
         settings.gpu.device_index = stud::ui::default_gpu_index();
     }
 
-    // Stud's own copy, always -- nothing points at wherever the user
+    // Stud's own copy, always. Nothing points at wherever the user
     // picked it from, so nothing breaks when that file moves.
     const std::string apk_path = stud::paths::stored_apk_path();
     if (!QFileInfo::exists(QString::fromStdString(apk_path))) {
         // main() opens Settings when nothing is configured, so reaching
         // here means the APK went missing between that check and this
         // one. Say that, rather than the old text telling the user to
-        // open Stud and go to Settings -- which was what they had just
+        // open Stud and go to Settings, which was what they had just
         // done, and from a fresh AppImage was not even possible.
         QMessageBox::warning(nullptr, "Stud",
                               "No Roblox APK is configured. Choose one in Settings, from the tray "
@@ -717,11 +717,11 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Real, once-per-import work (extraction) already happened in
     // Settings when this APK was selected (settings_window.cpp's
     // onSaveClicked()). Every actual game launch just uses whatever's
-    // already cached there, directly -- no re-extraction.
+    // already cached there, directly; no re-extraction.
     // If the cached extraction is missing, just redo it here rather
     // than telling the user to go re-save Settings. The cache lives
     // under ~/.cache, which anything (a cache cleaner, a manual `rm`,
-    // a disk-space sweep) may legitimately delete at any time -- a
+    // a disk-space sweep) may legitimately delete at any time, a
     // regenerable cache going missing is a normal condition, not a
     // misconfiguration, and the APK path is already known. Settings
     // still does the same extraction at APK-selection time; this is
@@ -785,15 +785,15 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Deliberately NOT an FFlag: flag_overrides.h's locked decision is that
     // FFlag overrides come only from the raw hand-edited file, never from a
     // UI toggle. This drives the one thing the toggle can honestly control
-    // in Stud's architecture -- which backend the vendored ANGLE uses for
-    // the real render context (real native Vulkan, or GLES) -- matching this
+    // in Stud's architecture, which backend the vendored ANGLE uses for
+    // the real render context (real native Vulkan, or GLES), matching this
     // project's own "ANGLE for both paths" constraint.
     QStringList render_host_args;
     // STUD_GRAPHICS_MODE overrides the saved choice for one run.
     //
     // Which renderer the engine uses changes which half of the render
-    // client is even reachable -- the GL forwarding layer is untouched in
-    // Vulkan mode -- so comparing the two is a routine part of chasing a
+    // client is even reachable, the GL forwarding layer is untouched in
+    // Vulkan mode, so comparing the two is a routine part of chasing a
     // rendering bug, and editing Settings between every run is a way to
     // leave the wrong value saved.
     QString graphics_mode_arg;
@@ -806,7 +806,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         render_host_args << "--graphics-mode" << graphics_mode_arg;
     }
     // Real HiDPI selection. Process C owns the window, so it is the only
-    // process that can honour the compositor's scale -- this toggle had
+    // process that can honour the compositor's scale; this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
     // Stud's own upscaler and how far below the screen the engine renders
@@ -822,7 +822,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     render_host_args << "--discord-join-button" << (settings.discord_join_button ? "on" : "off");
     // Where Roblox's own assets were extracted. Process C draws the text
     // overlay for a focused TextBox and needs the engine's real fonts to
-    // draw it in -- Process B is sandboxed and sees a different path, so
+    // draw it in. Process B is sandboxed and sees a different path, so
     // the host-side one has to come from here.
     render_host_args << "--assets-dir" << QString::fromStdString(stud::android_glue::default_assets_cache_dir());
     // Spawned through a QProcess rather than the static helper so it can
@@ -831,7 +831,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     QProcess render_host;
     // Give the child the REAL stdout, not this process's tee pipe. The
     // pipe's only reader is this process's own tee thread, and Process A
-    // exits within a second of launching -- after which a child writing
+    // exits within a second of launching, after which a child writing
     // to it would lose its output entirely. Each child opens the session
     // log itself (stud/session_log.h).
     if (const int passthrough = stud::logging::passthrough_stdout_fd(); passthrough >= 0) {
@@ -856,13 +856,13 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     if (!wait_for_render_host_socket()) {
         QMessageBox::critical(nullptr, "Stud",
                                "stud-render-host did not become ready in time (no real Wayland "
-                               "compositor reachable, or ANGLE failed to load -- check its stderr).");
+                               "compositor reachable, or ANGLE failed to load, check its stderr).");
         return;
     }
 
     stud::ipc::LaunchPayload payload;
     // Safe storage only. The cookie is never read from, written to, or
-    // migrated through the keyring directly -- the keyring holds nothing
+    // migrated through the keyring directly, the keyring holds nothing
     // but the safe-storage key (see safe_storage.h). A login stored by an
     // older build simply is not found, and the user logs in again, which
     // is the correct outcome: it means there is exactly one path a
@@ -914,34 +914,34 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
 
     // Serves in the background so Process B (started right after, further
     // down this function) can connect without this call blocking on a
-    // connection that can't exist yet -- serve_launch_payload_once()
+    // connection that can't exist yet, serve_launch_payload_once()
     // itself already has a real, bounded timeout (see stud-ipc/include/
     // stud/ipc.h), so this thread is guaranteed to finish, not leaked
     // indefinitely.
     //
     // Real, live-caught regression fixed: this used to be .detach()ed,
     // on the theory that its own bounded timeout made that safe. It
-    // isn't -- a detached thread dies with the whole process, and
+    // isn't, a detached thread dies with the whole process, and
     // proceed() (this function's only real caller) quits the process
     // right after this function returns. Once the OTHER real hang bug
     // in proceed() got fixed (QApplication::quit() no longer silently
     // swallowed), stud-ui started exiting fast enough to routinely beat
-    // this thread to its own accept()+write() -- confirmed live:
+    // this thread to its own accept()+write(), confirmed live:
     // Process B's own log showed "malformed launch payload: ...
     // attempting to parse an empty input" almost every run, immediately
     // followed by a real RBXCRASH ("Can't initialize the TaskScheduler
     // before flags have been loaded"). Joined now, at the end of this
-    // function, after Process B has actually been spawned -- so the
+    // function, after Process B has actually been spawned, so the
     // real concurrency this was introduced for (server listening while
     // the rest of this function does its own, slower setup work) is
-    // preserved, but launch_game() -- and so proceed()'s subsequent
-    // quit() -- can no longer return before the handoff genuinely
+    // preserved, but launch_game(), and so proceed()'s subsequent
+    // quit(), can no longer return before the handoff genuinely
     // finishes or times out.
     std::thread payload_thread([socket_path, payload]() {
         try {
             stud::ipc::serve_launch_payload_once(socket_path, payload);
         } catch (const stud::ipc::IpcError&) {
-            // Best-effort handoff -- if Process B never connects (e.g.
+            // Best-effort handoff, if Process B never connects (e.g.
             // it failed to start), there's nothing further to report
             // here; its own stderr already carries the failure if it
             // did start.
@@ -951,11 +951,11 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Real host paths Process B needs visible inside its sandbox, at the
     // identical absolute path outside it (bionic_runtime::launch_process_b()'s
     // own transparent-passthrough convention): the extracted libroblox.so/
-    // assets/cache root (writable -- Process B's own cache_subdir() writes
-    // there), $XDG_RUNTIME_DIR (writable -- covers both stud-render-host's
+    // assets/cache root (writable; Process B's own cache_subdir() writes
+    // there), $XDG_RUNTIME_DIR (writable, covers both stud-render-host's
     // socket and stud-ipc's own launch socket, both live under
     // $XDG_RUNTIME_DIR/stud/), and the configured APK's own containing
-    // directory (read-only -- only needed for the one-shot asset
+    // directory (read-only, only needed for the one-shot asset
     // extraction, already read-only by nature).
     std::vector<stud::bionic_runtime::HostBind> extra_binds;
     extra_binds.push_back(
@@ -968,7 +968,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Writable bind for Stud's own data directory, where the runtime keeps
     // the persistent local storage the engine logs in through. Without it
     // Process B's sandbox (`--tmpfs /`) has no such path at all, the store
-    // silently never gets written, and every login is forgotten on exit --
+    // silently never gets written, and every login is forgotten on exit,
     // live-caught exactly that way. Created here, by the process that has
     // the real HOME, so the bind always has something to point at.
     {
@@ -1007,12 +1007,12 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Real, previously-missing wiring: process-b/src/main.cpp already
     // reads a "--flag-overrides <path>" arg and threads it all the way
     // through to the real nativePreloadFlagOverrides call (see
-    // bootstrap.cpp) -- but launch_game() never actually passed one, so
+    // bootstrap.cpp), but launch_game() never actually passed one, so
     // the whole real FlagOverrides mechanism sat unreachable from any
     // real launch. Per the locked decision (flag_overrides.h's own doc
     // comment): this is a raw, hand-edited JSON file, never generated
     // from a Settings UI toggle (settings.graphics_mode is a separate,
-    // real Stud-level knob and deliberately isn't read here) -- a
+    // real Stud-level knob and deliberately isn't read here), a
     // missing file is the normal case and silently skipped, same as
     // FlagOverrides::load_from_file()'s own contract.
     std::string flag_overrides_path = stud::config::default_flag_overrides_path();
@@ -1065,18 +1065,18 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.stdout_fd = stud::logging::passthrough_stdout_fd();
     config.extra_binds = std::move(extra_binds);
     // Real, writable, already-bound (see extra_binds above) cwd for
-    // Process B -- see ProcessBConfig::working_directory's own doc
+    // Process B; see ProcessBConfig::working_directory's own doc
     // comment for the real EROFS hazard this avoids.
     config.working_directory = std::filesystem::path(so_path).parent_path().string();
     // Real diagnostic, always on: before this, launch_process_b() had
     // no way to set any env var at all, so this trace (and every other
     // env-gated diagnostic this project has built) stayed permanently
-    // off outside a hand-run bwrap test script -- meaning there was
+    // off outside a hand-run bwrap test script, meaning there was
     // never any real evidence, from a real production launch, of
     // whether libroblox.so ever even attempts
     // dlopen("libvulkan.so.1") at all. Cheap when it never fires
     // (which is the expectation until Phase 6 native-Vulkan work
-    // forces it) -- just an env-gated stderr print in the stub, see
+    // forces it), just an env-gated stderr print in the stub, see
     // process-b/render-client/src/vulkan_stub.cpp.
     // Deliberately NOT setting STUD_VULKAN_CALL_TRACE here any more. It
     // was added when the open question was whether libroblox.so ever even
@@ -1096,7 +1096,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
                                QString("Failed to start the real bionic runtime: %1").arg(e.what()));
     }
 
-    // See payload_thread's own doc comment above -- must join, not
+    // See payload_thread's own doc comment above, must join, not
     // detach, so this function (and so proceed()'s subsequent quit())
     // can't return before the real handoff actually finishes or its own
     // bounded timeout elapses.
@@ -1107,7 +1107,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
 
 namespace stud::ui {
 
-// Ends a running session -- the same scan the launcher uses to clear
+// Ends a running session, the same scan the launcher uses to clear
 // leftovers, which is exactly what the tray's "Exit Stud" has to do.
 // Outside the anonymous namespace above so the tray can link against it.
 void terminate_stud_session() { terminate_stale_processes(); }
@@ -1119,7 +1119,7 @@ void terminate_stud_session() { terminate_stale_processes(); }
 // something is genuinely running.
 bool stud_session_is_running() { return another_instance_is_running(); }
 
-// Start one, with no deep link -- Roblox opens on its own home screen.
+// Start one, with no deep link. Roblox opens on its own home screen.
 // Used to put back a session that Settings had to stop to replace the
 // APK underneath it.
 void start_stud_session() { launch_game(std::nullopt); }
@@ -1136,7 +1136,7 @@ int main(int argc, char** argv) {
     // leave, BEFORE Qt exists.
     //
     // This used to happen further down, after QApplication was
-    // constructed, and the cost was visible -- a second Stud icon
+    // constructed, and the cost was visible, a second Stud icon
     // appeared in the taskbar for as long as this process lived, for a
     // process whose whole job is to pass on a place id and exit. Nothing
     // here needs Qt: the instance check reads /proc and the hand-off is a
@@ -1145,7 +1145,7 @@ int main(int argc, char** argv) {
         const auto link = stud::ui::parse_launch_uri(argv[1]);
         if (link && link->place_id != 0 && another_instance_is_running() &&
             stud::ui::hand_deep_link_to_running_stud(*link)) {
-            std::printf("stud: already running -- handed the link to the running session\n");
+            std::printf("stud: already running, handed the link to the running session\n");
             std::fflush(stdout);
             return 0;
         }
@@ -1156,7 +1156,7 @@ int main(int argc, char** argv) {
     // Wayland has no window-icon protocol: a compositor finds an app's icon by
     // matching the surface's app_id against a .desktop file. Qt derives that
     // app_id from the desktop file name, and without this it uses the
-    // executable name ("stud-ui"), which matches no entry -- so the taskbar
+    // executable name ("stud-ui"), which matches no entry, so the taskbar
     // showed a generic placeholder no matter what setWindowIcon() said. The
     // game window already reports the same id via xdg_toplevel_set_app_id().
     QGuiApplication::setDesktopFileName(QStringLiteral(STUD_APP_ID));
@@ -1164,18 +1164,18 @@ int main(int argc, char** argv) {
 
     // "--settings" is the real entry point packaging/stud.desktop's
     // "Settings" Desktop Action invokes (right-click the app icon ->
-    // Settings, same discoverability convention Sober itself uses --
+    // Settings, same discoverability convention Sober itself uses;
     // see the engineering notes' M8 writeup). Deliberately bypasses the login
     // gate entirely, not just "skip login if already logged in": GPU
     // selection, the APK path, and the FFlags file are all local
     // configuration with zero dependency on a Roblox session, so
-    // requiring auth first was a real bug (caught live) -- a user
+    // requiring auth first was a real bug (caught live), a user
     // without a stored session yet still needs to be able to pick their
     // APK before ever logging in.
     // Persist a session cookie the engine produced, then exit.
     //
     // Stud's login happens inside the real Roblox app, so the cookie that
-    // proves it is created by the engine -- not by anything Process A
+    // proves it is created by the engine, not by anything Process A
     // does. Nothing ever wrote it back, so a fresh in-app login lived
     // only in that process's memory and every restart fell back to
     // whatever was already in the keyring. That is why logging out
@@ -1184,7 +1184,7 @@ int main(int argc, char** argv) {
     //
     // The value arrives on stdin, never argv: /proc/<pid>/cmdline is
     // readable by anything running as this user and this is a real
-    // credential. Only the keyring ever holds it -- never Stud's config,
+    // credential. Only the keyring ever holds it, never Stud's config,
     // cache, or a log line.
     // Safe-storage helpers, run one-shot by render-host (the only
     // unsandboxed process still alive once a login happens). The secret's
@@ -1192,8 +1192,8 @@ int main(int argc, char** argv) {
     // because /proc/<pid>/cmdline is readable by anything running as this
     // user. Nothing here logs a value or a prefix of one.
     // One-shot notification helper. The processes that know when
-    // something notification-worthy happened -- render-host and Process B
-    // -- are not Qt applications and Process B cannot reach the session
+    // something notification-worthy happened, render-host and Process B
+    // are not Qt applications and Process B cannot reach the session
     // bus at all from inside its sandbox, so they invoke this the same
     // way render-host already invokes the keyring helper.
     //
@@ -1207,7 +1207,7 @@ int main(int argc, char** argv) {
     // Names the country a game server is in, for the join notification.
     //
     // The address comes from Process B, which reads it off the engine's
-    // own UDP socket -- the engine's join line names a 10.x UDMUX address
+    // own UDP socket, the engine's join line names a 10.x UDMUX address
     // that locates nothing. Turning it into a country needs a lookup, and
     // this is the one outbound request Stud makes on a join: what leaves
     // the machine is the Roblox datacenter's own IP, never the user's.
@@ -1216,7 +1216,7 @@ int main(int argc, char** argv) {
     // wrong one. Bounded, because a join must never wait on this.
     // Game metadata for the Discord presence: name, creator, square
     // thumbnail, join link. Roblox's own public APIs, in three steps
-    // because that is how they are shaped -- a place id names a universe,
+    // because that is how they are shaped, a place id names a universe,
     // a universe carries the name and creator, and thumbnails are a
     // separate service.
     //
@@ -1258,7 +1258,7 @@ int main(int argc, char** argv) {
 
         // The square thumbnail. 512x512 is what Discord wants for a large
         // image, and the API answers with a CDN URL Discord fetches itself
-        // -- so nothing has to be uploaded to the application.
+        // so nothing has to be uploaded to the application.
         QString thumbnail;
         const QJsonDocument thumb_doc = fetch(
             "https://thumbnails.roblox.com/v1/games/icons?universeIds=" + universe +
@@ -1268,7 +1268,7 @@ int main(int argc, char** argv) {
             thumbnail = thumbs.at(0).toObject().value("imageUrl").toString();
         }
 
-        // The link Roblox itself builds to join one specific server --
+        // The link Roblox itself builds to join one specific server,
         // `ServerList.js` sends exactly this shape when a private server
         // or an instance is picked. An https link, deliberately, not the
         // `roblox://` deep link this used to be: a deep link is not
@@ -1278,7 +1278,7 @@ int main(int argc, char** argv) {
         //
         // It is a SERVER link, not an invite. Roblox has a real invite
         // link (`share?code=...&type=ExperienceInvite`) but only the Lua
-        // SocialService in an experience can mint one -- the web API
+        // SocialService in an experience can mint one, the web API
         // Stud could call for it does not exist (checked live:
         // apis.roblox.com/sharelinks/v1/generate-link answers 404, and
         // the only share-link path in libroblox.so is resolve-link).
@@ -1294,7 +1294,7 @@ int main(int argc, char** argv) {
     if (argc > 2 && std::string(argv[1]) == "--notify-region") {
         const QString ip = QString::fromUtf8(argv[2]);
         QNetworkAccessManager net;
-        // Over TLS, and only ever the game server's address -- never the
+        // Over TLS, and only ever the game server's address, never the
         // user's. ip-api.com was here first and served this exactly as
         // well, but its free tier is plaintext HTTP only: an unencrypted
         // request on every join, telling anyone on the path which server
@@ -1319,7 +1319,7 @@ int main(int argc, char** argv) {
         const QString code = json.value("country_code").toString();
         const QString city = json.value("city").toString();
         // A flag emoji is the country's two letters as regional indicator
-        // symbols -- U+1F1E6 is 'A' -- so any ISO code becomes one with no
+        // symbols, U+1F1E6 is 'A', so any ISO code becomes one with no
         // table to keep up to date.
         QString flag;
         if (code.size() == 2) {
@@ -1365,7 +1365,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         // stdout is the channel, so this is the one place a value is
-        // written -- to a pipe render-host owns, never to a log.
+        // written, to a pipe render-host owns, never to a log.
         const QByteArray bytes = value->toUtf8();
         std::fwrite(bytes.constData(), 1, static_cast<size_t>(bytes.size()), stdout);
         std::fflush(stdout);
@@ -1381,7 +1381,7 @@ int main(int argc, char** argv) {
     }
 
     // An AppImage installs nothing, so nothing ties its windows to an
-    // icon and no browser knows it handles roblox:// links -- and there
+    // icon and no browser knows it handles roblox:// links, and there
     // is no obvious place for a user to find that out. Said once, at the
     // one moment it is relevant, rather than made to happen behind their
     // back: writing to someone's desktop tree is their decision.
@@ -1392,7 +1392,7 @@ int main(int argc, char** argv) {
             QStringLiteral(".desktop");
         if (!QFileInfo::exists(entry)) {
             std::printf(
-                "stud: no desktop entry yet -- run `%s --install-desktop-entry` for the "
+                "stud: no desktop entry yet, run `%s --install-desktop-entry` for the "
                 "taskbar icon and roblox:// links\n",
                 qPrintable(qEnvironmentVariable("APPIMAGE")));
             std::fflush(stdout);
@@ -1406,8 +1406,8 @@ int main(int argc, char** argv) {
         launch_uri = stud::ui::parse_launch_uri(argv[1]);
         // What the browser actually handed over, and what came out of it.
         // A deep link that parses to nothing is indistinguishable from no
-        // deep link at all once it reaches the engine -- both open the
-        // home screen -- so this is the only place the difference is
+        // deep link at all once it reaches the engine, both open the
+        // home screen, so this is the only place the difference is
         // visible.
         //
         // Key NAMES and byte counts only. The gameinfo field is a
@@ -1443,7 +1443,7 @@ int main(int argc, char** argv) {
     if (settings_only) {
         // A Stud that is already running owns Settings: hand the request
         // over and get out of the way, so the shortcut and the tray open
-        // the same window -- and so the one that can stop and restart the
+        // the same window, and so the one that can stop and restart the
         // session is the one that has it.
         if (stud::ui::SettingsWindow::handOffToRunningInstance()) return 0;
         stud::ui::SettingsWindow::listenForOpenRequests();
@@ -1453,7 +1453,7 @@ int main(int argc, char** argv) {
 
     // Nothing to launch yet: open Settings instead of refusing.
     //
-    // Stud does not ship Roblox -- the user supplies the APK -- so on a
+    // Stud does not ship Roblox, the user supplies the APK, so on a
     // first run there is nothing for a launch to do. It used to answer a
     // plain click with a dialog saying to "open Stud normally and select
     // one in Settings", which is precisely what had just been done, and
@@ -1484,13 +1484,13 @@ int main(int argc, char** argv) {
     }
 
     // Real Android Roblox behavior (user correction: Roblox is a real
-    // mobile app with its own real UI, not a URI-activated launcher --
+    // mobile app with its own real UI, not a URI-activated launcher:
     // opening it plain, with no deep link, opens straight into its own
     // real home/game-picker screen, rendered by libroblox.so itself the
     // same as any other screen; a deep link just pre-fills which
     // activity/game it jumps to, the same as any real Android intent
     // extra). So a bare Stud launch (icon click, no args) boots the
-    // real engine exactly like a deep-link launch does -- `launch_uri`
+    // real engine exactly like a deep-link launch does, `launch_uri`
     // being absent just means Roblox's own UI opens on its own default
     // screen instead of a specific game. SettingsWindow is reached ONLY
     // via the desktop file's separate "Settings" action (--settings),
@@ -1506,16 +1506,16 @@ int main(int argc, char** argv) {
         launch_game(launch_uri);
         // Real magnet-link behavior: hand off and get out of the way,
         // same as qBittorrent doesn't need to stay open once a
-        // torrent's been added -- the actual game runs in the
+        // torrent's been added, the actual game runs in the
         // separate runtime process.
         //
         // Real, live-caught bug fixed: a direct QApplication::quit()
         // call here is a documented Qt no-op if there's no event loop
-        // running yet to quit -- which is exactly the case on the
+        // running yet to quit, which is exactly the case on the
         // already-logged-in path below (proceed() runs synchronously in
         // main(), before app.exec() is ever reached). The quit request
         // was silently swallowed, then app.exec() started a real loop
-        // with nothing left to ever stop it -- confirmed live: stud-ui
+        // with nothing left to ever stop it, confirmed live: stud-ui
         // stayed running indefinitely after a bare, already-logged-in
         // launch. QueuedConnection posts a real event that's delivered
         // once the loop actually starts, whether that's before or after
@@ -1537,14 +1537,14 @@ int main(int argc, char** argv) {
                 stud::ui::SettingsWindow::listenForOpenRequests();
                 return;
             }
-            std::fprintf(stderr, "stud: no system tray available -- exiting after launch\n");
+            std::fprintf(stderr, "stud: no system tray available, exiting after launch\n");
         }
         QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
     };
 
     // No login gate. Stud logs in the way Sober does: inside the real
     // Roblox app itself, on its own login screen, rendered by the real
-    // engine -- not through a separate QtWebEngine window that scrapes a
+    // engine, not through a separate QtWebEngine window that scrapes a
     // session cookie out of the web site. The engine persists that
     // session through Stud's own local-storage platform protocol
     // (runtime: LocalStoragePlatformStub, backed by a real 0600 file
@@ -1552,7 +1552,7 @@ int main(int argc, char** argv) {
     // restarts exactly as it does on a real device.
     //
     // A cookie stored by an older build is still honoured if present, so
-    // upgrading does not silently sign the user out -- but nothing here
+    // upgrading does not silently sign the user out, but nothing here
     // ever asks for one again.
     proceed();
 

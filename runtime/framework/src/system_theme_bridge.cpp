@@ -87,8 +87,8 @@ std::string message_id(FakeJni::Env& env, const stud::linker::LoadedLibrary& lib
     return read_jstring(env, result);
 }
 
-// The value arrives as a JSON string holding an integer -- the real
-// handler does `optString(key)` then `toIntOrNull` -- but a bare number
+// The value arrives as a JSON string holding an integer, the real
+// handler does `optString(key)` then `toIntOrNull`, but a bare number
 // is accepted too rather than depending on which of the two the app
 // happens to send.
 int theme_value_field(const std::string& json, const std::string& key) {
@@ -165,7 +165,7 @@ int system_theme_value() {
     // SYSTEM_DARK/SYSTEM_LIGHT is what a platform honestly reports: the
     // desktop's own setting, with "system" meaning the app is free to
     // follow its own preference instead. STUD_FORCE_THEME exists to test
-    // whether this app follows it at all -- it claims the platform theme
+    // whether this app follows it at all; it claims the platform theme
     // is explicitly dark or light (DARK 2 / LIGHT 1), which is what a
     // device would report only if the user had chosen that per-app.
     if (const char* forced = std::getenv("STUD_FORCE_THEME");

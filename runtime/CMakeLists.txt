@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Standalone bionic-toolchain project -- built as a nested configure/build
+# Standalone bionic-toolchain project, built as a nested configure/build
 # via ExternalProject_Add from the top-level (host/glibc) CMakeLists.txt.
 # Real bionic ELF executable + real bionic .so's, same reasoning as the
 # pre-reset process-b (the engineering notes' "nuke stud, recreate sober 1:1"
@@ -17,7 +17,7 @@ if(NOT ANDROID)
     message(FATAL_ERROR
         "stud/runtime must be configured with the NDK's android.toolchain.cmake "
         "(see the ExternalProject_Add(runtime ...) call in the top-level "
-        "CMakeLists.txt) -- it produces real bionic binaries, not host glibc ones.")
+        "CMakeLists.txt). It produces real bionic binaries, not host glibc ones.")
 endif()
 
 if(NOT MINIZ_SRC_DIR OR NOT MINIZ_BIN_DIR)
@@ -63,19 +63,19 @@ set_target_properties(stud_runtime_libandroid PROPERTIES
     # returns NULL inside libroblox.so's own call, despite Stud's own
     # ALooper_prepare(0) succeeding moments earlier on the same thread"
     # entry): this target used to also compile looper.cpp/asset_manager.cpp/
-    # configuration.cpp/apk_extract.cpp -- duplicating them here as well as
+    # configuration.cpp/apk_extract.cpp, duplicating them here as well as
     # in stud_runtime_libandroid meant BOTH .so files exported the exact
     # same real symbol names (ALooper_prepare, ALooper_forThread, ...),
     # each with its own independent thread_local t_looper. libroblox.so's
     # real DT_NEEDED order lists libmediandk.so BEFORE libandroid.so
-    # (confirmed via the library's own dependency list) -- the real bionic dynamic linker binds
+    # (confirmed via the library's own dependency list), the real bionic dynamic linker binds
     # libroblox.so's own ALooper_* imports against THIS library's copy,
     # while Stud's own main.cpp links directly against stud_runtime_
-    # libandroid and calls ALooper_prepare() on THAT copy -- two
+    # libandroid and calls ALooper_prepare() on THAT copy, two
     # completely separate, never-synchronized loopers. A real device's
     # actual libmediandk.so does not export ALooper_*/AAssetManager_*/
     # AConfiguration_* at all (those are libandroid.so's exclusive real
-    # surface) -- trimmed to media_codec.cpp only, its own real, unique
+    # surface): trimmed to media_codec.cpp only, its own real, unique
     # purpose, confirmed (via grep) to call none of the removed functions.
 add_library(stud_runtime_libmediandk SHARED
     "${ANDROID_GLUE_SRC}/src/media_codec.cpp"
@@ -87,7 +87,7 @@ set_target_properties(stud_runtime_libmediandk PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib64"
 )
 
-# Real libaaudio.so -- the engine's own audio output path. Not an empty
+# Real libaaudio.so, the engine's own audio output path. Not an empty
 # stub like the ones below: it forwards PCM to Process C, which owns the
 # host audio server connection (see render-client/src/aaudio_stub.cpp for
 # why audio is load-bearing rather than optional).
@@ -115,9 +115,9 @@ endforeach()
 # framework/: real Android JNIEnv/JavaVM implementation (FakeJni/jnivm)
 # plus Stud's own real, app- and AOSP-grounded framework substrate (Handler/
 # Looper/ClassLoader/Activity/Context, Djinni protocol registrations,
-# AGDK GameActivity/game-text-input surfaces) -- real, evidence-based,
+# AGDK GameActivity/game-text-input surfaces); real, evidence-based,
 # proven-compiling code kept across the reset. What's NOT reused is the
-# old scripted, hand-sequenced call-chasing orchestration in main.cpp --
+# old scripted, hand-sequenced call-chasing orchestration in main.cpp;
 # see src/main.cpp's own doc comment for the real replacement.
 include(FetchContent)
 FetchContent_Declare(
@@ -184,7 +184,7 @@ add_library(stud_runtime_framework STATIC
 target_include_directories(stud_runtime_framework PUBLIC
     "${FRAMEWORK_SRC}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../bionic-symbol-lookup/include"
-    # stud/stud_paths.h -- one answer to "where does this file belong",
+    # stud/stud_paths.h, one answer to "where does this file belong",
     # shared by all three processes.
     "${ANDROID_GLUE_SRC}/include"
 )
@@ -215,13 +215,13 @@ set_target_properties(stud_runtime_libGLESv2 PROPERTIES
 )
 
 # Real ETC1/ETC2/EAC and PVRTC decoders, fetched at configure time with a
-# pinned hash -- same "vendor it, do not hand-roll it" reasoning as miniz
+# pinned hash, same "vendor it, do not hand-roll it" reasoning as miniz
 # and libjnivm elsewhere in this tree. A block decoder that is subtly wrong
 # produces textures that look plausible and are quietly corrupt, which is
 # far worse than not supporting the format at all, so these are vetted
 # implementations rather than something written from the spec here.
-#   etcdec.h        -- public domain (Unlicense), Sergii "iOrange" Kudlai
-#   PVRTDecompress  -- MIT, Imagination Technologies' own PowerVR SDK
+#   etcdec.h       , public domain (Unlicense), Sergii "iOrange" Kudlai
+#   PVRTDecompress , MIT, Imagination Technologies' own PowerVR SDK
 set(TexDecodeDir "${CMAKE_CURRENT_BINARY_DIR}/texdec")
 file(MAKE_DIRECTORY "${TexDecodeDir}")
 file(DOWNLOAD
@@ -243,12 +243,12 @@ file(DOWNLOAD
     TLS_VERIFY ON
 )
 
-# detex -- MIT, Hans-Kristian "hglm" Lemmens' texture decompression
+# detex, MIT, Hans-Kristian "hglm" Lemmens' texture decompression
 # library, and the ETC decoder Sober uses for this same job. Measured
 # against etcdec.h on this machine, byte-identical output on every format
 # Stud emulates (ETC2 RGB8/RGBA8/RGB8A1, EAC R11/RG11) and 2.3x the
 # throughput on the two colour formats that dominate a real texture
-# burst -- 510 -> 1181 MB/s and 420 -> 979 MB/s. Pinned to one commit
+# burst, 510 -> 1181 MB/s and 420 -> 979 MB/s. Pinned to one commit
 # rather than a branch: a decoder that changes under the build is exactly
 # the "quietly corrupt textures" risk this whole block exists to avoid.
 set(DetexCommit "cab11584d9be140602a66fd9a88ef0b99f08a97a")
@@ -303,7 +303,7 @@ set(STUD_IPC_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../stud-ipc")
 # Which library each copy of render_client_common.cpp ends up in.
 #
 # That file is listed in all five of these targets, so each gets its own
-# copy of the connection statics -- up to fifteen sockets to render-host,
+# copy of the connection statics, up to fifteen sockets to render-host,
 # not the three the header describes. STUD_IPC_OWNERS=1 makes each one
 # say which library opened it.
 target_compile_definitions(stud_runtime_libandroid PRIVATE STUD_CLIENT_OWNER="libandroid.so")
@@ -345,7 +345,7 @@ target_link_libraries(stud-runtime-bionic PRIVATE
 #
 # libvulkan.so is a separate object that does not link the framework, so
 # it resolves stud_set_write_fault_handler (trap_recovery.h) at runtime
-# with dlsym(RTLD_DEFAULT, ...) -- the same pattern Stud already uses for
+# with dlsym(RTLD_DEFAULT, ...), the same pattern Stud already uses for
 # every other cross-object entry point. Without this the executable
 # exported zero dynamic symbols and that lookup simply failed, silently
 # leaving the mapped-memory write barrier off.

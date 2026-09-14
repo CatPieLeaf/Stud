@@ -34,7 +34,7 @@ std::atomic<bool> g_running{false};
 FakeJni::Jvm* g_jvm = nullptr;
 
 using MouseMoveFn = void (*)(JNIEnv*, jclass, jfloat, jfloat, jfloat, jfloat);
-// Whether the engine currently wants the mouse held at the centre -- what
+// Whether the engine currently wants the mouse held at the centre, what
 // it does while a camera is being turned. The real app polls this on every
 // mouse event and takes or drops Android's pointer capture accordingly
 // (the app's own input handler's own OnGenericMotionListener/OnCapturedPointerListener pair).
@@ -42,12 +42,12 @@ using IsMouseLockedFn = jboolean (*)(JNIEnv*, jclass);
 using MouseButtonFn = void (*)(JNIEnv*, jclass, jfloat, jfloat, jboolean, jint);
 using MouseWheelFn = void (*)(JNIEnv*, jclass, jfloat, jfloat, jfloat);
 using KeyEventFn = void (*)(JNIEnv*, jclass, jboolean, jint, jint, jboolean);
-// nativePassInput(pointerId, x, y, state, viewWidth, viewHeight) -- the real
+// nativePassInput(pointerId, x, y, state, viewWidth, viewHeight), the real
 // touch path, state 0 = down, 1 = move, 2 = up (confirmed against the app's own code from the real
 // handler in the app's own input handler: `hVar2.d(0)` on ACTION_DOWN, `.d(1)` on move).
 using PassInputFn = void (*)(JNIEnv*, jclass, jint, jfloat, jfloat, jint, jint, jint);
 // nativePassText(textBoxHandle, fullText, done, cursorPos) and
-// nativeReturnPressedFromOnScreenKeyboard(textBoxHandle) -- the real path
+// nativeReturnPressedFromOnScreenKeyboard(textBoxHandle), the real path
 // a focused Lua TextBox takes its text through (RbxKeyboard).
 //
 // STATE OF TEXT ENTRY (measured against THIS APK, 2.736.1408, not assumed):
@@ -55,14 +55,14 @@ using PassInputFn = void (*)(JNIEnv*, jclass, jint, jfloat, jfloat, jint, jint, 
 //     showKeyboard with the real TextBox handle, and its own log confirms
 //     handleTextBoxFocused_AndroidLayer_ for that exact handle.
 //   * nativePassText returns at once when done is false:
-//     -- with done=false (what a real device sends on every keystroke) it
+//     with done=false (what a real device sends on every keystroke) it
 //     returns immediately having done nothing. Its done=true branch is the
 //     COMMIT: live-confirmed, the search box submits after every letter.
 //   * So live typing rides on syncTextboxTextAndCursorPosition2(text, cursor),
-//     which RbxKeyboard.onTextChanged calls FIRST -- confirmed against
+//     which RbxKeyboard.onTextChanged calls FIRST, confirmed against
 //     this APK's own RbxKeyboard, not an older copy.
 //   * Stud calls it, and it has no effect, because its body bails out at
-//     an early return -- the engine's own
+//     an early return: the engine's own
 //     "currently focused text box" pointer is null in Stud even though the
 //     focus callback demonstrably ran.
 // The open question is precisely: what populates that pointer on a real
@@ -71,13 +71,13 @@ using PassInputFn = void (*)(JNIEnv*, jclass, jint, jfloat, jfloat, jint, jint, 
 using PassTextFn = void (*)(JNIEnv*, jclass, jlong, jstring, jboolean, jint);
 using ReturnPressedFn = void (*)(JNIEnv*, jclass, jlong);
 // NativeGLInterface.syncTextboxTextAndCursorPosition2(String text, int cursor).
-// This -- not nativePassText -- is what carries live typing in this build.
+// This, not nativePassText, is what carries live typing in this build.
 // RbxKeyboard.onTextChanged calls this FIRST and only
 // then nativePassText(..., done=false, ...), and nativePassText
 // returns at once when done is false: with done == false it
 // returns immediately having done nothing at all. Stud delivered only the
 // call that is a no-op, so every keystroke reached the engine and was
-// discarded. Takes no TextBox handle -- the engine applies it to whatever it
+// discarded. Takes no TextBox handle, the engine applies it to whatever it
 // currently considers focused.
 using SyncTextFn = void (*)(JNIEnv*, jclass, jstring, jint);
 
@@ -101,14 +101,14 @@ using GamepadSupportedMotionFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, ji
 // when its IME actually opens over the GL view. Under test because
 // syncTextboxTextAndCursorPosition2 bails out immediately when
 // the engine's own "currently focused text box" pointer is null
-// and in Stud it is --
+// and in Stud it is,
 // even though the engine logs handleTextBoxFocused_AndroidLayer_.
 using UpdateKeyboardSizeFn = void (*)(JNIEnv*, jclass, jboolean, jint, jint, jint, jint);
 using GetTextBoxInfoFn = jobject (*)(JNIEnv*, jclass);
 //
 // Live-tested and DISPROVEN, twice, do not re-try: completing the IME
-// handshake on focus -- nativeGetTextBoxInfo() plus updateKeyboardSize(true,
-// ...) -- does not arm the pointer sync needs. Tried once with zero geometry
+// handshake on focus, nativeGetTextBoxInfo() plus updateKeyboardSize(true,
+// ...), does not arm the pointer sync needs. Tried once with zero geometry
 // and again with a real open-keyboard rectangle (the real caller only reports
 // visible=true when the measured height exceeds 10, so the zero case was not
 // a fair test); neither changed anything. Both are still resolved here
@@ -140,20 +140,20 @@ struct InputFns {
 // it stops moving its own cursor and steers the camera from the deltas
 // alone. A desktop client answers that by holding the OS pointer still, so
 // nothing drifts and the cursor is exactly where it was when the button
-// comes back up. Stud had no such thing -- the real pointer walked across
+// comes back up. Stud had no such thing, the real pointer walked across
 // the desktop while the camera turned, and the engine adopted wherever it
 // had got to the moment the drag ended. That is the teleport.
 //
 // The engine never says which mode it is in. Its one exported predicate,
 // nativeGetMainWindowIsMouseLockedCenter, answers only for LockCenter (the
-// shift-lock/first-person case) -- live-confirmed returning false through a
+// shift-lock/first-person case), live-confirmed returning false through a
 // whole rotation drag. So a real Android device with a mouse attached
 // drifts in exactly the same way; it simply never comes up on a phone.
 // Holding the pointer for the duration of any button hold is what the real
 // desktop client does, and it needs no signal the engine does not give.
 // STUD_NO_MOUSE_LOCK=1 turns it off.
 // Real MotionEvent button bits. The camera is dragged with either the
-// right button or the middle one -- the middle is what a mouse with no
+// right button or the middle one, the middle is what a mouse with no
 // usable right button (or a player who binds it that way) turns the view
 // with, and every desktop client treats the two the same here.
 constexpr jint kButtonSecondary = 2;
@@ -184,7 +184,7 @@ bool mouse_lock_enabled() {
 //
 // Nothing is warped on release. Under a lock the compositor does not move
 // the pointer at all, so when the lock ends it is still exactly where the
-// drag began -- which is where the engine's pinned cursor is. Asking the
+// drag began, which is where the engine's pinned cursor is. Asking the
 // compositor to place it somewhere is both unnecessary and a trick: an
 // earlier version set a cursor-position hint from the accumulated
 // position, which papered over the real question of where the engine
@@ -196,7 +196,7 @@ bool mouse_lock_enabled() {
 // While locked the reported position is accumulated from raw deltas and
 // the physical pointer has not moved, so the two are far apart by the time
 // the drag ends. The first unlocked motion event would otherwise report
-// `true_position - accumulated_position` as its delta -- a single huge
+// `true_position - accumulated_position` as its delta, a single huge
 // step that the engine applies as camera movement. That is the rotation
 // jumping after a few spins.
 std::atomic<bool> g_resync_after_unlock{false};
@@ -211,7 +211,7 @@ bool g_have_prev_raw = false;
 // it: the engine's own LockCenter (first person, polled every ~8ms) and a
 // right-button drag (a camera orbit). They were both calling
 // set_pointer_locked() directly, so a lock taken on right-button-down was
-// destroyed by the very next poll -- measured in Stud's own Wayland
+// destroyed by the very next poll, measured in Stud's own Wayland
 // traffic, 34 MICROSECONDS after the request, long before the compositor
 // could activate it. That is why it never once sent locked() back, why
 // the pointer kept moving through an orbit, and why every variation of
@@ -222,8 +222,8 @@ bool g_lock_from_drag = false;
 // Escape lets go of the lock without letting go of the button.
 //
 // A camera drag holds the pointer for as long as the button is down, so a
-// drag that starts over something it should not have -- or simply a hand
-// that wants the desktop back -- has no way out but releasing. Escape is
+// drag that starts over something it should not have, or simply a hand
+// that wants the desktop back, has no way out but releasing. Escape is
 // what a player already presses (it opens Roblox's own menu), so it ends
 // the lock too, and the latch keeps it ended: re-locking would be
 // immediate otherwise, since the button is still held. Cleared the first
@@ -233,7 +233,7 @@ bool g_lock_suppressed = false;
 // The cursor stays where the engine left it when a camera drag ends.
 //
 // The engine pins its OWN cursor for the whole of a camera rotation
-// (MouseBehavior.LockCurrentPosition) and steers from the deltas -- with
+// (MouseBehavior.LockCurrentPosition) and steers from the deltas, with
 // or without any pointer lock, live-observed with locking off entirely.
 // It ignores the position it is given for the duration and picks it up
 // again on release, so a slow orbit that walked the hand 224 units left
@@ -246,12 +246,12 @@ bool g_lock_suppressed = false;
 // So the gesture's starting point is remembered, and from the release
 // onwards every position is reported shifted by the distance between it
 // and where the hand ended. The cursor carries on from where it visibly
-// is, which is the whole of what was missing -- no lock, no warp, nothing
+// is, which is the whole of what was missing: no lock, no warp, nothing
 // put back.
 //
 // This is NOT integration: each position is still the pointer's own plus
 // one constant, fixed once per gesture, so nothing accumulates while the
-// mouse moves. The position is also NOT frozen during the drag -- tried,
+// mouse moves. The position is also NOT frozen during the drag, tried,
 // and it made the rotation itself wrong.
 bool g_drag_anchored = false;
 float g_drag_anchor_x = 0.0f;
@@ -262,7 +262,7 @@ float g_drag_anchor_y = 0.0f;
 float g_drag_anchor_px = 0.0f;
 float g_drag_anchor_py = 0.0f;
 
-// The pointer is kept inside the window for a camera drag -- confined,
+// The pointer is kept inside the window for a camera drag, confined,
 // not taken.
 //
 // A lock replaces the pointer's position with deltas, and every attempt
@@ -277,7 +277,7 @@ bool g_drag_confined = false;
 
 // What the engine says it is doing with its own cursor, polled beside the
 // LockCenter poll. This is the fact every earlier attempt at this had to
-// guess at -- see mouse_behavior.h.
+// guess at; see mouse_behavior.h.
 std::atomic<int> g_engine_mouse_behavior{
     static_cast<int>(stud::runtime::MouseBehavior::kUnknown)};
 
@@ -287,7 +287,7 @@ std::atomic<int> g_engine_mouse_behavior{
 // STUD_INPUT_POLL_MS overrides it. 4ms rather than 8: the engine paints
 // its cursor inside the frame, so every millisecond between the hand
 // moving and the engine hearing about it is a millisecond the cursor is
-// visibly behind -- there is no hardware cursor here to hide it, the way
+// visibly behind, there is no hardware cursor here to hide it, the way
 // there is on Windows.
 int poll_interval_ms() {
     static const int ms = [] {
@@ -301,7 +301,7 @@ int poll_interval_ms() {
 bool engine_pins_cursor() {
     // Either locked mode: the engine holds its own cursor and ignores
     // every position it is given. LockCurrentPosition is a camera
-    // rotation, LockCenter is first person -- for the cursor they are the
+    // rotation, LockCenter is first person, for the cursor they are the
     // same thing, and only Default means "follow the pointer".
     const int behavior = g_engine_mouse_behavior.load();
     return behavior == static_cast<int>(stud::runtime::MouseBehavior::kLockCurrentPosition) ||
@@ -323,7 +323,7 @@ float g_pin_px = 0.0f;
 float g_pin_py = 0.0f;
 
 // The last raw pointer position in surface pixels, which is what a warp
-// takes -- kept because the pin can begin on a poll, away from any event.
+// takes, kept because the pin can begin on a poll, away from any event.
 float g_last_raw_px = 0.0f;
 float g_last_raw_py = 0.0f;
 
@@ -333,7 +333,7 @@ float g_last_raw_py = 0.0f;
 // the compositor may still have one or two of the HAND's own events in
 // flight when the warp is asked for. A single "take the next event as-is"
 // flag is not enough: the stale event eats it, and then the warp's own
-// arrival is read as real movement -- live-caught as the cursor jumping
+// arrival is read as real movement, live-caught as the cursor jumping
 // back to where the hand had been and a -390 unit delta reaching the
 // camera in one step, which is exactly the spin teleporting.
 //
@@ -347,7 +347,7 @@ float g_warp_target_py = 0.0f;
 // Where the pointer was when the warp was asked for. The echo is
 // recognised by being nearer the place it was sent to than the place it
 // came from, which ends the window on the FIRST event after the warp
-// lands however fast the hand is still moving -- waiting for the pointer
+// lands however fast the hand is still moving, waiting for the pointer
 // to be exactly on the target instead held the cursor still for a couple
 // of hundred milliseconds whenever the hand had not stopped.
 float g_warp_from_px = 0.0f;
@@ -358,7 +358,7 @@ std::chrono::steady_clock::time_point g_warp_started{};
 // Whether the compositor can move the pointer at all (wp_pointer_warp_v1,
 // or X11's own warp). Asked once. Without it the pointer cannot be put
 // back on the cursor when a drag ends, and the cursor goes to the pointer
-// instead -- the old jump, on old compositors only.
+// instead, the old jump, on old compositors only.
 bool pointer_warp_available() {
     static const bool available = []() {
         uint64_t a[8] = {};
@@ -398,7 +398,7 @@ void begin_warp(float target_px, float target_py) {
     g_warp_from_px = g_last_raw_px;
     g_warp_from_py = g_last_raw_py;
     // A bound in TIME, so a warp the compositor quietly drops cannot
-    // swallow the pointer -- and short, because every millisecond of it
+    // swallow the pointer, and short, because every millisecond of it
     // is a millisecond the cursor does not move.
     g_warp_started = std::chrono::steady_clock::now();
 }
@@ -417,12 +417,12 @@ void set_pointer_locked(bool locked) {
                                            nullptr);
 }
 
-// The lock is held while EITHER reason holds it -- unless the player is
+// The lock is held while EITHER reason holds it, unless the player is
 // typing, or Escape has just let go of it.
 //
 // Typing: a focused Lua TextBox means the mouse is not steering a camera,
 // and pinning the pointer while someone types into chat is only ever in
-// the way. The engine's own LockCenter still wins -- Roblox can keep
+// the way. The engine's own LockCenter still wins; Roblox can keep
 // shift-lock on with chat focused, and that is its decision to make, not
 // a drag Stud inferred.
 void apply_pointer_lock() {
@@ -450,7 +450,7 @@ void apply_pointer_lock() {
 //   ... only non-mouse events reach nativePassInput
 //
 // So a real mouse produces ONLY nativePassMouse{Move,Button,Wheel} and
-// NEVER nativePassInput -- the touch path is for actual fingers. Stud used
+// NEVER nativePassInput, the touch path is for actual fingers. Stud used
 // to synthesize a touch pointer from the primary button on the theory that
 // the app shell's buttons were touch-driven; that is a real deviation from
 // the device, and touch input is also what makes Roblox suppress its own
@@ -476,7 +476,7 @@ void send_touch(const InputFns& fns, JNIEnv* jni_env,
 //       buttonState, classification, edgeFlags, precisionX, precisionY)
 //   onKeyDownNative(handle, keyEvent) / onKeyUpNative(handle, keyEvent)
 // (GameActivity). These are registered by
-// initializeNativeCode via RegisterNatives -- they are NOT exported symbols,
+// initializeNativeCode via RegisterNatives; they are NOT exported symbols,
 // so they must be invoked as ordinary JNI methods on the activity object,
 // exactly like drive_game_activity_lifecycle() already does.
 struct AgdkInput {
@@ -546,8 +546,8 @@ void deliver_text(const InputFns& fns, const std::string& text, long text_box, b
     // only raw key events.
     //
     // Real-device logcat (Waydroid) shows a phone drives text through
-    // Android's IME -- RemoteInputConnectionImpl, requestCursorUpdates,
-    // an EditText -- which is why selecting text there shows ANDROID's
+    // Android's IME, RemoteInputConnectionImpl, requestCursorUpdates,
+    // an EditText, which is why selecting text there shows ANDROID's
     // highlight. Sober on this machine shows ROBLOX's own font and
     // highlight instead, so it is not on that path at all: the engine is
     // editing and drawing the text itself, the way the desktop client
@@ -568,7 +568,7 @@ void deliver_text(const InputFns& fns, const std::string& text, long text_box, b
         sync_ok = call_trapping_abort(fns.sync_text, env, nullptr, jsync, cursor);
         clear_pending_jni_exception(env, "syncTextboxTextAndCursorPosition2");
     }
-    // Length and outcome only -- a TextBox can be a password field, so the
+    // Length and outcome only, a TextBox can be a password field, so the
     // contents are never logged.
     std::printf("stud: text delivered: %zu chars, cursor=%d, box=%ld, sync=%s, done=%d\n",
                 text.size(), static_cast<int>(cursor), text_box,
@@ -577,7 +577,7 @@ void deliver_text(const InputFns& fns, const std::string& text, long text_box, b
     std::fflush(stdout);
     if (fns.pass_text != nullptr) {
         // STUD_TEXT_DONE=1 is a documented, deliberately-off workaround, not a
-        // fix. It makes every keystroke land -- and every keystroke also
+        // fix. It makes every keystroke land, and every keystroke also
         // COMMIT, because done=true is exactly "the user finished editing":
         // live-confirmed, the search box submits after each letter and the
         // engine re-issues showKeyboard with the committed text. Useful only
@@ -603,7 +603,7 @@ bool agdk_input_enabled() {
     // InputDevice source and tool type (SOURCE_MOUSE / TOOL_TYPE_MOUSE):
     // NativeInputInterface.nativePassMouse* delivers coordinates but says
     // nothing about what produced them, so an engine fed only that cannot
-    // know a mouse exists at all -- which is exactly what the app's own
+    // know a mouse exists at all, which is exactly what the app's own
     // handler (the app's own input handler) branches on. It was switched off during the
     // black-screen hunt as a suspect and left that way; rendering has since
     // been root-caused to render-host's own window-size and surface handling
@@ -618,7 +618,7 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
     if (g_agdk.resolved) return;
     g_agdk.resolved = true;
     // Window focus is lifecycle, not input, so it is resolved before the
-    // AGDK *input* switch below -- which is off by default. Telling the
+    // AGDK *input* switch below, which is off by default. Telling the
     // engine it lost focus is what makes it let go of a key whose release
     // happened somewhere this window could not hear, and that has to work
     // whether or not the AGDK input path is in use.
@@ -641,7 +641,7 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
     if (cls == nullptr) return;
     // No onTouchEventNative here. A real mouse never reaches it: the
     // app's own handler returns from its mouse branch before the touch
-    // path, so mouse input goes through nativePassMouse* alone -- and
+    // path, so mouse input goes through nativePassMouse* alone, and
     // the dispatcher that used to build a MotionEvent for it had no
     // callers left at all.
     g_agdk.on_key_down = env.GetMethodID(cls, "onKeyDownNative", "(JLandroid/view/KeyEvent;)Z");
@@ -649,7 +649,7 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
     // Real AGDK text input. This is a genuinely separate path from the
     // Android IME one Stud has been using: AGDK's own InputConnection
     // reports the edited text straight to native code as a
-    // gametextinput.State, with no Java EditText and no IME involved --
+    // gametextinput.State, with no Java EditText and no IME involved,
     // which is exactly the shape Stud can actually satisfy, since it has
     // no DEX to run a real EditText in. libroblox carries the whole
     // GameTextInput surface (its own `gametextinput.State` /
@@ -667,7 +667,7 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
 }
 
 // Delivers the focused text box's whole current contents through AGDK's
-// own text-input callback -- the same thing a real InputConnection sends
+// own text-input callback, the same thing a real InputConnection sends
 // on every edit, with the caret at the end and no composing region (Stud
 // has no IME, so there is never a composing region to report).
 void send_agdk_text(FakeJni::Env& env, jobject activity_ref, const std::string& text) {
@@ -675,7 +675,7 @@ void send_agdk_text(FakeJni::Env& env, jobject activity_ref, const std::string& 
     // No composing region: Stud has no IME, so nothing is ever mid-
     // composition, and -1/-1 is the honest answer. Reporting the whole
     // string as a composing region was tried live, on the theory that a
-    // client renders composing text while an edit is in progress -- no
+    // client renders composing text while an edit is in progress; no
     // effect on the invisible-while-typing symptom, so it is not kept as
     // a guess.
     const auto len = static_cast<FakeJni::JInt>(text.size());
@@ -708,7 +708,7 @@ void send_agdk_key(FakeJni::Env& env, jobject activity_ref, bool down, jint scan
 // The engine's own input entry points take density-independent units, not
 // pixels: the real handler passes `MotionEvent.getX() / DisplayMetrics.
 // density` (the app's own input handler, whose density divisor is that density). AGDK's own
-// MotionEvent path is the opposite -- getX() really is pixels -- so the
+// MotionEvent path is the opposite, getX() really is pixels, so the
 // two need different numbers from the same event.
 //
 // Stud passed pixels to both, so on a 1.25x display the engine placed its
@@ -718,7 +718,7 @@ void send_agdk_key(FakeJni::Env& env, jobject activity_ref, bool down, jint scan
 //
 // Roblox on desktop eases the camera toward a new zoom distance; the
 // Android build steps straight to it, so a wheel notch is a jump. The
-// difference is not the engine's camera code -- it is what the platform
+// difference is not the engine's camera code; it is what the platform
 // hands it. Android's AXIS_VSCROLL is a float, and a high-resolution
 // wheel legitimately reports fractions of a notch, so a notch delivered
 // as a short run of fractional deltas is ordinary input the engine
@@ -750,11 +750,11 @@ bool smooth_zoom_enabled() {
 
 // How much zoom one wheel detent is worth. The window layer already
 // reports exact detents (wl_pointer.axis_value120/axis_discrete), so 1.0
-// is one notch -- the same amount the desktop client sends -- and this
+// is one notch, the same amount the desktop client sends, and this
 // exists to dial the step finer without a rebuild.
 // Reads a live NativeTextBoxInfo back out of the engine. The fields are
 // the real ones the engine itself populates; going through plain JNI
-// rather than casting the object keeps this honest about what it is --
+// rather than casting the object keeps this honest about what it is,
 // an ordinary read of a Java object Stud registered.
 bool read_text_box_info(JNIEnv* env, jobject info,
                         NativeGLJavaInterfaceStub::TextBoxStyle& out) {
@@ -786,7 +786,7 @@ bool read_text_box_info(JNIEnv* env, jobject info,
         // What the engine says about the box, which is all Stud has to go
         // on: it reports a TextSize but not whether the box scales its
         // text to fit (Roblox's TextScaled), and those two cases need
-        // different ems. Never the contents -- a TextBox can be a
+        // different ems. Never the contents, a TextBox can be a
         // password field.
         std::printf("stud: text box: font=%d fontSize=%.2f box=%.1fx%.1f at (%.1f,%.1f) "
                     "align=%d/%d\n",
@@ -828,7 +828,7 @@ std::string get_clipboard() {
 }
 
 // Text selection with the mouse, for the box Stud draws. A drag inside a
-// focused TextBox belongs to the text widget, not to the camera -- the
+// focused TextBox belongs to the text widget, not to the camera, the
 // same division a device makes between an EditText and the GL view under
 // it.
 std::atomic<bool> g_text_drag{false};
@@ -863,9 +863,9 @@ void push_text_overlay(bool visible, const std::string& text, int caret, int sel
     static const bool disabled = std::getenv("STUD_NO_TEXT_OVERLAY") != nullptr;
     if (disabled) return;
     auto style = NativeGLJavaInterfaceStub::active_text_box_style();
-    // The engine works in density-independent units -- the same space
+    // The engine works in density-independent units, the same space
     // nativePassMouseMove takes, which is why to_density_independent()
-    // exists for the opposite direction -- while the overlay is drawn in
+    // exists for the opposite direction, while the overlay is drawn in
     // real buffer pixels. Everything geometric therefore scales by the
     // density the engine was told about, the box and the font size alike.
     //
@@ -931,7 +931,7 @@ float to_density_independent(float pixels) {
     // buffer is scaled by the display's own scale. With HiDPI off the
     // buffer IS the window's logical size, so dividing by the monitor's
     // 1.25 put every pointer coordinate at 80% of where the pointer
-    // really was -- the engine's own cursor visibly lagging behind the
+    // really was, the engine's own cursor visibly lagging behind the
     // system one on the way into the window.
     const float density = stud::jni_bridge::engine_layout_density();
     return density > 0.0f ? pixels / density : pixels;
@@ -954,13 +954,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             if (fns.mouse_move == nullptr) return;
             // Real caller (the app's own input handler) passes absolute position plus the
             // delta since the previous move, both already divided by the
-            // display density -- so `last_x`/`last_y` are kept in those
+            // display density, so `last_x`/`last_y` are kept in those
             // same units, not pixels.
             const float x = to_density_independent(ev.x);
             const float y = to_density_independent(ev.y);
             // First move after a lock: take the position, report no
             // movement. The pointer did not travel from the accumulated
-            // position to here -- that difference is an artefact of the
+            // position to here. That difference is an artefact of the
             // lock, and reporting it as a delta moves the camera.
             // The position reported to the engine is INTEGRATED from the
             // pointer's movement; it is never assigned from the pointer's
@@ -968,7 +968,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             //
             // That one distinction is what removes the teleport, in both
             // directions. While the pointer is locked it cannot move, so
-            // the reported position advances by relative deltas instead --
+            // the reported position advances by relative deltas instead,
             // and the moment the lock ends, assigning the physical
             // position back would snap the engine's cursor across the
             // whole distance the hand travelled. Integrating means there
@@ -976,9 +976,9 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // from where it was, moved by however far the mouse moves.
             //
             // An earlier attempt kept an offset between the two and added
-            // it to each absolute position. That compounds -- the offset
+            // it to each absolute position. That compounds, the offset
             // was computed from a position that already contained the
-            // previous one -- so every drag displaced the cursor further,
+            // previous one, so every drag displaced the cursor further,
             // and a third-person camera ended up somewhere random. There
             // is no offset here to compound.
             // The real client's own unlocked mouse path, followed
@@ -997,7 +997,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // own instead, and clamp that to the window. Both were
             // mistakes and both were visible: an integrated position
             // drifts away from the pointer, and once it has drifted past
-            // an edge the clamp holds it there -- a cursor stuck against
+            // an edge the clamp holds it there, a cursor stuck against
             // the left of the screen, which the real client has no notion
             // of. It also cannot drift back, because nothing ever
             // reconciles the two.
@@ -1017,7 +1017,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             g_prev_raw_x = x;
             g_prev_raw_y = y;
             if (input_trace_enabled()) {
-                // Motions during a drag, and the first few after it ends --
+                // Motions during a drag, and the first few after it ends,
                 // the window where a jump would happen.
                 static int after_release = 0;
                 if (g_button_state != 0) {
@@ -1055,7 +1055,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             //
             // NO PAN. onTouch() returns y(motionEvent) for a real mouse
             // before it ever reaches the GestureDetector, so
-            // nativePassMousePan is never called for one -- the pan at
+            // nativePassMousePan is never called for one, the pan at
             // the app's own input handler is guarded by SOURCE_MOUSE but is only
             // reachable for an event whose tool type IS a finger, which a
             // mouse's never is. Stud sent it anyway, and a pan carries an
@@ -1063,9 +1063,9 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // fixed point, so the engine pins its cursor there for the
             // duration and takes the position back at the end. That is
             // the cursor jumping to where the hand stopped, and
-            // everything built to hide it -- snapping the position back
+            // everything built to hide it, snapping the position back
             // to the anchor on release, locking the real pointer for a
-            // drag, clamping the position inside the window -- was
+            // drag, clamping the position inside the window, was
             // working around a gesture the platform should never have
             // reported.
             //
@@ -1107,19 +1107,19 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             if (g_drag_confined) {
                 // Per EVENT, not per poll. The camera sets its pin a frame
                 // or so after the press, and an 8ms poll can miss the whole
-                // of a short flick -- which is exactly when the cursor was
+                // of a short flick, which is exactly when the cursor was
                 // still jumping: the gesture ended before Stud ever saw the
                 // pin, so it treated a rotation as a UI drag.
                 g_engine_mouse_behavior.store(static_cast<int>(stud::runtime::read_mouse_behavior()));
             }
             if (g_drag_confined && engine_pins_cursor()) {
-                // The engine is pinning its own cursor RIGHT NOW -- it
+                // The engine is pinning its own cursor RIGHT NOW; it
                 // says so (MouseBehavior == LockCurrentPosition), which
                 // is the one thing this used to have to guess at.
                 //
                 // While that lasts the engine ignores every position it
                 // is given, so the position is left exactly where its
-                // cursor is and only the movement is sent -- from the
+                // cursor is and only the movement is sent, from the
                 // relative stream, which keeps reporting what the device
                 // did even once the pointer has reached the confinement
                 // boundary and stopped. That is what makes a spin
@@ -1130,7 +1130,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     // The press point, not wherever the pointer had got to
                     // by the time this was noticed. The camera pins on the
                     // button-down it receives, so that is where the
-                    // engine's own cursor is standing -- adopting the
+                    // engine's own cursor is standing, adopting the
                     // current position instead puts the cursor (and the
                     // warp at the end) a flick's worth away from it.
                     g_pin_x = g_drag_anchor_x;
@@ -1165,8 +1165,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // Mouse look. `ev.x`/`ev.y` are the raw delta, not a position:
             // the compositor is holding the cursor still, so this is the
             // only motion there is. The real captured-pointer path
-            // (the app's own input handler) reads exactly this -- Android's
-            // AXIS_RELATIVE_X/Y -- and adds it to the position it tracks
+            // (the app's own input handler) reads exactly this; Android's
+            // AXIS_RELATIVE_X/Y, and adds it to the position it tracks
             // itself before passing both on, which is what this mirrors.
             // (It only skips the accumulation under FFlag
             // AndroidMouseLockButtonFix, whose compiled-in default is
@@ -1182,14 +1182,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             //
             // So the position is INTEGRATED by the deltas rather than
             // frozen: it is the client's idea of where the cursor now is,
-            // and capture does not suspend that -- it only changes where
+            // and capture does not suspend that; it only changes where
             // the movement comes from.
             //
             // Stud used to freeze the position here and pass the stale one
             // with each delta. That is why a camera rotation ended
             // somewhere else: the engine spent the whole gesture being
             // told the cursor had not moved, and the first ordinary move
-            // afterwards -- which passes the pointer's real position --
+            // afterwards, which passes the pointer's real position,
             // moved it the entire distance at once. The jump was never at
             // the release; it was on the next motion after it, which is
             // exactly how it presents.
@@ -1201,7 +1201,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // that flag is off, and passes the position either way.
             //
             // The flag is FFlagAndroidMouseLockButtonFix, and
-            // production serves it True -- so the branch is NOT taken and
+            // production serves it True, so the branch is NOT taken and
             // the client passes its position unchanged with each delta.
             // Integrating instead is what left the orbit teleporting: the
             // engine holds its cursor still for the gesture, so the
@@ -1237,7 +1237,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // While the pointer is locked the compositor is not moving it,
             // so a button event still carries the position from before the
             // lock. Adopting that would throw away everything accumulated
-            // during the drag -- including on the release that ends it,
+            // during the drag, including on the release that ends it,
             // which is the moment the accumulated position is needed.
             if (!g_drag_locked.load()) {
                 // Move by however far the pointer has travelled since the
@@ -1268,7 +1268,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     g_button_state &= ~bit;
                 }
                 // The anchor is the point the gesture began at, and it
-                // lasts until every button is up -- the same lifetime the
+                // lasts until every button is up, the same lifetime the
                 // real client's gesture has.
                 // A right-button drag inside an experience locks the
                 // pointer, and nothing else.
@@ -1285,7 +1285,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // Note what is NOT there: no set_cursor_position_hint
                 // anywhere in the log. The compositor does not move a
                 // locked pointer, so destroying the lock leaves it where
-                // the drag began -- the cursor "stays where it was
+                // the drag began, the cursor "stays where it was
                 // locked" for free, and moving afterwards carries on from
                 // there. Sending a hint moves the pointer a second time,
                 // and putting the reported position back on the anchor
@@ -1301,15 +1301,15 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // state, not input handling. Measured from its own Wayland
                 // traffic, one session, one game: a right press that
                 // orbits the camera is followed immediately by
-                // lock_pointer + locked(), and a right press over a UI --
-                // a real 2.5-second drag with 583 motion events -- takes
+                // lock_pointer + locked(), and a right press over a UI,
+                // a real 2.5-second drag with 583 motion events, takes
                 // no lock at all. The lock arrives on the PRESS, before
                 // any motion, so whatever decides it is already known at
                 // press time.
                 //
                 // In the client the only thing that requests capture is
                 // nativeGetMainWindowIsMouseLockedCenter() (the app's own input handler)
-                // -- and in Stud that call is live (never trapped) and
+                // and in Stud that call is live (never trapped) and
                 // reads 0 through an entire session, orbit included, in
                 // 9,480 polls. It does go to 1 for first person. So the
                 // engine simply is not entering that state for an orbit
@@ -1325,7 +1325,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     if (held && !g_drag_anchored) {
                         g_drag_anchored = true;
                         // Where the cursor is, which at a press is also
-                        // where the pointer is -- the two only come apart
+                        // where the pointer is, the two only come apart
                         // during the gesture, and are put back together at
                         // the end of it.
                         g_drag_anchor_x = to_density_independent(ev.x);
@@ -1341,7 +1341,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                         // One last read before the engine lets go. A
                         // gesture short enough to finish between two polls
                         // would otherwise look like it was never pinned at
-                        // all -- the engine drops the pin on its own frame
+                        // all, the engine drops the pin on its own frame
                         // after this button-up, so right now it still says
                         // what it was doing.
                         if (!g_pin_seen) {
@@ -1354,7 +1354,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                                 g_pin_px = g_drag_anchor_px;
                                 g_pin_py = g_drag_anchor_py;
                                 if (input_trace_enabled()) {
-                                    std::printf("stud: the engine was pinning after all -- "
+                                    std::printf("stud: the engine was pinning after all, "
                                                 "caught at the release\n");
                                     std::fflush(stdout);
                                 }
@@ -1379,13 +1379,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                             // this gesture, so the pointer is somewhere
                             // else by now. Put the pointer back ON the
                             // cursor rather than moving the cursor to the
-                            // pointer -- that direction is the teleport.
+                            // pointer; that direction is the teleport.
                             begin_warp(g_pin_px, g_pin_py);
                             last_x = g_pin_x;
                             last_y = g_pin_y;
                         }
                         if (input_trace_enabled()) {
-                            std::printf("stud: drag ended at (%.1f,%.1f) -- %s\n",
+                            std::printf("stud: drag ended at (%.1f,%.1f), %s\n",
                                         static_cast<double>(last_x), static_cast<double>(last_y),
                                         g_pin_seen
                                             ? (pointer_warp_available()
@@ -1413,7 +1413,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     // position back from the platform on release. That
                     // moved only Stud's idea of the cursor: the desktop
                     // pointer stayed where the hand ended, so the two
-                    // disagreed -- visible the moment the pointer left the
+                    // disagreed, visible the moment the pointer left the
                     // window, and as a cursor teleporting back in a view
                     // whose camera does not rotate at all.
                     //
@@ -1426,8 +1426,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     //
                     // Inside an experience the lock taken above ends here.
                     // The compositor does not move a locked pointer, so it
-                    // is still where the drag began -- which is where the
-                    // engine's pinned cursor is -- and the next motion
+                    // is still where the drag began, which is where the
+                    // engine's pinned cursor is, and the next motion
                     // event re-bases rather than applying a delta across
                     // the gap.
                 }
@@ -1471,7 +1471,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // in-game rotation and wrong for the avatar editor, which
                 // wants the cursor to travel with the hand. Faithful
                 // absolute positions need no such distinction. The lock
-                // remains for the one case the engine does report --
+                // remains for the one case the engine does report,
                 // shift-lock and first person, below.
             }
             // Only the primary button maps onto a real touch pointer.
@@ -1494,8 +1494,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // and nothing else is touched.
             //
             // While a button is held the compositor keeps delivering
-            // motion after the pointer has left the window -- that is what
-            // an implicit grab is for -- so the release can arrive at a
+            // motion after the pointer has left the window; that is what
+            // an implicit grab is for, so the release can arrive at a
             // coordinate the view does not contain. Live-captured: a
             // right-button release at x=-95.0 on a 1728-wide surface, with
             // the engine simply not acting on it and the button left held
@@ -1516,7 +1516,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 button_x = button_x < 0.0f ? 0.0f : (button_x > w - 1.0f ? w - 1.0f : button_x);
                 button_y = button_y < 0.0f ? 0.0f : (button_y > h - 1.0f ? h - 1.0f : button_y);
                 if (input_trace_enabled() && (button_x != last_x || button_y != last_y)) {
-                    std::printf("stud: release was outside the view (%.1f,%.1f) -- reported at "
+                    std::printf("stud: release was outside the view (%.1f,%.1f), reported at "
                                 "(%.1f,%.1f)\n", static_cast<double>(last_x),
                                 static_cast<double>(last_y), static_cast<double>(button_x),
                                 static_cast<double>(button_y));
@@ -1565,8 +1565,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
 
             // A key already released into text entry stays released until
-            // it is really let go. Without this the next auto-repeat --
-            // 25 a second -- presses it straight back down, which is why
+            // it is really let go. Without this the next auto-repeat,
+            // 25 a second, presses it straight back down, which is why
             // the character kept walking while its owner typed.
             {
                 auto& released_into_text = keys_released_into_text_entry();
@@ -1578,7 +1578,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     // release, on the reasoning that the user had let go so
                     // the suppression was done. That was the bug: while a
                     // text box has focus the engine discards key events, so
-                    // that release never landed either -- and with the key
+                    // that release never landed either, and with the key
                     // no longer in this set there was nothing left to
                     // re-send when the box let go, which is the one moment
                     // a release can actually be heard. Live-caught: the
@@ -1608,7 +1608,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             } else if (ev.code == 29 || ev.code == 97) {  // LEFTCTRL / RIGHTCTRL
                 g_meta_state = down ? (g_meta_state | 0x1000) : (g_meta_state & ~0x1000);
             }
-            // Escape gives the pointer back, whatever is holding it -- see
+            // Escape gives the pointer back, whatever is holding it; see
             // g_lock_suppressed. The key still reaches the engine as
             // normal; this only lets go of the lock alongside it.
             if (down && !is_repeat && ev.code == 1) {  // KEY_ESC
@@ -1617,12 +1617,12 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             // What this key really types, according to the compositor's own
             // keymap. Stud's own table is positional and describes a US
-            // layout, so it is only the fallback now -- for the X11 backend,
+            // layout, so it is only the fallback now, for the X11 backend,
             // and for the moment before the keymap has arrived.
             std::string typed_text;
             if (!text_from_keymap(ev.keysym, ev.codepoint, ev.composed_utf8,
                                   sizeof(ev.composed_utf8), &typed_text)) {
-                // Only reached with no keymap at all -- the X11 backend, or
+                // Only reached with no keymap at all, the X11 backend, or
                 // the moment before wl_keyboard.keymap arrives.
                 char from_table = 0;
                 if (char_for_scan_code(ev.code, shift_down, &from_table)) {
@@ -1632,8 +1632,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
             // real one goes through whole rather than being truncated.
             // KeyEvent.getUnicodeChar() is a single code point, so a
-            // multi-character composed result has none to report -- the
-            // text still reaches the engine through typed_text -- and
+            // multi-character composed result has none to report, the
+            // text still reaches the engine through typed_text, and
             // neither does a dead key, which types nothing on its own.
             const jint unicode_char =
                 ev.codepoint != 0
@@ -1642,7 +1642,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                            ? 0
                            : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
             const jint key_code = android_key_code_for_event(ev.code, ev.keysym);
-            // The scan code is what the engine actually keys off -- it
+            // The scan code is what the engine actually keys off; it
             // indexes a table straight to a USB HID usage code, and never
             // reads the Android key code at all. So it has to carry what
             // the key types rather than where it sits. See
@@ -1653,7 +1653,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // Real text entry. When the engine has told us a Lua TextBox
             // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
             // must go back as the TextBox's whole updated contents via
-            // nativePassText -- a real device does exactly this from its
+            // nativePassText, a real device does exactly this from its
             // IME, never as key events.
             long text_box = NativeGLJavaInterfaceStub::active_text_box();
 
@@ -1663,7 +1663,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             //
             // RESULT, live: 0x9c8 is null while 0xa78/0xa80 both hold real
             // pointers. An earlier reading of this took the null 0x9c8 for
-            // the reason typing does not echo -- that is RETRACTED. Its
+            // the reason typing does not echo; that is RETRACTED. Its
             // consumer only takes 0x9c8 as a fast path and falls through to
             // a second path built on 0xa80, so
             // syncTextboxTextAndCursorPosition2 really does reach the
@@ -1709,7 +1709,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
             // real device performs when its keyboard opens over the GL view.
-            // This was tried twice before and disproven -- but both attempts
+            // This was tried twice before and disproven, but both attempts
             // predate `java.lang.String.getBytes` existing at all, and
             // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
             // focused box's own text. Off by default; the DIAG probe above
@@ -1748,7 +1748,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 auto& ed = editor();
                 if (ed.text() != NativeGLJavaInterfaceStub::active_text_box_text()) {
                     // The engine replaced the contents (a fresh focus, or
-                    // Lua setting the text) -- adopt it.
+                    // Lua setting the text), adopt it.
                     ed.set_text(NativeGLJavaInterfaceStub::active_text_box_text());
                 }
                 const bool ctrl = (g_meta_state & 0x1000) != 0;
@@ -1806,7 +1806,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 }
                 if (changed) {
                     if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
-                        // Length only -- never the content, which can be a password.
+                        // Length only, never the content, which can be a password.
                         std::printf("stud: input bridge: nativePassText -> %zu chars\n",
                                     text.size());
                         std::fflush(stdout);
@@ -1835,7 +1835,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // Real Android Back. The app shell leaves a page (a WebView
             // page, a settings screen) on KEYCODE_BACK, which every real
             // device has as a button or a gesture and which Stud had no
-            // way to send at all -- leaving a user stuck on any screen
+            // way to send at all, leaving a user stuck on any screen
             // whose only exit is Back, live-reported exactly that way.
             // Escape stays KEYCODE_ESCAPE, because that is what a real
             // hardware keyboard sends and what Roblox uses in-game for
@@ -1884,7 +1884,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             if (fns.key_event == nullptr) return;
             // Every key actually handed to the engine, one line each,
-            // immediately before the call -- so a run says what the engine
+            // immediately before the call, so a run says what the engine
             // received rather than leaving it to be inferred from what
             // Stud meant to send. Bounded so it cannot fill a log.
             {
@@ -1918,8 +1918,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // it is what makes the engine let go.
             //
             // This is the opposite of listening in the background: no
-            // input is read while unfocused -- the compositor stops
-            // sending any -- this only says "stop", and says it once.
+            // input is read while unfocused, the compositor stops
+            // sending any. This only says "stop", and says it once.
             if (!focused) {
                 // Local latched state goes too, or a modifier held at the
                 // moment focus left stays latched for the next keystroke
@@ -1959,14 +1959,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 apply_pointer_lock();
             }
             // Real hover enter/exit. Without these the engine has no way to
-            // know the pointer is inside the window at all -- and Roblox
+            // know the pointer is inside the window at all, and Roblox
             // only draws its own cursor while it believes it is.
             if (ev.type == Ev::kPointerEnter && fns.mouse_move != nullptr) {
                 // Tell the engine where the pointer came in, straight
                 // away. A hover-enter carries no position the engine acts
                 // on, so without this its cursor stays wherever it was
                 // when the pointer last left and only catches up on the
-                // next movement -- which is why it took a moment to
+                // next movement, which is why it took a moment to
                 // appear, in the wrong place, instead of being there.
                 const float x = to_density_independent(ev.x);
                 const float y = to_density_independent(ev.y);
@@ -1976,8 +1976,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // Only the first was being set. The reported position is
                 // integrated from the pointer's movement, so the next
                 // motion measured itself against wherever the pointer was
-                // when it last left -- a delta across everything that
-                // happened outside the window -- and the cursor jumped off
+                // when it last left, a delta across everything that
+                // happened outside the window, and the cursor jumped off
                 // the moment it came back in. Re-basing here is what makes
                 // entering seamless: the pointer really is at this point,
                 // so this is the one place adopting it is correct.
@@ -1996,8 +1996,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 //
                 // Wayland stops sending button events the moment the
                 // pointer leaves the surface, so a button released outside
-                // -- after dragging out of the window, or when another
-                // surface takes the pointer, or on alt-tab -- is a release
+                // after dragging out of the window, or when another
+                // surface takes the pointer, or on alt-tab, is a release
                 // Stud never hears about. The engine is then left holding
                 // a button forever: a left-drag that never ends (the climb
                 // fling that will not let go), and a right button that
@@ -2022,14 +2022,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 }
                 g_text_drag.store(false);
                 // No button is held any more, so nothing justifies keeping
-                // the pointer locked -- or fenced in.
+                // the pointer locked, or fenced in.
                 g_lock_from_drag = false;
                 apply_pointer_lock();
                 g_drag_anchored = false;
                 g_warp_pending = false;
                 set_pointer_confined(false);
                 if (input_trace_enabled()) {
-                    std::printf("stud: pointer left the surface -- released every held button\n");
+                    std::printf("stud: pointer left the surface, released every held button\n");
                     std::fflush(stdout);
                 }
             }
@@ -2045,7 +2045,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // The real caller scales the change in pinch factor by 3.5
             // before handing it over (the app's own mouse branch), and
             // passes the position already divided by the display
-            // density -- same units every other pointer call uses here.
+            // density, same units every other pointer call uses here.
             call_trapping_abort(fns.mouse_pinch, jni_env, nullptr, to_density_independent(ev.x),
                                 to_density_independent(ev.y), ev.a * 3.5f);
             return;
@@ -2065,14 +2065,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                         static_cast<int>(device_id), static_cast<int>(type));
             std::fflush(stdout);
             // v1 of the connect event says whether this pad has force
-            // feedback -- see render-host/src/gamepad.cpp.
+            // feedback; see render-host/src/gamepad.cpp.
             if (gamepad_presence_hook()) {
                 gamepad_presence_hook()(static_cast<int>(device_id), ev.y != 0.0f);
             }
             return;
         }
         // What the pad can do, announced BEFORE it is said to have
-        // arrived -- the real app does the same (`E(deviceId, type)` runs
+        // arrived, the real app does the same (`E(deviceId, type)` runs
         // immediately before the connect call). A pad that reports no
         // keys is a pad with no bindings, which looks exactly like a
         // controller that does nothing.
@@ -2099,7 +2099,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE);
             const jint type = static_cast<jint>(ev.y);
             // Direction -1 for every axis, and additionally +1 for the
-            // two hat axes -- exactly what the real caller registers
+            // two hat axes, exactly what the real caller registers
             // not both directions for
             // everything.
             if (input_trace_enabled()) {
@@ -2125,7 +2125,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         }
         case Ev::kGamepadButton: {
             if (fns.gamepad_button == nullptr) return;
-            // 1 is pressed, 0 is released -- NOT Android's ACTION_DOWN/UP
+            // 1 is pressed, 0 is released, NOT Android's ACTION_DOWN/UP
             // constants, which are the other way round. The real caller
             // converts explicitly (the app's own key listener:
             // pressed when the action is ACTION_DOWN), so sending the
@@ -2213,8 +2213,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
     fns.gamepad_supported_motion = reinterpret_cast<GamepadSupportedMotionFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedMotionWithGamepadType"));
     // The engine's own MouseBehavior, decoded out of the engine itself.
-    // Everything the cursor does during a drag depends on it -- see
-    // mouse_behavior.h -- and it degrades to "unknown" safely.
+    // Everything the cursor does during a drag depends on it; see
+    // mouse_behavior.h, and it degrades to "unknown" safely.
     stud::runtime::init_mouse_behavior_probe(lib);
     g_jvm = &jvm;
     g_agdk.activity = std::move(activity);
@@ -2222,7 +2222,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 
     // Controller rumble. Registered here rather than at bring-up because
     // this is where a pad's arrival and departure are already known, and
-    // the engine has to be told the truth at both moments -- a pad
+    // the engine has to be told the truth at both moments, a pad
     // plugged in while Stud is running is the ordinary case, and one
     // that was never there must not be advertised.
     {
@@ -2248,7 +2248,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
     if (fns.mouse_move == nullptr && fns.mouse_button == nullptr && fns.key_event == nullptr) {
         std::fprintf(stderr,
                      "stud: input bridge: this build exports none of the real input entry "
-                     "points -- not starting\n");
+                     "points, not starting\n");
         g_running.store(false);
         return false;
     }
@@ -2262,7 +2262,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 
     std::thread([&jvm, fns]() {
         // Every thread that makes a real JNI call has to be attached
-        // first -- the same precondition every other background caller in
+        // first, the same precondition every other background caller in
         // this codebase observes.
         stud::jni_bridge::ensure_current_thread_attached_to_jvm();
         float last_x = 0.0f;
@@ -2272,7 +2272,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         while (g_running.load(std::memory_order_relaxed)) {
             // Input's own connection, so asking for events never queues
             // behind a frame's worth of GL calls and never makes one wait
-            // -- and so the host can simply hold the request until an
+            // and so the host can simply hold the request until an
             // event arrives. Falls back to the shared connection if the
             // second socket could not be opened.
             auto& input_conn = stud::render_client::input_connection().connected()
@@ -2311,7 +2311,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             //
             // The engine stops treating keys as gameplay input the moment
             // one of its own text boxes has focus, so the release that
-            // would have stopped a walk is simply never acted on -- click
+            // would have stopped a walk is simply never acted on, click
             // into chat while holding W and the character walks forever.
             // A real device has the same handover and ends the gesture.
             //
@@ -2335,7 +2335,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     //
                     // Measured, with every key event logged at the moment
                     // it reached the engine: the release sent here really
-                    // did arrive, and the character carried on walking --
+                    // did arrive, and the character carried on walking,
                     // while pressing the key again (a down AND an up)
                     // stopped it. Roblox acts on the CHANGE, not on the
                     // event: releasing here cleared the engine's own idea
@@ -2348,9 +2348,9 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // concerned, every event for it is dropped while the
                     // text box has focus (so no repeat can disturb it),
                     // and the one release is sent when focus is given up
-                    // -- where it is a real change, and stops the walk.
+                    // where it is a real change, and stops the walk.
                     // Held until really let go, so the repeats that
-                    // follow cannot press them back down -- but NOT yet.
+                    // follow cannot press them back down, but NOT yet.
                     // Applying it here would suppress the releases that
                     // were just collected, since they go through the same
                     // path: the key would already be in the set by the
@@ -2364,14 +2364,14 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 }
                 if (text_box == 0 && previous_text_box != 0) {
                     // The text box let go, so the engine is listening to
-                    // keys again -- and this is the only moment a release
+                    // keys again, and this is the only moment a release
                     // for them can actually land.
                     //
                     // Measured: while a text box has focus the engine
                     // discards key events entirely, so both the release
                     // Stud sends at focus time and the user's own physical
                     // release are ignored, and the key stays held forever
-                    // -- "it only stops if i press the same key once
+                    // "it only stops if i press the same key once
                     // again", which is exactly a release finally being
                     // heard. Sending them here ends that for good.
                     //
@@ -2387,7 +2387,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                         released.push_back(up);
                     }
                     if (!still_suppressed.empty()) {
-                        std::printf("stud: input bridge: the text box let go -- releasing %zu "
+                        std::printf("stud: input bridge: the text box let go, releasing %zu "
                                     "key(s) held across it\n",
                                     still_suppressed.size());
                         std::fflush(stdout);
@@ -2399,7 +2399,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 
             if (count > 0 || !released.empty()) {
                 // One-shot confirmation that the real seat is actually
-                // reaching this process -- silent afterwards.
+                // reaching this process, silent afterwards.
                 // Temporary, low-rate diagnostic: which real event types
                 // actually reach the engine, once per second at most.
                 static unsigned counts[14] = {};
@@ -2443,7 +2443,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             }
 
             // Mouse look. The engine is asked, every round, whether it wants
-            // the pointer held -- exactly what the real app does on every
+            // the pointer held, exactly what the real app does on every
             // mouse event (the app's own input handler takes Android's pointer capture when
             // this is true and drops it when it is false). Without it the
             // real cursor keeps travelling across the desktop while the
@@ -2456,7 +2456,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             // an exponential ease with a time constant, so the feel does
             // not change with STUD_INPUT_POLL_MS. About 4 time constants
             // covers the move, so the default settles in roughly a third
-            // of a second -- close to the desktop client's own camera
+            // of a second, close to the desktop client's own camera
             // spring, and long enough to read as motion rather than a cut.
             if (fns.mouse_wheel != nullptr && smooth_zoom_enabled()) {
                 float step = 0.0f;
@@ -2486,8 +2486,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                         // treating a tiny step as "close enough, pay it all"
                         // collapsed the whole ease into two payments.
                         //
-                        // This threshold is what actually ends the glide --
-                        // an exponential never reaches zero -- so it sets
+                        // This threshold is what actually ends the glide,
+                        // an exponential never reaches zero, so it sets
                         // the tail length: tau * ln(1/eps), which is about
                         // 370ms at the defaults. The earlier 0.002 (0.2% of
                         // a notch) ran ~500ms, and that last stretch moves
@@ -2605,11 +2605,11 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 if (!asked) {
                     // A trapped call leaves `locked` untouched, so a
                     // failing query is indistinguishable from a steady
-                    // "false" -- which is exactly what this looked like.
+                    // "false", which is exactly what this looked like.
                     static bool said = false;
                     if (!said) {
                         said = true;
-                        std::printf("stud: nativeGetMainWindowIsMouseLockedCenter TRAPPED -- the "
+                        std::printf("stud: nativeGetMainWindowIsMouseLockedCenter TRAPPED, the "
                                     "engine's own mouse-lock state is not being read at all\n");
                         std::fflush(stdout);
                     }
@@ -2629,8 +2629,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                                          static_cast<int>(stud::runtime::MouseBehavior::kUnknown);
                 if (probe_valid) {
                     // The field itself, not the predicate over it. Both
-                    // read the same MouseBehavior -- the predicate just
-                    // answers for one of its three values -- and a live
+                    // read the same MouseBehavior, the predicate just
+                    // answers for one of its three values, and a live
                     // capture caught them disagreeing, which is worth
                     // knowing about rather than silently picking one.
                     const bool field_says_center = engine_locks_center();
@@ -2639,7 +2639,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                         if (!said) {
                             said = true;
                             std::printf("stud: the engine's LockCenter predicate (%d) and its own "
-                                        "MouseBehavior (%d) disagree -- going with the field\n",
+                                        "MouseBehavior (%d) disagree, going with the field\n",
                                         static_cast<int>(locked), g_engine_mouse_behavior.load());
                             std::fflush(stdout);
                         }
@@ -2658,8 +2658,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     //
                     // Holding a button no longer takes the lock. The
                     // cursor is meant to travel with the hand while a
-                    // button is held -- confirmed directly by the user
-                    // against the real client -- and pinning it is what
+                    // button is held, confirmed directly by the user
+                    // against the real client, and pinning it is what
                     // made a right-drag over an in-game UI end somewhere
                     // else: the pointer could not move, so the position
                     // the engine was given came from accumulated deltas
@@ -2667,8 +2667,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     //
                     // This is also what the real device does. the app's own input handler
                     // takes Android's pointer capture only when
-                    // nativeGetMainWindowIsMouseLockedCenter() is true --
-                    // shift-lock and first person -- and leaves an
+                    // nativeGetMainWindowIsMouseLockedCenter() is true,
+                    // shift-lock and first person, and leaves an
                     // ordinary drag uncaptured.
                     g_lock_from_engine = locked != 0;
                     apply_pointer_lock();

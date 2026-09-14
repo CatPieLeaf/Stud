@@ -9,7 +9,7 @@
 //     bionic_context/stud_wrap_native_for_bionic_caller: purely the old
 //     dual-ABI-same-process design's %fs-swapping concern. Under
 //     Process B's real bionic-native architecture, jnivm itself is
-//     bionic-compiled and every caller is bionic too -- nothing ever
+//     bionic-compiled and every caller is bionic too; nothing ever
 //     needs wrapping. Implemented here as the correct degenerate case
 //     (is_bionic_address always false, enter/leave no-ops, wrap is the
 //     identity function), not deleted from the patch, since the patch's
@@ -17,7 +17,7 @@
 //     canonical-VM substitution) are still real and still needed.
 //   - stud_canonical_java_vm/stud_register_canonical_jnivm_instance/
 //     stud_canonical_jnivm_instance: a real, still-needed pointer
-//     registry, entirely unrelated to %fs -- works around a genuine C++
+//     registry, entirely unrelated to %fs, works around a genuine C++
 //     Itanium-ABI multiple-inheritance issue (see bionic_jvm.h's
 //     GetBionicSafeJavaVM() doc comment) by substituting the one,
 //     correct, registered pointer at every JNI dispatch regardless of
@@ -27,7 +27,7 @@
 namespace stud::jni_bridge {
 
 // Call once, right after constructing the real BionicAwareJvm, with
-// jvm.GetBionicSafeJavaVM()'s result -- the one, ABI-correct JavaVM*
+// jvm.GetBionicSafeJavaVM()'s result, the one, ABI-correct JavaVM*
 // stud_canonical_java_vm() (called from libjnivm's own patched jni.h)
 // hands back to every JNI dispatch afterward.
 void register_canonical_java_vm(void* vm);

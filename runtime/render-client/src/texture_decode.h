@@ -10,7 +10,7 @@
 //   Intel Iris Xe          Caps: Texture: DXT 1 PVR 0 ETC1 1 ETC2 1
 //   NVIDIA RTX 3050        Caps: Texture: DXT 1 PVR 0 ETC1 0 ETC2 0
 //
-// and the textures are noticeably better in the first case -- confirmed
+// and the textures are noticeably better in the first case, confirmed
 // side by side by running Stud on each. NVIDIA genuinely has no ETC2 at
 // all (probed directly: textureCompressionETC2 is false and every
 // ETC2/EAC format reports optimalTilingFeatures 0x0), so the engine falls
@@ -23,7 +23,7 @@
 // is 8x an ETC2 RGB block) and a little CPU per texture upload, which is
 // a good trade for textures that are actually right.
 //
-// The block decoders themselves are vendored, not written here -- see
+// The block decoders themselves are vendored, not written here; see
 // runtime/CMakeLists.txt. A hand-rolled block decoder that is subtly
 // wrong yields textures that look plausible and are quietly corrupt,
 // which is worse than not supporting the format.
@@ -41,7 +41,7 @@ namespace stud::texture_decode {
 //
 // This is what makes the engine's own texture budget mean what it means
 // on a real device: see texture_encode.h for the measurement that
-// forced it -- an RGBA8 substitute is 8x an ETC2 block, against a
+// forced it, an RGBA8 substitute is 8x an ETC2 block, against a
 // compiled-in 64MB budget, and the streaming system spends the whole
 // session evicting and reloading mips it cannot fit.
 void set_bc_available(bool available);
@@ -49,15 +49,15 @@ bool bc_available();
 
 // Use BC7 for the colour formats rather than BC1/BC3. Exact parity for
 // ETC2 RGBA8 and twice the size for ETC2 RGB8, bought because BC1 holds
-// only four colours per block -- the textbook worst case for a normal
+// only four colours per block, the textbook worst case for a normal
 // map, and what made them look like blocky noise.
 void set_bc7_available(bool available);
 
-// True for the compressed formats Stud decodes itself. Everything else --
-// including BC/DXT, which desktop GPUs support natively -- is left alone.
+// True for the compressed formats Stud decodes itself. Everything else,
+// including BC/DXT, which desktop GPUs support natively, is left alone.
 bool is_emulated(VkFormat format);
 
-// True for the PVRTC formats. They cannot be decoded a band at a time --
+// True for the PVRTC formats. They cannot be decoded a band at a time,
 // a PVRTC texel is interpolated from neighbouring blocks, so a partial
 // decode would seam at every band edge.
 bool is_pvrtc(VkFormat format);
@@ -72,7 +72,7 @@ VkFormat substitute(VkFormat format);
 // Bytes one decoded mip level occupies, tightly packed.
 uint64_t decoded_size(VkFormat format, uint32_t width, uint32_t height);
 
-// Bytes one compressed mip level occupies, tightly packed -- the size the
+// Bytes one compressed mip level occupies, tightly packed, the size the
 // engine itself wrote into its staging buffer.
 uint64_t encoded_size(VkFormat format, uint32_t width, uint32_t height);
 
@@ -85,7 +85,7 @@ uint64_t encoded_size(VkFormat format, uint32_t width, uint32_t height);
 // rows of blocks, for a source whose rows are not tightly packed (a copy
 // with a bufferRowLength larger than the extent). Zero means tight, which
 // is the ordinary case. PVRTC cannot be decoded from a padded source at
-// all -- its texels interpolate across neighbouring blocks -- so a
+// all. Its texels interpolate across neighbouring blocks, so a
 // non-tight pitch is refused rather than silently mis-decoded.
 bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, void* dst,
             uint64_t src_row_pitch = 0);

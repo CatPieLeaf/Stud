@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
     // Back to the round-trip file for the checks below.
     stud::config::save_settings(path, settings);
 
-    // Real content check -- keys are actually named as the schema promises.
+    // Real content check, keys are actually named as the schema promises.
     {
         std::ifstream f(path);
         std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
 
     // save_settings() preserves an unrelated pre-existing top-level key
     // (e.g. render/dev_backend_config.h's "devRenderBackend") instead of
-    // clobbering it -- this file is shared, not exclusively owned.
+    // clobbering it. This file is shared, not exclusively owned.
     std::string shared_path = dir + "/shared_config.json";
     {
         std::ofstream out(shared_path);
