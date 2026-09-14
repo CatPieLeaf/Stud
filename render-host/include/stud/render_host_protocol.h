@@ -1199,6 +1199,11 @@ public:
 
     bool connected() const { return fd_ >= 0; }
 
+    // For diagnostics only: lets a client say which socket it got,
+    // so a host-side connection can be matched to the library that
+    // opened it.
+    int fd() const { return fd_; }
+
 private:
     // Real, user-reported bug fixed: `connected()` used to just report
     // whether connect_to() ever succeeded, never whether the connection

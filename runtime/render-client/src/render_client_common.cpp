@@ -3,6 +3,26 @@
 #include <cstdio>
 #include <cstdlib>
 
+// Which shared library this copy was compiled into.
+//
+// render_client_common.cpp is listed in five separate SHARED targets, so
+// each of libandroid, libaaudio, libEGL, libGLESv2 and libvulkan gets its
+// OWN copy of the statics below -- up to fifteen sockets, not the three
+// this file's header describes. STUD_IPC_OWNERS=1 names them, so a host
+// connection can be matched to the library that opened it.
+#ifndef STUD_CLIENT_OWNER
+#define STUD_CLIENT_OWNER "unknown"
+#endif
+
+namespace {
+void announce(const char* kind, const stud::render_host::Client& c) {
+    static const bool on = std::getenv("STUD_IPC_OWNERS") != nullptr;
+    if (!on) return;
+    std::fprintf(stderr, "stud: render-client: %s opened the %s connection (fd %d)\n",
+                 STUD_CLIENT_OWNER, kind, c.fd());
+}
+}  // namespace
+
 namespace stud::render_client {
 
 stud::render_host::Client& connection() {
@@ -17,6 +37,7 @@ stud::render_host::Client& connection() {
                          "(is it running?)\n",
                          path.c_str());
         }
+        announce("render", client);
     }
     return client;
 }
@@ -35,6 +56,7 @@ stud::render_host::Client& audio_connection() {
                          "sharing the render connection instead\n",
                          path.c_str());
         }
+        announce("audio", client);
     }
     return client;
 }
@@ -51,6 +73,7 @@ stud::render_host::Client& input_connection() {
                          "sharing the render connection instead\n",
                          path.c_str());
         }
+        announce("input", client);
     }
     return client;
 }
