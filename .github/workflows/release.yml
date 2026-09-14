@@ -97,13 +97,48 @@ jobs:
             -DSTUD_VERSION="${TAG#v}"
           cmake --build build -j"$(nproc)"
 
-      - name: Package
-        run: cd build && cpack -G RPM
+      # One build, several wrappers. Building each format separately would
+      # mean several builds of ANGLE and no guarantee the packages contain
+      # the same binaries -- so the install tree is produced once here and
+      # every package is made from it.
+      - name: Package (rpm, deb)
+        run: cd build && cpack -G RPM && cpack -G DEB
+
+      - name: Install tree, for the Arch package and the Flatpak archive
+        run: |
+          DESTDIR="$PWD/install-tree" cmake --install build
+          # What the Flatpak manifest expects: the tree rooted at usr/,
+          # compressed the way its `type: archive` source reads it.
+          tar -C install-tree -caf "stud-${TAG#v}-x86_64-flatpak.tar.zst" usr
+
+      - name: Build the Arch package
+        # In a container, because makepkg is Arch's and refuses to run as
+        # root -- hence the unprivileged user. It compiles nothing: the
+        # PKGBUILD copies the install tree that already exists.
+        run: |
+          cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
+          cat > /tmp/makepkg.sh <<'SCRIPT'
+          set -eux
+          pacman -Sy --noconfirm --needed base-devel zstd
+          useradd -m builder
+          cp /work/PKGBUILD /home/builder/
+          chown -R builder:builder /home/builder
+          su builder -c "cd /home/builder && STUD_DESTDIR=/work/install-tree             PKGEXT=.pkg.tar.zst makepkg --nodeps --noconfirm"
+          cp /home/builder/*.pkg.tar.zst /work/
+          SCRIPT
+          chmod +x /tmp/makepkg.sh
+          podman run --rm -v "$PWD":/work:z -v /tmp/makepkg.sh:/makepkg.sh:z \
+            docker.io/library/archlinux:base-devel /makepkg.sh
+        continue-on-error: true
 
       - uses: actions/upload-artifact@v7
         with:
-          name: rpm
-          path: build/*.rpm
+          name: packages
+          path: |
+            build/*.rpm
+            build/*.deb
+            *.pkg.tar.zst
+            *-flatpak.tar.zst
           if-no-files-found: error
 
   appimage:
@@ -204,7 +239,29 @@ jobs:
           # Found rather than assumed: the artifact actions have changed
           # where they unpack to before, and a release that silently gets
           # no packages attached is worse than a loud failure.
-          mapfile -t packages < <(find artifacts -type f \( -name '*.rpm' -o -name '*.AppImage' \))
-          [ "${#packages[@]}" -eq 2 ] ||
-            { echo "expected 2 packages, found ${#packages[@]}" >&2; exit 1; }
+          mapfile -t packages < <(find artifacts -type f \
+            \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
+               -o -name '*.pkg.tar.zst' -o -name '*-flatpak.tar.zst' \))
+          # rpm, deb, AppImage and the Flatpak archive are required. The
+          # Arch package is not: its job is allowed to fail, since makepkg
+          # in a container is the one step here that depends on something
+          # outside this repository's control.
+          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\-flatpak\.tar\.zst$'; do
+            printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
+              { echo "no package matching $required" >&2; exit 1; }
+          done
           gh release upload "$TAG" "${packages[@]}" --clobber
+
+      # The checksums the AUR PKGBUILD and the Flatpak manifest need. Both
+      # carry a placeholder in the tree on purpose -- a checksum belongs to
+      # one specific archive, and a stale one is worse than an obvious gap
+      # -- so the values are printed here, where whoever updates those two
+      # repositories can copy them.
+      - name: Checksums for the AUR and Flathub repositories
+        run: |
+          echo "Source tarball (AUR sha256sums):"
+          curl -fsSL "https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz" \
+            | sha256sum | cut -d' ' -f1
+          echo
+          echo "Flatpak archive (manifest sha256):"
+          find artifacts -name '*-flatpak.tar.zst' -exec sha256sum {} + | cut -d' ' -f1
