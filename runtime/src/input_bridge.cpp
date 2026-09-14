@@ -1079,57 +1079,6 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             const float dy = y - g_prev_raw_y;
             g_prev_raw_x = x;
             g_prev_raw_y = y;
-            // A jump during FREE movement -- no button held -- which the
-            // drag trace below cannot see. Measured against the real
-            // device: 89133 events from this mouse gave an accelerated
-            // |d| of p99.9 = 11.7 and a maximum of 31.2, so anything past
-            // the default 40 is not something the hardware produced.
-            // Off by default; STUD_INPUT_JUMPS=1 arms it.
-            {
-                static const bool jumps = std::getenv("STUD_INPUT_JUMPS") != nullptr;
-                static const float limit = [] {
-                    const char* v = std::getenv("STUD_INPUT_JUMP_PX");
-                    const float f = v != nullptr ? static_cast<float>(std::atof(v)) : 40.0f;
-                    return f > 0.0f ? f : 40.0f;
-                }();
-                if (jumps) {
-                    const float mag = std::sqrt(dx * dx + dy * dy);
-                    // A big delta on its own is not a defect. Motion is
-                    // coalesced (newest position wins) and the poll is
-                    // ~8ms, so one delivered delta legitimately carries a
-                    // dozen hardware events: a fast flick really does move
-                    // hundreds of pixels between samples. Measured: this
-                    // mouse peaks at 31px PER EVENT, and the poll can
-                    // merge ten of them.
-                    //
-                    // A twitch is different in kind -- the cursor leaps and
-                    // comes BACK. Real movement does not reverse itself.
-                    // So a jump is only reported when a second one undoes
-                    // it within a few frames.
-                    static float prev_dx = 0.0f, prev_dy = 0.0f;
-                    static std::chrono::steady_clock::time_point prev_at{};
-                    const auto at = std::chrono::steady_clock::now();
-                    if (mag >= limit) {
-                        const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                               at - prev_at).count();
-                        const float dot = dx * prev_dx + dy * prev_dy;
-                        const float prev_mag = std::sqrt(prev_dx * prev_dx + prev_dy * prev_dy);
-                        // Reversed, comparable in size, and close in time.
-                        const bool undone = prev_mag >= limit && dot < 0.0f && since <= 120 &&
-                                            mag >= prev_mag * 0.5f && mag <= prev_mag * 2.0f;
-                        std::printf("stud: %s |d|=%.1f d=(%.1f,%.1f) dt=%lldms pos=(%.1f,%.1f) "
-                                    "state=0x%x locked=%d confined=%d%s\n",
-                                    undone ? "TWITCH (jump reversed)" : "jump", mag, dx, dy,
-                                    static_cast<long long>(since), last_x, last_y,
-                                    static_cast<unsigned>(g_button_state),
-                                    g_drag_locked.load() ? 1 : 0,
-                                    g_drag_confined ? 1 : 0,
-                                    resync ? " RESYNC" : "");
-                        std::fflush(stdout);
-                        prev_dx = dx; prev_dy = dy; prev_at = at;
-                    }
-                }
-            }
             if (input_trace_enabled()) {
                 // Motions during a drag, and the first few after it ends --
                 // the window where a jump would happen.
