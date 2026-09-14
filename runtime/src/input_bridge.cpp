@@ -1578,9 +1578,11 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     const bool is_a_repeat = ev.b != 0.0f;
                     if (down && is_a_repeat) return;  // the repeat of a key already let go
                     // A real release, or a deliberate fresh press: either
-                    // ends the suppression, and both are worth forwarding.
+                    // ends the suppression, and both are forwarded. The
+                    // release especially -- the one sent at focus time was
+                    // discarded by the engine, so this is not a duplicate
+                    // of anything that landed.
                     released_into_text.erase(it);
-                    if (!down) return;  // its release was sent at focus time
                 }
             }
             // Track modifiers locally: Wayland reports them in a separate
@@ -2312,6 +2314,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             // usually arrives from a MOUSE click and the engine reports it
             // asynchronously, with no key event anywhere near it.
             std::vector<android_glue::HostInputEvent> released;
+            bool pulse_on_focus = false;
             {
                 static jlong previous_text_box = 0;
                 const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
@@ -2332,8 +2335,41 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // Held until really let go, so the repeats that
                     // follow cannot press them back down.
                     keys_released_into_text_entry() = held_keys();
+                    pulse_on_focus = !held_keys().empty();
                     held_keys().clear();
 
+                }
+                if (text_box == 0 && previous_text_box != 0) {
+                    // The text box let go, so the engine is listening to
+                    // keys again -- and this is the only moment a release
+                    // for them can actually land.
+                    //
+                    // Measured: while a text box has focus the engine
+                    // discards key events entirely, so both the release
+                    // Stud sends at focus time and the user's own physical
+                    // release are ignored, and the key stays held forever
+                    // -- "it only stops if i press the same key once
+                    // again", which is exactly a release finally being
+                    // heard. Sending them here ends that for good.
+                    //
+                    // Harmless if the key really is still held: the
+                    // compositor's own repeats press it straight back
+                    // down, which is the truth of the matter.
+                    auto& still_suppressed = keys_released_into_text_entry();
+                    for (uint32_t code : still_suppressed) {
+                        android_glue::HostInputEvent up{};
+                        up.type = android_glue::HostInputEvent::kKey;
+                        up.code = code;
+                        up.a = 0.0f;
+                        released.push_back(up);
+                    }
+                    if (!still_suppressed.empty()) {
+                        std::printf("stud: input bridge: the text box let go -- releasing %zu "
+                                    "key(s) the engine would not let go of\n",
+                                    still_suppressed.size());
+                        std::fflush(stdout);
+                    }
+                    still_suppressed.clear();
                 }
                 previous_text_box = text_box;
             }
@@ -2408,7 +2444,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                                                g_agdk.on_window_focus_changed, g_agdk.handle,
                                                static_cast<jboolean>(JNI_TRUE));
                 }
-                if (!released.empty() && can_pulse) {
+                if (pulse_on_focus && can_pulse) {
                     g_agdk_env->CallVoidMethod(g_agdk_activity_ref,
                                                g_agdk.on_window_focus_changed, g_agdk.handle,
                                                static_cast<jboolean>(JNI_FALSE));
