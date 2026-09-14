@@ -34,6 +34,14 @@ option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
 option(STUD_BUILD_QT_ONLY
        "Build only the Qt executables; skip the render host, the bionic runtime and ANGLE" OFF)
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
+# Whether a missing shader compiler is an error rather than a warning.
+#
+# Without glslc the upscaler is built with an empty shader array: FSR is
+# offered in Settings and does nothing. That is a reasonable degrade for
+# someone who only wants the rest of Stud, and unacceptable in a package
+# -- so the release workflow turns this on and a plain build does not.
+option(STUD_REQUIRE_SHADERS
+       "Fail the configure if glslc is missing, instead of building without the upscaler" OFF)
 
 # Hardening for the glibc-side binaries.
 #

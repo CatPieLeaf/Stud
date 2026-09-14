@@ -61,7 +61,7 @@ jobs:
     # The AppImage is the exception and builds its own, because it links
     # against an older glibc than this container has -- which is also why
     # it keeps a separate ANGLE cache.
-    name: Build, rpm and deb
+    name: Build and package
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -91,7 +91,7 @@ jobs:
         # about 15 GB. Harmless otherwise.
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
-      - name: Restore the Android NDK
+      - name: Cache Android NDK
         # One key for both jobs: the NDK is downloaded, not built, so the
         # container that extracted it makes no difference -- it compiles
         # Process B with its own toolchain rather than the host's. Caching
@@ -102,7 +102,7 @@ jobs:
           path: third_party/android-ndk-r28c
           key: ndk-${{ hashFiles('tools/setup.sh') }}
 
-      - name: Restore ANGLE and bionic
+      - name: Cache ANGLE and bionic
         # Per-container, unlike the NDK above: ANGLE is COMPILED here,
         # against this container's glibc, so a Fedora build and an Ubuntu
         # one are not interchangeable.
@@ -144,7 +144,7 @@ jobs:
       # mean several builds of ANGLE and no guarantee the packages contain
       # the same binaries -- so the install tree is produced once here and
       # every package is made from it.
-      - name: The upscaler must have its shaders
+      - name: Verify embedded shaders
         # A build with no glslc silently produces an empty shader array,
         # so FSR is present in Settings and does nothing. That shipped:
         # the released render-host carried one SPIR-V module where a
@@ -166,10 +166,10 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Package the rpm and the deb
+      - name: Build rpm and deb
         run: cd build && cpack -G RPM && cpack -G DEB
 
-      - name: Lay out the install tree the rest of the packages come from
+      - name: Stage install tree
         run: |
           DESTDIR="$PWD/install-tree" cmake --install build
           # The layout every package below assumes. Checked here so a
@@ -187,7 +187,7 @@ jobs:
           # compressed the way its `type: archive` source reads it.
           tar -C install-tree -caf "stud-${TAG#v}-x86_64.tar.zst" usr
 
-      - name: The install tree must be complete, and the rpm must carry it
+      - name: Validate install tree and rpm
         # Two different questions, and both have shipped broken before.
         #
         # validate-payload asks whether the tree is any good: FSR shipped
@@ -233,7 +233,7 @@ jobs:
         with:
           ref: ${{ env.TAG }}
 
-      - name: The Flatpak manifest must pass Flathub's own linter
+      - name: Lint Flatpak manifest
         # The same linter Flathub runs on a submission. It exits 0 for
         # warnings (an available runtime update is one), so errors are
         # read out of its JSON rather than from the exit code alone.
@@ -263,12 +263,9 @@ jobs:
 
   # Arch package and cpak image.
   #
-  # These run HERE, on the runner, and not in the packages job -- that one
-  # runs inside a Fedora container, and podman is installed on the runner,
-  # not in the container. It failed there with `podman: command not found`
-  # (exit 127) and, because both steps carried continue-on-error, the job
-  # still went green while producing neither. Two of five package formats
-  # were silently missing from the release.
+  # These run on the runner rather than in the packages job, because that
+  # job runs inside a Fedora container and podman is on the runner, not in
+  # the container.
   containers:
     name: Arch package and cpak image
     needs: packages
@@ -286,7 +283,7 @@ jobs:
           name: packages
           path: artifacts
 
-      - name: Unpack the install tree
+      - name: Unpack install tree
         # stud-<version>-x86_64.tar.zst IS the install tree, rooted at
         # usr/ -- the same archive the Flatpak and stud-bin install. No
         # second copy is made for this.
@@ -297,7 +294,7 @@ jobs:
           tar -C install-tree -xf "$archive"
           test -d install-tree/usr
 
-      - name: Each .SRCINFO must match the PKGBUILD it describes
+      - name: Verify .SRCINFO is current
         # The AUR serves .SRCINFO, not the PKGBUILD -- so a stale one
         # advertises dependencies the package does not actually declare.
         # It is generated, never hand-edited, and drifted once already
@@ -325,7 +322,7 @@ jobs:
           podman run --rm -v "$PWD":/work:z -v /tmp/srcinfo.sh:/srcinfo.sh:z \
             docker.io/library/archlinux:base-devel /srcinfo.sh
 
-      - name: The deb must be a well-formed Debian package
+      - name: Validate deb metadata
         # dpkg is not in the Fedora container that builds it, so nothing
         # there can check its own output -- and CPack, asked to detect the
         # architecture with no dpkg to ask, quietly produced an EMPTY
@@ -365,7 +362,7 @@ jobs:
           podman run --rm -v "$PWD":/work:z -v /tmp/debcheck.sh:/debcheck.sh:z \
             docker.io/library/debian:stable-slim /debcheck.sh
 
-      - name: Package the Arch pkg.tar.zst
+      - name: Build Arch package
         # makepkg is Arch's and refuses to run as root, hence the
         # unprivileged user. It compiles nothing: the PKGBUILD copies the
         # install tree that already exists.
@@ -389,11 +386,9 @@ jobs:
           chmod +x /tmp/makepkg.sh
           podman run --rm -v "$PWD":/work:z -v /tmp/makepkg.sh:/makepkg.sh:z \
             docker.io/library/archlinux:base-devel /makepkg.sh
-          # No continue-on-error: a missing package should fail the job,
-          # not vanish quietly.
           ls -la ./*.pkg.tar.zst
 
-      - name: The Arch package must pass namcap
+      - name: Lint Arch package
         # Arch's own package analyser, run on the real .pkg.tar.zst just
         # built. namcap exits 0 whatever it finds, so its errors are read
         # from its output. Warnings are expected and not fatal: most are
@@ -416,7 +411,7 @@ jobs:
           podman run --rm -v "$PWD":/work:z -v /tmp/namcap.sh:/namcap.sh:z \
             docker.io/library/archlinux:base-devel /namcap.sh
 
-      - name: The Arch package and the deb must carry the install tree
+      - name: Validate Arch and deb contents
         # The two formats nobody here can install and try. They are held
         # to the install tree instead: same files, same bytes, and a
         # payload that validates on its own terms.
@@ -444,7 +439,7 @@ jobs:
             --work /tmp/deb-payload --already-extracted
           python3 tools/validate-payload.py /tmp/deb-payload --label "deb"
 
-      - name: Push the cpak image to ghcr.io
+      - name: Publish cpak image
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -477,10 +472,9 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    # The same base packaging/Containerfile.appimage pins, for the same
-    # reasons: Qt 6.8 and a KF6 that has the real Breeze style. Running it
-    # as the job's container means build-appimage.sh does not have to
-    # start one of its own.
+    # The same base packaging/Containerfile.appimage pins, for the reasons
+    # given there. Running it as the job's container means
+    # build-appimage.sh does not have to start one of its own.
     container: ubuntu:26.04
     env:
       STUD_APPIMAGE_IN_CONTAINER: "1"
@@ -511,14 +505,14 @@ jobs:
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
-      - name: Restore the Android NDK
+      - name: Cache Android NDK
         # The same key the packages job uses -- see the comment there.
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
           key: ndk-${{ hashFiles('tools/setup.sh') }}
 
-      - name: Restore ANGLE and bionic
+      - name: Cache ANGLE and bionic
         uses: actions/cache@v6
         with:
           path: |
@@ -526,7 +520,7 @@ jobs:
             third_party/android-bionic
           key: deps-ubuntu2604-${{ hashFiles('tools/setup.sh') }}
 
-      - name: Restore linuxdeploy and appimagetool
+      - name: Cache AppImage tools
         uses: actions/cache@v6
         with:
           path: third_party/appimage-tools
@@ -548,7 +542,7 @@ jobs:
           export STUD_CMAKE_ARGS="-DSTUD_VERSION=${TAG#v}"
           packaging/build-appimage.sh
 
-      - name: The AppImage must be complete
+      - name: Validate AppImage contents
         # This one is its OWN build, in a different container, so it can
         # drift from every other package independently -- and has: the
         # release whose rpm was missing the FSR shaders had an AppImage
@@ -589,7 +583,7 @@ jobs:
           name: packages
           path: artifacts
 
-      - name: Point the manifest at what this run built
+      - name: Prepare manifest for local sources
         # The manifest in the tree names the release URL, which does not
         # exist until this release is published -- so for the bundle it is
         # rewritten to the local file. Same archive either way; only where
@@ -646,7 +640,7 @@ jobs:
           PY
           grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
 
-      - name: The manifest must carry no placeholder into the build
+      - name: Verify no placeholders remain
         # The dependency checksums are real in the tree -- Flathub builds
         # from the manifest as committed, so a manifest that only works
         # after CI has rewritten it is not one they can build at all. The
@@ -671,7 +665,7 @@ jobs:
           flatpak build-bundle flatpak-repo \
             "stud-${TAG#v}-x86_64.flatpak" io.github.catpieleaf.Stud
 
-      - name: The Flatpak must be complete
+      - name: Validate Flatpak contents
         # Half of this one is compiled here and half is copied from the
         # release archive, so "did both halves land" is a real question
         # that no other package has to answer. The layout is /app rather
@@ -688,7 +682,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Attach every package to the release
+    name: Publish
     permissions:
       contents: write
     needs: [packages, containers, appimage, flatpak]
@@ -699,7 +693,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Upload to the release
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -712,11 +706,8 @@ jobs:
             \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
                -o -name '*.pkg.tar.zst' -o -name 'stud-*-x86_64.tar.zst' \
                -o -name '*.flatpak' \))
-          # Every format is required, the Arch package included. It used
-          # to be exempt, back when its step carried continue-on-error and
-          # could vanish quietly; that is gone, `needs` covers its job, and
-          # this list is the last check that what the release promises is
-          # actually attached to it.
+          # Every format is required. This is the last check that what
+          # the release promises is actually attached to it.
           for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.flatpak$' '\.pkg\.tar\.zst$'; do
             printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
               { echo "no package matching $required" >&2; exit 1; }
@@ -728,7 +719,7 @@ jobs:
       # one specific archive, and a stale one is worse than an obvious gap
       # -- so the values are printed here, where whoever updates those two
       # repositories can copy them.
-      - name: Checksums for the AUR and Flathub repositories
+      - name: Print downstream checksums
         run: |
           echo "Source tarball -- for the source PKGBUILD, which is NOT the"
           echo "published one (see packaging/aur/README.md):"
