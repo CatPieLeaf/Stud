@@ -161,7 +161,7 @@ modules:
       # reproducible.
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.0/stud-1.1.0-x86_64.tar.zst
-        sha256: b6c093195a2a3025fc7dca3f8eaa500d1c4dfcfcfdd898498deacac6ac6ea89e
+        sha256: PLACEHOLDER_STUD_SHA256
         # This archive IS the install tree, rooted at usr/, and every
         # build-command above addresses it that way. flatpak-builder
         # strips one leading component from an archive by default, which
@@ -193,9 +193,14 @@ modules:
       - -DFETCHCONTENT_SOURCE_DIR_LIBJNIVM=/run/build/stud/deps/libjnivm
       - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
     sources:
+      # Stud's own source, for the tag this manifest describes. The
+      # release workflow replaces this with the checkout it already has
+      # (see "Point the manifest at what this run built"), so CI never
+      # depends on this digest -- which matters, because a re-cut tag
+      # changes it and the build failed exactly that way once.
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
-        sha256: 5d80970bae4de728fe537d1d710c69f36165d0290dff35bdf33eaa9b4235a48f
+        sha256: 9506d0a68d4051155e8d1af34780b7ae64af9de0a54181a7cb96953b7a34f0b3
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
         sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb

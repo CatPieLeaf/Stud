@@ -509,7 +509,7 @@ jobs:
           name: packages
           path: artifacts
 
-      - name: Point the manifest at the archive we just built
+      - name: Point the manifest at what this run built
         # The manifest in the tree names the release URL, which does not
         # exist until this release is published -- so for the bundle it is
         # rewritten to the local file. Same archive either way; only where
@@ -518,8 +518,9 @@ jobs:
           archive="$(find artifacts -name 'stud-*-x86_64.tar.zst' | head -1)"
           [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
           cp "$archive" stud-archive.tar.zst
+          export STUD_COMMIT="$(git rev-parse HEAD)"
           python3 - <<'PY'
-          import re, sys
+          import os, re, sys
           p = "packaging/flatpak/io.github.catpieleaf.Stud.yml"
           s = open(p).read()
           # Matches whatever checksum the manifest carries, not one literal
@@ -533,6 +534,21 @@ jobs:
                          "        path: ../../stud-archive.tar.zst\n", s)
           if n != 1:
               print(f"::error::expected one archive source to rewrite, rewrote {n}")
+              sys.exit(1)
+          # ...and Stud's own source, to the checkout this job already
+          # has. The manifest names a release tarball so Flathub can build
+          # it as committed, but that digest belongs to one specific tag:
+          # re-cutting the tag changed it and the build died with "Wrong
+          # sha256 checksum for 1.1.0.tar.gz". Building the checkout is
+          # also the only way this job tests the code it was run against.
+          s, n = re.subn(r"      - type: archive\n"
+                         r"        url: https://github\.com/CatPieLeaf/Stud/archive/[^\n]*\n"
+                         r"        sha256: \S+\n",
+                         "      - type: git\n"
+                         "        path: ../..\n"
+                         f"        commit: {os.environ['STUD_COMMIT']}\n", s)
+          if n != 1:
+              print(f"::error::expected one source tarball to rewrite, rewrote {n}")
               sys.exit(1)
           open(p, "w").write(s)
           PY

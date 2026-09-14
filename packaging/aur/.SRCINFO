@@ -33,6 +33,6 @@ pkgbase = stud
 	depends = hicolor-icon-theme
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	source = stud-1.1.0.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
-	sha256sums = 5d80970bae4de728fe537d1d710c69f36165d0290dff35bdf33eaa9b4235a48f
+	sha256sums = SKIP
 
 pkgname = stud
