@@ -55,7 +55,7 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config \
-            curl unzip tar zstd python3 e2fsprogs findutils
+            curl unzip tar xz zstd python3 e2fsprogs findutils
 
       - uses: actions/checkout@v7
 
@@ -95,7 +95,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             g++ cmake ninja-build git pkg-config \
-            curl unzip tar zstd python3 e2fsprogs findutils ca-certificates
+            curl unzip tar xz-utils zstd python3 e2fsprogs findutils ca-certificates
 
       - uses: actions/checkout@v7
 

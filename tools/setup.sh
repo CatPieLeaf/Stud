@@ -238,6 +238,13 @@ setup_angle() {
     warn "no prebuilt ANGLE given (STUD_ANGLE_SRC) -- building from source."
     warn "this downloads several GB and takes upwards of an hour."
     need git; need python3
+    # xz is not used by anything here directly. ANGLE's own hooks download
+    # the Chromium sysroot as a .tar.xz and shell out to `tar mxf`, which
+    # needs the xz binary on PATH -- and tar's failure for a missing one is
+    # `tar (child): xz: Cannot exec: No such file or directory`, seventeen
+    # minutes into a gclient sync. Checking it here fails in a second
+    # instead, with a name worth searching for.
+    need xz
 
     if [ ! -d "$DEPOT_TOOLS_DIR" ]; then
         say "fetching depot_tools"
