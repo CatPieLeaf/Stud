@@ -11,6 +11,7 @@
 #include "stud/dev_backend_config.h"
 #endif
 
+#include <QStyle>
 #include <QApplication>
 #include <QCheckBox>
 #include <QLocalServer>
@@ -281,12 +282,30 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // actually running, so it appears only then -- there is nothing to
     // restart otherwise, and Save already starts one when it has to.
     restartButton_ = new QPushButton(this);
-    restartButton_->setIcon(QIcon::fromTheme(
-        "view-refresh", QIcon::fromTheme("system-reboot")));
+    // The desktop's own refresh icon, and Qt's built-in one when there is
+    // no icon theme to ask.
+    //
+    // fromTheme() returns nothing at all where no theme is installed, and
+    // a themed FALLBACK is no help because it fails for the same reason.
+    // This button carries no text -- it is 36px of icon -- so that left a
+    // blank square in the AppImage, which bundles no icon theme. Qt's
+    // standard icons come from the style and ship inside Qt itself, so
+    // they are there whatever the desktop has.
+    QIcon refresh = QIcon::fromTheme(QStringLiteral("view-refresh"),
+                                     QIcon::fromTheme(QStringLiteral("system-reboot")));
+    if (refresh.isNull()) {
+        refresh = style()->standardIcon(QStyle::SP_BrowserReload);
+    }
+    restartButton_->setIcon(refresh);
     restartButton_->setToolTip("Save and restart Stud");
     // Icon only: the row's width belongs to Save, and a refresh glyph says
-    // this on its own.
-    restartButton_->setFixedWidth(36);
+    // this on its own. Unless there is no glyph to be had anywhere, in
+    // which case a word beats an empty button.
+    if (restartButton_->icon().isNull()) {
+        restartButton_->setText(QStringLiteral("Restart"));
+    } else {
+        restartButton_->setFixedWidth(36);
+    }
     // Only when there is a session to restart. Opened from the desktop
     // entry with nothing running, Save is the whole story.
     restartButton_->setVisible(stud_session_is_running());
