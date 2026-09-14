@@ -1526,6 +1526,17 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
         std::fflush(stdout);
     }
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
+    // The driver recycles handles, and a retired swapchain image's handle
+    // can come back here as an ordinary image. Without this, that image
+    // stays "retired" for the rest of the process and EVERY barrier
+    // against it is dropped -- a real layout transition, thrown away
+    // silently. Live-measured before this line existed: 8450 dropped
+    // barriers in 30 seconds, every one of them against a retired handle
+    // and not one against a null one, i.e. all of them wrong.
+    //
+    // vkGetSwapchainImagesKHR already does this, for the same reason and
+    // with the same comment. Ordinary images were the case it missed.
+    l.retired_images.erase(to_u64(image));
     return write_handle(to_u64(image), out, out_len);
 }
 
@@ -4775,6 +4786,21 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // image that is never going to be presented anyway.
             {
                 const size_t before = img.size();
+                // Counted apart, because the two arms mean opposite
+                // things. A null handle is the engine's own doing and
+                // dropping it is free. A RETIRED image means Stud
+                // decided that image was dead while the engine still
+                // thought otherwise -- and then a real layout transition
+                // is being silently thrown away, which is Stud's bug.
+                static uint64_t dropped_null = 0;
+                static uint64_t dropped_retired = 0;
+                for (const VkImageMemoryBarrier& b : img) {
+                    if (b.image == VK_NULL_HANDLE) {
+                        ++dropped_null;
+                    } else if (l.retired_images.count(to_u64(b.image)) != 0) {
+                        ++dropped_retired;
+                    }
+                }
                 img.erase(std::remove_if(img.begin(), img.end(),
                                          [&l](const VkImageMemoryBarrier& b) {
                                              // A NULL image is the one that actually crashes:
@@ -4793,12 +4819,18 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 if (img.size() != before) {
                     static uint64_t dropped = 0;
                     dropped += before - img.size();
+                    // Armed by default this wrote a line every 64 drops
+                    // -- 2.1 million of them in one real session. It is
+                    // investigation output; it says so now.
+                    static const bool trace = std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr;
                     static uint64_t announced = 0;
-                    if (dropped >= announced + 64 || announced == 0) {
+                    if (trace && (dropped >= announced + 256 || announced == 0)) {
                         announced = dropped;
-                        std::printf("stud-render-host: dropped %llu image barrier(s) with no "
-                                    "live image (resize)\n",
-                                    static_cast<unsigned long long>(dropped));
+                        std::printf("stud-render-host: dropped %llu image barrier(s): %llu with "
+                                    "no image, %llu against a retired one\n",
+                                    static_cast<unsigned long long>(dropped),
+                                    static_cast<unsigned long long>(dropped_null),
+                                    static_cast<unsigned long long>(dropped_retired));
                         std::fflush(stdout);
                     }
                 }
