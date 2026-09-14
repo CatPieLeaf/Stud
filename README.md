@@ -69,6 +69,7 @@
  - Runs the **real, unmodified** Roblox Android app
  - Three separate processes in the shape of a browser's — the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
  - Vulkan by default, with OpenGL through ANGLE, OpenGL, and software-rendering in Settings
+ - **AMD FSR upscaling** — the game renders below your screen's resolution and Stud rebuilds the frame at full size, with adjustable sharpening
  - Smooth zoom in/out just like Windows client
  - Your login lives in the system keyring — never in Stud's config, cache or logs
  - `roblox://` links from a browser open straight into the experience
@@ -77,7 +78,7 @@
  - Discord Rich Presence, with a join button
  - Tells you which country the game server is in when you join
  - MangoHud overlay toggle, HiDPI and UI scaling, GPU picker, system tray
- - (Coming soon) FPS Limiter when stud is left in background.
+ - Caps the frame rate while nothing can see the window — minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
  - Ships as an rpm and an AppImage — and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
 
@@ -268,6 +269,7 @@ That last one is the file to read when something goes wrong, and the one to atta
  - [ANGLE](https://chromium.googlesource.com/angle/angle) — the GL translation layer (BSD)
  - [bionic](https://android.googlesource.com/platform/bionic/) — Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
  - [libjnivm](https://github.com/ChristopherHX/libjnivm) — the JNI virtual machine Stud's Java layer stands on (MIT)
+ - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) — Stud's upscaler is EASU and RCAS ported from AMD's own reference headers, vendored at `third_party/fidelityfx-fsr1` (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK), [PortAudio](https://www.portaudio.com/) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
 
