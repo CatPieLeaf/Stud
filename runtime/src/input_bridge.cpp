@@ -1094,15 +1094,39 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 }();
                 if (jumps) {
                     const float mag = std::sqrt(dx * dx + dy * dy);
+                    // A big delta on its own is not a defect. Motion is
+                    // coalesced (newest position wins) and the poll is
+                    // ~8ms, so one delivered delta legitimately carries a
+                    // dozen hardware events: a fast flick really does move
+                    // hundreds of pixels between samples. Measured: this
+                    // mouse peaks at 31px PER EVENT, and the poll can
+                    // merge ten of them.
+                    //
+                    // A twitch is different in kind -- the cursor leaps and
+                    // comes BACK. Real movement does not reverse itself.
+                    // So a jump is only reported when a second one undoes
+                    // it within a few frames.
+                    static float prev_dx = 0.0f, prev_dy = 0.0f;
+                    static std::chrono::steady_clock::time_point prev_at{};
+                    const auto at = std::chrono::steady_clock::now();
                     if (mag >= limit) {
-                        std::printf("stud: JUMP |d|=%.1f d=(%.1f,%.1f) pos=(%.1f,%.1f) "
-                                    "raw=(%.1f,%.1f) state=0x%x locked=%d confined=%d%s\n",
-                                    mag, dx, dy, last_x, last_y, ev.x, ev.y,
+                        const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               at - prev_at).count();
+                        const float dot = dx * prev_dx + dy * prev_dy;
+                        const float prev_mag = std::sqrt(prev_dx * prev_dx + prev_dy * prev_dy);
+                        // Reversed, comparable in size, and close in time.
+                        const bool undone = prev_mag >= limit && dot < 0.0f && since <= 120 &&
+                                            mag >= prev_mag * 0.5f && mag <= prev_mag * 2.0f;
+                        std::printf("stud: %s |d|=%.1f d=(%.1f,%.1f) dt=%lldms pos=(%.1f,%.1f) "
+                                    "state=0x%x locked=%d confined=%d%s\n",
+                                    undone ? "TWITCH (jump reversed)" : "jump", mag, dx, dy,
+                                    static_cast<long long>(since), last_x, last_y,
                                     static_cast<unsigned>(g_button_state),
                                     g_drag_locked.load() ? 1 : 0,
                                     g_drag_confined ? 1 : 0,
                                     resync ? " RESYNC" : "");
                         std::fflush(stdout);
+                        prev_dx = dx; prev_dy = dy; prev_at = at;
                     }
                 }
             }
