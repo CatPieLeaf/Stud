@@ -141,7 +141,7 @@ void Tray::showUpdateAvailable(const QString& latestVersion) {
     icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
     icon_->setToolTip(QStringLiteral("Stud — version %1 is available").arg(latestVersion));
     if (menu_ != nullptr) {
-        updateAction_ = new QAction(QStringLiteral("[!] Update Stud"), menu_);
+        updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
         connect(updateAction_, &QAction::triggered, this, [] {
             QDesktopServices::openUrl(QUrl(UpdateCheck::releasesUrl()));
         });
