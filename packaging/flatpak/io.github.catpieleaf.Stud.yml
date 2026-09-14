@@ -21,6 +21,11 @@
 
 app-id: io.github.catpieleaf.Stud
 runtime: org.kde.Platform
+# flatpak-builder-lint notes that 6.11 exists and suggests moving to
+# it. Not yet: the release workflow builds in
+# ghcr.io/flathub-infra/flatpak-github-actions, which publishes no
+# kde-6.11 tag, so raising this alone would build against an SDK the
+# CI image does not have. Raise both together or neither.
 runtime-version: '6.10'
 sdk: org.kde.Sdk
 command: stud
@@ -124,6 +129,9 @@ modules:
     build-commands:
       # The archive is the install tree Stud's own CMake produces, rooted
       # at /usr -- so it is relocated to /app here rather than rebuilt.
+      # /app/libexec in particular does not exist -- nothing before this
+      # module puts anything there -- and cp will not create it.
+      - mkdir -p /app/bin /app/lib /app/libexec /app/share
       - cp -a usr/bin/. /app/bin/
       - cp -a usr/lib/stud /app/lib/stud
       - cp -a usr/libexec/stud /app/libexec/stud
