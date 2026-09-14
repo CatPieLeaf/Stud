@@ -1,21 +1,26 @@
 #version 450
 
-// Catmull-Rom bicubic upscale.
+// EASU: the edge-adaptive resample from AMD's FidelityFX Super Resolution
+// 1, ported out of the real reference rather than paraphrased.
 //
-// This replaced a hand-written EASU (FSR1's edge-adaptive resample). That
-// attempt is worth recording as a negative result: EASU's weights are a
-// specific pair of polynomials over the squared tap distance, and writing
-// them from memory rather than from ffx_fsr1.h produced a kernel that was
-// directionally wrong -- visibly scratched edges, blocky patches, and
-// badly distorted text. A directional kernel with wrong weights is far
-// worse than a good isotropic one.
+// The reference is vendored at third_party/fidelityfx-fsr1 (MIT). Its own
+// variable names are kept here -- pp, dir, len, len2, lob, clp, the b/c/
+// e/f/g/h/i/j/k/l/n/o tap letters -- so FsrEasuF and this shader can be
+// read side by side. Everything arithmetic below is theirs; what is not
+// carried over is the packed 16-bit path and the preprocessor
+// configuration layer, neither of which one compute pass needs.
 //
-// Catmull-Rom is the right trade here and is exactly specifiable: it is
-// the interpolating cubic with continuous first derivatives, sharper than
-// bilinear, and -- unlike Lanczos -- its overshoot is small enough that
-// text and flat UI art survive it. Roblox's interface is mostly flat art
-// and glyphs, which is the content that punishes an aggressive kernel
-// hardest.
+// Why the reference and not memory: the first version of this shader was
+// written from a recollection of the algorithm, and the recollection was
+// wrong in two specific places -- the tap weight's polynomial pair, and
+// how `len` is derived from the gradients. It looked like scratched edges,
+// blocky patches and badly distorted text. A directional kernel with the
+// wrong weights is worse than no direction at all.
+//
+// The sharpening half of FSR1 (RCAS) is a separate pass over this pass's
+// output -- sharpen.comp -- because it judges contrast from the pixels
+// either side of the one it writes and so must run at the OUTPUT
+// resolution.
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -28,15 +33,54 @@ layout(push_constant) uniform Params {
     float sharpness;  // not used here: sharpening is its own pass
 } p;
 
-// The Catmull-Rom basis, written out rather than factored, so it can be
-// checked against the definition at a glance.
-vec4 catmull_rom_weights(float t) {
-    float t2 = t * t;
-    float t3 = t2 * t;
-    return vec4(-0.5 * t3 + t2 - 0.5 * t,
-                 1.5 * t3 - 2.5 * t2 + 1.0,
-                -1.5 * t3 + 2.0 * t2 + 0.5 * t,
-                 0.5 * t3 - 0.5 * t2);
+// FsrEasuTapF. `off` is the tap's offset from the resolve position, and
+// the weight is the reference's lanczos2 approximation: a base term times
+// a window term, both quadratics in the squared distance, so it costs no
+// sin, sqrt or reciprocal.
+void easu_tap(inout vec3 accum_colour, inout float accum_weight, vec2 off, vec2 dir, vec2 len,
+              float lob, float clp, vec3 c) {
+    // Rotate the offset into the edge's frame, then stretch it.
+    vec2 v = vec2(off.x * dir.x + off.y * dir.y, off.x * -dir.y + off.y * dir.x);
+    v *= len;
+    float d2 = min(v.x * v.x + v.y * v.y, clp);
+    //  (25/16 * (2/5 * x^2 - 1)^2 - (25/16 - 1)) * (lob * x^2 - 1)^2
+    //  |_______________________________________|   |_________________|
+    //                   base                             window
+    float wB = (2.0 / 5.0) * d2 - 1.0;
+    float wA = lob * d2 - 1.0;
+    wB *= wB;
+    wA *= wA;
+    wB = (25.0 / 16.0) * wB - (25.0 / 16.0 - 1.0);
+    float w = wB * wA;
+    accum_colour += c * w;
+    accum_weight += w;
+}
+
+// FsrEasuSetF, once per nearest tap, weighted by how much the resolve
+// position sits on it. The direction is the '+' difference around the
+// centre tap; the length turns a gradient reversal into 0 and a clean edge
+// into 1.
+void easu_set(inout vec2 dir, inout float len, vec2 pp, float w, float lA, float lB, float lC,
+              float lD, float lE) {
+    float dc = lD - lC;
+    float cb = lC - lB;
+    float lenX = max(abs(dc), abs(cb));
+    lenX = 1.0 / max(lenX, 1.0 / 32768.0);
+    float dirX = lD - lB;
+    dir.x += dirX * w;
+    lenX = clamp(abs(dirX) * lenX, 0.0, 1.0);
+    lenX *= lenX;
+    len += lenX * w;
+
+    float ec = lE - lC;
+    float ca = lC - lA;
+    float lenY = max(abs(ec), abs(ca));
+    lenY = 1.0 / max(lenY, 1.0 / 32768.0);
+    float dirY = lE - lA;
+    dir.y += dirY * w;
+    lenY = clamp(abs(dirY) * lenY, 0.0, 1.0);
+    lenY *= lenY;
+    len += lenY * w;
 }
 
 void main() {
@@ -44,38 +88,87 @@ void main() {
     if (out_pos.x >= p.dst_size.x || out_pos.y >= p.dst_size.y) return;
 
     vec2 scale = vec2(p.src_size) / vec2(p.dst_size);
-    // Where this output pixel's centre falls in the source, in source
-    // pixel centres.
     vec2 src_pos = (vec2(out_pos) + 0.5) * scale - 0.5;
     vec2 base = floor(src_pos);
-    vec2 f = src_pos - base;
-
-    vec4 wx = catmull_rom_weights(f.x);
-    vec4 wy = catmull_rom_weights(f.y);
-
+    // `pp` in the reference: where inside the 2x2 of nearest taps the
+    // resolve position falls.
+    vec2 pp = src_pos - base;
     vec2 inv = 1.0 / vec2(p.src_size);
-    vec3 colour = vec3(0.0);
-    // Separable, over the 4x4 neighbourhood. The sampler clamps at the
-    // edges, so the rows and columns outside the image repeat rather than
-    // wrap -- which is what keeps a border from smearing the far side in.
-    for (int y = 0; y < 4; ++y) {
-        vec3 row = vec3(0.0);
-        for (int x = 0; x < 4; ++x) {
-            vec2 tap = (base + vec2(float(x) - 1.0, float(y) - 1.0) + 0.5) * inv;
-            row += texture(src, tap).rgb * wx[x];
-        }
-        colour += row * wy[y];
+
+    // The 12 taps: the 4x4 neighbourhood without its corners.
+    //      b c
+    //    e f g h
+    //    i j k l
+    //      n o
+    #define TAP(dx, dy) texture(src, (base + vec2(dx, dy) + 0.5) * inv).rgb
+    vec3 b = TAP(0.0, -1.0), c = TAP(1.0, -1.0);
+    vec3 e = TAP(-1.0, 0.0), f = TAP(0.0, 0.0), g = TAP(1.0, 0.0), h = TAP(2.0, 0.0);
+    vec3 i = TAP(-1.0, 1.0), j = TAP(0.0, 1.0), k = TAP(1.0, 1.0), l = TAP(2.0, 1.0);
+    vec3 n = TAP(0.0, 2.0), o = TAP(1.0, 2.0);
+    #undef TAP
+
+    // The reference's luma: blue*0.5 + (red*0.5 + green). Not a
+    // perceptual luminance -- it is what EASU's gradients are defined
+    // against, so it stays exactly this.
+    #define LUMA(x) ((x).b * 0.5 + ((x).r * 0.5 + (x).g))
+    float bL = LUMA(b), cL = LUMA(c), eL = LUMA(e), fL = LUMA(f);
+    float gL = LUMA(g), hL = LUMA(h), iL = LUMA(i), jL = LUMA(j);
+    float kL = LUMA(k), lL = LUMA(l), nL = LUMA(n), oL = LUMA(o);
+    #undef LUMA
+
+    vec2 dir = vec2(0.0);
+    float len = 0.0;
+    easu_set(dir, len, pp, (1.0 - pp.x) * (1.0 - pp.y), bL, eL, fL, gL, jL);
+    easu_set(dir, len, pp, pp.x * (1.0 - pp.y), cL, fL, gL, hL, kL);
+    easu_set(dir, len, pp, (1.0 - pp.x) * pp.y, fL, iL, jL, kL, nL);
+    easu_set(dir, len, pp, pp.x * pp.y, gL, jL, kL, lL, oL);
+
+    // Normalise the direction, and treat a flat neighbourhood as
+    // horizontal rather than picking a direction out of noise.
+    vec2 dir2 = dir * dir;
+    float dirR = dir2.x + dir2.y;
+    bool zero = dirR < (1.0 / 32768.0);
+    dirR = inversesqrt(max(dirR, 1.0 / 32768.0));
+    if (zero) {
+        dirR = 1.0;
+        dir.x = 1.0;
     }
+    dir *= dirR;
 
-    // Catmull-Rom's negative lobes can overshoot on a hard edge. Bounding
-    // the result by the four pixels this sample sits between removes the
-    // halo without softening anything that was not overshooting.
-    vec3 c00 = texture(src, (base + vec2(0.5, 0.5)) * inv).rgb;
-    vec3 c10 = texture(src, (base + vec2(1.5, 0.5)) * inv).rgb;
-    vec3 c01 = texture(src, (base + vec2(0.5, 1.5)) * inv).rgb;
-    vec3 c11 = texture(src, (base + vec2(1.5, 1.5)) * inv).rgb;
-    vec3 lo = min(min(c00, c10), min(c01, c11));
-    vec3 hi = max(max(c00, c10), max(c01, c11));
+    // {0..2} to {0..1}, then shaped.
+    len = len * 0.5;
+    len *= len;
 
-    imageStore(dst, out_pos, vec4(clamp(colour, lo, hi), 1.0));
+    // Stretch the kernel: 1.0 on an axis, sqrt(2) on the diagonal.
+    float stretch = (dir.x * dir.x + dir.y * dir.y) /
+                     max(max(abs(dir.x), abs(dir.y)), 1.0 / 32768.0);
+    // x: 1.0 lerped toward `stretch` on edges; y: 1.0 lerped toward 2x.
+    vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+    // The window shifts with the amount of edge, and the clip point is
+    // where that window ends.
+    float lob = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
+    float clp = 1.0 / lob;
+
+    vec3 accum = vec3(0.0);
+    float weight = 0.0;
+    easu_tap(accum, weight, vec2(0.0, -1.0) - pp, dir, len2, lob, clp, b);
+    easu_tap(accum, weight, vec2(1.0, -1.0) - pp, dir, len2, lob, clp, c);
+    easu_tap(accum, weight, vec2(-1.0, 1.0) - pp, dir, len2, lob, clp, i);
+    easu_tap(accum, weight, vec2(0.0, 1.0) - pp, dir, len2, lob, clp, j);
+    easu_tap(accum, weight, vec2(0.0, 0.0) - pp, dir, len2, lob, clp, f);
+    easu_tap(accum, weight, vec2(-1.0, 0.0) - pp, dir, len2, lob, clp, e);
+    easu_tap(accum, weight, vec2(1.0, 1.0) - pp, dir, len2, lob, clp, k);
+    easu_tap(accum, weight, vec2(2.0, 1.0) - pp, dir, len2, lob, clp, l);
+    easu_tap(accum, weight, vec2(2.0, 0.0) - pp, dir, len2, lob, clp, h);
+    easu_tap(accum, weight, vec2(1.0, 0.0) - pp, dir, len2, lob, clp, g);
+    easu_tap(accum, weight, vec2(1.0, 2.0) - pp, dir, len2, lob, clp, o);
+    easu_tap(accum, weight, vec2(0.0, 2.0) - pp, dir, len2, lob, clp, n);
+
+    // Normalise, and dering against the four nearest taps: the negative
+    // lobe can overshoot, and this is the reference's own bound on it.
+    vec3 min4 = min(min(f, g), min(j, k));
+    vec3 max4 = max(max(f, g), max(j, k));
+    vec3 colour = min(max4, max(min4, accum / max(weight, 1.0 / 32768.0)));
+
+    imageStore(dst, out_pos, vec4(colour, 1.0));
 }
