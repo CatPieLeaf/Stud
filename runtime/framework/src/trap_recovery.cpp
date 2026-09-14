@@ -27,6 +27,15 @@ std::atomic<bool> g_shutting_down{false};
 
 void note_shutting_down() { g_shutting_down.store(true, std::memory_order_relaxed); }
 
+}  // namespace stud::jni_bridge
+
+// Resolved by name from the render client, which is compiled into five
+// separate shared objects and cannot link against this executable. See
+// Client::report_death() for why it is called from there.
+extern "C" void stud_note_shutting_down() { stud::jni_bridge::note_shutting_down(); }
+
+namespace stud::jni_bridge {
+
 namespace {
 
 

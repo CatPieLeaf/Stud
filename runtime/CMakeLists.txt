@@ -321,6 +321,11 @@ target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp
                                     src/pthread_create_interpose.cpp
                                     src/android_log_interpose.cpp src/pthread_tls_interpose.cpp)
+# The render client lives in five separate .so files and finds this
+# executable's stud_note_shutting_down() by name at runtime; without
+# --export-dynamic the symbol is not in the dynamic table and dlsym
+# returns null, silently.
+target_link_options(stud-runtime-bionic PRIVATE -Wl,--export-dynamic)
 target_include_directories(stud-runtime-bionic PRIVATE
     "${ANDROID_GLUE_SRC}/include"
     "${FRAMEWORK_SRC}/include"
