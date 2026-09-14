@@ -195,6 +195,15 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/stud")
 
+# Debian policy requires /usr/share/doc/<package>/copyright, in the
+# machine-readable DEP-5 format, naming every component and its licence
+# (lintian: no-copyright-file). It is installed everywhere rather than
+# only in the deb -- an rpm or an Arch package carrying it too costs a
+# few kilobytes and one fewer thing that differs between formats.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian-copyright"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/stud"
+        RENAME "copyright")
+
 # The man page. @STUD_VERSION@ in its header is the only substitution.
 #
 # It is compressed here rather than left to the packaging tools: rpm's own
