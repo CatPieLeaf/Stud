@@ -93,7 +93,7 @@ set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # release it was built for.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
     "bubblewrap, libqt6gui6, libqt6widgets6, libqt6network6, libqt6webenginewidgets6, \
-qtkeychain-qt6-dev | libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
+libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
 libwayland-client0, libxkbcommon0")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud")
 # The bundled libraries are private to Stud. Without this, dpkg-shlibdeps
