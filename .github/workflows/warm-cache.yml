@@ -1,0 +1,122 @@
+# Builds Stud's third-party dependencies and caches them. Nothing else.
+#
+# It exists because of how GitHub scopes caches. The release workflow only
+# ever runs on a tag, and a cache created for one tag is not visible to
+# another -- GitHub's own words: "a run cannot restore caches from
+# arbitrary sibling branches, child branches, or a different tag". So
+# every release was rebuilding ANGLE from source, an hour at a time, and
+# the caches it wrote could only ever help a re-run of that same release.
+#
+# A run on the DEFAULT BRANCH is the exception: those caches are visible to
+# every ref, tags included. So this workflow does one job -- populate them.
+#
+# It is deliberately not part of the release pipeline and builds no
+# packages. It runs only when the file that defines the dependencies
+# changes, which is rare, plus a button for when something needs
+# refreshing by hand.
+#
+# Not warmed here: the AppImage job's linuxdeploy/appimagetool cache. Those
+# are two small downloads, not an hour of compiling, so a cold one costs a
+# release almost nothing and is not worth a third job to avoid.
+
+name: Warm the dependency cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The only file that decides what the dependencies are. A change to
+      # Stud's own source cannot invalidate them, so it must not trigger
+      # an hour of ANGLE.
+      - 'tools/setup.sh'
+      - '.github/workflows/warm-cache.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time, and a newer push wins: two of these racing would just
+  # build the same thing twice.
+  group: warm-cache
+  cancel-in-progress: true
+
+jobs:
+  fedora:
+    name: Fedora dependencies
+    runs-on: ubuntu-latest
+    container: fedora:42
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            gcc-c++ cmake ninja-build git pkgconf-pkg-config \
+            curl unzip tar zstd python3 e2fsprogs findutils
+
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
+
+      - name: Restore the Android NDK
+        # The same key the release workflow uses, and the whole point of
+        # this job: written from main, so every tag can read it.
+        uses: actions/cache@v6
+        with:
+          path: third_party/android-ndk-r28c
+          key: ndk-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Restore ANGLE and bionic
+        uses: actions/cache@v6
+        with:
+          path: |
+            third_party/angle
+            third_party/android-bionic
+          key: deps-fedora42-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Fetch dependencies
+        run: |
+          tools/setup.sh
+          # The checkout is several GB and only the two libraries it
+          # produced are kept, so it goes before the cache is written.
+          rm -rf third_party/angle-src third_party/depot_tools
+
+  ubuntu:
+    name: Ubuntu dependencies
+    runs-on: ubuntu-latest
+    container: ubuntu:25.04
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            g++ cmake ninja-build git pkg-config \
+            curl unzip tar zstd python3 e2fsprogs findutils ca-certificates
+
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
+
+      - name: Restore the Android NDK
+        # Shared with the job above and with both release jobs: the NDK is
+        # downloaded, not compiled, so one copy serves every container.
+        uses: actions/cache@v6
+        with:
+          path: third_party/android-ndk-r28c
+          key: ndk-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Restore ANGLE and bionic
+        # Its own key: ANGLE is compiled against this container's glibc,
+        # so the Fedora build is not interchangeable with this one.
+        uses: actions/cache@v6
+        with:
+          path: |
+            third_party/angle
+            third_party/android-bionic
+          key: deps-ubuntu2504-${{ hashFiles('tools/setup.sh') }}
+
+      - name: Fetch dependencies
+        run: |
+          tools/setup.sh
+          rm -rf third_party/angle-src third_party/depot_tools
