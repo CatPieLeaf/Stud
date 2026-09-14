@@ -122,9 +122,10 @@ void test_bmi1_decode_and_emulate() {
     }
 
     // The 64-bit form, which differs only in VEX.W -- byte 2 becomes 0xF0.
-    // Every encoding in this test was checked against `as`/`objdump`
-    // rather than hand-derived, so a decoder that agrees with them is
-    // agreeing with the assembler, not with me.
+    // Every encoding in this test was taken from the assembler's own
+    // output rather than hand-derived, so a decoder that agrees with
+    // them is agreeing with the architecture, not with whoever wrote
+    // the test.
     {
         const uint8_t code[] = {0xC4, 0xE2, 0xF0, 0xF2, 0xC3};  // andn rax, rcx, rbx
         auto d = try_decode_bmi1(code);
@@ -144,6 +145,95 @@ void test_bmi1_decode_and_emulate() {
               "a 2-byte VEX prefix is not decoded as BMI1");
         const uint8_t popcnt[] = {0xF3, 0x0F, 0xB8, 0xC3, 0x00};
         check(try_decode_bmi1(popcnt).length == 0, "POPCNT is not decoded as BMI1");
+    }
+}
+
+void test_movbe_decode_and_emulate() {
+    using namespace stud::cpu_compat;
+    greg_t gregs[NGREG] = {};
+    // Every encoding below came from the assembler's own output, not
+    // from reading the manual and hoping.
+    uint64_t buffer = 0;
+    gregs[reg_to_greg_index(3)] = reinterpret_cast<greg_t>(&buffer);  // rbx
+
+    // movbe (%rbx), %eax        0f 38 f0 03
+    {
+        const uint8_t code[] = {0x0F, 0x38, 0xF0, 0x03};
+        auto d = try_decode_movbe(code);
+        check(d.length == 4 && !d.is_store && !d.is_64bit, "movbe load decodes as a 4-byte load");
+        check(d.reg == 0 && d.mem.base_reg == 3 && d.mem.index_reg == -1,
+              "movbe (%rbx),%eax names eax and a plain rbx base");
+        buffer = 0x11223344;
+        emulate_movbe(d, gregs, 0);
+        check(static_cast<uint32_t>(gregs[reg_to_greg_index(0)]) == 0x44332211u,
+              "movbe byte-swaps on load");
+    }
+
+    // movbe %eax, (%rbx)        0f 38 f1 03
+    {
+        const uint8_t code[] = {0x0F, 0x38, 0xF1, 0x03};
+        auto d = try_decode_movbe(code);
+        check(d.is_store, "opcode F1 is the store form");
+        buffer = 0;
+        gregs[reg_to_greg_index(0)] = 0xAABBCCDD;
+        emulate_movbe(d, gregs, 0);
+        check(static_cast<uint32_t>(buffer) == 0xDDCCBBAAu, "movbe byte-swaps on store");
+    }
+
+    // movbe 0x10(%rbx), %eax    0f 38 f0 43 10   (mod=01, disp8)
+    {
+        const uint8_t code[] = {0x0F, 0x38, 0xF0, 0x43, 0x10};
+        auto d = try_decode_movbe(code);
+        check(d.length == 5 && d.mem.disp == 0x10, "a disp8 form decodes its displacement");
+    }
+
+    // movbe (%rbx,%rcx,4), %eax  0f 38 f0 04 8b   (SIB)
+    {
+        const uint8_t code[] = {0x0F, 0x38, 0xF0, 0x04, 0x8B};
+        auto d = try_decode_movbe(code);
+        check(d.length == 5, "a SIB form consumes the SIB byte");
+        check(d.mem.base_reg == 3 && d.mem.index_reg == 1 && d.mem.scale == 4,
+              "SIB decodes base=rbx, index=rcx, scale=4");
+        buffer = 0x11223344;
+        gregs[reg_to_greg_index(1)] = 0;  // rcx = 0, so the address is just rbx
+        emulate_movbe(d, gregs, 0);
+        check(static_cast<uint32_t>(gregs[reg_to_greg_index(0)]) == 0x44332211u,
+              "a SIB address resolves and loads");
+    }
+
+    // movbe 0x1234(%rip), %eax   0f 38 f0 05 34 12 00 00
+    {
+        const uint8_t code[] = {0x0F, 0x38, 0xF0, 0x05, 0x34, 0x12, 0x00, 0x00};
+        auto d = try_decode_movbe(code);
+        check(d.length == 8 && d.mem.rip_relative && d.mem.disp == 0x1234,
+              "the RIP-relative form decodes as such, with its disp32");
+        check(resolve_address(d.mem, gregs, 0x1000) == 0x1000 + 0x1234,
+              "RIP-relative resolves from the END of the instruction");
+    }
+
+    // movbe (%rbx), %rax         48 0f 38 f0 03   (REX.W)
+    {
+        const uint8_t code[] = {0x48, 0x0F, 0x38, 0xF0, 0x03};
+        auto d = try_decode_movbe(code);
+        check(d.length == 5 && d.is_64bit, "REX.W selects the 64-bit form");
+        buffer = 0x1122334455667788ull;
+        emulate_movbe(d, gregs, 0);
+        check(static_cast<uint64_t>(gregs[reg_to_greg_index(0)]) == 0x8877665544332211ull,
+              "the 64-bit form swaps all eight bytes");
+    }
+
+    // movbe (%r12), %eax         41 0f 38 f0 04 24  (REX.B, SIB, no index)
+    {
+        const uint8_t code[] = {0x41, 0x0F, 0x38, 0xF0, 0x04, 0x24};
+        auto d = try_decode_movbe(code);
+        check(d.length == 6 && d.mem.base_reg == 12 && d.mem.index_reg == -1,
+              "r12 as a base needs a SIB with no index, and decodes that way");
+    }
+
+    // The 16-bit form is rejected rather than mis-swapped.
+    {
+        const uint8_t code[] = {0x66, 0x0F, 0x38, 0xF0, 0x03};
+        check(try_decode_movbe(code).length == 0, "the 16-bit (0x66) form is not claimed");
     }
 }
 
@@ -224,6 +314,7 @@ int main() {
     test_feature_detection();
     test_popcnt_decode_and_emulate();
     test_bmi1_decode_and_emulate();
+    test_movbe_decode_and_emulate();
     test_signal_handler_install();
 
     std::printf("all cpu-compat checks passed\n");

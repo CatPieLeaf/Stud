@@ -47,6 +47,16 @@ void sigill_handler(int /*signum*/, siginfo_t* /*info*/, void* ucontext_raw) {
         return;
     }
 
+    DecodedMovbe movbe = try_decode_movbe(rip);
+    if (movbe.length > 0) {
+        // RIP-relative addressing is measured from the end of the
+        // instruction, so the emulator needs to know where that is.
+        emulate_movbe(movbe, gregs,
+                      static_cast<uint64_t>(gregs[REG_RIP]) + static_cast<uint64_t>(movbe.length));
+        gregs[REG_RIP] += movbe.length;
+        return;
+    }
+
     std::fprintf(stderr,
                   "stud: SIGILL at %p -- instruction not recognized or not yet "
                   "emulated (bytes: %02x %02x %02x %02x). This CPU is missing an "

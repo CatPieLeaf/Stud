@@ -33,11 +33,37 @@
 // why they are unit-tested against real encodings and real expected
 // values rather than only for "did it decode".
 //
-// Other instructions (MOVBE, LZCNT, TZCNT) are NOT emulated yet -- the
-// handler reports them clearly and aborts rather than silently
-// misbehaving, growing iteratively against real SIGILL traps the same way
-// the rest of this project has, rather than guessing a full instruction
-// set upfront.
+// MOVBE is emulated too, including its memory addressing (ModRM/SIB/
+// disp8/disp32/RIP-relative) -- it exists only in load and store forms,
+// so there was nothing to emulate without that.
+//
+// LZCNT and TZCNT are NOT emulated, and CANNOT BE by this mechanism.
+// This is worth stating plainly, because it looks like an omission and is
+// not one:
+//
+//   lzcnt  ->  f3 0f bd    bsr  ->  0f bd
+//   tzcnt  ->  f3 0f bc    bsf  ->  0f bc
+//
+// They are BSR/BSF with an 0xF3 prefix. A CPU without LZCNT/TZCNT does not
+// reject those encodings -- it IGNORES the prefix and executes BSR/BSF.
+// No #UD, no SIGILL, nothing for a signal handler to catch. Emulating
+// them would mean finding and rewriting the instructions in the loaded
+// image, which is the byte-patching this project does not do.
+//
+// The practical consequence, stated honestly: on a CPU lacking them,
+// TZCNT and BSF agree for every non-zero input and differ only at zero
+// (TZCNT returns the operand width; BSF leaves the destination
+// undefined), so the exposure is narrow. LZCNT and BSR disagree for all
+// inputs -- BSR returns the bit index, LZCNT the count of leading zeros
+// -- so an engine built with LZCNT would compute wrong values silently on
+// such a CPU. Nothing in Stud can detect that, and pretending otherwise
+// would be worse than saying so here.
+//
+// Everything else (the rest of BMI2, AVX, and so on) is still NOT
+// emulated -- the handler reports the instruction clearly and aborts
+// rather than silently misbehaving, growing iteratively against real
+// SIGILL traps the same way the rest of this project has, rather than
+// guessing a full instruction set upfront.
 //
 // Honest testing limitation: this development host has every relevant ISA
 // extension (SSSE3/SSE4.1/SSE4.2/POPCNT all present, confirmed via CPUID),
