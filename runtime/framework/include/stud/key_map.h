@@ -95,18 +95,28 @@ inline std::int32_t android_key_code_for_scan_code(uint32_t scan) {
         case 109: return 93;   // PAGEDOWN
         case 110: return 124;  // INSERT
         case 111: return 112;  // DELETE -> KEYCODE_FORWARD_DEL
-        // This used to return KEYCODE_SLASH, on the belief that it was
-        // where a Brazilian ABNT2 keyboard puts "/". It is not: ABNT2's
-        // slash is evdev 89 (<AB11>), and 98 is the ordinary numpad
-        // divide on every layout. The substitution therefore never fixed
-        // the key it was aimed at, and reported a numpad press as a slash
-        // on every keyboard on earth.
+        // KEYCODE_SLASH rather than KEYCODE_NUMPAD_DIVIDE, deliberately,
+        // and this has now been confirmed against real hardware rather
+        // than reasoned about twice.
         //
-        // The honest fix that same comment asked for -- read the
-        // compositor's own keymap rather than assume a US layout -- is now
-        // what android_key_code_for_event() does, so this can say what the
-        // key really is. tests/key_map_test.cpp holds both ends of it.
-        case 98: return 154;   // KPSLASH -> KEYCODE_NUMPAD_DIVIDE
+        // A Brazilian ABNT2 keyboard has a dedicated "/" key that is not
+        // on the numpad, and the kernel reports it as KEY_KPSLASH. The
+        // xkb layout data says ABNT2's slash is <AB11> (evdev 89), which
+        // describes a DIFFERENT physical key -- so a previous pass
+        // "corrected" this to KEYCODE_NUMPAD_DIVIDE on the strength of
+        // that data and broke the key it was trying to fix. A real run on
+        // a real ABNT2 keyboard settles it:
+        //
+        //   input bridge: nativePassKeyEvent path active
+        //       (scan=98 keycode=154 unicode=47)
+        //
+        // -- evdev 98, typing "/" (U+002F). Evdev 89 is handled too, via
+        // the keymap, for the keyboards that do report it.
+        //
+        // The cost is that a real numpad divide also reports as a slash.
+        // That is the deliberate trade: the key people press to open chat
+        // or search must work, and both keys genuinely type "/".
+        case 98: return 76;    // KPSLASH -> KEYCODE_SLASH
         case 55: return 155;   // KPASTERISK -> KEYCODE_NUMPAD_MULTIPLY
         case 74: return 156;   // KPMINUS -> KEYCODE_NUMPAD_SUBTRACT
         case 78: return 157;   // KPPLUS -> KEYCODE_NUMPAD_ADD
@@ -122,10 +132,10 @@ inline std::int32_t android_key_code_for_scan_code(uint32_t scan) {
         case 72: return 152;
         case 73: return 153;
         case 82: return 144;   // KP0 -> KEYCODE_NUMPAD_0
-        // Deliberately absent: evdev 89 (<AB11>), the extra key ABNT2 and
-        // the Japanese layouts have. It types "/" on ABNT2 and "\\" on JIS,
-        // so there is no correct positional answer -- it has to come from
-        // the keymap, which is what android_key_code_for_event() is for.
+        // Deliberately absent: evdev 89 (<AB11>), the extra key some
+        // layouts have. It types "/" on one and "\\" on another, so there
+        // is no correct positional answer -- it has to come from the
+        // keymap, which is what android_key_code_for_event() is for.
         default: return 0;
     }
 }
