@@ -92,6 +92,13 @@ modules:
   - name: portaudio
     buildsystem: cmake-ninja
     config-opts:
+      # PortAudio 19.7.0 asks for CMake 2.8, and CMake 4 -- which the
+      # runtime ships -- removed compatibility below 3.5 outright:
+      # `Compatibility with CMake < 3.5 has been removed from CMake.`
+      # Reproduced locally against CMake 4.3 and confirmed this is what
+      # clears it. Upstream's own fix is a newer release; this pins the
+      # version already checksummed here rather than changing it.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
       - -DPA_BUILD_SHARED_LIBS=ON
       - -DPA_BUILD_TESTS=OFF
       - -DPA_BUILD_EXAMPLES=OFF
