@@ -20,6 +20,14 @@
 # `gclient sync`, a few GB) -- possible, and a much larger build.
 
 app-id: io.github.catpieleaf.Stud
+# QtWebEngine, which org.kde.Platform does NOT ship -- checked directly:
+# there is no libQt6WebEngine* anywhere in 6.10 or 6.11, and stud-webview
+# could not even load ("libQt6WebEngineWidgets.so.6: cannot open shared
+# object file"), so every web panel and every login challenge was dead.
+# This base app is how a Flathub application gets it, and its branch
+# tracks the runtime's.
+base: io.qt.qtwebengine.BaseApp
+base-version: '6.10'
 runtime: org.kde.Platform
 # flatpak-builder-lint warns that 6.11 exists and suggests moving to it.
 # Staying on 6.10 deliberately:
@@ -134,23 +142,26 @@ modules:
         url: https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz
         sha256: a22c708f351431d8736a0ac5c562414f2b7bb919a6292cbca1ff7ac0849cb0a7
 
-  - name: stud
+  # The prebuilt half: ANGLE, the extracted bionic runtime, the render
+  # host and Process B. None of it links Qt, and building ANGLE here
+  # would add an hour to every Flatpak build for no benefit.
+  #
+  # Deliberately does NOT install usr/bin/stud or stud-webview from this
+  # archive. Those two are the Qt executables, and a Qt binary built
+  # against another distribution's Qt is what made this Flatpak crash
+  # inside Qt's own startup before a line of Stud ran -- the module below
+  # compiles them against the runtime's own Qt instead.
+  - name: stud-prebuilt
     buildsystem: simple
     build-commands:
-      # The archive is the install tree Stud's own CMake produces, rooted
-      # at /usr -- so it is relocated to /app here rather than rebuilt.
-      # /app/libexec in particular does not exist -- nothing before this
-      # module puts anything there -- and cp will not create it.
-      - mkdir -p /app/bin /app/lib /app/libexec /app/share
-      - cp -a usr/bin/. /app/bin/
-      - cp -a usr/lib/stud /app/lib/stud
-      - cp -a usr/libexec/stud /app/libexec/stud
-      - cp -a usr/share/. /app/share/
-      # Flathub requires both to be named for the app id.
-      - install -Dm644 usr/share/metainfo/io.github.catpieleaf.Stud.metainfo.xml
-          -t /app/share/metainfo/
-      - install -Dm644 usr/share/applications/io.github.catpieleaf.Stud.desktop
-          -t /app/share/applications/
+      - mkdir -p /app/lib/stud /app/libexec/stud /app/share/licenses
+      - cp -a usr/lib/stud/. /app/lib/stud/
+      - cp -a usr/libexec/stud/lib64 /app/libexec/stud/lib64
+      - install -Dm755 usr/libexec/stud/stud-render-host -t /app/libexec/stud/
+      - install -Dm755 usr/libexec/stud/stud-runtime-bionic -t /app/libexec/stud/
+      # The licences of everything above, which the Qt-only build has no
+      # reason to know about and therefore does not install.
+      - cp -a usr/share/licenses/. /app/share/licenses/
     sources:
       # Replaced at release time by CI, which knows the tag and the digest
       # of the archive it just built. Never "latest": a manifest that can
@@ -160,10 +171,50 @@ modules:
         url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.0/stud-1.1.0-x86_64.tar.zst
         sha256: b6c093195a2a3025fc7dca3f8eaa500d1c4dfcfcfdd898498deacac6ac6ea89e
         # This archive IS the install tree, rooted at usr/, and every
-        # build-command below addresses it that way. flatpak-builder
+        # build-command above addresses it that way. flatpak-builder
         # strips one leading component from an archive by default, which
         # turned usr/bin into bin and failed with
         # `cp: cannot stat 'usr/bin/.'`.
         strip-components: 0
         only-arches:
           - x86_64
+
+  # The Qt half, compiled here against the runtime's own Qt.
+  #
+  # STUD_BUILD_QT_ONLY builds just the two executables that link Qt --
+  # stud and stud-webview -- and skips the render host, the bionic
+  # runtime and ANGLE, which the module above supplies prebuilt.
+  #
+  # The three dependencies CMake would otherwise fetch over the network
+  # are supplied as sources instead, because a Flatpak build has no
+  # network. FETCHCONTENT_SOURCE_DIR_<NAME> is CMake's own documented way
+  # to hand FetchContent a directory it already has.
+  - name: stud
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - -DSTUD_BUILD_QT_ONLY=ON
+      - -DSTUD_BUILD_TESTS=OFF
+      - -DSTUD_VERSION=1.1.0
+      - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
+      - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
+      - -DFETCHCONTENT_SOURCE_DIR_LIBJNIVM=/run/build/stud/deps/libjnivm
+      - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
+    sources:
+      - type: archive
+        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
+        sha256: 5d80970bae4de728fe537d1d710c69f36165d0290dff35bdf33eaa9b4235a48f
+      - type: archive
+        url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
+        sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb
+        dest: deps/miniz
+      - type: archive
+        url: https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz
+        sha256: 0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406
+        dest: deps/json
+      # Pinned to a commit: the build declares this one with GIT_TAG main,
+      # which is not something a reproducible package can follow.
+      - type: git
+        url: https://github.com/ChristopherHX/libjnivm.git
+        commit: f24b98c198fcc5c59a68d1efadd3f5791eb01c2e
+        dest: deps/libjnivm
