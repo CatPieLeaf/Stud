@@ -2627,6 +2627,11 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::DeliverDeepLink: {
             std::string uri(reinterpret_cast<const char*>(in.data()), in.size());
             if (uri.empty()) return 0;
+            // Read before the string is moved into the queue below --
+            // reading it after reported 0 bytes every time, which is what
+            // a moved-from string is.
+            const size_t payload_bytes = uri.size();
+            const bool has_token = uri.find("activationToken=") != std::string::npos;
             {
                 std::lock_guard<std::mutex> lock(g_deep_link_mutex);
                 // Two links queued at once means the first was never
@@ -2650,8 +2655,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 // the session log -- so a missing token was invisible
                 // from both ends.
                 std::printf("stud-render-host: deep link payload %zu bytes, activation token %s\n",
-                            uri.size(),
-                            uri.find(key) != std::string::npos ? "present" : "ABSENT");
+                            payload_bytes,
+                            has_token ? "present" : "ABSENT");
                 std::fflush(stdout);
                 size_t at = 0;
                 bool raised = false;
