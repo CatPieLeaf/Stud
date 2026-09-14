@@ -2959,7 +2959,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
             std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
                         built.engine.width, built.engine.height, built.present.width,
                         built.present.height, count,
-                        built.compute ? "edge-adaptive + sharpening" : "linear blit");
+                        built.compute ? (built.sharpen ? "bicubic + sharpening" : "bicubic")
+                                      : "linear blit");
             std::fflush(stdout);
         }
     }

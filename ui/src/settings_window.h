@@ -79,7 +79,6 @@ private:
     QCheckBox* hidpiCheck_;
     QCheckBox* followDpiCheck_;
     QCheckBox* upscalingCheck_;
-    QComboBox* upscaleOutputCombo_;
     QSlider* upscaleSharpnessSlider_;
     QLabel* sharpnessValueLabel_;
     QPushButton* restartButton_;

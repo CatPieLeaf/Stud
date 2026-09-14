@@ -901,11 +901,11 @@ bool g_hidpi_enabled = true;
 // for it -- DLSS's quality presets. The output is never a setting: it is
 // always the window's size in the display's own pixels.
 bool g_upscaling_enabled = false;
-// What the upscaler writes, as a percentage of the window's own pixels.
 // The engine's render size is NOT a setting -- it is pinned to the
-// window's logical size, because moving it moves the UI's size with it.
-int g_upscale_target_percent = 100;
-int g_upscale_sharpness_percent = 30;
+// window's logical size, because moving it moves the UI's size with it --
+// and neither is the output: that is the window's own resolution, which
+// the compositor shows 1:1.
+int g_upscale_sharpness_percent = 0;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
@@ -3625,15 +3625,10 @@ void sync_vk_window_size() {
         int32_t real_h = 0;
         stud::android_glue::native_window_display_pixel_size(&real_w, &real_h);
         if (real_w > 0 && real_h > 0) {
-            // The window's own pixels, times the target. At 1x this is the
-            // window exactly and the frame is shown 1:1; above it the
-            // compositor scales the larger frame down, which is what
-            // steadies edges.
-            const auto target_w = static_cast<uint32_t>(
-                static_cast<int64_t>(real_w) * g_upscale_target_percent / 100);
-            const auto target_h = static_cast<uint32_t>(
-                static_cast<int64_t>(real_h) * g_upscale_target_percent / 100);
-            stud::render_host::vk_set_upscale_output_size(target_w, target_h);
+            // The window's own pixels, and nothing else: the compositor
+            // then shows the frame 1:1, with no second resample.
+            stud::render_host::vk_set_upscale_output_size(static_cast<uint32_t>(real_w),
+                                                           static_cast<uint32_t>(real_h));
         }
     }
     std::printf("stud-render-host: window size now %ux%u (Vulkan surface extent updated)\n", w, h);
@@ -3983,9 +3978,6 @@ int main(int argc, char** argv) {
             g_hidpi_enabled = std::string_view(argv[i + 1]) != "off";
         } else if (std::string_view(argv[i]) == "--upscaling") {
             g_upscaling_enabled = std::string_view(argv[i + 1]) == "on";
-        } else if (std::string_view(argv[i]) == "--upscale-target") {
-            const int percent = std::atoi(argv[i + 1]);
-            if (percent >= 100 && percent <= 200) g_upscale_target_percent = percent;
         } else if (std::string_view(argv[i]) == "--upscale-sharpness") {
             const int percent = std::atoi(argv[i + 1]);
             if (percent >= 0 && percent <= 100) g_upscale_sharpness_percent = percent;
@@ -4021,8 +4013,8 @@ int main(int argc, char** argv) {
         stud::android_glue::set_render_scale_120(120);
         stud::render_host::vk_set_upscale_sharpness_percent(g_upscale_sharpness_percent);
         std::printf("stud-render-host: upscaling: the engine renders at the window's logical "
-                    "size, Stud writes %d%% of the window's pixels, sharpening %d%%\n",
-                    g_upscale_target_percent, g_upscale_sharpness_percent);
+                    "size, Stud writes the window's own resolution, sharpening %d%%\n",
+                    g_upscale_sharpness_percent);
         std::fflush(stdout);
     }
 

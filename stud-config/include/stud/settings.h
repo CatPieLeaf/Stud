@@ -93,23 +93,19 @@ struct StudSettings {
     // so the engine is left believing nothing changed and the scaling
     // happens entirely inside Stud.
     bool upscaling = false;
-    // What the upscaler writes, as a multiple of the window's own pixels
-    // (100 = the window, 150 = half again, 200 = double, then scaled down
-    // when shown).
-    //
-    // There is deliberately NO quality preset here. DLSS's
-    // Quality/Balanced/Performance choose how far below the output the
-    // GAME renders, and in this engine that cannot be done: it lays its UI
-    // out in the pixels it renders, so a lower render size shows a larger
-    // interface -- and compensating through its own DPI scale makes it draw
-    // square corners below 1.0 and drop SSAO above. All measured. So the
-    // engine is pinned to the window's logical size (what Stud already
-    // renders with HiDPI off) and only Stud's own output moves.
-    int upscale_target_percent = 100;
+    // NOTE: there is no target-resolution knob either. What the upscaler
+    // writes is the window's own size in the display's pixels, which the
+    // compositor then shows 1:1 -- anything else means a second resample
+    // on the way to the screen.
     // How hard the sharpening pass pulls, 0-100. It runs at the output
     // resolution over the upscaled image, so it sharpens what is actually
     // shown rather than what was rendered.
-    int upscale_sharpness_percent = 30;    // Smooth zoom: the wheel eases the camera toward the new distance
+    //
+    // Off by default, and that is from being burned: sharpening flat art
+    // and glyphs -- which is most of Roblox's interface -- is what looks
+    // scratched. The resample alone is the honest baseline; this is for
+    // someone who wants more bite in a 3D scene and can see what it costs.
+    int upscale_sharpness_percent = 0;    // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;
