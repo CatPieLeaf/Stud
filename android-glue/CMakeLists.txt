@@ -30,6 +30,10 @@ FetchContent_MakeAvailable(miniz)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WaylandProtocols REQUIRED wayland-protocols)
 pkg_get_variable(WaylandProtocolsDataDir wayland-protocols pkgdatadir)
+# Overridable so the vendored-fallback path can actually be exercised;
+# an `if(NOT EXISTS ...)` that is never taken in testing is not tested.
+set(WaylandProtocolsDataDir "${WaylandProtocolsDataDir}" CACHE PATH
+    "Where wayland-protocols keeps its XML")
 find_program(WaylandScanner NAMES wayland-scanner REQUIRED)
 
 set(XdgShellXml "${WaylandProtocolsDataDir}/stable/xdg-shell/xdg-shell.xml")
@@ -165,7 +169,16 @@ add_custom_command(
 # Staging, and young: KWin 6.4+, Mutter 49+, wlroots 0.19+. Absent at
 # runtime simply means no warping, and every caller is written to be
 # correct without it.
+# Prefer the system copy; fall back to the vendored one. This protocol is
+# new enough that a distribution one release behind simply does not ship
+# it -- which is not a reason for Stud to fail to build there, since the
+# runtime treats the protocol as optional anyway.
 set(PointerWarpXml "${WaylandProtocolsDataDir}/staging/pointer-warp/pointer-warp-v1.xml")
+if(NOT EXISTS "${PointerWarpXml}")
+    set(PointerWarpXml
+        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/wayland-protocols/staging/pointer-warp/pointer-warp-v1.xml")
+    message(STATUS "wayland-protocols has no pointer-warp-v1; using the vendored copy")
+endif()
 set(PointerWarpHeader "${XdgShellGeneratedDir}/pointer-warp-v1-client-protocol.h")
 set(PointerWarpSource "${XdgShellGeneratedDir}/pointer-warp-v1-protocol.c")
 add_custom_command(
