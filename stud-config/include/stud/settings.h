@@ -97,16 +97,16 @@ struct StudSettings {
     // writes is the window's own size in the display's pixels, which the
     // compositor then shows 1:1 -- anything else means a second resample
     // on the way to the screen.
-    // How hard the sharpening pass pulls, 100-125. It runs at the output
-    // resolution over the upscaled image, so it sharpens what is actually
-    // shown rather than what was rendered.
+    // How hard the sharpening pass pulls, 0-125, defaulting to 100. It runs
+    // at the output resolution over the upscaled image, so it sharpens what
+    // is actually shown rather than what was rendered.
     //
-    // 100 is the floor, not "off": it is RCAS at its ordinary full
-    // strength, which is what the upscaled image wants. The range above it
-    // exists because 100 can still read as soft, and it stops at 125
-    // because that is where this filter's own renormaliser reaches zero --
-    // see sharpen.comp, which maps the top of the range to just short of
-    // it.
+    // 100 is RCAS at its ordinary full strength, which is what the
+    // upscaled image wants and so is the default. 0 skips the pass
+    // entirely -- no second image, no second dispatch -- and is the
+    // baseline worth comparing against. 125 is the ceiling because that is
+    // where this filter's own renormaliser reaches zero; sharpen.comp maps
+    // the top of the range to just short of it.
     int upscale_sharpness_percent = 100;    // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
