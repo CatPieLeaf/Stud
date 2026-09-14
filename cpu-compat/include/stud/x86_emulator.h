@@ -91,6 +91,51 @@ DecodedBmi1 try_decode_bmi1(const uint8_t* code);
 // promise.
 void emulate_bmi1(const DecodedBmi1& decoded, greg_t* gregs);
 
+// A decoded memory operand: everything ModRM/SIB/displacement can say
+// about where an operand lives, without yet knowing register contents.
+//
+// Kept separate from the instructions that use it because resolving it
+// needs a register file and decoding does not -- so decode stays a pure
+// function that can be tested against instruction bytes alone.
+struct EffectiveAddress {
+    int base_reg = -1;   // -1: no base register
+    int index_reg = -1;  // -1: no index register
+    int scale = 1;       // 1, 2, 4 or 8
+    int32_t disp = 0;
+    // RIP-relative (mod=00, rm=101) is addressed from the END of the
+    // instruction, so resolving it needs the instruction length too.
+    bool rip_relative = false;
+};
+
+// Turns a decoded operand into an address. `next_rip` is the address of
+// the instruction AFTER this one, which is what RIP-relative addressing
+// is measured from.
+uint64_t resolve_address(const EffectiveAddress& ea, const greg_t* gregs, uint64_t next_rip);
+
+struct DecodedMovbe {
+    // 0 means "not a MOVBE (or a form not decoded)".
+    int length = 0;
+    EffectiveAddress mem;
+    int reg = -1;        // the register operand
+    bool is_64bit = false;
+    bool is_store = false;  // true: register -> memory (opcode F1)
+};
+
+// Decodes MOVBE at `code` ([REX] 0F 38 F0/F1 /r) -- a load or store that
+// byte-swaps as it goes, which is why it only exists in memory forms and
+// why it needs the addressing decode above.
+//
+// 32- and 64-bit forms only. MOVBE also has a 16-bit form (0x66 prefix);
+// it is rejected rather than guessed at, so an unhandled one is reported
+// by the signal handler instead of silently swapping the wrong width.
+DecodedMovbe try_decode_movbe(const uint8_t* code);
+
+// Emulates the decoded MOVBE against `gregs`. `next_rip` is needed for
+// the RIP-relative form. Reads or writes the real memory the instruction
+// names -- if that address is bad, this faults exactly where the real
+// instruction would have.
+void emulate_movbe(const DecodedMovbe& decoded, greg_t* gregs, uint64_t next_rip);
+
 // Real x86-64 register-number-to-ucontext-REG_*-index mapping (standard
 // ModRM/REX encoding order: 0=RAX,1=RCX,...,7=RDI,8-15=R8-R15), needed to
 // read/write the right slot in a gregset_t.
