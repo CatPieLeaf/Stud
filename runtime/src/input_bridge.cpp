@@ -1636,15 +1636,10 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // layout, so it is only the fallback now -- for the X11 backend,
             // and for the moment before the keymap has arrived.
             std::string typed_text;
-            if (ev.composed_utf8[0] != '\0') {
-                // A completed dead-key sequence whose result is more than
-                // one character; the ordinary single-character case comes
-                // through as a code point below.
-                typed_text.assign(ev.composed_utf8,
-                                  ::strnlen(ev.composed_utf8, sizeof(ev.composed_utf8)));
-            } else if (ev.codepoint != 0) {
-                typed_text = utf8_from_codepoint(ev.codepoint);
-            } else {
+            if (!text_from_keymap(ev.keysym, ev.codepoint, ev.composed_utf8,
+                                  sizeof(ev.composed_utf8), &typed_text)) {
+                // Only reached with no keymap at all -- the X11 backend, or
+                // the moment before wl_keyboard.keymap arrives.
                 char from_table = 0;
                 if (char_for_scan_code(ev.code, shift_down, &from_table)) {
                     typed_text.assign(1, from_table);
@@ -1654,7 +1649,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // real one goes through whole rather than being truncated.
             // KeyEvent.getUnicodeChar() is a single code point, so a
             // multi-character composed result has none to report -- the
-            // text still reaches the engine through typed_text.
+            // text still reaches the engine through typed_text -- and
+            // neither does a dead key, which types nothing on its own.
             const jint unicode_char =
                 ev.codepoint != 0
                     ? static_cast<jint>(ev.codepoint)
