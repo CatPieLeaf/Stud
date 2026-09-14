@@ -38,11 +38,10 @@ env:
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
-  rpm:
-    # The job id stays `rpm` so `needs:` and existing run links keep
-    # working; the name says what it actually does. One build of Stud,
-    # wrapped four ways -- building each separately would mean four builds
-    # of ANGLE and no guarantee they hold the same binaries.
+  packages:
+    # One build of Stud, wrapped four ways. Building each format in its
+    # own job would mean four builds of ANGLE -- an hour each -- and no
+    # guarantee that the packages hold the same binaries.
     name: rpm, deb, Arch, cpak image
     runs-on: ubuntu-latest
     container: fedora:42
@@ -251,7 +250,7 @@ jobs:
   flatpak:
     # After the job above, because it installs the archive that job built.
     name: Flatpak bundle (needs the build above)
-    needs: rpm
+    needs: packages
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.8
@@ -321,7 +320,7 @@ jobs:
 
   publish:
     name: Attach every package to the release
-    needs: [rpm, appimage, flatpak]
+    needs: [packages, appimage, flatpak]
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
     steps:
