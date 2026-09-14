@@ -22,6 +22,17 @@ endif()
 
 option(STUD_BUILD_TESTS "Build Stud tests" ON)
 option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
+# Build ONLY the parts that link Qt, against whatever Qt is present, and
+# take everything else from an existing install tree.
+#
+# This exists for the Flatpak. Copying a binary built on one distribution
+# into a runtime carrying a different Qt is what made the Flatpak crash
+# inside Qt's own startup before a line of Stud ran -- so there, the Qt
+# side is compiled in the runtime and the rest (ANGLE, the bionic
+# runtime, the render host) is installed prebuilt, which needs no Qt and
+# would otherwise cost an hour of ANGLE per build.
+option(STUD_BUILD_QT_ONLY
+       "Build only the Qt executables; skip the render host, the bionic runtime and ANGLE" OFF)
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 
 # Hardening for the glibc-side binaries.
@@ -123,15 +134,19 @@ add_subdirectory(android-glue)
 add_subdirectory(render)
 add_subdirectory(stud-config)
 add_subdirectory(stud-ipc)
-add_subdirectory(render-host)
-add_subdirectory(tools)
+if(NOT STUD_BUILD_QT_ONLY)
+    add_subdirectory(render-host)
+    add_subdirectory(tools)
+endif()
 
 # runtime/: the real replacement for the old jni-bridge+process-b pair.
 # Real bionic ELF output, built with the Android NDK's own toolchain --
 # same real reason as before (Process B's own code must be real
 # bionic-ABI code to call directly into libroblox.so's real bionic JNI
 # exports on the same thread/ABI, no glibc-forwarding trampoline).
-if(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
+if(STUD_BUILD_QT_ONLY)
+    # Supplied prebuilt; see STUD_BUILD_QT_ONLY.
+elseif(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
     include(ExternalProject)
     ExternalProject_Add(runtime
         SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime"
@@ -279,17 +294,21 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1/LICENSE"
 # share/licenses/stud/, which is where a distribution looks. If setup
 # could not fetch them it says so loudly -- a package built from a tree
 # without them is one that cannot legally be distributed.
-if(EXISTS "${STUD_THIRD_PARTY_DIR}/angle")
+set(STUD_PREBUILT_DEPS angle android-bionic)
+if(STUD_BUILD_QT_ONLY)
+    set(STUD_PREBUILT_DEPS)  # supplied prebuilt, so nothing to install here
+endif()
+if(NOT STUD_BUILD_QT_ONLY AND EXISTS "${STUD_THIRD_PARTY_DIR}/angle")
     install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/angle/"
             DESTINATION "${STUD_PRIVATE_LIB_DIR}/angle"
             USE_SOURCE_PERMISSIONS)
 endif()
-if(EXISTS "${STUD_THIRD_PARTY_DIR}/android-bionic")
+if(NOT STUD_BUILD_QT_ONLY AND EXISTS "${STUD_THIRD_PARTY_DIR}/android-bionic")
     install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/android-bionic/"
             DESTINATION "${STUD_PRIVATE_LIB_DIR}/android-bionic"
             USE_SOURCE_PERMISSIONS)
 endif()
-foreach(stud_dep angle android-bionic)
+foreach(stud_dep ${STUD_PREBUILT_DEPS})
     if(EXISTS "${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses")
         install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses/"
                 DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/${stud_dep}")
@@ -305,6 +324,7 @@ endforeach()
 # by the nested NDK sub-build, so they are installed from its output
 # directory rather than as CMake targets of this project.
 set(STUD_RUNTIME_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/runtime-prefix/src/runtime-build")
+if(NOT STUD_BUILD_QT_ONLY)
 install(PROGRAMS "${STUD_RUNTIME_BUILD_DIR}/stud-runtime-bionic"
         DESTINATION "${STUD_LIBEXEC_DIR}" OPTIONAL)
 install(DIRECTORY "${STUD_RUNTIME_BUILD_DIR}/lib64/"
@@ -314,5 +334,6 @@ install(DIRECTORY "${STUD_RUNTIME_BUILD_DIR}/lib64/"
             GROUP_READ GROUP_EXECUTE
             WORLD_READ WORLD_EXECUTE
         FILES_MATCHING PATTERN "*.so*")
+endif()
 
 include(packaging/Packaging.cmake)
