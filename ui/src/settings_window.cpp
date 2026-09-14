@@ -155,10 +155,13 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     //
     // So it belongs to HiDPI being OFF: with HiDPI on the engine already
     // draws every real pixel and there is nothing to upscale from.
-    upscalingCheck_ = new QCheckBox("FSR Upscaler", this);
+    upscalingCheck_ = new QCheckBox("FSR 1", this);
     upscalingCheck_->setToolTip(
-        "Rebuild the frame at full resolution instead of letting the compositor stretch it.\n"
-        "Needs HiDPI off, which is where the game renders below the screen's resolution.");
+        "AMD FidelityFX Super Resolution 1: rebuild the frame at full resolution instead of\n"
+        "letting the compositor stretch it. Needs HiDPI off, which is where the game renders\n"
+        "below the screen's resolution.\n"
+        "Version 1 and not 2 or 3 because those need motion vectors from the renderer, which\n"
+        "Roblox does not produce.");
     graphics->addWidget(upscalingCheck_);
 
     // Sharpening strength. Its own control because the right amount is a
