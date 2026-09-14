@@ -254,31 +254,25 @@ package — `paru -S stud`, and expect around an hour, almost all of it ANGLE:
 git clone https://aur.archlinux.org/stud.git && cd stud && makepkg -si
 ```
 
-## 🔶 F L A T P A K  ( N O T _ Y E T _ O N _ F L A T H U B )
-
-The manifest is in `packaging/flatpak` and works, but Stud is not on Flathub yet, so
-there is nothing to `flatpak install` from a remote. Building it yourself:
+## 🔶 F L A T P A K
 
 ```bash
-flatpak install -y flathub org.kde.Sdk//6.8 org.kde.Platform//6.8
-flatpak-builder --force-clean --user --install build-flatpak \
-  packaging/flatpak/io.github.catpieleaf.Stud.yml
+flatpak install --user ./stud-*-x86_64.flatpak
 flatpak run io.github.catpieleaf.Stud
 ```
 
-The `*-flatpak.tar.zst` attached to releases is what that manifest installs — it is
-not something to install directly.
+Not on Flathub yet, so it is a file rather than a remote — the bundle is attached to
+each release and carries everything it needs. The manifest it is built from is in
+`packaging/flatpak`.
 
-## ⬛ C P A K  ( N O T _ Y E T _ P U B L I S H E D )
-
-[cpak](https://github.com/Containerpak/cpak) installs an application from an OCI
-image and runs it rootless. The `Containerfile` and the manifest are in
-`packaging/cpak`, but the image is not published yet, so this does not work until it
-is:
+## ⬛ C P A K
 
 ```bash
 cpak install github.com/CatPieLeaf/Stud
 ```
+
+[cpak](https://github.com/Containerpak/cpak) installs from an OCI image and runs it
+rootless. The image is published to `ghcr.io/catpieleaf/stud` with each release.
 
 ## 🟠 A P P I M A G E  ( A N Y _ D I S T R O )
 
