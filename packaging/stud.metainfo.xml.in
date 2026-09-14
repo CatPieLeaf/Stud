@@ -6,22 +6,16 @@
   <project_license>AGPL-3.0-or-later</project_license>
 
   <name>Stud</name>
-  <summary>Play Roblox on Linux</summary>
+  <summary>A better Roblox experience on Linux</summary>
 
-  <!--
-    Written for someone deciding whether to install it, not for someone
-    reading the source: what Stud does, what they get, and what they have
-    to bring. The architecture is in the README, where it belongs.
-    (No double hyphen anywhere in here: XML forbids it inside a comment.)
-  -->
   <description>
     <p>
-      Stud plays Roblox on Linux. It runs the real Roblox app on your
-      desktop, in its own window, with your mouse and keyboard — no
-      browser, no emulator, no virtual machine.
+      Stud allows you to play Roblox on Linux. It runs the real,
+      unmodified Roblox app on your desktop, in its own window, with your
+      mouse and keyboard — no browser, no emulator, no virtual machine.
     </p>
     <p>
-      It is built to stay out of the way while you play:
+      <em>It is built to bring a better Roblox experience on Linux:</em>
     </p>
     <ul>
       <li>Links from your browser open straight into the experience</li>
@@ -29,11 +23,15 @@
       <li>Upscaling, so the game can render below your screen's resolution and still fill it</li>
       <li>Discord Rich Presence, with a button friends can join through</li>
       <li>A system tray menu, and it tells you which country a server is in when you join</li>
-      <li>Your login lives in the system keyring, never in a file Stud leaves lying around</li>
     </ul>
     <p>
       Roblox is not included. You supply the Android application package
       yourself, and Roblox remains subject to its own terms.
+    </p>
+    <p>
+      Stud is a launcher, not a distributor, not a modding tool and not an
+      emulator. It is an independent project, not affiliated with Roblox
+      Corporation, and not endorsed, supported or approved by it in any way.
     </p>
   </description>
 
