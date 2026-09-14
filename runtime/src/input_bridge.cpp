@@ -1079,6 +1079,33 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             const float dy = y - g_prev_raw_y;
             g_prev_raw_x = x;
             g_prev_raw_y = y;
+            // A jump during FREE movement -- no button held -- which the
+            // drag trace below cannot see. Measured against the real
+            // device: 89133 events from this mouse gave an accelerated
+            // |d| of p99.9 = 11.7 and a maximum of 31.2, so anything past
+            // the default 40 is not something the hardware produced.
+            // Off by default; STUD_INPUT_JUMPS=1 arms it.
+            {
+                static const bool jumps = std::getenv("STUD_INPUT_JUMPS") != nullptr;
+                static const float limit = [] {
+                    const char* v = std::getenv("STUD_INPUT_JUMP_PX");
+                    const float f = v != nullptr ? static_cast<float>(std::atof(v)) : 40.0f;
+                    return f > 0.0f ? f : 40.0f;
+                }();
+                if (jumps) {
+                    const float mag = std::sqrt(dx * dx + dy * dy);
+                    if (mag >= limit) {
+                        std::printf("stud: JUMP |d|=%.1f d=(%.1f,%.1f) pos=(%.1f,%.1f) "
+                                    "raw=(%.1f,%.1f) state=0x%x locked=%d confined=%d%s\n",
+                                    mag, dx, dy, last_x, last_y, ev.x, ev.y,
+                                    static_cast<unsigned>(g_button_state),
+                                    g_drag_locked.load() ? 1 : 0,
+                                    g_drag_confined ? 1 : 0,
+                                    resync ? " RESYNC" : "");
+                        std::fflush(stdout);
+                    }
+                }
+            }
             if (input_trace_enabled()) {
                 // Motions during a drag, and the first few after it ends --
                 // the window where a jump would happen.
