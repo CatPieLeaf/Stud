@@ -1641,8 +1641,25 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     fns.glGetIntegerv_(GL_READ_BUFFER, &read_buf);
                     std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
                     fns.glReadPixels_(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-                    const char* path = std::getenv("STUD_DUMP_FRAME_PATH");
-                    if (path == nullptr) path = "/tmp/stud_frame.ppm";
+                    const char* path_base = std::getenv("STUD_DUMP_FRAME_PATH");
+                    if (path_base == nullptr) path_base = "/tmp/stud_frame.ppm";
+                    // Numbered, so consecutive frames do not overwrite each
+                    // other: comparing one frame with the NEXT one is the
+                    // whole point of dumping more than one, and a fixed
+                    // name silently made that impossible.
+                    std::string numbered(path_base);
+                    {
+                        const size_t dot = numbered.rfind('.');
+                        char suffix[32];
+                        std::snprintf(suffix, sizeof(suffix), "_%04llu",
+                                      static_cast<unsigned long long>(swap_seen));
+                        if (dot == std::string::npos) {
+                            numbered += suffix;
+                        } else {
+                            numbered.insert(dot, suffix);
+                        }
+                    }
+                    const char* path = numbered.c_str();
                     size_t nonblack = 0;
                     size_t white = 0;
                     for (size_t i = 0; i + 3 < px.size(); i += 4) {
