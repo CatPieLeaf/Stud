@@ -316,12 +316,14 @@ That last one is the file to read when something goes wrong, and the one to atta
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
- - [ANGLE](https://chromium.googlesource.com/angle/angle) — the GL translation layer (BSD)
+ - [ANGLE](https://chromium.googlesource.com/angle/angle) — the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
  - [bionic](https://android.googlesource.com/platform/bionic/) — Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
  - [libjnivm](https://github.com/ChristopherHX/libjnivm) — the JNI virtual machine Stud's Java layer stands on (MIT)
  - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) — Stud's upscaler is EASU and RCAS ported from AMD's own reference headers, vendored at `third_party/fidelityfx-fsr1` (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK), [PortAudio](https://www.portaudio.com/) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
+
+Every binary Stud redistributes carries its own licence and copyright notice. `tools/setup.sh` fetches them, and a package installs them to `/usr/share/licenses/stud/` and beside the libraries themselves.
 
 Stud itself is **AGPLv3**. Stud is and always will be Open Source.
 

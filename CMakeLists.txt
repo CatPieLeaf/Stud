@@ -187,12 +187,25 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.png"
         RENAME "${STUD_APP_ID}.png")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud")
+# AMD's FSR1 reference headers are vendored, and render-host's upscaler is
+# EASU and RCAS ported from them -- so MIT's notice travels with the build
+# output, not just with the source tree.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/fidelityfx-fsr1"
+        RENAME "LICENSE-FidelityFX-FSR1.txt")
 
 # The dependencies setup.sh fetched. They are not Stud's own code, but a
 # package has to carry them or the application cannot start: ANGLE is the
 # GL translation layer, and the bionic set is the real linker and libc
 # that load Roblox's engine. Both are redistributable -- ANGLE is BSD,
-# bionic is Apache-2.0 from AOSP -- and their licences ship beside them.
+# the bionic set is BSD and Apache-2.0 from AOSP -- and both licences
+# require their text and copyright to travel with the binaries.
+#
+# `tools/setup.sh` puts them in a `licenses/` directory beside each set,
+# so installing the directory carries them; they are ALSO installed under
+# share/licenses/stud/, which is where a distribution looks. If setup
+# could not fetch them it says so loudly -- a package built from a tree
+# without them is one that cannot legally be distributed.
 if(EXISTS "${STUD_THIRD_PARTY_DIR}/angle")
     install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/angle/"
             DESTINATION "${STUD_PRIVATE_LIB_DIR}/angle"
@@ -203,6 +216,17 @@ if(EXISTS "${STUD_THIRD_PARTY_DIR}/android-bionic")
             DESTINATION "${STUD_PRIVATE_LIB_DIR}/android-bionic"
             USE_SOURCE_PERMISSIONS)
 endif()
+foreach(stud_dep angle android-bionic)
+    if(EXISTS "${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses")
+        install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses/"
+                DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/${stud_dep}")
+    else()
+        message(WARNING
+            "no ${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses -- a package built from "
+            "this tree would redistribute ${stud_dep} with no licence text. "
+            "Run tools/setup.sh to fetch them.")
+    endif()
+endforeach()
 
 # Process B and the overlay libraries it binds over /system/lib64. Built
 # by the nested NDK sub-build, so they are installed from its output
