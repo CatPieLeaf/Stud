@@ -172,6 +172,34 @@ jobs:
           tar -C install-tree -xf "$archive"
           test -d install-tree/usr
 
+      - name: Each .SRCINFO must match the PKGBUILD it describes
+        # The AUR serves .SRCINFO, not the PKGBUILD -- so a stale one
+        # advertises dependencies the package does not actually declare.
+        # It is generated, never hand-edited, and drifted once already
+        # (a dependency added to both PKGBUILDs and to neither .SRCINFO).
+        run: |
+          cat > /tmp/srcinfo.sh <<'SCRIPT'
+          #!/bin/bash
+          set -eu
+          pacman -Sy --noconfirm --needed base-devel >/dev/null
+          useradd -m builder
+          status=0
+          for pair in "PKGBUILD:.SRCINFO" "PKGBUILD.stud-bin:.SRCINFO.stud-bin"; do
+            pkgbuild="/work/packaging/aur/${pair%%:*}"
+            srcinfo="/work/packaging/aur/${pair##*:}"
+            install -o builder -m644 "$pkgbuild" /home/builder/PKGBUILD
+            su builder -c "cd /home/builder && makepkg --printsrcinfo" > /tmp/generated
+            if ! diff -u "$srcinfo" /tmp/generated; then
+              echo "::error::${pair##*:} is stale -- regenerate it with: makepkg --printsrcinfo > ${pair##*:}"
+              status=1
+            fi
+          done
+          exit $status
+          SCRIPT
+          chmod +x /tmp/srcinfo.sh
+          podman run --rm -v "$PWD":/work:z -v /tmp/srcinfo.sh:/srcinfo.sh:z \
+            docker.io/library/archlinux:base-devel /srcinfo.sh
+
       - name: Package the Arch pkg.tar.zst
         # makepkg is Arch's and refuses to run as root, hence the
         # unprivileged user. It compiles nothing: the PKGBUILD copies the
