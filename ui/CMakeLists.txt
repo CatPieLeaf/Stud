@@ -79,6 +79,7 @@ add_executable(stud-ui
     src/desktop_entry.cpp
     src/diagnose.cpp
     src/settings_window.cpp
+    src/update_check.cpp
     src/tray.cpp
     resources/resources.qrc
 )

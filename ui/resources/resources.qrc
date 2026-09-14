@@ -2,5 +2,6 @@
     <qresource prefix="/">
         <file>stud-logo-color.png</file>
         <file>stud-logo.png</file>
+        <file>stud-logo-update.png</file>
     </qresource>
 </RCC>

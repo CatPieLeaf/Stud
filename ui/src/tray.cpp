@@ -10,6 +10,8 @@
 // the tray is the only other caller.
 namespace stud::ui { void terminate_stud_session(); }
 
+#include "update_check.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QFile>
@@ -19,6 +21,8 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QIcon>
+#include <QAction>
+#include <QDesktopServices>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
@@ -98,6 +102,9 @@ bool Tray::show() {
     icon_->setToolTip(QStringLiteral("Stud"));
 
     auto* menu = new QMenu();
+    // Kept so the update entry can be added to it later, when and if the
+    // check comes back saying there is one.
+    menu_ = menu;
     menu->addAction(QStringLiteral("Stud settings"), this, &Tray::openSettings);
     menu->addAction(QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
     menu->addAction(QStringLiteral("Export logs"), this, &Tray::exportLogs);
@@ -108,6 +115,12 @@ bool Tray::show() {
     icon_->setContextMenu(menu);
     icon_->show();
 
+    // Ask GitHub whether there is a newer Stud, once, in the background.
+    // Nothing appears unless there is -- see UpdateCheck.
+    connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this, &Tray::showUpdateAvailable);
+    if (UpdateCheck::updateAvailable()) showUpdateAvailable(UpdateCheck::latestVersion());
+    UpdateCheck::start();
+
     // The tray must not outlive the session it belongs to: once the game
     // is gone there is nothing for it to be a menu for, and an icon left
     // behind is worse than no icon.
@@ -115,6 +128,28 @@ bool Tray::show() {
     connect(watchdog, &QTimer::timeout, this, &Tray::checkSessionAlive);
     watchdog->start(2000);
     return true;
+}
+
+// A newer release exists: say so in the one place a user is already
+// looking, and give them somewhere to go.
+//
+// The icon changes as well as the menu, because a menu entry nobody opens
+// the menu to see is not a notification. It is deliberately NOT a popup:
+// an update is not urgent enough to interrupt a game.
+void Tray::showUpdateAvailable(const QString& latestVersion) {
+    if (icon_ == nullptr || updateAction_ != nullptr) return;
+    icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
+    icon_->setToolTip(QStringLiteral("Stud — version %1 is available").arg(latestVersion));
+    if (menu_ != nullptr) {
+        updateAction_ = new QAction(QStringLiteral("[!] Update Stud"), menu_);
+        connect(updateAction_, &QAction::triggered, this, [] {
+            QDesktopServices::openUrl(QUrl(UpdateCheck::releasesUrl()));
+        });
+        // At the top, above Settings: it is the only entry here that is
+        // news rather than a thing the user came to do.
+        menu_->insertAction(menu_->actions().value(0), updateAction_);
+        menu_->insertSeparator(menu_->actions().value(1));
+    }
 }
 
 void Tray::checkSessionAlive() {
