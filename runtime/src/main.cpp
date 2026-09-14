@@ -170,7 +170,13 @@ void link_engine_caches(const std::string& files_dir) {
 
 
 std::atomic<bool> g_should_keep_running{true};
-void handle_shutdown_signal(int) { g_should_keep_running.store(false, std::memory_order_relaxed); }
+void handle_shutdown_signal(int) {
+    g_should_keep_running.store(false, std::memory_order_relaxed);
+    // SIGTERM is as deliberate an exit as closing the window, and the
+    // engine's threads are about to lose the process under them either
+    // way. Async-signal-safe: it sets one atomic.
+    stud::jni_bridge::note_shutting_down();
+}
 
 // Real render context: reuses the SAME ANativeWindow GameActivity's own
 // onSurfaceCreatedNative already created (android-glue's per-jobject
@@ -2577,6 +2583,13 @@ int main(int argc, char** argv) {
         // Checked unconditionally now -- it used to sit inside Stud's
         // own fallback-render-context block, which no longer exists.
         if (!stud::render_client::connection().connected()) {
+            // Before anything else. The engine's threads start faulting
+            // the instant the host goes away -- their next GL or Vulkan
+            // call has nothing to talk to -- and that happens BEFORE this
+            // loop comes round to notice. Setting the flag only after the
+            // loop exits (as this used to) left exactly that window, and
+            // a core dump landed in it.
+            stud::jni_bridge::note_shutting_down();
             std::printf("stud: render-host connection lost -- shutting down\n");
             g_should_keep_running.store(false, std::memory_order_relaxed);
             render_host_gone = true;

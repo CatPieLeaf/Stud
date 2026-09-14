@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 
+#include <dlfcn.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -1280,6 +1281,21 @@ private:
     }
     void report_death(const char* which) {
         if (fd_ < 0) return;  // already reported
+        // The render host going away IS the shutdown, and this is the
+        // earliest anything in this process learns of it -- earlier than
+        // the main loop, which only looks every 250ms and was still
+        // sleeping while the engine's own threads faulted on the same
+        // dead socket.
+        //
+        // Resolved rather than called directly: this header is compiled
+        // into five separate .so files as well as the executable that
+        // defines the function, so the only way they can all reach the
+        // one real copy is by name at runtime. Absent (render-host's own
+        // process, which has no such symbol) it simply does nothing.
+        using NoteFn = void (*)();
+        static const NoteFn note =
+            reinterpret_cast<NoteFn>(::dlsym(RTLD_DEFAULT, "stud_note_shutting_down"));
+        if (note != nullptr) note();
         std::fprintf(stderr,
                      "stud: render-client: connection lost on %s (errno=%d %s) during call_id=%d "
                      "in_len=%u\n",
