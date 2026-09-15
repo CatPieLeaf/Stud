@@ -128,7 +128,7 @@ int main() {
         const QString source = QDir(dir).filePath(
             QString::fromStdString(name.substr(name.find_last_of('/') + 1)));
         QFile original(source);
-        original.open(QIODevice::ReadOnly);
+        check(original.open(QIODevice::ReadOnly), "the source log opened for reading");
         const QByteArray expected = original.readAll();
         if (static_cast<std::size_t>(expected.size()) != size ||
             std::memcmp(tar.data() + offset, expected.constData(), size) != 0) {
