@@ -65,8 +65,11 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # itself, it does not assume a distribution's package name, and naming
 # the package instead is what rpmlint calls explicit-lib-dependency.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()
-set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud wl-clipboard")(64bit)")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()(64bit)")
+# Weak, both of them: mangohud is a Settings toggle, and wl-clipboard is
+# what the tray's "copy server link" shells out to on Wayland. Neither
+# stops Stud from running.
+set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 # The bundled libraries are private to Stud: nothing else may resolve
 # against them, and rpm must not advertise them as provided.
