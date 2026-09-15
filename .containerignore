@@ -10,3 +10,9 @@ build-*/
 *.rpm
 *.deb
 third_party/appimage-tools/
+
+# Packaging staging directories and bundles, for the same reason.
+install-tree/
+deb-tree/
+*.pkg.tar.zst
+*.flatpak
