@@ -1,20 +1,14 @@
 {
+  "dependencies": [],
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/5353281c56bfb451",
-    "manifest_sha256": "5353281c56bfb45117be24c78e227056f86fc0de28b9c4d039327d60b20933c8",
     "image": "ghcr.io/catpieleaf/stud@sha256:bebcd045d10792ddb78290c853978fed707ffef73627a13845719f606ca8ac85",
-    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:bebcd045d10792ddb78290c853978fed707ffef73627a13845719f606ca8ac85",
     "manifest": {
       "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
-      "manifest_version": "3.0",
-      "name": "Stud",
-      "description": "Play Roblox on Linux.",
-      "version": "1.1.0",
-      "image": "ghcr.io/catpieleaf/stud@sha256:bebcd045d10792ddb78290c853978fed707ffef73627a13845719f606ca8ac85",
       "binaries": [
         "/usr/bin/stud"
       ],
+      "description": "Play Roblox on Linux.",
       "desktop_entries": [
         "/usr/share/applications/io.github.catpieleaf.Stud.desktop"
       ],
@@ -22,44 +16,54 @@
         "desktop"
       ],
       "idle_time": 0,
+      "image": "ghcr.io/catpieleaf/stud@sha256:bebcd045d10792ddb78290c853978fed707ffef73627a13845719f606ca8ac85",
+      "manifest_version": "3.0",
+      "name": "Stud",
       "override": {
-        "socketX11": false,
-        "displayX11": false,
-        "socketWayland": true,
-        "socketPulseAudio": true,
-        "socketSessionBus": false,
-        "socketSystemBus": false,
-        "socketSshAgent": false,
-        "socketCups": false,
-        "socketGpgAgent": false,
-        "socketAtSpiBus": false,
-        "socketBluetooth": false,
+        "asRoot": false,
         "bluetooth": false,
-        "deviceDri": true,
-        "deviceKvm": false,
-        "deviceShm": true,
+        "clipboard": {},
+        "cpuQuota": 0,
+        "deviceAll": false,
         "deviceAlsa": false,
-        "deviceVideo": false,
+        "deviceDri": true,
         "deviceFuse": false,
+        "deviceInput": false,
+        "deviceKvm": false,
+        "deviceSerial": false,
+        "deviceShm": true,
+        "deviceTTY": false,
         "deviceTun": false,
         "deviceUsb": false,
-        "deviceSerial": false,
-        "deviceInput": false,
-        "deviceTTY": false,
-        "deviceAll": false,
-        "notification": true,
-        "openURI": true,
-        "hostApplications": false,
+        "deviceVideo": false,
+        "displayX11": false,
         "filePicker": {
           "openFile": true,
           "persistent": true
         },
-        "clipboard": {},
+        "filesystem": [
+          {
+            "access": "read-only",
+            "path": "xdg-download"
+          },
+          {
+            "access": "read-only",
+            "path": "home/.config/kdeglobals"
+          }
+        ],
+        "hostApplications": false,
+        "memoryMaxMB": 0,
+        "network": true,
+        "notification": true,
+        "openURI": true,
+        "pidsMax": 0,
+        "process": false,
         "sessionBus": {
+          "own": [
+            "org.kde.StatusNotifierItem-"
+          ],
           "talk": [
             {
-              "name": "org.kde.kwalletd6",
-              "path": "/modules/kwalletd6",
               "interface": "org.kde.KWallet",
               "members": [
                 "open",
@@ -71,51 +75,47 @@
                 "createFolder",
                 "hasFolder",
                 "networkWallet"
-              ]
+              ],
+              "name": "org.kde.kwalletd6",
+              "path": "/modules/kwalletd6"
             },
             {
-              "name": "org.kde.StatusNotifierWatcher",
-              "path": "/StatusNotifierWatcher",
               "interface": "org.kde.StatusNotifierWatcher",
               "members": [
                 "RegisterStatusNotifierItem",
                 "RegisterStatusNotifierHost"
-              ]
+              ],
+              "name": "org.kde.StatusNotifierWatcher",
+              "path": "/StatusNotifierWatcher"
             },
             {
-              "name": "org.kde.StatusNotifierWatcher",
-              "path": "/StatusNotifierWatcher",
               "interface": "org.freedesktop.DBus.Properties",
               "members": [
                 "Get",
                 "GetAll",
                 "PropertiesChanged"
-              ]
+              ],
+              "name": "org.kde.StatusNotifierWatcher",
+              "path": "/StatusNotifierWatcher"
             }
-          ],
-          "own": [
-            "org.kde.StatusNotifierItem-"
           ]
         },
-        "filesystem": [
-          {
-            "path": "xdg-download",
-            "access": "read-only"
-          },
-          {
-            "path": "home/.config/kdeglobals",
-            "access": "read-only"
-          }
-        ],
-        "network": true,
-        "process": false,
-        "userNamespaces": true,
-        "memoryMaxMB": 0,
-        "cpuQuota": 0,
-        "pidsMax": 0,
-        "asRoot": false
-      }
-    }
-  },
-  "dependencies": []
+        "socketAtSpiBus": false,
+        "socketBluetooth": false,
+        "socketCups": false,
+        "socketGpgAgent": false,
+        "socketPulseAudio": true,
+        "socketSessionBus": false,
+        "socketSshAgent": false,
+        "socketSystemBus": false,
+        "socketWayland": true,
+        "socketX11": false,
+        "userNamespaces": true
+      },
+      "version": "1.1.1"
+    },
+    "manifest_sha256": "c093debea6abf522cf65b67a1e231519232175749bb177ea63a036198f9af7ba",
+    "origin": "local.cpak/package/c093debea6abf522",
+    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:bebcd045d10792ddb78290c853978fed707ffef73627a13845719f606ca8ac85"
+  }
 }

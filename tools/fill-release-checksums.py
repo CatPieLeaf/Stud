@@ -11,11 +11,11 @@ this fills them in from the one that does.
 Run it after a release is published, before submitting to the AUR or
 Flathub:
 
-    tools/fill-release-checksums.py 1.1.0
+    tools/fill-release-checksums.py 1.1.1
 
 With no network (or to redo it from values already in hand):
 
-    tools/fill-release-checksums.py 1.1.0 --source-sha <hex> --archive-sha <hex>
+    tools/fill-release-checksums.py 1.1.1 --source-sha <hex> --archive-sha <hex>
 
 `--check` reports what is filled in and what is still a placeholder,
 without writing anything.
@@ -136,7 +136,7 @@ def regenerate_srcinfo() -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("tag", help="the published tag, e.g. 1.1.0")
+    ap.add_argument("tag", help="the published tag, e.g. 1.1.1")
     ap.add_argument("--source-sha", help="sha256 of the tag's source tarball")
     ap.add_argument("--archive-sha", help="sha256 of stud-<tag>-x86_64.tar.zst")
     ap.add_argument("--image-digest", help="sha256:... of the published cpak image")
