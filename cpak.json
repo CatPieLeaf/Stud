@@ -80,6 +80,14 @@
             "GetAll",
             "PropertiesChanged"
           ]
+        },
+        {
+          "name": "org.freedesktop.Notifications",
+          "path": "/org/freedesktop/Notifications",
+          "interface": "org.freedesktop.Notifications",
+          "members": [
+            "Notify"
+          ]
         }
       ],
       "own": [
