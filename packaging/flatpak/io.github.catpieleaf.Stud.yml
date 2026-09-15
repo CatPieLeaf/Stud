@@ -130,7 +130,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.1/stud-1.1.1-x86_64.tar.zst
-        sha256: PLACEHOLDER_STUD_SHA256
+        sha256: 83658417b0a7a7a74116c0cae0b762baeb0cabfbe90599dbbe1792c9157468fa
         # The archive is the install tree, rooted at usr/.
         strip-components: 0
         only-arches:
@@ -152,7 +152,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.1.tar.gz
-        sha256: PLACEHOLDER_SOURCE_SHA256
+        sha256: 7360a64c20af8de9f6efd8dc20f479488f31f0ca6fe110c7ec769d7a204f07ad
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
         sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb

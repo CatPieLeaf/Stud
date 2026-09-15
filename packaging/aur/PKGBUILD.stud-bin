@@ -79,8 +79,8 @@ source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$
 # one is worse than an obvious gap: this carried the digest of a release
 # that was later deleted, which would have failed every install with a
 # corruption error rather than a missing-file one.
-sha256sums=('SKIP'
-            'SKIP')
+sha256sums=('83658417b0a7a7a74116c0cae0b762baeb0cabfbe90599dbbe1792c9157468fa'
+            '7360a64c20af8de9f6efd8dc20f479488f31f0ca6fe110c7ec769d7a204f07ad')
 
 build() {
   # Just the Qt half: STUD_BUILD_QT_ONLY skips the render host, the
