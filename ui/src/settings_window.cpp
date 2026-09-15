@@ -31,6 +31,8 @@
 #include <QSignalBlocker>
 #include <QTabWidget>
 #include <QPixmap>
+#include <QEvent>
+#include <QPainter>
 
 #include <fstream>
 
@@ -282,28 +284,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // actually running, so it appears only then, there is nothing to
     // restart otherwise, and Save already starts one when it has to.
     restartButton_ = new QPushButton(this);
-    // The desktop's own refresh icon, and Qt's built-in one when there is
-    // no icon theme to ask.
-    //
-    // fromTheme() returns nothing at all where no theme is installed, and
-    // a themed FALLBACK is no help because it fails for the same reason.
-    // This button carries no text. It is 36px of icon, so that left a
-    // blank square in the AppImage, which bundles no icon theme. Qt's
-    // standard icons come from the style and ship inside Qt itself, so
-    // they are there whatever the desktop has.
-    QIcon refresh = QIcon::fromTheme(QStringLiteral("view-refresh"),
-                                     QIcon::fromTheme(QStringLiteral("system-reboot")));
-    if (refresh.isNull()) {
-        refresh = style()->standardIcon(QStyle::SP_BrowserReload);
-    }
-    restartButton_->setIcon(refresh);
+    paintRestartIcon();
     restartButton_->setToolTip("Save and restart Stud");
     // Icon only: the row's width belongs to Save, and a refresh glyph says
-    // this on its own. Unless there is no glyph to be had anywhere, in
-    // which case a word beats an empty button.
-    if (restartButton_->icon().isNull()) {
-        restartButton_->setText(QStringLiteral("Restart"));
-    } else {
+    // this on its own. With no glyph anywhere, paintRestartIcon() leaves a
+    // word instead, and a word needs room.
+    if (!restartButton_->icon().isNull()) {
         restartButton_->setFixedWidth(36);
     }
     // Only when there is a session to restart. Opened from the desktop
@@ -646,6 +632,57 @@ void SettingsWindow::onBrowseApkClicked() {
 // Not a plain restart: settings are read when a session STARTS, so
 // restarting without saving would relaunch the old ones and look like the
 // change did nothing.
+void SettingsWindow::paintRestartIcon() {
+    // Draws the restart glyph in the palette's own button-text colour.
+    //
+    // Neither source of that glyph gets the colour right by itself. A Breeze
+    // monochrome icon is a fixed dark glyph, measured at rgb(35,37,40): KDE's
+    // own applications recolour it at runtime through KIconTheme, and a plain
+    // Qt application does not, so a dark colour scheme draws it dark on dark.
+    // Where no icon theme is installed, Qt falls back to SP_BrowserReload, a
+    // fixed blue-grey bitmap at rgb(59,107,146) whatever the scheme.
+    //
+    // Each is a single-colour glyph. Repainting every opaque pixel in the
+    // palette colour keeps the shape and settles the colour, and the button
+    // then follows an accent or a light/dark switch.
+    QIcon source = QIcon::fromTheme(QStringLiteral("view-refresh"),
+                                    QIcon::fromTheme(QStringLiteral("system-reboot")));
+    if (source.isNull()) {
+        source = style()->standardIcon(QStyle::SP_BrowserReload);
+    }
+    if (source.isNull()) {
+        // Nothing to draw anywhere: a word beats an empty button.
+        restartButton_->setIcon(QIcon());
+        restartButton_->setText(QStringLiteral("Restart"));
+        return;
+    }
+
+    const QColor colour = restartButton_->palette().buttonText().color();
+    QIcon painted;
+    // Several sizes, so a HiDPI screen picks a real one instead of scaling
+    // a small pixmap up.
+    for (const int size : {16, 22, 24, 32, 48}) {
+        QPixmap pixmap = source.pixmap(QSize(size, size));
+        if (pixmap.isNull()) continue;
+        QPainter painter(&pixmap);
+        // Keeps the glyph's own alpha, replaces its colour.
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(pixmap.rect(), colour);
+        painter.end();
+        painted.addPixmap(pixmap);
+    }
+    restartButton_->setIcon(painted.isNull() ? source : painted);
+}
+
+void SettingsWindow::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    // A colour-scheme switch while this window is open changes the colour
+    // the glyph belongs in.
+    if (event->type() == QEvent::PaletteChange && restartButton_ != nullptr) {
+        paintRestartIcon();
+    }
+}
+
 void SettingsWindow::onRestartClicked() {
     // Save first, through the ordinary path, settings are read when a
     // session STARTS, so restarting without saving would relaunch the old
