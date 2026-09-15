@@ -69,6 +69,14 @@ finish-args:
   # /dev/input at all, so Stud's own diagnostics report "controllers:
   # /dev/input unreadable" where a native run lists the real devices.
   - --device=input
+  # --device=input is only understood from flatpak 1.15.6, and an older
+  # one would take the app without honouring it. Flathub asks for the
+  # floor to be stated, and asks for a higher one than the protocol
+  # strictly needs, `finish-args-insufficient-required-flatpak:
+  # finish-args has 'input' or 'usb' device but 'require-version' is not
+  # >=1.16.0`, so 1.16.0 it is, which is the first stable release
+  # carrying it.
+  - --require-version=1.16.0
   # Discord Rich Presence, which is a plain socket in the runtime
   # directory, discord-ipc-0 through -9, tried in order
   # (render-host/src/discord_rpc.cpp). Not visible in the sandbox
@@ -118,13 +126,24 @@ finish-args:
   # region is known.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-  # Raising Stud's own window when a browser link arrives and Stud is
-  # already running. There is no portal for "focus my window", and the
-  # Wayland activation token belongs to the browser, so on KDE this goes
-  # through KWin's own scripting interface (render-host's
-  # raise_through_kwin). Without it the game opened behind whatever was
-  # in front.
-  - --talk-name=org.kde.KWin
+  # Deliberately NOT here: --talk-name=org.kde.KWin.
+  #
+  # render-host's last-resort way to raise the window when a browser link
+  # arrives and Stud is already running goes through KWin's own scripting
+  # interface, because xdg-activation cannot do it (measured: KDE passes
+  # no token to a URL handler, and a self-minted one is refused since its
+  # serial is from Stud's last input, not the browser's click). Flathub
+  # rejects that permission outright; `flatpak-builder-lint:
+  # finish-args-kwin-talk-name`, and it is a fair rejection: talking to
+  # KWin's scripting interface is running arbitrary code in the
+  # compositor.
+  #
+  # So in a Flatpak the window does not come forward on KDE, and the game
+  # opens behind whatever is in front. A user who wants it can grant the
+  # permission themselves, which is a decision that belongs to them
+  # rather than to this manifest:
+  #
+  #   flatpak override --user --talk-name=org.kde.KWin io.github.catpieleaf.Stud
 
 modules:
   # bubblewrap, from source. The runtime does not carry it, and Stud will
