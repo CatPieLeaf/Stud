@@ -65,7 +65,8 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # itself, it does not assume a distribution's package name, and naming
 # the package instead is what rpmlint calls explicit-lib-dependency.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()(64bit)")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()
+set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud wl-clipboard")(64bit)")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 # The bundled libraries are private to Stud: nothing else may resolve
 # against them, and rpm must not advertise them as provided.
@@ -144,7 +145,14 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
     "bubblewrap, libqt6gui6, libqt6widgets6, libqt6network6, libqt6webenginewidgets6, \
 libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
 libwayland-client0, libxkbcommon0")
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud")
+# wl-clipboard because the tray's "copy server link" shells out to
+# wl-copy: a Wayland compositor only accepts a clipboard offer with the
+# serial of a real input event on one of the application's own surfaces,
+# and the tray menu is the desktop's own, so Qt cannot copy from there
+# (ui/src/tray.cpp explains it at the call site). Recommended rather than
+# required, without it that one menu entry says what is missing, and
+# everything else works.
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard")
 # The bundled libraries are private to Stud. Without this, dpkg-shlibdeps
 # reads ANGLE and the bionic set and either invents dependencies that do
 # not exist or fails outright. They are not built against the host's

@@ -21,6 +21,7 @@ pkgbase = stud-bin
 	depends = openssl
 	depends = hicolor-icon-theme
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
+	optdepends = wl-clipboard: copying a server link from the tray menu on Wayland
 	provides = stud=1.1.0
 	conflicts = stud
 	options = !strip

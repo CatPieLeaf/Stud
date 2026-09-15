@@ -66,6 +66,7 @@ makedepends=(
 )
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
+  'wl-clipboard: copying a server link from the tray menu on Wayland'
 )
 # The tag carries no leading "v", match what is actually published.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
