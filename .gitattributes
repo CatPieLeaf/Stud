@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Not text, and diffing them is noise.
+*.png binary
+*.webp binary
+*.zst binary
+*.AppImage binary
