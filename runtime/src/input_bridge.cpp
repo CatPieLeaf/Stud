@@ -1979,7 +1979,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // when it last left, a delta across everything that
                 // happened outside the window, and the cursor jumped off
                 // the moment it came back in. Re-basing here is what makes
-                // entering seamless: the pointer really is at this point,
+                // entering smooth: the pointer really is at this point,
                 // so this is the one place adopting it is correct.
                 // Carrying whatever shift a camera drag left behind, so
                 // Nothing to carry across: a camera drag leaves the

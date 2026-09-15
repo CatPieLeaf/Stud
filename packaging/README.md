@@ -1,8 +1,8 @@
 # Packaging
 
-One install tree, three formats. `cmake --install` lays down a
-relocatable layout; the deb and the rpm are that tree packaged, and the
-AppImage is that tree bundled with its dependencies.
+One install tree, three formats. `cmake --install` lays down a relocatable
+layout. The deb and the rpm are that tree packaged. The AppImage is that
+tree plus its dependencies.
 
 ```
 <prefix>/bin/stud                     the launcher, the only thing on PATH
@@ -39,9 +39,9 @@ run and caches them in `third_party/appimage-tools`.
 
 ## What is bundled, and what is depended on
 
-Stud ships ANGLE and the bionic set in every format. Neither is Stud's
-own code, but the application cannot start without them, and both are
-redistributable: ANGLE is BSD, bionic is Apache-2.0 from AOSP.
+Stud ships ANGLE and the bionic set in every format. Neither is our code.
+Nothing starts without them, and both are redistributable: ANGLE is BSD,
+bionic is Apache-2.0 from AOSP.
 
 **bubblewrap is a dependency, never bundled.** Process B runs inside it
 and Stud refuses to launch without it. A distribution's own build carries
@@ -49,17 +49,17 @@ the AppArmor or SELinux policy that lets it create a user namespace;
 a binary copied into a package would be refused on exactly the
 distributions that matter.
 
-Qt is depended on by the deb and the rpm and bundled by the AppImage,
-which is the ordinary split, since a system package should use the system Qt.
+The deb and the rpm depend on Qt. The AppImage bundles it. That is the
+ordinary split: a system package should use the system Qt.
 
 ## Appearing in a software centre
 
-Discover, GNOME Software and the rest read AppStream. The component is
-`packaging/stud.metainfo.xml.in`, installed to
-`share/metainfo/<app-id>.metainfo.xml`, and it has the parts a centre
-needs to list an application rather than hide it: a reverse-DNS id, a
-`desktop-application` type, a launchable pointing at the desktop entry,
-a summary and description, a licence, a URL, and an OARS content rating.
+Discover, GNOME Software and the rest read AppStream. The component lives
+in `packaging/stud.metainfo.xml.in` and installs to
+`share/metainfo/<app-id>.metainfo.xml`. A centre hides an application
+whose component is incomplete, so this one carries the lot: reverse-DNS
+id, `desktop-application` type, a launchable pointing at the desktop
+entry, summary, description, licence, URL, OARS content rating.
 
 Three identifiers must agree or the entry does not resolve: the AppStream
 `<id>`, the desktop file's name, and the Wayland `app_id` both of Stud's
@@ -73,6 +73,6 @@ appstreamcli validate build/packaging/<app-id>.metainfo.xml
 desktop-file-validate build/packaging/<app-id>.desktop
 ```
 
-**Screenshots are missing.** A centre will list Stud without them but
-shows it poorly; they need hosting somewhere stable and adding as
-`<screenshots>` to the component.
+**Screenshots are missing.** A centre still lists Stud without them, just
+badly. They need hosting somewhere stable, then adding to the component as
+`<screenshots>`.
