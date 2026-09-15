@@ -26,6 +26,16 @@ depends on them.
   it compiles the decoder's dependencies out of the runtime sub-build's
   own checkout.
 
+- **`validate-payload.py`**: asks whether an install tree, an extracted
+  package or an AppImage is complete. It looks inside the binaries rather
+  than at file names, which is how a release once shipped a render host
+  with one embedded shader where a correct build has three.
+
+- **`compare-package-contents.py`**: compares a built package against the
+  install tree it came from, file by file, by digest. Arch relocates
+  `libexec/stud` to `lib/stud`, and that one mapping is applied before
+  comparing.
+
 - **`diag_launch_direct.cpp`** (`stud_diag_launch_direct`): launches
   Process B directly against a real extracted `libroblox.so`, skipping
   Process A's login and config entirely. Useful for bring-up questions
