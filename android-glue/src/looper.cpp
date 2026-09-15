@@ -165,8 +165,9 @@ ALooper* ALooper_forThread() { return t_looper; }
 void ALooper_acquire(ALooper* looper) {
     if (looper == nullptr) return;
     int new_ref = looper->ref_count.fetch_add(1) + 1;
-    std::fprintf(stderr, "stud: [ALooper] ALooper_acquire(%p) tid=%ld new_ref=%d\n",
-                 static_cast<void*>(looper), static_cast<long>(::syscall(SYS_gettid)), new_ref);
+    if (looper_trace_enabled())
+        std::fprintf(stderr, "stud: [ALooper] ALooper_acquire(%p) tid=%ld new_ref=%d\n",
+                     static_cast<void*>(looper), static_cast<long>(::syscall(SYS_gettid)), new_ref);
 }
 
 void ALooper_release(ALooper* looper) {
@@ -185,9 +186,10 @@ void ALooper_release(ALooper* looper) {
     // requiring every caller to null-check first.
     if (looper == nullptr) return;
     int prev_ref = looper->ref_count.fetch_sub(1);
-    std::fprintf(stderr, "stud: [ALooper] ALooper_release(%p) tid=%ld prev_ref=%d t_looper=%p\n",
-                 static_cast<void*>(looper), static_cast<long>(::syscall(SYS_gettid)), prev_ref,
-                 static_cast<void*>(t_looper));
+    if (looper_trace_enabled())
+        std::fprintf(stderr, "stud: [ALooper] ALooper_release(%p) tid=%ld prev_ref=%d t_looper=%p\n",
+                     static_cast<void*>(looper), static_cast<long>(::syscall(SYS_gettid)), prev_ref,
+                     static_cast<void*>(t_looper));
     if (prev_ref == 1) {
         ::close(looper->epoll_fd);
         if (t_looper == looper) t_looper = nullptr;
