@@ -134,10 +134,12 @@ set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # portaudio because render-host loads it by name at runtime rather than
 # linking it, so no dependency scan would ever find it.
 #
-# Qt is named by its Debian binary packages rather than a version:
-# whatever the distribution has is what this package builds against, and
-# pinning a minimum here would only make the package uninstallable on the
-# release it was built for.
+# Qt is named by its Debian binary packages rather than a version, which
+# is only honest if the deb really was built against the distribution's
+# own Qt. It was not, and the 1.1.0 deb installed happily on Ubuntu
+# 26.04 and then died with `libQt6Core.so.6: version 'Qt_6.11' not
+# found`, because it had been built on Fedora 44. The release workflow
+# builds it on ubuntu:26.04 now, which is what makes this list true.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
     "bubblewrap, libqt6gui6, libqt6widgets6, libqt6network6, libqt6webenginewidgets6, \
 libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
