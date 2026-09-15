@@ -215,6 +215,22 @@ PortAudio& portaudio() {
              "application.process.binary = Stud media.role = Game "
              "node.description = Stud node.name = Stud node.nick = Stud }",
              /*overwrite=*/0);
+    // The same job again for the OTHER ALSA plugin. Where the sound
+    // server is reached through alsa-plugins-pulseaudio rather than
+    // PipeWire's own plugin, which is what a container without
+    // /dev/snd ends up using, the name comes out as
+    // "ALSA plug-in [stud-render-host]": that plugin builds it from
+    // "ALSA plug-in [%s]" and libpulse's own pa_get_binary_name(),
+    // which reads /proc/self/exe and so ignores the program name set
+    // above. PULSE_PROP_OVERRIDE is the one channel it does honour.
+    //
+    // media.name stays "ALSA Playback" whatever is put here, since the
+    // plugin sets that per stream rather than on the connection. Mixers
+    // show application.name, which is the one that matters.
+    ::setenv("PULSE_PROP_OVERRIDE",
+             "application.name=Stud media.role=game "
+             "application.icon_name=io.github.catpieleaf.Stud",
+             /*overwrite=*/0);
     silence_alsa_probe_noise();
     // The host's own PortAudio first, always.
     //
