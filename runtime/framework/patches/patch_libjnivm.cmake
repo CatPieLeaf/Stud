@@ -22,8 +22,8 @@
 # (GIT_TAG main, not a pinned commit, see jni-bridge/CMakeLists.txt) and
 # a line-number-anchored diff would silently stop applying (or apply
 # wrong) the moment anything else in the file shifts. Matching against
-# the real, distinctive method bodies is robust to any unrelated
-# upstream change; it only fails loudly (see the checks below) if
+# the distinctive method bodies survives unrelated upstream changes.
+# It only fails loudly (see the checks below) if
 # libjnivm changes THESE specific 5 methods, which is the one thing this
 # patch actually depends on.
 

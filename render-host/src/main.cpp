@@ -12,8 +12,8 @@
 // versioning, glibc's own TLS models) to satisfy ANGLE's transitive
 // imports, dramatically harder and more fragile than anything
 // hand-loaded so far in this project. A real, separate glibc process
-// for ANGLE sidesteps that entirely: ANGLE loads via plain, ordinary,
-// fully-robust glibc dlopen(), zero hand-parsing needed. Same pattern
+// for ANGLE sidesteps that entirely: ANGLE loads through an ordinary
+// glibc dlopen(), with no hand-parsing at all. Same pattern
 // Chrome's own GPU process uses in production. User-approved pivot from
 // the original single-process plan text, proven end-to-end (real
 // bionic client, inside the real sandbox, driving real ANGLE->Vulkan->
