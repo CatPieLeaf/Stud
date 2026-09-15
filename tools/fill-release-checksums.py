@@ -76,6 +76,50 @@ def registry_digest(repo: str, tag: str) -> str:
         return ""
 
 
+def regenerate_srcinfo() -> bool:
+    """Rewrite both .SRCINFO files, which carry the sums just filled in.
+
+    The AUR reads .SRCINFO and not the PKGBUILD, so a stale one publishes
+    the wrong version and the wrong checksums. makepkg is Arch's, so this
+    uses it where it exists and an archlinux container otherwise, the
+    same thing the release workflow does to check they are current.
+    """
+    pairs = (("PKGBUILD", ".SRCINFO"), ("PKGBUILD.stud-bin", ".SRCINFO.stud-bin"))
+    aur = ROOT / "packaging/aur"
+    if shutil.which("makepkg"):
+        for pkgbuild, srcinfo in pairs:
+            shutil.copy(aur / pkgbuild, aur / "PKGBUILD.tmp")
+            out = subprocess.run(["makepkg", "--printsrcinfo", "-p", "PKGBUILD.tmp"],
+                                 cwd=aur, capture_output=True, text=True)
+            (aur / "PKGBUILD.tmp").unlink()
+            if out.returncode != 0:
+                print(f"makepkg failed for {pkgbuild}: {out.stderr.strip()}", file=sys.stderr)
+                return False
+            (aur / srcinfo).write_text(out.stdout)
+            print(f".SRCINFO:        {srcinfo} regenerated")
+        return True
+    if shutil.which("podman"):
+        script = (
+            "pacman -Sy --noconfirm --needed base-devel >/dev/null 2>&1; useradd -m b; "
+            'for p in "PKGBUILD:.SRCINFO" "PKGBUILD.stud-bin:.SRCINFO.stud-bin"; do '
+            'install -o b -m644 /work/packaging/aur/${p%%:*} /home/b/PKGBUILD; '
+            'su b -c "cd /home/b && makepkg --printsrcinfo" > /work/packaging/aur/${p##*:}; done')
+        rc = subprocess.run(["podman", "run", "--rm", "-v", f"{ROOT}:/work:z",
+                             "docker.io/library/archlinux:base-devel", "sh", "-c", script],
+                            capture_output=True).returncode
+        if rc != 0:
+            print("the archlinux container could not regenerate the .SRCINFO files",
+                  file=sys.stderr)
+            return False
+        print(".SRCINFO:        both regenerated (archlinux container)")
+        return True
+    print("neither makepkg nor podman is available, regenerate the .SRCINFO files by hand:",
+          file=sys.stderr)
+    print("  makepkg --printsrcinfo > packaging/aur/.SRCINFO", file=sys.stderr)
+    print("  makepkg --printsrcinfo > packaging/aur/.SRCINFO.stud-bin", file=sys.stderr)
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("tag", help="the published tag, e.g. 1.1.0")
@@ -158,9 +202,9 @@ def main() -> int:
             print(f"cpak is not installed, {lock.name} is now STALE, regenerate it with "
                   "`cpak lock cpak.json`", file=sys.stderr)
 
-    print("\nfilled. Regenerate the .SRCINFO files next (they carry the same sums):")
-    print("  makepkg --printsrcinfo > packaging/aur/.SRCINFO            # from PKGBUILD")
-    print("  makepkg --printsrcinfo > packaging/aur/.SRCINFO.stud-bin   # from PKGBUILD.stud-bin")
+    if not regenerate_srcinfo():
+        return 1
+    print("\nDone. Commit these, then copy them to the AUR and Flathub repositories.")
     return 0
 
 
