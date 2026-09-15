@@ -33,7 +33,7 @@ REPO = "CatPieLeaf/Stud"
 ROOT = Path(__file__).resolve().parent.parent
 
 MANIFEST = ROOT / "packaging/flatpak/io.github.catpieleaf.Stud.yml"
-CPAK = ROOT / "packaging/cpak/cpak.json"
+CPAK = ROOT / "cpak.json"
 PKGBUILD = ROOT / "packaging/aur/PKGBUILD"
 PKGBUILD_BIN = ROOT / "packaging/aur/PKGBUILD.stud-bin"
 

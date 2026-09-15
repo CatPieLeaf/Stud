@@ -4,7 +4,7 @@
   "name": "Stud",
   "description": "Play Roblox on Linux.",
   "version": "1.1.0",
-  "image": "ghcr.io/catpieleaf/stud:1.1.0",
+  "image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
   "binaries": [
     "/usr/bin/stud"
   ],
