@@ -1518,33 +1518,13 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             if (fns.eglChooseConfig_(g_displays.at(a[0]), config_attribs, &config, 1, &num_configs) !=
                     EGL_TRUE ||
                 num_configs == 0) {
-                std::fprintf(stderr, "stud-render-host: DIAG eglChooseConfig failed, error=0x%x\n",
+                std::fprintf(stderr, "stud-render-host: eglChooseConfig failed, error=0x%x\n",
                               fns.eglGetError_());
                 return kNullHandle;
-            }
-            {
-                EGLint config_id = -1, surface_type = -1, native_visual_id = -1;
-                fns.eglGetConfigAttrib_(g_displays.at(a[0]), config, EGL_CONFIG_ID, &config_id);
-                fns.eglGetConfigAttrib_(g_displays.at(a[0]), config, EGL_SURFACE_TYPE, &surface_type);
-                fns.eglGetConfigAttrib_(g_displays.at(a[0]), config, EGL_NATIVE_VISUAL_ID,
-                                          &native_visual_id);
-                std::fprintf(stderr,
-                              "stud-render-host: DIAG chosen config id=%d surface_type=0x%x "
-                              "native_visual_id=%d egl_window=%p wl_surface=%p\n",
-                              config_id, surface_type, native_visual_id,
-                              static_cast<void*>(window.egl_window),
-                              static_cast<void*>(window.surface));
             }
             return store(g_configs, config);
         }
         case CallId::EglCreateWindowSurface: {
-            if (window.egl_window != nullptr) {
-                std::fprintf(stderr,
-                              "stud-render-host: DIAG egl_window real size before create: "
-                              "width=%d height=%d attached_width=%d attached_height=%d\n",
-                              window.egl_window->width, window.egl_window->height,
-                              window.egl_window->attached_width, window.egl_window->attached_height);
-            }
             // Testable hypothesis (the engineering notes, "no kde window
             // at all" investigation): stud_try_render_window (a standalone
             // tool doing the exact same real window+EGL setup sequence)
@@ -1566,17 +1546,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 window.egl_native_window(), nullptr);
             if (s == EGL_NO_SURFACE) {
                 std::fprintf(stderr,
-                              "stud-render-host: DIAG eglCreateWindowSurface failed dpy=%p "
-                              "config_handle=%llu egl_window=%p error=0x%x\n",
-                              static_cast<void*>(g_displays.at(a[0])),
-                              static_cast<unsigned long long>(a[1]),
-                              static_cast<void*>(window.egl_window), fns.eglGetError_());
+                              "stud-render-host: eglCreateWindowSurface failed, error=0x%x\n",
+                              fns.eglGetError_());
             } else {
-                std::fprintf(stderr,
-                              "stud-render-host: DIAG eglCreateWindowSurface SUCCEEDED s=%p "
-                              "egl_window=%p (call #%d)\n",
-                              static_cast<void*>(s), static_cast<void*>(window.egl_window),
-                              ++g_window_surface_create_count);
+                ++g_window_surface_create_count;
             }
             if (s == EGL_NO_SURFACE) return kNullHandle;
             // ANGLE can hand back the *same* EGLSurface for repeated creates
@@ -1615,7 +1588,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             EGLBoolean ok = fns.eglMakeCurrent_(g_displays.at(a[0]), s, s, c);
             if (ok == EGL_TRUE && c != EGL_NO_CONTEXT) enable_requestable_extensions(fns);
             if (ok != EGL_TRUE) {
-                std::printf("stud-render-host: DIAG eglMakeCurrent FAILED dpy=%llu surf=%llu ctx=%llu "
+                std::printf("stud-render-host: eglMakeCurrent failed dpy=%llu surf=%llu ctx=%llu "
                             "egl_error=0x%x\n",
                             static_cast<unsigned long long>(a[0]),
                             static_cast<unsigned long long>(a[1]),
@@ -1983,7 +1956,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     GLsizei len = 0;
                     fns.glGetProgramInfoLog_(static_cast<GLuint>(a[0]), sizeof(log), &len, log);
                     log[len < static_cast<GLsizei>(sizeof(log)) ? len : sizeof(log) - 1] = '\0';
-                    std::printf("stud-render-host: DIAG link FAILED program=%llu log=%s\n",
+                    std::printf("stud-render-host: shader program %llu failed to link: %s\n",
                                 static_cast<unsigned long long>(a[0]), log);
                 }
             }

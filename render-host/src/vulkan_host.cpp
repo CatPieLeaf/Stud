@@ -3515,7 +3515,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
     VkRenderPass pass = VK_NULL_HANDLE;
     VkResult res = l.create_render_pass(l.device, &ci, nullptr, &pass);
     if (vk_object_trace_enabled()) {
-        std::printf("stud-render-host: DIAG vkCreateRenderPass att=%u sub=%u dep=%u -> %d\n",
+        std::printf("stud-render-host: vkCreateRenderPass att=%u sub=%u dep=%u -> %d\n",
                     attachment_count, subpass_count, dep_count, static_cast<int>(res));
     }
     // The per-attachment dump belongs with the line above it: useful
@@ -3569,9 +3569,11 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
     }
     if (targets_screen) {
         l.swapchain_framebuffers.insert(to_u64(fb));
-        std::printf("stud-render-host: framebuffer %llu targets the swapchain (%ux%u)\n",
-                    static_cast<unsigned long long>(to_u64(fb)), ci.width, ci.height);
-        std::fflush(stdout);
+        if (vk_object_trace_enabled()) {
+            std::printf("stud-render-host: framebuffer %llu targets the swapchain (%ux%u)\n",
+                        static_cast<unsigned long long>(to_u64(fb)), ci.width, ci.height);
+            std::fflush(stdout);
+        }
     }
     return write_handle(to_u64(fb), out, out_len);
 }
@@ -4215,7 +4217,7 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
     }
     uint32_t index = 0;
     static int acquires = 0;
-    if (acquires < 5) {
+    if (acquires < 5 && vk_object_trace_enabled()) {
         std::printf("stud-render-host: vkAcquireNextImageKHR #%d\n", acquires);
         std::fflush(stdout);
     }
@@ -4462,10 +4464,11 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     static_cast<int>(::getpid()));
         std::fflush(stdout);
     }
-    // The first few frames say the pipeline started; after that only a
-    // failure, or a heartbeat rare enough to be worth reading (~a minute
-    // at 60fps).
-    if (presents < 5 || res != VK_SUCCESS || (presents % 3600) == 0) {
+    // A failure, or a heartbeat rare enough to be worth reading (~a minute
+    // at 60fps). The first few frames also say the pipeline started, which
+    // is worth a line only while tracing.
+    if (res != VK_SUCCESS || (presents % 3600) == 0 ||
+        (presents < 5 && vk_object_trace_enabled())) {
         std::printf("stud-render-host: vkQueuePresentKHR #%d -> %d (%u swapchain(s))\n", presents,
                     static_cast<int>(res), ns);
         std::fflush(stdout);
@@ -4587,8 +4590,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 // screen at all. After that it is one line per 200
                 // render passes forever, which in a real game is 183 of
                 // them in one session saying the same thing.
-                if (to_screen < 3) {
-                    std::printf("stud-render-host: render pass #%d TARGETS THE SCREEN\n",
+                if (to_screen < 3 && vk_object_trace_enabled()) {
+                    std::printf("stud-render-host: render pass #%d draws to the screen\n",
                                 to_screen);
                     std::fflush(stdout);
                 }
@@ -5038,8 +5041,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             const uint32_t filter = r.u32();
             if (l.swapchain_images.count(to_u64(dst)) != 0) {
                 static int blits = 0;
-                if (blits < 3) {
-                    std::printf("stud-render-host: blit #%d TARGETS THE SCREEN\n", blits);
+                if (blits < 3 && vk_object_trace_enabled()) {
+                    std::printf("stud-render-host: blit #%d draws to the screen\n", blits);
                     std::fflush(stdout);
                 }
                 ++blits;

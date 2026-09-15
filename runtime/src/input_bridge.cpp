@@ -1657,63 +1657,23 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // IME, never as key events.
             long text_box = NativeGLJavaInterfaceStub::active_text_box();
 
-            // TEMPORARY, env-gated (STUD_DIAG_TEXTBOX=1), never armed by
-            // default: read the engine's own focused-text-box fields on the
-            // id-4 service singleton directly.
-            //
-            // RESULT, live: 0x9c8 is null while 0xa78/0xa80 both hold real
-            // pointers. An earlier reading of this took the null 0x9c8 for
-            // the reason typing does not echo; that is RETRACTED. Its
-            // consumer only takes 0x9c8 as a fast path and falls through to
+            // What a version-specific read of the engine's own
+            // focused-text-box fields found, while that probe existed: on
+            // the id-4 service singleton, 0x9c8 is null while 0xa78/0xa80
+            // both hold real pointers. An earlier reading took that null
+            // 0x9c8 for the reason typing does not echo, and is retracted.
+            // Its consumer takes 0x9c8 only as a fast path, falling through to
             // a second path built on 0xa80, so
             // syncTextboxTextAndCursorPosition2 really does reach the
             // focused box. See this file's header for what actually
-            // suppresses the drawing.
-            //
-            // Version-specific offsets, so this is an investigation tool
-            // only and must never become load-bearing: see this project's
-            // own non-negotiable constraints.
-            if (std::getenv("STUD_DIAG_TEXTBOX") != nullptr && down && text_box != 0) {
-                static int reported = 0;
-                if (reported < 3) {
-                    ++reported;
-                    auto* anchor = reinterpret_cast<const unsigned char*>(fns.key_event);
-                    if (anchor != nullptr) {
-                        const unsigned char* base = anchor - 0x2e4fcff;
-                        auto read_field = [base](unsigned long long packed) -> unsigned long long {
-                            const unsigned long long obj_off = packed >> 16;
-                            const unsigned long long field = packed & 0xffff;
-                            return *reinterpret_cast<const unsigned long long*>(base + obj_off +
-                                                                                 field);
-                        };
-                        // The three fields the engine itself reads off this
-                        // one service object: 0x9c8 is what the live sync
-                        // path bails on, 0xa78/0xa80 are what
-                        // nativeGetTextBoxInfo reads for the same box.
-                        for (unsigned long long obj : {0x72f2c80ULL, 0x72f3d50ULL}) {
-                            unsigned long long v9c8 = 0, va78 = 0, va80 = 0;
-                            const bool a = call_trapping_abort_with_result(read_field, v9c8,
-                                                                          (obj << 16) | 0x9c8);
-                            const bool b = call_trapping_abort_with_result(read_field, va78,
-                                                                          (obj << 16) | 0xa78);
-                            const bool c = call_trapping_abort_with_result(read_field, va80,
-                                                                          (obj << 16) | 0xa80);
-                            std::printf("stud: DIAG textbox obj=0x%llx 0x9c8=%s0x%llx "
-                                        "0xa78=%s0x%llx 0xa80=%s0x%llx\n",
-                                        obj, a ? "" : "(trapped) ", v9c8, b ? "" : "(trapped) ",
-                                        va78, c ? "" : "(trapped) ", va80);
-                        }
-                        std::fflush(stdout);
-                    }
-                }
-            }
+            // suppresses the drawing. The probe itself is gone: it answered
+            // its question, and its offsets belong to one Roblox build.
             // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
             // real device performs when its keyboard opens over the GL view.
             // This was tried twice before and disproven, but both attempts
             // predate `java.lang.String.getBytes` existing at all, and
             // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
-            // focused box's own text. Off by default; the DIAG probe above
-            // reports whether it arms the pointer sync needs.
+            // focused box's own text. Off by default.
             if (down && text_box != 0 && std::getenv("STUD_IME_HANDSHAKE") != nullptr) {
                 static bool handshaken = false;
                 if (!handshaken) {

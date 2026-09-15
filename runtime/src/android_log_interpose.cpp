@@ -1,34 +1,19 @@
-// Caught in testing: investigation this session (the engineering notes, "FLog
-// output has never appeared" gap): the earlier assumption that
-// __android_log_set_logger(__android_log_stderr_logger) (main.cpp) was
-// confirmed working, based on real linker warnings and [JNIVM] diagnostic
-// lines appearing in Stud's own captured output, turns out to be a false
-// correlation, checked directly this session: [JNIVM] lines are a
-// plain printf() (libjnivm's own internal/log.h, no HAVE_LOGGER defined
-// in this build), nothing to do with liblog at all. Whether the
-// registered logger callback ever actually receives libroblox.so's own
-// real FLog calls (confirmed, against the library's exported symbols, to import
-// __android_log_write/print/buf_write directly) was never actually
-// verified independently.
+// Roblox's own log, on this process's stdout.
 //
-// This interposes the real __android_log_write/print/buf_write/vprint
-// family at the ELF symbol level, same real technique already proven
-// by pthread_create_interpose.cpp in this same directory: a real,
-// exported symbol in this executable's own global scope takes priority
-// over real liblog.so's own definition for every call any loaded
-// library (including libroblox.so) makes, standard ELF symbol
-// resolution. Every call is printed directly to this process's own
-// stdout (bypassing __android_log_set_logger's registered callback
-// entirely, so this works regardless of whatever that mechanism is or
-// isn't doing), then forwarded to the real underlying liblog
-// implementation via RTLD_NEXT so real behavior (including the
-// stderr-logger redirect main.cpp already sets up) is unaffected.
+// The engine logs through Android's liblog, importing
+// __android_log_write/print/buf_write directly, confirmed against its own
+// exported symbols. On a device those reach logd. Stud has no logd, so
+// these functions are interposed at the ELF symbol level: an exported
+// symbol in this executable's own global scope wins over liblog.so's for
+// every call any loaded library makes, which is ordinary ELF symbol
+// resolution and the same technique pthread_create_interpose.cpp in this
+// directory already uses. Each call is printed, then forwarded to the real
+// implementation through RTLD_NEXT so nothing downstream changes.
 //
-// This directly answers the long-open question: does libroblox.so's own
-// FLog machinery call these functions at all, and if so, with what
-// priority/tag/content, something no prior technique in this project
-// (static analysis, planted breakpoints) could observe
-// without it either already being visible in liblog's own output.
+// Nearly all of a session log's content arrives this way, and it is the
+// only view of what the engine itself thinks is happening, FLog/DFLog
+// categories and warnings and errors included. Nothing here is Stud's own
+// tracing: the priority, tag and text are the engine's.
 
 #include <cstdarg>
 #include <cstdio>
@@ -61,7 +46,7 @@ const char* priority_name(int prio) {
 
 extern "C" int __android_log_write(int prio, const char* tag, const char* text) {
     if (text != nullptr) stud::jni_bridge::note_engine_log_line(text, std::strlen(text));
-    std::printf("[FLOG-INTERPOSE %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)",
+    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)",
                 text ? text : "(null)");
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*);
@@ -71,7 +56,7 @@ extern "C" int __android_log_write(int prio, const char* tag, const char* text) 
 
 extern "C" int __android_log_buf_write(int buf_id, int prio, const char* tag, const char* text) {
     if (text != nullptr) stud::jni_bridge::note_engine_log_line(text, std::strlen(text));
-    std::printf("[FLOG-INTERPOSE buf=%d %s/%s]: %s\n", buf_id, priority_name(prio),
+    std::printf("[roblox buf=%d %s/%s]: %s\n", buf_id, priority_name(prio),
                 tag ? tag : "(null)", text ? text : "(null)");
     std::fflush(stdout);
     using RealFn = int (*)(int, int, const char*, const char*);
@@ -86,7 +71,7 @@ extern "C" int __android_log_vprint(int prio, const char* tag, const char* fmt, 
     std::vsnprintf(buf, sizeof(buf), fmt ? fmt : "", ap_copy);
     va_end(ap_copy);
     stud::jni_bridge::note_engine_log_line(buf, std::strlen(buf));
-    std::printf("[FLOG-INTERPOSE %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
+    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*, va_list);
     static auto real = reinterpret_cast<RealFn>(::dlsym(RTLD_NEXT, "__android_log_vprint"));
@@ -107,7 +92,7 @@ extern "C" int __android_log_print(int prio, const char* tag, const char* fmt, .
     std::vsnprintf(buf, sizeof(buf), fmt ? fmt : "", ap);
     va_end(ap);
     stud::jni_bridge::note_engine_log_line(buf, std::strlen(buf));
-    std::printf("[FLOG-INTERPOSE %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
+    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*, va_list);
     static auto real = reinterpret_cast<RealFn>(::dlsym(RTLD_NEXT, "__android_log_vprint"));
@@ -131,7 +116,7 @@ extern "C" void __android_log_assert(const char* cond, const char* tag, const ch
     } else {
         std::snprintf(buf, sizeof(buf), "Assertion failed: %s", cond ? cond : "(null)");
     }
-    std::printf("[FLOG-INTERPOSE ASSERT %s]: %s\n", tag ? tag : "(null)", buf);
+    std::printf("[roblox assert %s]: %s\n", tag ? tag : "(null)", buf);
     std::fflush(stdout);
     __android_log_write(7, tag, buf);
     std::abort();

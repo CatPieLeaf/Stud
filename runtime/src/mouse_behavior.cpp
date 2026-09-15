@@ -115,9 +115,9 @@ bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
     }
     p.valid = true;
     g_probe = p;
-    std::printf("stud: MouseBehavior probe ready: getter(%d), guard +0x%x, subsystem +0x%x, "
-                "behavior +0x%x\n",
-                p.getter_arg, p.guard_offset, p.subsystem_offset, p.behavior_offset);
+    // The offsets themselves are decoded per build and say nothing useful
+    // in a log; that it decoded at all is the fact worth keeping.
+    std::printf("stud: MouseBehavior decoded from this build\n");
     std::fflush(stdout);
     return true;
 }

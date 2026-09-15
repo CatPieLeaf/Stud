@@ -51,8 +51,9 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     using InitNativeCodeFn = jlong (*)(JNIEnv*, jobject, jstring, jstring, jstring, jobject,
                                         jbyteArray, jobject);
     void* addr = lib.find_symbol("Java_com_google_androidgamesdk_GameActivity_initializeNativeCode");
-    std::fprintf(stderr, "stud: initializeNativeCode real resolved address = %p\n", addr);
     if (addr == nullptr) {
+        std::fprintf(stderr, "stud: GameActivity_initializeNativeCode is not exported by this "
+                             "libroblox.so, so there is no AGDK lifecycle\n");
         return out;
     }
     out.initialize_native_code_found = true;
@@ -74,14 +75,16 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     jobject configuration_instance = env.createLocalReference(std::make_shared<ConfigurationStub>());
 
     ALooper* looper_on_this_thread = ALooper_forThread();
-    std::fprintf(stderr, "stud: ALooper_forThread() on the calling thread = %p%s\n",
-                 static_cast<void*>(looper_on_this_thread),
-                 looper_on_this_thread == nullptr ? ", NULL" : "");
+    if (looper_on_this_thread == nullptr) {
+        // AGDK's own initializeNativeCode returns null on this, silently.
+        std::fprintf(stderr, "stud: no ALooper on the thread calling initializeNativeCode\n");
+    }
     int probe_pipe_fds[2];
     int probe_pipe_result = ::pipe(probe_pipe_fds);
-    std::fprintf(stderr, "stud: real pipe() probe (matches AGDK's own initializeNativeCode_native "
-                          "internal call) = %d%s\n",
-                 probe_pipe_result, probe_pipe_result != 0 ? ", FAILED" : ", ok");
+    if (probe_pipe_result != 0) {
+        // The other thing AGDK's own initializeNativeCode returns null on.
+        std::fprintf(stderr, "stud: pipe() failed before initializeNativeCode\n");
+    }
     if (probe_pipe_result == 0) {
         ::close(probe_pipe_fds[0]);
         ::close(probe_pipe_fds[1]);
@@ -109,9 +112,10 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     // knowing. This is a diagnostic only, not (yet) a behavior change,
     // never observed to actually be null in testing so far, but no
     // prior test explicitly checked, either.
-    std::fprintf(stderr, "stud: GameActivity_initializeNativeCode real return value (NativeCode*) = 0x%lx%s\n",
-                 static_cast<unsigned long>(out.game_activity_ptr),
-                 out.game_activity_ptr == 0 ? ", NULL, real AGDK early-return (see doc comment)" : "");
+    if (out.game_activity_ptr == 0) {
+        std::fprintf(stderr, "stud: GameActivity_initializeNativeCode returned NULL, so every "
+                             "lifecycle call below is a no-op (see this file's doc comment)\n");
+    }
 
     // Permanent: Stud plays the "Java side" role directly, calling
     // AGDK's own real, RegisterNatives()-installed lifecycle methods via
