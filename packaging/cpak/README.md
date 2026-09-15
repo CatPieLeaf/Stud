@@ -82,6 +82,22 @@ demonstrably does:
   than letting an application address it. Whether QtKeychain reaches it
   through that mediation is untested; see the gap below.
 
+  Live-tested inside cpak and it works: `secret "localstorage" stored
+  (encrypted, key in the keyring)`, with the encrypted file on disk in the
+  sandbox's own data directory. So the keyring is NOT the gap this file
+  used to warn about.
+
+  The system tray IS a gap, and it is cpak's to fix. Qt decides whether a
+  tray exists by asking the BUS DAEMON whether org.kde.StatusNotifierWatcher
+  has an owner, and cpak rejects a policy that names org.freedesktop.DBus
+  ("session bus policy cannot call org.freedesktop.DBus"); it mediates
+  the daemon itself. Granting talk to the watcher and its properties, and
+  own of org.kde.StatusNotifierItem-, is not enough: the question is asked
+  before any of that, so Qt answers "no tray" and Stud logs `no system
+  tray available, exiting after launch`. Verified from the host: no Stud
+  item ever appears in the watcher's RegisteredStatusNotifierItems while a
+  cpak session runs.
+
   The login cookie is stored encrypted under
   Stud's own data directory, and the key that decrypts it is held
   through the Secret Service (and KWallet on KDE). Without the keyring
