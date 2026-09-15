@@ -76,6 +76,20 @@ def registry_digest(repo: str, tag: str) -> str:
         return ""
 
 
+def report_change(where: str, what: str, old: str, new: str) -> None:
+    """Say when a value is REPLACED, not merely written.
+
+    A changed sum means the file it describes was republished, which is
+    worth seeing go past: it is also what a wrong --tag looks like.
+    """
+    if old == new:
+        return
+    if HEX.match(old):
+        print(f"{where}: {what} changed\n    {old}\n -> {new}")
+    else:
+        print(f"{where}: {what} filled in")
+
+
 def regenerate_srcinfo() -> bool:
     """Rewrite both .SRCINFO files, which carry the sums just filled in.
 
@@ -137,11 +151,25 @@ def main() -> int:
         image = json.loads(CPAK.read_text())["image"]
         pinned = "@sha256:" in image
         print(f"{CPAK.relative_to(ROOT)}: {'pinned' if pinned else 'on a tag'} ({image})")
+
+        # Pinned is not the same as current. A rebuilt release publishes a
+        # new image under the same tag, and a manifest still pinned to the
+        # old digest installs the old Stud, which looks exactly like a fix
+        # that did not work. Cheap to ask, so ask.
+        stale = False
+        if pinned:
+            repo, _, digest = image.partition("@")
+            published = registry_digest(repo, args.tag)
+            if published and published != digest:
+                print(f"{CPAK.relative_to(ROOT)}: STALE. {args.tag} now publishes\n"
+                      f"    {published}\n"
+                      f"  refill with --image-digest {published}", file=sys.stderr)
+                stale = True
         # Non-zero when anything is still a placeholder, so this can gate a
         # release step rather than only being read by a person.
         pending = any("PLACEHOLDER_" in p.read_text() or "'SKIP'" in p.read_text()
                       for p in (MANIFEST, PKGBUILD, PKGBUILD_BIN))
-        return 1 if (pending or not pinned) else 0
+        return 1 if (pending or not pinned or stale) else 0
 
     source_sha = args.source_sha
     archive_sha = args.archive_sha
@@ -157,30 +185,49 @@ def main() -> int:
             print(f"{name} is not a sha256: {value}", file=sys.stderr)
             return 1
 
-    # The Flathub manifest: one archive each, named by its own placeholder.
+    # A release can be rebuilt: delete a tag, push it again, and every asset
+    # is republished under the same name with different bytes. So these are
+    # matched by where they sit rather than by a placeholder that exists only
+    # until the first fill. An already-filled value is the stale case that
+    # most needs rewriting, and skipping it silently left AUR and Flathub
+    # advertising sums no published file has.
+
+    # The Flathub manifest: the sha256 under each of Stud's own two urls.
+    # Only those; every other source in the file is a third-party pin.
     text = MANIFEST.read_text()
-    for placeholder, value in (("PLACEHOLDER_STUD_SHA256", archive_sha),
-                               ("PLACEHOLDER_SOURCE_SHA256", source_sha)):
-        if placeholder not in text:
-            print(f"{MANIFEST.name}: {placeholder} already filled, left alone")
-            continue
-        text = text.replace(placeholder, value)
+    for url_marker, value in (
+            (f"/releases/download/{args.tag}/stud-{args.tag}-x86_64.tar.zst", archive_sha),
+            (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha)):
+        pattern = re.compile(
+            r"(url:\s*\S*" + re.escape(url_marker) + r"\s*\n\s*sha256:\s*)(\S+)")
+        match = pattern.search(text)
+        if match is None:
+            print(f"{MANIFEST.name}: no source found for {url_marker}", file=sys.stderr)
+            return 1
+        report_change(MANIFEST.name, url_marker, match.group(2), value)
+        text = pattern.sub(lambda m: m.group(1) + value, text, count=1)
     MANIFEST.write_text(text)
 
     # The source PKGBUILD has one source: the tag's tarball.
     text = PKGBUILD.read_text()
-    if text.count("sha256sums=('SKIP')") == 1:
-        PKGBUILD.write_text(text.replace("sha256sums=('SKIP')", f"sha256sums=('{source_sha}')"))
-    else:
-        print(f"{PKGBUILD.name}: already filled, left alone")
+    single = re.compile(r"sha256sums=\('(\S+)'\)")
+    match = single.search(text)
+    if match is None:
+        print(f"{PKGBUILD.name}: no sha256sums= line found", file=sys.stderr)
+        return 1
+    report_change(PKGBUILD.name, "source tarball", match.group(1), source_sha)
+    PKGBUILD.write_text(single.sub(f"sha256sums=('{source_sha}')", text, count=1))
 
     # stud-bin has two, in source=() order: the release archive, then the
     # tag's tarball for the Qt half it builds itself.
     text = PKGBUILD_BIN.read_text()
-    old = "sha256sums=('SKIP'\n            'SKIP')"
-    if old in text:
-        PKGBUILD_BIN.write_text(
-            text.replace(old, f"sha256sums=('{archive_sha}'\n            '{source_sha}')"))
+    pair = re.compile(r"sha256sums=\('(\S+)'\n(\s+)'(\S+)'\)")
+    match = pair.search(text)
+    if match is not None:
+        report_change(PKGBUILD_BIN.name, "release archive", match.group(1), archive_sha)
+        report_change(PKGBUILD_BIN.name, "source tarball", match.group(3), source_sha)
+        PKGBUILD_BIN.write_text(pair.sub(
+            f"sha256sums=('{archive_sha}'\n{match.group(2)}'{source_sha}')", text, count=1))
     else:
         print(f"{PKGBUILD_BIN.name}: already filled, left alone")
 
