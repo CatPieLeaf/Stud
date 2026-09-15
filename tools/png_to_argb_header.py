@@ -106,4 +106,5 @@ def main():
                 f"{len(values)};\n")
 
 
-main()
+if __name__ == "__main__":
+    main()
