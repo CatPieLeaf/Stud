@@ -118,6 +118,13 @@ finish-args:
   # region is known.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
+  # Raising Stud's own window when a browser link arrives and Stud is
+  # already running. There is no portal for "focus my window", and the
+  # Wayland activation token belongs to the browser, so on KDE this goes
+  # through KWin's own scripting interface (render-host's
+  # raise_through_kwin). Without it the game opened behind whatever was
+  # in front.
+  - --talk-name=org.kde.KWin
 
 modules:
   # bubblewrap, from source. The runtime does not carry it, and Stud will
@@ -140,6 +147,33 @@ modules:
     cleanup:
       - /share/bash-completion
       - /share/zsh
+
+  # wl-clipboard, for the tray's "copy server link".
+  #
+  # A Wayland compositor only accepts a clipboard offer with the serial
+  # of a real input event on one of the application's own surfaces, and
+  # the tray menu is the desktop's own, not a Qt surface, so
+  # QClipboard::setText copies nothing from there and Stud shells out to
+  # wl-copy, which owns the selection in its own process (ui/src/tray.cpp
+  # explains it at the call site). A distribution install gets that from
+  # the wl-clipboard package; inside the sandbox it has to be here, or
+  # the menu entry reports "this desktop needs wl-clipboard installed".
+  - name: wl-clipboard
+    buildsystem: meson
+    config-opts:
+      # Its fish completions install to an absolute /usr/share/fish,
+      # which is read-only here, the build died on it with
+      # `Unhandled python OSError` out of meson's install step. Stud
+      # calls the binary; no shell needs to complete it.
+      - -Dfishcompletiondir=no
+      - -Dzshcompletiondir=no
+    sources:
+      - type: archive
+        url: https://github.com/bugaevc/wl-clipboard/archive/refs/tags/v2.2.1.tar.gz
+        sha256: 6eb8081207fb5581d1d82c4bcd9587205a31a3d47bea3ebeb7f41aa1143783eb
+    cleanup:
+      - /share/man
+      - /share/bash-completion
 
   # PortAudio. render-host loads it by name at runtime, so it must be in
   # the sandbox even though nothing links against it.
