@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/fbb56ea57ac0e36f",
-    "manifest_sha256": "fbb56ea57ac0e36fb217250ff26198c0ea10eed10d2e05e1bbb071cc957254c5",
+    "origin": "local.cpak/package/83078f16492f06e6",
+    "manifest_sha256": "83078f16492f06e60bdda36826633f332e982040d115b98ade6fd972ca0f8e44",
     "image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
     "manifest": {
@@ -78,7 +78,18 @@
               "path": "/StatusNotifierWatcher",
               "interface": "org.kde.StatusNotifierWatcher",
               "members": [
-                "RegisterStatusNotifierItem"
+                "RegisterStatusNotifierItem",
+                "RegisterStatusNotifierHost"
+              ]
+            },
+            {
+              "name": "org.kde.StatusNotifierWatcher",
+              "path": "/StatusNotifierWatcher",
+              "interface": "org.freedesktop.DBus.Properties",
+              "members": [
+                "Get",
+                "GetAll",
+                "PropertiesChanged"
               ]
             }
           ],
