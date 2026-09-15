@@ -782,4 +782,4 @@ jobs:
           echo
           echo "...then regenerate packaging/aur/.SRCINFO and .SRCINFO.stud-bin."
           echo "They stay placeholders in the tree on purpose: a checksum belongs"
-          echo "to one release, and re-cutting a tag changes both of these.
+          echo "to one release, and re-cutting a tag changes both of these."
