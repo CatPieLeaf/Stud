@@ -26,7 +26,7 @@
 
 pkgname=stud-bin
 _pkgname=stud
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="Play Roblox on Linux, runs the real, unmodified Roblox Android app"
 arch=('x86_64')
@@ -79,8 +79,8 @@ source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$
 # one is worse than an obvious gap: this carried the digest of a release
 # that was later deleted, which would have failed every install with a
 # corruption error rather than a missing-file one.
-sha256sums=('7bb6fabca3637836a281b0153d52e9bd25de484da8c5d90cf948a7d596977a0a'
-            '32af14c9bc7feca068191191c12c284be00ef257274585f1c1bc9e2d66709753')
+sha256sums=('SKIP'
+            'SKIP')
 
 build() {
   # Just the Qt half: STUD_BUILD_QT_ONLY skips the render host, the

@@ -129,8 +129,8 @@ modules:
       - cp -a usr/share/licenses/. /app/share/licenses/
     sources:
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.0/stud-1.1.0-x86_64.tar.zst
-        sha256: 7bb6fabca3637836a281b0153d52e9bd25de484da8c5d90cf948a7d596977a0a
+        url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.1/stud-1.1.1-x86_64.tar.zst
+        sha256: PLACEHOLDER_STUD_SHA256
         # The archive is the install tree, rooted at usr/.
         strip-components: 0
         only-arches:
@@ -143,7 +143,7 @@ modules:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - -DSTUD_BUILD_QT_ONLY=ON
       - -DSTUD_BUILD_TESTS=OFF
-      - -DSTUD_VERSION=1.1.0
+      - -DSTUD_VERSION=1.1.1
       # No network during the build, so these are supplied as sources.
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
@@ -151,8 +151,8 @@ modules:
       - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
     sources:
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
-        sha256: 32af14c9bc7feca068191191c12c284be00ef257274585f1c1bc9e2d66709753
+        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.1.tar.gz
+        sha256: PLACEHOLDER_SOURCE_SHA256
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
         sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb
