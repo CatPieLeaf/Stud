@@ -96,7 +96,15 @@ namespace {
 // it from outside the sandbox.
 void terminate_stale_processes() {
     pid_t self = ::getpid();
-    std::vector<pid_t> victims;
+    // Process B first, then the processes it talks to.
+    //
+    // Order matters, and getting it wrong is what made "restart" look
+    // like a crash: render-host went away while the engine was still
+    // calling into it, and Process B then faulted on a dead socket,
+    // `connection lost on read ... call_id=120` followed by a STUD_TRAP
+    // and a core dump, every restart.
+    std::vector<pid_t> engine;
+    std::vector<pid_t> hosts;
     for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
         if (!entry.is_directory()) continue;
         const std::string name = entry.path().filename().string();
@@ -106,41 +114,54 @@ void terminate_stale_processes() {
 
         std::error_code ec;
         std::filesystem::path exe = std::filesystem::read_symlink(entry.path() / "exe", ec);
-        if (!ec && exe.filename() == "stud-render-host") {
-            victims.push_back(pid);
+        const std::string exe_name = ec ? std::string() : exe.filename().string();
+        if (exe_name == "stud-render-host" || exe_name == "stud-webview") {
+            hosts.push_back(pid);
             continue;
         }
 
-        // bwrap-wrapped Process B: match by cmdline instead (real
-        // bionic_runtime::launch_process_b() bakes the full
-        // stud-runtime-bionic path into bwrap's own argv).
-        if (!ec && exe.filename() == "bwrap") {
-            std::ifstream cmdline_file(entry.path() / "cmdline", std::ios::binary);
-            std::string cmdline((std::istreambuf_iterator<char>(cmdline_file)),
-                                 std::istreambuf_iterator<char>());
-            if (cmdline.find("stud-runtime-bionic") != std::string::npos) {
-                victims.push_back(pid);
+        // Process B by its command line, whatever is in front of it.
+        //
+        // This used to insist the executable was bwrap, which is true of
+        // every install that can create a user namespace, and false in
+        // a Flatpak, where bwrap is refused one and Stud runs the bionic
+        // loader directly (see bionic_runtime.cpp). So there the engine
+        // was never matched and never stopped: a restart left the old one
+        // running against a dead render host and started a second beside
+        // it. Matching the command line covers bwrap, linker64, and a
+        // plain exec of the binary itself.
+        std::ifstream cmdline_file(entry.path() / "cmdline", std::ios::binary);
+        std::string cmdline((std::istreambuf_iterator<char>(cmdline_file)),
+                             std::istreambuf_iterator<char>());
+        if (cmdline.find("stud-runtime-bionic") != std::string::npos) {
+            engine.push_back(pid);
+        }
+    }
+    if (engine.empty() && hosts.empty()) return;
+
+    auto wait_for = [](const std::vector<pid_t>& pids, int tries) {
+        for (int i = 0; i < tries; ++i) {
+            bool any_alive = false;
+            for (pid_t pid : pids) {
+                if (::kill(pid, 0) == 0) any_alive = true;
             }
+            if (!any_alive) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-    }
-    for (pid_t pid : victims) {
-        ::kill(pid, SIGTERM);
-    }
-    if (victims.empty()) return;
-    // Give each a real chance to run its own clean shutdown path before
-    // a new one starts (avoids two processes racing for the same window
-    // briefly); short and bounded, not a hang risk either way.
-    for (int i = 0; i < 20; ++i) {
-        bool any_alive = false;
-        for (pid_t pid : victims) {
-            if (::kill(pid, 0) == 0) any_alive = true;
-        }
-        if (!any_alive) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    for (pid_t pid : victims) {
-        if (::kill(pid, 0) == 0) {
-            ::kill(pid, SIGKILL);  // still alive after the grace period, force it
+    };
+
+    for (pid_t pid : engine) ::kill(pid, SIGTERM);
+    // Long enough for Process B's own teardown (LeaveGame/DestroyApp are
+    // bounded waits of their own), short enough not to stall a restart.
+    wait_for(engine, 20);
+    for (pid_t pid : hosts) ::kill(pid, SIGTERM);
+    wait_for(hosts, 20);
+
+    for (const std::vector<pid_t>* group : {&engine, &hosts}) {
+        for (pid_t pid : *group) {
+            if (::kill(pid, 0) == 0) {
+                ::kill(pid, SIGKILL);  // still alive after the grace period, force it
+            }
         }
     }
 }
@@ -1477,8 +1498,7 @@ int main(int argc, char** argv) {
             if (stud::ui::SettingsWindow::handOffToRunningInstance()) return 0;
             stud::ui::SettingsWindow::listenForOpenRequests();
             stud::ui::SettingsWindow::showSingleton(
-                QStringLiteral("Select your Roblox APK to finish setting Stud up. "
-                               "Stud does not download or include Roblox itself."));
+                QStringLiteral("Select a Roblox APK to finish setting Stud"));
             return app.exec();
         }
     }
