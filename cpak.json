@@ -60,7 +60,18 @@
           "path": "/StatusNotifierWatcher",
           "interface": "org.kde.StatusNotifierWatcher",
           "members": [
-            "RegisterStatusNotifierItem"
+            "RegisterStatusNotifierItem",
+            "RegisterStatusNotifierHost"
+          ]
+        },
+        {
+          "name": "org.kde.StatusNotifierWatcher",
+          "path": "/StatusNotifierWatcher",
+          "interface": "org.freedesktop.DBus.Properties",
+          "members": [
+            "Get",
+            "GetAll",
+            "PropertiesChanged"
           ]
         }
       ],

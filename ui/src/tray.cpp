@@ -14,6 +14,8 @@ namespace stud::ui { void terminate_stud_session(); }
 
 #include <QApplication>
 #include <QClipboard>
+
+#include <cstdio>
 #include <QFile>
 #include <QDir>
 #include <QDateTime>
@@ -86,7 +88,18 @@ bool session_is_running() {
 Tray::Tray(QObject* parent) : QObject(parent) {}
 
 bool Tray::show() {
-    if (!QSystemTrayIcon::isSystemTrayAvailable()) return false;
+    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+        // Said out loud, because the alternative is a tray that is simply
+        // absent with no way to tell why. Qt answers this by asking the
+        // session bus whether a StatusNotifierWatcher is registered, so a
+        // sandbox that does not let Stud read that watcher's properties
+        // looks exactly like a desktop with no tray at all, which is
+        // what a cpak install did before its manifest granted them.
+        std::fprintf(stderr,
+                     "stud: no system tray on this desktop; Qt found no "
+                     "StatusNotifierWatcher on the session bus\n");
+        return false;
+    }
 
     // A tray-only process has no windows, and Qt quits an application
     // when its last window closes. So opening Settings from the tray and
