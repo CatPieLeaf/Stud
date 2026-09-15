@@ -8,8 +8,6 @@ runtime-version: '6.11'
 sdk: org.kde.Sdk
 command: stud
 separate-locales: false
-tags:
-  - proprietary
 
 finish-args:
   # Rendering. Stud runs the GPU driver in its own process and still needs the device.
@@ -121,12 +119,16 @@ modules:
   - name: stud-prebuilt
     buildsystem: simple
     build-commands:
-      - mkdir -p /app/lib/stud /app/libexec/stud /app/share/licenses
+      - mkdir -p /app/lib/stud /app/libexec/stud
       - cp -a usr/lib/stud/. /app/lib/stud/
       - cp -a usr/libexec/stud/lib64 /app/libexec/stud/lib64
       - install -Dm755 usr/libexec/stud/stud-render-host -t /app/libexec/stud/
       - install -Dm755 usr/libexec/stud/stud-runtime-bionic -t /app/libexec/stud/
-      - cp -a usr/share/licenses/. /app/share/licenses/
+      # A distribution package looks in share/licenses/<package>; Flathub
+      # asks for share/licenses/<app id>. The archive is built for the
+      # former, so the licences move on the way in.
+      - mkdir -p /app/share/licenses/io.github.catpieleaf.Stud
+      - cp -a usr/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
     sources:
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.1/stud-1.1.1-x86_64.tar.zst
