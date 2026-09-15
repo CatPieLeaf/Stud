@@ -54,7 +54,18 @@
             "hasFolder",
             "networkWallet"
           ]
+        },
+        {
+          "name": "org.kde.StatusNotifierWatcher",
+          "path": "/StatusNotifierWatcher",
+          "interface": "org.kde.StatusNotifierWatcher",
+          "members": [
+            "RegisterStatusNotifierItem"
+          ]
         }
+      ],
+      "own": [
+        "org.kde.StatusNotifierItem-"
       ]
     }
   }

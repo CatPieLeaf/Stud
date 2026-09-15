@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/ba81a9af42a245f8",
-    "manifest_sha256": "ba81a9af42a245f8b714603c4ea054f11c552ac289d16abb8ae446f724e7b528",
+    "origin": "local.cpak/package/fbb56ea57ac0e36f",
+    "manifest_sha256": "fbb56ea57ac0e36fb217250ff26198c0ea10eed10d2e05e1bbb071cc957254c5",
     "image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
     "manifest": {
@@ -72,7 +72,18 @@
                 "hasFolder",
                 "networkWallet"
               ]
+            },
+            {
+              "name": "org.kde.StatusNotifierWatcher",
+              "path": "/StatusNotifierWatcher",
+              "interface": "org.kde.StatusNotifierWatcher",
+              "members": [
+                "RegisterStatusNotifierItem"
+              ]
             }
+          ],
+          "own": [
+            "org.kde.StatusNotifierItem-"
           ]
         },
         "filesystem": [
