@@ -313,6 +313,8 @@ chmod +x Stud-x86_64.AppImage
 
 That last one is the file to read when something goes wrong, and the one to attach to a bug report.
 
+In a Flatpak or cpak install the same four live under the sandbox's own home, so `~/.config/stud/` becomes `~/.var/app/io.github.catpieleaf.Stud/config/stud/` and the rest follow.
+
 <br>
 
 <div align="center">
