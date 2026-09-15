@@ -42,7 +42,27 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libGLES \
         portaudio freetype \
         dbus-libs libnotify \
+        wl-clipboard \
+        plasma-breeze-qt6 \
     && dnf clean all
+
+# What the application looks like, and where its file dialog can reach.
+#
+# Both were wrong in the first image that anyone ran: Stud came up in bare
+# Qt colours instead of the desktop's, and the APK picker could only see
+# Downloads, because Qt used its own dialog and its own default palette.
+#
+# The portal platform theme fixes both at once; it takes colours, fonts
+# and icons from the host through the portal, and routes QFileDialog to
+# the portal's file chooser, which is what lets the user pick an APK from
+# anywhere without the sandbox mounting their home. The plugin is already
+# in the image (qt6-qtbase-gui ships it); nothing was selecting it.
+#
+# plasma-breeze-qt6 above is the real Breeze widget style, for the same
+# reason the AppImage carries one: a widget style is a Qt plugin and can
+# only load into the Qt it was built against, so the host's own cannot be
+# used from in here.
+ENV QT_QPA_PLATFORMTHEME=xdgdesktopportal
 
 COPY --from=build /stage/usr /usr
 
