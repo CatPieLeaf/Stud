@@ -166,8 +166,12 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Build rpm and deb
-        run: cd build && cpack -G RPM && cpack -G DEB
+      - name: Build rpm
+        # The rpm only. The deb is built in the AppImage job instead,
+        # against that container's own Qt; see the comment there for
+        # what a deb built here actually did on the distributions it is
+        # for.
+        run: cd build && cpack -G RPM
 
       - name: Stage install tree
         run: |
@@ -322,50 +326,53 @@ jobs:
           podman run --rm -v "$PWD":/work:z -v /tmp/srcinfo.sh:/srcinfo.sh:z \
             docker.io/library/archlinux:base-devel /srcinfo.sh
 
-      - name: Validate deb metadata
-        # dpkg is not in the Fedora container that builds it, so nothing
-        # there can check its own output, and CPack, asked to detect the
-        # architecture with no dpkg to ask, quietly produced an EMPTY
-        # Architecture field and a package called `stud_1.1.0_.deb` that
-        # dpkg refuses to install. It shipped in a green release.
+      - name: Build the Qt executables against Arch's own Qt
+        # The two binaries that link Qt, bin/stud and stud-webview,
+        # cannot come from the fedora build. Measured on the 1.1.0
+        # package, installed in a real archlinux container: it resolved
+        # every library and then refused to start with
         #
-        # Checked here instead, where podman can run a real Debian.
+        #   copy relocation against non-copyable protected symbol
+        #   `_ZN12QLocalServer16staticMetaObjectE' ... error due to
+        #   GNU_PROPERTY_1_NEEDED_INDIRECT_EXTERN_ACCESS
+        #
+        # because Arch builds Qt with indirect external access, which
+        # forbids the copy relocation a binary built against Fedora's Qt
+        # carries. Nothing else in the tree has that problem: render-host,
+        # Process B, ANGLE and the bionic set all resolved there, since
+        # none of them link Qt.
+        #
+        # So only the Qt half is rebuilt here, exactly as the Flatpak
+        # already does it (STUD_BUILD_QT_ONLY), and it replaces those two
+        # files in the install tree everything below is made from, which
+        # keeps the byte comparison honest, because the comparison is
+        # against this same merged tree.
         run: |
-          cat > /tmp/debcheck.sh <<'SCRIPT'
+          cat > /tmp/qtbuild.sh <<'SCRIPT'
           #!/bin/bash
-          set -eu
-          deb=$(find /work/artifacts -name '*.deb' | head -1)
-          [ -n "$deb" ] || { echo "::error::no deb to check"; exit 1; }
-          echo "checking $(basename "$deb")"
-          # Every field dpkg itself requires. `dpkg-deb -f` prints nothing
-          # for a field that is absent, which is exactly the failure.
-          status=0
-          for field in Package Version Architecture Maintainer Description; do
-            value=$(dpkg-deb -f "$deb" "$field")
-            if [ -z "$value" ]; then
-              echo "::error::the deb has no $field field"
-              status=1
-            else
-              echo "  $field: $value"
-            fi
-          done
-          # ...and the name a Debian archive expects, which encodes the
-          # architecture: an empty one leaves a bare trailing underscore.
-          case "$(basename "$deb")" in
-            *_*_*.deb) ;;
-            *) echo "::error::$(basename "$deb") is not <package>_<version>_<arch>.deb"; status=1 ;;
-          esac
-          dpkg-deb -I "$deb" >/dev/null
-          exit $status
+          set -eux
+          # git because the build fetches libjnivm; without it the
+          # configure step dies in FetchContent.
+          pacman -Sy --noconfirm --needed base-devel cmake ninja git qt6-base qt6-webengine \
+              qtkeychain-qt6 vulkan-headers vulkan-icd-loader wayland wayland-protocols \
+              libxkbcommon freetype2 portaudio
+          cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_QT_ONLY=ON -DSTUD_BUILD_TESTS=OFF \
+              -DSTUD_VERSION="$STUD_VERSION"
+          cmake --build /tmp/qtonly -j"$(nproc)"
+          install -m755 /tmp/qtonly/ui/stud-ui /work/install-tree/usr/bin/stud
+          install -m755 /tmp/qtonly/webview/stud-webview /work/install-tree/usr/libexec/stud/stud-webview
           SCRIPT
-          chmod +x /tmp/debcheck.sh
-          podman run --rm -v "$PWD":/work:z -v /tmp/debcheck.sh:/debcheck.sh:z \
-            docker.io/library/debian:stable-slim /debcheck.sh
+          chmod +x /tmp/qtbuild.sh
+          podman run --rm -e STUD_VERSION="${TAG#v}" -v "$PWD":/work:z \
+            -v /tmp/qtbuild.sh:/qtbuild.sh:z docker.io/library/archlinux:latest /qtbuild.sh
+          file install-tree/usr/bin/stud install-tree/usr/libexec/stud/stud-webview
 
       - name: Build Arch package
         # makepkg is Arch's and refuses to run as root, hence the
         # unprivileged user. It compiles nothing: the PKGBUILD copies the
-        # install tree that already exists.
+        # install tree that already exists (with the two Qt binaries
+        # replaced by the step above).
         run: |
           cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
           cat > /tmp/makepkg.sh <<'SCRIPT'
@@ -411,10 +418,10 @@ jobs:
           podman run --rm -v "$PWD":/work:z -v /tmp/namcap.sh:/namcap.sh:z \
             docker.io/library/archlinux:base-devel /namcap.sh
 
-      - name: Validate Arch and deb contents
-        # The two formats nobody here can install and try. They are held
-        # to the install tree instead: same files, same bytes, and a
-        # payload that validates on its own terms.
+      - name: Validate Arch package contents
+        # Held to the install tree it was made from: same files, same
+        # bytes, and a payload that validates on its own terms. (The deb
+        # is checked the same way, in the job that now builds it.)
         #
         # Arch relocates /usr/libexec/stud to /usr/lib/stud because namcap
         # rejects libexec; the comparison applies that one mapping rather
@@ -425,19 +432,6 @@ jobs:
           python3 tools/compare-package-contents.py \
             --tree install-tree --package "$pkg" --kind arch --work /tmp/arch-payload
           python3 tools/validate-payload.py /tmp/arch-payload --label "Arch package"
-
-          # dpkg is not on this runner image, so the deb is unpacked in
-          # a real Debian and the result compared here.
-          deb="$(find artifacts -name '*.deb' | head -1)"
-          [ -n "$deb" ] || { echo "::error::no deb in the artifacts"; exit 1; }
-          mkdir -p /tmp/deb-payload
-          podman run --rm -v "$PWD":/work:z -v /tmp/deb-payload:/out:z \
-            docker.io/library/debian:stable-slim \
-            sh -c "dpkg-deb -x '/work/$deb' /out && chown -R $(id -u):$(id -g) /out"
-          python3 tools/compare-package-contents.py \
-            --tree install-tree --package "$deb" --kind deb \
-            --work /tmp/deb-payload --already-extracted
-          python3 tools/validate-payload.py /tmp/deb-payload --label "deb"
 
       - name: Publish cpak image
         env:
@@ -555,10 +549,57 @@ jobs:
           ( cd /tmp && "$OLDPWD/$appimage" --appimage-extract >/dev/null )
           python3 tools/validate-payload.py /tmp/squashfs-root --label "AppImage"
 
+      - name: Build the deb
+        # Here, not in the job that builds the rpm, and the reason is not
+        # tidiness: a Qt program built against one distribution's Qt does
+        # not run on another's. Both halves of that were measured on the
+        # 1.1.0 packages, each installing cleanly and then refusing to
+        # start:
+        #
+        #   ubuntu:26.04, deb built on fedora:44,
+        #     `libQt6Core.so.6: version 'Qt_6.11' not found`, because
+        #     Fedora had 6.11 and Ubuntu has 6.10, and Qt is forward-
+        #     incompatible.
+        #
+        #   archlinux, Arch package built from the same tree,
+        #     `copy relocation against non-copyable protected symbol
+        #     QLocalServer::staticMetaObject ... error due to
+        #     GNU_PROPERTY_1_NEEDED_INDIRECT_EXTERN_ACCESS`, because Arch
+        #     builds Qt with indirect external access and a Fedora-built
+        #     binary carries a copy relocation it forbids.
+        #
+        # This job already builds everything on ubuntu:26.04 for the
+        # AppImage, so the deb costs nothing more than the packaging step
+        # and is finally built against the Qt its users have.
+        run: cd build-appimage && cpack -G DEB
+
+      - name: Validate deb contents
+        # Against this job's own install tree, the one the deb was
+        # actually made from. Same two questions as every other package:
+        # are the bytes the build's own, and is the payload complete.
+        run: |
+          deb="$(find build-appimage -maxdepth 1 -name '*.deb' | head -1)"
+          [ -n "$deb" ] || { echo "::error::no deb was built"; exit 1; }
+          DESTDIR="$PWD/deb-tree" cmake --install build-appimage --prefix /usr >/dev/null
+          python3 tools/compare-package-contents.py \
+            --tree deb-tree --package "$deb" --kind deb --work /tmp/deb-payload
+          python3 tools/validate-payload.py /tmp/deb-payload --label "deb"
+          for field in Package Version Architecture Maintainer Description; do
+            value="$(dpkg-deb -f "$deb" "$field")"
+            [ -n "$value" ] || { echo "::error::the deb has no $field field"; exit 1; }
+            echo "$field: $value"
+          done
+          case "$(basename "$deb")" in
+            *_*_*.deb) ;;
+            *) echo "::error::$(basename "$deb") is not <package>_<version>_<arch>.deb"; exit 1 ;;
+          esac
+
       - uses: actions/upload-artifact@v7
         with:
           name: appimage
-          path: build-appimage/packages/*.AppImage
+          path: |
+            build-appimage/packages/*.AppImage
+            build-appimage/*.deb
           if-no-files-found: error
 
   flatpak:
