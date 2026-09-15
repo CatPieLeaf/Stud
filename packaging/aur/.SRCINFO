@@ -34,6 +34,6 @@ pkgbase = stud
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	optdepends = wl-clipboard: copying a server link from the tray menu on Wayland
 	source = stud-1.1.0.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
-	sha256sums = b907c53444a919a6c8739824c5b26f24affc6085c7b81b1a1bf25c8074f50ad3
+	sha256sums = 32af14c9bc7feca068191191c12c284be00ef257274585f1c1bc9e2d66709753
 
 pkgname = stud
