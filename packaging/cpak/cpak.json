@@ -27,10 +27,6 @@
     "openURI": true,
     "network": true,
     "userNamespaces": true,
-    "clipboard": {
-      "hostToApp": true,
-      "appToHost": true
-    },
     "filePicker": {
       "openFile": true,
       "persistent": true
@@ -43,29 +39,6 @@
     ],
     "sessionBus": {
       "talk": [
-        {
-          "name": "org.freedesktop.secrets",
-          "path": "/org/freedesktop/secrets",
-          "interface": "org.freedesktop.Secret.Service",
-          "members": [
-            "OpenSession",
-            "SearchItems",
-            "Unlock",
-            "Lock",
-            "GetSecrets",
-            "ReadAlias",
-            "CreateCollection"
-          ]
-        },
-        {
-          "name": "org.freedesktop.secrets",
-          "path": "/org/freedesktop/secrets/aliases/default",
-          "interface": "org.freedesktop.Secret.Collection",
-          "members": [
-            "CreateItem",
-            "SearchItems"
-          ]
-        },
         {
           "name": "org.kde.kwalletd6",
           "path": "/modules/kwalletd6",
