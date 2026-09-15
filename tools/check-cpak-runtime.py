@@ -42,12 +42,23 @@ def env(stage: str) -> set[str]:
     return set(re.findall(r"^ENV\s+(\S+=\S+)", strip_comments(stage), re.MULTILINE))
 
 
+def commands(stage: str) -> set[str]:
+    """Every RUN other than the dnf install the packages come from.
+
+    One of these writes the ALSA default, without which the sandbox has no
+    sound at all, so it has to be in both files too.
+    """
+    runs = re.findall(r"^RUN (.+)$", strip_comments(stage), re.MULTILINE)
+    return {r.strip() for r in runs if "dnf install" not in r}
+
+
 def main() -> int:
     files = {name: runtime_stage((CPAK / name).read_text())
              for name in ("Containerfile", "Containerfile.prebuilt")}
 
     problems = []
-    for what, extract in (("package", packages), ("env setting", env)):
+    for what, extract in (("package", packages), ("env setting", env),
+                          ("command", commands)):
         source, prebuilt = (extract(files[n]) for n in
                             ("Containerfile", "Containerfile.prebuilt"))
         for missing in sorted(source - prebuilt):
