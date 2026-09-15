@@ -35,12 +35,27 @@ int main() {
         std::printf("  found GPU %u: %s\n", gpu.device_index, gpu.name.c_str());
     }
 
-    // device_index values are exactly 0..N-1, matching
-    // vkEnumeratePhysicalDevices()'s own result order (the settings
-    // schema's real, stable identifier; see stud-config/settings.h).
+    // device_index is a position in vkEnumeratePhysicalDevices()'s own
+    // result order (the settings schema's real, stable identifier; see
+    // stud-config/settings.h), so the values rise but are NOT required to
+    // be 0..N-1: a loader that offers the same device twice, which a
+    // Flatpak's runtime really does, through two ICD directories, has
+    // its duplicates dropped, and the survivors keep their raw indices.
     for (size_t i = 0; i < gpus.size(); ++i) {
-        check(gpus[i].device_index == static_cast<uint32_t>(i),
-              "device_index matches vkEnumeratePhysicalDevices()'s own result order");
+        check(gpus[i].device_index >= static_cast<uint32_t>(i),
+              "device_index is a raw vkEnumeratePhysicalDevices() position");
+        if (i > 0) {
+            check(gpus[i].device_index > gpus[i - 1].device_index,
+                  "device_index values rise in enumeration order");
+        }
+    }
+
+    // And no real GPU is listed twice.
+    for (size_t i = 0; i < gpus.size(); ++i) {
+        for (size_t j = i + 1; j < gpus.size(); ++j) {
+            check(gpus[i].device_index != gpus[j].device_index,
+                  "no two entries share a device index");
+        }
     }
 
     std::printf("all gpu-enum checks passed\n");
