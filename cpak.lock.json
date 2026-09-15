@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/4feadb87f5f911e7",
-    "manifest_sha256": "4feadb87f5f911e739cff472fb9ef96fab10526b902a5d4729167e085a33e438",
+    "origin": "local.cpak/package/a802ea41bc3adff5",
+    "manifest_sha256": "a802ea41bc3adff5dfb2365d5e84d52dbec2b115604f2c454abd543b36d166dd",
     "image": "ghcr.io/catpieleaf/stud@sha256:f77011dc0da91e9cbcfe2012443e0680511361c3f8d731574d28c1eb486c5cce",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:f77011dc0da91e9cbcfe2012443e0680511361c3f8d731574d28c1eb486c5cce",
     "manifest": {
@@ -93,6 +93,14 @@
                 "Get",
                 "GetAll",
                 "PropertiesChanged"
+              ]
+            },
+            {
+              "name": "org.freedesktop.Notifications",
+              "path": "/org/freedesktop/Notifications",
+              "interface": "org.freedesktop.Notifications",
+              "members": [
+                "Notify"
               ]
             }
           ],
