@@ -45,10 +45,21 @@ finish-args:
   # Rendering. Stud's whole reason to exist is that the GPU driver runs in
   # its own process; it still needs the device to do it.
   - --device=dri
-  # Process B runs inside its own bwrap, with its own user namespace.
-  # That is the architecture, not an optional hardening step. A nested
-  # sandbox needs this. (Sober requires the same, for ptrace.)
-  - --allow=devel
+  # Deliberately NOT here: --allow=devel.
+  #
+  # It used to be, for Process B's own bwrap; that sandbox is the
+  # architecture, not optional hardening. But a Flatpak refuses a nested
+  # user namespace whatever this says: measured, `unshare -Ur` returns
+  # EPERM inside the sandbox while the same call nests fine on the host,
+  # because of the seccomp filter Flatpak installs on every app. So
+  # Process B runs here without bwrap (bionic_runtime.cpp falls back to
+  # building the /system tree with symlinks), and this permission buys
+  # nothing.
+  #
+  # Checked rather than assumed before removing it: with
+  # `flatpak override --disallow=devel` the app still reaches the render
+  # host, opens a real audio device and gets the engine to its app-ready
+  # milestones.
   # The engine expects a shared IPC namespace for X11 shared memory.
   # Wayland does not need it; the X11 fallback does.
   - --share=ipc
