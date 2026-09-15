@@ -1,0 +1,50 @@
+name: Bug report
+description: Something went wrong while running Stud
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install Stud
+      options:
+        - rpm
+        - deb
+        - Arch package or AUR
+        - AppImage
+        - Flatpak
+        - built from source
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Distribution, desktop and session
+      placeholder: Fedora 44, KDE Plasma 6.7, Wayland
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      placeholder: NVIDIA RTX 3050, 610.57.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        The tray menu has an Export logs entry that packs every session into
+        one archive. Attach that if you can. Otherwise the newest file in
+        ~/.local/state/stud/logs is usually enough.
