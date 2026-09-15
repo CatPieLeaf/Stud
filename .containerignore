@@ -12,7 +12,12 @@ build-*/
 third_party/appimage-tools/
 
 # Packaging staging directories and bundles, for the same reason.
-install-tree/
+#
+# install-tree/ is deliberately NOT excluded: it is what
+# packaging/cpak/Containerfile.prebuilt copies its whole /usr from, so
+# excluding it does not trim the context, it breaks the image build
+# ("no items matching glob install-tree"). Any exclusion here applies to
+# every build from this context, not only the one it was written for.
 deb-tree/
 *.pkg.tar.zst
 *.flatpak
