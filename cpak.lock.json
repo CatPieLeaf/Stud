@@ -1,17 +1,17 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/59beb40b16d05478",
-    "manifest_sha256": "59beb40b16d054786f8057fd405922a1b255b9af5938f4c07eb191ca1eeb6eaf",
-    "image": "ghcr.io/catpieleaf/stud@sha256:002fd17763d929a4d7a05fecdece2d56a53047ac3fe08bc39fdc7f06ecb77e59",
-    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:002fd17763d929a4d7a05fecdece2d56a53047ac3fe08bc39fdc7f06ecb77e59",
+    "origin": "local.cpak/package/4feadb87f5f911e7",
+    "manifest_sha256": "4feadb87f5f911e739cff472fb9ef96fab10526b902a5d4729167e085a33e438",
+    "image": "ghcr.io/catpieleaf/stud@sha256:f77011dc0da91e9cbcfe2012443e0680511361c3f8d731574d28c1eb486c5cce",
+    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:f77011dc0da91e9cbcfe2012443e0680511361c3f8d731574d28c1eb486c5cce",
     "manifest": {
       "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
       "manifest_version": "3.0",
       "name": "Stud",
       "description": "Play Roblox on Linux.",
       "version": "1.1.1",
-      "image": "ghcr.io/catpieleaf/stud@sha256:002fd17763d929a4d7a05fecdece2d56a53047ac3fe08bc39fdc7f06ecb77e59",
+      "image": "ghcr.io/catpieleaf/stud@sha256:f77011dc0da91e9cbcfe2012443e0680511361c3f8d731574d28c1eb486c5cce",
       "binaries": [
         "/usr/bin/stud"
       ],
