@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <jni.h>
 
-// Real, independent-of-ABI signal-based recovery: makes one direct call
+// Independent-of-ABI signal-based recovery: makes one direct call
 // into Roblox's own bionic-compiled code, catching two things instead of
 // letting them kill the whole process:
 //
@@ -92,7 +92,7 @@ bool call_trapping_abort_with_result(Fn fn, Result& result, Args... args) {
 // process. Confirmed, real crash this exists for: nativeAppBridgeV2
 // StartAppWithParams's internal telemetry-logging helper dereferences a
 // null object a few calls deep (root-caused live,
-// not a guess), likely a
+// checked), likely a
 // Roblox-internal singleton real Android populates before this path
 // runs that Stud's bring-up doesn't yet, out of scope to chase further
 // right now since this call is already documented as optional/

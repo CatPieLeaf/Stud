@@ -24,7 +24,7 @@ namespace stud::jni_bridge {
 // bionic-compiled callers.
 class BionicAwareJvm : public FakeJni::Jvm {
 public:
-    // Real, confirmed C++ ABI bug (unrelated to %fs/glibc-vs-bionic):
+    // Confirmed C++ ABI bug (unrelated to %fs/glibc-vs-bionic):
     // `Jvm : public JavaVM, protected jnivm::VM`, jnivm::VM is
     // polymorphic (CreateEnv is virtual), plain `_JavaVM` is not, so
     // under the Itanium C++ ABI jnivm::VM becomes the *primary* base
@@ -44,7 +44,7 @@ public:
     // bionic-compiled caller, never `&jvm`/`static_cast<JavaVM*>(&jvm)`.
     JavaVM* GetBionicSafeJavaVM() { return this->GetJavaVM(); }
 
-    // Real, confirmed behavioral gap (unrelated to %fs): a brand-new
+    // Confirmed behavioral gap (unrelated to %fs): a brand-new
     // thread's FIRST-ever FakeJni::LocalFrame construction falls through
     // to `vm.AttachCurrentThread(nullptr, nullptr)`, dispatched through
     // the JNIInvokeInterface's AttachCurrentThread slot, which real
@@ -63,7 +63,7 @@ public:
     }
 };
 
-// Real, live-caught gap (the engineering notes, "GameActivity_
+// Gap found in testing (the engineering notes, "GameActivity_
 // initializeNativeCode returns NULL" fix / "new crash inside a
 // libroblox.so-spawned thread" follow-up): `pthread_create_interpose.
 // cpp` wraps *every* thread any code in this process spawns, including

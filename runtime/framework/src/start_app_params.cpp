@@ -35,7 +35,7 @@ std::shared_ptr<StartAppParams> build_desktop_start_app_params(
     // desktop no matter what the system-theme protocol said afterwards.
     params->selectedTheme_ =
         std::make_shared<FakeJni::JString>(system_dark_mode() ? "Dark" : "Light");
-    // Real, user-reported bug fixed (the engineering notes, "two windows,
+    // User-reported bug, fixed (the engineering notes, "two windows,
     // one invisible" entry): this used to construct a brand-new
     // SurfaceStub of its own; Roblox's own ANativeWindow_fromSurface()
     // call on THAT jobject creates a genuinely separate, second real

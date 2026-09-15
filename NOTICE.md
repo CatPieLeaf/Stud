@@ -1,4 +1,4 @@
-# Stud — legal notice
+# Stud legal notice
 
 Stud is a free, unofficial, non-commercial project that runs the real
 Roblox Android application on a Linux desktop. It is experimental
@@ -7,7 +7,7 @@ software and it earns nobody any money.
 **This is a notice, not a licence agreement.** Stud's licence is the GNU
 Affero General Public License version 3 or later ([`LICENSE`](LICENSE)),
 with one additional permission ([`LICENSE.exception`](LICENSE.exception)).
-Nothing on this page takes away any right that licence gives you — it
+Nothing on this page takes away any right that licence gives you. It
 cannot, and it is not trying to. What follows is what the project is,
 what it is not, and what you should know before you use it.
 
@@ -64,7 +64,7 @@ claim on the author's time, help or approval for any of the above.
 ## 5. Content and conduct inside Roblox
 
 Stud draws the window. It does not control, monitor, moderate or have any
-knowledge of what happens inside the Roblox application — chat, voice,
+knowledge of what happens inside the Roblox application: chat, voice,
 user-generated experiences or anything else. It cannot act on any of it.
 Report anything you encounter to Roblox, whose moderation systems are
 unaffected by Stud and continue to apply normally.
@@ -84,7 +84,7 @@ and no crash reporting of any kind.
   readable `.ROBLOSECURITY` value, and deleting that entry makes the
   stored cookie permanently unreadable.
 - If, and only if, you switch on the server-region notification in
-  Settings — off by default — the address of the **game server** you
+  Settings, off by default, the address of the **game server** you
   joined is sent over HTTPS to `ipwho.is` to name its country. Your own address is
   not sent. Leaving the setting off means the request never happens.
 - Logs are written under `~/.local/state/stud/logs/` and stay on your

@@ -54,7 +54,7 @@ std::string real_persistent_android_id() {
 }  // namespace
 
 
-// Real, confirmed against the app's own code format string and field wiring, traced through
+// Confirmed against the app's own code format string and field wiring, traced through
 // the app's own HTTP/cookie layer -> the app's own User-Agent builder ->
 // its real builder class and its format method (~/Stud/
 // the engineering notes, "instantiate controllers" investigation, found by
@@ -88,7 +88,7 @@ std::string real_persistent_android_id() {
 // real, publicly-documented value for Roblox's actual Play Store
 // distribution channel, used here as a reasonable, clearly-labeled
 // best-effort default, everything else in this string is real,
-// traced through the app's own code, not guessed.
+// traced through the app's own code, checked.
 // One builder, two callers. `android_app_token` picks the client token
 // the agent carries: the engine's own HTTP wants a desktop-class client
 // (see the long note further down), while the app's WEB VIEW is
@@ -379,7 +379,7 @@ AppBridgeResult run_app_bridge_start(FakeJni::Jvm& jvm, const stud::linker::Load
     std::string user_agent = build_real_user_agent();
     jstring user_agent_ref = env.NewStringUTF(user_agent.c_str());
     jstring android_id_ref = env.NewStringUTF(real_persistent_android_id().c_str());
-    // Real, confirmed constant (com/roblox/client/personasdk/
+    // Confirmed constant (com/roblox/client/personasdk/
     // BuildConfig in the app itself), not
     // guessed, but a real per-package build value that could go stale
     // on a future Roblox release, same category of risk as the FFlag

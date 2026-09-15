@@ -57,7 +57,7 @@
 //     (Surface, PlatformParams, Activity), both real, exported,
 //     confirmed by the library's exported symbols, and both observed firing (twice each, back to
 //     back) immediately before StartAppWithParams in every real
-//     non-URI-launch capture. Real, verified home-screen order:
+//     non-URI-launch capture. Verified home-screen order:
 //       nativeAppBridgeAppStart -> nativeAppBridgeV2Init ->
 //       (instantiate controllers/coordinator) ->
 //       nativeAppBridgeStartLuaAppDM ->
@@ -195,7 +195,7 @@
 // nativeAppBridgeV2StartGameWithParam`, no ResumeGameWithPlatformParams
 // logged in between, consistent with ResumeGame only firing on a
 // *second* updateSurface() call this file's own single, one-shot
-// sequence never reaches). Real, honest caveat: StartGameWithParam's
+// sequence never reaches). Caveat: StartGameWithParam's
 // real parameters need a real join/matchmaking response (place ID,
 // access code, etc.) this project has no source for yet; Stud's own
 // build_desktop_start_game_params() still passes honest placeholders,
@@ -226,7 +226,7 @@ struct EngineV2BridgeResult {
     // not calls known to block.
     bool app_setup_called = false;
     bool app_setup_trapped_abort = false;
-    // Real, load-bearing prerequisites for StartAppWithParams, only
+    // Load-bearing prerequisites for StartAppWithParams, only
     // attempted when it is (see this file's own UPDATE 2 doc comment):
     // synchronous, not bounded-wait, same as app_setup above: real
     // captures show all three return near-instantly.
@@ -240,7 +240,7 @@ struct EngineV2BridgeResult {
     bool start_app_with_params_trapped_abort = false;
     // True if the real, bounded wait for this call elapsed before it
     // completed (see run_engine_v2_sequence()'s own doc comment), an
-    // honest report that it's still running/blocked, not a guess about
+    // honest report that it's still running/blocked, checked about
     // whether it ever will finish. The background thread it runs on
     // keeps going regardless (detached, same precedent as
     // start_app_with_params_background()).
@@ -259,7 +259,7 @@ struct EngineV2BridgeResult {
     bool start_game_called = false;
     bool start_game_trapped_abort = false;
     bool start_game_still_running = false;
-    // Real, live-traced correction (of the actual
+    // Live-traced correction (of the actual
     // Java_..._nativeAppBridgeV2StartGameWithParam entry point and its
     // real return-value global): this is NOT a join
     // success/failure status code. It's a native-window-creation
@@ -293,7 +293,7 @@ struct EngineV2BridgeResult {
 // than being called synchronously on the caller's thread. None of them
 // are skipped outright.
 //
-// Real, a live syscall trace-confirmed finding (this session, superseding the old
+// A live syscall trace-confirmed finding (this session, superseding the old
 // docs' "hangs forever on a network-wait futex" characterization with
 // more precise evidence): nativeAppBridgeV2StartAppWithParams spawns a
 // real worker-thread pool early (all its clone() calls land in one
@@ -305,7 +305,7 @@ struct EngineV2BridgeResult {
 // Binder symbols), there is not one real outbound connect() anywhere,
 // only local sockets (logdw, render-host.sock).
 //
-// Real, Phase-5-confirmed follow-up: run end-to-end against a real,
+// Phase-5-confirmed follow-up: run end-to-end against a real,
 // live stud-render-host (real ANGLE + real Wayland window) with a real
 // LaunchPayload session (real fetched ClientSettings, delivered over a
 // real --ipc-connect socket), StartAppWithParams still never returns
@@ -395,7 +395,7 @@ EngineV2BridgeResult run_engine_v2_early_init(FakeJni::Jvm& jvm,
                                                 const stud::linker::LoadedLibrary& lib,
                                                 std::shared_ptr<InitParams> init_params);
 
-// Real, deliberate departure from run_engine_v2_sequence() above
+// Deliberate departure from run_engine_v2_sequence() above
 // (the engineering notes, "make Roblox appear on the window" entry):
 // nativeAppBridgeV2StartAppWithParams itself is confirmed (via a real,
 // working Sober log's own FLog output) to be what triggers Roblox's own
@@ -435,7 +435,7 @@ struct EngineV2TeardownResult {
     bool destroy_app_still_running = false;
 };
 
-// Real, graceful shutdown pair, nativeAppBridgeV2LeaveGame() then
+// Graceful shutdown pair, nativeAppBridgeV2LeaveGame() then
 // nativeAppBridgeV2DestroyApp(), both real, no-arg, exported symbols
 // (the library's exported symbols confirmed); see this file's own UPDATE 2 doc comment for the
 // real capture (four-for-four across URI launch, menu launch, fresh

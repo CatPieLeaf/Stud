@@ -10,7 +10,7 @@ namespace stud::bionic_runtime {
 
 namespace {
 
-// Real, confirmed in the engine constants (see property_area.h's own doc
+// Confirmed in the engine constants (see property_area.h's own doc
 // comment), both written together as one real 8-byte immediate in the
 // actual extracted libc.so's own prop_area::map_prop_area_rw.
 constexpr uint32_t kPropAreaMagic = 0x504f5250;
@@ -19,7 +19,7 @@ constexpr size_t kHeaderSize = 128;  // bytes_used_(4)+serial_(4)+magic_(4)+vers
 constexpr size_t kPropValueMax = 92;
 constexpr size_t kPropInfoFixedSize = 4 + kPropValueMax;  // serial + value[92]
 
-// Real, confirmed in the engine ordering (prop_area::find_prop_trie_node, this
+// Confirmed in the engine ordering (prop_area::find_prop_trie_node, this
 // project's own reading of the actual extracted libc.so): siblings at
 // each trie level are compared by LENGTH first (shorter = "less"), and
 // only by lexicographic byte content when lengths are equal, NOT the
@@ -89,7 +89,7 @@ private:
 // area to inspect).
 uint32_t serialize_prop_info(Arena& arena, const std::string& full_name, const std::string& value) {
     uint32_t info_offset = arena.reserve(kPropInfoFixedSize + full_name.size());
-    // Real, confirmed in the engine encoding (SystemProperties::Read, this
+    // Confirmed in the engine encoding (SystemProperties::Read, this
     // project's own reading of the actual extracted libc.so): the
     // top 8 bits of serial are the real value length; bit 0 selects the
     // short-inline-value path (vs. a long-property callback this
@@ -163,7 +163,7 @@ bool write_property_area(const std::string& output_path,
     TrieBuildNode root;
     for (const auto& [name, value] : properties) {
         if (name.empty() || value.size() > kPropValueMax - 1) {
-            // Real, honest failure; see property_area.h's own doc
+            // Honest failure; see property_area.h's own doc
             // comment: never silently truncate/corrupt a value into a
             // wrong-but-plausible-looking one.
             return false;

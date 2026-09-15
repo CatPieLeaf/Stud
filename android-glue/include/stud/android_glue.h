@@ -35,7 +35,7 @@
 // surface (M6, see native_window_wl_display()/native_window_wl_surface()
 // below): ANativeWindow_fromSurface() connects to the host compositor
 // (wl_display_connect(), binds wl_compositor via the registry) and calls
-// real wl_compositor_create_surface(). Real, honest degradation if no
+// real wl_compositor_create_surface(). Honest degradation if no
 // compositor is reachable (e.g. a headless test environment), returns
 // an ANativeWindow with a null surface rather than crashing; callers
 // that need the surface (the Vulkan WSI shim, vulkan-wsi/) check for
@@ -94,7 +94,7 @@ void extract_apk_assets(const std::string& apk_path, const std::string& dest_dir
 // library (e.g. "libroblox.so") out of the APK's real "lib/x86_64/"
 // path, the same directory structure confirmed present in the real
 // Roblox APK (M1's own symbol survey), and writes it to
-// `dest_path`. Real, not a stub, reuses the same miniz-based zip
+// `dest_path`. Not a stub, reuses the same miniz-based zip
 // reading as extract_apk_assets(). x86_64-only, matching this whole
 // project's scope (no ARM translation, see the engineering notes' core
 // technical insight). Throws ExtractError if the APK is missing/corrupt
@@ -209,7 +209,7 @@ bool window_close_requested();
 ::wl_display* native_window_wl_display(::ANativeWindow* window);
 ::wl_surface* native_window_wl_surface(::ANativeWindow* window);
 
-// Real, lazily-created wl_egl_window backing for `window`, shared
+// Lazily-created wl_egl_window backing for `window`, shared
 // between whoever creates the real render context (runtime/main.cpp)
 // and native_window.cpp's own xdg_toplevel_configure handler, so a
 // real compositor-driven resize (drag, maximize) can actually resize

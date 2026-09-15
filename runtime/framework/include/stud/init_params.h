@@ -29,7 +29,7 @@
 // (the engineering notes, the "InitParams.platformParams reads null" chain):
 // AutoValue-generated classes expose their properties as zero-arg GETTER
 // METHODS (`platformParams()`, `baseURL()`, ...), never as plain public
-// fields: confirmed directly, not guessed, via a real jnivm diagnostic
+// fields: confirmed directly, checked, via a real jnivm diagnostic
 // showing Roblox's own compiled code calling
 // `GetMethodID(InitParams, "platformParams", "()Lcom/roblox/engine/jni/
 // model/PlatformParams;")` and getting back "not found," for EVERY one
@@ -57,7 +57,7 @@ public:
     FakeJni::JBoolean isTablet_ = false;
     FakeJni::JBoolean isPotato_ = false;
     FakeJni::JBoolean isVrDevice_ = false;
-    // Real, confirmed fields this class was missing entirely until
+    // Confirmed fields this class was missing entirely until
     // now (real com.roblox.engine.jni.autovalue.InitParams has 9
     // abstract getters; this class only ever implemented 7), an
     // AutoValue-generated class's abstract getters are ALL required to
@@ -68,7 +68,7 @@ public:
     // documented throughout this whole project. buildVariant's real
     // value ("googleProdRelease") is confirmed; it's the literal
     // Kotlin metadata module-name tag on every source file
-    // in this build ("NativeShell_googleProdRelease"), not guessed.
+    // in this build ("NativeShell_googleProdRelease"), checked.
     // vrContext is a real android.app.Activity reference; Stud is
     // never a VR device (isVrDevice_ always false), so any real,
     // non-null Activity-shaped object satisfies real code that's

@@ -2,10 +2,10 @@
 
 namespace stud::jni_bridge {
 
-// Real, version-agnostic fix (the engineering notes): registers InitParams's
+// Version-agnostic fix (the engineering notes): registers InitParams's
 // properties as real METHODS, matching AutoValue's actual zero-arg
 // getter convention (confirmed directly against the real libroblox.so,
-// not guessed); see init_params.h's doc comment for the full trace.
+// checked); see init_params.h's doc comment for the full trace.
 BEGIN_NATIVE_DESCRIPTOR(InitParams)
 { FakeJni::Function<&InitParams::platformParams>{}, "platformParams" },
 { FakeJni::Function<&InitParams::deviceParams>{}, "deviceParams" },

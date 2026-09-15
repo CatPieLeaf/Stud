@@ -50,7 +50,7 @@ int main() {
     check(stud::android_glue::native_window_wl_display(nullptr) == nullptr,
           "native_window_wl_display(nullptr) returns null instead of crashing");
 
-    // Real, standard NDK usage pattern, getWidth/getHeight/acquire/
+    // Standard NDK usage pattern, getWidth/getHeight/acquire/
     // release all still work exactly as before this change.
     check(ANativeWindow_getWidth(window) > 0, "ANativeWindow_getWidth reports a positive value");
     check(ANativeWindow_getHeight(window) > 0, "ANativeWindow_getHeight reports a positive value");

@@ -31,7 +31,7 @@ int main() {
     check(!stud::ui::parse_launch_uri("https://www.roblox.com/games/123").has_value(),
           "an ordinary https URL is not mistaken for a launch URI");
 
-    // Real, well-known format.
+    // Well-known format.
     std::string uri =
         "roblox-player://1"
         "+launchmode:play"

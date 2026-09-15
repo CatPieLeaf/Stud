@@ -11,7 +11,7 @@ void* g_gles_handle = nullptr;
 }  // namespace
 
 void set_angle_library_paths(const std::string& egl_path, const std::string& gles_path) {
-    // Real, previously-missing piece of the locked "Vulkan by default on
+    // Previously-missing piece of the locked "Vulkan by default on
     // first launch" decision (the engineering notes, "Rendering architecture"):
     // ANGLE does NOT default to its Vulkan backend on this platform,
     // confirmed directly, real testing (tools/try_render_window.cpp):

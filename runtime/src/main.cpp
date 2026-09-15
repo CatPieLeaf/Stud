@@ -306,7 +306,7 @@ std::map<std::string, std::string> stud_default_flags() {
         // The legacy art is a coarse hollow triangle; the modern set is
         // the hand and the small solid arrow the desktop client draws.
         // The name is registered right beside the pointer to that byte,
-        // and the FFlag prefix is not a guess: HideCursorForNonMouseUsers
+        // and the FFlag prefix is checked: HideCursorForNonMouseUsers
         // registers with a byte-identical signature and appears in the
         // live settings as FFlagHideCursorForNonMouseUsers.
         //
@@ -456,7 +456,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Real, live-caught gap: on a real Android device, __system_properties_init()
+    // Gap found in testing: on a real Android device, __system_properties_init()
     // is called once by Zygote/app_process during real system boot, long
     // before any app process is even forked; Stud has no Zygote/
     // app_process layer at all, so nothing ever called it, meaning every
@@ -467,7 +467,7 @@ int main(int argc, char** argv) {
     // /dev/__properties__ (confirmed live: even with a byte-verified
     // real file bind-mounted there, /proc/<pid>/maps showed it was
     // never even mmap'd, the real function that would do that was
-    // simply never invoked). Real, confirmed-exported symbol (the library's exported symbols:
+    // simply never invoked). Confirmed-exported symbol (the library's exported symbols:
     // __system_properties_init@@LIBC_Q), called here, as early as
     // possible, same dlsym pattern as __android_log_set_logger above
     // (real reason for dlsym over a direct call: this project's own
@@ -562,7 +562,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Real, env-gated end-to-end proof for the fix above: registering a
+    // Env-gated end-to-end proof for the fix above: registering a
     // nameserver via _resolv_set_nameservers_for_net succeeding (rc==0)
     // only proves the resolver cache accepted the entry; it doesn't by
     // itself prove a real hostname lookup actually reaches that
@@ -622,7 +622,7 @@ int main(int argc, char** argv) {
     }
 
 
-    // Real, confirmed-live gap: Roblox's own code calls
+    // Confirmed-live gap: Roblox's own code calls
     // boost::filesystem::canonical() on a real "android" directory,
     // expected to already exist as a sibling of the cache/files/assets
     // dirs below (all sharing $HOME/.cache/stud as their parent),
@@ -759,9 +759,9 @@ int main(int argc, char** argv) {
     }
     stud::android_glue::set_asset_base_directory(asset_dir);
 
-    // Real, structural reorder (the engineering notes, "build real framework,
+    // Structural reorder (the engineering notes, "build real framework,
     // run it for real" direction): this whole block used to run AFTER
-    // dlopen() below. Real, live-caught evidence this session: the
+    // dlopen() below. Live-caught evidence this session: the
     // Djinni classloader-bootstrap idiom (FindClass(NativeObjectManager)
     // -> GetObjectClass -> getClassLoader() -> loadClass/findClass)
     // fires from inside libroblox.so's own real DT_INIT_ARRAY static
@@ -791,7 +791,7 @@ int main(int argc, char** argv) {
     stud::jni_bridge::register_game_activity_stubs(jvm);
     stud::jni_bridge::register_protocol_platform_stubs(jvm);
 
-    // Real, live-caught ordering bug: libroblox reads
+    // Caught in testing: ordering bug: libroblox reads
     // `NativeGLJavaInterface.getDeviceStaticParams()` during its OWN
     // JNI_OnLoad/static-constructor phase, i.e. inside dlopen() below,
     // long before any Stud bring-up call runs. Setting it later (which is
@@ -962,7 +962,7 @@ int main(int argc, char** argv) {
         asset_dir, engine_dpi_scale, real_viewport_mm_w, real_viewport_mm_h);
     auto device_params = stud::jni_bridge::build_desktop_device_params(
         "34", "Stud", real_app_version, "1920x1080", 1920, 1080, 16384);
-    // Real, confirmed against the app's own code, previously-missing call (the engineering notes,
+    // Confirmed against the app's own code, previously-missing call (the engineering notes,
     // "instantiate controllers" investigation): the real
     // setInitParamsForEngine calls this FIRST, strictly before
     // building InitParams; see bootstrap.h's own doc comment on
@@ -1051,7 +1051,7 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
     }
 
-    // Real, live-caught ordering bug, fixed here: this block used to run
+    // Caught in testing: ordering bug, fixed here: this block used to run
     // much later (after run_app_bridge_start()/run_preload_bootstrap()),
     // matching neither a real device nor real Sober. A real device sets
     // up Context.getCacheDir()/getFilesDir() before any native call at
@@ -1097,7 +1097,7 @@ int main(int argc, char** argv) {
     link_engine_caches(files_dir);
     stud::jni_bridge::set_native_user_interface_files_dir(files_dir);
 
-    // Real, persistent local storage, loaded before anything can read it.
+    // Persistent local storage, loaded before anything can read it.
     // This is where a login made inside the app itself survives a
     // restart: the engine writes the signed-in user and its session
     // material through the LocalStorage platform protocol, and reads them
@@ -1235,10 +1235,10 @@ int main(int argc, char** argv) {
         // but tested directly, with the file set to 30 the engine still
         // ran at 57fps. It does not read that value on this path.
 
-        // Real, live-caught, load-bearing fix: the engine's own internal
+        // Caught in testing:, load-bearing fix: the engine's own internal
         // HTTP client looks for a CA bundle at `<filesDir>/exe/cacert.pem`
         // (confirmed via a real `DFLog::HttpTraceError` capture, the
-        // exact path it logged, not a guess), NOT relative to cwd, and
+        // exact path it logged, checked), NOT relative to cwd, and
         // NOT the `assets/ssl/cacert.pem` path Stud already extracts from
         // the APK. Without this file present at exactly this path, EVERY
         // real outbound HTTPS request the engine makes fails at the TLS
@@ -1420,17 +1420,17 @@ int main(int argc, char** argv) {
         // own exported getter, which is the only honest check.
         stud::jni_bridge::report_flag_override_state(jvm, lib, overrides, "after ClientSettings");
     }
-    // Real, live-caught, structural fix (the engineering notes): a real
+    // Caught in testing:, structural fix (the engineering notes): a real
     // device's Application dispatches a full Activity-lifecycle callback
     // sequence (19 real native methods on JNIActivityLifecycleCallbacks,
     // confirmed against the app's own code) as real Activities are created/shown/torn
     // down. Stud had never called any of them, since it has no
-    // ART/real Activity to generate them. Real, live evidence a worker
+    // ART/real Activity to generate them. Live evidence a worker
     // thread genuinely blocks forever (an absl::Mutex::Await with an
     // infinite timeout, found by live inspection) waiting on
     // state only these callbacks update.
     //
-    // Real, corrected order: RobloxApplication.onCreate() (confirmed against the app's own code
+    // Corrected order: RobloxApplication.onCreate() (confirmed against the app's own code
     // real Application subclass) is the actual first real callback of
     // the whole process, before any Activity; it calls
     // JNIAAssetManagerSetup (hands libroblox.so a real AssetManager
@@ -1442,7 +1442,7 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
         std::fprintf(stderr, "stud: run_asset_manager_setup_bridge() failed: %s\n", e.what());
     }
-    // Real, confirmed against the app's own code (LocalStorageManager.a(context)): real storage
+    // Confirmed against the app's own code (LocalStorageManager.a(context)): real storage
     // subsystem bring-up, separate from the AssetManager-only call above.
     try {
         bool storage_ok = stud::jni_bridge::run_local_storage_manager_bootstrap(jvm, lib, files_dir,
@@ -1490,7 +1490,7 @@ int main(int argc, char** argv) {
             });
     }
     //
-    // Real, corrected order and activity names (this project's own real
+    // Corrected order and activity names (this project's own real
     // logcat, `~/Stud/roblox_logcat2.txt`'s `InitHelper` tag output,
     // analyzed properly this session, an earlier attempt guessed a
     // wrong activity name, "MainGameActivity", which doesn't exist, and
@@ -1911,7 +1911,7 @@ int main(int argc, char** argv) {
     }
 
     if (lifecycle.surface) {
-        // Real, live-caught race (the engineering notes, "keep going" entry
+        // Caught in testing: race (the engineering notes, "keep going" entry
         // after the getNativeHelper fix): render-host's own real window
         // surface can only ever be held by ONE live EGL context at a
         // time. Confirmed live: when Roblox's own engine (via its own,
@@ -2602,7 +2602,7 @@ int main(int argc, char** argv) {
                                                                  lifecycle.surface);
             }
         }
-        // Real, user-reported bug fixed: closing the real window
+        // User-reported bug, fixed: closing the real window
         // (stud-render-host, Process C) used to leave this process
         // running forever. Treat a lost render connection as this
         // process's own real shutdown signal, same as SIGINT/SIGTERM.

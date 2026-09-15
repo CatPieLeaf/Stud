@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/83078f16492f06e6",
-    "manifest_sha256": "83078f16492f06e60bdda36826633f332e982040d115b98ade6fd972ca0f8e44",
+    "origin": "local.cpak/package/346507ed60a55530",
+    "manifest_sha256": "346507ed60a55530c0faff451636107a9242184e8f7985bbab945d04b963c008",
     "image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:7276b61fc041081c0f88628e912c351d5a00cf39723e30a26010544edd652b7b",
     "manifest": {
@@ -100,6 +100,10 @@
         "filesystem": [
           {
             "path": "xdg-download",
+            "access": "read-only"
+          },
+          {
+            "path": "home/.config/kdeglobals",
             "access": "read-only"
           }
         ],

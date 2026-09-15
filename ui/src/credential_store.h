@@ -30,17 +30,17 @@ namespace stud::ui {
 // not app-branded credential-store keys under someone else's identity).
 inline constexpr auto kKeychainService = "Stud";
 
-// Real, blocking write. Returns true on success; on failure, *error_out
+// Blocking write. Returns true on success; on failure, *error_out
 // (if non-null) is set to QtKeychain's own real error string.
 bool store_credential(const QString& key, const QString& value, QString* error_out = nullptr);
 
-// Real, blocking read. std::nullopt if the key doesn't exist or on any
+// Blocking read. std::nullopt if the key doesn't exist or on any
 // other real error, callers can't distinguish those two cases from
 // this return value alone (matches "no stored login yet" and "keychain
 // unavailable" both meaning "show the login window" for this app).
 std::optional<QString> load_credential(const QString& key);
 
-// Real, blocking delete, e.g. for a future "log out" action. Not an
+// Blocking delete, e.g. for a future "log out" action. Not an
 // error if the key didn't exist.
 void delete_credential(const QString& key);
 

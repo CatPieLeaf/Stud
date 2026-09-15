@@ -72,7 +72,7 @@ struct LaunchPayload {
     std::string client_settings_body;
     long client_settings_http_status = 0;
 
-    // Real, currently-authenticated user identity (Roblox's own public
+    // Currently-authenticated user identity (Roblox's own public
     // `users.roblox.com/v1/users/authenticated` endpoint, given a valid
     // .ROBLOSECURITY cookie): fetched once, here, by the UI process,
     // same pattern as client_settings_body above. Investigated this
@@ -90,7 +90,7 @@ struct LaunchPayload {
     std::string authenticated_username;
     std::string authenticated_display_name;
 
-    // Real, raw response body from GET-ing place_launcher_url above (with
+    // Raw response body from GET-ing place_launcher_url above (with
     // the real session cookie): Roblox's own public, real,
     // community-documented PlaceLauncher.ashx?request=RequestGame
     // endpoint, the same one third-party Roblox launchers use to turn a

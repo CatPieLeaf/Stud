@@ -18,7 +18,7 @@
 //   nativePassMouseWheel(x, y, delta)             , delta = AXIS_VSCROLL
 //   nativePassKeyEvent(isDown, scanCode, keyCode, isRepeat)
 //
-// Real, honest limitation: `keyCode` is Android's own virtual key code,
+// Honest limitation: `keyCode` is Android's own virtual key code,
 // which Wayland does not provide, only the evdev scan code, which
 // Android reports identically via `KeyEvent.getScanCode()`. The mapping
 // below covers the real ASCII/navigation keys a login screen and normal

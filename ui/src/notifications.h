@@ -12,7 +12,7 @@
 
 namespace stud::ui {
 
-// Real, synchronous D-Bus call to org.freedesktop.Notifications.Notify.
+// Synchronous D-Bus call to org.freedesktop.Notifications.Notify.
 // Returns true if the notification server accepted it (a valid,
 // non-error D-Bus reply), false if no notification daemon is running,
 // or the call otherwise failed. `icon` is the notification's own picture

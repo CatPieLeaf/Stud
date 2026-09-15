@@ -40,7 +40,7 @@ struct BoundedCallOutcome {
 // thread/frame that created it, so nothing JNI-related may be captured
 // from the caller). Returns true iff the call completed without
 // trapping a fatal signal; the outer bounded wait treats "still
-// running" as an honest, real report, not a guess.
+// running" as an honest, real report, checked.
 // Same reporting as run_bounded_v2_call, but runs the call on the CALLING
 // thread instead of a fresh one, for the cases where the caller's thread
 // identity is itself load-bearing and moving the work off it changes what
@@ -107,7 +107,7 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
     return outcome;
 }
 
-// Real, shared JNI plumbing for one UpdateSurfaceApp+UpdateSurfaceGame
+// Shared JNI plumbing for one UpdateSurfaceApp+UpdateSurfaceGame
 // pair, factored out of the STUD_ENABLE_V2_STARTAPP-gated block below
 // so run_engine_v2_sequence()'s own default path can reuse it. Real
 // evidence for calling this on the default path at all: a real, working
@@ -117,7 +117,7 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
 // the StartApp-prerequisite one this block was originally written for,
 // but the same real JNI call shape.
 //
-// Real, live-caught bug this session (not a hypothetical): calling this
+// Bug found in testing this session (not a hypothetical): calling this
 // synchronously hung the whole boot sequence forever on the direct-launch
 // path: no crash, no STUD_TRAP, `run_engine_v2_sequence()` just never
 // returned. Exactly the documented "any new V2 entry point can block
@@ -309,7 +309,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 
 // Runs ONLY the pre-surface half of the real app-shell sequence.
 //
-// Real, live-caught ordering bug this fixes (engine FLog, via Stud's
+// Caught in testing: ordering bug this fixes (engine FLog, via Stud's
 // logd sink): Stud drove `onSurfaceCreatedNative` first, and the engine
 // responded by bootstrapping its own Lua app to completion
 // (`setStage: LuaApp`, `userDidLogin`), and only THEN did Stud's
@@ -353,7 +353,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // near-null SIGSEGV whose backtrace pc traced back to a lazily-
     // populated subsystem pointer these two calls are the real,
     // confirmed (the library's exported symbols) way to populate.
-    // Real, live-caught bug (the engineering notes, "keep going. until now,
+    // Bug found in testing (the engineering notes, "keep going. until now,
     // there's no kde window at all", the crash-recovery fixes landed
     // earlier this session let real execution reach this call for the
     // first time, and it hung the main thread forever, blocking
@@ -450,7 +450,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
             dm_addr != nullptr) {
             result.lua_app_dm_called = true;
             auto* dm_fn = reinterpret_cast<V2VoidNoArgFn>(dm_addr);
-            // Real, live-caught bug (the engineering notes): this call used to
+            // Bug found in testing (the engineering notes): this call used to
             // run synchronously via a bare call_trapping_abort() on the
             // calling thread, but its real implementation dispatches
             // the actual work (initializeLuaAppWithLoggedInUser) to a
@@ -549,7 +549,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // of the order this file used before. See engine_v2_bridge.h's own
     // doc comment.
 
-    // Real, live-caught bug (the engineering notes, the "stop trying to force
+    // Bug found in testing (the engineering notes, the "stop trying to force
     // StartGameWithParam" user correction): this call used to fire
     // unconditionally for EVERY launch, bare or not. On a real device,
     // StartGameWithParam only ever runs either (a) immediately, for a
@@ -589,7 +589,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         result.start_game_still_running = outcome.still_running;
         result.start_game_result = *start_game_result;
 
-        // Real, evidence-backed addition (a real, successful Sober FLog
+        // Evidence-backed addition (a real, successful Sober FLog
         // capture, the engineering notes): on the SAME direct-launch path this
         // function already drives, both UpdateSurfaceApp and
         // UpdateSurfaceGame fire twice each, right after
@@ -617,7 +617,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
                 result.update_surface_game_trapped_abort =
                     result.update_surface_game_trapped_abort || pair_outcome.trapped_abort;
                 if (pair_outcome.still_running) {
-                    // Real, honest degrade: don't attempt the second pair
+                    // Honest degrade: don't attempt the second pair
                     // if the first one is still blocked in the
                     // background, a second concurrent call into the
                     // same native entry points while the first hasn't
@@ -652,7 +652,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // trigger is the *second* real updateSurface() call
     // (surfaceState==2 && !graphicsStarted), which calling it here,
     // immediately after StartGame, doesn't actually correspond to.
-    // Real, live-confirmed symptom this session with StartApp fixed:
+    // Live-confirmed symptom this session with StartApp fixed:
     // this call now reliably crashes on a null controller pointer
     // (inside SingleSurfaceApp's own real
     // `pauseBeforeResume` branch), consistent with calling it at a
@@ -779,7 +779,7 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
 EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib) {
     EngineV2TeardownResult result;
 
-    // Real, live-tested correction: LeaveGame/DestroyApp are NOT safe to
+    // Live-tested correction: LeaveGame/DestroyApp are NOT safe to
     // call synchronously, same as Init/StartApp/ResumeGame above, a
     // real SIGTERM-triggered test this session hung the whole process
     // forever right here (no "shutting down" ever printed, STUD_TRAP

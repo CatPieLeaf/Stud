@@ -83,7 +83,7 @@ void ensure_sigaltstack_for_current_thread() {
     ::sigaltstack(&ss, nullptr);
 }
 
-// Real, in-process diagnostic that doesn't depend on a debugger ever attaching
+// In-process diagnostic that doesn't depend on a debugger ever attaching
 // correctly to this process: this session's own investigation found
 // that an external debugger never catches this binary's own exec, because
 // real bionic's linker64 loads it via its own internal ELF-mapping
@@ -189,7 +189,7 @@ bool addr_is_mapped(uintptr_t addr) {
 void print_backtrace(uintptr_t start_rbp) {
     uintptr_t rbp = start_rbp;
     for (int i = 0; i < 24 && rbp != 0; ++i) {
-        // Real, live-caught bug (the engineering notes), same class as the
+        // Bug found in testing (the engineering notes), same class as the
         // one already fixed in stud_trap_handler()'s own near_null rbp
         // dump loop: this doc comment used to claim "if this faults...
         // a hard crash simply ends the walk, which is an acceptable,
@@ -281,7 +281,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         auto fault_addr = reinterpret_cast<uintptr_t>(info->si_addr);
         uintptr_t stack_delta = fault_addr > fault_rsp ? fault_addr - fault_rsp : fault_rsp - fault_addr;
         bool near_stack = stack_delta <= (1u << 20);
-        // Real, live-caught gap (the engineering notes, "the new, current,
+        // Gap found in testing (the engineering notes, "the new, current,
         // fully deterministic blocker" entry): a real, ordinary null
         // `this` deref through a LARGE struct-field offset, confirmed
         // live: a member read through a null `this`,
@@ -385,7 +385,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
 
             print_backtrace(static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RBP]));
 
-            // Real, live stack scan for the caller's own saved callee-
+            // Live stack scan for the caller's own saved callee-
             // registers (x86-64 SysV: `push` after `push rbp; mov
             // rsp,rbp` stores each at successive rbp-8, rbp-16, ...),
             // safe (only reads already-valid stack memory, no risk of a
@@ -397,10 +397,10 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             // this session, not fully trustworthy here). Each slot is
             // run through describe_address(): a real heap/lib pointer
             // resolves to a real mapped region, stack garbage or a
-            // small integer won't: lets real evidence, not a guess,
+            // small integer won't: lets real evidence, checked,
             // say which saved register is the struct pointer whose
             // field faulted.
-            // Real, live-caught bug (the engineering notes): this loop used
+            // Bug found in testing (the engineering notes): this loop used
             // to dereference `stack_addr` with no bounds check at all,
             // unlike the `value` read a few lines below it, which
             // already correctly gates on addr_is_mapped(). If `rbp`
@@ -425,7 +425,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
                 std::snprintf(label, sizeof(label), "rbp-%d", slot * 8);
                 describe_address(label, value);
 
-                // Real, live struct-field dump for anything that
+                // Live struct-field dump for anything that
                 // resolved to real, mapped memory, reads are safe
                 // (addr_is_mapped() already confirmed it; heap pages
                 // are contiguous readable memory even a bit past one
@@ -444,7 +444,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
                 }
             }
         }
-        // Real, live-caught bug: g_tolerate_wild_sigsegv (set by
+        // Bug found in testing: g_tolerate_wild_sigsegv (set by
         // arm_abort_trap_tolerating_wild_sigsegv(), see its own doc
         // comment) was defined and armed/disarmed correctly but never
         // actually CONSULTED anywhere in this classification, a
@@ -480,7 +480,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         siglongjmp(*target, 1);
     }
 
-    // Real, live-caught structural gap (the engineering notes): g_armed_
+    // Caught in testing: structural gap (the engineering notes): g_armed_
     // checkpoint is thread_local by design (a checkpoint only makes
     // sense to resume on the same thread's own stack, siglongjmp
     // across threads is not something sigsetjmp/siglongjmp support at
@@ -499,7 +499,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     // for every async, off-calling-thread instance of this crash
     // class, independent of the earlier unbounded-stack-read fix.
     //
-    // Real, pragmatic fix: for a fault already classified recoverable-
+    // Pragmatic fix: for a fault already classified recoverable-
     // shaped (near_null) but with no per-thread checkpoint to jump
     // back to, terminate only the faulting thread (pthread_exit(),
     // never returning) instead of the whole process. This is the same
@@ -558,7 +558,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     ::raise(sig);
 }
 
-// Real, confirmed-live reason this re-installs on EVERY arm rather than
+// Confirmed-live reason this re-installs on EVERY arm rather than
 // once (std::call_once, this file's own earlier version): libroblox.so
 // bundles Google's Crashpad crash-reporting library (confirmed via its
 // own string table, ".../CrashCallback/android/

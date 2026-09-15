@@ -30,7 +30,7 @@ std::string get_string_field(FakeJni::Env& env, jobject obj, jclass cls, const c
 // Real correction (the engineering notes, "InitParams.platformParams reads
 // null" chain): InitParams's own properties are registered as real
 // zero-arg METHODS now, matching AutoValue's actual accessor convention
-// confirmed directly against the real libroblox.so, not guessed.
+// confirmed directly against the real libroblox.so, checked.
 // DeviceParams's own fields (checked separately below, nested inside a
 // method-returned InitParams.deviceParams()) are still genuine FIELDS,
 // unaffected by this, only InitParams itself needed correcting.

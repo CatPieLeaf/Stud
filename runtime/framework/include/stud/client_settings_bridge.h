@@ -21,7 +21,7 @@
 // locked "Universal App" decision; see the engineering notes' M1 section), so
 // there's no Java AsyncTask to do this fetch.
 //
-// Real, ground-truth-traced endpoint (the app's own HTTP/cookie layer,
+// Ground-truth-traced endpoint (the app's own HTTP/cookie layer,
 // methods, `BuildConfig.CLIENT_SETTINGS_GROUPNAME = "GoogleAndroidApp"`):
 //   https://clientsettingscdn.roblox.com/v2/settings/application/GoogleAndroidApp
 //

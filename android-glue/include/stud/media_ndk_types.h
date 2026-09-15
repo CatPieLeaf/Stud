@@ -48,7 +48,7 @@ AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
 
 // --- NdkMediaFormat.h key-name constants ---------------------------------
 //
-// Real, publicly documented, stable AOSP NDK ABI string constants (not
+// Publicly documented, stable AOSP NDK ABI string constants (not
 // Roblox-specific unknowns; see frameworks/av's NdkMediaFormat.cpp,
 // mirrored across every NDK release). Found via a real load: libroblox.so
 // imports these as OBJECT (data) symbols; some statically-linked

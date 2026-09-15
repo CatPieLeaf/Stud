@@ -7,7 +7,7 @@
 #include <functional>
 #include <string>
 
-// Real, general infrastructure for driving a loaded libroblox.so through
+// General infrastructure for driving a loaded libroblox.so through
 // its actual post-load boot sequence, promoted out of
 // tools/try_bootstrap.cpp once proven against the real binary, shared by
 // the diagnostic tool and the real stud-runtime binary so both stay in

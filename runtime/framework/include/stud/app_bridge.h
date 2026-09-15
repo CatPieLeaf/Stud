@@ -41,7 +41,7 @@
 // stud::config::real_persistent_android_id()'s own doc comment for how
 // this is honestly sourced, not fabricated), and appUpgradeKey (the
 // real, confirmed against the app's own code constant "AppAndroidV"; see
-// com.roblox.client.personasdk.BuildConfig, not guessed). userAgent
+// com.roblox.client.personasdk.BuildConfig, checked). userAgent
 // is the one remaining honest empty placeholder: its real construction
 // (built several real calls deep in the app's own HTTP layer) wasn't traced this
 // session, left honestly empty rather than fabricated.

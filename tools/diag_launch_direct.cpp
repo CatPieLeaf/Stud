@@ -1,4 +1,4 @@
-// Real, temporary diagnostic driver (the engineering notes' own "throwaway
+// Temporary diagnostic driver (the engineering notes' own "throwaway
 // diagnostic driver" pattern, bypasses stud-ui's login/APK-config gate
 // this sandbox genuinely has neither of, real interactive login and
 // ~/.config/stud/settings.json). Reconstructs the exact same
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
                      payload.session_cookie.size());
     }
 
-    // Real, fresh ClientSettings fetch (public endpoint, no login needed,
+    // Fresh ClientSettings fetch (public endpoint, no login needed,
     // confirmed this project's own earlier session). Without this the
     // engine hits a real, different, earlier crash ("Can't initialize the
     // TaskScheduler before flags have been loaded") before ever reaching
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "diag: fetched ClientSettings, %zu bytes\n",
                  payload.client_settings_body.size());
 
-    // Real, deliberate: NOT a deep link. Stud's own standing rule (per
+    // Deliberate: NOT a deep link. Stud's own standing rule (per
     // the user's explicit, repeated instruction) is to never attempt to
     // launch/join an actual Roblox game/experience, only the app UI
     // (bare launch, Lua home screen/app chrome) is in scope. A deep link

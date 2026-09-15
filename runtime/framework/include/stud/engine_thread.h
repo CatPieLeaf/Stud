@@ -2,7 +2,7 @@
 
 #include <functional>
 
-// Real, live-root-caused fix (the engineering notes, "what drains the task
+// Live-root-caused fix (the engineering notes, "what drains the task
 // queue"): Roblox's own engine designates ONE thread as its real "main"
 // thread, the first thread to call into the relevant engine entry
 // points stores its own `pthread_t` in a real global

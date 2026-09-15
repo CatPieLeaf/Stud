@@ -35,6 +35,10 @@
       {
         "path": "xdg-download",
         "access": "read-only"
+      },
+      {
+        "path": "home/.config/kdeglobals",
+        "access": "read-only"
       }
     ],
     "sessionBus": {

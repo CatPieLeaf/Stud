@@ -12,10 +12,10 @@
   <a href="https://discord.gg/MQRGatcqMb"><img src="https://img.shields.io/badge/discord-5865F2?logo=discord&logoColor=FFFFFF&style=for-the-badge" alt="Discord"></a>
 </p>
 
-  <p align="center">Play Roblox on Linux — the real Android app, running on your desktop.</p>
+  <p align="center">Play Roblox on Linux: the real Android app, running on your desktop.</p>
 </div>
 
-<p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything it needs to run — the Android framework, a window, a mouse and keyboard, a graphics stack — so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
+<p align="center">Stud is a <b>launcher</b>. It takes the real, unmodified Roblox Android app and gives it everything it needs to run (the Android framework, a window, a mouse and keyboard, a graphics stack) so it runs on a Linux desktop instead. Roblox itself is never touched, never patched, and never shipped from here.</p>
 
 <div align="center">
 
@@ -61,9 +61,9 @@
 </div>
 
 <div align="center">
-  <p><i>Honestly? Because the existing options to play Roblox on Linux kept falling over. NVIDIA, Vulkan, mid-game — often enough that playing stopped being the point and finding out why started being the point. That is one person's experience on one set of hardware, not a verdict on anyone else's work; your mileage may genuinely vary.<br><br>
+  <p><i>Honestly? Because the existing options to play Roblox on Linux kept falling over. NVIDIA, Vulkan, mid-game, often enough that playing stopped being the point and finding out why started being the point. That is one person's experience on one set of hardware, not a verdict on anyone else's work; your mileage may genuinely vary.<br><br>
   The first version of Stud made things worse in an interesting way: one process doing everything, Android code and desktop code taking turns on the same threads, a graphics driver spinning up worker threads nobody asked for in the middle of it. It crashed in places that made no sense until it became clear the design itself was the bug.<br><br>
-  So it got taken apart. Three processes now, each with one job, borrowing the shape a web browser has used for years — and most of the crashes stopped being possible rather than being fixed.<br><br>
+  So it got taken apart. Three processes now, each with one job, borrowing the shape a web browser has used for years, and most of the crashes stopped being possible rather than being fixed.<br><br>
   This is a project made entirely by one person, in two months, who just wanted to have a better experience playing Roblox.</i></p>
 </div>
 
@@ -75,20 +75,20 @@
 </div>
 
  - Runs the **real, unmodified** Roblox Android app
- - Three separate processes in the shape of a browser's — the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
+ - Three separate processes in the shape of a browser's, the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
  - Vulkan by default, with OpenGL through ANGLE, OpenGL, and software-rendering in Settings
- - **AMD FSR upscaling** — the game renders below your screen's resolution and Stud rebuilds the frame at full size, with adjustable sharpening
+ - **AMD FSR upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size, with adjustable sharpening
  - Smooth zoom in/out just like Windows client
- - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring — the same safe-storage arrangement Chromium uses
+ - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring, the same safe-storage arrangement Chromium uses
  - `roblox://` links from a browser open straight into the experience
- - In-app web panels — Messages, account pages, login challenges — and private servers joined from the server list
+ - In-app web panels (Messages, account pages, login challenges) and private servers joined from the server list
  - Copy Link in an experience puts the real invite link on your clipboard
  - Discord Rich Presence, with a join button
  - Tells you which country the game server is in when you join
  - MangoHud overlay toggle, HiDPI and UI scaling, GPU picker, system tray
- - Caps the frame rate while nothing can see the window — minimised, covered, or on another workspace
+ - Caps the frame rate while nothing can see the window: minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
- - Ships as an **rpm**, a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, and a **Flatpak** — plus an [AUR](https://aur.archlinux.org/packages/stud-bin) package and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
+ - Ships as an **rpm**, a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, and a **Flatpak**, plus an [AUR](https://aur.archlinux.org/packages/stud-bin) package and a [cpak](https://github.com/Containerpak/cpak) **(Planned)**
 
 <br>
 
@@ -98,9 +98,9 @@
 </div>
 
 > [!WARNING]
-> **Stud is very unstable.** It boots, it logs in, it renders the real app and it joins real games — and it also breaks, hangs and does strange things, sometimes for reasons nobody has measured yet. For now, treat it as something to tinker with, not something to rely on.
+> **Stud is very unstable.** It boots, it logs in, it renders the real app and it joins real games. It also breaks, hangs and does strange things, sometimes for reasons nobody has measured yet. For now, treat it as something to tinker with, not something to rely on.
 
-**Contributions of any kind are welcome** — code, bug reports, a log from a machine that isn't ours, a GPU we've never tested on, a screenshot of something rendering wrong. Nothing is too small. Open an [issue](https://github.com/CatPieLeaf/Stud/issues) and say what happened; the tray's **Export logs** puts every session in one file for you.
+**Contributions of any kind are welcome**: code, bug reports, a log from a machine that isn't ours, a GPU we've never tested on, a screenshot of something rendering wrong. Nothing is too small. Open an [issue](https://github.com/CatPieLeaf/Stud/issues) and say what happened; the tray's **Export logs** puts every session in one file for you.
 
 <br>
 
@@ -111,7 +111,7 @@
 
  - **Not affiliated with Roblox.** Stud is an independent project, not endorsed, supported or approved by Roblox Corporation in any way.
  - **Not a distributor.** No Roblox APK is included here, mirrored here, or downloaded by anything here. You supply your own copy, and Roblox remains subject to its own terms.
- - **Not a modding tool.** Stud does not inject code, patch the client, alter game behaviour or give you anything you would not have on a regular client — and it will not gain support for doing so. Requests for that will be ignored and closed.
+ - **Not a modding tool.** Stud does not inject code, patch the client, alter game behaviour or give you anything you would not have on a regular client, and it will not gain support for doing so. Requests for that will be ignored and closed.
  - **Not borrowed.** Stud shares no code with any similar project. Not a single line comes from Sober or anything like it; everything here was written for this project.
  - **Not an emulator.** There is no Android system image and no virtual machine. The app's own code runs directly, with the pieces it expects supplied around it.
 
@@ -126,7 +126,7 @@ Three processes, talking over a Unix socket:
 
 | process | runs as | does |
 |---|---|---|
-| `stud-ui` | glibc, Qt6 | settings, deep links, starting the other two — then gets out of the way |
+| `stud-ui` | glibc, Qt6 | settings, deep links, starting the other two, then gets out of the way |
 | `stud-runtime-bionic` | real bionic, inside `bwrap` | the engine, the JNI bridge, the Android framework stand-in |
 | `stud-render-host` | glibc | Wayland or X11, ANGLE, the real Vulkan surface, audio |
 
@@ -192,12 +192,12 @@ cmake --build build
 ./build/ui/stud-ui
 ```
 
-First launch opens Settings, because Stud has no Roblox APK yet — point it at one you obtained yourself and save. That extracts what it needs; every launch after that goes straight to Roblox.
+First launch opens Settings, because Stud has no Roblox APK yet. Point it at one you obtained yourself and save. That extracts what it needs; every launch after that goes straight to Roblox.
 
 <details>
 <summary>Making packages</summary>
 
-Both ship everything Stud needs — ANGLE, the bionic set, the runtime process — on top of what they declare as dependencies. Neither contains Roblox.
+Both ship everything Stud needs (ANGLE, the bionic set, the runtime process) on top of what they declare as dependencies. Neither contains Roblox.
 
 ```bash
 cd build && cpack -G RPM      # build/stud-<version>-1.x86_64.rpm
@@ -247,7 +247,7 @@ that matches its own Qt rather than one that refuses to install.
 sudo pacman -U stud-*-x86_64.pkg.tar.zst
 ```
 
-Or from the [AUR](https://aur.archlinux.org/packages/stud-bin) — `paru -S stud-bin`,
+Or from the [AUR](https://aur.archlinux.org/packages/stud-bin): `paru -S stud-bin`,
 which installs the same prebuilt package:
 
 ```bash
@@ -257,7 +257,7 @@ git clone https://aur.archlinux.org/stud-bin.git && cd stud-bin && makepkg -si
 To build from source instead, use the PKGBUILD in this repository at
 `packaging/aur/` and expect around an hour, almost all of it ANGLE. It is not
 the AUR package because it downloads ANGLE's own dependencies while it builds,
-which a clean chroot cannot do — `packaging/aur/README.md` explains.
+which a clean chroot cannot do. `packaging/aur/README.md` explains.
 
 ## 🔶 F L A T P A K
 
@@ -266,7 +266,7 @@ flatpak install --user ./stud-*-x86_64.flatpak
 flatpak run io.github.catpieleaf.Stud
 ```
 
-Not on Flathub yet, so it is a file rather than a remote — the bundle is attached to
+Not on Flathub yet, so it is a file rather than a remote. The bundle is attached to
 each release and carries everything it needs. The manifest it is built from is in
 `packaging/flatpak`.
 
@@ -293,7 +293,7 @@ chmod +x Stud-x86_64.AppImage
 > ```
 
 > [!NOTE]
-> `bubblewrap` is deliberately **not** bundled in the AppImage — it needs the AppArmor or SELinux policy your own distribution ships alongside it. Install it from your package manager (`bubblewrap`); the AppImage will tell you if it is missing. The rpm, deb and Arch packages depend on it, so those pull it in for you, and the Flatpak builds its own inside the sandbox.
+> `bubblewrap` is deliberately **not** bundled in the AppImage: it needs the AppArmor or SELinux policy your own distribution ships alongside it. Install it from your package manager (`bubblewrap`); the AppImage will tell you if it is missing. The rpm, deb and Arch packages depend on it, so those pull it in for you, and the Flatpak builds its own inside the sandbox.
 >
 > Every package here is built on a current distribution, which puts a floor of glibc 2.43 under all of them: Fedora 44+, Ubuntu 26.04+ and current rolling releases. That includes the AppImage, which also carries its own Qt and Breeze. Older than that, build from source.
 
@@ -308,7 +308,7 @@ chmod +x Stud-x86_64.AppImage
 |---|---|
 | `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides |
 | `~/.local/share/stud/` | the encrypted session cookie, and the engine's own data |
-| `~/.cache/stud/` | the extracted APK, assets and caches — safe to delete |
+| `~/.cache/stud/` | the extracted APK, assets and caches, safe to delete |
 | `~/.local/state/stud/logs/` | one log per session, written by all three processes |
 
 That last one is the file to read when something goes wrong, and the one to attach to a bug report.
@@ -321,13 +321,13 @@ That last one is the file to read when something goes wrong, and the one to atta
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
- - [ANGLE](https://chromium.googlesource.com/angle/angle) — the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
- - [bionic](https://android.googlesource.com/platform/bionic/) — Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
- - [libjnivm](https://github.com/ChristopherHX/libjnivm) — the JNI virtual machine Stud's Java layer stands on (MIT)
- - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) — Stud's upscaler is EASU and RCAS ported from AMD's own reference headers, vendored at `third_party/fidelityfx-fsr1` (MIT)
+ - [ANGLE](https://chromium.googlesource.com/angle/angle): the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
+ - [bionic](https://android.googlesource.com/platform/bionic/): Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
+ - [libjnivm](https://github.com/ChristopherHX/libjnivm): the JNI virtual machine Stud's Java layer stands on (MIT)
+ - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): Stud's upscaler is EASU and RCAS ported from AMD's own reference headers, vendored at `third_party/fidelityfx-fsr1` (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK), [PortAudio](https://www.portaudio.com/) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
- - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616) — the typeface in Stud's logo, by ripoof. The logo is an image; the font itself is not shipped with Stud
+ - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The logo is an image; the font itself is not shipped with Stud
 
 Every binary Stud redistributes carries its own licence and copyright notice. `tools/setup.sh` fetches them, and a package installs them to `/usr/share/licenses/stud/` and beside the libraries themselves.
 

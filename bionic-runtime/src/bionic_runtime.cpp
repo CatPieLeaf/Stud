@@ -116,7 +116,7 @@ std::string default_shipped_bionic_directory() {
     throw BionicNotFound();
 }
 
-// Real, XDG-scoped path for the generated DNS property area (see
+// XDG-scoped path for the generated DNS property area (see
 // property_area.h's own doc comment for the real, ground-truth-traced
 // mechanism this backs), same convention as stud-ipc's own launch
 // socket path.
@@ -127,7 +127,7 @@ std::string default_property_area_path() {
     return "/tmp/stud-dns-property-area";
 }
 
-// Real, minimal /etc/resolv.conf parse, just real "nameserver <ip>"
+// Minimal /etc/resolv.conf parse, just real "nameserver <ip>"
 // lines, in the real order they appear, up to the two real properties
 // (net.dns1/net.dns2) this project currently has any use for. No other
 // resolv.conf directive (search/options/etc.) matters for this.
@@ -145,7 +145,7 @@ std::vector<std::string> real_host_nameservers() {
     return servers;
 }
 
-// Real, best-effort generation of the DNS property area from the host's
+// Best-effort generation of the DNS property area from the host's
 // own real resolver config; see property_area.h's own doc comment for
 // why this exists (real, live-traced: bionic's DNS resolver reads
 // net.dns1/net.dns2 via __system_property_get(), not /etc/resolv.conf
@@ -326,7 +326,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back(bwrap_path);
     argv_storage.push_back("--tmpfs");
     argv_storage.push_back("/");
-    // Real, live-caught fix (was `--dev-bind /dev /dev`, the whole real
+    // Fix from testing (was `--dev-bind /dev /dev`, the whole real
     // host devtmfs): a real syscall trace of a full, working run showed
     // Process B itself (the real bionic linker64 process specifically,
     // isolated from Process C/stud-render-host's own, separate, much
@@ -461,7 +461,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
             for (const auto& entry : fs::directory_iterator(overlay_lib64_dir, ec)) {
                 // ".so" anywhere in the name, not extension() == ".so".
                 //
-                // Real, live-caught bug: libvulkan.so.1's extension is
+                // Bug found in testing: libvulkan.so.1's extension is
                 // ".1", so it was the one file in this directory the
                 // overlay silently skipped; Stud's real Vulkan library
                 // was never bound into the sandbox at all. What the
@@ -496,7 +496,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         }
     }
 
-    // Real, live-caught gap: this sandbox's root is `--tmpfs /`, so
+    // Gap found in testing: this sandbox's root is `--tmpfs /`, so
     // /etc/resolv.conf genuinely doesn't exist inside it at all,
     // confirmed via a real syscall trace capture showing bionic's own DNS
     // resolver worker connect()ing to a broken 0.0.0.0 "nameserver"
@@ -526,7 +526,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back("/system/etc/hosts");
     }
 
-    // Real, untested-until-now hypothesis: this sandbox has never bound
+    // Untested until now: hypothesis: this sandbox has never bound
     // any real CA certificate store at all. Process A's own HTTP fetches
     // (ClientSettings, PlaceLauncher, authenticated-user identity) all
     // run in glibc Process A, outside this sandbox entirely, and were
@@ -554,8 +554,8 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back(real_ca_bundle_path);
     }
 
-    // Real, live-traced follow-up to the resolv.conf/hosts binds above.
-    // Real, live-caught history: this used to fail outright
+    // Live-traced follow-up to the resolv.conf/hosts binds above.
+    // Caught in testing: history: this used to fail outright
     // ("Permission denied" creating a new mount point at
     // /dev/__properties__) back when /dev was the old --dev-bind /dev
     // /dev (a live view of the real, root-owned host devtmpfs, which
@@ -582,7 +582,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back(config.working_directory);
     }
 
-    // Real, live-caught, fixed (not configurable) requirement, not an
+    // Caught in testing:, fixed (not configurable) requirement, not an
     // optional diagnostic like config.extra_env below. traced in the engine
     // (symbol resolution against the real, unstripped extracted libc.so
     // resolved the exact crash site by name): a real SIGFPE
@@ -631,7 +631,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     if (!config.share_network) {
         argv_storage.push_back("--unshare-net");
     }
-    // Real, live-caught, real root cause of the DNS property-area fix
+    // Caught in testing:, real root cause of the DNS property-area fix
     // (see property_area.h's own doc comment): bionic's own real
     // prop_area::map_fd_ro(), confirmed via this project's own
     // reading of the actual extracted libc.so, requires the mapped
@@ -655,7 +655,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back("0");
     argv_storage.push_back("--gid");
     argv_storage.push_back("0");
-    // Real, live-caught regression fixed: --die-with-parent here directly
+    // Caught in testing: regression fixed: --die-with-parent here directly
     // contradicts this project's own documented, intentional architecture
     // (ui/src/main.cpp's launch_game()/proceed(): "hand off and get out
     // of the way ... the actual game runs in the separate runtime
@@ -684,7 +684,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back(arg);
     }
 
-    // Real, direct follow-up once net.dns1/net.dns2 (the property-area
+    // Direct follow-up once net.dns1/net.dns2 (the property-area
     // approach above) were confirmed absent from this libc.so's actual
     // resolver code (see the engineering notes gap #1): threads the same real host
     // nameservers into Process B's own real argv (not a bwrap flag.

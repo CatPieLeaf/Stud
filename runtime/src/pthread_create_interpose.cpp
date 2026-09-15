@@ -1,4 +1,4 @@
-// Real, confirmed-live gap (this session): trap_recovery.h's abort/trap
+// Confirmed-live gap (this session): trap_recovery.h's abort/trap
 // protection was only ever armed around ONE specific call (the main
 // thread's JNI_OnLoad invocation), any background thread Roblox's own
 // code spawns (confirmed live: a real, named "RBX Worker A" thread hit
@@ -37,7 +37,7 @@ void* stud_thread_trampoline(void* raw) {
     void* arg = wrapped->real_arg;
     delete wrapped;
 
-    // Real, confirmed-live gap (this session): AGDK's own
+    // Confirmed-live gap (this session): AGDK's own
     // GameActivity_initializeNativeCode() spawns an internal "app
     // thread" to run its native code on, and that thread later calls
     // ALooper_release() on ALooper_forThread()'s result without ever
@@ -52,7 +52,7 @@ void* stud_thread_trampoline(void* raw) {
     // one call site.
     ::ALooper_prepare(0);
 
-    // Real, live-caught gap (the engineering notes, "GameActivity_
+    // Gap found in testing (the engineering notes, "GameActivity_
     // initializeNativeCode returns NULL" fix / follow-up crash inside a
     // libroblox.so-spawned thread): now that the ALooper fix above lets
     // real engine callbacks actually fire for the first time, threads
@@ -69,7 +69,7 @@ void* stud_thread_trampoline(void* raw) {
     // to do it individually.
     stud::jni_bridge::ensure_current_thread_attached_to_jvm();
 
-    // Real, live-caught gap, fixed same pass as the fix this comment
+    // Gap found in testing, fixed same pass as the fix this comment
     // describes (the engineering notes, "fix the landing pad crash"): this
     // used the strict call_trapping_abort() (recoverable only for a
     // stack-overflow-shaped or near-null fault), so a genuinely wild-

@@ -38,7 +38,7 @@
 // `setPlatformImpl` symbol at all (unlike every protocol below),
 // `IPlatformSystemDialogHandler` itself has its own real `CppProxy`,
 // suggesting a different (constructor-injection or similar)
-// registration mechanism this session didn't trace. Real, honest open
+// registration mechanism this session didn't trace. Honest open
 // item, don't add a stub for it without first finding the real
 // injection point, or it'll sit registered but never actually reached.
 namespace stud::jni_bridge {
@@ -79,7 +79,7 @@ public:
     FakeJni::JBoolean isAvailable() { return false; }
     void pinExperience(FakeJni::JLong /*universeId*/, std::shared_ptr<FakeJni::JString> /*name*/,
                         std::shared_ptr<FakeJni::JString> /*iconUrl*/) {}
-    // Real, live-caught addition, and a real lesson about working from
+    // Caught in testing: addition, and a real lesson about working from
     // an older copy of the app. This protocol was the LAST of the six still failing to
     // register, and the engine's own Djinni glue named the cause exactly:
     //   djinni (djinni_support.cpp:339): GetMethodID returned null
@@ -162,7 +162,7 @@ public:
 // stubs.h` has a real, functional `JavaUtilHashSetStub` registered
 // under the correct name, returns a real, empty (not fabricated-
 // nonempty) HashSet, with the real, correctly-matching signature.
-// Real, live-caught gap (the engineering notes): every Djinni protocol's
+// Gap found in testing (the engineering notes): every Djinni protocol's
 // `setPlatformImpl` call was recorded as succeeding because it returned
 // without trapping, but each one left a PENDING JNI EXCEPTION behind,
 // because Djinni's own JNI glue does a real
@@ -392,7 +392,7 @@ public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/localstorageplatforminterface/generated/"
         "IPlatformLocalStorageHandler")
-    // Real, working implementation, not honest-default stubs any more.
+    // Working implementation, not honest-default stubs any more.
     //
     // Why this matters (live-traced, the engineering notes): the real Lua app
     // asks the platform who is logged in via this protocol. Returning 0

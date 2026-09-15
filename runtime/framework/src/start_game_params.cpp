@@ -30,7 +30,7 @@ BEGIN_NATIVE_DESCRIPTOR(StartGameParams)
 { FakeJni::Function<&StartGameParams::vrContext>{}, "vrContext" },
 END_NATIVE_DESCRIPTOR
 
-// Real, deliberate departure from the earlier host-side plan of calling
+// Deliberate departure from the earlier host-side plan of calling
 // gamejoin.roblox.com/PlaceLauncher.ashx directly and parsing its
 // response: Sober (this project's own real reference, sober-oss/, a
 // real, working, open-source Roblox-on-Linux launcher) has ZERO code
@@ -65,7 +65,7 @@ std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     params->joinAttemptId_ = std::make_shared<FakeJni::JString>(deep_link.join_attempt_id);
     params->joinAttemptOrigin_ = std::make_shared<FakeJni::JString>(deep_link.join_attempt_origin);
     params->joinRequestType_ = 0;
-    // Real, live-tested-and-failed-once-already follow-up (see
+    // Live-tested-and-failed-once-already follow-up (see
     // DeepLinkJoinInfo::launch_data's own doc comment): placeId/
     // joinAttemptId/referredByPlayerId/joinAttemptOrigin ALONE, without
     // this, did not trigger a real join in a real test this session
@@ -73,7 +73,7 @@ std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     // Trying the raw opaque gameinfo ticket here next.
     params->launchData_ = std::make_shared<FakeJni::JString>(deep_link.launch_data);
     params->linkCode_ = std::make_shared<FakeJni::JString>("");
-    // Real, tested (the engineering notes, "proceed" entry): a real, well-
+    // Tested (the engineering notes, "proceed" entry): a real, well-
     // known place ID (1818, "Classic: Crossroads") was tried ALONE here
     // as a cheap experiment before deep-link parsing existed,
     // confirmed via a real run's FLog output to change NOTHING

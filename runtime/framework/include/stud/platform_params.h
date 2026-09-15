@@ -8,7 +8,7 @@
 // FakeJni object so libroblox.so's native code can operate on it via
 // genuine JNI field accessors, exactly as it would on a real device.
 //
-// Field layout and types are ground-truth, not guessed: traced directly
+// Field layout and types are ground-truth, checked: traced directly
 // from the real Roblox APK's app's own device-params builder, which builds this exact object from
 // PackageManager.hasSystemFeature() results before handing it to the
 // engine. See the engineering notes, "Desktop-vs-mobile spoof: SOLVED" section,

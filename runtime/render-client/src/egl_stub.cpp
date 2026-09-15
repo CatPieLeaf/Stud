@@ -192,14 +192,14 @@ EGLBoolean eglTerminate(EGLDisplay dpy) {
     return connection().call(CallId::EglTerminate, a, nullptr, 0, nullptr, 0, nullptr) ? EGL_TRUE : EGL_FALSE;
 }
 
-// Real, honest limitation: nothing beyond the core EGL1.x/GLES2 API this
+// Honest limitation: nothing beyond the core EGL1.x/GLES2 API this
 // stub already implements has been confirmed needed (Roblox importing
 // this symbol doesn't by itself prove it queries any specific extension
 // at runtime), returns nullptr for anything not explicitly known,
 // same "grow against real evidence, don't guess ahead" discipline this
 // whole project already follows elsewhere, rather than building a
 // speculative generic-dispatch trampoline pool for an unconfirmed need.
-// Real, live-root-caused fix (the engineering notes, "what drains the
+// Live-root-caused fix (the engineering notes, "what drains the
 // engine's task queue"): this used to unconditionally return nullptr.
 // That is not a harmless stub. Real GL code resolves its entry points
 // once, up front, into its own dispatch table, and libroblox does

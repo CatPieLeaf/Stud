@@ -81,7 +81,7 @@ EngineThreadOutcome run_on_engine_thread(std::function<bool()> work, int timeout
     auto result = task.result;
     EngineThread::instance().submit(std::move(task));
 
-    // Real, bounded, condition-based wait, polls the real completion
+    // Bounded, condition-based wait, polls the real completion
     // flag rather than assuming an elapsed time, same discipline as the
     // per-call bounded wait this replaces.
     constexpr int kPollIntervalMs = 50;

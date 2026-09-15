@@ -30,7 +30,7 @@ void check(bool condition, const char* what) {
     std::printf("ok: %s\n", what);
 }
 
-// Real, known host paths a real Linux system's GPU driver stack lives
+// Known host paths a real Linux system's GPU driver stack lives
 // under, if any of these show up as a *bind source* (the host-side
 // path bwrap is told to expose), that's exactly the mistake this test
 // exists to catch. Deliberately broad (covers Mesa/DRI, NVIDIA's own
@@ -93,7 +93,7 @@ int main() {
     }
     std::printf("ok: no bwrap argv entry references a known real host GPU driver path\n");
 
-    // Real, specific check on top of the substring scan: /dev is bound
+    // Specific check on top of the substring scan: /dev is bound
     // as a whole (device *nodes*, not driver code; see this test's
     // own doc comment for why that's an accepted, understood tradeoff,
     // not this test's concern) but must never ALSO get a real driver
@@ -106,7 +106,7 @@ int main() {
     }
     check(bind_count > 0, "sanity: at least one real --bind/--ro-bind entry exists");
 
-    // Real, live-caught regression coverage for this session's own DNS
+    // Caught in testing: regression coverage for this session's own DNS
     // fix chain (see the engineering notes gap #1): ANDROID_DNS_MODE=local is
     // a fixed, unconditional requirement (real SIGFPE inside libc.so's
     // own _cache_lookup_p otherwise, a zero-size resolver-cache pool

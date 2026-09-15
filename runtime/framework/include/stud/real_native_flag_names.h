@@ -10,7 +10,7 @@
 //
 // Stud runs no DEX, so it cannot compute the subset the way the app
 // does; the names are listed here instead. They are data the app itself
-// would supply, not a guess, and they need regenerating whenever the
+// would supply, checked, and they need regenerating whenever the
 // configured APK changes, the engineering notes record how.
 //
 // Scope, honestly: this is only the input to that one call. It is not

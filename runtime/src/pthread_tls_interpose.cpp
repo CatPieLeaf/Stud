@@ -1,4 +1,4 @@
-// Real, live-value diagnostic (the engineering notes, "GameActivity_
+// Live-value diagnostic (the engineering notes, "GameActivity_
 // initializeNativeCode returns NULL" entry): a live one-shot breakpoint
 // confirmed the null-return branch is gated on real, empty-string
 // checks read via a thread-local scratch buffer (a real

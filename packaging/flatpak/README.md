@@ -2,7 +2,7 @@
 
 `io.github.catpieleaf.Stud.yml` is the manifest. Flathub wants it in its
 own repository (`flathub/io.github.catpieleaf.Stud`), so this copy is the
-source of truth and that repository carries a copy — the same arrangement
+source of truth and that repository carries a copy, the same arrangement
 as `packaging/aur`.
 
 ## It installs a prebuilt archive, and it has to
@@ -14,8 +14,8 @@ runs, and **Flathub builds have no network**. There is no self-contained
 ANGLE source tarball to pin instead, so a from-source manifest cannot be
 written today.
 
-[Sober](https://github.com/flathub/org.vinegarhq.Sober) — the same kind of
-application — resolves this the same way, shipping a prebuilt archive from
+[Sober](https://github.com/flathub/org.vinegarhq.Sober), the same kind of
+application, resolves this the same way, shipping a prebuilt archive from
 its own server with a `sha256`. Every permission in the manifest follows
 theirs, with a comment saying why.
 
@@ -26,7 +26,7 @@ pinned source bundle. It is possible; it is a much larger build.
 ## The one thing to check before submitting
 
 `--allow=devel`. Process B runs inside its own `bwrap`, with its own user
-namespace — that is Stud's architecture, and it is why the GPU driver
+namespace. That is Stud's architecture, and it is why the GPU driver
 never shares a process with the engine. A nested sandbox needs this
 permission. Sober is granted it (for ptrace), so the precedent exists, but
 expect a reviewer to ask, and the answer is the architecture rather than
