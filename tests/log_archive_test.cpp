@@ -59,7 +59,8 @@ int main() {
     for (int i = 0; i < 3; ++i) {
         const QString path = QDir(dir).filePath(QStringLiteral("session-%1.log").arg(i));
         QFile file(path);
-        file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        check(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
+              "the fixture log opened for writing");
         // Sizes that are deliberately not multiples of 512, so the block
         // padding is actually exercised.
         file.write(QByteArray(100 + i * 517, static_cast<char>('a' + i)));
