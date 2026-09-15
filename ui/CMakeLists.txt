@@ -97,7 +97,7 @@ add_executable(stud-ui
     src/tray.cpp
     resources/resources.qrc
 )
-target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network stud_ui_gpu_enum stud_config stud_ui_credential_store
+target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network Qt6::DBus stud_ui_gpu_enum stud_config stud_ui_credential_store
                                        stud_ui_notifications stud_ui_launch_uri stud_ui_log_archive
                                        stud_ipc stud_android_glue stud_render stud_bionic_runtime
                       stud_ui_deep_link_handoff)
