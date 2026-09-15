@@ -10,6 +10,11 @@
 build/
 build-*/
 cmake-build-*/
+
+# Staging directories the packaging steps write next to the source, both
+# here and in CI.
+install-tree/
+deb-tree/
 /out/
 /dist/
 .ccache/
