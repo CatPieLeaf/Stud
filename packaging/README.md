@@ -10,9 +10,9 @@ AppImage is that tree bundled with its dependencies.
                                       viewer, and Process B's lib64/ overlay
 <prefix>/lib/stud/angle/              ANGLE
 <prefix>/lib/stud/android-bionic/     the real linker64 and libc
-<prefix>/share/applications/…         desktop entry
-<prefix>/share/metainfo/…             AppStream component
-<prefix>/share/icons/hicolor/…        icon
+<prefix>/share/applications/...       desktop entry
+<prefix>/share/metainfo/...           AppStream component
+<prefix>/share/icons/hicolor/...      icon
 ```
 
 Every binary finds bionic, ANGLE and its sibling processes **relative to
@@ -41,7 +41,7 @@ run and caches them in `third_party/appimage-tools`.
 
 Stud ships ANGLE and the bionic set in every format. Neither is Stud's
 own code, but the application cannot start without them, and both are
-redistributable — ANGLE is BSD, bionic is Apache-2.0 from AOSP.
+redistributable: ANGLE is BSD, bionic is Apache-2.0 from AOSP.
 
 **bubblewrap is a dependency, never bundled.** Process B runs inside it
 and Stud refuses to launch without it. A distribution's own build carries
@@ -50,7 +50,7 @@ a binary copied into a package would be refused on exactly the
 distributions that matter.
 
 Qt is depended on by the deb and the rpm and bundled by the AppImage,
-which is the ordinary split — a system package should use the system Qt.
+which is the ordinary split, since a system package should use the system Qt.
 
 ## Appearing in a software centre
 

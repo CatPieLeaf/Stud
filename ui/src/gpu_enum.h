@@ -28,7 +28,7 @@ struct GpuInfo {
     bool discrete = false;
 };
 
-// Real, not stubbed: creates a throwaway VkInstance, enumerates real
+// Not stubbed: creates a throwaway VkInstance, enumerates real
 // physical devices, reads each one's real vkGetPhysicalDeviceProperties
 // name. Returns an empty vector (not an error) if no Vulkan-capable
 // instance/devices are available, the settings window should show

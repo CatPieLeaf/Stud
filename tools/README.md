@@ -4,21 +4,21 @@ Standalone diagnostics and the dependency setup script. None of these are
 part of Stud itself; nothing in `ui/`, `runtime/` or `render-host/`
 depends on them.
 
-- **`setup.sh`** — fetches the three third-party dependencies into
+- **`setup.sh`**: fetches the three third-party dependencies into
   `third_party/` (the NDK, an ANGLE build, a real extracted bionic).
   `tools/setup.sh --help` explains how to point it at copies you already
   have instead of downloading or building them.
 
-- **`try_render_window.cpp`** (`stud_try_render_window`) — opens a real
+- **`try_render_window.cpp`** (`stud_try_render_window`): opens a real
   Wayland window through ANGLE and swaps real frames, with no
   `libroblox.so` and no JNI anywhere. When rendering breaks, this is how
   you find out in one minute whether the machine, the driver or the
   ANGLE build is at fault, rather than the engine.
 
-- **`try_vulkan_window.cpp`** (`stud_try_vulkan_window`) — the same idea
+- **`try_vulkan_window.cpp`** (`stud_try_vulkan_window`): the same idea
   for the native Vulkan path.
 
-- **`tex_decode_compare.cpp`** (`stud_tex_decode_compare`) — decodes the
+- **`tex_decode_compare.cpp`** (`stud_tex_decode_compare`): decodes the
   same compressed blocks with Stud's own software decoder and with a GPU
   that implements the format in hardware, and compares. This is what
   settled whether texture corruption came from the decoder or from
@@ -26,7 +26,7 @@ depends on them.
   it compiles the decoder's dependencies out of the runtime sub-build's
   own checkout.
 
-- **`diag_launch_direct.cpp`** (`stud_diag_launch_direct`) — launches
+- **`diag_launch_direct.cpp`** (`stud_diag_launch_direct`): launches
   Process B directly against a real extracted `libroblox.so`, skipping
   Process A's login and config entirely. Useful for bring-up questions
   that do not need a real session. It takes the cookie from

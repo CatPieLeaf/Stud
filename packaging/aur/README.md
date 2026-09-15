@@ -6,7 +6,7 @@ Three PKGBUILDs live here, and only one of them is published to the AUR.
 |------|---------|--------------|
 | `PKGBUILD.stud-bin` + `.SRCINFO.stud-bin` | **`stud-bin`** | **the AUR package.** Installs the release archive CI built from the tag. |
 | `PKGBUILD` | `stud` | builds from source, for building on your own machine. Not publishable; see below. |
-| `PKGBUILD.bin` | — | CI only. Turns an install tree that already exists into a `pkg.tar.zst`. |
+| `PKGBUILD.bin` | (none) | CI only. Turns an install tree that already exists into a `pkg.tar.zst`. |
 
 They live here rather than only in the AUR repository so the packaging is
 versioned with the code it builds, a dependency added to Stud and not to

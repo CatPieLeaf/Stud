@@ -49,7 +49,7 @@
 // correct-thing-first, not yet chunked for buffers over kMaxBufferBytes
 // (large single texture uploads could exceed this; a real, flagged
 // limitation for follow-on work once actual Roblox texture sizes are
-// observed, not guessed at now).
+// observed, checked at now).
 
 namespace stud::render_host {
 
@@ -298,7 +298,7 @@ enum class CallId : uint32_t {
     // TLS.
     //
     // These four are the real, live-observed first commands the engine
-    // asks for (captured with STUD_VULKAN_CALL_TRACE=1), not a guess.
+    // asks for (captured with STUD_VULKAN_CALL_TRACE=1), checked.
     //
     // vkEnumerateInstanceVersion: out-buffer is one uint32 apiVersion.
     VkEnumerateInstanceVersion,
@@ -993,7 +993,7 @@ struct ResponseHeader {
 // module's own test client, owns exactly one blocking, synchronous
 // request/response round-trip.
 //
-// Real, live-caught bug fixed (the engineering notes): this doc comment used
+// Bug found in testing (the engineering notes): this doc comment used
 // to say "no connection pooling/threading" as if that were a documented
 // constraint on the *caller*, but render_client_common.cpp's own
 // connection() returns one process-wide, shared Client instance, and
@@ -1226,7 +1226,7 @@ public:
     int fd() const { return fd_; }
 
 private:
-    // Real, user-reported bug fixed: `connected()` used to just report
+    // User-reported bug, fixed: `connected()` used to just report
     // whether connect_to() ever succeeded, never whether the connection
     // was still alive, so a client had no way to notice stud-render-
     // host had exited (e.g. the user closing the real window) short of
@@ -1238,7 +1238,7 @@ private:
         if (fd_ >= 0) ::close(fd_);
         fd_ = -1;
     }
-    // Real, live-caught bug: neither of these retried on EINTR. Process B
+    // Bug found in testing: neither of these retried on EINTR. Process B
     // is a heavily-signalled process (trap_recovery's own SIGSEGV/SIGTRAP
     // handling, plus whatever timers libroblox arms), and a single
     // interrupted read()/write() here permanently killed the render

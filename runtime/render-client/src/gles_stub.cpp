@@ -393,7 +393,7 @@ void glBindAttribLocation(GLuint program, GLuint index, const GLchar* name) {
     connection().call(CallId::GlBindAttribLocation, a, name, len, nullptr, 0, nullptr);
 }
 void glShaderSource(GLuint shader, GLsizei count, const GLchar* const* strings, const GLint* length) {
-    // Real, documented scope: concatenates into one buffer and sends as
+    // Documented scope: concatenates into one buffer and sends as
     // a single logical source string (count treated as 1 server-side;
     // see render-host/src/main.cpp's own matching doc comment). Correct
     // for the real, single-string call shape confirmed used elsewhere in

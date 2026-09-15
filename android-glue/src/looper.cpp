@@ -45,7 +45,7 @@ thread_local ALooper* t_looper = nullptr;
 std::mutex g_all_loopers_mutex;
 std::vector<ALooper*> g_all_loopers;
 
-// Real, stable, public NDK ABI shape (android_native_app_glue.h's
+// Stable, public NDK ABI shape (android_native_app_glue.h's
 // `struct android_poll_source`, unchanged for over a decade),
 // reimplemented here from its documented layout, not copied from any
 // vendored source, since poll_orphaned_loopers_once() needs to interpret
@@ -70,7 +70,7 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
                          void** outData) {
     if (looper == nullptr) return ALOOPER_POLL_ERROR;
 
-    // Real, live-caught issue, fixed (the engineering notes, "fix the busy-loop
+    // Caught in testing: issue, fixed (the engineering notes, "fix the busy-loop
     // thread"): a real Roblox-internal worker thread calls this with
     // timeoutMillis=0 in a tight loop expecting some OTHER call each
     // iteration (a real vsync-paced swap, on a real device) to naturally
@@ -170,7 +170,7 @@ void ALooper_acquire(ALooper* looper) {
 }
 
 void ALooper_release(ALooper* looper) {
-    // Real, confirmed-live gap (this session): some thread Roblox's own
+    // Confirmed-live gap (this session): some thread Roblox's own
     // code creates without going through Stud's interposed
     // pthread_create() (bypassing the per-thread ALooper_prepare() that
     // adds, e.g. a raw clone()-based thread pool a statically-linked

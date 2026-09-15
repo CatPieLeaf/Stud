@@ -16,7 +16,7 @@
 //     classes, JNI_OnLoad, native settings, asset manager, Activity
 //     lifecycle dispatch, app-bridge start, engine V2 sequence) is
 //     kept as-is. That ordering is real, evidence-grounded (matches
-//     real device logcat captures), not a guess, and rewriting it from
+//     real device logcat captures), checked, and rewriting it from
 //     scratch would just rediscover the same real constraints through
 //     the same trial and error already paid for once.
 //

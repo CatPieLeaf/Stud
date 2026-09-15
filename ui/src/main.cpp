@@ -173,7 +173,7 @@ void terminate_stale_processes() {
 // keychain key name).
 constexpr auto kSessionCookieKey = "roblosecurity";
 
-// Real, best-effort search for a sibling binary: first where this dev
+// Best-effort search for a sibling binary: first where this dev
 // build's own layout puts it, then PATH, matching however a real
 // install eventually lays these out. No formal install step exists yet
 // (M11/packaging): this is the honest, current state, not a permanent
@@ -239,7 +239,7 @@ std::string render_host_socket_path() {
     return "/tmp/stud-" + std::to_string(::getuid()) + "/render-host.sock";
 }
 
-// Real, bounded, condition-based wait, not a guessed timing window
+// Bounded, condition-based wait, not a guessed timing window
 // (this project's own hard-won debugging discipline, see BOOT_PROGRESS.md's
 // "no arbitrary timing windows" lesson): polls for the real socket FILE
 // stud-render-host's own bind()/listen() creates, so Process B's first
@@ -527,7 +527,7 @@ void remove_stale_render_host_socket() {
     ::unlink(render_host_socket_path().c_str());
 }
 
-// Real, blocking HTTPS GET against Roblox's own ClientSettings endpoint
+// Blocking HTTPS GET against Roblox's own ClientSettings endpoint
 // (see jni-bridge/include/stud/client_settings_bridge.h's own doc
 // comment for the ground-truth-traced URL and why this fetch has to
 // happen somewhere other than inside the real device's Java layer,
@@ -613,7 +613,7 @@ void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
                 payload.authenticated_user_id, payload.authenticated_username.c_str());
 }
 
-// Real, public, community-documented Roblox endpoint
+// Public, community-documented Roblox endpoint
 // (PlaceLauncher.ashx?request=RequestGame) that every real third-party
 // Roblox launcher uses to turn a deep link's opaque join ticket into
 // real server-join info, confirmed real this session from a real,
@@ -735,7 +735,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         return;
     }
 
-    // Real, once-per-import work (extraction) already happened in
+    // Once-per-import work (extraction) already happened in
     // Settings when this APK was selected (settings_window.cpp's
     // onSaveClicked()). Every actual game launch just uses whatever's
     // already cached there, directly; no re-extraction.
@@ -940,7 +940,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // stud/ipc.h), so this thread is guaranteed to finish, not leaked
     // indefinitely.
     //
-    // Real, live-caught regression fixed: this used to be .detach()ed,
+    // Caught in testing: regression fixed: this used to be .detach()ed,
     // on the theory that its own bounded timeout made that safe. It
     // isn't, a detached thread dies with the whole process, and
     // proceed() (this function's only real caller) quits the process
@@ -1025,7 +1025,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.executable_path = process_b_binary.toStdString();
     config.args = {so_path, "--apk", apk_path, "--ipc-connect", socket_path};
 
-    // Real, previously-missing wiring: process-b/src/main.cpp already
+    // Previously-missing wiring: process-b/src/main.cpp already
     // reads a "--flag-overrides <path>" arg and threads it all the way
     // through to the real nativePreloadFlagOverrides call (see
     // bootstrap.cpp), but launch_game() never actually passed one, so
@@ -1085,7 +1085,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     }
     config.stdout_fd = stud::logging::passthrough_stdout_fd();
     config.extra_binds = std::move(extra_binds);
-    // Real, writable, already-bound (see extra_binds above) cwd for
+    // Writable, already-bound (see extra_binds above) cwd for
     // Process B; see ProcessBConfig::working_directory's own doc
     // comment for the real EROFS hazard this avoids.
     config.working_directory = std::filesystem::path(so_path).parent_path().string();
@@ -1529,7 +1529,7 @@ int main(int argc, char** argv) {
         // torrent's been added, the actual game runs in the
         // separate runtime process.
         //
-        // Real, live-caught bug fixed: a direct QApplication::quit()
+        // Bug found in testing: a direct QApplication::quit()
         // call here is a documented Qt no-op if there's no event loop
         // running yet to quit, which is exactly the case on the
         // already-logged-in path below (proceed() runs synchronously in

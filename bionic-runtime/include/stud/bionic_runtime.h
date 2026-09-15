@@ -118,7 +118,7 @@ struct ProcessBConfig {
     // matching this field being new/optional.
     std::string working_directory;
 
-    // Real, previously-missing gap: extra environment variables for
+    // Previously-missing gap: extra environment variables for
     // Process B, passed via bwrap's own real `--setenv NAME VALUE`.
     // Before this field existed, launch_process_b() had no way at all
     // to set anything like STUD_VULKAN_CALL_TRACE/STUD_RENDER_CALL_TRACE

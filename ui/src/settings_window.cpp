@@ -748,7 +748,7 @@ void SettingsWindow::onSaveClicked() {
     }
     const std::string apk = stored.toStdString();
 
-    // Real, once-per-import work: extract libroblox.so from the chosen
+    // Once-per-import work: extract libroblox.so from the chosen
     // APK, once, right here at APK-selection time, not on every game
     // launch. Only runs when the APK path actually changed (or no
     // cached extraction exists yet at all); an unrelated settings

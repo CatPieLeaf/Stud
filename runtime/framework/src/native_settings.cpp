@@ -68,7 +68,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
 
     NativeSettingsResult result;
 
-    // Real, exact order from the app's own HTTP/cookie layer's T0(boolean) (the engineering notes,
+    // Exact order from the app's own HTTP/cookie layer's T0(boolean) (the engineering notes,
     // "instantiate controllers" investigation): exception-reason
     // filename first, then base URL/channel/platform name, then cache/
     // files directories, then FastLog init, then Roblox version,
@@ -86,7 +86,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
         set_exception_reason_filename, jni_env, nullptr, exception_reason_filename_jstring);
     clear_pending_jni_exception(jni_env, "nativeSetExceptionReasonFilename");
 
-    // Real, optional, called first when a real files directory is
+    // Optional, called first when a real files directory is
     // configured, matches try_bootstrap.cpp's own established probe
     // ordering ("nativeSetFilesDirectory, early"). Skipped (not just a
     // no-op empty-string call) when files_directory is empty, since an
@@ -122,7 +122,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
         clear_pending_jni_exception(jni_env, "nativeSetCacheDirectory");
     }
 
-    // Real, immediately-following calls in T0()'s own real body, right
+    // Immediately-following calls in T0()'s own real body, right
     // after Q0()'s cache/files directory pair.
     auto* init_fast_log = find_required_symbol<InitFastLogFn>(
         lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeInitFastLog");
@@ -152,7 +152,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
         clear_pending_jni_exception(jni_env, "nativeSetBaseDataDirectories");
     }
 
-    // Real, confirmed: `InitHelper` (`InitHelper`) calls
+    // Confirmed: `InitHelper` (`InitHelper`) calls
     // `nativeSetPreferencesFile(<preferences name>)` immediately after
     // nativeSetBaseDataDirectories above, and `f()` returns the plain
     // preferences NAME `"prefs"` (the app's own preferences helper -> `g("prefs", false)`)
@@ -205,7 +205,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
                                      api_base_url_jstring);
     clear_pending_jni_exception(jni_env, "nativeSetBaseUrl");
 
-    // Real, immediately-following calls in T0()'s own real body, right
+    // Immediately-following calls in T0()'s own real body, right
     // after nativeSetBaseUrl.
     auto* set_roblox_channel = find_required_symbol<SetRobloxChannelFn>(
         lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetRobloxChannel");

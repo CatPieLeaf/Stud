@@ -12,7 +12,7 @@
 // real to read: no property service exists in Process B's sandbox at
 // all).
 //
-// Real, ground-truth-confirmed mechanism (this project's own static analysis
+// Ground-truth-confirmed mechanism (this project's own static analysis
 // reading of the actual extracted third_party/android-bionic/libc.so,
 // not assumed from a public AOSP mirror, confirmed the mirror's struct
 // layout AND magic/version constants are byte-for-byte correct for this
@@ -59,7 +59,7 @@ namespace stud::bionic_runtime {
 // name -> value properties (dotted names get a real, correct multi-level
 // trie, matching how bionic's own resolver actually looks them up).
 // Returns false (and leaves no file, or removes a partial one) on any
-// real I/O failure. Real, honest constraint: `properties` must be
+// real I/O failure. Constraint: `properties` must be
 // non-empty and each value must be <= 91 bytes (the legacy short-value
 // limit), longer values are rejected outright rather than silently
 // truncated or corrupted, matching this project's own "honest failure,

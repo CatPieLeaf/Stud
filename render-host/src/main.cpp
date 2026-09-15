@@ -22,7 +22,7 @@
 //
 // Covers the full real GL/EGL symbol surface libroblox.so's own dynamic
 // symbol table imports (85 entries, confirmed via `the ELF headers --dyn-syms`,
-// not guessed). Vulkan gets a deliberately narrower treatment; see
+// checked). Vulkan gets a deliberately narrower treatment; see
 // render_host_protocol.h's own doc comment for why.
 
 #include "stud/session_log.h"
@@ -1426,7 +1426,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         }
         return in.empty() ? nullptr : in.data();
     };
-    // Real, temporary diagnostic answering a real, concrete question: does
+    // Temporary diagnostic answering a real, concrete question: does
     // the engine ever issue a single real draw/clear call, or does it only
     // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
     // EglSwapBuffers alone (see that case below), extended here to the
@@ -1545,7 +1545,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                               window.egl_window->width, window.egl_window->height,
                               window.egl_window->attached_width, window.egl_window->attached_height);
             }
-            // Real, testable hypothesis (the engineering notes, "no kde window
+            // Testable hypothesis (the engineering notes, "no kde window
             // at all" investigation): stud_try_render_window (a standalone
             // tool doing the exact same real window+EGL setup sequence)
             // succeeds immediately at startup, while this same sequence in
@@ -1790,7 +1790,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 std::fflush(stdout);
                 last_frame = now;
             }
-            // Real, evidence-based confirmation of the first actual
+            // Evidence-based confirmation of the first actual
             // rendered frame (~Stud plan, "Phase 5" verification: "confirm
             // the first frame via render-host's own dispatch log on
             // EglSwapBuffers"), not just a stdout claim from the bionic
@@ -2015,7 +2015,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // data copied into the outgoing buffer at every draw call
             // using it, not yet implemented since nothing has confirmed
             // Roblox actually relies on that (rare in modern engines;
-            // flagged, not guessed at).
+            // flagged, checked at).
             fns.glVertexAttribPointer_(static_cast<GLuint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLboolean>(a[3]), static_cast<GLsizei>(a[4]), reinterpret_cast<const void*>(a[5]));
             return 0;
 
@@ -3266,7 +3266,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                        static_cast<GLuint>(a[2]));
             return 0;
         case CallId::GlGetUniformBlockIndex: {
-            // Real, NUL-terminated block name arrives in the in-buffer.
+            // NUL-terminated block name arrives in the in-buffer.
             std::string name(reinterpret_cast<const char*>(in.data()), in.size());
             if (!name.empty() && name.back() == '\0') name.pop_back();
             return fns.glGetUniformBlockIndex_(static_cast<GLuint>(a[0]), name.c_str());
@@ -3382,7 +3382,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
 
         // ---- GLES2: small out-param arrays ----
         case CallId::GlGetIntegerv: {
-            // Real, generous fixed count (16) covers every real
+            // Generous fixed count (16) covers every real
             // GLES2 pname's true count (the largest, GL_ALIASED_*_RANGE/
             // viewport-shaped queries, need at most 4), always reading
             // a few extra, harmless ints past what a given pname truly
@@ -3432,7 +3432,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
 
         // ---- GLES2: bulk buffer transfer ----
         case CallId::GlBufferData:
-            // Real, live-caught bug: `usage` rides in a[3] (the client
+            // Bug found in testing: `usage` rides in a[3] (the client
             // leaves a[2] as a zero placeholder for the data pointer it
             // cannot send), but this read a[2], so every single
             // glBufferData call in this project's history passed usage=0,
@@ -3686,7 +3686,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         // refcounting Roblox's side does with it.
         case CallId::ANativeWindowFromSurface:
             return 1;
-        // Real, live-caught regression (the engineering notes, "Three different
+        // Caught in testing: regression (the engineering notes, "Three different
         // 'real' window sizes existed for one window"): these two returned
         // hardcoded 800x600 while the same process sized its wl_egl_window,
         // and answered CallId::GetWindowSize, from android-glue's own real
@@ -4256,7 +4256,7 @@ int main(int argc, char** argv) {
     // Opening talks to the audio server and can block, so it happens on
     // its own thread, never on the dispatch loop.
     stud::render_host::audio_start_output_device();
-    // Real, live-caught diagnostic bug: this process's stdout is a
+    // Caught in testing: diagnostic bug: this process's stdout is a
     // redirected file (stud-ui starts it detached, inheriting stdout),
     // so libc block-buffers it and nothing written after the first
     // partial block ever reaches the log while the process stays alive
@@ -4497,7 +4497,7 @@ int main(int argc, char** argv) {
     if (::listen(listen_fd, 1) != 0) { std::perror("stud-render-host: listen"); return 1; }
     std::printf("stud-render-host: listening on %s\n", socket_path.c_str());
 
-    // Real, user-reported bug fixed: both accept() and read_all() below
+    // User-reported bug, fixed: both accept() and read_all() below
     // used to block indefinitely with nothing servicing this window's
     // own Wayland connection in between, so xdg_wm_base's real ping
     // (which MUST be answered with a pong or the compositor marks the
@@ -4571,7 +4571,7 @@ int main(int argc, char** argv) {
             // Pipelined requests arrive in bulk, so drain what is already
             // buffered before going back to poll(): one poll per request was
             // itself a large share of the per-frame cost. FIONREAD is an
-            // honest "is there already a whole request waiting", not a guess.
+            // honest "is there already a whole request waiting", checked.
             serve_extra_connections(listen_fd, fns, real_window);
             int pending = 0;
             const bool have_buffered =

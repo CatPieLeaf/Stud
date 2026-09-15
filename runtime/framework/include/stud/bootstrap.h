@@ -17,7 +17,7 @@
 // symbols" reasoning already established for the whole JNI bridge (see
 // the engineering notes' "libroblox.so native symbol survey").
 //
-// Real, ground-truth call order (the engineering notes, "Sober does not
+// Ground-truth call order (the engineering notes, "Sober does not
 // patch libroblox.so either" entry, corrects the earlier, guessed
 // order this file previously documented), traced from the actual
 // the real MainGameActivity.onCreate()/J2()/A2()/D2():
@@ -106,7 +106,7 @@ InitParamsBootstrapResult run_init_params_bootstrap(FakeJni::Jvm& jvm,
                                                      const stud::linker::LoadedLibrary& lib,
                                                      std::shared_ptr<InitParams> init_params);
 
-// Real, confirmed against the app's own code, previously-missing entry point (found while
+// Confirmed against the app's own code, previously-missing entry point (found while
 // investigating why Roblox's Lua-driven app UI never renders anything,
 // the engineering notes' "instantiate controllers" investigation): the real
 // D2() (setInitParamsForEngine) calls `NativeSettingsInterface.
@@ -115,7 +115,7 @@ InitParamsBootstrapResult run_init_params_bootstrap(FakeJni::Jvm& jvm,
 // nativeSetDeviceInfo`), as its very first action, BEFORE building or
 // setting InitParams at all. Stud has never called this at any point in
 // this project's history (confirmed via a grep across the whole
-// codebase before adding this). Real, plausible significance: this is
+// codebase before adding this). Plausible significance: this is
 // the engine's one dedicated entry point for its own internal
 // "device info" global state, and D2()'s own real ordering (this call
 // strictly precedes InitParams) suggests later initialization code may

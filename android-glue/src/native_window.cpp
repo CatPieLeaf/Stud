@@ -36,7 +36,7 @@
 #include <unistd.h>
 
 namespace {
-// Real, user-reported bug fixed (the engineering notes, "window too big"):
+// User-reported bug, fixed (the engineering notes, "window too big"):
 // 1920x1080 as a hardcoded default made the window bigger than
 // smaller real monitors and, combined with xdg_toplevel's own
 // configure callback being a no-op below, meant it could never be
@@ -1217,7 +1217,7 @@ void registry_global_remove(void*, wl_registry*, uint32_t) {
     // startup; nothing to do.
 }
 
-// Real, standard integration of a foreign (non-ALooper-native) event
+// Standard integration of a foreign (non-ALooper-native) event
 // source into a real Android-style event loop, the same technique
 // real apps use to fold e.g. a socket or timerfd into ALooper_pollOnce()
 // (the engineering notes, "real event loop" entry: runtime/main.cpp's own
@@ -1238,7 +1238,7 @@ int wayland_looper_callback(int /*fd*/, int /*events*/, void* data) {
     return 1;  // keep the registration
 }
 
-// Real, honest degradation: if no ALooper has been prepared on this
+// Honest degradation: if no ALooper has been prepared on this
 // thread yet (ALooper_prepare() not called; see runtime/main.cpp),
 // there's no real loop to register with. Not an error, matches the
 // same "connect if possible, work correctly either way" pattern
@@ -1418,7 +1418,7 @@ struct ANativeWindow {
     xdg_surface* shell_surface = nullptr;
     xdg_toplevel* toplevel = nullptr;
     zxdg_toplevel_decoration_v1* decoration = nullptr;
-    // Real, lazily-created EGL window backing (native_window_get_or_
+    // Lazily-created EGL window backing (native_window_get_or_
     // create_egl_window() below), shared between whoever first
     // creates the render context (runtime/main.cpp) and this file's own
     // xdg_toplevel_configure handler, so a real compositor-driven
@@ -1615,7 +1615,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
             return it->second;
         }
     } else if (!window_cache().empty()) {
-        // Real, user-reported bug fixed (the engineering notes, "still two
+        // User-reported bug, fixed (the engineering notes, "still two
         // invisible windows" entry): confirmed via a real diagnostic
         // trace that once the real production window already exists
         // (window_cache() non-empty), Roblox's own compiled code
@@ -1736,7 +1736,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
             std::printf("stud: android-glue: xdg_toplevel app_id=\"%s\" title=\"Stud\"\n",
                          STUD_APP_ID);
             std::fflush(stdout);
-            // Real, explicit request for a server-side (compositor-drawn)
+            // Explicit request for a server-side (compositor-drawn)
             // titlebar (the engineering notes, real user report: "must have
             // titlebar"). Stud draws no client-side decorations of its
             // own, so without this the compositor is free to leave the

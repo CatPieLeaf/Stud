@@ -99,7 +99,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     if (out.initialize_native_code_trapped_abort) {
         return out;
     }
-    // Real, live-caught gap (the engineering notes): the real AGDK
+    // Gap found in testing (the engineering notes): the real AGDK
     // initializeNativeCode_native() returns a real, valid NativeCode*
     // on success but returns a plain 0 (no crash, no trap) if
     // ALooper_forThread() is null on the calling thread, a real,
@@ -113,14 +113,14 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
                  static_cast<unsigned long>(out.game_activity_ptr),
                  out.game_activity_ptr == 0 ? ", NULL, real AGDK early-return (see doc comment)" : "");
 
-    // Real, permanent: Stud plays the "Java side" role directly, calling
+    // Permanent: Stud plays the "Java side" role directly, calling
     // AGDK's own real, RegisterNatives()-installed lifecycle methods via
     // ordinary JNI reflection; see game_engine_boot.h's doc comment for
     // the two real jnivm bugs (patched permanently in
     // jni-bridge/patches/patch_libjnivm.cmake) this depends on.
     jclass game_activity_class = env.GetObjectClass(game_activity_instance);
 
-    // Real, live-caught gap (the engineering notes, "GameActivity_
+    // Gap found in testing (the engineering notes, "GameActivity_
     // initializeNativeCode returns NULL" fix, immediately-following new
     // symptom): with a real, valid NativeCode* now flowing through (the
     // fix above), these calls invoke libroblox.so's own real

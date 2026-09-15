@@ -13,7 +13,7 @@
 // reference architecture document (see the engineering notes' "Core technical
 // insight").
 //
-// Real, tested scope for this pass: CPUID feature detection (SSSE3/
+// Tested scope for this pass: CPUID feature detection (SSSE3/
 // SSE4.1/SSE4.2/POPCNT, the exact requirement list both Sober and
 // mcpelauncher-manifest independently document), a minimum-requirement
 // fatal check (SSE4.1, matching documented precedent), and real decode +
@@ -87,7 +87,7 @@ struct CpuFeatures {
 };
 
 // Real CPUID leaf 1 ECX bit checks (bit 9/19/20/23 respectively, standard
-// Intel/AMD-documented positions, not guessed).
+// Intel/AMD-documented positions, checked).
 CpuFeatures detect_cpu_features();
 
 // Matches Sober/mcpelauncher's documented minimum requirement. Returns

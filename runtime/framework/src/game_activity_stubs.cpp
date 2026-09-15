@@ -538,7 +538,7 @@ void NativeGLJavaInterfaceStub::onAppBridgeNotification(std::shared_ptr<FakeJni:
     std::string data_str = data ? data->asStdString() : "";
     std::printf("stud: onAppBridgeNotification: type=\"%s\" data=%s\n", type_str.c_str(),
                 data_str.c_str());
-    // Real, confirmed shape for the one payload this project knows
+    // Confirmed shape for the one payload this project knows
     // about (InitHelper's own inner callback, the AppBridge-BrowserTracker flow;
     // see this class's own header doc comment). Parsed and logged, not
     // yet acted on; see that comment for why acting on it is deferred

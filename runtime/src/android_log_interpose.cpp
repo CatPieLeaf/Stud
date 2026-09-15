@@ -1,4 +1,4 @@
-// Real, live-caught investigation this session (the engineering notes, "FLog
+// Caught in testing: investigation this session (the engineering notes, "FLog
 // output has never appeared" gap): the earlier assumption that
 // __android_log_set_logger(__android_log_stderr_logger) (main.cpp) was
 // confirmed working, based on real linker warnings and [JNIVM] diagnostic

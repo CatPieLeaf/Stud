@@ -54,7 +54,7 @@ struct NativeSettingsConfig {
     // exists, the real post-login cookie string goes here instead of a
     // fabricated one.
     std::string cookies;
-    // Real, persistent per-app data directory (matches Android's
+    // Persistent per-app data directory (matches Android's
     // Context.getFilesDir()). Roblox's own engine caches its fetched
     // client settings here (confirmed empirically: a real device/Stud run
     // writes <filesDir>/appData/ClientSettings/{IxpSettings,FlagsSet}.json
@@ -65,7 +65,7 @@ struct NativeSettingsConfig {
     // directory yet get the previous, unchanged behavior.
     std::string files_directory;
 
-    // Real, previously-missing gap closed (the engineering notes, "verify the
+    // Previously-missing gap closed (the engineering notes, "verify the
     // 2D shell renders" entry): real device FLog output
     // (`RbxStorage::getStorageInterface failed to initialize... Path
     // does not exist: ""`) showed Roblox's own local-storage subsystem
@@ -91,7 +91,7 @@ struct NativeSettingsConfig {
     // Empty skips the call.
     std::string external_directory;
 
-    // Real, previously-missing cluster, all traced to a single real
+    // Previously-missing cluster, all traced to a single real
     // function this session (the engineering notes, "instantiate controllers"
     // investigation): the app's own HTTP/cookie layer's T0(boolean) is the real, full
     // NativeSettingsInterface bootstrap sequence; Stud had only ever

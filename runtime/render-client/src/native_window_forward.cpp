@@ -1,4 +1,4 @@
-// Real, confirmed-live gap (this session): libroblox.so's own dynamic
+// Confirmed-live gap (this session): libroblox.so's own dynamic
 // symbol table directly references ANativeWindow_fromSurface/getWidth/
 // getHeight/acquire/release (an eager/data-bound import, same class as
 // AMediaFormat_delete). These must be real, exported libandroid.so

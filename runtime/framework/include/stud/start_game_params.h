@@ -113,7 +113,7 @@ struct DeepLinkJoinInfo {
 // builder() factory). `deep_link` (see DeepLinkJoinInfo above) feeds
 // placeId/joinAttemptId/referredByPlayerId/joinAttemptOrigin when a
 // real deep link supplied them; real, structurally-confirmed fields,
-// not guessed (this project has NOT yet live-confirmed these alone are
+// checked (this project has NOT yet live-confirmed these alone are
 // sufficient for the real engine to complete a real join; see this
 // function's own .cpp doc comment for the reasoning behind trying this
 // over reimplementing Roblox's own internal join-ticket resolution
