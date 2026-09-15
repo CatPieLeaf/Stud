@@ -2979,7 +2979,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetQueryPoolResults(VkDevice device, VkQue
 // another that also uses it before it is done, which is why this is used
 // on the command-recording paths and the callers that were checked, not
 // applied blindly everywhere.
-std::vector<uint8_t>& wire_scratch() {
+// C++ linkage: it returns a C++ type, and clang warns about that inside an
+// extern "C" block.
+static std::vector<uint8_t>& wire_scratch() {
     thread_local std::vector<uint8_t> buffer;
     buffer.clear();
     return buffer;
