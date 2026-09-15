@@ -38,6 +38,14 @@ public:
     // processes too.
     static SettingsWindow* showSingleton(const QString& status = QString());
 
+protected:
+    // The desktop can switch between light and dark while this window is
+    // open. The restart icon is drawn in the palette's own colour, so it
+    // has to be drawn again when that colour changes.
+    void changeEvent(QEvent* event) override;
+
+public:
+
     // The desktop entry's Settings action starts a new stud-ui, which
     // knows nothing about the one already running the session. If that
     // one is listening, hand the request over and let it raise its own
@@ -96,6 +104,9 @@ private:
     QSlider* upscaleSharpnessSlider_;
     QLabel* sharpnessValueLabel_;
     QPushButton* restartButton_;
+    // Applies the palette's button-text colour to the restart glyph. Also
+    // called on a palette change, hence keeping it around.
+    void paintRestartIcon();
     QCheckBox* smoothZoomCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;
