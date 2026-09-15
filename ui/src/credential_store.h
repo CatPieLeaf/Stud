@@ -40,6 +40,15 @@ bool store_credential(const QString& key, const QString& value, QString* error_o
 // unavailable" both meaning "show the login window" for this app).
 std::optional<QString> load_credential(const QString& key);
 
+// Whether the keyring answered "no such entry", as opposed to failing.
+//
+// The difference decides whether it is safe to write a new value in its
+// place. A missing entry is the first run; a failure is a keyring that
+// could not be reached, and overwriting on that reading destroys whatever
+// the old value protected. Only meaningful right after load_credential()
+// returned nothing.
+bool last_load_was_absent();
+
 // Blocking delete, e.g. for a future "log out" action. Not an
 // error if the key didn't exist.
 void delete_credential(const QString& key);

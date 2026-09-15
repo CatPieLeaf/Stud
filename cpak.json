@@ -48,15 +48,18 @@
           "path": "/modules/kwalletd6",
           "interface": "org.kde.KWallet",
           "members": [
-            "open",
             "close",
-            "hasEntry",
-            "readEntry",
-            "writeEntry",
-            "removeEntry",
             "createFolder",
+            "entryType",
+            "hasEntry",
             "hasFolder",
-            "networkWallet"
+            "networkWallet",
+            "open",
+            "readEntry",
+            "readPassword",
+            "removeEntry",
+            "writeEntry",
+            "writePassword"
           ]
         },
         {

@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/bd96d01b97584a8e",
-    "manifest_sha256": "bd96d01b97584a8ed9620e565c301cddef9cd0deef7fe3f89665fa3996de3b8e",
+    "origin": "local.cpak/package/59beb40b16d05478",
+    "manifest_sha256": "59beb40b16d054786f8057fd405922a1b255b9af5938f4c07eb191ca1eeb6eaf",
     "image": "ghcr.io/catpieleaf/stud@sha256:002fd17763d929a4d7a05fecdece2d56a53047ac3fe08bc39fdc7f06ecb77e59",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:002fd17763d929a4d7a05fecdece2d56a53047ac3fe08bc39fdc7f06ecb77e59",
     "manifest": {
@@ -62,15 +62,18 @@
               "path": "/modules/kwalletd6",
               "interface": "org.kde.KWallet",
               "members": [
-                "open",
                 "close",
-                "hasEntry",
-                "readEntry",
-                "writeEntry",
-                "removeEntry",
                 "createFolder",
+                "entryType",
+                "hasEntry",
                 "hasFolder",
-                "networkWallet"
+                "networkWallet",
+                "open",
+                "readEntry",
+                "readPassword",
+                "removeEntry",
+                "writeEntry",
+                "writePassword"
               ]
             },
             {
