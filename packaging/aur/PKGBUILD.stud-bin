@@ -42,6 +42,7 @@ depends=(
 )
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
+  'wl-clipboard: copying a server link from the tray menu on Wayland'
 )
 # Stripping a bionic ELF or ANGLE is neither useful nor safe, the same
 # reason the rpm turns it off. These are also already-built binaries, so
