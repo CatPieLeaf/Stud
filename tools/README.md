@@ -26,6 +26,14 @@ depends on them.
   it compiles the decoder's dependencies out of the runtime sub-build's
   own checkout.
 
+- **`fill-release-checksums.py`**: after a release is published, writes
+  its digests into the two AUR PKGBUILDs and the Flatpak manifest, pins
+  the cpak image, regenerates `cpak.lock.json` and both `.SRCINFO` files.
+  `--check` reports what is still a placeholder.
+
+- **`png_to_argb_header.py`**: turns a PNG into the ARGB header the
+  cursor and window icons are compiled from.
+
 - **`validate-payload.py`**: asks whether an install tree, an extracted
   package or an AppImage is complete. It looks inside the binaries rather
   than at file names, which is how a release once shipped a render host
