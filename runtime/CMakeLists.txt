@@ -33,7 +33,8 @@ add_library(stud_runtime_render_host_protocol STATIC
 )
 target_include_directories(stud_runtime_render_host_protocol PUBLIC "${RENDER_HOST_SRC}/include")
 
-add_compile_options(-static-libstdc++)
+# Link-time only: clang warns 'argument unused during compilation' for
+# every translation unit if it is a compile option too.
 add_link_options(-static-libstdc++)
 
 add_library(stud_runtime_libandroid SHARED
