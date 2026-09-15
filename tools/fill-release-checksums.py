@@ -135,8 +135,13 @@ def main() -> int:
             pending = text.count("PLACEHOLDER_") + text.count("'SKIP'")
             print(f"{path.relative_to(ROOT)}: {'filled' if pending == 0 else f'{pending} placeholder(s)'}")
         image = json.loads(CPAK.read_text())["image"]
-        print(f"{CPAK.relative_to(ROOT)}: {'pinned' if '@sha256:' in image else 'on a tag'} ({image})")
-        return 0
+        pinned = "@sha256:" in image
+        print(f"{CPAK.relative_to(ROOT)}: {'pinned' if pinned else 'on a tag'} ({image})")
+        # Non-zero when anything is still a placeholder, so this can gate a
+        # release step rather than only being read by a person.
+        pending = any("PLACEHOLDER_" in p.read_text() or "'SKIP'" in p.read_text()
+                      for p in (MANIFEST, PKGBUILD, PKGBUILD_BIN))
+        return 1 if (pending or not pinned) else 0
 
     source_sha = args.source_sha
     archive_sha = args.archive_sha
