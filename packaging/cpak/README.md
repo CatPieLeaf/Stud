@@ -52,11 +52,23 @@ demonstrably does:
   (which the user can turn off in Settings), and Stud's own test
   notification.
 - **`openURI`**, the About tab's repository link.
-- **`clipboard`**, text boxes in the app.
+- **`clipboard`**, NOT granted. cpak only mediates the X11 clipboard:
+  with a Wayland-only socket it refuses the manifest outright,
+  `clipboard mediation requires displayX11`. Stud is a Wayland
+  application and its clipboard goes through the compositor (the tray
+  shells out to wl-copy), so the grant bought nothing and pulling in
+  displayX11 to keep it would be a far larger permission than the
+  feature is worth.
 - **`filePicker` + `xdg-download` read-only**; Stud does not
   distribute Roblox; the user supplies the APK, and Downloads is where a
   downloaded one lands. Nothing else of the host's home is visible.
-- **`sessionBus.talk`**, the login cookie is stored encrypted under
+- **`sessionBus.talk`**, KWallet only. cpak rejects a grant naming
+  `org.freedesktop.secrets` at all (`session bus policy cannot call
+  org.freedesktop.secrets`); it mediates the Secret Service itself rather
+  than letting an application address it. Whether QtKeychain reaches it
+  through that mediation is untested; see the gap below.
+
+  The login cookie is stored encrypted under
   Stud's own data directory, and the key that decrypts it is held
   through the Secret Service (and KWallet on KDE). Without the keyring
   the stored cookie cannot be read at all.

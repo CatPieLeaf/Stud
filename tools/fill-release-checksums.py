@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Put a release's real checksums into the AUR and Flatpak recipes.
 
-Three files name an archive by URL and carry a checksum for it: the two
-AUR PKGBUILDs and the Flathub manifest. The checksums cannot live in the
+Four files name something by URL and carry a digest for it: the two AUR
+PKGBUILDs, the Flathub manifest, and the cpak manifest (whose image must
+be pinned to a digest, not a tag, before `cpak lock` will accept it). The checksums cannot live in the
 tree, because they belong to one specific release, re-cutting a tag
 changes both, so they sit as placeholders until a release exists, and
 this fills them in from the one that does.
@@ -22,6 +23,7 @@ without writing anything.
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import urllib.request
@@ -31,6 +33,7 @@ REPO = "CatPieLeaf/Stud"
 ROOT = Path(__file__).resolve().parent.parent
 
 MANIFEST = ROOT / "packaging/flatpak/io.github.catpieleaf.Stud.yml"
+CPAK = ROOT / "packaging/cpak/cpak.json"
 PKGBUILD = ROOT / "packaging/aur/PKGBUILD"
 PKGBUILD_BIN = ROOT / "packaging/aur/PKGBUILD.stud-bin"
 
@@ -45,11 +48,38 @@ def digest_of(url: str) -> str:
     return h.hexdigest()
 
 
+def registry_digest(repo: str, tag: str) -> str:
+    """The published image's own digest, straight from the registry.
+
+    Anonymous pull token, then the manifest's Docker-Content-Digest. Only
+    ghcr is handled, which is the only registry this project pushes to;
+    anything else returns empty and leaves the image on its tag.
+    """
+    if not repo.startswith("ghcr.io/"):
+        return ""
+    name = repo[len("ghcr.io/"):]
+    try:
+        with urllib.request.urlopen(
+                f"https://ghcr.io/token?scope=repository:{name}:pull&service=ghcr.io") as r:
+            token = json.load(r)["token"]
+        request = urllib.request.Request(
+            f"https://ghcr.io/v2/{name}/manifests/{tag}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.oci.image.manifest.v1+json, "
+                               "application/vnd.oci.image.index.v1+json"})
+        with urllib.request.urlopen(request) as r:
+            return r.headers.get("Docker-Content-Digest", "")
+    except Exception as exc:  # noqa: BLE001, report and carry on
+        print(f"could not read the image digest ({exc}); left on its tag", file=sys.stderr)
+        return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("tag", help="the published tag, e.g. 1.1.0")
     ap.add_argument("--source-sha", help="sha256 of the tag's source tarball")
     ap.add_argument("--archive-sha", help="sha256 of stud-<tag>-x86_64.tar.zst")
+    ap.add_argument("--image-digest", help="sha256:... of the published cpak image")
     ap.add_argument("--check", action="store_true", help="report, do not write")
     args = ap.parse_args()
 
@@ -58,6 +88,8 @@ def main() -> int:
             text = path.read_text()
             pending = text.count("PLACEHOLDER_") + text.count("'SKIP'")
             print(f"{path.relative_to(ROOT)}: {'filled' if pending == 0 else f'{pending} placeholder(s)'}")
+        image = json.loads(CPAK.read_text())["image"]
+        print(f"{CPAK.relative_to(ROOT)}: {'pinned' if '@sha256:' in image else 'on a tag'} ({image})")
         return 0
 
     source_sha = args.source_sha
@@ -79,27 +111,39 @@ def main() -> int:
     for placeholder, value in (("PLACEHOLDER_STUD_SHA256", archive_sha),
                                ("PLACEHOLDER_SOURCE_SHA256", source_sha)):
         if placeholder not in text:
-            print(f"{MANIFEST.name}: no {placeholder}, already filled?", file=sys.stderr)
-            return 1
+            print(f"{MANIFEST.name}: {placeholder} already filled, left alone")
+            continue
         text = text.replace(placeholder, value)
     MANIFEST.write_text(text)
 
     # The source PKGBUILD has one source: the tag's tarball.
     text = PKGBUILD.read_text()
-    if text.count("sha256sums=('SKIP')") != 1:
-        print(f"{PKGBUILD.name}: expected one SKIP", file=sys.stderr)
-        return 1
-    PKGBUILD.write_text(text.replace("sha256sums=('SKIP')", f"sha256sums=('{source_sha}')"))
+    if text.count("sha256sums=('SKIP')") == 1:
+        PKGBUILD.write_text(text.replace("sha256sums=('SKIP')", f"sha256sums=('{source_sha}')"))
+    else:
+        print(f"{PKGBUILD.name}: already filled, left alone")
 
     # stud-bin has two, in source=() order: the release archive, then the
     # tag's tarball for the Qt half it builds itself.
     text = PKGBUILD_BIN.read_text()
     old = "sha256sums=('SKIP'\n            'SKIP')"
-    if old not in text:
-        print(f"{PKGBUILD_BIN.name}: expected two SKIPs", file=sys.stderr)
-        return 1
-    PKGBUILD_BIN.write_text(
-        text.replace(old, f"sha256sums=('{archive_sha}'\n            '{source_sha}')"))
+    if old in text:
+        PKGBUILD_BIN.write_text(
+            text.replace(old, f"sha256sums=('{archive_sha}'\n            '{source_sha}')"))
+    else:
+        print(f"{PKGBUILD_BIN.name}: already filled, left alone")
+
+    # cpak wants the image itself pinned: a tag can be moved, a digest
+    # cannot, and `cpak lock` refuses a manifest that only names a tag
+    # ("manifest version 3.0 requires a digest-pinned image").
+    image = json.loads(CPAK.read_text())["image"]
+    repo = image.split("@", 1)[0].rsplit(":", 1)[0]
+    digest = args.image_digest or registry_digest(repo, args.tag)
+    if digest:
+        data = json.loads(CPAK.read_text())
+        data["image"] = f"{repo}@{digest}"
+        CPAK.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"cpak image:      {digest}")
 
     print("\nfilled. Regenerate the .SRCINFO files next (they carry the same sums):")
     print("  makepkg --printsrcinfo > packaging/aur/.SRCINFO            # from PKGBUILD")
