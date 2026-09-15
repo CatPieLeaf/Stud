@@ -278,7 +278,7 @@ modules:
       # reproducible.
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/releases/download/1.1.0/stud-1.1.0-x86_64.tar.zst
-        sha256: b4f010c009a30591485261be9910def4be5106b14a43ce9b202b87cd66549381
+        sha256: PLACEHOLDER_STUD_SHA256
         # This archive IS the install tree, rooted at usr/, and every
         # build-command above addresses it that way. flatpak-builder
         # strips one leading component from an archive by default, which
@@ -317,7 +317,7 @@ modules:
       # changes it and the build failed exactly that way once.
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.0.tar.gz
-        sha256: 827e205679e43cfdea3a139f57e8700c43de9dff2dfa9672b32a1dd06e645ee4
+        sha256: PLACEHOLDER_SOURCE_SHA256
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
         sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb
