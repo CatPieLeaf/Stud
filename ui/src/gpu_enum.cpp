@@ -2,6 +2,11 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <string>
+
 namespace stud::ui {
 
 std::vector<GpuInfo> enumerate_gpus() {
@@ -12,18 +17,27 @@ std::vector<GpuInfo> enumerate_gpus() {
     app_info.pApplicationName = "Stud Settings";
     app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     app_info.pEngineName = "Stud";
-    app_info.apiVersion = VK_API_VERSION_1_0;
+    // 1.1 for VkPhysicalDeviceIDProperties, which is what tells one real
+    // GPU apart from the same GPU enumerated twice (see below). A loader
+    // too old for it still works: the request drops back to 1.0 and the
+    // duplicate check falls back to the device's own identifiers.
+    app_info.apiVersion = VK_API_VERSION_1_1;
 
     VkInstanceCreateInfo instance_info{};
     instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instance_info.pApplicationInfo = &app_info;
 
+    bool have_device_uuid = true;
     VkInstance instance = VK_NULL_HANDLE;
     if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) {
-        // Honest empty result. No usable Vulkan loader/driver on this
-        // host. The settings window shows "no GPUs found" rather than
-        // crashing.
-        return result;
+        have_device_uuid = false;
+        app_info.apiVersion = VK_API_VERSION_1_0;
+        if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) {
+            // Honest empty result. No usable Vulkan loader/driver on this
+            // host. The settings window shows "no GPUs found" rather than
+            // crashing.
+            return result;
+        }
     }
 
     uint32_t device_count = 0;
@@ -32,9 +46,55 @@ std::vector<GpuInfo> enumerate_gpus() {
         std::vector<VkPhysicalDevice> devices(device_count);
         vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
 
+        // One entry per real GPU, even when the loader offers it more than
+        // once.
+        //
+        // A Flatpak does exactly that: its runtime carries one GL
+        // extension directory per driver (GL/default, GL/nvidia-<ver>)
+        // and reaches them through several entries of XDG_DATA_DIRS as
+        // well as /usr/share/vulkan/icd.d, so every ICD is read twice and
+        // every device is enumerated twice, the GPU list showed each
+        // card, the integrated one and llvmpipe in pairs.
+        //
+        // The identity is the device UUID, not the name: a machine with
+        // two identical cards must still list both, and those differ only
+        // by UUID. Where that is unavailable, the vendor/device/driver
+        // triple plus the name is the closest honest substitute.
+        std::vector<std::array<uint8_t, VK_UUID_SIZE>> seen_uuids;
+        std::vector<std::string> seen_keys;
         for (uint32_t i = 0; i < device_count; ++i) {
             VkPhysicalDeviceProperties props{};
             vkGetPhysicalDeviceProperties(devices[i], &props);
+
+            bool duplicate = false;
+            if (have_device_uuid) {
+                VkPhysicalDeviceIDProperties id_props{};
+                id_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+                VkPhysicalDeviceProperties2 props2{};
+                props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+                props2.pNext = &id_props;
+                vkGetPhysicalDeviceProperties2(devices[i], &props2);
+                std::array<uint8_t, VK_UUID_SIZE> uuid{};
+                std::memcpy(uuid.data(), id_props.deviceUUID, VK_UUID_SIZE);
+                duplicate = std::find(seen_uuids.begin(), seen_uuids.end(), uuid) !=
+                            seen_uuids.end();
+                if (!duplicate) seen_uuids.push_back(uuid);
+            } else {
+                std::string key = std::string(props.deviceName) + "|" +
+                                  std::to_string(props.vendorID) + "|" +
+                                  std::to_string(props.deviceID) + "|" +
+                                  std::to_string(props.driverVersion);
+                duplicate = std::find(seen_keys.begin(), seen_keys.end(), key) != seen_keys.end();
+                if (!duplicate) seen_keys.push_back(key);
+            }
+            if (duplicate) continue;
+
+            // The index is this device's position in the RAW enumeration,
+            // duplicates included, and has to stay that way: it is what
+            // Settings stores and what render-host uses to pick a device
+            // out of its own vkEnumeratePhysicalDevices (see
+            // vk_set_preferred_device_index). Renumbering here would point
+            // a saved choice at a different card.
             result.push_back(GpuInfo{i, std::string(props.deviceName), props.vendorID,
                                      props.deviceType ==
                                          VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU});
