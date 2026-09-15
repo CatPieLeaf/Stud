@@ -1,8 +1,22 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
-# The prebuilt package. It installs the release archive CI built from the
-# tag, so it needs no ANGLE build and no network beyond fetching that one
-# file, which makepkg does itself, before build() ever runs.
+# The mostly-prebuilt package. It installs the release archive CI built
+# from the tag, so no ANGLE build, and no network beyond the two files
+# makepkg fetches itself before build() runs, and compiles ONLY the two
+# executables that link Qt.
+#
+# Those two cannot be shipped prebuilt. A Qt program built against one
+# distribution's Qt does not run on another's, and this archive is built
+# on Fedora: installed as-is on Arch, /usr/bin/stud dies at the loader
+# with `copy relocation against non-copyable protected symbol
+# QLocalServer::staticMetaObject ... GNU_PROPERTY_1_NEEDED_INDIRECT_
+# EXTERN_ACCESS`, because Arch builds Qt with indirect external access.
+# Measured, not assumed. Nothing else in the archive has that problem:
+# render-host, Process B, ANGLE and the bionic set link no Qt at all.
+#
+# So STUD_BUILD_QT_ONLY rebuilds `stud` and `stud-webview` here, against
+# the Qt this machine has, exactly as the Flatpak and the release
+# workflow's own Arch package do.
 #
 # This is the one that belongs in the AUR. The source PKGBUILD beside it
 # fetches Google's NDK, an ANGLE checkout and a bionic image from inside
@@ -48,15 +62,37 @@ optdepends=(
 # reason the rpm turns it off. These are also already-built binaries, so
 # there is nothing here for makepkg to strip that upstream did not mean.
 options=(!strip !debug emptydirs)
-# The tag carries no leading "v", match what is actually published.
-source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst")
+makedepends=(
+  'cmake'
+  'ninja'
+  'git'
+  'vulkan-headers'
+  'wayland-protocols'
+)
+# The tag carries no leading "v", match what is actually published. The
+# source tarball is here for the Qt half above, not for a full build.
+source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst"
+        "$_pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Filled in at publish time from the archive the release actually
 # serves, `updpkgsums`, or the value the release workflow prints at the
 # end of its run. A checksum belongs to one specific archive, so a stale
 # one is worse than an obvious gap: this carried the digest of a release
 # that was later deleted, which would have failed every install with a
 # corruption error rather than a missing-file one.
-sha256sums=('SKIP')
+sha256sums=('b4f010c009a30591485261be9910def4be5106b14a43ce9b202b87cd66549381'
+            '827e205679e43cfdea3a139f57e8700c43de9dff2dfa9672b32a1dd06e645ee4')
+
+build() {
+  # Just the Qt half: STUD_BUILD_QT_ONLY skips the render host, the
+  # bionic runtime and ANGLE, which the archive already supplies.
+  cmake -S "Stud-$pkgver" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DSTUD_BUILD_QT_ONLY=ON \
+    -DSTUD_BUILD_TESTS=OFF \
+    -DSTUD_VERSION="$pkgver"
+  cmake --build build
+}
 
 package() {
   # The archive is the install tree rooted at usr/, which is exactly what
@@ -73,4 +109,10 @@ package() {
     cp -a "$pkgdir/usr/lib/stud-helpers/." "$pkgdir/usr/lib/stud/"
     rm -rf "$pkgdir/usr/lib/stud-helpers" "$pkgdir/usr/libexec"
   fi
+
+  # ...and the two Qt executables built above replace the archive's own,
+  # which were compiled against a different distribution's Qt. See the
+  # header for what happens without this.
+  install -Dm755 build/ui/stud-ui "$pkgdir/usr/bin/stud"
+  install -Dm755 build/webview/stud-webview "$pkgdir/usr/lib/stud/stud-webview"
 }
