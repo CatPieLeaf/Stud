@@ -899,7 +899,8 @@ struct BufferMapping {
 // indices all 0 pointing at a zeroed vertex.
 //
 // std::map keeps references stable across insertion, which a vector does not.
-std::map<GLuint, BufferMapping>& mappings() {
+// C++ linkage, for the same reason as wire_scratch in the Vulkan client.
+static std::map<GLuint, BufferMapping>& mappings() {
     static std::map<GLuint, BufferMapping> m;
     return m;
 }
