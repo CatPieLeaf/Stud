@@ -3074,7 +3074,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBeginRenderPass(VkCommandBuffer cb,
     if (bi == nullptr) return;
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u64(to_u64(bi->renderPass));
     w.u64(to_u64(bi->framebuffer));
     w.u32(static_cast<uint32_t>(bi->renderArea.offset.x));
@@ -3099,7 +3099,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindPipeline(VkCommandBuffer cb, VkPipeline
                                                    VkPipeline pipeline) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(bp);
     w.u64(to_u64(pipeline));
     record_bytes(cb, vk_wire::CmdKind::BindPipeline, w.data(), w.size());
@@ -3111,7 +3111,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindDescriptorSets(
     const uint32_t* pDynOffsets) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(bp);
     w.u64(to_u64(layout));
     w.u32(firstSet);
@@ -3128,7 +3128,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindVertexBuffers(VkCommandBuffer cb, uint3
                                                         const VkDeviceSize* pOffsets) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(firstBinding);
     w.u32(bindingCount);
     for (uint32_t i = 0; i < bindingCount; ++i) w.u64(to_u64(pBuffers[i]));
@@ -3140,7 +3140,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffe
                                                       VkDeviceSize offset, VkIndexType type) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u64(to_u64(buffer));
     w.u64(offset);
     w.u32(type);
@@ -3152,7 +3152,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCou
                                            uint32_t firstInstance) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(vertexCount);
     w.u32(instanceCount);
     w.u32(firstVertex);
@@ -3165,7 +3165,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdDrawIndexed(VkCommandBuffer cb, uint32_t in
                                                   int32_t vertexOffset, uint32_t firstInstance) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(indexCount);
     w.u32(instanceCount);
     w.u32(firstIndex);
@@ -3178,7 +3178,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdDispatch(VkCommandBuffer cb, uint32_t x, ui
                                                uint32_t z) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(x);
     w.u32(y);
     w.u32(z);
@@ -3189,7 +3189,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdSetViewport(VkCommandBuffer cb, uint32_t fi
                                                   uint32_t count, const VkViewport* pViewports) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(first);
     w.u32(count);
     for (uint32_t i = 0; i < count; ++i) {
@@ -3207,7 +3207,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdSetScissor(VkCommandBuffer cb, uint32_t fir
                                                  uint32_t count, const VkRect2D* pScissors) {
     StubScope stub_scope;
     vk_wire::FixedWriter<256> w;
-    
+
     w.u32(first);
     w.u32(count);
     for (uint32_t i = 0; i < count; ++i) {
