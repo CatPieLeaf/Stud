@@ -14,6 +14,10 @@ namespace stud::ui { void terminate_stud_session(); }
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusReply>
+#include <QDBusVariant>
 
 #include <cstdio>
 #include <QFile>
@@ -83,23 +87,37 @@ bool session_is_running() {
     return !free_to_take;
 }
 
+// Whether a system tray exists, as Qt sees it.
+//
+// Qt asks the bus daemon whether org.kde.StatusNotifierWatcher has an owner.
+// A sandbox that mediates the daemon can refuse that question; cpak refuses
+// any policy naming org.freedesktop.DBus, which is the daemon itself.
+//
+// Ignoring the refusal and registering with the watcher directly does not
+// work, and it is a tempting enough idea to be worth ruling out here. On a
+// refusal the Qt platform theme builds no tray icon at all
+// (QGenericUnixTheme::createPlatformSystemTrayIcon returns null), so
+// QSystemTrayIcon::show() has nothing to show. Stud cannot reach around that.
+//
+// The sandbox has to allow the question. cpak does now: a policy granting
+// talk to a name may ask who owns that name, and a client owning a name
+// receives calls addressed to it.
+bool system_tray_exists() {
+    if (QSystemTrayIcon::isSystemTrayAvailable()) return true;
+    std::fprintf(stderr,
+                 "stud: no system tray; the session bus reports no "
+                 "org.kde.StatusNotifierWatcher\n");
+    return false;
+}
+
 }  // namespace
 
 Tray::Tray(QObject* parent) : QObject(parent) {}
 
 bool Tray::show() {
-    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
-        // Said out loud, because the alternative is a tray that is simply
-        // absent with no way to tell why. Qt answers this by asking the
-        // session bus whether a StatusNotifierWatcher is registered, so a
-        // sandbox that does not let Stud read that watcher's properties
-        // looks exactly like a desktop with no tray at all, which is
-        // what a cpak install did before its manifest granted them.
-        std::fprintf(stderr,
-                     "stud: no system tray on this desktop; Qt found no "
-                     "StatusNotifierWatcher on the session bus\n");
-        return false;
-    }
+    // An absent icon gives no way to tell a trayless desktop from a failed
+    // registration, so both cases say which one happened.
+    if (!system_tray_exists()) return false;
 
     // A tray-only process has no windows, and Qt quits an application
     // when its last window closes. So opening Settings from the tray and
@@ -127,6 +145,43 @@ bool Tray::show() {
     menu->addAction(QStringLiteral("Exit Stud"), this, &Tray::quitStud);
     icon_->setContextMenu(menu);
     icon_->show();
+
+    // Qt registers the item asynchronously and says nothing when the watcher
+    // never takes it, which looks the same as an icon that failed to draw.
+    // Read the watcher's own list back and report which happened.
+    QTimer::singleShot(2000, this, [] {
+        QDBusMessage ask = QDBusMessage::createMethodCall(
+            QStringLiteral("org.kde.StatusNotifierWatcher"),
+            QStringLiteral("/StatusNotifierWatcher"),
+            QStringLiteral("org.freedesktop.DBus.Properties"),
+            QStringLiteral("Get"));
+        ask.setArguments({QStringLiteral("org.kde.StatusNotifierWatcher"),
+                          QStringLiteral("RegisteredStatusNotifierItems")});
+
+        const QDBusMessage reply =
+            QDBusConnection::sessionBus().call(ask, QDBus::Block, 3000);
+        if (reply.type() == QDBusMessage::ErrorMessage) {
+            std::fprintf(stderr, "stud: could not read the tray's item list (%s)\n",
+                         qUtf8Printable(reply.errorName()));
+            return;
+        }
+
+        const QString self = QDBusConnection::sessionBus().baseService();
+        const QStringList items =
+            reply.arguments().value(0).value<QDBusVariant>().variant().toStringList();
+        // Entries read ":1.47/StatusNotifierItem". Matching on the unique
+        // name plus its separator stops ":1.4" matching ":1.47".
+        for (const QString& item : items) {
+            if (item.startsWith(self + QLatin1Char('/'))) {
+                std::fprintf(stderr, "stud: the tray accepted this session's icon\n");
+                return;
+            }
+        }
+        std::fprintf(stderr,
+                     "stud: the tray did not take this session's icon; it holds "
+                     "%lld other item(s)\n",
+                     static_cast<long long>(items.size()));
+    });
 
     // Ask GitHub whether there is a newer Stud, once, in the background.
     // Nothing appears unless there is; see UpdateCheck.
