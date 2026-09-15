@@ -393,6 +393,65 @@ copy_bionic_from_dir() {
 RUNTIME_APEX_PATH="mainline/runtime/apex/com.android.runtime-x86_64.apex"
 TZDATA_APEX_PATH="mainline/tzdata/apex/com.android.tzdata-x86_64.apex"
 
+# Pipes a googlesource archive to stdout, retrying a few times first.
+#
+# gitiles answers 429 and 503 under load, which is ordinary rather than
+# exceptional: a CI run that fetches eight archives in a row hits it
+# often enough to matter. Every caller here is idempotent, so the only
+# question is how long to wait before giving up.
+fetch_archive() {
+    local url="$1" attempt=1
+    while [ "$attempt" -le 3 ]; do
+        # Only the last attempt reports: a repo that is simply down
+        # otherwise prints the same curl line once per try, per archive,
+        # and buries the one message that says what is being done about it.
+        if [ "$attempt" -lt 3 ]; then
+            curl -fsSL --max-time 180 "$url" 2>/dev/null && return 0
+            sleep $(( attempt * 3 ))
+        else
+            curl -fsSL --max-time 180 "$url" && return 0
+        fi
+        attempt=$(( attempt + 1 ))
+    done
+    return 1
+}
+
+# Unpacks one directory of an AOSP repo, from googlesource or its mirror.
+#
+# gitiles is the source of record and is tried first. It also goes down:
+# platform/system/core answered 503 at its own repo root for a whole
+# afternoon while every neighbouring repo served fine, which no amount of
+# retrying gets past. AOSP publishes the same trees to github.com/
+# aosp-mirror, a couple of megabytes a repo, so that is the second try.
+#
+# Both produce the same layout: the contents of <path>, unpacked into
+# <into>, which is what the include flags below expect.
+fetch_aosp_dir() {
+    local repo="$1" path="$2" into="$3"
+    mkdir -p "$into"
+    if fetch_archive "$AOSP/platform/$repo/+archive/refs/heads/$AOSP_BRANCH/$path.tar.gz" \
+        | tar xz -C "$into" 2>/dev/null; then
+        return 0
+    fi
+
+    local mirror="platform_$(printf '%s' "$repo" | tr / _)"
+    local cached="$third_party/.aosp-mirror/$mirror-$AOSP_BRANCH.tar.gz"
+    if [ ! -s "$cached" ]; then
+        say "googlesource has no $repo right now, trying the AOSP mirror"
+        mkdir -p "$(dirname "$cached")"
+        fetch_archive \
+            "https://codeload.github.com/aosp-mirror/$mirror/tar.gz/refs/heads/$AOSP_BRANCH" \
+            > "$cached.part" || { rm -f "$cached.part"; return 1; }
+        mv "$cached.part" "$cached"
+    fi
+
+    # One component for the tarball's own root directory, then one per
+    # component of the path being lifted out of it.
+    local strip=$(( 1 + $(printf '%s' "$path" | tr -cd / | wc -c) + 1 ))
+    tar xz -C "$into" --strip-components="$strip" \
+        --wildcards "*/$path/*" -f "$cached"
+}
+
 # Downloads one file out of a googlesource repo and checks it really is
 # the file that repo lists.
 #
@@ -449,8 +508,8 @@ build_liblog() {
 
     rm -rf "$work"; mkdir -p "$work/src" "$work/inc"
     say "fetching liblog source from AOSP ($AOSP_BRANCH)"
-    curl -fsSL "$AOSP/platform/system/logging/+archive/refs/heads/$AOSP_BRANCH/liblog.tar.gz" \
-        | tar xz -C "$work/src" || { warn "could not fetch liblog source"; return 1; }
+    fetch_aosp_dir system/logging liblog "$work/src" \
+        || { warn "could not fetch liblog source"; return 1; }
 
     # Header-only dependencies, named by liblog's own header_libs.
     local d
@@ -464,15 +523,18 @@ build_liblog() {
         local rest="${d#*:}"
         local path="${rest%%:*}"
         local into="${rest##*:}"
-        mkdir -p "$work/inc/$into"
-        curl -fsSL "$AOSP/platform/$repo/+archive/refs/heads/$AOSP_BRANCH/$path.tar.gz" \
-            | tar xz -C "$work/inc/$into" 2>/dev/null || true
+        # Not optional, whatever an earlier version of this said. Letting a
+        # failed archive through produced a compile error naming a header
+        # (system/graphics.h) rather than the download that never arrived,
+        # which is a much longer way round to the same answer.
+        fetch_aosp_dir "$repo" "$path" "$work/inc/$into" \
+            || { warn "could not fetch $repo/$path from AOSP"; return 1; }
     done
     # utils/Errors.h is a symlink out of that archive into libutils/binder.
     if [ -L "$work/inc/utils/utils/Errors.h" ]; then
         mkdir -p "$work/inc/binder"
-        curl -fsSL "$AOSP/platform/system/core/+archive/refs/heads/$AOSP_BRANCH/libutils/binder/include.tar.gz" \
-            | tar xz -C "$work/inc/binder" 2>/dev/null || true
+        fetch_aosp_dir system/core libutils/binder/include "$work/inc/binder" \
+            || { warn "could not fetch system/core/libutils/binder from AOSP"; return 1; }
         rm -f "$work/inc/utils/utils/Errors.h"
         cp "$work/inc/binder/utils/Errors.h" "$work/inc/utils/utils/Errors.h" 2>/dev/null || true
     fi

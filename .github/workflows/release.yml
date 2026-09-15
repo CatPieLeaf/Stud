@@ -91,6 +91,15 @@ jobs:
         # about 15 GB. Harmless otherwise.
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
+      - name: Work out the dependency cache key
+        # Hashes what the dependencies are, not the script that fetches
+        # them; see tools/dependency-id.sh.
+        id: deps
+        run: |
+          echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "appimage=$(sh tools/dependency-id.sh appimage | sha256sum | cut -c1-16)" \
+            >> "$GITHUB_OUTPUT"
+
       - name: Cache Android NDK
         # One key for both jobs: the NDK is downloaded, not built, so the
         # container that extracted it makes no difference; it compiles
@@ -100,7 +109,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
-          key: ndk-${{ hashFiles('tools/setup.sh') }}
+          key: ndk-${{ steps.deps.outputs.id }}
 
       - name: Cache ANGLE and bionic
         # Per-container, unlike the NDK above: ANGLE is COMPILED here,
@@ -111,7 +120,7 @@ jobs:
           path: |
             third_party/angle
             third_party/android-bionic
-          key: deps-fedora44-${{ hashFiles('tools/setup.sh') }}
+          key: deps-fedora44-${{ steps.deps.outputs.id }}
 
       - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
@@ -502,12 +511,21 @@ jobs:
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
+      - name: Work out the dependency cache key
+        # Hashes what the dependencies are, not the script that fetches
+        # them; see tools/dependency-id.sh.
+        id: deps
+        run: |
+          echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "appimage=$(sh tools/dependency-id.sh appimage | sha256sum | cut -c1-16)" \
+            >> "$GITHUB_OUTPUT"
+
       - name: Cache Android NDK
         # The same key the packages job uses; see the comment there.
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
-          key: ndk-${{ hashFiles('tools/setup.sh') }}
+          key: ndk-${{ steps.deps.outputs.id }}
 
       - name: Cache ANGLE and bionic
         uses: actions/cache@v6
@@ -515,13 +533,13 @@ jobs:
           path: |
             third_party/angle
             third_party/android-bionic
-          key: deps-ubuntu2604-${{ hashFiles('tools/setup.sh') }}
+          key: deps-ubuntu2604-${{ steps.deps.outputs.id }}
 
       - name: Cache AppImage tools
         uses: actions/cache@v6
         with:
           path: third_party/appimage-tools
-          key: appimage-tools-${{ hashFiles('packaging/build-appimage.sh') }}
+          key: appimage-tools-${{ steps.deps.outputs.appimage }}
 
       - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
