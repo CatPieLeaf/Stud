@@ -332,8 +332,10 @@ Loader& loader() {
         l.get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
             ::dlsym(l.handle, "vkGetInstanceProcAddr"));
         if (l.get_instance_proc_addr == nullptr) return l;
-        auto global = [&l](const char* n) {
-            return l.get_instance_proc_addr(VK_NULL_HANDLE, n);
+        // Captures the function pointer, not the static itself: capturing a
+        // variable with static storage is deprecated in C++20.
+        auto global = [get = l.get_instance_proc_addr](const char* n) {
+            return get(VK_NULL_HANDLE, n);
         };
         l.enumerate_instance_version =
             reinterpret_cast<PFN_vkEnumerateInstanceVersion>(global("vkEnumerateInstanceVersion"));
