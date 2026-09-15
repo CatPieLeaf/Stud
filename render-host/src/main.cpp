@@ -29,6 +29,7 @@
 #include "stud/android_glue.h"
 #include "stud/text_overlay.h"
 #include "stud/clipboard.h"
+#include "stud/stud_paths.h"
 #include "stud/ndk_types.h"
 #include <set>
 #include <string>
@@ -75,6 +76,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <csignal>
+#include <filesystem>
 #include <vector>
 
 #include <dlfcn.h>
@@ -1111,6 +1113,32 @@ std::string fix_uint_index_arithmetic(const std::string& src) {
 // Runs stud-ui one-shot and does not wait for it. Same discovery of the
 // sibling binary as the keyring helper below; nothing is read back, so
 // there are no pipes and no reaping beyond the double fork.
+// Where the Qt half of Stud is, from render-host's own location.
+//
+// It is installed as `stud` (bin/stud) and only ever called `stud-ui` in
+// a build tree, so a list that knew only the build-tree name worked
+// here and nowhere else. That is not cosmetic: the keyring helper below
+// is what persists a login, and the server-region notification goes the
+// same way, so both were dead in every package (rpm, deb, Arch, AppImage
+// and Flatpak alike) while working perfectly from a build tree. Caught
+// in the Flatpak as `read secret "rbxas" ... absent (helper ok=0)` with
+// an empty secrets directory, which is why a relaunch always asked for a
+// login again.
+//
+// bin/stud is two levels up from libexec/stud, and from lib/stud too,
+// which is where Arch puts it (namcap rejects libexec).
+std::vector<std::string> ui_helper_candidates(const std::string& own_dir) {
+    std::vector<std::string> paths;
+    if (!own_dir.empty()) {
+        paths.push_back(own_dir + "/../ui/stud-ui");   // a build tree
+        paths.push_back(own_dir + "/../../bin/stud");  // any install tree
+        paths.push_back(own_dir + "/stud-ui");
+    }
+    paths.push_back("stud");     // and, failing that, the PATH
+    paths.push_back("stud-ui");
+    return paths;
+}
+
 void run_ui_helper_detached(const char* mode, const std::string& argument) {
     const pid_t pid = ::fork();
     if (pid != 0) {
@@ -1132,10 +1160,12 @@ void run_ui_helper_detached(const char* mode, const std::string& argument) {
             if (slash != std::string::npos) own_dir = exe.substr(0, slash);
         }
     }
-    const std::string candidates[] = {own_dir + "/../ui/stud-ui", own_dir + "/stud-ui",
-                                      "stud-ui"};
-    for (const std::string& path : candidates) {
-        ::execl(path.c_str(), "stud-ui", mode, argument.c_str(), nullptr);
+    for (const std::string& path : ui_helper_candidates(own_dir)) {
+        if (path.find('/') == std::string::npos) {
+            ::execlp(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
+        } else {
+            ::execl(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
+        }
     }
     ::_exit(127);
 }
@@ -1172,11 +1202,13 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
                 if (slash != std::string::npos) own_dir = exe.substr(0, slash);
             }
         }
-        if (!own_dir.empty()) {
-            const std::string sibling = own_dir + "/../ui/stud-ui";
-            ::execl(sibling.c_str(), "stud-ui", mode, name.c_str(), nullptr);
+        for (const std::string& path : ui_helper_candidates(own_dir)) {
+            if (path.find('/') == std::string::npos) {
+                ::execlp(path.c_str(), path.c_str(), mode, name.c_str(), nullptr);
+            } else {
+                ::execl(path.c_str(), path.c_str(), mode, name.c_str(), nullptr);
+            }
         }
-        ::execlp("stud-ui", "stud-ui", mode, name.c_str(), nullptr);
         ::_exit(127);
     }
     ::close(to_child[0]);
@@ -3973,9 +4005,18 @@ void trace_gl_error_after(stud::render_host::CallId id, const RealFns& fns) {
 // blocks in this file are the same namespace.
 namespace {
 void raise_through_kwin() {
-    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
-    if (runtime == nullptr) return;
-    std::string js_path = std::string(runtime) + "/stud/kwin-raise.js";
+    // The script goes in Stud's own data directory, not the runtime
+    // directory: KWin has to READ this path, and it runs on the host. A
+    // Flatpak's runtime directory is private to the sandbox (the real
+    // one is buried under /run/user/<uid>/.flatpak/<instance>/), so KWin
+    // was handed a path that does not exist for it and the raise
+    // silently did nothing, a game opened from the browser stayed
+    // behind the window in front. The data directory is a real host path
+    // in both cases (~/.local/share/stud, or ~/.var/app/<id>/data/stud).
+    const std::string dir = stud::paths::data_dir();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::string js_path = dir + "/kwin-raise.js";
     {
         std::ofstream js(js_path, std::ios::trunc);
         if (!js) return;
