@@ -762,11 +762,24 @@ jobs:
       # repositories can copy them.
       - name: Print downstream checksums
         run: |
-          echo "Source tarball, for the source PKGBUILD, which is NOT the"
-          echo "published one (see packaging/aur/README.md):"
-          curl -fsSL "https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz" \
-            | sha256sum | cut -d' ' -f1
+          source_sha="$(curl -fsSL \
+            "https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz" \
+            | sha256sum | cut -d' ' -f1)"
+          archive_sha="$(find artifacts -name 'stud-*-x86_64.tar.zst' -exec sha256sum {} + \
+            | cut -d' ' -f1)"
+          echo "source tarball:  $source_sha"
+          echo "release archive: $archive_sha"
           echo
-          echo "Release archive. This is the one stud-bin and the Flatpak"
-          echo "manifest both name, so both take this checksum:"
-          find artifacts -name 'stud-*-x86_64.tar.zst' -exec sha256sum {} + | cut -d' ' -f1
+          echo "Four placeholders take these: the Flatpak manifest names both"
+          echo "archives, the source PKGBUILD names the tarball, and stud-bin"
+          echo "names the release archive AND the tarball (it builds the two Qt"
+          echo "executables itself, because a Qt binary built on Fedora does not"
+          echo "run on Arch). One command fills all of them:"
+          echo
+          echo "  tools/fill-release-checksums.py ${TAG} \\"
+          echo "      --source-sha $source_sha \\"
+          echo "      --archive-sha $archive_sha"
+          echo
+          echo "...then regenerate packaging/aur/.SRCINFO and .SRCINFO.stud-bin."
+          echo "They stay placeholders in the tree on purpose: a checksum belongs"
+          echo "to one release, and re-cutting a tag changes both of these.
