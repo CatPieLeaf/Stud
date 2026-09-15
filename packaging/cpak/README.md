@@ -16,14 +16,28 @@ podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:1.1.0 .
 podman push ghcr.io/catpieleaf/stud:1.1.0
 ```
 
+## Where the manifest lives
+
+`cpak.json` is at the **root of the repository**, not in this directory,
+and it has to be: `cpak install github.com/catpieleaf/stud` fetches that
+one path and nothing else. With it in here the install fails with
+
+    Error: failed to get manifest file: failed to get file content: 404 Not Found
+
+cpak resolves the **default branch** unless told otherwise ("No version
+specified, using the default branch: main"), so a fix to the manifest
+reaches users as soon as it is on `main`. It does not need a new tag or
+a new release. `-r/--release`, `-b/--branch` and `-c/--commit` pick
+something else.
+
 ## Publishing the manifest
 
 Manifest v3 requires `image` to be pinned to an immutable digest, so the
 tag above is only the authoring state. `cpak` resolves it:
 
 ```sh
-cpak lock packaging/cpak/cpak.json
-cpak test packaging/cpak/cpak.json     # installs temporarily and runs it
+cpak lock cpak.json
+cpak test cpak.json                    # installs temporarily and runs it
 ```
 
 The locked `cpak.json` goes at the root of the repository cpak installs
