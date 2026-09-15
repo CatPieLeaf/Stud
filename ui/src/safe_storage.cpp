@@ -47,6 +47,19 @@ std::optional<QByteArray> safe_storage_key(QString* error_out) {
         if (error_out != nullptr) *error_out = "existing safe-storage key is malformed";
         return std::nullopt;
     }
+    // Nothing came back. A new key is right only when the keyring is
+    // genuinely empty, which is the first run. When the read FAILED
+    // instead, minting one here would overwrite the key every existing
+    // secret was encrypted with, and each of them would read as absent
+    // from then on: the login is gone and nothing says why. That is
+    // exactly what a sandbox missing one D-Bus grant produced.
+    if (!last_load_was_absent()) {
+        if (error_out != nullptr) {
+            *error_out = "the keyring could not be read; refusing to replace the key";
+        }
+        return std::nullopt;
+    }
+
     QByteArray key(kKeyBytes, '\0');
     if (RAND_bytes(reinterpret_cast<unsigned char*>(key.data()), kKeyBytes) != 1) {
         if (error_out != nullptr) *error_out = "could not generate a safe-storage key";
