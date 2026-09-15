@@ -438,6 +438,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${TAG#v}"
+          # Only this file is ever built, so anything added to the
+          # from-source Containerfile instead reaches nobody.
+          python3 tools/check-cpak-runtime.py
           podman build -f packaging/cpak/Containerfile.prebuilt \
             -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" \
             -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest" .
