@@ -59,7 +59,30 @@ finish-args:
   - --socket=fallback-x11
   # Audio out, and microphone in for voice chat. This is the PulseAudio
   # socket; on a PipeWire desktop it is pipewire-pulse that answers it.
+  # PortAudio reaches it through the runtime's own ALSA pulse plugin,
+  # which its 99-pulseaudio-default.conf already makes the default device
+  # measured in the sandbox: Pa_Initialize() returns 0 and enumerates
+  # 14 devices.
   - --socket=pulseaudio
+  # Game controllers. render-host reads the evdev nodes directly
+  # (render-host/src/gamepad.cpp), and without this the sandbox has no
+  # /dev/input at all, so Stud's own diagnostics report "controllers:
+  # /dev/input unreadable" where a native run lists the real devices.
+  - --device=input
+  # Discord Rich Presence, which is a plain socket in the runtime
+  # directory, discord-ipc-0 through -9, tried in order
+  # (render-host/src/discord_rpc.cpp). Not visible in the sandbox
+  # otherwise, so the feature was silently dead here.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/discord-ipc-1
+  - --filesystem=xdg-run/discord-ipc-2
+  - --filesystem=xdg-run/discord-ipc-3
+  - --filesystem=xdg-run/discord-ipc-4
+  - --filesystem=xdg-run/discord-ipc-5
+  - --filesystem=xdg-run/discord-ipc-6
+  - --filesystem=xdg-run/discord-ipc-7
+  - --filesystem=xdg-run/discord-ipc-8
+  - --filesystem=xdg-run/discord-ipc-9
   # No filesystem access is requested. The APK is chosen through a
   # QFileDialog, which Qt routes to the file chooser portal inside a
   # sandbox, the portal hands back a path under /run/user/<uid>/doc/
@@ -75,6 +98,22 @@ finish-args:
   # the login itself. Without it that encrypted file cannot be read, so
   # Stud would have to fall back to storing the cookie in the clear.
   - --talk-name=org.freedesktop.secrets
+  # QtWebEngine comes from the base app, which installs under /app, while
+  # Qt itself comes from the runtime and only looks beside its own prefix:
+  #
+  #   The following paths were searched for Qt WebEngine Process:
+  #     /usr/lib/libexec/QtWebEngineProcess
+  #     /usr/bin/QtWebEngineProcess
+  #     /app/libexec/stud/QtWebEngineProcess
+  #   but could not find it.
+  #
+  # stud-webview aborted on exactly that (SIGABRT, twice, caught in
+  # coredumpctl) the moment a login challenge opened a web view, so
+  # logging in through the Flatpak could never complete. Its resources and
+  # locales live under /app for the same reason and are named here too.
+  - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
+  - --env=QTWEBENGINE_RESOURCES_PATH=/app/resources
+  - --env=QTWEBENGINE_LOCALES_PATH=/app/translations/qtwebengine_locales
   # The tray icon, and the notification Stud raises when a game server's
   # region is known.
   - --talk-name=org.kde.StatusNotifierWatcher
@@ -121,6 +160,31 @@ modules:
       - type: archive
         url: https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz
         sha256: 5af29ba58bbdbb7bbcefaaecc77ec8fc413f0db6f4c4e286c40c3e1b83174fa0
+    post-install:
+      # Two things are wrong with the obvious placement, and both were
+      # measured in the sandbox rather than guessed:
+      #
+      # PortAudio's own CMake sets its SONAME to a bare libportaudio.so,
+      # while every distribution, and render-host's own dlopen, uses
+      # libportaudio.so.2.
+      #
+      # And a bare dlopen("libportaudio.so.2") fails here even with the
+      # file in /app/lib, because LD_LIBRARY_PATH is empty in a Flatpak
+      # and /app/lib reaches the loader through /etc/ld.so.conf, which
+      # the loader never reads (it reads only the cache). Loading the
+      # same file by its full path works: Pa_Initialize() returns 0 and
+      # finds 14 devices.
+      #
+      # So it also goes where render-host looks for a bundled copy by
+      # absolute path, <exe dir>/../lib/stud/audio/libportaudio.so.2,
+      # the same fallback the AppImage uses (render-host/src/
+      # audio_output.cpp's bundled_portaudio_path()).
+      - ln -sf libportaudio.so /app/lib/libportaudio.so.2
+      - install -d /app/lib/stud/audio
+      - ln -sf ../../libportaudio.so /app/lib/stud/audio/libportaudio.so.2
+    cleanup:
+      # Nothing in the bundle links against it.
+      - /lib/libportaudio.a
 
   # QtKeychain, for the login. Qt itself comes from the runtime.
   - name: qtkeychain
