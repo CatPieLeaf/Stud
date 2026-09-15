@@ -1,14 +1,18 @@
 #include "stud/bionic_runtime.h"
 #include "stud/property_area.h"
 
+#include <sched.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -173,6 +177,137 @@ std::string default_linker64_path() {
     std::string linker64 = default_shipped_bionic_directory() + "/linker64";
     if (file_executable(linker64)) return linker64;
     throw LinkerNotFound();
+}
+
+// Whether this process can create a user namespace at all, the one
+// thing bwrap cannot do without, and the one thing a Flatpak refuses.
+//
+// Measured directly rather than inferred from being in a Flatpak: the
+// host allows nesting (`unshare -Ur, unshare -Ur true` succeeds), while
+// the same call inside Stud's own Flatpak returns EPERM even though the
+// app carries --allow=devel and the kernel's own limits are untouched
+// (user.max_user_namespaces reads 2147483647 in there). What refuses it
+// is the seccomp filter Flatpak installs on every app; org.flatpak.Builder
+// behaves identically, so this is a property of Flatpak rather than of
+// anything in this manifest. bwrap's own diagnosis blames the kernel.
+// "No permissions to creating new namespace, likely because the kernel
+// does not allow non-privileged user namespaces", which is what a
+// Flatpak launch printed while Process B never started and no Roblox
+// window ever appeared.
+//
+// The probe is a fork whose child does nothing but the syscall, so the
+// answer costs one process and cannot disturb this one.
+bool can_create_user_namespace() {
+    static const bool available = [] {
+        pid_t pid = ::fork();
+        if (pid < 0) return false;
+        if (pid == 0) {
+            ::_exit(::unshare(CLONE_NEWUSER) == 0 ? 0 : 1);
+        }
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }();
+    return available;
+}
+
+// One symlink, replacing whatever is already at that path.
+bool place_link(const fs::path& target, const fs::path& link) {
+    std::error_code ec;
+    fs::create_directories(link.parent_path(), ec);
+    fs::remove(link, ec);
+    fs::create_symlink(target, link, ec);
+    return !ec;
+}
+
+// The same tree build_process_b_argv() mounts, built with symlinks
+// instead, for the case where there is no mount namespace to mount it
+// in (see can_create_user_namespace()).
+//
+// This is only reachable where the root filesystem is writable, which on
+// an ordinary desktop it is not, and there bwrap works, so this path is
+// never taken. Inside a Flatpak "/" is a per-instance tmpfs owned by the
+// user (`tmpfs rw,nosuid,nodev,uid=1000`), private to this sandbox, so
+// creating /system there affects nothing outside it and disappears with
+// the app.
+//
+// The one thing it cannot reproduce is the sandbox's uid 0: bionic's
+// prop_area::map_fd_ro() requires the property file to be owned by root,
+// which bwrap arranged by remapping this user to 0 inside its own user
+// namespace. Without that namespace the file stays user-owned and
+// __system_properties_init() returns -1, honest degradation, and
+// nothing in Stud's own DNS path depends on it (the resolver is set up
+// through _resolv_set_nameservers_for_net and ANDROID_DNS_MODE, both
+// still done below).
+void link_android_system_tree(const ProcessBConfig& config,
+                             const std::string& bionic_lib_dir,
+                             const std::string& linker64_path) {
+    std::error_code ec;
+    for (const char* dir : {"/system/lib64", "/system/bin", "/system/etc",
+                            "/system/usr/share/zoneinfo"}) {
+        fs::create_directories(dir, ec);
+        if (ec) {
+            throw std::runtime_error(
+                "stud: this process cannot create user namespaces and cannot write " +
+                std::string(dir) + " either, so there is no way to give Process B the "
+                "/system tree bionic's linker requires: " + ec.message());
+        }
+    }
+
+    // The overlay's own names win, exactly as they do in the bind list.
+    std::set<std::string> overlay_names;
+    const std::string overlay_lib64_dir =
+        fs::path(config.executable_path).parent_path().string() + "/lib64";
+    if (fs::is_directory(overlay_lib64_dir)) {
+        for (const auto& entry : fs::directory_iterator(overlay_lib64_dir, ec)) {
+            const std::string filename = entry.path().filename().string();
+            if (filename.find(".so") != std::string::npos) overlay_names.insert(filename);
+        }
+    }
+    for (const auto& entry : fs::directory_iterator(bionic_lib_dir, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        const std::string filename = entry.path().filename().string();
+        if (overlay_names.count(filename) != 0) continue;
+        place_link(entry.path(), fs::path("/system/lib64") / filename);
+    }
+    if (fs::is_directory(overlay_lib64_dir)) {
+        for (const auto& entry : fs::directory_iterator(overlay_lib64_dir, ec)) {
+            const std::string filename = entry.path().filename().string();
+            if (filename.find(".so") == std::string::npos) continue;
+            place_link(entry.path(), fs::path("/system/lib64") / filename);
+        }
+    }
+
+    place_link(linker64_path, "/system/bin/linker64");
+    place_link(linker64_path, "/system/lib64/linker64");
+    place_link(bionic_lib_dir + "/tzdata", "/system/usr/share/zoneinfo/tzdata");
+    if (fs::exists("/etc/hosts")) place_link("/etc/hosts", "/system/etc/hosts");
+    if (fs::exists(default_property_area_path())) {
+        place_link(default_property_area_path(), "/dev/__properties__");
+    }
+}
+
+// Process B's own environment, for the same launch: what bwrap would
+// have set with --setenv, applied to a copy of this process's own.
+std::vector<std::string> process_b_environment(const ProcessBConfig& config,
+                                               const std::string& ca_bundle_path) {
+    std::map<std::string, std::string> env;
+    for (char** e = environ; e != nullptr && *e != nullptr; ++e) {
+        const char* eq = std::strchr(*e, '=');
+        if (eq == nullptr) continue;
+        env[std::string(static_cast<const char*>(*e), eq)] = std::string(eq + 1);
+    }
+    // See build_process_b_argv()'s own comments for why each of these is
+    // not optional.
+    env["ANDROID_DNS_MODE"] = "local";
+    if (!ca_bundle_path.empty()) env["SSL_CERT_FILE"] = ca_bundle_path;
+    for (const auto& [name, value] : config.extra_env) env[name] = value;
+
+    std::vector<std::string> flat;
+    flat.reserve(env.size());
+    for (const auto& [name, value] : env) flat.push_back(name + "=" + value);
+    return flat;
 }
 
 std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
@@ -573,14 +708,63 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     return argv_storage;
 }
 
+namespace {
+
+// One spawn, shared by both launch paths below. `envp` empty means this
+// process's own environment, which is what bwrap gets (it sets Process
+// B's with --setenv from the inside).
+pid_t spawn_process_b(const std::string& program,
+                      std::vector<std::string> argv_storage,
+                      const std::vector<std::string>& envp_storage,
+                      const std::string& working_directory,
+                      int stdout_fd) {
+    std::vector<char*> argv;
+    argv.reserve(argv_storage.size() + 1);
+    for (std::string& s : argv_storage) argv.push_back(s.data());
+    argv.push_back(nullptr);
+
+    std::vector<char*> envp;
+    if (!envp_storage.empty()) {
+        envp.reserve(envp_storage.size() + 1);
+        for (const std::string& s : envp_storage) envp.push_back(const_cast<char*>(s.c_str()));
+        envp.push_back(nullptr);
+    }
+
+    pid_t pid = 0;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_t* actions_ptr = nullptr;
+    if (stdout_fd >= 0 || !working_directory.empty()) {
+        ::posix_spawn_file_actions_init(&actions);
+        actions_ptr = &actions;
+    }
+    if (stdout_fd >= 0) {
+        ::posix_spawn_file_actions_adddup2(actions_ptr, stdout_fd, STDOUT_FILENO);
+        ::posix_spawn_file_actions_adddup2(actions_ptr, stdout_fd, STDERR_FILENO);
+    }
+    // bwrap has --chdir; without it the working directory has to be set
+    // here, and for the same reason (ProcessBConfig::working_directory's
+    // own comment: Roblox writes to relative paths).
+    if (!working_directory.empty()) {
+        ::posix_spawn_file_actions_addchdir_np(actions_ptr, working_directory.c_str());
+    }
+
+    int rc = ::posix_spawn(&pid, program.c_str(), actions_ptr, nullptr, argv.data(),
+                           envp.empty() ? environ : envp.data());
+    if (actions_ptr != nullptr) ::posix_spawn_file_actions_destroy(actions_ptr);
+    if (rc != 0) {
+        throw std::runtime_error("stud: posix_spawn(" + program + ") failed: " +
+                                 std::string(std::strerror(rc)));
+    }
+    return pid;
+}
+
+}  // namespace
+
 pid_t launch_process_b(const ProcessBConfig& config) {
     const std::string bionic_lib_dir =
         config.bionic_lib_dir.empty() ? default_shipped_bionic_directory() : config.bionic_lib_dir;
     const std::string linker64_path =
         config.linker64_path.empty() ? default_linker64_path() : config.linker64_path;
-
-    const std::string bwrap_path = find_bwrap_on_path();
-    if (bwrap_path.empty()) throw BwrapNotFound();
 
     if (!file_readable(config.executable_path)) {
         throw std::runtime_error("stud: Process B executable not found or not readable: " +
@@ -593,29 +777,49 @@ pid_t launch_process_b(const ProcessBConfig& config) {
     // honest degradation as a host with no real /etc/hosts.
     generate_property_area_if_possible();
 
-    std::vector<std::string> argv_storage =
-        build_process_b_argv(config, bwrap_path, bionic_lib_dir, linker64_path);
+    // No user namespace, no bwrap; see can_create_user_namespace().
+    // Process B then runs in whatever sandbox already refused it one,
+    // which in the only case this happens (a Flatpak) is a real sandbox
+    // of its own: no host filesystem, its own /tmp, its own tmpfs root.
+    // What is genuinely lost is Stud's own narrowing on top of that,
+    // the GPU driver paths bwrap keeps out of this process, and the PID/
+    // IPC/UTS namespaces, so it is a fallback, never a preference.
+    if (!can_create_user_namespace()) {
+        link_android_system_tree(config, bionic_lib_dir, linker64_path);
+        std::fprintf(stderr,
+                     "stud: no user namespaces available (a Flatpak sandbox refuses them), "
+                     "so Process B runs without its own bwrap sandbox\n");
 
-    std::vector<char*> argv;
-    argv.reserve(argv_storage.size() + 1);
-    for (std::string& s : argv_storage) argv.push_back(s.data());
-    argv.push_back(nullptr);
+        std::string ca_bundle_path;
+        if (fs::exists("/etc/pki/tls/certs/ca-bundle.crt")) {
+            ca_bundle_path = "/etc/pki/tls/certs/ca-bundle.crt";
+        } else if (fs::exists("/etc/ssl/certs/ca-certificates.crt")) {
+            ca_bundle_path = "/etc/ssl/certs/ca-certificates.crt";
+        }
 
-    pid_t pid = 0;
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_t* actions_ptr = nullptr;
-    if (config.stdout_fd >= 0) {
-        ::posix_spawn_file_actions_init(&actions);
-        ::posix_spawn_file_actions_adddup2(&actions, config.stdout_fd, STDOUT_FILENO);
-        ::posix_spawn_file_actions_adddup2(&actions, config.stdout_fd, STDERR_FILENO);
-        actions_ptr = &actions;
+        // The same loader invocation the sandboxed argv ends with, and
+        // the same --dns-servers tail after Process B's own arguments.
+        std::vector<std::string> argv_storage = {"/system/lib64/linker64",
+                                                 config.executable_path};
+        for (const std::string& arg : config.args) argv_storage.push_back(arg);
+        std::vector<std::string> servers = real_host_nameservers();
+        if (!servers.empty()) {
+            std::string joined = servers[0];
+            for (size_t i = 1; i < servers.size(); ++i) joined += "," + servers[i];
+            argv_storage.push_back("--dns-servers");
+            argv_storage.push_back(joined);
+        }
+        return spawn_process_b("/system/lib64/linker64", std::move(argv_storage),
+                               process_b_environment(config, ca_bundle_path),
+                               config.working_directory, config.stdout_fd);
     }
-    int rc = ::posix_spawn(&pid, bwrap_path.c_str(), actions_ptr, nullptr, argv.data(), environ);
-    if (actions_ptr != nullptr) ::posix_spawn_file_actions_destroy(actions_ptr);
-    if (rc != 0) {
-        throw std::runtime_error("stud: posix_spawn(bwrap) failed: " + std::string(std::strerror(rc)));
-    }
-    return pid;
+
+    const std::string bwrap_path = find_bwrap_on_path();
+    if (bwrap_path.empty()) throw BwrapNotFound();
+
+    return spawn_process_b(bwrap_path,
+                           build_process_b_argv(config, bwrap_path, bionic_lib_dir, linker64_path),
+                           {}, std::string(), config.stdout_fd);
 }
 
 }  // namespace stud::bionic_runtime
