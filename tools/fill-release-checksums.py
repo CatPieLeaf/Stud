@@ -25,6 +25,8 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
+import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -144,6 +146,17 @@ def main() -> int:
         data["image"] = f"{repo}@{digest}"
         CPAK.write_text(json.dumps(data, indent=2) + "\n")
         print(f"cpak image:      {digest}")
+
+        # cpak validates the lock against the manifest at install time
+        # ("cpak.lock.json does not match the root manifest"), so it is
+        # regenerated here rather than left to go stale.
+        lock = ROOT / "cpak.lock.json"
+        if shutil.which("cpak"):
+            rc = subprocess.run(["cpak", "lock", str(CPAK)], cwd=ROOT).returncode
+            print("cpak lock:       " + ("written" if rc == 0 else f"FAILED (rc={rc})"))
+        elif lock.exists():
+            print(f"cpak is not installed, {lock.name} is now STALE, regenerate it with "
+                  "`cpak lock cpak.json`", file=sys.stderr)
 
     print("\nfilled. Regenerate the .SRCINFO files next (they carry the same sums):")
     print("  makepkg --printsrcinfo > packaging/aur/.SRCINFO            # from PKGBUILD")
