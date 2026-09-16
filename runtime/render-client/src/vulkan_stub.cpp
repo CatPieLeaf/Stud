@@ -571,7 +571,7 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
     static const bool full_flush = std::getenv("STUD_VK_FULL_FLUSH") != nullptr;
     if (full_flush) {
         send_mapped_run(memory, m, rel_offset, n);
-        if (m.barrier.valid()) m.barrier.mark_all_clean_and_protect();
+        if (m.barrier.valid()) m.barrier.mark_clean_and_protect(rel_offset, n);
         return;
     }
 
@@ -594,7 +594,11 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
             if (run_end > end) run_end = end;
             if (run_end > run_start) send_mapped_run(memory, m, run_start, run_end - run_start);
         }
-        m.barrier.mark_all_clean_and_protect();
+        // Only the range this flush covered. A vkFlushMappedMemoryRanges
+        // names a sub-range, and clearing the rest would drop writes made
+        // outside it: they would never be sent, and the host would keep
+        // stale bytes for the GPU to read.
+        m.barrier.mark_clean_and_protect(rel_offset, n);
         return;
     }
 
