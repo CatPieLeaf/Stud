@@ -44,6 +44,11 @@ public:
     // Page-aligned allocation the engine writes into. False on failure,
     // in which case the caller must fall back to sending everything.
     bool allocate(std::size_t bytes);
+
+    // True when this allocation is tracked by the kernel (uffd-scan)
+    // rather than by the fault handler. Reported by STUD_VK_MEM_STATS so a
+    // session says which mechanism produced its numbers.
+    bool kernel_tracked() const { return uffd_; }
     uint8_t* data() const { return base_; }
     std::size_t size() const { return size_; }
     bool valid() const { return base_ != nullptr; }
@@ -83,7 +88,13 @@ public:
 
     // True when nothing has been written since the last re-arm. Lets a
     // caller skip an allocation entirely rather than walk its pages.
-    bool clean() const { return armed_ && dirty_pages_.load(std::memory_order_acquire) == 0; }
+    bool clean() const {
+        // The kernel keeps no count, and asking costs a scan, so an
+        // allocation it tracks is never reported clean: the flush scans it
+        // and finds nothing, which is one ioctl rather than a page walk.
+        if (uffd_) return false;
+        return armed_ && dirty_pages_.load(std::memory_order_acquire) == 0;
+    }
 
     // Called from the signal handler. True if the address belonged to
     // this allocation and the fault was handled.
@@ -113,6 +124,12 @@ private:
     // the thread that wrote, and no code holding this lock ever writes to
     // the mapping, so the holder can never be the faulting thread.
     mutable std::mutex lock_;
+
+    // uffd-scan: the kernel marks written pages itself and one PAGEMAP_SCAN
+    // returns and re-arms them. When this is set, dirty_ and the fault
+    // handler are unused, and nothing in this class is ever entered from a
+    // signal. See uffd_scan.h.
+    bool uffd_ = false;
 
     uint8_t* base_ = nullptr;
     std::size_t size_ = 0;

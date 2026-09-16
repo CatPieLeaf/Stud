@@ -49,6 +49,7 @@
 
 #include "mapped_write_barrier.h"
 #include "render_client_common.h"
+#include "uffd_scan.h"
 #include "texture_decode.h"
 #include "stud/vulkan_forward.h"
 
@@ -2629,12 +2630,25 @@ void flush_all_mapped_memory() {
     if (stats) {
         static int submits = 0;
         if ((++submits % 120) == 0) {
-            std::printf(
-                "stud: vk mapped flush: %d submits, %llu KB sent of %llu KB asked, "
-                "%llu write faults\n",
-                submits, (unsigned long long)(g_mapped_bytes_sent / 1024),
-                (unsigned long long)(g_mapped_bytes_asked / 1024),
-                stud::render_client::barrier_fault_count());
+            // Which mechanism produced these numbers is part of the
+            // measurement: the fault barrier counts signals, uffd-scan
+            // counts ioctls, and the two are being compared on traffic.
+            if (stud::render_client::UffdScan::available()) {
+                std::printf(
+                    "stud: vk mapped flush: %d submits, %llu KB sent of %llu KB asked, "
+                    "%llu scans reporting %llu pages (uffd-scan)\n",
+                    submits, (unsigned long long)(g_mapped_bytes_sent / 1024),
+                    (unsigned long long)(g_mapped_bytes_asked / 1024),
+                    stud::render_client::UffdScan::scan_count(),
+                    stud::render_client::UffdScan::pages_reported());
+            } else {
+                std::printf(
+                    "stud: vk mapped flush: %d submits, %llu KB sent of %llu KB asked, "
+                    "%llu write faults\n",
+                    submits, (unsigned long long)(g_mapped_bytes_sent / 1024),
+                    (unsigned long long)(g_mapped_bytes_asked / 1024),
+                    stud::render_client::barrier_fault_count());
+            }
             std::fflush(stdout);
         }
     }
