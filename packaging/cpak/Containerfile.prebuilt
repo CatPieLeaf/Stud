@@ -63,6 +63,6 @@ ENV QT_QPA_PLATFORMTHEME=xdgdesktopportal
 COPY install-tree/usr /usr
 
 LABEL org.opencontainers.image.title="Stud" \
-      org.opencontainers.image.description="Play Roblox on Linux" \
+      org.opencontainers.image.description="An Unofficial Open-Source Roblox Launcher for Linux" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.source="https://github.com/CatPieLeaf/Stud"

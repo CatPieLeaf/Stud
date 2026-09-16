@@ -26,7 +26,7 @@
 Name:           stud
 Version:        1.1.2
 Release:        1%{?dist}
-Summary:        Play Roblox on Linux, runs the real, unmodified Roblox Android app
+Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
 License:        AGPL-3.0-or-later
 URL:            https://github.com/CatPieLeaf/Stud
