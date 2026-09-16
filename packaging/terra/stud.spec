@@ -24,7 +24,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*
 
 Name:           stud
-Version:        1.1.1
+Version:        1.1.2
 Release:        1%{?dist}
 Summary:        Play Roblox on Linux, runs the real, unmodified Roblox Android app
 
@@ -101,5 +101,8 @@ appstream-util validate-relax --nonet %{buildroot}%{_datadir}/metainfo/%{appid}.
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Tue Sep 15 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.2-1
+- Update to 1.1.2
+
 * Tue Sep 15 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.1-1
 - Initial package

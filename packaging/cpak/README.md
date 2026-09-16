@@ -12,8 +12,8 @@ the same as any other build of Stud; ANGLE builds from source and
 takes hours, so it is not fetched inside the image build.
 
 ```sh
-podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:1.1.1 .
-podman push ghcr.io/catpieleaf/stud:1.1.1
+podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:1.1.2 .
+podman push ghcr.io/catpieleaf/stud:1.1.2
 ```
 
 ## Where the manifest lives

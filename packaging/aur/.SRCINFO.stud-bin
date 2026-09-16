@@ -1,6 +1,6 @@
 pkgbase = stud-bin
 	pkgdesc = Play Roblox on Linux, runs the real, unmodified Roblox Android app
-	pkgver = 1.1.1
+	pkgver = 1.1.2
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
 	arch = x86_64
@@ -28,14 +28,14 @@ pkgbase = stud-bin
 	depends = hicolor-icon-theme
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	optdepends = wl-clipboard: copying a server link from the tray menu on Wayland
-	provides = stud=1.1.1
+	provides = stud=1.1.2
 	conflicts = stud
 	options = !strip
 	options = !debug
 	options = emptydirs
-	source = stud-bin-1.1.1.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.1.1/stud-1.1.1-x86_64.tar.zst
-	source = stud-1.1.1.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.1.tar.gz
-	sha256sums = 8151277ac9248162d005f1477dcbe28630c5c1fa353c132e9434e87ba5b5f6e8
-	sha256sums = 31fcf840336e09f0fb692396757b3abc3f0c6004a4f54bee47463a9981af761c
+	source = stud-bin-1.1.2.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.1.2/stud-1.1.2-x86_64.tar.zst
+	source = stud-1.1.2.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.2.tar.gz
+	sha256sums = SKIP
+	sha256sums = SKIP
 
 pkgname = stud-bin
