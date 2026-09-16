@@ -307,7 +307,7 @@ jobs:
           tar -C install-tree -xf "$archive"
           test -d install-tree/usr
 
-      - name: Verify .SRCINFO is current
+      - name: Verify the Arch recipes agree with each other and with the tree
         # The AUR serves .SRCINFO, not the PKGBUILD, so a stale one
         # advertises dependencies the package does not actually declare.
         # It is generated, never hand-edited, and drifted once already
@@ -316,9 +316,14 @@ jobs:
           cat > /tmp/srcinfo.sh <<'SCRIPT'
           #!/bin/bash
           set -eu
-          pacman -Sy --noconfirm --needed base-devel >/dev/null
+          pacman -Sy --noconfirm --needed base-devel python binutils >/dev/null
           useradd -m builder
           status=0
+          # All three PKGBUILDs describe one package, and PKGBUILD.bin --
+          # the one this workflow ships -- drifted from the other two
+          # without anything noticing. --tree also names which package
+          # owns each library the built binaries link.
+          python3 /work/tools/check-aur-depends.py --tree /work/install-tree || status=1
           for pair in "PKGBUILD:.SRCINFO" "PKGBUILD.stud-bin:.SRCINFO.stud-bin"; do
             pkgbuild="/work/packaging/aur/${pair%%:*}"
             srcinfo="/work/packaging/aur/${pair##*:}"
