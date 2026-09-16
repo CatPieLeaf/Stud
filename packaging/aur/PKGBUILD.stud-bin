@@ -44,6 +44,7 @@ depends=(
   'qtkeychain-qt6'
   'vulkan-icd-loader'
   'libglvnd'
+  'libx11'
   'libxext'
   'portaudio'
   'freetype2'
