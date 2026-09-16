@@ -50,6 +50,20 @@ public:
     // After a flush the caller calls this to re-arm the barrier.
     void mark_all_clean_and_protect();
 
+    // Re-arm only the pages a flush actually sent.
+    //
+    // vkFlushMappedMemoryRanges names a sub-range, and clearing the whole
+    // allocation's dirty state after sending part of it drops every write
+    // that landed outside that range: the host keeps stale bytes until
+    // something writes those pages again. A shader then reads whatever
+    // was left behind, and a loop bound read out of stale memory does not
+    // terminate, which is a GPU submission that never retires and a fence
+    // that never signals.
+    //
+    // Pages outside [offset, offset+len) keep their dirty state and their
+    // writable protection, so the next flush sends them.
+    void mark_clean_and_protect(std::size_t offset, std::size_t len);
+
     // Byte ranges written since the last re-arm, merged into runs so a
     // rewritten region travels as one write rather than many.
     std::vector<std::pair<std::size_t, std::size_t>> dirty_runs() const;

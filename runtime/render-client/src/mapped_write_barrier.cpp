@@ -114,6 +114,10 @@ bool MappedWriteBarrier::allocate(std::size_t bytes) {
 }
 
 void MappedWriteBarrier::mark_all_clean_and_protect() {
+    mark_clean_and_protect(0, size_);
+}
+
+void MappedWriteBarrier::mark_clean_and_protect(std::size_t offset, std::size_t len) {
     if (base_ == nullptr) return;
     // Clear before protecting, paired with the handler's protect-then-
     // record order above: a write landing in the gap re-arms its own
@@ -143,6 +147,11 @@ void MappedWriteBarrier::mark_all_clean_and_protect() {
     // them is pure waste. Only the dirty ones were made writable by the
     // fault handler and need protecting again.
     if (!armed_) {
+        // Only a whole-allocation arm can do this: it clears every page's
+        // dirty bit, which for a partial flush would drop exactly the
+        // writes this function exists to preserve. Leave them dirty; the
+        // next full flush sends them and arms properly.
+        if (offset != 0 || len < size_) return;
         // First arm, or recovering from a failure: the whole range's
         // protection is unknown, so it all has to be set.
         std::memset(dirty_, 0, pages_);
@@ -161,14 +170,22 @@ void MappedWriteBarrier::mark_all_clean_and_protect() {
 
     if (dirty_pages_ == 0) return;  // nothing was written; nothing to re-arm
 
-    for (std::size_t i = 0; i < pages_;) {
+    // Only the pages this flush actually sent.
+    std::size_t first = offset / ps;
+    std::size_t last = (offset + len + ps - 1) / ps;
+    if (first > pages_) first = pages_;
+    if (last > pages_) last = pages_;
+
+    std::size_t cleaned = 0;
+    for (std::size_t i = first; i < last;) {
         if (dirty_[i] == 0) {
             ++i;
             continue;
         }
         const std::size_t run_start = i;
-        while (i < pages_ && dirty_[i] != 0) {
+        while (i < last && dirty_[i] != 0) {
             dirty_[i] = 0;
+            ++cleaned;
             ++i;
         }
         if (::mprotect(base_ + run_start * ps, (i - run_start) * ps, PROT_READ) != 0) {
@@ -180,7 +197,7 @@ void MappedWriteBarrier::mark_all_clean_and_protect() {
             return;
         }
     }
-    dirty_pages_ = 0;
+    dirty_pages_ -= cleaned < dirty_pages_ ? cleaned : dirty_pages_;
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs() const {
