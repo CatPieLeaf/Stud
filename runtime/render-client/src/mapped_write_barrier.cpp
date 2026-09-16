@@ -1,5 +1,7 @@
 #include "mapped_write_barrier.h"
 
+#include "uffd_scan.h"
+
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -76,6 +78,10 @@ MappedWriteBarrier& MappedWriteBarrier::operator=(MappedWriteBarrier&& other) no
 
 void MappedWriteBarrier::release() {
     if (base_ == nullptr) return;
+    if (uffd_) {
+        UffdScan::unregister_range(base_, pages_ * page_size());
+        uffd_ = false;
+    }
     unregister_barrier(this);
     // Writable again before unmapping, so nothing can fault on the way
     // out.
@@ -110,6 +116,17 @@ bool MappedWriteBarrier::allocate(std::size_t bytes) {
     armed_ = false;
     next_page_ = 0;
     window_pages_ = 1;
+    // uffd-scan first: the kernel tracks the writes, so no page is ever
+    // protected against the engine and no fault handler is involved. The
+    // fault barrier stays as the fallback, unchanged.
+    if (UffdScan::available() && UffdScan::register_range(base_, pages_ * ps) &&
+        UffdScan::protect(base_, pages_ * ps)) {
+        uffd_ = true;
+        armed_ = true;
+        // Everything starts written, as it does for the fault barrier: the
+        // host has never seen this memory. The first scan reports it all.
+        return true;
+    }
     if (!register_barrier(this)) {
         // Unprotected and unregistered is safe; protected and
         // unregistered is a crash on the first write.
@@ -131,6 +148,14 @@ void MappedWriteBarrier::mark_all_clean_and_protect() {
 
 void MappedWriteBarrier::mark_clean_and_protect(std::size_t offset, std::size_t len) {
     if (base_ == nullptr) return;
+    if (uffd_) {
+        const std::size_t ps = page_size();
+        const std::size_t first = (offset / ps) * ps;
+        std::size_t span = ((offset - first) + len + ps - 1) / ps * ps;
+        if (first + span > pages_ * ps) span = pages_ * ps - first;
+        UffdScan::protect(base_ + first, span);
+        return;
+    }
     std::lock_guard<std::mutex> guard(lock_);
     mark_clean_and_protect_locked(offset, len);
 }
@@ -138,6 +163,25 @@ void MappedWriteBarrier::mark_clean_and_protect(std::size_t offset, std::size_t 
 std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::take_dirty_runs_and_protect(
     std::size_t offset, std::size_t len) {
     if (base_ == nullptr) return {};
+    if (uffd_) {
+        // One ioctl: what was written, and re-armed, with nothing able to
+        // happen between the two. This is the whole reason for uffd-scan.
+        std::vector<std::pair<std::size_t, std::size_t>> runs;
+        if (!UffdScan::take_written_and_protect(base_, offset, len, runs)) {
+            // The kernel refused. Report the whole asked range rather than
+            // risk dropping a write; it costs bytes, never correctness.
+            runs.clear();
+            runs.emplace_back(offset, len);
+        }
+        for (auto& run : runs) {
+            if (run.first >= size_) {
+                run.second = 0;
+            } else if (run.first + run.second > size_) {
+                run.second = size_ - run.first;
+            }
+        }
+        return runs;
+    }
     std::lock_guard<std::mutex> guard(lock_);
     auto runs = dirty_runs_locked();
     mark_clean_and_protect_locked(offset, len);
@@ -235,6 +279,12 @@ void MappedWriteBarrier::mark_clean_and_protect_locked(std::size_t offset, std::
 
 std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs() const {
     if (base_ == nullptr) return {};
+    if (uffd_) {
+        // Reading without re-arming is exactly the split this mechanism
+        // exists to remove, so it is not offered: callers use
+        // take_dirty_runs_and_protect().
+        return {{0, size_}};
+    }
     std::lock_guard<std::mutex> guard(lock_);
     return dirty_runs_locked();
 }

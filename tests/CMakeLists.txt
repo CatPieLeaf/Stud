@@ -157,7 +157,8 @@ endif()
 # which is bionic-only.
 add_executable(stud_mapped_write_barrier_test
     mapped_write_barrier_test.cpp
-    ../runtime/render-client/src/mapped_write_barrier.cpp)
+    ../runtime/render-client/src/mapped_write_barrier.cpp
+    ../runtime/render-client/src/uffd_scan.cpp)
 target_include_directories(stud_mapped_write_barrier_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src)
 target_link_libraries(stud_mapped_write_barrier_test PRIVATE ${CMAKE_DL_LIBS})

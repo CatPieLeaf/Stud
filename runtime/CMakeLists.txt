@@ -284,6 +284,7 @@ add_library(stud_runtime_libvulkan SHARED
     render-client/src/texture_decode.cpp
     render-client/src/texture_cache.cpp
     render-client/src/texture_encode.cpp
+    render-client/src/uffd_scan.cpp
     render-client/src/mapped_write_barrier.cpp
     render-client/src/render_client_common.cpp
     "${TexDecodeDir}/PVRTDecompress.cpp"
