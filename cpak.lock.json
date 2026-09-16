@@ -9,7 +9,7 @@
       "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
       "manifest_version": "3.0",
       "name": "Stud",
-      "description": "Play Roblox on Linux.",
+      "description": "An Unofficial Open-Source Roblox Launcher for Linux",
       "version": "1.1.2",
       "image": "ghcr.io/catpieleaf/stud@sha256:80a18942ad083fbd731a174443caea34dc65bf166b156b4642629efaf963476d",
       "binaries": [

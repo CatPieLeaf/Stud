@@ -12,7 +12,7 @@
 
 set(CPACK_PACKAGE_NAME "stud")
 set(CPACK_PACKAGE_VERSION "${STUD_VERSION}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Play Roblox on Linux")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "An Unofficial Open-Source Roblox Launcher for Linux")
 set(CPACK_PACKAGE_DESCRIPTION
     "Stud runs the real Roblox Android client on a Linux desktop. It loads \
 Roblox's own engine and drives it through the interfaces it expects, \

@@ -10,7 +10,7 @@
 pkgname=stud
 pkgver=1.1.2
 pkgrel=1
-pkgdesc="Play Roblox on Linux, runs the real, unmodified Roblox Android app"
+pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
 license=('AGPL-3.0-or-later')
