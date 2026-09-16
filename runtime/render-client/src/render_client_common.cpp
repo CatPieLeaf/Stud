@@ -27,9 +27,12 @@ namespace stud::render_client {
 
 stud::render_host::Client& connection() {
     static stud::render_host::Client client;
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
+    // The connect has to finish before any other thread is handed this
+    // client. A plain `tried` flag is set before connect_to() runs, so a
+    // second thread arriving in that window gets a Client whose socket is
+    // not open yet. A function-local static's initialiser is the one
+    // construct the language already serialises for exactly this.
+    static const bool tried = [&] {
         std::string path = stud::render_host::default_socket_path();
         if (!client.connect_to(path)) {
             std::fprintf(stderr,
@@ -38,15 +41,20 @@ stud::render_host::Client& connection() {
                          path.c_str());
         }
         announce("render", client);
-    }
+        return true;
+    }();
+    (void)tried;
     return client;
 }
 
 stud::render_host::Client& audio_connection() {
     static stud::render_host::Client client;
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
+    // The connect has to finish before any other thread is handed this
+    // client. A plain `tried` flag is set before connect_to() runs, so a
+    // second thread arriving in that window gets a Client whose socket is
+    // not open yet. A function-local static's initialiser is the one
+    // construct the language already serialises for exactly this.
+    static const bool tried = [&] {
         std::string path = stud::render_host::default_socket_path();
         if (!client.connect_to(path)) {
             // Not fatal: the caller falls back to the shared connection,
@@ -57,15 +65,20 @@ stud::render_host::Client& audio_connection() {
                          path.c_str());
         }
         announce("audio", client);
-    }
+        return true;
+    }();
+    (void)tried;
     return client;
 }
 
 stud::render_host::Client& input_connection() {
     static stud::render_host::Client client;
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
+    // The connect has to finish before any other thread is handed this
+    // client. A plain `tried` flag is set before connect_to() runs, so a
+    // second thread arriving in that window gets a Client whose socket is
+    // not open yet. A function-local static's initialiser is the one
+    // construct the language already serialises for exactly this.
+    static const bool tried = [&] {
         std::string path = stud::render_host::default_socket_path();
         if (!client.connect_to(path)) {
             std::fprintf(stderr,
@@ -74,7 +87,9 @@ stud::render_host::Client& input_connection() {
                          path.c_str());
         }
         announce("input", client);
-    }
+        return true;
+    }();
+    (void)tried;
     return client;
 }
 

@@ -17,12 +17,14 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <deque>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <mutex>
+#include <condition_variable>
 #include <set>
 #include <unordered_map>
 #include <atomic>
@@ -143,6 +145,9 @@ struct Loader {
     VkInstance instance = VK_NULL_HANDLE;
     PFN_vkEnumeratePhysicalDevices enumerate_physical_devices = nullptr;
     PFN_vkGetPhysicalDeviceProperties get_physical_device_properties = nullptr;
+    // Needed for the imported-host-pointer alignment, which is a
+    // properties2 chain and has no 1.0 equivalent.
+    PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties2 = nullptr;
     PFN_vkGetPhysicalDeviceFeatures get_physical_device_features = nullptr;
     PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties = nullptr;
     PFN_vkGetPhysicalDeviceQueueFamilyProperties get_physical_device_queue_family_properties =
@@ -545,6 +550,12 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
         reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(inst("vkEnumeratePhysicalDevices"));
     l.get_physical_device_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
         inst("vkGetPhysicalDeviceProperties"));
+    l.get_physical_device_properties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
+        inst("vkGetPhysicalDeviceProperties2"));
+    if (l.get_physical_device_properties2 == nullptr) {
+        l.get_physical_device_properties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
+            inst("vkGetPhysicalDeviceProperties2KHR"));
+    }
     l.get_physical_device_features =
         reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(inst("vkGetPhysicalDeviceFeatures"));
     l.get_physical_device_memory_properties =
@@ -1721,6 +1732,24 @@ void unmap_shared_memory(SharedMapping& m) {
     m.length = 0;
 }
 
+// The driver's own rule for importing host pointers. Queried once: it is a
+// physical-device property, and the import path hits it on every shared
+// allocation.
+VkDeviceSize imported_host_pointer_alignment() {
+    Loader& l = loader();
+    static VkDeviceSize cached = [&]() -> VkDeviceSize {
+        if (l.get_physical_device_properties2 == nullptr) return 0;
+        VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{};
+        host.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT;
+        VkPhysicalDeviceProperties2 props{};
+        props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props.pNext = &host;
+        l.get_physical_device_properties2(l.physical_device, &props);
+        return host.minImportedHostPointerAlignment;
+    }();
+    return cached;
+}
+
 uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vector<uint8_t>& in,
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
                              const std::string& shared_path) {
@@ -1785,6 +1814,19 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             }
         }
         if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << use_type)) != 0) {
+            // An imported host pointer carries its own size rule: the
+            // allocation must be a whole number of the driver's import
+            // alignment, and the engine's size is whatever it asked for.
+            // Live-caught by validation: 2310400 bytes against a 4096
+            // alignment. Rounding up is safe because mmap already gave
+            // whole pages, so the extra bytes are mapped memory; leaving
+            // it unrounded is undefined behaviour in the one subsystem
+            // that hands the device its data.
+            const VkDeviceSize align = imported_host_pointer_alignment();
+            if (align > 1) {
+                const VkDeviceSize rounded = ((size + align - 1) / align) * align;
+                if (rounded != size) ai.allocationSize = rounded;
+            }
             import.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT;
             import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
             import.pHostPointer = mapping.address;
@@ -3117,6 +3159,25 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
     ci.size = size;
     ci.usage = usage;
     ci.sharingMode = static_cast<VkSharingMode>(sharing_mode);
+    // A buffer that may later be bound to imported host memory has to say
+    // so when it is created: the handle type must appear here as well as
+    // on the allocation, or binding the two is undefined behaviour.
+    // Live-caught by validation (VUID-vkBindBufferMemory-memory-02985),
+    // and the host cannot know at create time which buffers will be bound
+    // to a shared allocation, so every buffer declares it while sharing
+    // is available at all.
+    VkExternalMemoryBufferCreateInfo external{};
+    // Gated on the extension's own entry point, not on the alignment:
+    // vkGetPhysicalDeviceProperties2 answers the host-pointer chain even
+    // when VK_EXT_external_memory_host was never enabled on the device,
+    // and naming a handle type the device does not have is itself
+    // invalid (live-caught, VUID-...-handleTypes-parameter).
+    if (l.get_memory_host_pointer_properties != nullptr &&
+        imported_host_pointer_alignment() > 0) {
+        external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+        external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+        ci.pNext = &external;
+    }
     VkBuffer buffer = VK_NULL_HANDLE;
     VkResult r = l.create_buffer(l.device, &ci, nullptr, &buffer);
     // Deliberately no per-call print here. The engine creates buffers
@@ -4135,6 +4196,73 @@ uint64_t vk_reset_command_pool(uint64_t pool, uint32_t flags) {
         l.reset_command_pool(l.device, from_u64<VkCommandPool>(pool), flags)));
 }
 
+
+// The last fence events, so a stuck fence can name the work it belongs to. A fence that never signals is only useful as
+// evidence if the submission it came from can be identified.
+namespace {
+struct SubmitRecord {
+    const char* what = "submit";
+    uint64_t seq = 0;
+    uint64_t fence = 0;
+    uint32_t batches = 0;
+    uint32_t command_buffers = 0;
+    uint64_t first_command_buffer = 0;
+    double at_s = 0.0;
+};
+std::mutex& submit_log_mutex() { static std::mutex m; return m; }
+std::deque<SubmitRecord>& submit_log() { static std::deque<SubmitRecord> d; return d; }
+std::atomic<uint64_t> g_submit_seq{0};
+
+// Resets and waits belong in the same log as the submits. A wait that never returns while the same fence is being reset by
+// another thread is a missed signal, and the only way to see it is to have
+// all three in one ordered list.
+void note_fence_event(const char* what, uint64_t fence) {
+    static const auto start = std::chrono::steady_clock::now();
+    SubmitRecord rec;
+    rec.seq = ++g_submit_seq;
+    rec.fence = fence;
+    rec.batches = 0;
+    rec.command_buffers = 0;
+    rec.first_command_buffer = 0;
+    rec.at_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    rec.what = what;
+    std::lock_guard<std::mutex> lock(submit_log_mutex());
+    auto& d = submit_log();
+    d.push_back(rec);
+    if (d.size() > 40) d.pop_front();
+}
+
+void note_submit(uint64_t fence, uint32_t batches, uint32_t cbs, uint64_t first_cb) {
+    static const auto start = std::chrono::steady_clock::now();
+    SubmitRecord rec;
+    rec.seq = ++g_submit_seq;
+    rec.fence = fence;
+    rec.batches = batches;
+    rec.command_buffers = cbs;
+    rec.first_command_buffer = first_cb;
+    rec.at_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::lock_guard<std::mutex> lock(submit_log_mutex());
+    auto& d = submit_log();
+    d.push_back(rec);
+    if (d.size() > 24) d.pop_front();
+}
+
+void dump_submit_log(uint64_t stuck_fence) {
+    std::lock_guard<std::mutex> lock(submit_log_mutex());
+    std::printf("stud-render-host: recent submissions (newest last), stuck fence=0x%llx:\n",
+                static_cast<unsigned long long>(stuck_fence));
+    for (const auto& rec : submit_log()) {
+        std::printf("stud-render-host:   #%llu t=%.3fs %-6s fence=0x%llx cmdbufs=%u "
+                    "first_cb=0x%llx%s\n",
+                    static_cast<unsigned long long>(rec.seq), rec.at_s, rec.what,
+                    static_cast<unsigned long long>(rec.fence), rec.command_buffers,
+                    static_cast<unsigned long long>(rec.first_command_buffer),
+                    rec.fence == stuck_fence ? "   <-- the stuck fence" : "");
+    }
+    std::fflush(stdout);
+}
+}  // namespace
+
 uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8_t>& in) {
     Loader& l = loader();
     if (l.queue_submit == nullptr) {
@@ -4159,6 +4287,15 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         signals[i].resize(ns);
         for (uint32_t j = 0; j < ns; ++j) signals[i][j] = from_u64<VkSemaphore>(r.u64());
     }
+    {
+        uint32_t total_cbs = 0;
+        uint64_t first_cb = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+            total_cbs += static_cast<uint32_t>(buffers[i].size());
+            if (first_cb == 0 && !buffers[i].empty()) first_cb = to_u64(buffers[i][0]);
+        }
+        note_submit(fence, n, total_cbs, first_cb);
+    }
     for (uint32_t i = 0; i < n; ++i) {
         submits[i].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submits[i].waitSemaphoreCount = static_cast<uint32_t>(waits[i].size());
@@ -4174,6 +4311,51 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
+// Fences waited on right now, and the resets waiting for those waits.
+//
+// In the engine's own process a wait returns before the reset that follows
+// it is issued, so the two never overlap. Stud breaks that: the wait blocks
+// one connection thread inside the driver for a whole round trip while a
+// reset for the same fence arrives on another connection and runs at once.
+// The fence goes back to unsignalled between the signal and the waiter
+// noticing, and with a ten millisecond frame cycle the waiter can lose that
+// race every time, which is a wait that never returns while the engine
+// carries on submitting. Live-caught: the fence log shows the stuck fence
+// cycling WAIT/RESET/submit every 21ms with a wait on it outstanding.
+//
+// So a reset waits for any in-flight wait on the same fence. That is the
+// ordering the engine already believes it has.
+std::mutex& fence_wait_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::condition_variable& fence_wait_cv() {
+    static std::condition_variable cv;
+    return cv;
+}
+std::set<uint64_t>& fences_being_waited_on() {
+    static std::set<uint64_t> s;
+    return s;
+}
+
+struct FenceWaitGuard {
+    std::vector<uint64_t> held;
+    explicit FenceWaitGuard(const std::vector<VkFence>& fences) {
+        std::lock_guard<std::mutex> lock(fence_wait_mutex());
+        for (const VkFence f : fences) {
+            const uint64_t h = to_u64(f);
+            if (fences_being_waited_on().insert(h).second) held.push_back(h);
+        }
+    }
+    ~FenceWaitGuard() {
+        {
+            std::lock_guard<std::mutex> lock(fence_wait_mutex());
+            for (const uint64_t h : held) fences_being_waited_on().erase(h);
+        }
+        fence_wait_cv().notify_all();
+    }
+};
+
 uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, uint64_t timeout) {
     Loader& l = loader();
     if (l.wait_for_fences == nullptr) {
@@ -4183,9 +4365,47 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
     const uint32_t n = r.u32();
     std::vector<VkFence> fences(n);
     for (auto& f : fences) f = from_u64<VkFence>(r.u64());
+    for (const VkFence f : fences) note_fence_event("WAIT", to_u64(f));
+    // Announce the wait so a reset for the same fence cannot land in the
+    // middle of it and take the signal away.
+    FenceWaitGuard wait_guard(fences);
     const auto t0 = std::chrono::steady_clock::now();
-    VkResult res = l.wait_for_fences(l.device, n, fences.empty() ? nullptr : fences.data(),
-                                      wait_all, timeout);
+    // Never wait unbounded in one call.
+    //
+    // The engine asks for UINT64_MAX, so a submission that never retires
+    // parks this thread inside the driver forever. The client is blocked
+    // reading the reply, no frame ever completes, and the SLOW print
+    // below cannot fire because the call does not return: a total freeze
+    // that says nothing at all. Waiting in slices keeps the semantics the
+    // engine asked for and lets a stuck fence announce itself.
+    VkResult res = VK_TIMEOUT;
+    {
+        const uint64_t slice_ns = 1000ull * 1000ull * 1000ull;  // 1s
+        uint64_t left = timeout;
+        int reports = 0;
+        for (;;) {
+            const uint64_t slice = left < slice_ns ? left : slice_ns;
+            res = l.wait_for_fences(l.device, n, fences.empty() ? nullptr : fences.data(),
+                                    wait_all, slice);
+            if (res != VK_TIMEOUT) break;
+            if (timeout != UINT64_MAX) {
+                left -= slice;
+                if (left == 0) break;
+            }
+            const double waited = std::chrono::duration<double>(
+                                      std::chrono::steady_clock::now() - t0).count();
+            if (waited >= 5.0 * static_cast<double>(reports + 1)) {
+                ++reports;
+                std::printf("stud-render-host: FENCE STUCK: %u fence(s) have not signalled in "
+                            "%.0fs (wait_all=%u, engine timeout=%llu). The GPU has not retired "
+                            "the submission they belong to.\n",
+                            n, waited, wait_all,
+                            static_cast<unsigned long long>(timeout));
+                std::fflush(stdout);
+                if (reports == 1) dump_submit_log(n > 0 ? to_u64(fences[0]) : 0);
+            }
+        }
+    }
     const double ms = std::chrono::duration<double, std::milli>(
                           std::chrono::steady_clock::now() - t0).count();
     if (ms > 50.0) {
@@ -4197,6 +4417,11 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
 }
 
 uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
+    {
+        vk_wire::Reader probe(in.data(), in.size());
+        const uint32_t n = probe.u32();
+        for (uint32_t i = 0; i < n; ++i) note_fence_event("RESET", probe.u64());
+    }
     Loader& l = loader();
     if (l.reset_fences == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -4205,6 +4430,18 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
     const uint32_t n = r.u32();
     std::vector<VkFence> fences(n);
     for (auto& f : fences) f = from_u64<VkFence>(r.u64());
+    // Hold the reset until nothing is waiting on any of these fences. The
+    // wait is bounded (see vk_wait_for_fences), so this cannot deadlock on
+    // a fence that never signals; it just runs after that wait gives up.
+    {
+        std::unique_lock<std::mutex> lock(fence_wait_mutex());
+        fence_wait_cv().wait(lock, [&fences] {
+            for (const VkFence f : fences) {
+                if (fences_being_waited_on().count(to_u64(f)) != 0) return false;
+            }
+            return true;
+        });
+    }
     VkResult res = l.reset_fences(l.device, n, fences.empty() ? nullptr : fences.data());
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
