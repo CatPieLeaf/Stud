@@ -1,0 +1,7 @@
+# The mapping's own bytes are written by the test's writer threads while the
+# flusher copies them out. That is the design: the barrier reports WHICH
+# bytes changed, and Vulkan makes the application responsible for not
+# writing memory a submit is consuming. Suppressed so the run can answer
+# the question it exists for, which is whether the barrier's own metadata
+# still races.
+race:mapped_write_barrier_test.cpp
