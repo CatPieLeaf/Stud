@@ -55,7 +55,8 @@ MappedWriteBarrier& MappedWriteBarrier::operator=(MappedWriteBarrier&& other) no
     pages_ = other.pages_;
     dirty_ = other.dirty_;
     armed_ = other.armed_;
-    dirty_pages_ = other.dirty_pages_;
+    dirty_pages_.store(other.dirty_pages_.load(std::memory_order_acquire),
+                       std::memory_order_release);
     next_page_ = other.next_page_;
     window_pages_ = other.window_pages_;
     other.base_ = nullptr;
@@ -63,7 +64,7 @@ MappedWriteBarrier& MappedWriteBarrier::operator=(MappedWriteBarrier&& other) no
     other.pages_ = 0;
     other.dirty_ = nullptr;
     other.armed_ = false;
-    other.dirty_pages_ = 0;
+    other.dirty_pages_.store(0, std::memory_order_release);
     other.next_page_ = 0;
     other.window_pages_ = 1;
     if (base_ != nullptr) {
@@ -86,7 +87,7 @@ void MappedWriteBarrier::release() {
     pages_ = 0;
     dirty_ = nullptr;
     armed_ = false;
-    dirty_pages_ = 0;
+    dirty_pages_.store(0, std::memory_order_release);
     next_page_ = 0;
     window_pages_ = 1;
 }
@@ -102,14 +103,25 @@ bool MappedWriteBarrier::allocate(std::size_t bytes) {
     base_ = static_cast<uint8_t*>(p);
     size_ = bytes;
     pages_ = rounded / ps;
-    dirty_ = new uint8_t[pages_];
+    dirty_ = new std::atomic<uint8_t>[pages_];
     // Everything starts dirty: the host has never seen any of it.
-    std::memset(dirty_, 1, pages_);
-    dirty_pages_ = pages_;
+    for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(1, std::memory_order_relaxed);
+    dirty_pages_.store(pages_, std::memory_order_release);
     armed_ = false;
     next_page_ = 0;
     window_pages_ = 1;
-    register_barrier(this);
+    if (!register_barrier(this)) {
+        // Unprotected and unregistered is safe; protected and
+        // unregistered is a crash on the first write.
+        ::munmap(base_, pages_ * ps);
+        delete[] dirty_;
+        base_ = nullptr;
+        size_ = 0;
+        pages_ = 0;
+        dirty_ = nullptr;
+        dirty_pages_.store(0, std::memory_order_release);
+        return false;
+    }
     return true;
 }
 
@@ -118,6 +130,21 @@ void MappedWriteBarrier::mark_all_clean_and_protect() {
 }
 
 void MappedWriteBarrier::mark_clean_and_protect(std::size_t offset, std::size_t len) {
+    if (base_ == nullptr) return;
+    std::lock_guard<std::mutex> guard(lock_);
+    mark_clean_and_protect_locked(offset, len);
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::take_dirty_runs_and_protect(
+    std::size_t offset, std::size_t len) {
+    if (base_ == nullptr) return {};
+    std::lock_guard<std::mutex> guard(lock_);
+    auto runs = dirty_runs_locked();
+    mark_clean_and_protect_locked(offset, len);
+    return runs;
+}
+
+void MappedWriteBarrier::mark_clean_and_protect_locked(std::size_t offset, std::size_t len) {
     if (base_ == nullptr) return;
     // Clear before protecting, paired with the handler's protect-then-
     // record order above: a write landing in the gap re-arms its own
@@ -154,21 +181,21 @@ void MappedWriteBarrier::mark_clean_and_protect(std::size_t offset, std::size_t 
         if (offset != 0 || len < size_) return;
         // First arm, or recovering from a failure: the whole range's
         // protection is unknown, so it all has to be set.
-        std::memset(dirty_, 0, pages_);
-        dirty_pages_ = 0;
+        for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(0, std::memory_order_relaxed);
+        dirty_pages_.store(0, std::memory_order_release);
         if (::mprotect(base_, pages_ * ps, PROT_READ) == 0) {
             armed_ = true;
         } else {
             // Could not arm: treat everything as dirty forever rather
             // than silently dropping the engine's writes.
-            std::memset(dirty_, 1, pages_);
-            dirty_pages_ = pages_;
+            for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(1, std::memory_order_relaxed);
+            dirty_pages_.store(pages_, std::memory_order_release);
             armed_ = false;
         }
         return;
     }
 
-    if (dirty_pages_ == 0) return;  // nothing was written; nothing to re-arm
+    if (dirty_pages_.load(std::memory_order_acquire) == 0) return;  // nothing written
 
     // Only the pages this flush actually sent.
     std::size_t first = offset / ps;
@@ -178,39 +205,51 @@ void MappedWriteBarrier::mark_clean_and_protect(std::size_t offset, std::size_t 
 
     std::size_t cleaned = 0;
     for (std::size_t i = first; i < last;) {
-        if (dirty_[i] == 0) {
+        if (dirty_[i].load(std::memory_order_acquire) == 0) {
             ++i;
             continue;
         }
         const std::size_t run_start = i;
-        while (i < last && dirty_[i] != 0) {
-            dirty_[i] = 0;
-            ++cleaned;
-            ++i;
-        }
+        while (i < last && dirty_[i].load(std::memory_order_acquire) != 0) ++i;
+        // Protect BEFORE clearing, never after. Clearing first leaves the
+        // page writable with nothing recording it: a write landing in that
+        // window is not sent by this flush, does not fault (still
+        // writable), and so is never sent at all. Protecting first means
+        // any write from here on faults and re-marks the page, and the
+        // caller sends after this returns, so a write that beat the
+        // mprotect is still in the bytes that go out.
         if (::mprotect(base_ + run_start * ps, (i - run_start) * ps, PROT_READ) != 0) {
             // A page left writable would have its writes missed, so fall
             // back to the conservative state rather than lose them.
-            std::memset(dirty_, 1, pages_);
-            dirty_pages_ = pages_;
+            for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(1, std::memory_order_relaxed);
+            dirty_pages_.store(pages_, std::memory_order_release);
             armed_ = false;
             return;
         }
+        for (std::size_t j = run_start; j < i; ++j) {
+            if (dirty_[j].exchange(0, std::memory_order_acq_rel) != 0) ++cleaned;
+        }
     }
-    dirty_pages_ -= cleaned < dirty_pages_ ? cleaned : dirty_pages_;
+    if (cleaned != 0) dirty_pages_.fetch_sub(cleaned, std::memory_order_acq_rel);
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs() const {
+    if (base_ == nullptr) return {};
+    std::lock_guard<std::mutex> guard(lock_);
+    return dirty_runs_locked();
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs_locked() const {
     std::vector<std::pair<std::size_t, std::size_t>> runs;
     if (base_ == nullptr) return runs;
     const std::size_t ps = page_size();
     std::size_t run_start = 0;
     bool in_run = false;
     for (std::size_t i = 0; i < pages_; ++i) {
-        if (dirty_[i] != 0 && !in_run) {
+        if (dirty_[i].load(std::memory_order_acquire) != 0 && !in_run) {
             run_start = i;
             in_run = true;
-        } else if (dirty_[i] == 0 && in_run) {
+        } else if (dirty_[i].load(std::memory_order_acquire) == 0 && in_run) {
             runs.emplace_back(run_start * ps, (i - run_start) * ps);
             in_run = false;
         }
@@ -232,6 +271,7 @@ bool MappedWriteBarrier::handle_write_fault(void* addr) {
     auto* p = static_cast<uint8_t*>(addr);
     const std::size_t ps = page_size();
     if (p < base_ || p >= base_ + pages_ * ps) return false;
+    std::lock_guard<std::mutex> guard(lock_);
     const std::size_t page = static_cast<std::size_t>(p - base_) / ps;
 
     // One page per fault is exact but pathological for the access
@@ -266,9 +306,8 @@ bool MappedWriteBarrier::handle_write_fault(void* addr) {
     // the flush's own clear erase it and lose the write for good.
     if (::mprotect(base_ + page * ps, run * ps, PROT_READ | PROT_WRITE) != 0) return false;
     for (std::size_t i = page; i < page + run; ++i) {
-        if (dirty_[i] == 0) {
-            dirty_[i] = 1;
-            ++dirty_pages_;
+        if (dirty_[i].exchange(1, std::memory_order_acq_rel) == 0) {
+            dirty_pages_.fetch_add(1, std::memory_order_acq_rel);
         }
     }
     next_page_ = page + run;
@@ -276,15 +315,19 @@ bool MappedWriteBarrier::handle_write_fault(void* addr) {
     return true;
 }
 
-void register_barrier(MappedWriteBarrier* barrier) {
+bool register_barrier(MappedWriteBarrier* barrier) {
     for (auto& slot : g_barriers) {
         MappedWriteBarrier* expected = nullptr;
-        if (slot.compare_exchange_strong(expected, barrier, std::memory_order_acq_rel)) return;
+        if (slot.compare_exchange_strong(expected, barrier, std::memory_order_acq_rel)) {
+            return true;
+        }
     }
-    // Full: this barrier stays unregistered, so its faults are not
-    // recognised. allocate() is the only caller and it will behave as an
-    // ordinary allocation whose pages are never protected.
+    // Full: this barrier's faults would reach nobody. Its pages still get
+    // protected by the first arm, so every write to them would be
+    // classified as a crash and kill the writing thread. Say so and let
+    // allocate() fail, which puts the mapping on the plain staging path.
     std::fprintf(stderr, "stud: vulkan-client: write-barrier registry full\n");
+    return false;
 }
 
 void unregister_barrier(MappedWriteBarrier* barrier) {

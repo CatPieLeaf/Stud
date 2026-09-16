@@ -425,6 +425,24 @@ std::map<uint64_t, MappedRange>& mapped_ranges() {
     return m;
 }
 
+// Guards mapped_ranges() itself.
+//
+// Vulkan lets one thread map or free memory while another submits, and
+// the engine really does: asset threads map and unmap while the render
+// thread is inside vkQueueSubmit, whose flush walks this whole table.
+// Stud's own decode workers map scratch buffers from their own threads
+// too. A std::map is a red-black tree, so an insert rotates nodes under
+// a concurrent walk and an erase frees one out from under it: a mapping
+// silently skipped by a flush (its writes never sent, which is stale
+// memory for the GPU to read) or a use-after-free.
+//
+// Recursive because vkUnmapMemory flushes before erasing, and both want
+// the table.
+std::recursive_mutex& mapped_mutex() {
+    static std::recursive_mutex m;
+    return m;
+}
+
 // STUD_VK_FRAME_TIME=1: where a frame's wall clock actually goes.
 // CPU sitting well under one core while frames are slow means the thread
 // is waiting, not computing; this says on what.
@@ -551,6 +569,7 @@ void send_mapped_run(uint64_t memory, MappedRange& m, uint64_t rel_offset, uint6
 }
 
 void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
+    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     auto it = mapped_ranges().find(memory);
     if (it == mapped_ranges().end()) return;
     MappedRange& m = it->second;
@@ -570,8 +589,8 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
     // the tracking is not the cause.
     static const bool full_flush = std::getenv("STUD_VK_FULL_FLUSH") != nullptr;
     if (full_flush) {
-        send_mapped_run(memory, m, rel_offset, n);
         if (m.barrier.valid()) m.barrier.mark_clean_and_protect(rel_offset, n);
+        send_mapped_run(memory, m, rel_offset, n);
         return;
     }
 
@@ -586,7 +605,11 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
     // clipped to the range asked for, then re-arm.
     if (m.barrier.valid()) {
         const uint64_t end = rel_offset + n;
-        for (const auto& run : m.barrier.dirty_runs()) {
+        // Snapshot, re-arm, then send. Sending first leaves a window in
+        // which a write lands after its page was read and before it was
+        // protected again, and that write would never be reported.
+        const auto runs = m.barrier.take_dirty_runs_and_protect(rel_offset, n);
+        for (const auto& run : runs) {
             uint64_t run_start = run.first;
             uint64_t run_end = run.first + run.second;
             if (run_end <= rel_offset || run_start >= end) continue;
@@ -594,11 +617,6 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
             if (run_end > end) run_end = end;
             if (run_end > run_start) send_mapped_run(memory, m, run_start, run_end - run_start);
         }
-        // Only the range this flush covered. A vkFlushMappedMemoryRanges
-        // names a sub-range, and clearing the rest would drop writes made
-        // outside it: they would never be sent, and the host would keep
-        // stale bytes for the GPU to read.
-        m.barrier.mark_clean_and_protect(rel_offset, n);
         return;
     }
 
@@ -1554,7 +1572,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindImageMemory(VkDevice device, VkImage i
 
 VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory memory,
                                               const VkAllocationCallbacks*) {
-    mapped_ranges().erase(to_u64(memory));
+    {
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+        mapped_ranges().erase(to_u64(memory));
+    }
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         auto it = shared_allocations().find(to_u64(memory));
@@ -1599,6 +1620,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
             return VK_SUCCESS;
         }
     }
+    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     auto& slot = mapped_ranges()[to_u64(memory)];
     slot = MappedRange{};
     slot.offset = offset;
@@ -1628,11 +1650,42 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
 
 VKAPI_ATTR void VKAPI_CALL stud_vkUnmapMemory(VkDevice device, VkDeviceMemory memory) {
     const uint64_t key = to_u64(memory);
+    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     push_mapped_bytes(key, 0, VK_WHOLE_SIZE);
     mapped_ranges().erase(key);
     uint64_t a[8] = {to_u64(device), key};
     stud::render_client::connection().call(CallId::VkUnmapMemory, a, nullptr, 0, nullptr, 0,
                                             nullptr);
+}
+
+// A mapping in this client is upload-only: the staging buffer holds what
+// the engine wrote, and nothing ever copies back what the device wrote into
+// the real allocation. That is fine for a mapping used to upload, which is
+// every one the engine has been observed to make, and silently wrong for one
+// used to read results back: the engine would see its own last write, or
+// zeroes, instead of the device's data.
+//
+// Unimplemented is not the same as unnoticed. The entry point exists so the
+// day the engine asks for it, the log says so, rather than the frame quietly
+// containing the wrong thing.
+VKAPI_ATTR VkResult VKAPI_CALL stud_vkInvalidateMappedMemoryRanges(
+    VkDevice device, uint32_t memoryRangeCount, const VkMappedMemoryRange* pMemoryRanges) {
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true)) {
+        std::fprintf(stderr,
+                     "stud: vulkan-client: vkInvalidateMappedMemoryRanges(%u range(s)) is not "
+                     "implemented: this client never copies device writes back into a mapping, "
+                     "so whatever is read through it is stale. Reported once.\n",
+                     memoryRangeCount);
+        std::fflush(stderr);
+    }
+    // Deliberately not forwarded: the host's own allocation is not what the
+    // engine reads, the staging buffer is, so invalidating the real one
+    // changes nothing here. Returning success is honest about the call
+    // having been accepted; the warning above is honest about the rest.
+    (void)device;
+    (void)pMemoryRanges;
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkFlushMappedMemoryRanges(
@@ -1641,6 +1694,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkFlushMappedMemoryRanges(
     for (uint32_t i = 0; i < memoryRangeCount; ++i) {
         const VkMappedMemoryRange& r = pMemoryRanges[i];
         const uint64_t key = to_u64(r.memory);
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
         auto it = mapped_ranges().find(key);
         // The range's offset is absolute; the staging buffer starts at
         // whatever offset the mapping used.
@@ -2567,6 +2621,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetCommandPool(VkDevice device, VkComman
 // Flushing at submit is the honest point: it is the moment the spec
 // requires prior host writes to be visible to the device.
 void flush_all_mapped_memory() {
+    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     for (auto& kv : mapped_ranges()) {
         push_mapped_bytes(kv.first, 0, VK_WHOLE_SIZE);
     }
@@ -3386,6 +3441,13 @@ bool acquire_scratch(VkCommandBuffer cb, VkDeviceSize size, ScratchSlice& out) {
 // mapped, in which case the copy cannot be decoded and is passed through
 // untouched rather than guessed at.
 const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t length) {
+    // buffer_bindings() is written under emulation_mutex (vkBindBufferMemory,
+    // vkDestroyBuffer) and mapped_ranges() under mapped_mutex, and this reads
+    // both. Taken in that order everywhere they are held together: the decode
+    // path already holds emulation_mutex when it goes back through
+    // vkMapMemory, which takes mapped_mutex.
+    std::lock_guard<std::recursive_mutex> emu_lock(emulation_mutex());
+    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     auto bit = buffer_bindings().find(to_u64(buffer));
     if (bit == buffer_bindings().end()) return nullptr;
     // Shared with the host: the engine wrote straight into the file both
@@ -3563,6 +3625,7 @@ private:
 // barrier alone. The pages stay dirty, which costs one redundant send at
 // the engine's next flush and cannot lose anything.
 void send_decoded_scratch(uint64_t memory) {
+    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     auto it = mapped_ranges().find(memory);
     if (it == mapped_ranges().end()) return;  // shared with the host: already visible
     MappedRange& m = it->second;
@@ -4213,6 +4276,8 @@ PFN_vkVoidFunction lookup_command(const char* pName) {
         {"vkUnmapMemory", reinterpret_cast<PFN_vkVoidFunction>(&stud_vkUnmapMemory)},
         {"vkFlushMappedMemoryRanges",
          reinterpret_cast<PFN_vkVoidFunction>(&stud_vkFlushMappedMemoryRanges)},
+        {"vkInvalidateMappedMemoryRanges",
+         reinterpret_cast<PFN_vkVoidFunction>(&stud_vkInvalidateMappedMemoryRanges)},
         {"vkGetPhysicalDeviceSurfaceFormatsKHR",
          reinterpret_cast<PFN_vkVoidFunction>(&stud_vkGetPhysicalDeviceSurfaceFormatsKHR)},
         {"vkGetPhysicalDeviceSurfacePresentModesKHR",

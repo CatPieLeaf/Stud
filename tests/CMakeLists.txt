@@ -149,3 +149,31 @@ if(STUD_ENABLE_DEV_RENDER_TOGGLE)
     add_test(NAME dev_backend_config_test COMMAND stud_dev_backend_config_test
              ${CMAKE_CURRENT_BINARY_DIR}/dev_backend_config_scratch)
 endif()
+
+# The mapped-memory write barrier's one promise: a byte written into the
+# mapping is reported by a flush. Runs the real fault handler by providing
+# the hook the barrier resolves at runtime, so the mechanism under test is
+# the real one. Built as its own target rather than against the runtime,
+# which is bionic-only.
+add_executable(stud_mapped_write_barrier_test
+    mapped_write_barrier_test.cpp
+    ../runtime/render-client/src/mapped_write_barrier.cpp)
+target_include_directories(stud_mapped_write_barrier_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src)
+target_link_libraries(stud_mapped_write_barrier_test PRIVATE ${CMAKE_DL_LIBS})
+# The barrier finds its hook with dlsym(RTLD_DEFAULT, ...), so the test's
+# own definition has to be in the dynamic symbol table.
+set_target_properties(stud_mapped_write_barrier_test PROPERTIES ENABLE_EXPORTS ON)
+add_test(NAME mapped_write_barrier_test COMMAND stud_mapped_write_barrier_test)
+# Under ThreadSanitizer, which is what proves the barrier's own metadata is
+# free of races rather than merely passing. Not a ctest target: it needs a
+# separate toolchain and the suppression beside it, so it is run by hand.
+#
+#   clang++ -std=c++20 -fsanitize=thread -g -O1 \
+#       -o /tmp/barrier_tsan tests/mapped_write_barrier_test.cpp \
+#       runtime/render-client/src/mapped_write_barrier.cpp \
+#       -Iruntime/render-client/src -ldl -rdynamic
+#   TSAN_OPTIONS="handle_segv=0 suppressions=tests/tsan.supp" /tmp/barrier_tsan
+#
+# handle_segv=0 is required: the barrier's write faults are its mechanism,
+# not crashes, so TSan must leave SIGSEGV to the test's own handler.
