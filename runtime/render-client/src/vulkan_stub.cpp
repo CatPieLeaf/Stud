@@ -2600,6 +2600,15 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEndCommandBuffer(VkCommandBuffer cb) {
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetCommandPool(VkDevice device, VkCommandPool pool,
                                                         VkCommandPoolResetFlags flags) {
+    // Recycling command buffers has to wait for the submits that use them.
+    //
+    // vkQueueSubmit is deferred, so a reset sent straight to the host can
+    // arrive while submits naming this pool's command buffers are still
+    // queued here. The host would then reset them and execute the queued
+    // submit against recycled memory, which is a GPU running whatever is
+    // there now. Same family as the vkResetFences ordering bug above, and
+    // the same one-line answer.
+    flush_deferred_queue();
     uint64_t a[8] = {to_u64(device), to_u64(pool), flags};
     uint64_t r = stud::render_client::connection().call(CallId::VkResetCommandPool, a, nullptr, 0,
                                                          nullptr, 0, nullptr);
@@ -2850,6 +2859,22 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fe
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetFences(VkDevice device, uint32_t fenceCount,
                                                    const VkFence* pFences) {
+    // Same reason vkWaitForFences flushes, and missing it is worse here.
+    //
+    // vkQueueSubmit is deferred: it returns as soon as the work is queued
+    // on the ordered thread. A reset goes straight to the host, so with
+    // submits still queued the host resets a fence whose own submit has
+    // not reached it yet, and then that submit arrives and makes the fence
+    // pending again. The engine's next submit reuses the same fence while
+    // it is still in use, which Vulkan does not allow, and the fence then
+    // never signals in a way anyone is waiting for.
+    //
+    // Under a light load the queue is empty and the ordering holds by
+    // luck. Under a heavy one (live-caught in a physics-heavy experience
+    // that was already dropping frames) the queue is deep, resets overtake
+    // submits, and the submit log shows the same fence handle submitted
+    // twelve times while a wait on it is outstanding.
+    flush_deferred_queue();
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
     w.u32(fenceCount);
