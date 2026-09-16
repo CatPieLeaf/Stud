@@ -16,6 +16,7 @@ pkgbase = stud-bin
 	depends = qtkeychain-qt6
 	depends = vulkan-icd-loader
 	depends = libglvnd
+	depends = libx11
 	depends = libxext
 	depends = portaudio
 	depends = freetype2
