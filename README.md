@@ -323,6 +323,7 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
+ - [RakuOS](https://repo.rakuos.org/): Stud is not affiliated with RakuOS either. They were nice and let Stud redirect its support to [their Discord](https://discord.gg/DSrbRk6dPp).
  - [ANGLE](https://chromium.googlesource.com/angle/angle): the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
  - [bionic](https://android.googlesource.com/platform/bionic/): Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
  - [libjnivm](https://github.com/ChristopherHX/libjnivm): the JNI virtual machine Stud's Java layer stands on (MIT)
