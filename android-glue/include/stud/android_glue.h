@@ -173,6 +173,9 @@ unsigned long native_window_x11_window();
 // something in it matches that instead of showing an empty window for
 // the whole of the engine's bring-up. No-op on Wayland.
 void x11_ensure_mapped();
+// Says how long after a restore the first frame reached the window, once
+// per restore. No-op off X11 and when nothing is owed.
+void x11_note_frame_reached_window();
 
 // The X connection's socket, for the render host's own poll loop.
 // -1 on Wayland.
@@ -473,6 +476,17 @@ struct HostInputEvent {
         // which is how a key released after clicking away left a
         // character walking forever.
         kWindowFocus = 15,
+        // The window's contents are gone and need drawing again -- on X11,
+        // the window having just been mapped after a minimise.
+        //
+        // Real Android delivers this as SurfaceHolder.Callback2's own
+        // surfaceRedrawNeeded, which GameActivity turns into
+        // onSurfaceRedrawNeededNative and the engine receives as
+        // onNativeWindowRedrawNeeded. Stud never sent it, so after a
+        // restore the engine drew whenever its own idle pacing next came
+        // round -- measured at up to 833ms, spread evenly across the
+        // second it spends hidden at 1fps.
+        kWindowRedrawNeeded = 16,
     };
     uint32_t type = 0;
     uint32_t code = 0;

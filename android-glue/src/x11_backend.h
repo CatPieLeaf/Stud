@@ -76,6 +76,9 @@ std::string clipboard_get();
 // is committed to it, while X11 would happily show an empty one for the
 // whole of the engine's bring-up.
 void ensure_mapped();
+// Reports how long after a restore the first frame arrived; see the
+// definition. No-op unless the window was just mapped.
+void note_frame_reached_window();
 
 void present_text_overlay(const void* argb, int width, int height, int x, int y);
 void hide_text_overlay();

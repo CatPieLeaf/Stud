@@ -494,6 +494,7 @@ struct AgdkInput {
     jmethodID on_key_up = nullptr;
     jmethodID on_text_input = nullptr;
     jmethodID on_window_focus_changed = nullptr;
+    jmethodID on_surface_redraw_needed = nullptr;
 };
 AgdkInput g_agdk;
 // Set for the duration of one drained batch, so dispatch_event() can reach
@@ -637,6 +638,9 @@ void resolve_agdk(FakeJni::Env& env, jobject activity_ref) {
         if (focus_cls != nullptr) {
             g_agdk.on_window_focus_changed =
                 env.GetMethodID(focus_cls, "onWindowFocusChangedNative", "(JZ)V");
+            // The redraw request a restore needs; see kWindowRedrawNeeded.
+            g_agdk.on_surface_redraw_needed = env.GetMethodID(
+                focus_cls, "onSurfaceRedrawNeededNative", "(JLandroid/view/Surface;)V");
         }
     }
     if (!agdk_input_enabled()) {
@@ -1954,6 +1958,36 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             return;
         }
         case Ev::kPointerEnter:
+        case Ev::kWindowRedrawNeeded: {
+            // The window was just mapped, so its contents are gone.
+            //
+            // Real Android calls this the moment a surface needs its
+            // picture back (SurfaceHolder.Callback2.surfaceRedrawNeeded ->
+            // GameActivity.onSurfaceRedrawNeededNative ->
+            // onNativeWindowRedrawNeeded). Stud never called it, so after
+            // restoring a minimised window the engine drew whenever its
+            // own idle pacing next came round: measured at 67, 114, 319,
+            // 510 and 833ms across five restores, spread evenly over the
+            // second it spends at 1fps while hidden. That spread is the
+            // tell -- a fixed cost would repeat, waiting out a tick does
+            // not.
+            //
+            // A redraw request and nothing more: no surface is destroyed
+            // and no swapchain is rebuilt, so it cannot cost what a
+            // rebuild costs on X11.
+            if (g_agdk_env != nullptr && g_agdk_activity_ref != nullptr &&
+                g_agdk.on_surface_redraw_needed != nullptr) {
+                // The Surface argument is in the JNI signature and
+                // nowhere in the implementation: AGDK's own
+                // onSurfaceRedrawNeeded_native takes the handle and stops
+                // there, ignoring the object entirely. Passing null is
+                // therefore honest rather than a shortcut -- there is no
+                // Surface this call could read.
+                g_agdk_env->CallVoidMethod(g_agdk_activity_ref, g_agdk.on_surface_redraw_needed,
+                                            g_agdk.handle, static_cast<jobject>(nullptr));
+            }
+            return;
+        }
         case Ev::kWindowFocus: {
             const bool focused = ev.a != 0.0f;
             // Stud has already sent a release for everything it knew was

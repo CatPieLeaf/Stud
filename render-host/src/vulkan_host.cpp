@@ -3443,6 +3443,36 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
             }
         }
     }
+    // Do not build a swapchain for a window the server cannot present to.
+    //
+    // Every 22-second create measured on X11 has had the window unmapped
+    // immediately before it, and the durations are a constant -- 22014,
+    // 22011, 22022, 22014 milliseconds -- which is a timeout expiring,
+    // not work being done. A minimise, or the moment inside a maximise
+    // when the window manager takes the window down and puts it back, is
+    // exactly when the engine notices its surface changed and rebuilds.
+    //
+    // So a rebuild that arrives while the window is down waits, briefly,
+    // for it to come back. Restoring the window then costs a normal
+    // 30ms rebuild instead of 22 seconds of nothing. The wait is bounded
+    // and the create is forwarded either way: a window that stays down is
+    // no worse off than it is today, and nothing is refused or faked.
+    if (stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11 &&
+        !stud::android_glue::native_window_is_visible()) {
+        const auto wait_t0 = std::chrono::steady_clock::now();
+        constexpr auto kMaxWait = std::chrono::milliseconds(1500);
+        while (!stud::android_glue::native_window_is_visible() &&
+               std::chrono::steady_clock::now() - wait_t0 < kMaxWait) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        const double waited = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - wait_t0).count();
+        std::printf("stud-render-host: the window was down when the engine asked for a swapchain; "
+                    "waited %.0fms, %s\n", waited,
+                    stud::android_glue::native_window_is_visible() ? "it came back"
+                                                                   : "building anyway");
+        std::fflush(stdout);
+    }
     const auto create_t0 = std::chrono::steady_clock::now();
     VkResult r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
     std::printf("stud-render-host: vkCreateSwapchainKHR -> %d (%ux%u format=%u images>=%u)\n",
@@ -5726,6 +5756,23 @@ present_without_upscale:
     // What the present itself costs THIS process, which the client's own
     // frame breakdown cannot see: it hands the present over and returns.
     // Off unless asked for, and two counters when it is.
+    // The same warning vkAcquireNextImageKHR already carries, for the
+    // same reason: a present that takes this long is not a frame, it is a
+    // wait, and which call is doing the waiting decides whose problem it
+    // is. Rate-limited, and silent on any healthy frame.
+    {
+        const double present_ms = std::chrono::duration<double, std::milli>(
+            present_t1 - present_t0).count();
+        if (present_ms > 50.0) {
+            static int said = 0;
+            if (said < 24) {
+                ++said;
+                std::printf("stud-render-host: SLOW vkQueuePresentKHR %.1fms -> %d\n", present_ms,
+                            static_cast<int>(res));
+                std::fflush(stdout);
+            }
+        }
+    }
     static const bool time_presents = std::getenv("STUD_VK_HOST_TIME") != nullptr;
     if (time_presents) {
         static int n = 0;
@@ -5762,6 +5809,7 @@ present_without_upscale:
     // so it never sits empty through the engine's bring-up. No-op on
     // Wayland and after the first call.
     stud::android_glue::x11_ensure_mapped();
+    stud::android_glue::x11_note_frame_reached_window();
     const int present_tid = static_cast<int>(::syscall(SYS_gettid));
     static int announced_tid = -1;
     if (present_tid != announced_tid) {
