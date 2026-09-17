@@ -2497,6 +2497,30 @@ void native_window_pump_x11() {
     constexpr int32_t kMinBufferPx = 64;
     int32_t buffer_w = buffer_px_from_logical(logical_w);
     int32_t buffer_h = buffer_px_from_logical(logical_h);
+    // Never larger than the window itself.
+    //
+    // The logical size is the device size divided by the display scale and
+    // rounded, and the buffer size multiplies it back up, rounding up --
+    // so the round trip can land a pixel PAST where it started: a 971-px
+    // window gives 777 logical, and 777 back up gives 972.
+    //
+    // On Wayland that overshoot is invisible, because the viewport scales
+    // whatever the buffer is to the window's logical size. X11 has no
+    // viewport: the buffer IS the window, so one pixel of overshoot is a
+    // swapchain that does not match the window it presents to, with
+    // nothing to cover the difference -- live-caught as a black screen
+    // with HiDPI on, the engine rendering 1728x972 into a 1728x971
+    // window.
+    //
+    // At the display's own scale the answer is not a rounded division at
+    // all: the buffer is exactly the pixels the window has.
+    if (effective_scale_120() == display_scale_120()) {
+        buffer_w = device_w;
+        buffer_h = device_h;
+    } else {
+        if (buffer_w > device_w) buffer_w = device_w;
+        if (buffer_h > device_h) buffer_h = device_h;
+    }
     if (buffer_w < kMinBufferPx) buffer_w = kMinBufferPx;
     if (buffer_h < kMinBufferPx) buffer_h = kMinBufferPx;
     if (buffer_w != g_window_width.load() || buffer_h != g_window_height.load()) {
