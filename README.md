@@ -34,8 +34,7 @@
 
 <br>
 <div align="center">
-  <h1>🖼️</h1>
-  <h4 id="screenshots">S C R E E N S H O T S</h4>
+  <h4 id="screenshots"><img src=".github/headers/screenshots.png" width="800" alt="Screenshots"></h4>
 </div>
 
 <div align="center">
@@ -63,7 +62,7 @@
 <br>
 
 <div align="center">
-  <h4 id="why"><img src=".github/headers/why.png" width="760" alt="Why?"></h4>
+  <h4 id="why"><img src=".github/headers/why.png" width="800" alt="Why?"></h4>
 </div>
 
 <div align="center">
@@ -76,7 +75,7 @@
 <br>
 
 <div align="center">
-  <h4 id="features"><img src=".github/headers/features.png" width="760" alt="Features"></h4>
+  <h4 id="features"><img src=".github/headers/features.png" width="800" alt="Features"></h4>
 </div>
 
  - Runs the **real, unmodified** Roblox Android app
@@ -98,7 +97,7 @@
 <br>
 
 <div align="center">
-  <h4 id="status"><img src=".github/headers/workinprogress.png" width="760" alt="Work in progress"></h4>
+  <h4 id="status"><img src=".github/headers/workinprogress.png" width="800" alt="Work in progress"></h4>
 </div>
 
 > [!WARNING]
@@ -109,7 +108,7 @@
 <br>
 
 <div align="center">
-  <h4 id="not"><img src=".github/headers/whatstudisnot.png" width="760" alt="What Stud is not"></h4>
+  <h4 id="not"><img src=".github/headers/whatstudisnot.png" width="800" alt="What Stud is not"></h4>
 </div>
 
  - **Not affiliated with Roblox.** Stud is an independent project, not endorsed, supported or approved by Roblox Corporation in any way.
@@ -121,7 +120,7 @@
 <br>
 
 <div align="center">
-  <h4 id="how"><img src=".github/headers/howitworks.png" width="760" alt="How it works"></h4>
+  <h4 id="how"><img src=".github/headers/howitworks.png" width="800" alt="How it works"></h4>
 </div>
 
 Three processes, talking over a Unix socket:
@@ -137,7 +136,7 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 <br>
 
 <div align="center">
-  <h4 id="building"><img src=".github/headers/building.png" width="760" alt="Building"></h4>
+  <h4 id="building"><img src=".github/headers/building.png" width="800" alt="Building"></h4>
 </div>
 
 > [!NOTE]
@@ -219,7 +218,7 @@ cd build && ctest
 <br>
 
 <div align="center">
-  <h4 id="installation"><img src=".github/headers/installation.png" width="760" alt="Installation"></h4>
+  <h4 id="installation"><img src=".github/headers/installation.png" width="800" alt="Installation"></h4>
 </div>
 
 Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/releases) page.
@@ -303,7 +302,7 @@ chmod +x Stud-x86_64.AppImage
 <br>
 
 <div align="center">
-  <h4 id="files"><img src=".github/headers/wherethingslive.png" width="760" alt="Where things live"></h4>
+  <h4 id="files"><img src=".github/headers/wherethingslive.png" width="800" alt="Where things live"></h4>
 </div>
 
 | path | what |
@@ -320,7 +319,7 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
 <br>
 
 <div align="center">
-  <h4 id="credits"><img src=".github/headers/credits.png" width="760" alt="Credits"></h4>
+  <h4 id="credits"><img src=".github/headers/credits.png" width="800" alt="Credits"></h4>
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
