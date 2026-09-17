@@ -4769,7 +4769,20 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         if (chain != g_upscale_chains.end() && l.queue_submit != nullptr) {
             UpscaleChain& c = chain->second;
             const uint32_t index = indices[0];
-            if (index < c.cmd.size()) {
+            // With no semaphore to wait on there is NOTHING ordering this
+            // pass against the engine's render: two submissions on one
+            // queue may overlap freely, and the pass reads the image the
+            // engine just drew. The frame goes through unmodified
+            // instead, which is a frame without upscaling, not a race.
+            if (waits.empty() && index < c.cmd.size()) {
+                static int said = 0;
+                if (said < 4) {
+                    ++said;
+                    std::printf("stud-render-host: the engine presented with no wait semaphore; "
+                                "presenting this frame without the upscale pass\n");
+                    std::fflush(stdout);
+                }
+            } else if (index < c.cmd.size()) {
                 // The previous submit of this image's pre-recorded command
                 // buffer has to have finished before it can be re-submitted.
                 //
@@ -4825,8 +4838,27 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     // semaphores, with no upscale submit for this frame.
                     goto present_without_upscale;
                 }
+                // The stages this pass actually runs in, and that is the
+                // whole point of the mask.
+                //
+                // A semaphore wait only holds back the stages named here.
+                // This said COLOR_ATTACHMENT_OUTPUT, which appears
+                // nowhere in the recorded command buffer: it is two
+                // compute dispatches and a blit. So nothing in the pass
+                // was held back by the engine's render-finished
+                // semaphore, and the dispatches were free to start
+                // sampling the engine's image while the engine was still
+                // drawing into it -- a real race against live GPU work,
+                // every frame, on every frame's own image.
+                //
+                // Intel tolerated it for 41 minutes; the RTX 3050 lost
+                // the device within minutes, every run, which is what a
+                // race looks like on hardware that overlaps work
+                // properly. ALL_COMMANDS rather than an enumeration: the
+                // wait happens once per frame, and being exhaustive here
+                // is worth more than saving a stage.
                 std::vector<VkPipelineStageFlags> stages(
-                    waits.size(), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                    waits.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
                 VkSubmitInfo si{};
                 si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
                 si.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
