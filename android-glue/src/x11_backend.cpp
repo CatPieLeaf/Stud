@@ -140,6 +140,8 @@ struct Xlib {
     int (*RaiseWindow)(Display*, Window) = nullptr;
     char* (*ResourceManagerString)(Display*) = nullptr;
     int (*SetWindowBackgroundPixmap)(Display*, Window, Pixmap) = nullptr;
+    int (*ChangeWindowAttributes)(Display*, Window, unsigned long,
+                                  XSetWindowAttributes*) = nullptr;
     Bool (*QueryExtension)(Display*, const char*, int*, int*, int*) = nullptr;
     Bool (*GetEventData)(Display*, XGenericEventCookie*) = nullptr;
     void (*FreeEventData)(Display*, XGenericEventCookie*) = nullptr;
@@ -313,6 +315,7 @@ bool load_xlib() {
     LOAD(RaiseWindow, "XRaiseWindow");
     LOAD(ResourceManagerString, "XResourceManagerString");
     LOAD(SetWindowBackgroundPixmap, "XSetWindowBackgroundPixmap");
+    LOAD(ChangeWindowAttributes, "XChangeWindowAttributes");
     LOAD(QueryExtension, "XQueryExtension");
     LOAD(GetEventData, "XGetEventData");
     LOAD(FreeEventData, "XFreeEventData");
@@ -455,18 +458,40 @@ bool create_window(int32_t width, int32_t height) {
     g_wm_delete = x.InternAtom(g_display, "WM_DELETE_WINDOW", False);
     x.SetWMProtocols(g_display, g_window, &g_wm_delete, 1);
 
-    // No background, so the server paints nothing of its own when the
-    // window is resized or exposed.
+    // What the server does with this window's pixels when it is resized.
     //
-    // By default X fills the window with its background colour on every
-    // configure, and the engine only overwrites that when it next
-    // presents, which during a drag-resize it largely cannot, because
-    // the swapchain is being invalidated as fast as the size changes.
-    // The result is a window that goes black for as long as the mouse
-    // button is held. With no background the previous frame simply stays
-    // on screen until a new one replaces it.
-    if (x.SetWindowBackgroundPixmap != nullptr) {
-        x.SetWindowBackgroundPixmap(g_display, g_window, None);
+    // Both halves matter, and having only one of them is what made a
+    // drag-resize show a transparent strip of desktop through the window.
+    //
+    // The default bit gravity is ForgetGravity: on every configure the
+    // server throws the window's whole contents away and clears it to its
+    // background. With the background also set to None, "clears it" is a
+    // no-op -- so the window holds nothing at all wherever the engine has
+    // not painted since, and a compositor draws nothing where a window
+    // holds nothing. That is the strip: not an alpha channel (this window
+    // is depth 24, opaque) but an area with no content in it.
+    //
+    // The two together fix it, and neither alone would:
+    //
+    //   NorthWestGravity  keeps the pixels already there, anchored at the
+    //                     top-left, instead of discarding them. This is
+    //                     what avoids the whole window going black for as
+    //                     long as the mouse button is held -- the original
+    //                     reason the background was removed, which was the
+    //                     right symptom and the wrong half of the fix.
+    //
+    //   a real background only the NEWLY exposed area is then cleared to
+    //                     it, so the strip is black for the frame or two
+    //                     before the engine catches up, rather than a
+    //                     hole.
+    //
+    // The engine still owns the window's contents; this only says what the
+    // server does in the instant between the resize and the next present.
+    if (x.ChangeWindowAttributes != nullptr) {
+        XSetWindowAttributes attrs{};
+        attrs.bit_gravity = NorthWestGravity;
+        attrs.background_pixel = BlackPixel(g_display, screen);
+        x.ChangeWindowAttributes(g_display, g_window, CWBitGravity | CWBackPixel, &attrs);
     }
 
     g_width.store(width);
