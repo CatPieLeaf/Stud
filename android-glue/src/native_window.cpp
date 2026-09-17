@@ -1851,6 +1851,10 @@ void* native_window_x11_display() {
     return display_backend() == DisplayBackend::X11 ? x11::display() : nullptr;
 }
 
+void* native_window_x11_vk_display() {
+    return display_backend() == DisplayBackend::X11 ? x11::vk_display() : nullptr;
+}
+
 void x11_ensure_mapped() {
     if (display_backend() != DisplayBackend::X11) return;
     x11::ensure_mapped();
@@ -2447,6 +2451,11 @@ bool window_close_requested() {
 // a resize arrives here as ConfigureNotify and has to reach the size
 // ANativeWindow_getWidth/getHeight report, which is what the engine, the
 // swapchain and DisplayMetrics all read.
+void native_window_pump_x11_events_only() {
+    if (display_backend() != DisplayBackend::X11) return;
+    x11::pump();
+}
+
 void native_window_pump_x11() {
     if (display_backend() != DisplayBackend::X11) return;
     x11::pump();

@@ -160,6 +160,11 @@ DisplayBackend display_backend();
 // native_window_wl_surface() below. Null/0 on Wayland, and before the
 // window exists.
 void* native_window_x11_display();
+// The X connection the Vulkan driver should be given: its own, so its
+// requests and Present events never share a stream with Stud's event
+// pump. Falls back to the pump's connection if a second one cannot be
+// opened.
+void* native_window_x11_vk_display();
 unsigned long native_window_x11_window();
 
 // Shows the X11 window, if it is not shown yet. Called when the first
@@ -533,6 +538,13 @@ size_t native_window_drain_input_events(HostInputEvent* out, size_t max);
 void native_window_pump_key_repeat();
 
 // Drains the X server's events on the X11 backend; a no-op on Wayland.
+// Drains the X server's event queue and nothing else.
+//
+// The full pump also takes the display lock the present path needs and
+// re-checks the window size, which is far too much for the input loop to
+// do every few milliseconds -- the Wayland side has only ever drained its
+// own queue there.
+void native_window_pump_x11_events_only();
 void native_window_pump_x11();
 
 }  // namespace stud::android_glue

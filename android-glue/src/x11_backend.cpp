@@ -21,6 +21,7 @@
 #include <cstring>
 
 #include <dlfcn.h>
+#include <unistd.h>
 
 namespace stud::android_glue::x11 {
 
@@ -61,6 +62,29 @@ Xi2& xi2() {
 
 struct Xlib {
     void* handle = nullptr;
+    // Xlib's own documented precondition for using one Display from more
+    // than one thread, and Stud does exactly that on X11: the main loop
+    // drains events while every client connection runs on its own thread
+    // (serve_connection_thread), and the Vulkan driver's X11 WSI presents
+    // on whichever of those threads the engine called from, through the
+    // SAME Display this file opened -- vkCreateXlibSurfaceKHR is handed
+    // it directly. Without this call Xlib's internal locks are no-ops and
+    // its XCB connection has no agreed reader.
+    //
+    // Wayland has no equivalent exposure: the driver creates its own
+    // wl_event_queue there, and Stud's own connection is only ever
+    // touched under wayland_mutex().
+    Status (*InitThreads)() = nullptr;
+    // Error handling. Without these, Xlib's own defaults apply: a
+    // protocol error prints to stderr and calls exit(), and an I/O error
+    // (the server gone, the session ending) exits too -- both from
+    // whatever thread happened to make the call, with static destructors
+    // running underneath live engine threads. This project already
+    // settled that question for its own shutdown, which is why both
+    // processes _exit() rather than return from main.
+    int (*SetErrorHandler)(int (*)(Display*, XErrorEvent*)) = nullptr;
+    int (*SetIOErrorHandler)(int (*)(Display*)) = nullptr;
+    int (*GetErrorText)(Display*, int, char*, int) = nullptr;
     Display* (*OpenDisplay)(const char*) = nullptr;
     int (*CloseDisplay)(Display*) = nullptr;
     Window (*CreateSimpleWindow)(Display*, Window, int, int, unsigned int, unsigned int,
@@ -242,6 +266,10 @@ bool load_xlib() {
     };
 #define LOAD(field, name) \
     x.field = reinterpret_cast<decltype(x.field)>(sym(name))
+    LOAD(InitThreads, "XInitThreads");
+    LOAD(SetErrorHandler, "XSetErrorHandler");
+    LOAD(SetIOErrorHandler, "XSetIOErrorHandler");
+    LOAD(GetErrorText, "XGetErrorText");
     LOAD(OpenDisplay, "XOpenDisplay");
     LOAD(CloseDisplay, "XCloseDisplay");
     LOAD(CreateSimpleWindow, "XCreateSimpleWindow");
@@ -298,6 +326,65 @@ bool load_xlib() {
 
 }  // namespace
 
+// A protocol error is not fatal, and Xlib's default says otherwise.
+//
+// The default handler prints and calls exit(). Every request Stud makes
+// is asynchronous, so the error arrives later, on whichever thread next
+// talks to the server -- so the default turns a bad window id, or a
+// property set on a window the manager has just withdrawn, into the whole
+// app disappearing. None of those are worth dying for: the window is
+// still there and the next frame still presents.
+//
+// Reported, though, and not silently swallowed: an X error means a real
+// request Stud made was refused, and the first few say which.
+int on_x_error(Display* dpy, XErrorEvent* event) {
+    static int said = 0;
+    static int total = 0;
+    ++total;
+    if (said < 8) {
+        ++said;
+        char text[128] = {0};
+        Xlib& x = xlib();
+        if (x.GetErrorText != nullptr) {
+            x.GetErrorText(dpy, event->error_code, text, static_cast<int>(sizeof(text)));
+        }
+        std::fprintf(stderr,
+                     "stud: android-glue: X error %u (%s) on request %u.%u, serial %lu\n",
+                     event->error_code, text[0] != '\0' ? text : "unknown",
+                     event->request_code, event->minor_code,
+                     static_cast<unsigned long>(event->serial));
+        std::fflush(stderr);
+        if (said == 8) {
+            std::fprintf(stderr, "stud: android-glue: further X errors will not be reported\n");
+            std::fflush(stderr);
+        }
+    }
+    return 0;
+}
+
+// An I/O error is the connection itself being gone -- the server exited,
+// the session ended, the socket was cut. Nothing can be recovered and no
+// further Xlib call can succeed, so the only question is how to leave.
+//
+// Xlib calls exit() if this returns, which would run static destructors
+// underneath whatever threads are still live -- the exact teardown crash
+// this project already fixed by making both processes _exit(). So it
+// leaves the same way, deliberately, rather than by falling through to
+// Xlib's answer.
+int on_x_io_error(Display*) {
+    std::fprintf(stderr, "stud: android-glue: the X server connection is gone; exiting\n");
+    std::fflush(stderr);
+    std::fflush(stdout);
+    ::_exit(0);
+    return 0;
+}
+
+void install_x_error_handlers() {
+    Xlib& x = xlib();
+    if (x.SetErrorHandler != nullptr) x.SetErrorHandler(on_x_error);
+    if (x.SetIOErrorHandler != nullptr) x.SetIOErrorHandler(on_x_io_error);
+}
+
 bool available() {
     static const bool answer = [] {
         const char* display_name = std::getenv("DISPLAY");
@@ -306,6 +393,14 @@ bool available() {
         // Opened once and kept: this is the connection the window, EGL and
         // Vulkan all use. Closing and reopening would hand out a stale
         // Display* to whichever of them asked first.
+        install_x_error_handlers();
+        // Before any other Xlib call on this connection, per Xlib's own
+        // contract -- see the declaration of InitThreads above.
+        if (xlib().InitThreads() == 0) {
+            std::fprintf(stderr, "stud: android-glue: XInitThreads() failed; X11 is not safe "
+                                 "to use from more than one thread\n");
+            return false;
+        }
         g_display = xlib().OpenDisplay(nullptr);
         if (g_display == nullptr) {
             std::fprintf(stderr, "stud: android-glue: DISPLAY=%s is set but XOpenDisplay failed\n",
@@ -499,6 +594,41 @@ void set_pointer_locked(bool locked) {
 }
 
 void* display() { return g_display; }
+
+// A second connection to the same X server, handed to the Vulkan driver
+// and to nothing else.
+//
+// The driver's X11 WSI is not a passive user of the connection it is
+// given: it issues requests and waits for Present events on it, from
+// whichever thread the engine called on, while Stud's own main loop is
+// draining events on the same connection. Sharing one Display makes those
+// two contend for one request stream and one reader -- live-caught as
+// vkCreateSwapchainKHR entering the driver during a resize and never
+// coming back, with the main loop stuck behind it.
+//
+// On Wayland this problem does not exist because the driver creates its
+// own wl_event_queue, so its traffic and Stud's never meet. A second
+// Display is the X equivalent: one connection per role, so issuing a
+// request never has to wait on the thread that is reading events.
+//
+// The window is a server-side resource named by an XID, so a surface
+// created on this connection addresses the same window the other one
+// made.
+void* vk_display() {
+    static Display* vk = [] () -> Display* {
+        if (g_display == nullptr) return nullptr;
+        Display* d = xlib().OpenDisplay(nullptr);
+        if (d == nullptr) {
+            std::fprintf(stderr, "stud: android-glue: could not open a second X connection for "
+                                 "Vulkan; sharing the event connection instead\n");
+            return nullptr;
+        }
+        std::printf("stud: android-glue: Vulkan has its own X connection\n");
+        std::fflush(stdout);
+        return d;
+    }();
+    return vk != nullptr ? static_cast<void*>(vk) : static_cast<void*>(g_display);
+}
 
 unsigned long window() { return g_window; }
 
