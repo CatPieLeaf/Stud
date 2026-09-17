@@ -1860,11 +1860,6 @@ void x11_ensure_mapped() {
     x11::ensure_mapped();
 }
 
-void x11_note_frame_reached_window() {
-    if (display_backend() != DisplayBackend::X11) return;
-    x11::note_frame_reached_window();
-}
-
 unsigned long native_window_x11_window() {
     return display_backend() == DisplayBackend::X11 ? x11::window() : 0;
 }
