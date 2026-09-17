@@ -692,6 +692,13 @@ enum class CallId : uint32_t {
     // and polled by Process B beside it. Appended last: every existing id
     // keeps its value.
     PollDeepLink,
+    // Appended last, so every id above keeps its value.
+    //
+    // A mapped allocation the host maps too, by the same file the client
+    // backs it with: the engine's writes land in pages both processes
+    // see, so a flush only has to name the run that changed.
+    VkShareMappedMemory,
+    VkWriteSharedMappedMemory,
 };
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -945,9 +952,11 @@ inline const char* call_id_name(CallId id) {
         "CanWarpPointer",
         "DeliverDeepLink",
         "PollDeepLink",
+        "VkShareMappedMemory",
+        "VkWriteSharedMappedMemory",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::PollDeepLink) + 1,
+                      static_cast<size_t>(CallId::VkWriteSharedMappedMemory) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

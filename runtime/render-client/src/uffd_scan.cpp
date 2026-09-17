@@ -81,9 +81,13 @@ struct Kernel {
 Kernel& kernel() {
     static Kernel k = [] {
         Kernel out;
-        // Opt-in until it has been measured against the barrier on a real
-        // session: STUD_VK_UFFD_SCAN=1.
-        if (std::getenv("STUD_VK_UFFD_SCAN") == nullptr) return out;
+        // The default. The kernel records which pages were written, so the
+        // engine is never write-protected: no signal per page, no
+        // mprotect, and no TLB shootdown across the engine's ~67 threads
+        // for every one of them. The fault barrier remains as the
+        // fallback for a kernel without WP_ASYNC, and
+        // STUD_VK_NO_UFFD_SCAN=1 forces that path back for an A/B.
+        if (std::getenv("STUD_VK_NO_UFFD_SCAN") != nullptr) return out;
 
         // UFFD_USER_MODE_ONLY is what makes this work unprivileged where
         // vm.unprivileged_userfaultfd is 0: a descriptor that can only ever

@@ -159,6 +159,10 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset);
 uint64_t vk_free_memory(uint64_t memory);
 uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t flags);
 uint64_t vk_write_mapped_memory(uint64_t memory, uint64_t offset, const std::vector<uint8_t>& in);
+// A mapped allocation both processes map, and a write whose bytes are
+// therefore already here; see the definitions.
+uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t size);
+uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_t n);
 uint64_t vk_unmap_memory(uint64_t memory);
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size);
 uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint32_t capacity,

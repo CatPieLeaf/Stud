@@ -2311,6 +2311,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                                      static_cast<uint32_t>(a[4]));
         case CallId::VkWriteMappedMemory:
             return stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
+        case CallId::VkShareMappedMemory:
+            return stud::render_host::vk_share_mapped_memory(a[1], a[2], a[3]);
+        case CallId::VkWriteSharedMappedMemory:
+            return stud::render_host::vk_write_shared_mapped_memory(a[1], a[2], a[3]);
         case CallId::VkUnmapMemory:
             return stud::render_host::vk_unmap_memory(a[1]);
         case CallId::VkFlushMappedMemoryRanges:
@@ -4297,6 +4301,15 @@ int main(int argc, char** argv) {
             g_hidpi_enabled = std::string_view(argv[i + 1]) != "off";
         } else if (std::string_view(argv[i]) == "--upscaling") {
             g_upscaling_enabled = std::string_view(argv[i + 1]) == "on";
+            // STUD_UPSCALING=off|on overrides the setting without writing
+            // to it, so the pass can be A/B'd against a frame-pacing
+            // question in one relaunch and the user's own configuration
+            // is left exactly as they set it.
+            if (const char* env = std::getenv("STUD_UPSCALING")) {
+                g_upscaling_enabled = std::string_view(env) == "on";
+                std::printf("stud-render-host: STUD_UPSCALING=%s overrides the setting\n", env);
+                std::fflush(stdout);
+            }
         } else if (std::string_view(argv[i]) == "--upscale-sharpness") {
             const int percent = std::atoi(argv[i + 1]);
             if (percent >= 0 && percent <= 125) g_upscale_sharpness_percent = percent;

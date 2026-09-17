@@ -44,6 +44,19 @@ public:
     // Page-aligned allocation the engine writes into. False on failure,
     // in which case the caller must fall back to sending everything.
     bool allocate(std::size_t bytes);
+    // Same, but backed by an open file so another process can map the
+    // very same pages.
+    //
+    // The engine writes its vertices and uniforms straight through this
+    // mapping, and everything that changes has to reach the host. Sending
+    // it down the socket costs a write, two kernel copies and a read, on
+    // 12.5 MB a frame measured in a real game. Backed by a file the host
+    // also maps, the bytes are already there when the host is told which
+    // ones moved, and only the run's offset and length travel.
+    //
+    // Takes ownership of nothing: the caller keeps the descriptor and may
+    // close it as soon as this returns, the mapping holds the pages.
+    bool allocate_backed_by(std::size_t bytes, int fd);
 
     // True when this allocation is tracked by the kernel (uffd-scan)
     // rather than by the fault handler. Reported by STUD_VK_MEM_STATS so a
@@ -100,6 +113,13 @@ public:
     // this allocation and the fault was handled.
     bool handle_write_fault(void* addr);
 
+    // Whether this page was opened ahead of a write rather than written
+    // to. See speculative_.
+    bool page_is_speculative(std::size_t page) const {
+        return speculative_ != nullptr && page < pages_ &&
+               speculative_[page].load(std::memory_order_acquire) != 0;
+    }
+
     // How many pages one fault unprotects at most. A sequential write
     // through a large mapping otherwise costs one signal plus one
     // mprotect per 4KB, which is what this cap exists to bound; see
@@ -144,6 +164,10 @@ private:
     // the fast path that skips untouched allocations quietly dies.
     // exchange() makes exactly one of them the one that counted it.
     std::atomic<uint8_t>* dirty_ = nullptr;
+    // Which dirty pages were opened AHEAD of a write rather than written
+    // to. The flush uses this to tell a page it must send from one it can
+    // check first; see the barrier branch of push_mapped_bytes().
+    std::atomic<uint8_t>* speculative_ = nullptr;
     bool armed_ = false;
     // How many pages are currently marked dirty. Maintained by the fault
     // handler and the re-arm, so "did anything change since the last

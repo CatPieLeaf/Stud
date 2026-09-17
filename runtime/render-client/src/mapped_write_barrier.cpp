@@ -56,6 +56,7 @@ MappedWriteBarrier& MappedWriteBarrier::operator=(MappedWriteBarrier&& other) no
     size_ = other.size_;
     pages_ = other.pages_;
     dirty_ = other.dirty_;
+    speculative_ = other.speculative_;
     armed_ = other.armed_;
     dirty_pages_.store(other.dirty_pages_.load(std::memory_order_acquire),
                        std::memory_order_release);
@@ -65,6 +66,7 @@ MappedWriteBarrier& MappedWriteBarrier::operator=(MappedWriteBarrier&& other) no
     other.size_ = 0;
     other.pages_ = 0;
     other.dirty_ = nullptr;
+    other.speculative_ = nullptr;
     other.armed_ = false;
     other.dirty_pages_.store(0, std::memory_order_release);
     other.next_page_ = 0;
@@ -91,6 +93,8 @@ void MappedWriteBarrier::release() {
     base_ = nullptr;
     size_ = 0;
     pages_ = 0;
+    delete[] speculative_;
+    speculative_ = nullptr;
     dirty_ = nullptr;
     armed_ = false;
     dirty_pages_.store(0, std::memory_order_release);
@@ -98,18 +102,25 @@ void MappedWriteBarrier::release() {
     window_pages_ = 1;
 }
 
-bool MappedWriteBarrier::allocate(std::size_t bytes) {
+bool MappedWriteBarrier::allocate(std::size_t bytes) { return allocate_backed_by(bytes, -1); }
+
+bool MappedWriteBarrier::allocate_backed_by(std::size_t bytes, int fd) {
     release();
     if (bytes == 0) return false;
     const std::size_t ps = page_size();
     const std::size_t rounded = ((bytes + ps - 1) / ps) * ps;
-    void* p = ::mmap(nullptr, rounded, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    // MAP_SHARED when a file backs it, so the host's mapping of the same
+    // file sees these writes; see allocate_backed_by()'s declaration.
+    void* p = fd >= 0 ? ::mmap(nullptr, rounded, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+                      : ::mmap(nullptr, rounded, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) return false;
     base_ = static_cast<uint8_t*>(p);
     size_ = bytes;
     pages_ = rounded / ps;
     dirty_ = new std::atomic<uint8_t>[pages_];
+    speculative_ = new std::atomic<uint8_t>[pages_];
+    for (std::size_t i = 0; i < pages_; ++i) speculative_[i].store(0, std::memory_order_relaxed);
     // Everything starts dirty: the host has never seen any of it.
     for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(1, std::memory_order_relaxed);
     dirty_pages_.store(pages_, std::memory_order_release);
@@ -356,6 +367,12 @@ bool MappedWriteBarrier::handle_write_fault(void* addr) {
     // the flush's own clear erase it and lose the write for good.
     if (::mprotect(base_ + page * ps, run * ps, PROT_READ | PROT_WRITE) != 0) return false;
     for (std::size_t i = page; i < page + run; ++i) {
+        // Only the page that faulted was written; the rest are a guess
+        // that the run continues, which the flush checks rather than pays
+        // for. See speculative_.
+        if (speculative_ != nullptr) {
+            speculative_[i].store(i == page ? 0 : 1, std::memory_order_release);
+        }
         if (dirty_[i].exchange(1, std::memory_order_acq_rel) == 0) {
             dirty_pages_.fetch_add(1, std::memory_order_acq_rel);
         }
