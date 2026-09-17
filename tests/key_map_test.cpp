@@ -14,6 +14,8 @@
 #include "stud/key_map.h"
 #include "stud/key_compose.h"
 
+#include "stud/keymap_chars.h"
+
 #include <xkbcommon/xkbcommon.h>
 
 #include <cstdio>
@@ -28,6 +30,11 @@ void check(bool ok, const std::string& what) {
         std::printf("FAIL: %s\n", what.c_str());
         ++g_failures;
     }
+}
+
+bool has_char(const uint64_t set[2], char c) {
+    const unsigned char u = static_cast<unsigned char>(c);
+    return (set[u / 64] & (1ull << (u % 64))) != 0;
 }
 
 void check_eq(const std::string& got, const std::string& want, const std::string& what) {
@@ -292,6 +299,41 @@ int main() {
         check(engine_scan_code_for_event(82, "0") == 82, "numpad 0 stays on the numpad");
         check(engine_scan_code_for_event(79, "1") == 79, "numpad 1 stays on the numpad");
         check(engine_scan_code_for_event(78, "+") == 78, "numpad plus stays on the numpad");
+
+        // A position whose character the layout cannot type with an
+        // ordinary press must keep its key, or every binding on it is
+        // lost. ABNT2 types "'" where US has the grave and reaches "`"
+        // only through AltGr and the acute key, which is why "'" stopped
+        // opening the Roblox inventory once keys began moving by
+        // character. The sets below come from the real compiled keymaps.
+        {
+            Keymap abnt2_map;
+            Keymap us_map;
+            uint64_t abnt2[2] = {0, 0};
+            uint64_t us[2] = {0, 0};
+            const bool opened = abnt2_map.open("br", "abnt2") && us_map.open("us", "");
+            check(opened, "both real keymaps compiled");
+            if (opened) {
+                stud::android_glue::collect_reachable_ascii(abnt2_map.keymap, abnt2);
+                stud::android_glue::collect_reachable_ascii(us_map.keymap, us);
+
+                check(!has_char(abnt2, '`'), "abnt2 cannot type ` with an ordinary press");
+                check(has_char(abnt2, '/'), "abnt2 can type /");
+                check(has_char(us, '`') && has_char(us, '\''), "us types both ` and '");
+
+                check(engine_scan_code_for_event(41, "'", abnt2) == 41,
+                      "abnt2: the grave position keeps its key");
+                // The slash pair is unaffected: both layouts type "/".
+                check(engine_scan_code_for_event(98, "/", abnt2) == 53,
+                      "abnt2: / still reaches the slash position");
+                check(engine_scan_code_for_event(53, ";", abnt2) == 39,
+                      "abnt2: ; still reaches the semicolon position");
+
+                check(engine_scan_code_for_event(41, "`", us) == 41, "us: grave stays put");
+                check(engine_scan_code_for_event(40, "'", us) == 40, "us: apostrophe stays put");
+                check(engine_scan_code_for_event(53, "/", us) == 53, "us: slash still stays put");
+            }
+        }
 
         // Nothing typed means nothing to place: dead keys, modifiers,
         // function and arrow keys all keep the position they came from.

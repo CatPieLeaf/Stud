@@ -19,6 +19,7 @@
 #include <xdg-shell-client-protocol.h>
 #include <xkbcommon/xkbcommon.h>
 #include "stud/key_compose.h"
+#include "stud/keymap_chars.h"
 
 #include <algorithm>
 #include <chrono>
@@ -683,6 +684,11 @@ struct XkbState {
     // the desktop composes with, not a list Stud invented.
     xkb_compose_table* compose_table = nullptr;
     xkb_compose_state* compose_state = nullptr;
+    // Every ASCII character this layout can type with an ordinary press,
+    // from collect_reachable_ascii(). See HostInputEvent::layout_chars for
+    // what reads it and why. All ones until a keymap has actually been
+    // compiled, so "unknown" behaves the way it did before this existed.
+    uint64_t ascii_reachable[2] = {~0ull, ~0ull};
 };
 
 XkbState& xkb() {
@@ -743,6 +749,7 @@ void keyboard_keymap(void*, wl_keyboard*, uint32_t format, int32_t fd, uint32_t 
                 if (x.keymap != nullptr) xkb_keymap_unref(x.keymap);
                 x.keymap = keymap;
                 x.state = state;
+                stud::android_glue::collect_reachable_ascii(keymap, x.ascii_reachable);
                 setup_compose(&x);
                 static bool announced = false;
                 if (!announced) {
@@ -782,6 +789,8 @@ void resolve_key_from_keymap(uint32_t evdev_code, bool pressed,
     // anything else would break it as a game binding.
     ev->keysym = static_cast<uint32_t>(sym);
     ev->codepoint = xkb_state_key_get_utf32(x.state, keycode);
+    ev->layout_chars[0] = x.ascii_reachable[0];
+    ev->layout_chars[1] = x.ascii_reachable[1];
 
     if (!pressed) return;
     const stud::android_glue::ComposeResult composed =

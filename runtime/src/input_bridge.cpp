@@ -1641,14 +1641,25 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     : (ev.composed_utf8[0] != '\0' || typed_text.empty()
                            ? 0
                            : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
-            const jint key_code = android_key_code_for_event(ev.code, ev.keysym);
+            // A key pinned to its position (see position_must_be_kept) is
+            // being reported for where it sits, so the Android key code
+            // has to agree: on ABNT2 that key types "'" but is the grave
+            // the inventory is bound to, and the two arguments describing
+            // one press must not name different keys. Typing is
+            // unaffected either way, it travels as text, never as this.
+            const bool keep_position =
+                typed_text.size() == 1 && !is_keypad_scan_code(ev.code) &&
+                position_must_be_kept(ev.code, typed_text[0], ev.layout_chars);
+            const jint key_code = keep_position
+                                      ? android_key_code_for_scan_code(ev.code)
+                                      : android_key_code_for_event(ev.code, ev.keysym);
             // The scan code is what the engine actually keys off; it
             // indexes a table straight to a USB HID usage code, and never
             // reads the Android key code at all. So it has to carry what
             // the key types rather than where it sits. See
             // engine_scan_code_for_event().
             const jint scan_code = static_cast<jint>(
-                engine_scan_code_for_event(ev.code, typed_text));
+                engine_scan_code_for_event(ev.code, typed_text, ev.layout_chars));
 
             // Real text entry. When the engine has told us a Lua TextBox
             // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
