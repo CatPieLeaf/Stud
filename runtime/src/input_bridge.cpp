@@ -322,6 +322,13 @@ float g_pin_y = 0.0f;
 float g_pin_px = 0.0f;
 float g_pin_py = 0.0f;
 
+// The live surface size in pixels, from whichever event carried it last.
+// Only the window's owner knows it, and the centre of the window is what
+// the engine puts its own cursor on for first person, so this is what
+// says where that is. Zero until the first event that carries one.
+float g_surface_px_w = 0.0f;
+float g_surface_px_h = 0.0f;
+
 // The last raw pointer position in surface pixels, which is what a warp
 // takes, kept because the pin can begin on a poll, away from any event.
 float g_last_raw_px = 0.0f;
@@ -937,6 +944,54 @@ float to_density_independent(float pixels) {
     return density > 0.0f ? pixels / density : pixels;
 }
 
+// Leaving first person, where the engine's cursor is the middle of the
+// window and the physical pointer is wherever it was when first person
+// began.
+//
+// A locked pointer does not move, by design: the compositor holds it and
+// reports relative motion instead, which is exactly what mouse look
+// needs. So when the lock ends the pointer is still standing at the spot
+// it was taken from, several hundred units from the centre, and the
+// first ordinary motion event reports that spot as the position. The
+// engine adopts it, and the cursor jumps from the middle of the screen
+// back to wherever the hand happened to be before first person, which is
+// the teleport.
+//
+// The middle is where the cursor VISIBLY is, so that is where the
+// pointer is put, and the position reported from here on starts there.
+// begin_warp() covers the rest: everything until the pointer is actually
+// seen at the centre is the warp's own doing and is reported as no
+// movement at all, so the camera does not turn on the way.
+//
+// Without a compositor that can warp (wp_pointer_warp_v1, or X11), the
+// pointer cannot be moved and moving only the reported position would
+// leave the two permanently apart. Nothing is done then, which is the
+// behaviour this had before.
+void recentre_after_engine_lock(float& last_x, float& last_y) {
+    if (g_surface_px_w <= 0.0f || g_surface_px_h <= 0.0f) return;
+    if (!pointer_warp_available()) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud: leaving first person leaves the cursor where the pointer is, "
+                        "this compositor cannot move the pointer\n");
+            std::fflush(stdout);
+        }
+        return;
+    }
+    const float centre_px = g_surface_px_w * 0.5f;
+    const float centre_py = g_surface_px_h * 0.5f;
+    begin_warp(centre_px, centre_py);
+    last_x = to_density_independent(centre_px);
+    last_y = to_density_independent(centre_py);
+    if (input_trace_enabled()) {
+        std::printf("stud: first person ended, the cursor carries on from the middle "
+                    "(%.1f,%.1f)\n",
+                    static_cast<double>(last_x), static_cast<double>(last_y));
+        std::fflush(stdout);
+    }
+}
+
 // Told when a pad appears or goes away, so the haptics bridge can
 // answer the engine truthfully. Set by start_input_bridge(), which is
 // the only place that has the Jvm and the library to hand.
@@ -948,6 +1003,10 @@ std::function<void(int device_id, bool can_rumble)>& gamepad_presence_hook() {
 void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, JNIEnv* jni_env,
                     float& last_x, float& last_y) {
     using Ev = stud::android_glue::HostInputEvent;
+    if (ev.surface_width > 0 && ev.surface_height > 0) {
+        g_surface_px_w = static_cast<float>(ev.surface_width);
+        g_surface_px_h = static_cast<float>(ev.surface_height);
+    }
     switch (ev.type) {
         case Ev::kPointerMotion: {
             if (g_touch_down) send_touch(fns, jni_env, ev, 1);
@@ -2641,8 +2700,20 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // nativeGetMainWindowIsMouseLockedCenter() is true,
                     // shift-lock and first person, and leaves an
                     // ordinary drag uncaptured.
+                    const bool was_locked_by_engine = g_lock_from_engine;
                     g_lock_from_engine = locked != 0;
                     apply_pointer_lock();
+                    // The falling edge only: first person (or shift lock)
+                    // has just ended and the engine's cursor is sitting in
+                    // the middle of the window.
+                    // ...and only if the pointer is really free again: a
+                    // camera drag can still be holding the lock (opt-in,
+                    // STUD_DRAG_LOCK), and a warp against a held lock does
+                    // nothing but confuse the accounting.
+                    if (was_locked_by_engine && !g_lock_from_engine &&
+                        !g_drag_locked.load()) {
+                        recentre_after_engine_lock(last_x, last_y);
+                    }
                 }
             }
             // ~8ms: fast enough that a real click/drag feels immediate,
