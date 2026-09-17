@@ -42,6 +42,15 @@ void vk_set_upscale_output_size(uint32_t width, uint32_t height);
 // pass is recorded, so it applies from the next swapchain onwards.
 void vk_set_upscale_sharpness_percent(int32_t percent);
 
+// Whether the pass may use its compute shaders (EASU/RCAS) or must stay a
+// plain scaled blit.
+//
+// Both are the same pass; only the filter differs. X11 needs the blit
+// even with upscaling switched off, because there is no compositor there
+// to scale the engine's buffer up to the window, which is a job Wayland
+// does for free. Defaults to true, which is every existing caller.
+void vk_set_upscale_use_compute(bool use_compute);
+
 // Whether the window is an X11 one, which decides whether instance
 // creation asks for VK_KHR_xlib_surface or VK_KHR_wayland_surface.
 void vk_set_on_x11(bool on_x11);

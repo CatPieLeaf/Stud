@@ -2518,9 +2518,34 @@ int main(int argc, char** argv) {
             if (packed != 0) {
                 const int32_t w = static_cast<int32_t>(packed >> 32);
                 const int32_t h = static_cast<int32_t>(packed & 0xffffffffu);
+                // Once the drag STOPS, and never twice at once.
+                //
+                // Dragging a window edge produces a new size every few
+                // milliseconds; this loop saw a few a second and told the
+                // engine about every one. Each telling is a real
+                // UpdateSurfaceApp, which rebuilds its render targets and
+                // can take seconds, and it was called straight from here,
+                // so the loop sat in it while the next sizes piled up
+                // behind. Live-caught while shrinking a window: two
+                // "still running/blocked after 8000ms" in a row and then
+                // the engine never came back.
+                //
+                // So: remember the newest size, wait for it to hold still,
+                // then tell the engine once, on a thread of its own, and
+                // do not start another until that one is done. A resize is
+                // not a frame; arriving a quarter of a second late costs
+                // nothing.
+                static std::atomic<bool> resize_in_flight{false};
+                static int32_t pending_w = 0;
+                static int32_t pending_h = 0;
+                static auto last_change = std::chrono::steady_clock::now();
                 if (w > 0 && h > 0 && (w != real_window_width || h != real_window_height)) {
                     real_window_width = w;
                     real_window_height = h;
+                    pending_w = w;
+                    pending_h = h;
+                    last_change = std::chrono::steady_clock::now();
+                    // Cheap and immediate: these only write numbers down.
                     stud::jni_bridge::set_real_display_metrics(w, h, layout_density);
                     // AGDK's own callback, for correctness, a real device
                     // sends it on every geometry change. Live-measured, the
@@ -2528,8 +2553,37 @@ int main(int argc, char** argv) {
                     // entirely in the V2 app bridge, so the call below is what
                     // actually moves its render targets.
                     stud::jni_bridge::dispatch_surface_changed(jvm, lifecycle, w, h);
-                    stud::jni_bridge::notify_surface_resized(jvm, lib, v2_platform_params,
-                                                             lifecycle.surface);
+                }
+                // Telling the V2 app bridge about a resize is opt-in, and
+                // off, because it does not come back.
+                //
+                // nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams is
+                // the call the engine uses to ADOPT a surface, and handing
+                // it the same surface again for a size change wedges it:
+                // live-caught on both backends, "still running/blocked
+                // after 8000ms" and the engine never renders again. It is
+                // also not needed. Stud answers the engine's own surface
+                // capabilities with the size it should render at, so a
+                // resize reaches it the way it reaches any Vulkan program:
+                // the swapchain goes out of date and the engine rebuilds
+                // it, which is exactly what its own log shows it doing.
+                //
+                // STUD_V2_RESIZE_NOTIFY=1 restores the call for anyone who
+                // wants to measure it again.
+                static const bool notify_v2_resize =
+                    std::getenv("STUD_V2_RESIZE_NOTIFY") != nullptr;
+                const auto settled = std::chrono::steady_clock::now() - last_change;
+                if (notify_v2_resize && pending_w > 0 &&
+                    settled > std::chrono::milliseconds(300) && !resize_in_flight.load()) {
+                    pending_w = 0;
+                    pending_h = 0;
+                    resize_in_flight.store(true);
+                    std::thread([&jvm, &lib, v2_platform_params, &lifecycle] {
+                        stud::jni_bridge::ensure_current_thread_attached_to_jvm();
+                        stud::jni_bridge::notify_surface_resized(jvm, lib, v2_platform_params,
+                                                                 lifecycle.surface);
+                        resize_in_flight.store(false);
+                    }).detach();
                 }
             }
         }

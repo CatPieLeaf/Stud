@@ -12,6 +12,8 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+// Types only; libXi itself is dlopen'd, like libX11 above.
+#include <X11/extensions/XInput2.h>
 
 #include <atomic>
 #include <cstdio>
@@ -28,6 +30,35 @@ namespace {
 // runtime. Declared with the real header's own types, so the compiler
 // checks each signature, what dlopen buys here is only that a machine
 // without libX11 still runs Stud on Wayland, not a hand-written ABI.
+// XInput2, for raw motion.
+//
+// Core X motion reports where the POINTER is, so it stops the moment the
+// pointer stops: at the edge of the window a confined pointer has nowhere
+// left to go and the events simply end, taking the camera with them. That
+// is the reported "spin is limited by the display boundaries".
+//
+// Wayland does not have that problem because zwp_relative_pointer reports
+// what the DEVICE did, independent of where the pointer is. XI2 raw events
+// are the same thing on X: they come straight off the device, before the
+// server has applied them to a pointer, so they keep arriving however hard
+// the pointer is pinned against a wall.
+//
+// Loaded separately and optionally: a machine without libXi keeps the old
+// behaviour rather than losing X11 support.
+struct Xi2 {
+    void* handle = nullptr;
+    Status (*QueryVersion)(Display*, int*, int*) = nullptr;
+    int (*SelectEvents)(Display*, Window, XIEventMask*, int) = nullptr;
+    Bool (*QueryExtension)(Display*, const char*, int*, int*, int*) = nullptr;
+    Bool (*GetEventData)(Display*, XGenericEventCookie*) = nullptr;
+    void (*FreeEventData)(Display*, XGenericEventCookie*) = nullptr;
+};
+
+Xi2& xi2() {
+    static Xi2 x;
+    return x;
+}
+
 struct Xlib {
     void* handle = nullptr;
     Display* (*OpenDisplay)(const char*) = nullptr;
@@ -85,6 +116,9 @@ struct Xlib {
     int (*RaiseWindow)(Display*, Window) = nullptr;
     char* (*ResourceManagerString)(Display*) = nullptr;
     int (*SetWindowBackgroundPixmap)(Display*, Window, Pixmap) = nullptr;
+    Bool (*QueryExtension)(Display*, const char*, int*, int*, int*) = nullptr;
+    Bool (*GetEventData)(Display*, XGenericEventCookie*) = nullptr;
+    void (*FreeEventData)(Display*, XGenericEventCookie*) = nullptr;
 };
 
 Xlib& xlib() {
@@ -95,6 +129,15 @@ Xlib& xlib() {
 Display* g_display = nullptr;
 Window g_window = 0;
 std::atomic<bool> g_pointer_locked{false};
+// Confined, which is what a camera drag does: the pointer keeps its own
+// position and its ordinary motion, it simply cannot leave the window.
+// Kept because relative motion has to be reported while it lasts; see
+// on_motion().
+std::atomic<bool> g_pointer_confined{false};
+// XInput2: the extension's opcode, and whether raw motion is actually
+// being delivered. False means core motion is all there is.
+int g_xi_opcode = -1;
+bool g_raw_motion = false;
 // Set while a warp of our own is in flight, so the MotionNotify it
 // generates is not read as the user moving the mouse, without this the
 // camera receives the warp back to centre as a second, opposite delta
@@ -126,6 +169,59 @@ std::atomic<bool> g_visible{true};
 std::atomic<bool> g_focused{true};
 std::atomic<int32_t> g_width{0};
 std::atomic<int32_t> g_height{0};
+
+// Opens libXi and asks the server for raw motion on every master device.
+// Best-effort: returns false and leaves everything as it was if XI2 is
+// not there, which costs only the unbounded spin.
+bool enable_raw_motion(Display* display) {
+    Xi2& xi = xi2();
+    if (xi.handle == nullptr) {
+        xi.handle = ::dlopen("libXi.so.6", RTLD_NOW | RTLD_LOCAL);
+        if (xi.handle == nullptr) {
+            std::fprintf(stderr,
+                         "stud: android-glue: no libXi.so.6, so a camera spin stops at the edge "
+                         "of the window (%s)\n",
+                         ::dlerror());
+            return false;
+        }
+        xi.QueryVersion = reinterpret_cast<decltype(xi.QueryVersion)>(
+            ::dlsym(xi.handle, "XIQueryVersion"));
+        xi.SelectEvents = reinterpret_cast<decltype(xi.SelectEvents)>(
+            ::dlsym(xi.handle, "XISelectEvents"));
+    }
+    Xlib& x = xlib();
+    if (xi.QueryVersion == nullptr || xi.SelectEvents == nullptr || x.QueryExtension == nullptr ||
+        x.GetEventData == nullptr) {
+        return false;
+    }
+    int event_base = 0;
+    int error_base = 0;
+    if (x.QueryExtension(display, "XInputExtension", &g_xi_opcode, &event_base, &error_base) !=
+        True) {
+        return false;
+    }
+    int major = 2;
+    int minor = 2;
+    if (xi.QueryVersion(display, &major, &minor) != Success) return false;
+
+    // Raw events are only ever delivered to the root window: they are not
+    // about any particular window, which is exactly why they survive the
+    // pointer being pinned against an edge.
+    unsigned char mask_bits[XIMaskLen(XI_LASTEVENT)] = {0};
+    XISetMask(mask_bits, XI_RawMotion);
+    XIEventMask mask{};
+    mask.deviceid = XIAllMasterDevices;
+    mask.mask_len = sizeof(mask_bits);
+    mask.mask = mask_bits;
+    const Window root = DefaultRootWindow(display);
+    if (xi.SelectEvents(display, root, &mask, 1) != Success) return false;
+    if (x.Flush != nullptr) x.Flush(display);
+    g_raw_motion = true;
+    std::printf("stud: android-glue: XInput2 raw motion (a spin is not stopped by the window "
+                "edge)\n");
+    std::fflush(stdout);
+    return true;
+}
 
 bool load_xlib() {
     Xlib& x = xlib();
@@ -189,6 +285,9 @@ bool load_xlib() {
     LOAD(RaiseWindow, "XRaiseWindow");
     LOAD(ResourceManagerString, "XResourceManagerString");
     LOAD(SetWindowBackgroundPixmap, "XSetWindowBackgroundPixmap");
+    LOAD(QueryExtension, "XQueryExtension");
+    LOAD(GetEventData, "XGetEventData");
+    LOAD(FreeEventData, "XFreeEventData");
 #undef LOAD
     if (!ok) {
         ::dlclose(x.handle);
@@ -241,6 +340,10 @@ bool create_window(int32_t width, int32_t height) {
                   StructureNotifyMask | VisibilityChangeMask | FocusChangeMask |
                       KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
                       PointerMotionMask | EnterWindowMask | LeaveWindowMask);
+
+    // Device-level motion, so a camera spin is not stopped by the window
+    // edge. Optional: without it the core motion above is all there is.
+    enable_raw_motion(g_display);
 
     x.StoreName(g_display, g_window, "Stud");
     // WM_CLASS is X11's answer to Wayland's app_id: it is what ties this
@@ -327,10 +430,15 @@ void warp_pointer(int x, int y) {
     if (g_display == nullptr || g_window == 0) return;
     Xlib& x11 = xlib();
     if (x11.WarpPointer == nullptr) return;
-    x11.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, x, y);
+    // Given in the engine's pixels; the server wants its own.
+    const int device_x = static_cast<int>(
+        stud::android_glue::native_window_device_px_from_pointer(static_cast<float>(x)) + 0.5f);
+    const int device_y = static_cast<int>(
+        stud::android_glue::native_window_device_px_from_pointer(static_cast<float>(y)) + 0.5f);
+    x11.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, device_x, device_y);
     if (x11.Flush != nullptr) x11.Flush(g_display);
-    g_pointer_x = static_cast<float>(x);
-    g_pointer_y = static_cast<float>(y);
+    g_pointer_x = static_cast<float>(device_x);
+    g_pointer_y = static_cast<float>(device_y);
 }
 
 void set_pointer_confined(bool confined) {
@@ -344,8 +452,10 @@ void set_pointer_confined(bool confined) {
         x11.GrabPointer(g_display, g_window, True,
                         ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
                         GrabModeAsync, g_window, 0, 0);
+        g_pointer_confined.store(true);
     } else if (x11.UngrabPointer != nullptr) {
         x11.UngrabPointer(g_display, 0);
+        g_pointer_confined.store(false);
     }
     if (x11.Flush != nullptr) x11.Flush(g_display);
 }
@@ -494,10 +604,42 @@ void read_selection_reply(const XSelectionEvent& notify) {
     }
 }
 
+// The engine's pixels, not the server's.
+//
+// X reports device pixels and sizes; the engine renders into a buffer that
+// is smaller whenever HiDPI is off or the upscaler is running. Converting
+// at this one door keeps every event consistent -- positions, deltas and
+// the surface size that rides along with them.
+float to_engine_px(float device_px) {
+    return stud::android_glue::native_window_pointer_px_from_device(device_px);
+}
+
 void push(stud::android_glue::HostInputEvent ev) {
-    ev.surface_width = static_cast<uint32_t>(g_width.load());
-    ev.surface_height = static_cast<uint32_t>(g_height.load());
+    ev.surface_width =
+        static_cast<uint32_t>(to_engine_px(static_cast<float>(g_width.load())) + 0.5f);
+    ev.surface_height =
+        static_cast<uint32_t>(to_engine_px(static_cast<float>(g_height.load())) + 0.5f);
+    if (ev.type == stud::android_glue::HostInputEvent::kPointerMotion ||
+        ev.type == stud::android_glue::HostInputEvent::kPointerButton ||
+        ev.type == stud::android_glue::HostInputEvent::kPointerAxis ||
+        ev.type == stud::android_glue::HostInputEvent::kPointerRelative ||
+        ev.type == stud::android_glue::HostInputEvent::kPointerEnter) {
+        ev.x = to_engine_px(ev.x);
+        ev.y = to_engine_px(ev.y);
+    }
     stud::android_glue::push_host_input_event(ev);
+}
+
+// Raw motion, straight off the device: one event per physical movement,
+// with the deltas the device reported, whatever the pointer is doing.
+void on_raw_motion(double dx, double dy) {
+    if (!g_pointer_locked.load() && !g_pointer_confined.load()) return;
+    if (dx == 0.0 && dy == 0.0) return;
+    stud::android_glue::HostInputEvent ev;
+    ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
+    ev.x = static_cast<float>(dx);
+    ev.y = static_cast<float>(dy);
+    push(ev);
 }
 
 void on_motion(int x_pos, int y_pos) {
@@ -514,7 +656,8 @@ void on_motion(int x_pos, int y_pos) {
         const int dy = y_pos - g_locked_last_y;
         g_locked_last_x = x_pos;
         g_locked_last_y = y_pos;
-        if (dx != 0 || dy != 0) {
+        // Raw motion already reported this movement, from the device.
+        if (!g_raw_motion && (dx != 0 || dy != 0)) {
             stud::android_glue::HostInputEvent ev;
             ev.type = stud::android_glue::HostInputEvent::kPointerRelative;
             ev.x = static_cast<float>(dx);
@@ -543,8 +686,32 @@ void on_motion(int x_pos, int y_pos) {
         }
         return;
     }
+    // Relative motion while CONFINED, not only while locked, because that
+    // is what the Wayland side does (relative_pointer_motion() reports
+    // for locked OR confined) and everything downstream is written to it:
+    // during a confined drag the client deliberately withholds the delta
+    // it could compute from these absolute positions, on the grounds that
+    // the relative event for the same motion carries it. On X11 that
+    // event did not exist, so the movement was withheld and nothing
+    // replaced it -- a camera drag moved the view by exactly nothing,
+    // while the engine pinned its own cursor for the gesture, so the
+    // cursor stopped too. User-reported as "you click, it moves a tiny
+    // bit, you click again, repeat".
+    //
+    // A camera drag confines rather than locks (drag-lock is opt-in,
+    // STUD_DRAG_LOCK), which is why the locked branch above never came
+    // into it.
+    const float dx = static_cast<float>(x_pos) - g_pointer_x;
+    const float dy = static_cast<float>(y_pos) - g_pointer_y;
     g_pointer_x = static_cast<float>(x_pos);
     g_pointer_y = static_cast<float>(y_pos);
+    if (!g_raw_motion && g_pointer_confined.load() && (dx != 0.0f || dy != 0.0f)) {
+        stud::android_glue::HostInputEvent rel;
+        rel.type = stud::android_glue::HostInputEvent::kPointerRelative;
+        rel.x = dx;
+        rel.y = dy;
+        push(rel);
+    }
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kPointerMotion;
     ev.x = g_pointer_x;
@@ -674,6 +841,27 @@ void pump() {
     while (x.Pending(g_display) > 0) {
         XEvent event{};
         x.NextEvent(g_display, &event);
+        if (g_raw_motion && event.type == GenericEvent &&
+            event.xcookie.extension == g_xi_opcode && x.GetEventData != nullptr &&
+            x.GetEventData(g_display, &event.xcookie) == True) {
+            if (event.xcookie.evtype == XI_RawMotion && event.xcookie.data != nullptr) {
+                const auto* raw = static_cast<const XIRawEvent*>(event.xcookie.data);
+                // valuator 0 is X, 1 is Y, and only the axes that moved
+                // are present, so the values are walked in order.
+                double dx = 0.0;
+                double dy = 0.0;
+                const double* value = raw->raw_values;
+                for (int axis = 0; axis < raw->valuators.mask_len * 8; ++axis) {
+                    if (!XIMaskIsSet(raw->valuators.mask, axis)) continue;
+                    if (axis == 0) dx = *value;
+                    if (axis == 1) dy = *value;
+                    ++value;
+                }
+                on_raw_motion(dx, dy);
+            }
+            if (x.FreeEventData != nullptr) x.FreeEventData(g_display, &event.xcookie);
+            continue;
+        }
         switch (event.type) {
             case ConfigureNotify: {
                 const auto& configure = event.xconfigure;
