@@ -346,6 +346,7 @@ int main(int argc, char** argv) {
     // Before anything else prints: the session log Process A named, so
     // this process's whole bring-up is in it (stud/session_log.h).
     stud::logging::start_session_log_from_env();
+
     // Process B's own fatal-signal handling is trap_recovery's, which
     // recovers rather than reports. It installs itself later and must
     // win, so nothing is installed here.

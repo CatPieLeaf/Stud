@@ -18,7 +18,11 @@
 
 #include <atomic>
 #include <algorithm>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <map>
+#include <thread>
 #include <vector>
 
 // Wire protocol between Process B (real bionic, running Roblox's own
@@ -1156,6 +1160,37 @@ public:
         hdr.flags = 0;
         hdr.in_buffer_len = in_len;
         hdr.out_buffer_len = out_capacity;
+        // Single-writer: this request takes its place in the queue like
+        // everything else, and the caller waits for ITS OWN reply.
+        //
+        // Anything queued ahead still reaches the host first -- that is
+        // what the queue is -- but the caller no longer has to drive it
+        // there, and nothing queued behind it makes anyone wait. This is
+        // the path that replaced draining a second producer.
+        if (writer_started_) {
+            Completion c;
+            c.out = out_buffer;
+            c.cap = out_capacity;
+            const size_t at = queue_.size();
+            queue_.resize(at + sizeof(hdr) + in_len);
+            std::memcpy(queue_.data() + at, &hdr, sizeof(hdr));
+            if (in_len > 0 && in_buffer != nullptr) {
+                std::memcpy(queue_.data() + at + sizeof(hdr), in_buffer, in_len);
+            }
+            marks_.push_back(Mark{queue_.size(), nullptr, &c});
+            // Handing the queue over before waiting: the writer needs the
+            // lock this call is holding.
+            call_mutex_.unlock();
+            writer_wake_.notify_one();
+            {
+                std::unique_lock<std::mutex> wait_lock(c.m);
+                c.cv.wait(wait_lock, [&c] { return c.done; });
+            }
+            call_mutex_.lock();
+            if (out_len_written != nullptr) *out_len_written = c.written;
+            return c.failed ? kNullHandle : c.result;
+        }
+
         // Anything queued ahead of this must reach the server first: the
         // stream is ordered, and this call's own answer depends on that
         // earlier work having run.
@@ -1402,7 +1437,7 @@ public:
         static const bool no_pipeline = std::getenv("STUD_IPC_NO_PIPELINE") != nullptr;
         if (no_pipeline || batch_.size() >= kQueueFlushBytes) {
             emit_gl_batch_locked();
-            flush_locked();
+            hand_off_locked();
         }
         if (stats) {
             ++stats_void_calls_;
@@ -1436,7 +1471,7 @@ public:
         std::lock_guard<std::mutex> lock(call_mutex_);
         emit_command_batch_locked();
         emit_gl_batch_locked();
-        return flush_locked();
+        return hand_off_locked();
     }
 
 private:
@@ -1474,10 +1509,206 @@ private:
         queue_.insert(queue_.end(), hdr_bytes, hdr_bytes + sizeof(hdr));
         queue_.insert(queue_.end(), command_batch_.begin(), command_batch_.end());
         command_batch_.clear();
-        if (queue_.size() >= kQueueFlushBytes) flush_locked();
+        if (queue_.size() >= kQueueFlushBytes) hand_off_locked();
     }
 
     std::vector<uint8_t> command_batch_;
+
+    // ---- Single-writer mode -------------------------------------------
+    //
+    // One thread owns the socket. Everything else only ever appends to
+    // `queue_` under `call_mutex_`, so the order bytes reach the host is
+    // exactly the order the engine's own threads produced them, and
+    // nothing has to wait to find out where it stands in that order.
+    //
+    // WHY, measured: vkQueueSubmit and vkQueuePresentKHR used to be run
+    // by a second thread (DeferredQueue), so the stream had two producers
+    // and their relative order was whatever the scheduler chose. Anything
+    // that had to be ordered after a submit -- resetting a fence,
+    // resetting a command pool, acquiring the next image -- could only get
+    // that guarantee by DRAINING that thread first. Sampled in a real
+    // game, the engine's Main thread spent 13.1% of its wall clock parked
+    // in exactly that drain (futex on DeferredQueue's own condvar), while
+    // Process B as a whole used 1.72 of its 12 cores. It was not waiting
+    // for work; it was waiting to be told the queue was empty.
+    //
+    // With one writer that question disappears. A caller that wants an
+    // answer waits for ITS OWN reply and nothing else; a caller that does
+    // not simply appends and returns.
+    //
+    // `marks_` is what makes that work without giving up the batching.
+    // Bytes keep accumulating in one buffer, and a mark records, by byte
+    // offset, a place the writer must stop: either to run an ordered
+    // action (the texture decode that has to finish before the submit
+    // that reads it) or to read a reply for a caller that is waiting.
+    struct Completion {
+        std::mutex m;
+        std::condition_variable cv;
+        bool done = false;
+        bool failed = false;
+        uint64_t result = 0;
+        void* out = nullptr;
+        uint32_t cap = 0;
+        uint32_t written = 0;
+    };
+
+    struct Mark {
+        size_t at = 0;                 // write everything before this offset first
+        std::function<void()> action;  // ...then run this, if set
+        Completion* completion = nullptr;  // ...then read this reply, if set
+    };
+
+public:
+    // Turns this connection into a single-writer one. Call once, right
+    // after connect_to(), and only for a connection that actually needs
+    // it: the audio, input and test clients are each used by one thread
+    // and gain nothing from a thread of their own.
+    void start_writer() {
+        std::lock_guard<std::mutex> lock(call_mutex_);
+        if (writer_started_) return;
+        writer_started_ = true;
+        std::thread([this] { writer_loop(); }).detach();
+    }
+
+    bool writer_active() const { return writer_started_; }
+
+    // Puts a piece of work INTO the stream, to run on the writer thread
+    // when everything queued before it has been written and before
+    // anything queued after it is.
+    //
+    // This is what keeps the texture decode off the engine's thread
+    // without a second producer: the decode is ordered against the submit
+    // that reads its output by being in the same queue as it, rather than
+    // by the submitting thread waiting for a different thread to finish.
+    void enqueue_action(std::function<void()> fn) {
+        if (!fn) return;
+        if (!writer_started_) {
+            fn();
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(call_mutex_);
+            if (fd_ < 0) return;
+            emit_command_batch_locked();
+            emit_gl_batch_locked();
+            marks_.push_back(Mark{queue_.size(), std::move(fn), nullptr});
+        }
+        writer_wake_.notify_one();
+    }
+
+private:
+    void writer_loop() {
+        for (;;) {
+            std::vector<uint8_t> bytes;
+            std::deque<Mark> marks;
+            {
+                std::unique_lock<std::mutex> lock(call_mutex_);
+                writer_wake_.wait(lock, [this] {
+                    return !queue_.empty() || !marks_.empty() || !batch_.empty() ||
+                           !command_batch_.empty() || fd_ < 0;
+                });
+                if (fd_ < 0) {
+                    fail_all_pending_locked();
+                    return;
+                }
+                emit_command_batch_locked();
+                emit_gl_batch_locked();
+                bytes.swap(queue_);
+                queue_.clear();
+                reserve_queue_once();
+                marks.swap(marks_);
+            }
+
+            size_t pos = 0;
+            bool ok = true;
+            for (Mark& m : marks) {
+                if (ok && m.at > pos) {
+                    ok = write_all(bytes.data() + pos, static_cast<uint32_t>(m.at - pos));
+                }
+                pos = m.at;
+                if (m.action) {
+                    // Runs even if the socket has already failed: it owns
+                    // real work (a decode) whose buffers something else
+                    // may be waiting on.
+                    m.action();
+                }
+                if (m.completion != nullptr) {
+                    if (ok) {
+                        ok = read_reply_into(*m.completion);
+                    }
+                    if (!ok) {
+                        signal_failed(*m.completion);
+                    }
+                }
+            }
+            if (ok && pos < bytes.size()) {
+                ok = write_all(bytes.data() + pos, static_cast<uint32_t>(bytes.size() - pos));
+            }
+            if (!ok) {
+                std::lock_guard<std::mutex> lock(call_mutex_);
+                mark_dead();
+                fail_all_pending_locked();
+                return;
+            }
+        }
+    }
+
+    bool read_reply_into(Completion& c) {
+        ResponseHeader resp{};
+        if (!read_all(&resp, sizeof(resp))) return false;
+        if (resp.out_buffer_len > 0) {
+            const uint32_t to_copy =
+                resp.out_buffer_len < c.cap ? resp.out_buffer_len : c.cap;
+            if (c.out != nullptr && to_copy > 0) {
+                if (!read_all(c.out, to_copy)) return false;
+                if (resp.out_buffer_len > to_copy) drain(resp.out_buffer_len - to_copy);
+            } else {
+                drain(resp.out_buffer_len);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(c.m);
+            c.result = resp.result;
+            c.written = resp.out_buffer_len;
+            c.done = true;
+        }
+        c.cv.notify_one();
+        return true;
+    }
+
+    static void signal_failed(Completion& c) {
+        {
+            std::lock_guard<std::mutex> lock(c.m);
+            c.result = kNullHandle;
+            c.written = 0;
+            c.failed = true;
+            c.done = true;
+        }
+        c.cv.notify_one();
+    }
+
+    // Nobody may be left waiting on a reply that can no longer come: a
+    // dead render host has to surface as a failed call, not a hang.
+    void fail_all_pending_locked() {
+        for (Mark& m : marks_) {
+            if (m.completion != nullptr) signal_failed(*m.completion);
+        }
+        marks_.clear();
+    }
+
+    // Gets what is queued moving, by whichever means this connection uses:
+    // waking the writer thread, or writing it here on the caller's own
+    // thread when there is no writer (audio, input, the test client).
+    //
+    // Never waits for the bytes to land. A caller that needs them landed
+    // is a caller asking a question, and call() waits for its own answer.
+    bool hand_off_locked() {
+        if (writer_started_) {
+            writer_wake_.notify_one();
+            return fd_ >= 0;
+        }
+        return flush_locked();
+    }
 
     bool flush_locked() {
         if (queue_.empty()) return true;
@@ -1499,6 +1730,9 @@ private:
     }
 
     std::vector<uint8_t> queue_;
+    std::deque<Mark> marks_;
+    std::condition_variable writer_wake_;
+    bool writer_started_ = false;
     std::map<uint32_t, uint64_t> stats_by_id_;
     uint64_t stats_void_calls_ = 0;
     uint64_t stats_void_ns_ = 0;
