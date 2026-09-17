@@ -1627,11 +1627,20 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // it is really let go. Without this the next auto-repeat,
             // 25 a second, presses it straight back down, which is why
             // the character kept walking while its owner typed.
+            //
+            // Withheld from the ENGINE only. It still types: W was held
+            // when the chat box took focus, so W was in this set, so every
+            // W after that was dropped before it ever reached the editor
+            // and the one letter the player could not type into chat was
+            // the one they had been walking with. What has to stay
+            // untouched is the engine's own idea that the key is down; the
+            // text a keystroke produces has nothing to do with that.
+            bool held_through_text_entry = false;
             {
                 auto& released_into_text = keys_released_into_text_entry();
                 if (released_into_text.count(ev.code) != 0) {
-                    // Everything about this key is dropped until the text
-                    // box lets go, releases included.
+                    // Withheld from the engine until the text box lets go,
+                    // releases included.
                     //
                     // An earlier version erased the key here on a real
                     // release, on the reasoning that the user had let go so
@@ -1647,7 +1656,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     // The set is cleared in exactly one place now, at the
                     // moment focus is released, right after the real
                     // releases are sent.
-                    return;
+                    held_through_text_entry = true;
                 }
             }
             // Track modifiers locally: Wayland reports them in a separate
@@ -1871,6 +1880,12 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             // hardware keyboard sends and what Roblox uses in-game for
             // its own menu; Alt+Left is the desktop convention for
             // "back" and is what is bound here instead.
+            // Everything above is local: the editor, the overlay, and the
+            // text the engine is told through nativePassText. Below is the
+            // key itself, which is the one thing a withheld key must not
+            // send, in either of its two paths.
+            if (held_through_text_entry) return;
+
             const bool alt_left_back = ev.code == 105 && (g_meta_state & kMetaAlt) != 0;
             if (alt_left_back) {
                 if (g_agdk_env != nullptr) {
