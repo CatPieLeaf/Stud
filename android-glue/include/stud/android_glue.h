@@ -262,6 +262,14 @@ int32_t native_window_wait_for_display_scale_120();
 // upscaled.
 void native_window_display_pixel_size(int32_t* width, int32_t* height);
 
+// Between the X server's device pixels and the engine's buffer pixels.
+// The two differ by the display scale whenever the engine is rendering
+// below the window's own resolution, which is what HiDPI-off and the
+// upscaler both do. See the definitions for why X11 needs this and
+// Wayland does not.
+float native_window_pointer_px_from_device(float device_px);
+float native_window_device_px_from_pointer(float pointer_px);
+
 // An xdg-activation token for launching another application from this
 // window. A Wayland compositor deliberately will not let an arbitrary
 // process steal focus; handing the launched program a token minted

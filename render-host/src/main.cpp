@@ -3760,14 +3760,89 @@ void sync_vk_window_size() {
     static uint32_t last_w = 0, last_h = 0;
     if (w == last_w && h == last_h) return;
 
+    // Let the drag FINISH before the engine is told.
+    //
+    // Every size change here becomes a new surface extent, and a new
+    // surface extent makes the engine tear its swapchain down and build
+    // another. On Wayland a drag arrives as a handful of configure
+    // events, so that is a handful of rebuilds. X11 reports every pixel:
+    // one drag produced a rebuild per pixel, and one of those teardowns
+    // caught work that was still pending on the swapchain it was
+    // destroying -- after which the device can never go idle, and the
+    // engine's own vkDeviceWaitIdle on the next rebuild never returns.
+    // Live-caught as `dispatch call=154` stuck for ever and a dead
+    // window.
+    //
+    // So the newest size is remembered and applied once it has held still
+    // briefly. Mid-drag the engine keeps rendering at the size it has,
+    // which the server scales into the window exactly as it does for
+    // every other resizing program, and one rebuild happens at the end.
+    // The first size is applied at once: there is nothing to settle yet,
+    // and the engine cannot start without it.
+    static uint32_t pending_w = 0;
+    static uint32_t pending_h = 0;
+    static auto size_changed_at = std::chrono::steady_clock::now();
+    static auto last_applied_at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+    const bool first_size = last_w == 0 || last_h == 0;
+    // A size that arrives out of the blue is applied AT ONCE; only the
+    // ones that follow it are made to settle.
+    //
+    // Toggling fullscreen is a single change, and waiting for it to
+    // settle was pure delay -- the window was already its new size, with
+    // the engine still rendering the old one into a corner of it. A drag
+    // is hundreds of changes, and those still collapse into one rebuild
+    // at the end, which is what stops the engine from being asked to
+    // rebuild faster than a rebuild takes (measured: 35ms, nearly all of
+    // it inside the driver).
+    const bool settled_before =
+        std::chrono::steady_clock::now() - last_applied_at > std::chrono::milliseconds(200);
+    if (!first_size && !settled_before) {
+        if (w != pending_w || h != pending_h) {
+            pending_w = w;
+            pending_h = h;
+            size_changed_at = std::chrono::steady_clock::now();
+        }
+        static const int settle_ms = [] {
+            const char* v = std::getenv("STUD_RESIZE_SETTLE_MS");
+            // Short: this is the window in which the engine is still
+            // rendering at the old size while the window is already the
+            // new one, and on X11 the uncovered strip has nothing in it
+            // (the window has no background, deliberately -- see
+            // x11_backend.cpp -- so it shows through). Long enough to
+            // collapse a drag's worth of sizes into one rebuild, short
+            // enough that the strip is a flicker rather than a hole.
+            const int n = v != nullptr ? std::atoi(v) : 80;
+            return n >= 0 ? n : 80;
+        }();
+        if (std::chrono::steady_clock::now() - size_changed_at <
+            std::chrono::milliseconds(settle_ms)) {
+            return;
+        }
+    }
+
     last_w = w;
     last_h = h;
+    last_applied_at = std::chrono::steady_clock::now();
     stud::render_host::vk_set_window_size(w, h);
     // What the upscaler writes: the window in the display's own pixels,
     // which is a different number from the one above whenever the engine
     // is rendering below the screen. Zero while upscaling is off, which
     // disables the path entirely.
-    if (g_upscaling_enabled) {
+    // On X11 the pass runs whether or not the filter is switched on.
+    //
+    // Wayland scales the buffer to the window itself: a surface carries
+    // its own scale and viewport, so rendering below the window's real
+    // resolution costs nothing but sharpness. X has no such thing. A
+    // buffer smaller than the window would simply be a smaller picture in
+    // the corner of it, so something has to scale it, and the only
+    // something is this pass. With the filter on that is FSR; with it off
+    // it is a plain scaled blit, which is exactly what the Wayland
+    // compositor would have done.
+    const bool scale_in_stud =
+        g_upscaling_enabled ||
+        stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11;
+    stud::render_host::vk_set_upscale_use_compute(g_upscaling_enabled);
+    if (scale_in_stud) {
         int32_t real_w = 0;
         int32_t real_h = 0;
         stud::android_glue::native_window_display_pixel_size(&real_w, &real_h);

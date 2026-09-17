@@ -103,6 +103,12 @@ void vk_set_upscale_sharpness_percent(int32_t percent) {
 
 std::atomic<uint32_t> g_upscale_output_w{0};
 std::atomic<uint32_t> g_upscale_output_h{0};
+// Whether the pass may use its shaders. See the header.
+std::atomic<bool> g_upscale_use_compute{true};
+
+void vk_set_upscale_use_compute(bool use_compute) {
+    g_upscale_use_compute.store(use_compute, std::memory_order_relaxed);
+}
 
 void vk_set_upscale_output_size(uint32_t width, uint32_t height) {
     g_upscale_output_w.store(width, std::memory_order_relaxed);
@@ -1594,8 +1600,21 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
     // sentinel defers. Reporting the real size here is what a real
     // Android surface would have reported, not a fabrication.
     constexpr uint32_t kUndefinedExtent = 0xFFFFFFFFu;
-    if (caps.currentExtent.width == kUndefinedExtent ||
-        caps.currentExtent.height == kUndefinedExtent) {
+    // X11 answers this question itself, and its answer is the wrong one.
+    //
+    // A Wayland surface has no size of its own, so the driver returns the
+    // sentinel and Stud says how big the engine's buffer is. An X surface
+    // IS a window, so the driver returns the window's real device size --
+    // and the engine then renders at that size, which is the whole
+    // resolution, leaving the upscaler nothing to scale and HiDPI nothing
+    // to do. Substituting here puts both backends back on the same
+    // footing: the engine renders into the buffer Stud sized for it, and
+    // the pass covers the difference.
+    const bool substitute_extent =
+        stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11 ||
+        caps.currentExtent.width == kUndefinedExtent ||
+        caps.currentExtent.height == kUndefinedExtent;
+    if (substitute_extent) {
         // NEVER call ANativeWindow_fromSurface(nullptr, nullptr) here.
         // With a null Surface it only returns the existing window while
         // the window cache is non-empty, and a null Surface never
@@ -1625,8 +1644,8 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
             if (w != announced_w || h != announced_h) {
                 announced_w = w;
                 announced_h = h;
-                std::printf("stud-render-host: surface currentExtent was undefined (Wayland), "
-                            "reporting the real window size %ux%u\n", w, h);
+                std::printf("stud-render-host: reporting the engine's own surface size "
+                            "%ux%u\n", w, h);
                 std::fflush(stdout);
             }
         }
@@ -1688,8 +1707,22 @@ uint64_t vk_device_wait_idle() {
     if (l.device_wait_idle == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    // Every queue on the device, so it belongs under the same lock.
-    std::lock_guard<std::mutex> queue_lock(queue_mutex());
+    // NOT under the queue lock, deliberately, and this was a deadlock.
+    //
+    // Taking it here looks right -- vkDeviceWaitIdle is externally
+    // synchronised against every queue on the device -- but it waits for
+    // the GPU to go idle, and the thread it waits behind is the one
+    // inside vkQueuePresentKHR, which holds the lock while the driver
+    // blocks. During a resize the engine calls this on every swapchain
+    // rebuild, so a drag put the two on top of each other: the wait could
+    // not start until the present finished and the present could not
+    // finish. Live-caught as the render connection stopping dead --
+    // `dispatch call=154` for five seconds and a black window that never
+    // came back.
+    //
+    // What the lock is actually for is two threads issuing queue work at
+    // the same instant, and Stud's own submits and presents still take
+    // it. A wait for idle issues nothing.
     return static_cast<uint64_t>(static_cast<int32_t>(l.device_wait_idle(l.device)));
 }
 
@@ -2181,6 +2214,32 @@ struct UpscaleChain {
     // buffer has finished, which a re-submit requires.
     std::vector<VkCommandBuffer> cmd;
     std::vector<VkSemaphore> done;
+    // Semaphores a failed present may have left signalled.
+    //
+    // The pass signals done[index] and the present is what consumes it.
+    // When the present fails -- which on X11 it does on every resize --
+    // nothing consumed it, so it is still signalled, and signalling a
+    // binary semaphore that is already signalled wedges the queue for
+    // good: the device then never goes idle and the engine's own
+    // vkDeviceWaitIdle never returns. Live-caught exactly that way.
+    //
+    // So the semaphore is retired on the spot and a fresh one takes its
+    // place. Retiring rather than destroying because the submit that
+    // signalled it may still be running; these are destroyed with the
+    // rest of the chain, by which time nothing can be using them.
+    std::vector<VkSemaphore> retired;
+    // Set when a present did not return SUCCESS or SUBOPTIMAL.
+    //
+    // A failed present leaves the semaphores it was told to wait on in an
+    // UNDEFINED state: the spec does not say whether they were consumed.
+    // The pass signals `done[index]` every frame, so if the present that
+    // should have consumed it did not, the next submit signals a binary
+    // semaphore that is already signalled -- which wedges the queue, and a
+    // wedged queue never goes idle, so the engine's own vkDeviceLoseIdle
+    // on the next swapchain rebuild never returns. That is a resize
+    // killing the window, live-caught twice: OUT_OF_DATE from acquire,
+    // then `dispatch call=154` (vkDeviceWaitIdle) stuck for ever.
+    bool semaphores_tainted = false;
     std::vector<VkFence> fence;
     std::vector<bool> in_flight;
     // The real upscale: one compute dispatch per frame, reading the
@@ -2371,6 +2430,16 @@ void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* d
     if (needs_transfer) *dst_stage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
 }
 
+// Everything the pass owns EXCEPT the images the engine renders into.
+//
+// Those came out of vkGetSwapchainImagesKHR as far as the engine knows,
+// so it holds them, makes views and framebuffers of them, and would be
+// left with dangling handles if a rebuild threw them away. Everything on
+// the window side -- the real images' views, the recorded command
+// buffers, the descriptor sets that name them -- belongs to one real
+// swapchain and goes with it.
+void destroy_upscale_chain_keeping_offscreen(UpscaleChain& c);
+
 void destroy_upscale_chain(UpscaleChain& c) {
     Loader& l = loader();
     if (l.device == VK_NULL_HANDLE) return;
@@ -2457,7 +2526,28 @@ void destroy_upscale_chain(UpscaleChain& c) {
     for (auto mem : c.staging_memory) {
         if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
     }
+    for (auto sem : c.retired) {
+        if (sem != VK_NULL_HANDLE && l.destroy_semaphore != nullptr) {
+            l.destroy_semaphore(l.device, sem, nullptr);
+        }
+    }
     c = UpscaleChain{};
+}
+
+void destroy_upscale_chain_keeping_offscreen(UpscaleChain& c) {
+    // The engine's images and their memory are lifted out, the rest is
+    // torn down exactly as usual, and they are put back.
+    std::vector<VkImage> offscreen;
+    std::vector<VkDeviceMemory> memory;
+    offscreen.swap(c.offscreen);
+    memory.swap(c.memory);
+    const VkExtent2D engine = c.engine;
+    const VkFormat format = c.format;
+    destroy_upscale_chain(c);
+    c.offscreen.swap(offscreen);
+    c.memory.swap(memory);
+    c.engine = engine;
+    c.format = format;
 }
 
 // Device-local memory for an offscreen colour target. No host access is
@@ -3014,6 +3104,158 @@ bool record_upscale_blits(UpscaleChain& c) {
     return true;
 }
 
+// Builds everything on the WINDOW side of the pass for one real
+// swapchain: the offscreen images the engine renders into, the command
+// buffers that scale them, and the semaphores and fences that order it.
+//
+// Factored out of vkCreateSwapchainKHR so the window side can be rebuilt
+// on its own. `reuse_offscreen` keeps the images the engine is already
+// holding -- it was handed those from vkGetSwapchainImagesKHR and has no
+// idea they are Stud's, so they must outlive any number of rebuilds.
+
+// The swapchain the engine holds, and the one that really exists.
+//
+// On Wayland these are always the same handle: a surface there has no
+// size of its own, so a resize never invalidates a swapchain and the
+// engine's own rebuilds (79 of them in one measured session) all succeed.
+// Android behaves the same way, which is the only contract this engine
+// has ever been written against.
+//
+// X11 is the exception: the surface IS the window, so the driver
+// invalidates the swapchain the moment it resizes and hands back
+// VK_ERROR_OUT_OF_DATE_KHR -- an error the engine meets nowhere else and
+// does not recover from. It abandons the frame mid-flight, and what is
+// left queued can never complete, so the device never goes idle and its
+// next vkDeviceWaitIdle never returns: the window dies, every time.
+//
+// So Stud answers that error itself. It rebuilds the real swapchain,
+// keeping the images the engine was given, and the engine sees the
+// success it would have seen on any other platform. It still learns about
+// the resize the way it always does, through the surface capabilities.
+std::map<uint64_t, uint64_t> g_swapchain_alias;
+
+struct SavedSwapchainCI {
+    VkSwapchainCreateInfoKHR ci{};
+    std::vector<uint32_t> families;
+};
+std::map<uint64_t, SavedSwapchainCI> g_swapchain_ci;
+
+VkSwapchainKHR live_swapchain(uint64_t engine_handle) {
+    auto it = g_swapchain_alias.find(engine_handle);
+    return from_u64<VkSwapchainKHR>(it == g_swapchain_alias.end() ? engine_handle : it->second);
+}
+
+void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
+                         const VkSwapchainCreateInfoKHR& ci, bool reuse_offscreen) {
+    Loader& l = loader();
+    // One offscreen image per real swapchain image, so an index means
+    // the same thing on both sides and vkAcquireNextImageKHR needs no
+    // translation at all.
+    uint32_t count = 0;
+    l.get_swapchain_images(l.device, swapchain, &count, nullptr);
+    pending.real_images.resize(count);
+    l.get_swapchain_images(l.device, swapchain, &count, pending.real_images.data());
+    pending.real = swapchain;
+
+    bool ok = count > 0;
+    for (uint32_t i = 0; ok && !reuse_offscreen && i < count; ++i) {
+        VkImageCreateInfo ii{};
+        ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ii.imageType = VK_IMAGE_TYPE_2D;
+        ii.format = ci.imageFormat;
+        ii.extent = {pending.engine.width, pending.engine.height, 1};
+        ii.mipLevels = 1;
+        ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT;
+        ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        // Whatever the engine wanted from a swapchain image, plus the
+        // ability for Stud to read it back out on the GPU.
+        ii.usage = ci.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                    VK_IMAGE_USAGE_SAMPLED_BIT;
+        ii.usage &= ~static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImage image = VK_NULL_HANDLE;
+        if (l.create_image(l.device, &ii, nullptr, &image) != VK_SUCCESS) { ok = false; break; }
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+        if (!allocate_offscreen_memory(image, mem)) {
+            if (l.destroy_image != nullptr) l.destroy_image(l.device, image, nullptr);
+            ok = false;
+            break;
+        }
+        pending.offscreen.push_back(image);
+        pending.memory.push_back(mem);
+    }
+
+    if (ok) {
+        VkCommandPoolCreateInfo pci{};
+        pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pci.queueFamilyIndex = l.first_queue_family;
+        ok = l.create_command_pool(l.device, &pci, nullptr, &pending.pool) == VK_SUCCESS;
+    }
+    if (ok) {
+        pending.cmd.resize(count, VK_NULL_HANDLE);
+        VkCommandBufferAllocateInfo cbai{};
+        cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbai.commandPool = pending.pool;
+        cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbai.commandBufferCount = count;
+        ok = l.allocate_command_buffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
+    }
+    for (uint32_t i = 0; ok && i < count; ++i) {
+        VkSemaphoreCreateInfo sci{};
+        sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        VkSemaphore sem = VK_NULL_HANDLE;
+        if (l.create_semaphore(l.device, &sci, nullptr, &sem) != VK_SUCCESS) { ok = false; break; }
+        pending.done.push_back(sem);
+        VkFenceCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
+        pending.fence.push_back(fence);
+    }
+    // The real pass. If it cannot be built, an old driver, a format
+    // that will not take a storage image, a machine with no glslc at
+    // build time, the recorded command buffers fall back to a plain
+    // blit, which is what the compositor was doing anyway. Never a
+    // black window.
+    // A plain scaled blit when the filter is switched off: the same
+    // pass without its shaders. X11 needs it even with upscaling off,
+    // because nothing else there scales the engine's buffer up to the
+    // window; see vk_set_upscale_use_compute().
+    //
+    // build_upscale_compute() is what SETS pending.compute, so the
+    // flag has to gate the call rather than the field, or the field
+    // is false before anyone has tried and every chain is a blit.
+    const bool want_compute = g_upscale_use_compute.load(std::memory_order_relaxed);
+    if (ok && want_compute && !build_upscale_compute(pending)) {
+        std::printf("stud-render-host: the upscale shader could not be set up, falling back "
+                    "to a plain scaled blit\n");
+        std::fflush(stdout);
+        pending.compute = false;
+    }
+    if (ok) ok = record_upscale_blits(pending);
+    if (!ok) {
+        // An honest degrade: tear the half-built chain down and let
+        // the engine render straight into the real swapchain, which
+        // is exactly today's behaviour.
+        std::printf("stud-render-host: upscale unavailable for this swapchain, presenting "
+                    "the engine's own image instead\n");
+        std::fflush(stdout);
+        destroy_upscale_chain(pending);
+    } else {
+        pending.in_flight.assign(count, false);
+        g_upscale_chains[to_u64(swapchain)] = std::move(pending);
+        const UpscaleChain& built = g_upscale_chains[to_u64(swapchain)];
+        std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
+                    built.engine.width, built.engine.height, built.present.width,
+                    built.present.height, count,
+                    built.compute ? (built.sharpen ? "EASU + RCAS" : "EASU")
+                                  : "linear blit");
+        std::fflush(stdout);
+    }
+}
+
 uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                               uint32_t* out_len) {
     Loader& l = loader();
@@ -3101,108 +3343,37 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     }
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    const auto create_t0 = std::chrono::steady_clock::now();
     VkResult r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
     std::printf("stud-render-host: vkCreateSwapchainKHR -> %d (%ux%u format=%u images>=%u)\n",
                 static_cast<int>(r), h.width, h.height, h.image_format, h.min_image_count);
     std::fflush(stdout);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     g_swapchain_extents[to_u64(swapchain)] = ci.imageExtent;
+    {
+        // Kept so Stud can build this swapchain again at a new size
+        // without the engine's help. The family list is copied, since the
+        // create-info only points at it.
+        SavedSwapchainCI saved;
+        saved.ci = ci;
+        saved.families = families;
+        saved.ci.pQueueFamilyIndices =
+            saved.families.empty() ? nullptr : saved.families.data();
+        saved.ci.oldSwapchain = VK_NULL_HANDLE;
+        g_swapchain_ci[to_u64(swapchain)] = std::move(saved);
+    }
+    const auto chain_t0 = std::chrono::steady_clock::now();
     if (want_upscale) {
-        // One offscreen image per real swapchain image, so an index means
-        // the same thing on both sides and vkAcquireNextImageKHR needs no
-        // translation at all.
-        uint32_t count = 0;
-        l.get_swapchain_images(l.device, swapchain, &count, nullptr);
-        pending.real_images.resize(count);
-        l.get_swapchain_images(l.device, swapchain, &count, pending.real_images.data());
-        pending.real = swapchain;
-
-        bool ok = count > 0;
-        for (uint32_t i = 0; ok && i < count; ++i) {
-            VkImageCreateInfo ii{};
-            ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-            ii.imageType = VK_IMAGE_TYPE_2D;
-            ii.format = ci.imageFormat;
-            ii.extent = {pending.engine.width, pending.engine.height, 1};
-            ii.mipLevels = 1;
-            ii.arrayLayers = 1;
-            ii.samples = VK_SAMPLE_COUNT_1_BIT;
-            ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-            // Whatever the engine wanted from a swapchain image, plus the
-            // ability for Stud to read it back out on the GPU.
-            ii.usage = ci.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                        VK_IMAGE_USAGE_SAMPLED_BIT;
-            ii.usage &= ~static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-            ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            VkImage image = VK_NULL_HANDLE;
-            if (l.create_image(l.device, &ii, nullptr, &image) != VK_SUCCESS) { ok = false; break; }
-            VkDeviceMemory mem = VK_NULL_HANDLE;
-            if (!allocate_offscreen_memory(image, mem)) {
-                if (l.destroy_image != nullptr) l.destroy_image(l.device, image, nullptr);
-                ok = false;
-                break;
-            }
-            pending.offscreen.push_back(image);
-            pending.memory.push_back(mem);
-        }
-
-        if (ok) {
-            VkCommandPoolCreateInfo pci{};
-            pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            pci.queueFamilyIndex = l.first_queue_family;
-            ok = l.create_command_pool(l.device, &pci, nullptr, &pending.pool) == VK_SUCCESS;
-        }
-        if (ok) {
-            pending.cmd.resize(count, VK_NULL_HANDLE);
-            VkCommandBufferAllocateInfo cbai{};
-            cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            cbai.commandPool = pending.pool;
-            cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            cbai.commandBufferCount = count;
-            ok = l.allocate_command_buffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
-        }
-        for (uint32_t i = 0; ok && i < count; ++i) {
-            VkSemaphoreCreateInfo sci{};
-            sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-            VkSemaphore sem = VK_NULL_HANDLE;
-            if (l.create_semaphore(l.device, &sci, nullptr, &sem) != VK_SUCCESS) { ok = false; break; }
-            pending.done.push_back(sem);
-            VkFenceCreateInfo fci{};
-            fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-            VkFence fence = VK_NULL_HANDLE;
-            if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
-            pending.fence.push_back(fence);
-        }
-        // The real pass. If it cannot be built, an old driver, a format
-        // that will not take a storage image, a machine with no glslc at
-        // build time, the recorded command buffers fall back to a plain
-        // blit, which is what the compositor was doing anyway. Never a
-        // black window.
-        if (ok && !build_upscale_compute(pending)) {
-            std::printf("stud-render-host: the upscale shader could not be set up, falling back "
-                        "to a plain scaled blit\n");
-            std::fflush(stdout);
-            pending.compute = false;
-        }
-        if (ok) ok = record_upscale_blits(pending);
-        if (!ok) {
-            // An honest degrade: tear the half-built chain down and let
-            // the engine render straight into the real swapchain, which
-            // is exactly today's behaviour.
-            std::printf("stud-render-host: upscale unavailable for this swapchain, presenting "
-                        "the engine's own image instead\n");
-            std::fflush(stdout);
-            destroy_upscale_chain(pending);
-        } else {
-            pending.in_flight.assign(count, false);
-            g_upscale_chains[to_u64(swapchain)] = std::move(pending);
-            const UpscaleChain& built = g_upscale_chains[to_u64(swapchain)];
-            std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
-                        built.engine.width, built.engine.height, built.present.width,
-                        built.present.height, count,
-                        built.compute ? (built.sharpen ? "EASU + RCAS" : "EASU")
-                                      : "linear blit");
+        build_upscale_chain(pending, swapchain, ci, /*reuse_offscreen=*/false);
+    }
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const double swap_ms =
+            std::chrono::duration<double, std::milli>(chain_t0 - create_t0).count();
+        const double chain_ms = std::chrono::duration<double, std::milli>(now - chain_t0).count();
+        if (swap_ms + chain_ms > 20.0) {
+            std::printf("stud-render-host: a swapchain rebuild cost %.0fms (driver %.0f, "
+                        "upscale pass %.0f)\n", swap_ms + chain_ms, swap_ms, chain_ms);
             std::fflush(stdout);
         }
     }
@@ -3265,7 +3436,9 @@ uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vec
             static_cast<int32_t>(truncated ? VK_INCOMPLETE : VK_SUCCESS));
     }
 
-    VkSwapchainKHR sc = from_u64<VkSwapchainKHR>(swapchain);
+    // No upscale chain: the engine really does own this swapchain's
+    // images, so it gets whichever swapchain its handle stands for.
+    VkSwapchainKHR sc = live_swapchain(swapchain);
     uint32_t count = 0;
     VkResult r = l.get_swapchain_images(l.device, sc, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
@@ -3547,6 +3720,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::Swapchain: {
             g_swapchain_extents.erase(handle);
+            // The engine names the handle it was given; what has to be
+            // destroyed is whatever that stands for now.
+            const uint64_t live = to_u64(live_swapchain(handle));
+            g_swapchain_alias.erase(handle);
+            g_swapchain_ci.erase(handle);
             // Stud's own offscreen images and the pass that reads them go
             // with the swapchain they belong to.
             {
@@ -3566,7 +3744,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.swapchain_image_list.erase(images);
             }
             if (l.destroy_swapchain) {
-                l.destroy_swapchain(l.device, from_u64<VkSwapchainKHR>(handle), nullptr);
+                l.destroy_swapchain(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
             }
             break;
         }
@@ -4400,6 +4578,99 @@ std::atomic<uint64_t> g_submit_seq{0};
 // Resets and waits belong in the same log as the submits. A wait that never returns while the same fence is being reset by
 // another thread is a missed signal, and the only way to see it is to have
 // all three in one ordered list.
+// Fences the engine has RESET but not yet submitted anything with.
+//
+// This is the engine's own resize bug, and it is a well-known one: the
+// frame's fence is waited on and reset BEFORE the image is acquired, so
+// when vkAcquireNextImageKHR fails the frame is abandoned with nothing
+// submitted, and that fence can never be signalled. Its next
+// vkWaitForFences on the same fence -- or the vkDeviceWaitIdle in its
+// swapchain rebuild -- then waits for ever. The submit ring caught it
+// exactly: a WAIT and a RESET, and nothing after them.
+//
+// It only bites on X11, because it takes a failed acquire to reach it,
+// and a failed acquire takes a surface whose size the driver enforces.
+// Wayland and Android never produce one, which is why 79 rebuilds in a
+// Wayland session all pass.
+//
+// So Stud keeps track of which fences are in that state and, when an
+// acquire fails, signals them with an empty submit -- the submit the
+// engine would have made if it had not given up. It is legal, it costs
+// nothing, and it turns a permanent hang into a dropped frame.
+std::set<uint64_t> g_fences_reset_unsubmitted;
+std::mutex g_fences_reset_mutex;
+
+// Swapchains whose last acquire failed.
+//
+// After a failed acquire the engine has no image and has rendered
+// nothing, and it presents anyway -- live-caught, the present follows the
+// failed acquire by four milliseconds. That present waits on semaphores
+// its abandoned frame never signalled, so it can never execute, and
+// neither can anything queued behind it: the device stops being able to
+// go idle, and the engine's own vkDeviceWaitIdle waits for ever.
+//
+// The Vulkan specification's own issue tracker describes this hole
+// exactly -- vkDeviceWaitIdle cannot cancel a pending acquire's
+// semaphore, and a submission waiting on one never completes. So the
+// present for a frame that was never acquired is dropped here, which is
+// what the engine would do on any platform where acquire does not fail.
+std::set<uint64_t> g_acquire_failed;
+std::mutex g_acquire_failed_mutex;
+
+void note_acquire_failed(uint64_t swapchain, bool failed) {
+    std::lock_guard<std::mutex> lock(g_acquire_failed_mutex);
+    if (failed) {
+        g_acquire_failed.insert(swapchain);
+    } else {
+        g_acquire_failed.erase(swapchain);
+    }
+}
+
+bool take_acquire_failed(uint64_t swapchain) {
+    std::lock_guard<std::mutex> lock(g_acquire_failed_mutex);
+    return g_acquire_failed.erase(swapchain) != 0;
+}
+
+void note_fence_reset(uint64_t fence) {
+    if (fence == 0) return;
+    std::lock_guard<std::mutex> lock(g_fences_reset_mutex);
+    g_fences_reset_unsubmitted.insert(fence);
+}
+
+void note_fence_submitted(uint64_t fence) {
+    if (fence == 0) return;
+    std::lock_guard<std::mutex> lock(g_fences_reset_mutex);
+    g_fences_reset_unsubmitted.erase(fence);
+}
+
+// Signals whatever the engine left behind, so its next wait can finish.
+void signal_fences_the_engine_reset(VkQueue queue) {
+    Loader& l = loader();
+    if (l.queue_submit == nullptr || queue == VK_NULL_HANDLE) return;
+    std::vector<uint64_t> orphans;
+    {
+        std::lock_guard<std::mutex> lock(g_fences_reset_mutex);
+        orphans.assign(g_fences_reset_unsubmitted.begin(), g_fences_reset_unsubmitted.end());
+        g_fences_reset_unsubmitted.clear();
+    }
+    for (uint64_t fence : orphans) {
+        VkSubmitInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        l.queue_submit(queue, 0, nullptr, from_u64<VkFence>(fence));
+    }
+    if (!orphans.empty()) {
+        static int said = 0;
+        if (said < 8) {
+            ++said;
+            std::printf("stud-render-host: an acquire failed after the engine had already reset "
+                        "its frame fence; signalled %zu of them so its next wait can finish\n",
+                        orphans.size());
+            std::fflush(stdout);
+        }
+    }
+}
+
 void note_fence_event(const char* what, uint64_t fence) {
     static const auto start = std::chrono::steady_clock::now();
     SubmitRecord rec;
@@ -4480,6 +4751,7 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
             if (first_cb == 0 && !buffers[i].empty()) first_cb = to_u64(buffers[i][0]);
         }
         note_submit(fence, n, total_cbs, first_cb);
+        note_fence_submitted(fence);
     }
     for (uint32_t i = 0; i < n; ++i) {
         submits[i].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -4606,7 +4878,11 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
     {
         vk_wire::Reader probe(in.data(), in.size());
         const uint32_t n = probe.u32();
-        for (uint32_t i = 0; i < n; ++i) note_fence_event("RESET", probe.u64());
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint64_t f = probe.u64();
+            note_fence_event("RESET", f);
+            note_fence_reset(f);
+        }
     }
     Loader& l = loader();
     if (l.reset_fences == nullptr) {
@@ -4632,6 +4908,77 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
+// Builds the real swapchain again, at whatever size the window is now,
+// without telling the engine.
+//
+// Called when the driver reports the current one stale -- which on X11 is
+// every resize. The engine keeps the handle it was given and the images
+// it renders into; only the window side is replaced.
+bool recreate_real_swapchain(uint64_t engine_handle) {
+    // OFF, and kept for the record rather than deleted.
+    //
+    // Rebuilding the window side under the engine works right up until
+    // the new swapchain comes back with a different image count than the
+    // images the engine is already holding, at which point the chain
+    // indexes past them and render-host dies. Making that safe means
+    // owning the image mapping as well, which is a much larger change
+    // than the problem needs: the engine's actual fault is one fence (see
+    // signal_fences_the_engine_reset), and that is addressed directly.
+    //
+    // STUD_VK_REBUILD_SWAPCHAIN=1 turns it back on for anyone measuring.
+    static const bool enabled = std::getenv("STUD_VK_REBUILD_SWAPCHAIN") != nullptr;
+    if (!enabled) return false;
+    Loader& l = loader();
+    auto saved = g_swapchain_ci.find(engine_handle);
+    if (saved == g_swapchain_ci.end() || l.create_swapchain == nullptr) return false;
+
+    const uint32_t out_w = g_upscale_output_w.load(std::memory_order_relaxed);
+    const uint32_t out_h = g_upscale_output_h.load(std::memory_order_relaxed);
+    auto chain = g_upscale_chains.find(engine_handle);
+    VkExtent2D extent = saved->second.ci.imageExtent;
+    if (chain != g_upscale_chains.end() && out_w > 0 && out_h > 0) {
+        // With the pass in place the real swapchain carries the window's
+        // own resolution, not the engine's.
+        extent = {out_w, out_h};
+    } else {
+        extent = {g_window_width.load(std::memory_order_relaxed),
+                  g_window_height.load(std::memory_order_relaxed)};
+    }
+    if (extent.width == 0 || extent.height == 0) return false;
+
+    VkSwapchainKHR old = live_swapchain(engine_handle);
+    VkSwapchainCreateInfoKHR ci = saved->second.ci;
+    ci.imageExtent = extent;
+    ci.oldSwapchain = old;
+    VkSwapchainKHR fresh = VK_NULL_HANDLE;
+    const VkResult r = l.create_swapchain(l.device, &ci, nullptr, &fresh);
+    if (r != VK_SUCCESS) {
+        std::printf("stud-render-host: could not rebuild the swapchain at %ux%u (%d)\n",
+                    extent.width, extent.height, static_cast<int>(r));
+        std::fflush(stdout);
+        return false;
+    }
+
+    if (chain != g_upscale_chains.end()) {
+        destroy_upscale_chain_keeping_offscreen(chain->second);
+        chain->second.present = extent;
+        build_upscale_chain(chain->second, fresh, ci, /*reuse_offscreen=*/true);
+    }
+    if (l.destroy_swapchain != nullptr && old != VK_NULL_HANDLE) {
+        l.destroy_swapchain(l.device, old, nullptr);
+    }
+    g_swapchain_alias[engine_handle] = to_u64(fresh);
+    g_swapchain_extents[engine_handle] = extent;
+    static int rebuilds = 0;
+    if (rebuilds < 8) {
+        ++rebuilds;
+        std::printf("stud-render-host: the window changed under the swapchain; rebuilt it at "
+                    "%ux%u without disturbing the engine\n", extent.width, extent.height);
+        std::fflush(stdout);
+    }
+    return true;
+}
+
 uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore,
                                 uint64_t fence, std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -4646,9 +4993,25 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
     }
     ++acquires;
     const auto t0 = std::chrono::steady_clock::now();
-    VkResult r = l.acquire_next_image(l.device, from_u64<VkSwapchainKHR>(swapchain), timeout,
+    VkResult r = l.acquire_next_image(l.device, live_swapchain(swapchain), timeout,
                                        from_u64<VkSemaphore>(semaphore), from_u64<VkFence>(fence),
                                        &index);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+        // The engine is about to abandon this frame, having already waited
+        // on and reset its fence. Signal it, or its next wait never ends.
+        signal_fences_the_engine_reset(l.probe_queue);
+    }
+    note_acquire_failed(swapchain, r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR && recreate_real_swapchain(swapchain)) {
+        // The engine has no recovery for this; every other platform it
+        // runs on never produces it. Rebuilt above, so ask again -- and
+        // note the semaphore it passed was NOT signalled by the failed
+        // attempt, so this second one signals it exactly once, which is
+        // what the engine's own frame is waiting on.
+        r = l.acquire_next_image(l.device, live_swapchain(swapchain), timeout,
+                                 from_u64<VkSemaphore>(semaphore), from_u64<VkFence>(fence),
+                                 &index);
+    }
     const double ms = std::chrono::duration<double, std::milli>(
                           std::chrono::steady_clock::now() - t0).count();
     if (ms > 50.0) {
@@ -4789,19 +5152,46 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     vk_wire::Reader r(in.data(), in.size());
     const uint32_t nw = r.u32();
     std::vector<VkSemaphore> waits(nw);
+    // Read below and checked before anything is submitted: a present for
+    // a frame whose acquire failed is dropped, see g_acquire_failed.
     for (auto& w : waits) w = from_u64<VkSemaphore>(r.u64());
     const uint32_t ns = r.u32();
     std::vector<VkSwapchainKHR> chains(ns);
+    std::vector<VkSwapchainKHR> live(ns);
     std::vector<uint32_t> indices(ns);
     for (auto& c : chains) c = from_u64<VkSwapchainKHR>(r.u64());
+    // The engine names the handle it was given; the present goes to
+    // whichever swapchain that handle currently stands for.
+    for (size_t i = 0; i < chains.size(); ++i) live[i] = live_swapchain(to_u64(chains[i]));
     for (auto& i : indices) i = r.u32();
+
+    // The frame that was never acquired.
+    //
+    // Its wait semaphores were never signalled, so both the pass and the
+    // present itself would sit in the queue for ever. Reported as success:
+    // the engine loses one frame during a resize, which is what it loses
+    // anyway on a platform where the acquire would have succeeded.
+    bool dropped = false;
+    for (const auto& chain_handle : chains) {
+        if (take_acquire_failed(to_u64(chain_handle))) dropped = true;
+    }
+    if (dropped) {
+        static int said = 0;
+        if (said < 8) {
+            ++said;
+            std::printf("stud-render-host: dropped a present for a frame whose acquire had "
+                        "failed; nothing would ever have signalled what it waits on\n");
+            std::fflush(stdout);
+        }
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
 
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = nw;
     pi.pWaitSemaphores = waits.empty() ? nullptr : waits.data();
     pi.swapchainCount = ns;
-    pi.pSwapchains = chains.empty() ? nullptr : chains.data();
+    pi.pSwapchains = live.empty() ? nullptr : live.data();
     pi.pImageIndices = indices.empty() ? nullptr : indices.data();
     // STUD_VK_PROBE_PIXELS=1: before presenting, copy the swapchain image
     // to a host-visible buffer and report whether it holds anything but
@@ -4831,6 +5221,47 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         if (chain != g_upscale_chains.end() && l.queue_submit != nullptr) {
             UpscaleChain& c = chain->second;
             const uint32_t index = indices[0];
+            // A tainted semaphore cannot be signalled again, and cannot be
+            // destroyed while its own submit is still running either, so
+            // the pass's work is waited out first (bounded, like every
+            // other wait in here) and then they are replaced wholesale.
+            if (c.semaphores_tainted) {
+                c.semaphores_tainted = false;
+                bool idle = true;
+                if (l.wait_for_fences != nullptr && l.device_wait_idle != nullptr) {
+                    for (size_t i = 0; i < c.fence.size(); ++i) {
+                        if (!c.in_flight[i]) continue;
+                        VkResult fr = VK_TIMEOUT;
+                        for (int slice = 0; slice < 4 && fr == VK_TIMEOUT; ++slice) {
+                            fr = l.wait_for_fences(l.device, 1, &c.fence[i], VK_TRUE,
+                                                    250ull * 1000ull * 1000ull);
+                        }
+                        if (fr != VK_SUCCESS) idle = false;
+                    }
+                }
+                if (idle && l.destroy_semaphore != nullptr && l.create_semaphore != nullptr) {
+                    VkSemaphoreCreateInfo sci{};
+                    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+                    for (auto& sem : c.done) {
+                        if (sem != VK_NULL_HANDLE) l.destroy_semaphore(l.device, sem, nullptr);
+                        sem = VK_NULL_HANDLE;
+                        l.create_semaphore(l.device, &sci, nullptr, &sem);
+                    }
+                    if (l.reset_fences != nullptr) {
+                        for (size_t i = 0; i < c.fence.size(); ++i) {
+                            if (c.in_flight[i]) l.reset_fences(l.device, 1, &c.fence[i]);
+                            c.in_flight[i] = false;
+                        }
+                    }
+                    static int said = 0;
+                    if (said < 4) {
+                        ++said;
+                        std::printf("stud-render-host: a present did not succeed, so the pass's "
+                                    "semaphores were replaced before reuse\n");
+                        std::fflush(stdout);
+                    }
+                }
+            }
             // With no semaphore to wait on there is NOTHING ordering this
             // pass against the engine's render: two submissions on one
             // queue may overlap freely, and the pass reads the image the
@@ -4966,6 +5397,11 @@ present_without_upscale:
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
         res = l.queue_present(from_u64<VkQueue>(queue), &pi);
     }
+    if (res == VK_ERROR_OUT_OF_DATE_KHR && ns > 0 && !chains.empty()) {
+        // Same reasoning as the acquire above: rebuild and report success.
+        // The frame itself is lost, which is one frame during a resize.
+        if (recreate_real_swapchain(to_u64(chains[0]))) res = VK_SUCCESS;
+    }
     static int presents = 0;
     // Which thread presents matters: only the main loop pumps Wayland,
     // and a driver completing a present may need the display dispatched.
@@ -4994,6 +5430,31 @@ present_without_upscale:
         std::fflush(stdout);
     }
     ++presents;
+    if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR && ns > 0 && !chains.empty() &&
+        !indices.empty()) {
+        auto failed = g_upscale_chains.find(to_u64(chains[0]));
+        if (failed != g_upscale_chains.end()) {
+            UpscaleChain& fc = failed->second;
+            const uint32_t index = indices[0];
+            if (index < fc.done.size() && l.create_semaphore != nullptr) {
+                fc.retired.push_back(fc.done[index]);
+                VkSemaphoreCreateInfo sci{};
+                sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+                VkSemaphore fresh = VK_NULL_HANDLE;
+                if (l.create_semaphore(l.device, &sci, nullptr, &fresh) == VK_SUCCESS) {
+                    fc.done[index] = fresh;
+                    static int said = 0;
+                    if (said < 8) {
+                        ++said;
+                        std::printf("stud-render-host: a present failed, so the semaphore it "
+                                    "should have consumed was retired rather than signalled "
+                                    "twice\n");
+                        std::fflush(stdout);
+                    }
+                }
+            }
+        }
+    }
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 

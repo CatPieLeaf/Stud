@@ -427,19 +427,39 @@ void apply_locked_x11(const TextOverlaySpec& spec) {
         }
         return;
     }
-    const int buf_w = static_cast<int>(std::ceil(spec.width));
-    const int buf_h = static_cast<int>(std::ceil(spec.height));
+    // The spec is in the engine's buffer pixels; an X window is placed and
+    // sized in the server's device pixels. They are the same number only
+    // while the engine renders at the window's full resolution, which is
+    // no longer true with HiDPI off or the upscaler running -- the box
+    // then landed short of where the engine drew its own text and was
+    // drawn smaller than it, by exactly the display's scale.
+    //
+    // Everything is scaled, geometry and type together, so the overlay is
+    // rendered at the resolution it will actually be shown at rather than
+    // drawn small and stretched. Wayland needs none of this: its
+    // subsurface carries a buffer scale and the compositor maps it.
+    const float measured = native_window_device_px_from_pointer(1.0f);
+    const float to_device = measured > 0.0f ? measured : 1.0f;
+    TextOverlaySpec drawn = spec;
+    drawn.x *= to_device;
+    drawn.y *= to_device;
+    drawn.width *= to_device;
+    drawn.height *= to_device;
+    drawn.pixel_size *= to_device;
+    drawn.line_height *= to_device;
+    drawn.residual_x = 0.0f;
+    drawn.residual_y = 0.0f;
+
+    const int buf_w = static_cast<int>(std::ceil(drawn.width));
+    const int buf_h = static_cast<int>(std::ceil(drawn.height));
     if (buf_w <= 0 || buf_h <= 0) return;
     o.cpu_pixels.assign(static_cast<size_t>(buf_w) * static_cast<size_t>(buf_h) * 4, 0);
     o.pixels = o.cpu_pixels.data();
     o.width = buf_w;
     o.height = buf_h;
-    TextOverlaySpec drawn = spec;
-    drawn.residual_x = 0.0f;
-    drawn.residual_y = 0.0f;
     draw(drawn, o, WaylandOverlayDeps{});
-    x11::present_text_overlay(o.pixels, o.width, o.height, static_cast<int>(spec.x),
-                              static_cast<int>(spec.y));
+    x11::present_text_overlay(o.pixels, o.width, o.height, static_cast<int>(drawn.x),
+                              static_cast<int>(drawn.y));
     o.mapped_visible = true;
 }
 

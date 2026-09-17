@@ -254,16 +254,20 @@ int32_t display_scale_120() {
 stud::android_glue::DisplayBackend display_backend_impl();
 
 int32_t effective_scale_120() {
-    // X11 has no logical/buffer split: a window's size IS its size in
-    // device pixels, and the server scales nothing. So there is no
-    // buffer to multiply, rendering is already 1:1 with the panel, and
-    // treating Xft.dpi as a buffer scale here would render 1.25x the
-    // pixels and then have nothing scale them back down.
+    // The same rule on both backends, and X11 used to be exempt from it.
     //
-    // The display scale is still recorded (display_scale_120 above), and
-    // still reaches the engine as DisplayMetrics density when "Follow
-    // DPI" asks for it. That is a layout decision, not a buffer one.
-    if (display_backend_impl() == stud::android_glue::DisplayBackend::X11) return kScaleUnit;
+    // It returned 1.0 unconditionally, on the reasoning that an X window's
+    // size IS device pixels so there is no buffer to multiply. True as far
+    // as it goes, and it made HiDPI and the upscaler dead on X11: the
+    // engine always rendered at the full window size, so the upscaler
+    // never had anything smaller to scale up and FSR did nothing at all,
+    // which is exactly what a user with FSR enabled saw.
+    //
+    // What X11 really lacks is the compositor's own scaling, not the
+    // split. So the split is reconstructed instead (native_window_pump_x11
+    // derives a logical size from the window's device size and the
+    // display's scale) and Stud does the scaling the compositor would
+    // have done, through the same upscale pass.
     const int32_t requested = g_requested_render_scale_120.load();
     if (requested > 0) return requested;
     return display_scale_120();
@@ -1495,8 +1499,12 @@ void apply_window_geometry(ANativeWindow* window, const char* reason) {
     const int32_t logical_h = window->logical_height.load();
     if (logical_w <= 0 || logical_h <= 0) return;
 
-    const int32_t buf_w = buffer_px_from_logical(logical_w);
-    const int32_t buf_h = buffer_px_from_logical(logical_h);
+    // The same floor the X11 path applies; see native_window_pump_x11().
+    constexpr int32_t kMinBufferPx = 64;
+    int32_t buf_w = buffer_px_from_logical(logical_w);
+    int32_t buf_h = buffer_px_from_logical(logical_h);
+    if (buf_w < kMinBufferPx) buf_w = kMinBufferPx;
+    if (buf_h < kMinBufferPx) buf_h = kMinBufferPx;
     if (buf_w == g_window_width.load() && buf_h == g_window_height.load() &&
         window->egl_window != nullptr) {
         return;
@@ -1700,14 +1708,44 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     if (stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11) {
         const int32_t w = g_default_logical_width.load();
         const int32_t h = g_default_logical_height.load();
-        if (!stud::android_glue::x11::create_window(w, h)) {
+        // The scale FIRST, because an X window is created in device
+        // pixels: a 1382-logical window on a 1.25x desktop is 1728 of
+        // them, and a Wayland one covers exactly that much screen. Read
+        // before the window exists so the engine's very first swapchain
+        // is already the right size -- it asks once, and a chain it
+        // created at the wrong size is one the upscaler can never be
+        // given anything to do with.
+        const int32_t scale = stud::android_glue::x11::display_scale_120();
+        if (scale > 0) g_display_scale_120.store(scale);
+        g_render_scale_120.store(effective_scale_120());
+        // Nearest both ways, so that turning the device size back into a
+        // logical one (native_window_pump_x11) lands on the number it
+        // started from. Rounding up here and up again there differed by a
+        // pixel, and a pixel is a swapchain rebuild.
+        const int32_t device_w =
+            static_cast<int32_t>((static_cast<int64_t>(w) * g_display_scale_120.load() +
+                                  kScaleUnit / 2) / kScaleUnit);
+        const int32_t device_h =
+            static_cast<int32_t>((static_cast<int64_t>(h) * g_display_scale_120.load() +
+                                  kScaleUnit / 2) / kScaleUnit);
+        if (!stud::android_glue::x11::create_window(device_w, device_h)) {
             delete window;
             return nullptr;
         }
         window->logical_width.store(w);
         window->logical_height.store(h);
-        g_window_width.store(w);
-        g_window_height.store(h);
+        g_logical_width.store(w);
+        g_logical_height.store(h);
+        // What the engine renders into: the logical size times the render
+        // scale, exactly as on Wayland. HiDPI on makes that the device
+        // size again; HiDPI off leaves it smaller, and the upscale pass
+        // covers the difference.
+        g_window_width.store(buffer_px_from_logical(w));
+        g_window_height.store(buffer_px_from_logical(h));
+        std::printf("stud: android-glue: X11 window %dx%d device px, %dx%d logical, engine "
+                    "renders %dx%d\n",
+                    device_w, device_h, w, h, g_window_width.load(), g_window_height.load());
+        std::fflush(stdout);
         if (surface != nullptr) {
             window->surface_key = surface;
             window_cache()[surface] = window;
@@ -2148,7 +2186,43 @@ std::string native_window_activation_token(ANativeWindow* window) {
     return g_pending_activation_token;
 }
 
+// X11 pointer coordinates are DEVICE pixels; the engine's are buffer
+// pixels. They were the same number until the X11 backend learned the
+// logical/buffer split, and then every pointer position was out by the
+// display's scale -- the cursor appearing somewhere other than where the
+// mouse was, further off the further from the window's corner.
+//
+// Wayland needs no equivalent: its pointer arrives in surface-logical
+// units, which scale_pointer_coord() already converts.
+float native_window_pointer_px_from_device(float device_px) {
+    const int32_t display = display_scale_120();
+    if (display <= 0) return device_px;
+    return static_cast<float>(static_cast<double>(device_px) *
+                              static_cast<double>(g_render_scale_120.load()) /
+                              static_cast<double>(display));
+}
+
+float native_window_device_px_from_pointer(float pointer_px) {
+    const int32_t render = g_render_scale_120.load();
+    if (render <= 0) return pointer_px;
+    return static_cast<float>(static_cast<double>(pointer_px) *
+                              static_cast<double>(display_scale_120()) /
+                              static_cast<double>(render));
+}
+
 void native_window_display_pixel_size(int32_t* width, int32_t* height) {
+    // X11 knows this exactly, so it is not recomputed.
+    //
+    // Deriving it from the logical size rounds twice -- device to logical
+    // on the way in, logical back to device here -- and a 1382px window
+    // came back as 1383, which is not the window. The swapchain was then
+    // built one pixel wider than the thing it presents to and every
+    // present returned OUT_OF_DATE.
+    if (display_backend() == DisplayBackend::X11) {
+        if (width != nullptr) *width = x11::width();
+        if (height != nullptr) *height = x11::height();
+        return;
+    }
     // From the window's LOGICAL size and the display's own scale, not from
     // the buffer: the buffer is whatever the engine renders at, which is
     // exactly what this is not.
@@ -2376,12 +2450,52 @@ bool window_close_requested() {
 void native_window_pump_x11() {
     if (display_backend() != DisplayBackend::X11) return;
     x11::pump();
-    const int32_t w = x11::width();
-    const int32_t h = x11::height();
-    if (w > 0 && h > 0 && (w != g_window_width.load() || h != g_window_height.load())) {
-        g_window_width.store(w);
-        g_window_height.store(h);
-        std::printf("stud: android-glue: X11 window resized: %dx%d\n", w, h);
+    // The X window's size is DEVICE pixels; everything above this line
+    // thinks in the Wayland quantities, so they are reconstructed here:
+    //
+    //   device  = what X reports, the pixels the screen really has
+    //   logical = device / display scale, the size a Wayland compositor
+    //             would have called the window
+    //   buffer  = logical * render scale, what the engine renders into
+    //             and what ANativeWindow_getWidth reports
+    //
+    // With HiDPI on the render scale IS the display scale, so the buffer
+    // comes back to the device size and nothing has changed. With it off
+    // the buffer is the logical size, which is smaller, and the upscale
+    // pass writes the device size, which is what the compositor does for
+    // itself on Wayland.
+    const int32_t device_w = x11::width();
+    const int32_t device_h = x11::height();
+    if (device_w <= 0 || device_h <= 0) return;
+    const int32_t scale = display_scale_120();
+    // NEAREST, not ceiling. Rounding up here disagreed with the rounding
+    // up that produced the device size in the first place, so a window
+    // created at 1382 logical came back as 1383 on the very first pump
+    // and the swapchain was rebuilt for a pixel that had not moved.
+    const int32_t logical_w = static_cast<int32_t>(
+        (static_cast<int64_t>(device_w) * kScaleUnit + scale / 2) / scale);
+    const int32_t logical_h = static_cast<int32_t>(
+        (static_cast<int64_t>(device_h) * kScaleUnit + scale / 2) / scale);
+    g_logical_width.store(logical_w);
+    g_logical_height.store(logical_h);
+    // A floor on what the engine is ever told.
+    //
+    // Shrinking a window far enough, or minimising it, can leave the
+    // server reporting a handful of pixels, and every one of those is a
+    // swapchain the driver may refuse and a render target the engine
+    // rebuilds for nothing. 64 is below any usable window and above every
+    // driver's minimum.
+    constexpr int32_t kMinBufferPx = 64;
+    int32_t buffer_w = buffer_px_from_logical(logical_w);
+    int32_t buffer_h = buffer_px_from_logical(logical_h);
+    if (buffer_w < kMinBufferPx) buffer_w = kMinBufferPx;
+    if (buffer_h < kMinBufferPx) buffer_h = kMinBufferPx;
+    if (buffer_w != g_window_width.load() || buffer_h != g_window_height.load()) {
+        g_window_width.store(buffer_w);
+        g_window_height.store(buffer_h);
+        std::printf("stud: android-glue: X11 window %dx%d device px, %dx%d logical, engine "
+                    "renders %dx%d\n",
+                    device_w, device_h, logical_w, logical_h, buffer_w, buffer_h);
         std::fflush(stdout);
     }
 }
