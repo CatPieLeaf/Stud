@@ -8,7 +8,7 @@
 # already produced. CI sets STUD_DESTDIR to it.
 
 pkgname=stud
-pkgver=1.1.2
+pkgver=1.1.3
 pkgrel=1
 pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')

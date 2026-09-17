@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Stud VERSION 1.1.2 LANGUAGES CXX C ASM)
+project(Stud VERSION 1.1.3 LANGUAGES CXX C ASM)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -74,7 +74,7 @@ option(STUD_ENABLE_DEV_RENDER_TOGGLE "Enable the prototype-only dev render-backe
 # they all come from here.
 set(STUD_APP_ID "io.github.catpieleaf.Stud" CACHE STRING
     "Reverse-DNS application id: desktop entry, AppStream component and Wayland app_id")
-set(STUD_VERSION "1.1.2" CACHE STRING "Stud version, used for packages and AppStream")
+set(STUD_VERSION "1.1.3" CACHE STRING "Stud version, used for packages and AppStream")
 
 # Where an install puts things. Defined before any add_subdirectory()
 # below, because a subdirectory is processed where it is added and would
