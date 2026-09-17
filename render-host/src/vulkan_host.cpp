@@ -1576,6 +1576,31 @@ uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& 
     return write_pod(req, out, out_len);
 }
 
+// One thread at a time on the surface.
+//
+// vkCreateSwapchainKHR is deliberately outside the dispatch lock -- it
+// blocks in the driver for as long as the driver feels like, and holding
+// the lock across that froze render-host whole. But that also let a
+// swapchain build run at the same time as the engine's own queries about
+// the same surface, from the thread its other connection is served on.
+//
+// Live-caught on Wayland, inside a rebuild: two
+// vkGetPhysicalDeviceSurfaceFormatsKHR calls came back
+// VK_ERROR_INITIALIZATION_FAILED for a surface that had answered all
+// session, and the engine -- which does not check that result -- walked
+// the empty format list into a null dereference. Stud's own recovery then
+// killed the thread, which is why the window vanished while the process,
+// its audio and its tray carried on.
+//
+// So the surface gets a lock of its own: narrow enough that the create
+// still does not block everything else in render-host, and enough that
+// nobody asks the driver about a surface while it is building a swapchain
+// for it.
+std::mutex& surface_mutex() {
+    static std::mutex m;
+    return m;
+}
+
 uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, uint64_t surface,
                                                       std::vector<uint8_t>& out,
                                                       uint32_t* out_len) {
@@ -1584,6 +1609,7 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkSurfaceCapabilitiesKHR caps{};
+    std::unique_lock<std::mutex> surface_lock(surface_mutex());
     VkResult r = l.get_physical_device_surface_capabilities(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)),
         from_u64<VkSurfaceKHR>(surface), &caps);
@@ -2058,6 +2084,7 @@ uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
+    std::lock_guard<std::mutex> surface_lock(surface_mutex());
     VkResult r = l.get_surface_formats(pd, surf, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -2091,6 +2118,7 @@ uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
+    std::lock_guard<std::mutex> surface_lock(surface_mutex());
     VkResult r = l.get_surface_present_modes(pd, surf, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -2120,6 +2148,7 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkBool32 supported = VK_FALSE;
+    std::lock_guard<std::mutex> surface_lock(surface_mutex());
     VkResult r = l.get_surface_support(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)), queue_family,
         from_u64<VkSurfaceKHR>(surface), &supported);
@@ -3548,7 +3577,13 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         std::fflush(stdout);
     }
     const auto create_t0 = std::chrono::steady_clock::now();
-    VkResult r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+    VkResult r;
+    {
+        // Nobody queries this surface while it is being built on; see
+        // surface_mutex().
+        std::lock_guard<std::mutex> surface_lock(surface_mutex());
+        r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+    }
     {
         const double create_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - create_t0).count();
