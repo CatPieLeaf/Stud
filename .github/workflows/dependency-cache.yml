@@ -14,11 +14,21 @@
 # packages. Run it after changing tools/setup.sh, or whenever a release
 # reports a cold cache.
 #
-# One job per container the release builds in: ANGLE is compiled against
-# the container's own glibc, so fedora:44, ubuntu:26.04 (the AppImage) and
-# ubuntu:24.04 (the deb) each need their own. Add a job here whenever a
-# release job's container changes, or that job silently rebuilds ANGLE
-# from source on every release.
+# ONE build, shared by every release job, and that is not an assumption:
+# ANGLE ships its own sysroot and statically links its own libc++, so what
+# comes out does not depend on the container it was built in. Measured on
+# a real build of it (`objdump -p`): the libraries need GLIBC_2.16-2.18,
+# name no libstdc++ at all, and their only other dependencies are libdl,
+# libpthread, libm, libgcc_s and X11/xcb. A 2.18 floor is below every
+# distribution Stud targets, and the copy measured was built on Fedora and
+# is byte-for-byte usable on Ubuntu 24.04.
+#
+# This used to be three jobs, one per container, by analogy with Qt (where
+# a build really does pin its own version as a floor). The analogy was
+# wrong, and it cost three hours of compiling to produce three
+# interchangeable copies, with no guarantee the packages carried the same
+# one. The other two pieces were never container-specific either: the NDK
+# is downloaded and bionic is extracted from an Android system image.
 #
 # Not warmed here: the AppImage job's linuxdeploy/appimagetool cache. Those
 # are two small downloads, not an hour of compiling, so a cold one costs a
@@ -52,53 +62,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fedora:
-    name: Fedora dependencies
-    runs-on: ubuntu-latest
-    container: fedora:44
-    steps:
-      - name: Install build dependencies
-        run: |
-          dnf install -y --setopt=install_weak_deps=False \
-            gcc-c++ cmake ninja-build git pkgconf-pkg-config \
-            curl unzip tar xz zstd python3 e2fsprogs findutils
-
-      - uses: actions/checkout@v7
-
-      - name: Free up disk space
-        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
-
-      - name: Work out the dependency cache key
-        # Hashes what the dependencies are, not the script that fetches
-        # them; see tools/dependency-id.sh.
-        id: deps
-        run: echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Android NDK
-        # The same key the release workflow uses, and the whole point of
-        # this job: written from main, so every tag can read it.
-        uses: actions/cache@v6
-        with:
-          path: third_party/android-ndk-r28c
-          key: ndk-${{ steps.deps.outputs.id }}
-
-      - name: Cache ANGLE and bionic
-        uses: actions/cache@v6
-        with:
-          path: |
-            third_party/angle
-            third_party/android-bionic
-          key: deps-fedora44-${{ steps.deps.outputs.id }}
-
-      - name: Fetch dependencies
-        run: |
-          tools/setup.sh
-          # The checkout is several GB and only the two libraries it
-          # produced are kept, so it goes before the cache is written.
-          rm -rf third_party/angle-src third_party/depot_tools
-
-  ubuntu:
-    name: Ubuntu dependencies (AppImage)
+  dependencies:
+    # ubuntu:26.04 because this is the container ANGLE is known to build
+    # in today, not because the result belongs to it; see above.
+    name: Dependencies
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
@@ -121,71 +88,33 @@ jobs:
         run: echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Android NDK
-        # Shared with the job above and with both release jobs: the NDK is
-        # downloaded, not compiled, so one copy serves every container.
+        # Its own key, kept separate because it is a plain download and
+        # every job wants it whether or not it wants ANGLE.
         uses: actions/cache@v6
         with:
           path: third_party/android-ndk-r28c
           key: ndk-${{ steps.deps.outputs.id }}
 
       - name: Cache ANGLE and bionic
-        # Its own key: ANGLE is compiled against this container's glibc,
-        # so the Fedora build is not interchangeable with this one.
+        # One key, no container in it. Every release job reads this one.
         uses: actions/cache@v6
         with:
           path: |
             third_party/angle
             third_party/android-bionic
-          key: deps-ubuntu2604-${{ steps.deps.outputs.id }}
+          key: deps-${{ steps.deps.outputs.id }}
 
       - name: Fetch dependencies
         run: |
           tools/setup.sh
           rm -rf third_party/angle-src third_party/depot_tools
 
-  ubuntu-deb:
-    # The deb's own container, and it needs its own entry here for the
-    # same reason the two above do: ANGLE is compiled against the
-    # container's glibc, so a cache built on 26.04 is no use to a build
-    # on 24.04. The deb is built there deliberately, against the oldest
-    # Qt it claims to run on; see the deb job in release.yml.
-    name: Ubuntu dependencies (deb)
-    runs-on: ubuntu-latest
-    container: ubuntu:24.04
-    steps:
-      - name: Install build dependencies
+      - name: Report what was cached
+        # So a run says plainly whether it built ANGLE or restored it, and
+        # what the result actually depends on.
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            g++ cmake ninja-build git pkg-config \
-            curl unzip tar xz-utils zstd python3 e2fsprogs findutils ca-certificates
-
-      - uses: actions/checkout@v7
-
-      - name: Free up disk space
-        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
-
-      - name: Work out the dependency cache key
-        id: deps
-        run: echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Android NDK
-        # Shared with every other job: the NDK is downloaded, not
-        # compiled, so one copy serves every container.
-        uses: actions/cache@v6
-        with:
-          path: third_party/android-ndk-r28c
-          key: ndk-${{ steps.deps.outputs.id }}
-
-      - name: Cache ANGLE and bionic
-        uses: actions/cache@v6
-        with:
-          path: |
-            third_party/angle
-            third_party/android-bionic
-          key: deps-ubuntu2404-${{ steps.deps.outputs.id }}
-
-      - name: Fetch dependencies
-        run: |
-          tools/setup.sh
-          rm -rf third_party/angle-src third_party/depot_tools
+          ls -la third_party/angle | head
+          for lib in third_party/angle/lib*.so*; do
+            printf '%s needs %s\n' "$lib" \
+              "$(objdump -p "$lib" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+          done
