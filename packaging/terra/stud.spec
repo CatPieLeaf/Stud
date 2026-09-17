@@ -24,7 +24,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*
 
 Name:           stud
-Version:        1.1.2
+Version:        1.1.3
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -108,6 +108,9 @@ appstream-util validate-relax --nonet %{buildroot}%{_datadir}/metainfo/%{appid}.
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Wed Sep 16 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.3-1
+- Update to 1.1.3
+
 * Tue Sep 15 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.2-1
 - Update to 1.1.2
 

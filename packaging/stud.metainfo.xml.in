@@ -96,18 +96,28 @@
   </content_rating>
 
   <releases>
-    <release version="@STUD_VERSION@" date="2026-09-13">
+    <release version="@STUD_VERSION@" date="2026-09-16">
       <description>
-        <p>The mouse cursor now behaves as it does on the desktop client.</p>
+        <p>Keyboards that are not American, and a handful of things that
+           only went wrong at the edges.</p>
         <ul>
-          <li>The cursor stays put through a camera rotation and follows the
-              hand everywhere else, decided from the engine's own mouse
-              state rather than guessed at.</li>
-          <li>The pointer is kept inside the window during a camera drag, so
-              a spin is no longer stopped by the edge of the screen.</li>
-          <li>Input reaches the engine the moment the compositor delivers
-              it, which also lifted the frame rate well past 60.</li>
-          <li>The app shell's Exit button closes Stud.</li>
+          <li>A key now keeps its own position when the layout cannot reach
+              that character any other way, so the apostrophe key on a
+              Brazilian keyboard opens the inventory again.</li>
+          <li>A key held while chat takes focus still types. It is withheld
+              from the game, not from the chat box.</li>
+          <li>Leaving first person keeps the cursor in the middle of the
+              window instead of returning it to wherever the hand was.</li>
+          <li>Closing Stud no longer leaves a crash report behind: a fault
+              during teardown is the teardown, and an inner call can no
+              longer strip the crash protection from the thread around
+              it.</li>
+          <li>Writes to memory the engine has mapped are tracked by the
+              kernel where it can, and the flush that ships them no longer
+              drops any.</li>
+          <li>The Debian package is built against the oldest Qt it claims
+              to support, so it runs on Ubuntu 24.04, Debian 13 and the
+              Mint releases built on them.</li>
         </ul>
       </description>
     </release>
