@@ -1654,11 +1654,116 @@ uint64_t vk_host_has_proc(const std::vector<uint8_t>& in) {
     return 0;
 }
 
+// A VkQueue may only be touched by one thread at a time.
+//
+// The spec says so plainly: vkQueueSubmit, vkQueuePresentKHR and
+// vkQueueWaitIdle all list the queue as "externally synchronized", which
+// means the application is the one that has to serialise them. Stud had
+// nothing. Its dispatch mutex looks like it would cover this and does
+// not: calls that block in the driver deliberately run WITHOUT it (or a
+// blocking present would hold every other connection still), and
+// vkQueuePresentKHR is exactly such a call, while vkQueueSubmit is not.
+// So the engine's submit ran under the dispatch mutex on one thread
+// while Stud's present -- and, with upscaling on, Stud's own upscale
+// submit inside it -- ran on another, on the same queue, at the same
+// time.
+//
+// That is undefined behaviour, and the way it shows up on a real driver
+// is the GPU wedging: live-caught as
+// `vkWaitForFences returned VK_ERROR_DEVICE_LOST` with the engine's own
+// `DeviceRecovery reason=hung`, about ten seconds of frozen window while
+// the driver waited out its timeout, then a clean recovery. Rare,
+// timing-dependent, and far more likely with upscaling on, because that
+// is what puts a second submit on the queue from the present thread.
+std::mutex& queue_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+
+// Makes a forwarded barrier LEGAL without making it weaker.
+//
+// The engine records its own barriers and Stud replays them. Validation
+// on a real run says some of them are invalid: an access flag that the
+// stage it names cannot perform (VUID-vkCmdPipelineBarrier-
+// pImageMemoryBarriers-02819 -- SHADER_READ under ALL_TRANSFER), and a
+// transition into TRANSFER_DST that does not cover the copy that
+// immediately follows it (SYNC-HAZARD-WRITE-AFTER-WRITE on
+// vkCmdCopyImage). A lenient driver runs them anyway. NVIDIA does not:
+// every run of this session that put real work through this path on the
+// RTX 3050 ended in VK_ERROR_DEVICE_LOST, while the identical code on
+// Intel ran 41 minutes without one.
+//
+// Both repairs only ever ADD synchronisation, never remove it, so a
+// barrier that was already correct is unchanged in effect:
+//   - a stage mask that cannot perform the access it is given is widened
+//     to ALL_COMMANDS, which can perform all of them;
+//   - a transition into TRANSFER_DST/TRANSFER_SRC gains the transfer
+//     access and stage it is missing, so the copy that follows is
+//     ordered after the transition rather than racing it.
+void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* dst_stage,
+                        std::vector<VkMemoryBarrier>& mem,
+                        std::vector<VkBufferMemoryBarrier>& buf,
+                        std::vector<VkImageMemoryBarrier>& img) {
+    // What each stage is allowed to do, kept deliberately coarse: the
+    // question here is only "could this stage ever perform this access",
+    // and a wrong answer is caught by validation, not guessed at.
+    const VkAccessFlags transfer_access =
+        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT |
+        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT |
+        VK_ACCESS_HOST_WRITE_BIT;
+    const VkPipelineStageFlags transfer_only =
+        VK_PIPELINE_STAGE_TRANSFER_BIT |
+        VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT |
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+    auto stage_cannot = [&](VkPipelineStageFlags stage, VkAccessFlags access) {
+        if ((stage & ~transfer_only) != 0) return false;   // a general stage: fine
+        if ((stage & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) != 0) return false;
+        return (access & ~transfer_access) != 0;
+    };
+
+    VkAccessFlags all_src = 0;
+    VkAccessFlags all_dst = 0;
+    for (const auto& b : mem) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
+    for (const auto& b : buf) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
+    for (const auto& b : img) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
+
+    static int widened = 0;
+    if (stage_cannot(*src_stage, all_src) || stage_cannot(*dst_stage, all_dst)) {
+        *src_stage |= VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        *dst_stage |= VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        if (widened < 4) {
+            ++widened;
+            std::printf("stud-render-host: widened a barrier whose stage could not perform the "
+                        "access it was given (src=0x%x dst=0x%x)\n",
+                        static_cast<unsigned>(all_src), static_cast<unsigned>(all_dst));
+            std::fflush(stdout);
+        }
+    }
+
+    // A transition INTO a transfer layout is followed by a transfer. Say
+    // so, or the copy is a second write racing the transition's own.
+    bool needs_transfer = false;
+    for (auto& b : img) {
+        if (b.newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            b.dstAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
+            needs_transfer = true;
+        } else if (b.newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            b.dstAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
+            needs_transfer = true;
+        }
+    }
+    if (needs_transfer) *dst_stage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+}
+
 uint64_t vk_device_wait_idle() {
     Loader& l = loader();
     if (l.device_wait_idle == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    // Every queue on the device, so it belongs under the same lock.
+    std::lock_guard<std::mutex> queue_lock(queue_mutex());
     return static_cast<uint64_t>(static_cast<int32_t>(l.device_wait_idle(l.device)));
 }
 
@@ -2822,7 +2927,24 @@ bool record_upscale_blits(UpscaleChain& c) {
         after_dst.image = c.real_images[i];
 
         VkImageMemoryBarrier after[2] = {after_src, after_dst};
-        l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_TRANSFER_BIT,
+        // BOTH stages that actually did the work, and this was wrong.
+        //
+        // after_src releases a SHADER_READ (the compute pass sampled the
+        // engine's image); after_dst releases a TRANSFER_WRITE (the blit
+        // into the swapchain image). Naming only TRANSFER said the shader
+        // read happened in the transfer stage, which no stage can do:
+        // `srcAccessMask (VK_ACCESS_2_SHADER_READ_BIT) is not supported by
+        // stage mask (VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT)`, caught by
+        // the validation layer, once per frame, on the compute path only.
+        //
+        // An invalid barrier is not a barrier: the driver is free to make
+        // nothing of it, and this one is what orders the pass against the
+        // next frame's render. Every run of this session that put this
+        // path on the RTX 3050 ended in VK_ERROR_DEVICE_LOST within
+        // minutes, while the same code on Intel ran 41 minutes clean --
+        // which is what a wrong barrier looks like: fine until the
+        // hardware it lies to actually depends on it.
+        l.cmd_pipeline_barrier(c.cmd[i], pass_stage | VK_PIPELINE_STAGE_TRANSFER_BIT,
                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
                                nullptr, 2, after);
         if (l.end_command_buffer(c.cmd[i]) != VK_SUCCESS) return false;
@@ -4307,6 +4429,7 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         submits[i].signalSemaphoreCount = static_cast<uint32_t>(signals[i].size());
         submits[i].pSignalSemaphores = signals[i].empty() ? nullptr : signals[i].data();
     }
+    std::lock_guard<std::mutex> queue_lock(queue_mutex());
     VkResult res = l.queue_submit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
                                    from_u64<VkFence>(fence));
     return static_cast<uint64_t>(static_cast<int32_t>(res));
@@ -4574,8 +4697,11 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cb;
-    l.queue_submit(l.probe_queue, 1, &si, VK_NULL_HANDLE);
-    if (l.queue_wait_idle != nullptr) l.queue_wait_idle(l.probe_queue);
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        l.queue_submit(l.probe_queue, 1, &si, VK_NULL_HANDLE);
+        if (l.queue_wait_idle != nullptr) l.queue_wait_idle(l.probe_queue);
+    }
 
     void* data = nullptr;
     if (l.map_memory(l.device, memory, 0, size, 0, &data) == VK_SUCCESS && data != nullptr) {
@@ -4710,8 +4836,11 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 si.pCommandBuffers = &c.cmd[index];
                 si.signalSemaphoreCount = 1;
                 si.pSignalSemaphores = &c.done[index];
-                const VkResult sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si,
-                                                    c.fence[index]);
+                VkResult sr = VK_SUCCESS;
+                {
+                    std::lock_guard<std::mutex> queue_lock(queue_mutex());
+                    sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, c.fence[index]);
+                }
                 if (sr == VK_SUCCESS) {
                     c.in_flight[index] = true;
                     // The present now waits on the pass, not on the
@@ -4735,7 +4864,14 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     }
 
 present_without_upscale:
-    VkResult res = l.queue_present(from_u64<VkQueue>(queue), &pi);
+    // Held across the present itself. It blocks in the driver, so this
+    // does hold submits from other threads for its duration -- which is
+    // exactly the serialisation the spec asks for, and what was missing.
+    VkResult res;
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        res = l.queue_present(from_u64<VkQueue>(queue), &pi);
+    }
     static int presents = 0;
     // Which thread presents matters: only the main loop pumps Wayland,
     // and a driver completing a present may need the display dispatched.
@@ -5026,7 +5162,9 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         }
         case K::PipelineBarrier: {
             if (l.cmd_pipeline_barrier == nullptr) break;
-            const uint32_t src_stage = r.u32(), dst_stage = r.u32(), dep_flags = r.u32();
+            // Not const: make_barrier_legal() may widen them below.
+            VkPipelineStageFlags src_stage = r.u32(), dst_stage = r.u32();
+            const uint32_t dep_flags = r.u32();
             const uint32_t nm = r.u32();
             std::vector<VkMemoryBarrier> mem(nm);
             for (auto& m : mem) {
@@ -5164,6 +5302,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // are the same number until something above drops an entry,
             // and then handing the driver the original count with a
             // shorter array is a read past the end of it.
+            make_barrier_legal(&src_stage, &dst_stage, mem, buf, img);
             l.cmd_pipeline_barrier(cb, src_stage, dst_stage, dep_flags,
                                     static_cast<uint32_t>(mem.size()),
                                     mem.empty() ? nullptr : mem.data(),
