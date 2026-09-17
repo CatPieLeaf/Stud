@@ -60,21 +60,28 @@ Provides:       bundled(vulkan-loader)
 Provides:       bundled(fidelityfx-fsr1)
 
 %description
-Stud runs the real, unmodified Roblox Android app on a Linux desktop. The
-user supplies the APK from a device they own; Stud distributes none of it.
+Stud runs the real, unmodified Roblox app on your Linux desktop, in its own
+window, with your mouse and keyboard. No browser, no emulator, no virtual
+machine.
 
-There is no emulator and no virtual machine. Stud loads the app's own native
-library against a real bionic libc and linker, then answers the Android
-platform calls it makes: windowing, input, audio and asset access. Those land
-on Wayland, evdev and PortAudio, and rendering goes through ANGLE. The GPU
-driver runs in a separate process from the Android code, because a vendor
-driver spawns threads of its own and those threads do not survive foreign TLS.
+Links from a browser open straight into the experience, and the mouse and
+keyboard behave the way they do in the desktop client. The game can render
+below your screen's resolution and still fill it. Discord Rich
+Presence carries a button friends can join through, and a tray menu names
+the country a server is in when you join one.
+
+Roblox is not included. You supply the Android application package yourself,
+and Roblox remains subject to its own terms. Stud is an independent project,
+not affiliated with, endorsed by or approved by Roblox Corporation.
 
 %prep
 %autosetup -c -n %{name}-%{version}
 
 %build
-# Deliberately empty. See the comment at the top of this file.
+# Deliberately empty: this package installs the release archive, which CI
+# already built from the tag. ANGLE's own build fetches its dependencies
+# as it runs, and the bionic set is extracted from an Android system
+# image rather than compiled, so there is nothing to build here.
 
 %install
 cp -a usr %{buildroot}/
