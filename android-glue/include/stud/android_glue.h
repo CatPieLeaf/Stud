@@ -173,9 +173,6 @@ unsigned long native_window_x11_window();
 // something in it matches that instead of showing an empty window for
 // the whole of the engine's bring-up. No-op on Wayland.
 void x11_ensure_mapped();
-// Says how long after a restore the first frame reached the window, once
-// per restore. No-op off X11 and when nothing is owed.
-void x11_note_frame_reached_window();
 
 // The X connection's socket, for the render host's own poll loop.
 // -1 on Wayland.

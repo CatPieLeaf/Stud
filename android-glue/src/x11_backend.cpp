@@ -190,10 +190,6 @@ std::atomic<bool> g_close_requested{false};
 // unmapped (minimised, another workspace) or fully obscured by other
 // windows. VisibilityNotify is what the server sends for the second.
 std::atomic<bool> g_visible{true};
-// When the window was last mapped, and whether the next frame should say
-// how long it took to arrive. See the MapNotify handler.
-std::chrono::steady_clock::time_point g_mapped_at{};
-std::atomic<bool> g_report_first_frame{false};
 // FocusIn/FocusOut: X11's answer to whether this is the window being
 // used, which is a different question from whether it can be seen.
 std::atomic<bool> g_focused{true};
@@ -1090,13 +1086,6 @@ void pump() {
                 g_clipboard_owned.clear();
                 break;
             case MapNotify:
-                // When the window came back, so the first frame after it
-                // can say how long the gap was. A restore that shows
-                // black for a second is either the engine taking that
-                // long to produce a frame or the frame taking that long
-                // to reach the screen, and those need different fixes.
-                g_mapped_at = std::chrono::steady_clock::now();
-                g_report_first_frame.store(true);
                 push_window_redraw_needed();
                 if (!g_visible.exchange(true)) {
                     std::printf("stud: android-glue: window visible again\n");
@@ -1315,17 +1304,6 @@ bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h)
     mm_w = DisplayWidthMM(g_display, screen);
     mm_h = DisplayHeightMM(g_display, screen);
     return px_w > 0 && px_h > 0;
-}
-
-// Called when a frame reaches the window; reports the gap after a
-// restore, once per restore, and costs one relaxed read otherwise.
-void note_frame_reached_window() {
-    if (!g_report_first_frame.load(std::memory_order_relaxed)) return;
-    g_report_first_frame.store(false, std::memory_order_relaxed);
-    const double ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - g_mapped_at).count();
-    std::printf("stud: android-glue: first frame %.0fms after the window was mapped\n", ms);
-    std::fflush(stdout);
 }
 
 void ensure_mapped() {

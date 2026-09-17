@@ -3487,10 +3487,16 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         stud::android_glue::native_window_display_pixel_size(&now_w, &now_h);
         if (now_w > 0 && now_h > 0 &&
             (static_cast<uint32_t>(now_w) != out_w || static_cast<uint32_t>(now_h) != out_h)) {
-            std::printf("stud-render-host: the window is %dx%d now, not the %ux%u last latched; "
-                        "building the swapchain for the window it has\n", now_w, now_h, out_w,
-                        out_h);
-            std::fflush(stdout);
+            // Worth saying, worth saying a few times, not worth saying
+            // on every frame of a drag-resize.
+            static int said = 0;
+            if (said < 8) {
+                ++said;
+                std::printf("stud-render-host: the window is %dx%d now, not the %ux%u last "
+                            "latched; building the swapchain for the window it has\n", now_w,
+                            now_h, out_w, out_h);
+                std::fflush(stdout);
+            }
             out_w = static_cast<uint32_t>(now_w);
             out_h = static_cast<uint32_t>(now_h);
             g_upscale_output_w.store(out_w, std::memory_order_relaxed);
@@ -3545,36 +3551,6 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
                 std::fflush(stdout);
             }
         }
-    }
-    // Do not build a swapchain for a window the server cannot present to.
-    //
-    // Every 22-second create measured on X11 has had the window unmapped
-    // immediately before it, and the durations are a constant -- 22014,
-    // 22011, 22022, 22014 milliseconds -- which is a timeout expiring,
-    // not work being done. A minimise, or the moment inside a maximise
-    // when the window manager takes the window down and puts it back, is
-    // exactly when the engine notices its surface changed and rebuilds.
-    //
-    // So a rebuild that arrives while the window is down waits, briefly,
-    // for it to come back. Restoring the window then costs a normal
-    // 30ms rebuild instead of 22 seconds of nothing. The wait is bounded
-    // and the create is forwarded either way: a window that stays down is
-    // no worse off than it is today, and nothing is refused or faked.
-    if (stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11 &&
-        !stud::android_glue::native_window_is_visible()) {
-        const auto wait_t0 = std::chrono::steady_clock::now();
-        constexpr auto kMaxWait = std::chrono::milliseconds(1500);
-        while (!stud::android_glue::native_window_is_visible() &&
-               std::chrono::steady_clock::now() - wait_t0 < kMaxWait) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        const double waited = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - wait_t0).count();
-        std::printf("stud-render-host: the window was down when the engine asked for a swapchain; "
-                    "waited %.0fms, %s\n", waited,
-                    stud::android_glue::native_window_is_visible() ? "it came back"
-                                                                   : "building anyway");
-        std::fflush(stdout);
     }
     const auto create_t0 = std::chrono::steady_clock::now();
     VkResult r;
@@ -4875,21 +4851,7 @@ uint64_t vk_reset_command_pool(uint64_t pool, uint32_t flags) {
 }
 
 
-// The last fence events, so a stuck fence can name the work it belongs to. A fence that never signals is only useful as
-// evidence if the submission it came from can be identified.
 namespace {
-struct SubmitRecord {
-    const char* what = "submit";
-    uint64_t seq = 0;
-    uint64_t fence = 0;
-    uint32_t batches = 0;
-    uint32_t command_buffers = 0;
-    uint64_t first_command_buffer = 0;
-    double at_s = 0.0;
-};
-std::mutex& submit_log_mutex() { static std::mutex m; return m; }
-std::deque<SubmitRecord>& submit_log() { static std::deque<SubmitRecord> d; return d; }
-std::atomic<uint64_t> g_submit_seq{0};
 
 // Resets and waits belong in the same log as the submits. A wait that never returns while the same fence is being reset by
 // another thread is a missed signal, and the only way to see it is to have
@@ -5161,51 +5123,6 @@ void signal_fences_the_engine_reset(VkQueue queue) {
     }
 }
 
-void note_fence_event(const char* what, uint64_t fence) {
-    static const auto start = std::chrono::steady_clock::now();
-    SubmitRecord rec;
-    rec.seq = ++g_submit_seq;
-    rec.fence = fence;
-    rec.batches = 0;
-    rec.command_buffers = 0;
-    rec.first_command_buffer = 0;
-    rec.at_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    rec.what = what;
-    std::lock_guard<std::mutex> lock(submit_log_mutex());
-    auto& d = submit_log();
-    d.push_back(rec);
-    if (d.size() > 40) d.pop_front();
-}
-
-void note_submit(uint64_t fence, uint32_t batches, uint32_t cbs, uint64_t first_cb) {
-    static const auto start = std::chrono::steady_clock::now();
-    SubmitRecord rec;
-    rec.seq = ++g_submit_seq;
-    rec.fence = fence;
-    rec.batches = batches;
-    rec.command_buffers = cbs;
-    rec.first_command_buffer = first_cb;
-    rec.at_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    std::lock_guard<std::mutex> lock(submit_log_mutex());
-    auto& d = submit_log();
-    d.push_back(rec);
-    if (d.size() > 24) d.pop_front();
-}
-
-void dump_submit_log(uint64_t stuck_fence) {
-    std::lock_guard<std::mutex> lock(submit_log_mutex());
-    std::printf("stud-render-host: recent submissions (newest last), stuck fence=0x%llx:\n",
-                static_cast<unsigned long long>(stuck_fence));
-    for (const auto& rec : submit_log()) {
-        std::printf("stud-render-host:   #%llu t=%.3fs %-6s fence=0x%llx cmdbufs=%u "
-                    "first_cb=0x%llx%s\n",
-                    static_cast<unsigned long long>(rec.seq), rec.at_s, rec.what,
-                    static_cast<unsigned long long>(rec.fence), rec.command_buffers,
-                    static_cast<unsigned long long>(rec.first_command_buffer),
-                    rec.fence == stuck_fence ? "   <-- the stuck fence" : "");
-    }
-    std::fflush(stdout);
-}
 
 }  // namespace
 
@@ -5240,7 +5157,6 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
             total_cbs += static_cast<uint32_t>(buffers[i].size());
             if (first_cb == 0 && !buffers[i].empty()) first_cb = to_u64(buffers[i][0]);
         }
-        note_submit(fence, n, total_cbs, first_cb);
         note_fence_submitted(fence);
         // A real wait retires any signal Stud left on that semaphore; see
         // g_semaphores_stud_signalled.
@@ -5319,7 +5235,6 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
     const uint32_t n = r.u32();
     std::vector<VkFence> fences(n);
     for (auto& f : fences) f = from_u64<VkFence>(r.u64());
-    for (const VkFence f : fences) note_fence_event("WAIT", to_u64(f));
     // Announce the wait so a reset for the same fence cannot land in the
     // middle of it and take the signal away.
     FenceWaitGuard wait_guard(fences);
@@ -5356,7 +5271,6 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
                             n, waited, wait_all,
                             static_cast<unsigned long long>(timeout));
                 std::fflush(stdout);
-                if (reports == 1) dump_submit_log(n > 0 ? to_u64(fences[0]) : 0);
             }
         }
     }
@@ -5376,7 +5290,6 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
         const uint32_t n = probe.u32();
         for (uint32_t i = 0; i < n; ++i) {
             const uint64_t f = probe.u64();
-            note_fence_event("RESET", f);
             note_fence_reset(f);
         }
     }
@@ -5983,7 +5896,6 @@ present_without_upscale:
     // so it never sits empty through the engine's bring-up. No-op on
     // Wayland and after the first call.
     stud::android_glue::x11_ensure_mapped();
-    stud::android_glue::x11_note_frame_reached_window();
     const int present_tid = static_cast<int>(::syscall(SYS_gettid));
     static int announced_tid = -1;
     if (present_tid != announced_tid) {
