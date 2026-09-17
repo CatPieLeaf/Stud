@@ -139,13 +139,30 @@ set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # linking it, so no dependency scan would ever find it.
 #
 # Qt is named by its Debian binary packages rather than a version, which
-# is only honest if the deb really was built against the distribution's
-# own Qt. It was not, and the 1.1.0 deb installed happily on Ubuntu
-# 26.04 and then died with `libQt6Core.so.6: version 'Qt_6.11' not
-# found`, because it had been built on Fedora 44. The release workflow
-# builds it on ubuntu:26.04 now, which is what makes this list true.
+# is only honest if the deb really was built against a Qt no newer than
+# the ones named here. Twice it was not, and each package installed
+# cleanly and then refused to start: the 1.1.0 deb, built on Fedora 44,
+# died on Ubuntu 26.04 with `libQt6Core.so.6: version 'Qt_6.11' not
+# found`, and the 1.1.2 deb, built on ubuntu:26.04, died on Linux Mint 22
+# with `version 'Qt_6.10' not found`. Qt exports a symbol version per
+# release and the loader checks it, so a build runs on the Qt it was
+# linked against and everything newer, and on nothing older. The release
+# workflow builds the deb on ubuntu:24.04 now, the oldest distribution
+# this package targets, and checks the resulting binary's own Qt floor.
+#
+# Two names for each of three libraries, because Ubuntu 24.04 renamed
+# them for the 64-bit time_t transition and 26.04 renamed them back:
+# 24.04 has only libqt6gui6t64, 26.04 has only libqt6gui6 (checked in
+# both images, not assumed). An alternative satisfies whichever one the
+# distribution actually carries. The version floor is the Qt the build
+# is made against, so apt refuses the package on a distribution too old
+# to run it instead of dpkg accepting it and the loader failing later.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-    "bubblewrap, libqt6gui6, libqt6widgets6, libqt6network6, libqt6webenginewidgets6, \
+    "bubblewrap, \
+libqt6gui6 (>= 6.4) | libqt6gui6t64 (>= 6.4), \
+libqt6widgets6 (>= 6.4) | libqt6widgets6t64 (>= 6.4), \
+libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
+libqt6webenginewidgets6 (>= 6.4), \
 libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
 libwayland-client0, libxkbcommon0")
 # wl-clipboard because the tray's "copy server link" shells out to
