@@ -4261,6 +4261,7 @@ void dump_submit_log(uint64_t stuck_fence) {
     }
     std::fflush(stdout);
 }
+
 }  // namespace
 
 uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8_t>& in) {
@@ -4643,9 +4644,60 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             UpscaleChain& c = chain->second;
             const uint32_t index = indices[0];
             if (index < c.cmd.size()) {
+                // The previous submit of this image's pre-recorded command
+                // buffer has to have finished before it can be re-submitted.
+                //
+                // BOUNDED, and that is the whole point. This ran with
+                // UINT64_MAX and it is the one wait in this file that the
+                // bounded-slice treatment in vk_wait_for_fences never
+                // covered, so it could not even report itself. Live-caught:
+                // the window went to the background, the compositor stopped
+                // releasing swapchain images, this fence never signalled,
+                // and the wait sat here forever -- on the thread serving the
+                // client's connection, with the connection's own lock held,
+                // so every later call from every thread queued behind a
+                // present that was never coming back. That is the freeze:
+                // not the GPU, one unbounded wait in the wrong place.
+                //
+                // On timeout the upscale pass is simply skipped for this
+                // frame and the engine's image is presented directly, which
+                // is exactly what the submit-failed path below already
+                // does. The engine's own semaphores are still unconsumed
+                // (nothing was submitted), so presenting on them is
+                // correct.
+                bool image_ready = true;
                 if (c.in_flight[index] && l.wait_for_fences != nullptr) {
-                    l.wait_for_fences(l.device, 1, &c.fence[index], VK_TRUE, UINT64_MAX);
-                    if (l.reset_fences != nullptr) l.reset_fences(l.device, 1, &c.fence[index]);
+                    const auto fence_t0 = std::chrono::steady_clock::now();
+                    VkResult fr = VK_TIMEOUT;
+                    for (int slice = 0; slice < 4 && fr == VK_TIMEOUT; ++slice) {
+                        // 250ms a slice: long enough not to spin, short
+                        // enough that a stall is a hitch rather than a
+                        // freeze.
+                        fr = l.wait_for_fences(l.device, 1, &c.fence[index], VK_TRUE,
+                                                250ull * 1000ull * 1000ull);
+                    }
+                    if (fr == VK_SUCCESS) {
+                        if (l.reset_fences != nullptr) l.reset_fences(l.device, 1, &c.fence[index]);
+                    } else {
+                        image_ready = false;
+                        const double waited = std::chrono::duration<double>(
+                                                  std::chrono::steady_clock::now() - fence_t0)
+                                                  .count();
+                        static int reports = 0;
+                        if (reports < 8) {
+                            ++reports;
+                            std::printf("stud-render-host: the upscale pass for swapchain image "
+                                        "%u has not finished after %.1fs (%d); presenting this "
+                                        "frame without it rather than waiting\n",
+                                        index, waited, static_cast<int>(fr));
+                            std::fflush(stdout);
+                        }
+                    }
+                }
+                if (!image_ready) {
+                    // Straight to the present below, on the engine's own
+                    // semaphores, with no upscale submit for this frame.
+                    goto present_without_upscale;
                 }
                 std::vector<VkPipelineStageFlags> stages(
                     waits.size(), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
@@ -4682,6 +4734,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         }
     }
 
+present_without_upscale:
     VkResult res = l.queue_present(from_u64<VkQueue>(queue), &pi);
     static int presents = 0;
     // Which thread presents matters: only the main loop pumps Wayland,
