@@ -123,6 +123,28 @@ void throttle_while_hidden() {
     if (background_fps > 240 || background_fps < 1) return;
     if (stud::android_glue::native_window_is_foreground()) return;
 
+    // Says so the first time, because this is a sleep in the present path
+    // and it decides the frame rate.
+    //
+    // "Foreground" is the compositor's word, not Stud's: on Wayland it is
+    // the xdg_toplevel ACTIVATED state, on X11 the focus. If that is ever
+    // wrong -- a compositor that does not send ACTIVATED, a state missed
+    // across a fullscreen or resize -- then a window the user is looking
+    // at is throttled to 30fps and NOTHING else in the log says why. That
+    // is far too plausible a cause to leave silent; one line costs
+    // nothing and rules the whole mechanism in or out of any frame-rate
+    // investigation at a glance.
+    static bool said = false;
+    if (!said) {
+        said = true;
+        std::printf("stud-render-host: the window is not foreground, so frames are being paced to "
+                    "%d fps (STUD_BACKGROUND_FPS, or the setting it comes from; set it above 240 "
+                    "for unlimited). If the window IS the one in use, this is a bug and it is "
+                    "capping the frame rate.\n",
+                    background_fps);
+        std::fflush(stdout);
+    }
+
     const auto interval = std::chrono::microseconds(1000000 / background_fps);
     static auto last = std::chrono::steady_clock::time_point{};
     const auto now = std::chrono::steady_clock::now();
@@ -1413,6 +1435,28 @@ void enable_requestable_extensions(const RealFns& fns) {
 }
 
 
+// Says, once per call id, that a call the client will never hear back
+// about failed.
+//
+// A reply-free request has no channel to report anything on: the client
+// queued it and moved on. That is the right trade for calls whose result
+// nothing reads, but it means the host is the only place a real failure
+// can still be noticed, and a failure nobody can see is exactly the kind
+// of thing that later looks like an engine bug. Once per id, because a
+// call that fails usually fails every frame and the useful fact is which
+// one, not how many times.
+void report_reply_free_failure(stud::render_host::CallId id, uint64_t result) {
+    if (static_cast<int32_t>(result) == 0) return;  // VK_SUCCESS
+    static std::mutex m;
+    static std::set<int> said;
+    std::lock_guard<std::mutex> lock(m);
+    if (!said.insert(static_cast<int>(id)).second) return;
+    std::printf("stud-render-host: %s returned %d, and it was sent reply-free, so the client "
+                "cannot see this\n",
+                stud::render_host::call_id_name(id), static_cast<int32_t>(result));
+    std::fflush(stdout);
+}
+
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
@@ -2238,26 +2282,50 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::VkAllocateCommandBuffers:
             return stud::render_host::vk_allocate_command_buffers(
                 a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]), out, out_len);
-        case CallId::VkBeginCommandBuffer:
-            return stud::render_host::vk_begin_command_buffer(a[0],
-                                                               static_cast<uint32_t>(a[1]));
-        case CallId::VkEndCommandBuffer:
-            return stud::render_host::vk_end_command_buffer(a[0]);
+        // Both are normally sent reply-free (see sync_command_buffer_calls()
+        // in the Vulkan client), so the client cannot see these results and
+        // this is the only place a failure can be noticed at all. Said once
+        // each rather than per frame: a command buffer that fails to open
+        // fails every frame.
+        case CallId::VkBeginCommandBuffer: {
+            const uint64_t r = stud::render_host::vk_begin_command_buffer(
+                a[0], static_cast<uint32_t>(a[1]));
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkEndCommandBuffer: {
+            const uint64_t r = stud::render_host::vk_end_command_buffer(a[0]);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkResetCommandPool:
             return stud::render_host::vk_reset_command_pool(a[1], static_cast<uint32_t>(a[2]));
-        case CallId::VkQueueSubmit:
-            return stud::render_host::vk_queue_submit(a[0], a[1], in);
+        // Reply-free in the normal configuration, like the command-buffer
+        // bracket above, so this is the only place a failure can be seen.
+        case CallId::VkQueueSubmit: {
+            const uint64_t r = stud::render_host::vk_queue_submit(a[0], a[1], in);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkWaitForFences:
             return stud::render_host::vk_wait_for_fences(in, static_cast<uint32_t>(a[1]), a[2]);
         case CallId::VkResetFences:
             return stud::render_host::vk_reset_fences(in);
         case CallId::VkAcquireNextImageKHR:
             return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
-        case CallId::VkQueuePresentKHR:
+        case CallId::VkQueuePresentKHR: {
             note_frame_pacing();
             // The throttle happens BEFORE the dispatch lock is taken;
             // see throttle_before_dispatch().
-            return stud::render_host::vk_queue_present(a[0], in);
+            const uint64_t r = stud::render_host::vk_queue_present(a[0], in);
+            // OUT_OF_DATE and SUBOPTIMAL are the compositor telling the
+            // engine to rebuild, not failures, and they happen on every
+            // resize. Reporting them would be noise, and the rebuild path
+            // already says what it did.
+            const int32_t v = static_cast<int32_t>(r);
+            if (v != -1000001004 && v != 1000001003) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkGetQueryPoolResults:
             return stud::render_host::vk_get_query_pool_results(
                 a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]),

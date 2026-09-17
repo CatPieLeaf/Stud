@@ -39,6 +39,21 @@ stud::render_host::Client& connection() {
                          "stud: render-client: failed to connect to stud-render-host at %s "
                          "(is it running?)\n",
                          path.c_str());
+        } else if (std::getenv("STUD_IPC_NO_WRITER") == nullptr) {
+            // One thread owns this socket from here on.
+            //
+            // This is the connection the engine drives from many threads
+            // at once, and the only one that had a second producer
+            // (submit and present ran on a queue of their own). That is
+            // what made "is my work on the wire yet" a question worth
+            // blocking on: measured in a real game, the engine's Main
+            // thread spent 13.1% of its wall clock waiting for that other
+            // producer to drain. With one writer the question cannot be
+            // asked, so it cannot be waited on. See Client::start_writer.
+            //
+            // Audio and input keep the plain synchronous path below: each
+            // is driven by one thread and would gain nothing but a thread.
+            client.start_writer();
         }
         announce("render", client);
         return true;

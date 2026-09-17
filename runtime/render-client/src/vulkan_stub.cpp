@@ -282,6 +282,96 @@ VkResult simple_create(const uint64_t (&a)[8], H* outHandle) {
     return VK_SUCCESS;
 }
 
+// What the driver will ask for, remembered by the SHAPE of the object
+// rather than by its handle.
+//
+// vkGetBufferMemoryRequirements and vkGetImageMemoryRequirements are two
+// of the blocking round trips left on the engine's own thread, and the
+// engine makes one of each per resource it creates -- which, while an
+// experience streams textures and meshes in, is continuous. None of them
+// could be batched away, because the engine reads the answer immediately.
+//
+// They can be answered without asking, though, because the answer is a
+// pure function of the creation parameters. Vulkan says so directly: 1.3
+// added vkGetDeviceBufferMemoryRequirements and its image counterpart,
+// which return the requirements from a VkBufferCreateInfo/
+// VkImageCreateInfo ALONE, with no object in existence. An object's
+// requirements therefore cannot depend on anything but its create info,
+// and two objects created identically must be told the same thing.
+//
+// So the round trip is worth making once per distinct shape. Roblox
+// creates the same shapes over and over -- same formats, same mip chains,
+// same usage flags -- so after the first of each, this answers from
+// memory.
+//
+// Keyed on the exact serialised create parameters, and COMPARED in full
+// rather than by a hash. A hash collision here would hand the engine
+// another object's alignment or size, which is memory corruption that
+// would surface far from its cause; the key is a few dozen bytes and the
+// comparison is cheaper than the syscall it avoids either way.
+class MemoryRequirementsCache {
+public:
+    // Called at create time, once the real handle is known.
+    void remember_shape(uint64_t handle, std::string shape) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        shape_of_[handle] = std::move(shape);
+    }
+
+    bool get(uint64_t handle, VkMemoryRequirements& out) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto h = shape_of_.find(handle);
+        if (h == shape_of_.end()) return false;
+        const auto r = by_shape_.find(h->second);
+        if (r == by_shape_.end()) return false;
+        out = r->second;
+        ++hits_;
+        return true;
+    }
+
+    void put(uint64_t handle, const VkMemoryRequirements& reqs) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto h = shape_of_.find(handle);
+        if (h == shape_of_.end()) return;
+        by_shape_[h->second] = reqs;
+        ++misses_;
+    }
+
+    // A handle is only as good as the object behind it, and the driver
+    // reuses both. Dropping it at destroy is what stops a recycled handle
+    // answering with the previous object's shape.
+    void forget(uint64_t handle) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        shape_of_.erase(handle);
+    }
+
+    // STUD_VK_MEMREQ_STATS=1. "It caches" is not a measurement; the ratio
+    // is, and a cache that never hits is worth knowing about.
+    void report_if_asked() {
+        static const bool on = std::getenv("STUD_VK_MEMREQ_STATS") != nullptr;
+        if (!on) return;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if ((hits_ + misses_) % 4096 != 0) return;
+        std::fprintf(stderr,
+                     "stud: vulkan-client: memory requirements %llu answered from memory, "
+                     "%llu asked the host, %zu distinct shapes\n",
+                     static_cast<unsigned long long>(hits_),
+                     static_cast<unsigned long long>(misses_), by_shape_.size());
+    }
+
+private:
+    std::mutex mutex_;
+    std::map<uint64_t, std::string> shape_of_;
+    std::map<std::string, VkMemoryRequirements> by_shape_;
+    uint64_t hits_ = 0;
+    uint64_t misses_ = 0;
+};
+
+MemoryRequirementsCache& mem_req_cache() {
+    static MemoryRequirementsCache c;
+    return c;
+}
+
+
 // Staging for mapped device memory. A real mapping is a pointer into
 // driver-owned memory in Process C and cannot be shared, so the engine
 // writes into a local buffer here and the bytes are shipped over on
@@ -870,9 +960,11 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted);
 // Defined below, next to the emulation decision it belongs to; needed at
 // device creation, which comes first in this file.
 bool driver_supports_format(VkPhysicalDevice physicalDevice, VkFormat format);
+// Defined below, with the submit path; declared here because the calls
+// whose ordering depends on it come first in this file.
+bool sync_submit();
 // Defined with the deferred queue further down; declared here because the
 // entry points that have to wait for it come first in this file.
-void flush_deferred_queue();
 
 
 // Forwarded to Process C, where the real driver lives.
@@ -1552,6 +1644,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImage(VkDevice device,
         return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
     }
     *pImage = from_u64<VkImage>(handle);
+    // `in` IS the create parameters, already serialised for the host and
+    // carrying the substituted format rather than the requested one, which
+    // is what the object really has. Nothing better describes its shape.
+    mem_req_cache().remember_shape(handle, std::string(in.begin(), in.end()));
     if (emulated) {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         emulated_images()[handle] = EmulatedImage{requested_format, pCreateInfo->extent.width,
@@ -1563,6 +1659,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImage(VkDevice device,
 VKAPI_ATTR void VKAPI_CALL stud_vkGetImageMemoryRequirements(
     VkDevice device, VkImage image, VkMemoryRequirements* pMemoryRequirements) {
     if (pMemoryRequirements == nullptr) return;
+    if (mem_req_cache().get(to_u64(image), *pMemoryRequirements)) return;
     uint64_t a[8] = {to_u64(device), to_u64(image)};
     std::vector<uint8_t> out(sizeof(uint32_t) + sizeof(VkMemoryRequirements));
     uint32_t written = 0;
@@ -1570,12 +1667,25 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetImageMemoryRequirements(
                                             out.data(), static_cast<uint32_t>(out.size()),
                                             &written);
     read_pod(out.data(), written, *pMemoryRequirements, "VkMemoryRequirements");
+    mem_req_cache().put(to_u64(image), *pMemoryRequirements);
+    mem_req_cache().report_if_asked();
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
     VkPhysicalDevice physicalDevice, VkSurfaceKHR surface,
     VkSurfaceCapabilitiesKHR* pSurfaceCapabilities) {
     if (pSurfaceCapabilities == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    // NOT cached, and that is deliberate. Asking costs a blocking round
+    // trip on the render thread once a frame (1839 calls against 1838
+    // frames, 0.42ms each, measured), which is real -- but the engine is
+    // polling this to NOTICE that the window resized, and render-host owns
+    // the real swapchain and absorbs a compositor resize itself, so the
+    // engine's own acquire keeps returning VK_SUCCESS straight through
+    // one. There is therefore no event on this side that reliably says
+    // "the extent moved". Cached against those hooks it went stale and the
+    // whole image rendered horizontally stretched, live-caught. If this is
+    // ever worth removing, the invalidation has to come from render-host,
+    // which is the only place that knows.
     uint64_t a[8] = {to_u64(physicalDevice), to_u64(surface)};
     std::vector<uint8_t> out(sizeof(uint32_t) + sizeof(VkSurfaceCapabilitiesKHR));
     uint32_t written = 0;
@@ -1592,7 +1702,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkDeviceWaitIdle(VkDevice device) {
     // "Idle" has to include work this process has accepted but not yet
     // sent, or a teardown can destroy an object a queued submit names.
-    flush_deferred_queue();
     const auto t0 = std::chrono::steady_clock::now();
     uint64_t a[8] = {to_u64(device)};
     uint64_t r = stud::render_client::connection().call(CallId::VkDeviceWaitIdle, a, nullptr, 0,
@@ -2048,12 +2157,22 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateBuffer(VkDevice device,
     if (pCreateInfo == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags, pCreateInfo->size, pCreateInfo->usage,
                      static_cast<uint64_t>(pCreateInfo->sharingMode)};
-    return simple_create<VkBuffer, CallId::VkCreateBuffer>(a, pBuffer);
+    const VkResult r = simple_create<VkBuffer, CallId::VkCreateBuffer>(a, pBuffer);
+    if (r == VK_SUCCESS) {
+        // Everything the host is given to create this buffer with, minus
+        // the device -- so two buffers of the same shape on the same
+        // device share a key. See MemoryRequirementsCache.
+        char shape[sizeof(uint64_t) * 4];
+        std::memcpy(shape, &a[1], sizeof(shape));
+        mem_req_cache().remember_shape(to_u64(*pBuffer), std::string(shape, sizeof(shape)));
+    }
+    return r;
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkGetBufferMemoryRequirements(
     VkDevice device, VkBuffer buffer, VkMemoryRequirements* pMemoryRequirements) {
     if (pMemoryRequirements == nullptr) return;
+    if (mem_req_cache().get(to_u64(buffer), *pMemoryRequirements)) return;
     uint64_t a[8] = {to_u64(device), to_u64(buffer)};
     std::vector<uint8_t> out(sizeof(uint32_t) + sizeof(VkMemoryRequirements));
     uint32_t written = 0;
@@ -2061,6 +2180,8 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetBufferMemoryRequirements(
                                             out.data(), static_cast<uint32_t>(out.size()),
                                             &written);
     read_pod(out.data(), written, *pMemoryRequirements, "VkMemoryRequirements");
+    mem_req_cache().put(to_u64(buffer), *pMemoryRequirements);
+    mem_req_cache().report_if_asked();
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindBufferMemory(VkDevice device, VkBuffer buffer,
@@ -2159,6 +2280,9 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyBuffer(VkDevice device, VkBuffer handle
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         buffer_bindings().erase(to_u64(handle));
+        // The driver reuses handles; a stale shape would answer for the
+        // next object to get this one's number.
+        mem_req_cache().forget(to_u64(handle));
         // Anything still queued against this buffer can no longer read it.
         auto& pending = pending_decodes();
         pending.erase(std::remove_if(pending.begin(), pending.end(),
@@ -2173,6 +2297,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyImage(VkDevice device, VkImage handle,
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         emulated_images().erase(to_u64(handle));
+        mem_req_cache().forget(to_u64(handle));
     }
     destroy_handle(device, vk_wire::DestroyKind::Image, to_u64(handle));
 }
@@ -2422,7 +2547,16 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateDescriptorSets(
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetDescriptorPool(VkDevice device, VkDescriptorPool pool,
                                                            VkDescriptorPoolResetFlags flags) {
+    // Once per frame, measured, and nothing reads the answer: it can only
+    // fail by running out of memory, and the descriptor sets it frees are
+    // the host's own bookkeeping. Ordered against everything else by being
+    // in the same queue, which is what makes this safe now and was not
+    // before there was a single writer.
     uint64_t a[8] = {to_u64(device), to_u64(pool), flags};
+    if (!sync_submit()) {
+        stud::render_client::connection().call_void(CallId::VkResetDescriptorPool, a);
+        return VK_SUCCESS;
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkResetDescriptorPool, a, nullptr,
                                                          0, nullptr, 0, nullptr);
     return static_cast<VkResult>(static_cast<int32_t>(r));
@@ -2709,6 +2843,46 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateCommandBuffers(
     return VK_SUCCESS;
 }
 
+// Whether bracketing a command buffer still costs a blocking round trip.
+//
+// It does not need to. Both calls return only a VkResult, both of whose
+// failures are out-of-memory, and the engine records MANY command buffers
+// in a frame on several threads at once -- so this was two blocking round
+// trips per command buffer per frame, each one also forcing the recorded-
+// command batch out early and holding every other recording thread on the
+// connection's own mutex for the length of a socket round trip. Queued
+// reply-free they keep their place in the same ordered stream and cost
+// the caller a memcpy.
+//
+// ---- The ordering this relies on, which is easy to break
+//
+// Reply-free means these now travel in the connection's queue rather than
+// being waited for. Against the engine's own recorded commands that is
+// exact: same queue, same mutex, program order, and call_void() emits any
+// pending command batch before appending, so a Begin can never land ahead
+// of commands recorded before it.
+//
+// Against a SUBMIT it is not, and that is the trap. vkQueueSubmit is
+// handed to the deferred thread, so a submit naming this command buffer
+// may still be sitting there unsent. What stops a Begin overtaking it is
+// that the engine resets the pool (or the fence) before re-recording, and
+// vkResetCommandPool/vkResetFences drain the deferred queue first. That
+// drain is the ordering guarantee this call rides on.
+//
+// So: do NOT make those resets reply-free as well without replacing that
+// guarantee with another one. Tried together, the pair reorders a Begin
+// ahead of the submit that still has to read the same command buffer,
+// which is a GPU executing whatever is in it now. Separately, this one is
+// safe, because the drain still happens between the submit and the next
+// Begin.
+//
+// STUD_VK_SYNC_CMDBUF=1 puts both back to blocking, as the A/B for any
+// "did this change what the engine sees" question.
+bool sync_command_buffer_calls() {
+    static const bool on = std::getenv("STUD_VK_SYNC_CMDBUF") != nullptr;
+    return on;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
                                                           const VkCommandBufferBeginInfo* bi) {
     {
@@ -2719,6 +2893,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
         if (it != scratch_pools().end()) it->second.used = 0;
     }
     uint64_t a[8] = {to_u64(cb), bi != nullptr ? bi->flags : 0};
+    if (!sync_command_buffer_calls()) {
+        stud::render_client::connection().call_void(CallId::VkBeginCommandBuffer, a);
+        return VK_SUCCESS;
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkBeginCommandBuffer, a, nullptr, 0,
                                                          nullptr, 0, nullptr);
     return static_cast<VkResult>(static_cast<int32_t>(r));
@@ -2726,6 +2904,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkEndCommandBuffer(VkCommandBuffer cb) {
     uint64_t a[8] = {to_u64(cb)};
+    if (!sync_command_buffer_calls()) {
+        stud::render_client::connection().call_void(CallId::VkEndCommandBuffer, a);
+        return VK_SUCCESS;
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkEndCommandBuffer, a, nullptr, 0,
                                                          nullptr, 0, nullptr);
     return static_cast<VkResult>(static_cast<int32_t>(r));
@@ -2733,16 +2915,20 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEndCommandBuffer(VkCommandBuffer cb) {
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetCommandPool(VkDevice device, VkCommandPool pool,
                                                         VkCommandPoolResetFlags flags) {
-    // Recycling command buffers has to wait for the submits that use them.
+    // Recycling command buffers has to happen after the submits that use
+    // them, or the host resets a command buffer a queued submit is still
+    // going to execute, which is a GPU running whatever is there now.
     //
-    // vkQueueSubmit is deferred, so a reset sent straight to the host can
-    // arrive while submits naming this pool's command buffers are still
-    // queued here. The host would then reset them and execute the queued
-    // submit against recycled memory, which is a GPU running whatever is
-    // there now. Same family as the vkResetFences ordering bug above, and
-    // the same one-line answer.
-    flush_deferred_queue();
+    // That used to need a drain, because submits were produced by a second
+    // thread and this one could overtake them. With a single writer the
+    // submit is already ahead of this in the same queue -- the engine
+    // issued it first -- so the ordering is program order and costs
+    // nothing. Reply-free for the same reason: nothing reads the answer.
     uint64_t a[8] = {to_u64(device), to_u64(pool), flags};
+    if (!sync_submit()) {
+        stud::render_client::connection().call_void(CallId::VkResetCommandPool, a);
+        return VK_SUCCESS;
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkResetCommandPool, a, nullptr, 0,
                                                          nullptr, 0, nullptr);
     return static_cast<VkResult>(static_cast<int32_t>(r));
@@ -2817,97 +3003,30 @@ namespace {
 // That has to stay in program order with the engine's own writes to its
 // mapped memory: running it later would ship whatever the engine had
 // written by then, which is the next frame's data for an earlier submit.
-class DeferredQueue {
-public:
-    static DeferredQueue& get() {
-        static DeferredQueue q;
-        return q;
-    }
+// Submit and present are queued reply-free on the render connection's own
+// single writer, and the texture decode rides the same queue as an ordered
+// action just ahead of the submit that reads it.
+//
+// This replaced a second thread (DeferredQueue) that ran submit and
+// present itself. It kept the 15ms decode off the engine's thread, which
+// was its whole point and is preserved here, but it also made the stream
+// have two producers, so anything needing to be ordered after a submit
+// could only get that by draining it. Measured in a real game, the
+// engine's Main thread spent 13.1% of its wall clock in exactly that
+// drain. With one writer the ordering is program order and there is
+// nothing to drain. See Client::start_writer/enqueue_action.
+//
+// What still does NOT move is flush_all_mapped_memory(): it has to stay in
+// program order with the engine's own writes to its mapped memory, so it
+// runs on the engine's thread, before the submit is queued.
 
-    static bool enabled() {
-        static const bool on = std::getenv("STUD_VK_SYNC_SUBMIT") == nullptr;
-        return on;
-    }
 
-    void push(std::function<void()> work) {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            work_.push_back(std::move(work));
-        }
-        wake_.notify_one();
-    }
-
-    // Blocks until everything pushed before this call has run.
-    void flush() {
-        std::unique_lock<std::mutex> lock(mutex_);
-        // Bounded only so that a queue which has stopped draining says so.
-        // If the thread servicing it ever dies, a fault inside a decode
-        // used to do exactly that; every frame afterwards waits here
-        // forever, and what the user sees is a frozen window with no
-        // message anywhere. The wait still does not give up; it just
-        // stops being silent.
-        while (!idle_.wait_for(lock, std::chrono::seconds(2),
-                               [this] { return work_.empty() && !running_; })) {
-            if (!warned_stalled_) {
-                warned_stalled_ = true;
-                std::fprintf(stderr,
-                             "stud: vulkan-client: the deferred submit queue has not drained in "
-                             "2s (%zu queued), presentation is stalled\n",
-                             work_.size());
-                std::fflush(stderr);
-            }
-        }
-    }
-
-private:
-    DeferredQueue() {
-        std::thread([this] {
-            for (;;) {
-                std::function<void()> job;
-                {
-                    std::unique_lock<std::mutex> lock(mutex_);
-                    wake_.wait(lock, [this] { return !work_.empty(); });
-                    job = std::move(work_.front());
-                    work_.pop_front();
-                    running_ = true;
-                }
-                job();
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    running_ = false;
-                }
-                idle_.notify_all();
-            }
-        }).detach();
-    }
-
-    std::mutex mutex_;
-    std::condition_variable wake_;
-    std::condition_variable idle_;
-    std::deque<std::function<void()>> work_;
-    bool running_ = false;
-    bool warned_stalled_ = false;
-};
-
-void flush_deferred_queue() {
-    if (DeferredQueue::enabled()) DeferredQueue::get().flush();
-}
-
-// A submit or present that ran on the deferred thread reported something
-// other than success. Handed back on the next call of the same kind, and
-// said once, swallowing it entirely would hide a real device loss.
-std::atomic<int32_t> g_deferred_submit_result{VK_SUCCESS};
-std::atomic<int32_t> g_deferred_present_result{VK_SUCCESS};
-
-void record_deferred_result(std::atomic<int32_t>& slot, uint64_t r, const char* what) {
-    const int32_t result = static_cast<int32_t>(r);
-    if (result == VK_SUCCESS) return;
-    slot.store(result, std::memory_order_release);
-    static std::atomic<bool> said{false};
-    if (!said.exchange(true)) {
-        std::fprintf(stderr, "stud: vulkan-client: deferred %s returned %d\n", what, result);
-        std::fflush(stderr);
-    }
+// STUD_VK_SYNC_SUBMIT=1 puts submit and present back to blocking round
+// trips on the calling thread. The A/B for anything that looks like an
+// ordering or a "did the frame really land" question.
+bool sync_submit() {
+    static const bool on = std::getenv("STUD_VK_SYNC_SUBMIT") != nullptr;
+    return on;
 }
 
 }  // namespace
@@ -2943,21 +3062,30 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
     }
     uint64_t a[8] = {to_u64(queue), to_u64(fence)};
     uint64_t r = VK_SUCCESS;
-    if (DeferredQueue::enabled()) {
-        DeferredQueue::get().push([a, payload = std::move(in), submitted]() mutable {
-            run_pending_decodes(submitted);
-            const uint64_t res = stud::render_client::connection().call(
-                CallId::VkQueueSubmit, a, payload.data(),
-                static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-            record_deferred_result(g_deferred_submit_result, res, "vkQueueSubmit");
-        });
-        r = static_cast<uint64_t>(
-            static_cast<uint32_t>(g_deferred_submit_result.exchange(VK_SUCCESS)));
-    } else {
+    if (sync_submit()) {
         run_pending_decodes(submitted);
         r = stud::render_client::connection().call(CallId::VkQueueSubmit, a, in.data(),
                                                     static_cast<uint32_t>(in.size()), nullptr, 0,
                                                     nullptr);
+    } else {
+        // The decode goes into the stream just ahead of the submit that
+        // reads what it produces, so it is ordered against that submit
+        // without the engine's thread waiting for it. On the writer
+        // thread, not this one: it costs 15ms during a streaming burst
+        // and this is the engine's own render thread.
+        stud::render_client::connection().enqueue_action(
+            [submitted] { run_pending_decodes(submitted); });
+        // Reply-free. Real Vulkan's vkQueueSubmit does not block either,
+        // and the result is reported on the next submit instead, a frame
+        // late, which is honest as long as it is never dropped.
+        stud::render_client::connection().call_void(CallId::VkQueueSubmit, a, in.data(),
+                                                     static_cast<uint32_t>(in.size()));
+        // Nothing can report this back: the request carries no reply, so
+        // there is no channel for one. Said plainly rather than dressed up
+        // as a real answer -- render-host names any non-success of a
+        // reply-free call in its own output (report_reply_free_failure),
+        // which is the only place it can be seen.
+        r = VK_SUCCESS;
     }
     if (frame_timing_enabled()) {
         const double submit_before = frame_timing().submit_ms;
@@ -2974,7 +3102,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fe
                                                      uint64_t timeout) {
     // A fence cannot signal before the submit that would signal it has
     // actually been sent.
-    flush_deferred_queue();
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
     w.u32(fenceCount);
@@ -2994,27 +3121,31 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fe
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetFences(VkDevice device, uint32_t fenceCount,
                                                    const VkFence* pFences) {
-    // Same reason vkWaitForFences flushes, and missing it is worse here.
+    // A reset must not overtake a submit that signals the same fence.
     //
-    // vkQueueSubmit is deferred: it returns as soon as the work is queued
-    // on the ordered thread. A reset goes straight to the host, so with
-    // submits still queued the host resets a fence whose own submit has
-    // not reached it yet, and then that submit arrives and makes the fence
-    // pending again. The engine's next submit reuses the same fence while
-    // it is still in use, which Vulkan does not allow, and the fence then
-    // never signals in a way anyone is waiting for.
+    // It used to be able to. Submits were produced by a second thread, so
+    // a reset sent straight to the host could arrive while the submit that
+    // signals that fence was still queued there; the submit then landed
+    // and made the fence pending again, and the engine's next submit
+    // reused a fence still in use, which Vulkan does not allow and which
+    // ends with the fence never signalling for anyone waiting on it.
+    // Live-caught in a physics-heavy experience: the same fence handle
+    // submitted twelve times with a wait outstanding.
     //
-    // Under a light load the queue is empty and the ordering holds by
-    // luck. Under a heavy one (live-caught in a physics-heavy experience
-    // that was already dropping frames) the queue is deep, resets overtake
-    // submits, and the submit log shows the same fence handle submitted
-    // twelve times while a wait on it is outstanding.
-    flush_deferred_queue();
+    // One writer removes the race outright rather than paying a drain to
+    // dodge it. The engine calls vkQueueSubmit before vkResetFences, so
+    // the submit is ahead of this in the queue, and the queue is the only
+    // route to the host.
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
     w.u32(fenceCount);
     for (uint32_t i = 0; i < fenceCount; ++i) w.u64(to_u64(pFences[i]));
     uint64_t a[8] = {to_u64(device)};
+    if (!sync_submit()) {
+        stud::render_client::connection().call_void(CallId::VkResetFences, a, in.data(),
+                                                     static_cast<uint32_t>(in.size()));
+        return VK_SUCCESS;
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkResetFences, a, in.data(),
                                                          static_cast<uint32_t>(in.size()), nullptr,
                                                          0, nullptr);
@@ -3077,7 +3208,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAcquireNextImageKHR(VkDevice device,
     // Everything the deferred thread still owes, the previous frame's
     // submit and present, has to have reached the host before asking
     // which image is next.
-    flush_deferred_queue();
     uint64_t a[8] = {to_u64(device), to_u64(swapchain), timeout, to_u64(semaphore),
                      to_u64(fence)};
     uint32_t index = 0;
@@ -3109,24 +3239,19 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
     uint64_t a[8] = {to_u64(queue)};
     const auto t0 = std::chrono::steady_clock::now();
     uint64_t r = VK_SUCCESS;
-    if (DeferredQueue::enabled()) {
-        // Presenting on the same ordered thread as the submit keeps the
-        // two in the order the engine issued them. Its result is reported
-        // on the next present rather than this one, a frame late, which
-        // is the price of not blocking the engine here, and honest as
-        // long as it is never dropped.
-        DeferredQueue::get().push([a, payload = std::move(in)]() mutable {
-            const uint64_t res = stud::render_client::connection().call(
-                CallId::VkQueuePresentKHR, a, payload.data(),
-                static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-            record_deferred_result(g_deferred_present_result, res, "vkQueuePresentKHR");
-        });
-        r = static_cast<uint64_t>(
-            static_cast<uint32_t>(g_deferred_present_result.exchange(VK_SUCCESS)));
-    } else {
+    if (sync_submit()) {
         r = stud::render_client::connection().call(CallId::VkQueuePresentKHR, a, in.data(),
                                                     static_cast<uint32_t>(in.size()), nullptr, 0,
                                                     nullptr);
+    } else {
+        // Queued behind the submit it presents, by program order, which is
+        // all "the same ordered thread" ever bought. Its result is
+        // reported on the next present rather than this one, a frame late,
+        // which is the price of not blocking the engine here.
+        stud::render_client::connection().call_void(CallId::VkQueuePresentKHR, a, in.data(),
+                                                     static_cast<uint32_t>(in.size()));
+        r = VK_SUCCESS;  // as above: reply-free, so the host is the only reporter
+
     }
     if (frame_timing_enabled()) {
         const auto now = std::chrono::steady_clock::now();
