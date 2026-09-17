@@ -26,10 +26,20 @@
 // applies identically to Process B's real, single-ABI bionic execution.
 namespace stud::jni_bridge {
 
+// What was armed on this thread before, so an inner call can give it
+// back. Calls nest: a Roblox worker thread runs its whole body inside
+// one armed bracket (see the pthread_create interpose) and makes plenty
+// of ordinary trapped calls of its own along the way.
+struct TrapArm {
+    sigjmp_buf* checkpoint = nullptr;
+    bool tolerate_wild_sigsegv = false;
+};
+
 // Arms a checkpoint on the calling thread for the sigsetjmp() the caller
-// is about to perform. See call_trapping_abort()'s implementation for
-// the required call order (sigsetjmp() first, then arm).
-void arm_abort_trap(sigjmp_buf& checkpoint);
+// is about to perform, and returns whatever was armed before it. See
+// call_trapping_abort()'s implementation for the required call order
+// (sigsetjmp() first, then arm).
+TrapArm arm_abort_trap(sigjmp_buf& checkpoint);
 
 // Same as arm_abort_trap(), but also disables the ~1MB-of-RSP
 // recoverability heuristic for this one armed call: ANY SIGSEGV during
@@ -39,11 +49,21 @@ void arm_abort_trap(sigjmp_buf& checkpoint);
 // (see call_trapping_abort_tolerating_wild_sigsegv()'s doc comment),
 // using this elsewhere would hide real, unrelated null/wild-pointer
 // bugs that should stay fatal so they get root-caused.
-void arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint);
+TrapArm arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint);
 
-// Disarms whatever checkpoint is currently armed on this thread (a
-// no-op if none is). Always safe to call.
-void disarm_abort_trap();
+// Puts back what an arm displaced, so the bracket around an inner call
+// cannot disarm the one around an outer one.
+//
+// It used to clear the thread's checkpoint outright, which read as
+// harmless and was not: every Roblox-spawned thread runs its whole body
+// inside one wild-tolerant bracket, and the FIRST ordinary trapped call
+// that thread made, any JNI call at all, disarmed it on the way out. The
+// thread then ran the rest of its life unprotected, which is what a
+// crash dump saying `armed=0` inside
+// call_trapping_abort_tolerating_wild_sigsegv is: the arm was real, an
+// inner call took it away. Pass what the matching arm returned; a
+// default-constructed TrapArm means "nothing was armed".
+void disarm_abort_trap(TrapArm previous = {});
 
 // Makes one real call into Roblox's own code, trapping any int3/abort()
 // it hits mid-call instead of terminating the process. Deliberately
@@ -57,13 +77,14 @@ bool call_trapping_abort(Fn fn, Args... args) {
     // initialized `checkpoint`, not before, arming first leaves a real
     // window where a signal firing between the arm and the sigsetjmp
     // call itself would siglongjmp into an uninitialized buffer.
+    TrapArm previous;
     if (sigsetjmp(checkpoint, 1) == 0) {
-        arm_abort_trap(checkpoint);
+        previous = arm_abort_trap(checkpoint);
         fn(args...);
     } else {
         completed = false;
     }
-    disarm_abort_trap();
+    disarm_abort_trap(previous);
     return completed;
 }
 
@@ -73,13 +94,14 @@ template <typename Result, typename Fn, typename... Args>
 bool call_trapping_abort_with_result(Fn fn, Result& result, Args... args) {
     sigjmp_buf checkpoint;
     bool completed = true;
+    TrapArm previous;
     if (sigsetjmp(checkpoint, 1) == 0) {
-        arm_abort_trap(checkpoint);
+        previous = arm_abort_trap(checkpoint);
         result = fn(args...);
     } else {
         completed = false;
     }
-    disarm_abort_trap();
+    disarm_abort_trap(previous);
     return completed;
 }
 
@@ -103,13 +125,14 @@ template <typename Fn, typename... Args>
 bool call_trapping_abort_tolerating_wild_sigsegv(Fn fn, Args... args) {
     sigjmp_buf checkpoint;
     bool completed = true;
+    TrapArm previous;
     if (sigsetjmp(checkpoint, 1) == 0) {
-        arm_abort_trap_tolerating_wild_sigsegv(checkpoint);
+        previous = arm_abort_trap_tolerating_wild_sigsegv(checkpoint);
         fn(args...);
     } else {
         completed = false;
     }
-    disarm_abort_trap();
+    disarm_abort_trap(previous);
     return completed;
 }
 
