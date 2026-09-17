@@ -3203,6 +3203,29 @@ bool record_upscale_blits(UpscaleChain& c) {
 // the resize the way it always does, through the surface capabilities.
 std::map<uint64_t, uint64_t> g_swapchain_alias;
 
+// Tried and reverted: destroying the old swapchain before building the
+// new one, instead of handing it over as oldSwapchain.
+//
+// The measurement behind it is real and stands. On X11 the driver spends
+// its time retiring the old swapchain INSIDE vkCreateSwapchainKHR --
+// 22035ms of a 22040ms rebuild, with the window mapped -- while
+// destroying that same swapchain outright takes under 50ms, which is why
+// no SLOW destroy line has ever printed beside one of them.
+//
+// It cannot be done in that order regardless. With the old swapchain
+// already destroyed, the driver hands the SAME ADDRESS straight back for
+// the new one (live-confirmed, twice in one run). Every map in this file
+// is keyed by that handle, so the new swapchain inherits the old one's
+// upscale chain and its extent, and the pass writes a small old source
+// into a large new swapchain: a picture that does not fill the window,
+// with black bands down the left and along the bottom that never go
+// away. It also leaves the engine holding one value for two swapchains,
+// which makes its own destroy ambiguous -- keeping those handles distinct
+// is exactly what oldSwapchain is for.
+//
+// So the cost stands, and whatever removes it has to make retiring the
+// old swapchain cheap rather than move the retirement somewhere else.
+
 struct SavedSwapchainCI {
     VkSwapchainCreateInfoKHR ci{};
     std::vector<uint32_t> families;
@@ -3392,8 +3415,39 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     // requested size instead. Everything about the engine's view, the
     // extent it asked for, its scale, its UI, is left exactly as it
     // would have been.
-    const uint32_t out_w = g_upscale_output_w.load(std::memory_order_relaxed);
-    const uint32_t out_h = g_upscale_output_h.load(std::memory_order_relaxed);
+    uint32_t out_w = g_upscale_output_w.load(std::memory_order_relaxed);
+    uint32_t out_h = g_upscale_output_h.load(std::memory_order_relaxed);
+    // On X11, ask the window what size it is NOW rather than trusting the
+    // last value the display pump latched.
+    //
+    // This is what the 22-second rebuilds were. The latched value is set
+    // when the pump sees a configure; the engine's rebuild arrives later,
+    // and during a drag the window has moved on by then. Live-caught: a
+    // real swapchain built as "upscale 1536x792 -> 1920x990" while the X
+    // window was 1564x930, and then a second 22-second rebuild whose only
+    // job was retiring that mismatched swapchain. A swapchain whose
+    // extent does not match its window is what the driver spends those 22
+    // seconds on -- every fast rebuild in the same session matched.
+    //
+    // Wayland keeps the latched value: a surface there has no size of its
+    // own and the viewport scales whatever it is given, so nothing can
+    // mismatch.
+    if (stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11) {
+        int32_t now_w = 0;
+        int32_t now_h = 0;
+        stud::android_glue::native_window_display_pixel_size(&now_w, &now_h);
+        if (now_w > 0 && now_h > 0 &&
+            (static_cast<uint32_t>(now_w) != out_w || static_cast<uint32_t>(now_h) != out_h)) {
+            std::printf("stud-render-host: the window is %dx%d now, not the %ux%u last latched; "
+                        "building the swapchain for the window it has\n", now_w, now_h, out_w,
+                        out_h);
+            std::fflush(stdout);
+            out_w = static_cast<uint32_t>(now_w);
+            out_h = static_cast<uint32_t>(now_h);
+            g_upscale_output_w.store(out_w, std::memory_order_relaxed);
+            g_upscale_output_h.store(out_h, std::memory_order_relaxed);
+        }
+    }
     UpscaleChain pending;
     // Only when the output really is bigger than what the engine asked
     // for. Equal sizes mean there is nothing to upscale, and a blit of an
