@@ -1681,81 +1681,7 @@ std::mutex& queue_mutex() {
 }
 
 
-// Makes a forwarded barrier LEGAL without making it weaker.
-//
-// The engine records its own barriers and Stud replays them. Validation
-// on a real run says some of them are invalid: an access flag that the
-// stage it names cannot perform (VUID-vkCmdPipelineBarrier-
-// pImageMemoryBarriers-02819 -- SHADER_READ under ALL_TRANSFER), and a
-// transition into TRANSFER_DST that does not cover the copy that
-// immediately follows it (SYNC-HAZARD-WRITE-AFTER-WRITE on
-// vkCmdCopyImage). A lenient driver runs them anyway. NVIDIA does not:
-// every run of this session that put real work through this path on the
-// RTX 3050 ended in VK_ERROR_DEVICE_LOST, while the identical code on
-// Intel ran 41 minutes without one.
-//
-// Both repairs only ever ADD synchronisation, never remove it, so a
-// barrier that was already correct is unchanged in effect:
-//   - a stage mask that cannot perform the access it is given is widened
-//     to ALL_COMMANDS, which can perform all of them;
-//   - a transition into TRANSFER_DST/TRANSFER_SRC gains the transfer
-//     access and stage it is missing, so the copy that follows is
-//     ordered after the transition rather than racing it.
-void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* dst_stage,
-                        std::vector<VkMemoryBarrier>& mem,
-                        std::vector<VkBufferMemoryBarrier>& buf,
-                        std::vector<VkImageMemoryBarrier>& img) {
-    // What each stage is allowed to do, kept deliberately coarse: the
-    // question here is only "could this stage ever perform this access",
-    // and a wrong answer is caught by validation, not guessed at.
-    const VkAccessFlags transfer_access =
-        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT |
-        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT |
-        VK_ACCESS_HOST_WRITE_BIT;
-    const VkPipelineStageFlags transfer_only =
-        VK_PIPELINE_STAGE_TRANSFER_BIT |
-        VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT |
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 
-    auto stage_cannot = [&](VkPipelineStageFlags stage, VkAccessFlags access) {
-        if ((stage & ~transfer_only) != 0) return false;   // a general stage: fine
-        if ((stage & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) != 0) return false;
-        return (access & ~transfer_access) != 0;
-    };
-
-    VkAccessFlags all_src = 0;
-    VkAccessFlags all_dst = 0;
-    for (const auto& b : mem) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
-    for (const auto& b : buf) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
-    for (const auto& b : img) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
-
-    static int widened = 0;
-    if (stage_cannot(*src_stage, all_src) || stage_cannot(*dst_stage, all_dst)) {
-        *src_stage |= VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        *dst_stage |= VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        if (widened < 4) {
-            ++widened;
-            std::printf("stud-render-host: widened a barrier whose stage could not perform the "
-                        "access it was given (src=0x%x dst=0x%x)\n",
-                        static_cast<unsigned>(all_src), static_cast<unsigned>(all_dst));
-            std::fflush(stdout);
-        }
-    }
-
-    // A transition INTO a transfer layout is followed by a transfer. Say
-    // so, or the copy is a second write racing the transition's own.
-    bool needs_transfer = false;
-    for (auto& b : img) {
-        if (b.newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-            b.dstAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
-            needs_transfer = true;
-        } else if (b.newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
-            b.dstAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
-            needs_transfer = true;
-        }
-    }
-    if (needs_transfer) *dst_stage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
-}
 
 uint64_t vk_device_wait_idle() {
     Loader& l = loader();
@@ -2312,6 +2238,139 @@ struct UpscalePush {
 
 std::map<uint64_t, UpscaleChain> g_upscale_chains;
 
+// True only for images the presentation engine actually owns.
+//
+// With upscaling on, the engine is handed Stud's OWN images as its
+// swapchain images (vk_get_swapchain_images) and renders into those; the
+// real, presentable ones are the chain's real_images and the engine never
+// sees them. So "the engine thinks this is a swapchain image" and "this
+// image can be presented" are different questions, and PRESENT_SRC_KHR is
+// only a legal layout for the second.
+bool is_presentable_image(VkImage image) {
+    for (const auto& entry : g_upscale_chains) {
+        for (VkImage real : entry.second.real_images) {
+            if (real == image) return true;
+        }
+        for (VkImage fake : entry.second.offscreen) {
+            if (fake == image) return false;   // ours: never presentable
+        }
+    }
+    // No upscale chain: the engine renders straight into the real
+    // swapchain, which is exactly what it believes it is doing.
+    return true;
+}
+
+// Makes a forwarded barrier LEGAL without making it weaker.
+//
+// The engine records its own barriers and Stud replays them. Validation
+// on a real run says some of them are invalid: an access flag that the
+// stage it names cannot perform (VUID-vkCmdPipelineBarrier-
+// pImageMemoryBarriers-02819 -- SHADER_READ under ALL_TRANSFER), and a
+// transition into TRANSFER_DST that does not cover the copy that
+// immediately follows it (SYNC-HAZARD-WRITE-AFTER-WRITE on
+// vkCmdCopyImage). A lenient driver runs them anyway. NVIDIA does not:
+// every run of this session that put real work through this path on the
+// RTX 3050 ended in VK_ERROR_DEVICE_LOST, while the identical code on
+// Intel ran 41 minutes without one.
+//
+// Both repairs only ever ADD synchronisation, never remove it, so a
+// barrier that was already correct is unchanged in effect:
+//   - a stage mask that cannot perform the access it is given is widened
+//     to ALL_COMMANDS, which can perform all of them;
+//   - a transition into TRANSFER_DST/TRANSFER_SRC gains the transfer
+//     access and stage it is missing, so the copy that follows is
+//     ordered after the transition rather than racing it.
+void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* dst_stage,
+                        std::vector<VkMemoryBarrier>& mem,
+                        std::vector<VkBufferMemoryBarrier>& buf,
+                        std::vector<VkImageMemoryBarrier>& img) {
+    // What each stage is allowed to do, kept deliberately coarse: the
+    // question here is only "could this stage ever perform this access",
+    // and a wrong answer is caught by validation, not guessed at.
+    const VkAccessFlags transfer_access =
+        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT |
+        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT |
+        VK_ACCESS_HOST_WRITE_BIT;
+    const VkPipelineStageFlags transfer_only =
+        VK_PIPELINE_STAGE_TRANSFER_BIT |
+        VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT |
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+    auto stage_cannot = [&](VkPipelineStageFlags stage, VkAccessFlags access) {
+        if ((stage & ~transfer_only) != 0) return false;   // a general stage: fine
+        if ((stage & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) != 0) return false;
+        return (access & ~transfer_access) != 0;
+    };
+
+    VkAccessFlags all_src = 0;
+    VkAccessFlags all_dst = 0;
+    for (const auto& b : mem) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
+    for (const auto& b : buf) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
+    for (const auto& b : img) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
+
+    static int widened = 0;
+    if (stage_cannot(*src_stage, all_src) || stage_cannot(*dst_stage, all_dst)) {
+        *src_stage |= VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        *dst_stage |= VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        if (widened < 4) {
+            ++widened;
+            std::printf("stud-render-host: widened a barrier whose stage could not perform the "
+                        "access it was given (src=0x%x dst=0x%x)\n",
+                        static_cast<unsigned>(all_src), static_cast<unsigned>(all_dst));
+            std::fflush(stdout);
+        }
+    }
+
+    // PRESENT_SRC_KHR on an image that cannot be presented.
+    //
+    // The spec allows that layout only for a presentable image, and with
+    // upscaling on the engine's render target is not one: it is an
+    // ordinary image of Stud's, handed over as if it came from the
+    // swapchain, so the engine ends every frame by transitioning it to
+    // PRESENT_SRC. On a driver where that layout is a no-op nothing is
+    // ever wrong. On NVIDIA it is not a no-op -- the layout carries
+    // display-specific tiling and compression -- and it was being applied
+    // to an allocation that can never reach the screen. Every device loss
+    // this session had this pass running; none of the runs without it did,
+    // and the same code on Intel ran clean for 41 minutes.
+    //
+    // COLOR_ATTACHMENT_OPTIMAL is what the image really is, and the
+    // engine's own next render pass expects to find it in that layout
+    // either way, so the substitution is invisible to it.
+    for (auto& b : img) {
+        if (b.image == VK_NULL_HANDLE || is_presentable_image(b.image)) continue;
+        static int remapped = 0;
+        const bool interesting = b.oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ||
+                                 b.newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        if (interesting && remapped < 4) {
+            ++remapped;
+            std::printf("stud-render-host: an image that cannot be presented was being put in "
+                        "PRESENT_SRC; using COLOR_ATTACHMENT_OPTIMAL instead\n");
+            std::fflush(stdout);
+        }
+        if (b.oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+            b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+        if (b.newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+            b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+    }
+
+    // A transition INTO a transfer layout is followed by a transfer. Say
+    // so, or the copy is a second write racing the transition's own.
+    bool needs_transfer = false;
+    for (auto& b : img) {
+        if (b.newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            b.dstAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
+            needs_transfer = true;
+        } else if (b.newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            b.dstAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
+            needs_transfer = true;
+        }
+    }
+    if (needs_transfer) *dst_stage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+}
+
 void destroy_upscale_chain(UpscaleChain& c) {
     Loader& l = loader();
     if (l.device == VK_NULL_HANDLE) return;
@@ -2781,7 +2840,10 @@ bool record_upscale_blits(UpscaleChain& c) {
         to_read.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         to_read.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         to_read.dstAccessMask = read_access;
-        to_read.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        // Matches the remap in make_barrier_legal(): the engine's
+        // PRESENT_SRC transitions on this image become
+        // COLOR_ATTACHMENT_OPTIMAL, so that is where the pass finds it.
+        to_read.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         to_read.newLayout = read_layout;
         to_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         to_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -2912,10 +2974,10 @@ bool record_upscale_blits(UpscaleChain& c) {
         after_src.srcAccessMask = read_access;
         after_src.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         after_src.oldLayout = read_layout;
-        // Back where the engine left it, so the next frame's render pass
-        // finds exactly the layout it would have found on a real
-        // swapchain image.
-        after_src.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        // Back where the engine left it. Not PRESENT_SRC: this image is
+        // not presentable, and the engine's own transitions on it are
+        // remapped the same way.
+        after_src.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         VkImageMemoryBarrier after_dst = to_write;
         after_dst.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
