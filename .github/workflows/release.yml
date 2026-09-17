@@ -120,7 +120,7 @@ jobs:
           path: |
             third_party/angle
             third_party/android-bionic
-          key: deps-fedora44-${{ steps.deps.outputs.id }}
+          key: deps-${{ steps.deps.outputs.id }}
 
       - name: Fetch dependencies
         # A cold cache builds ANGLE from source: several GB of checkout and
@@ -537,7 +537,7 @@ jobs:
           path: |
             third_party/angle
             third_party/android-bionic
-          key: deps-ubuntu2604-${{ steps.deps.outputs.id }}
+          key: deps-${{ steps.deps.outputs.id }}
 
       - name: Cache AppImage tools
         uses: actions/cache@v6
@@ -653,14 +653,13 @@ jobs:
           key: ndk-${{ steps.deps.outputs.id }}
 
       - name: Cache ANGLE and bionic
-        # Per-container, like every other job's: ANGLE is COMPILED here,
-        # against this container's glibc.
+        # The same key every other job uses; see the packages job.
         uses: actions/cache@v6
         with:
           path: |
             third_party/angle
             third_party/android-bionic
-          key: deps-ubuntu2404-${{ steps.deps.outputs.id }}
+          key: deps-${{ steps.deps.outputs.id }}
 
       - name: Fetch dependencies
         run: |
