@@ -3116,7 +3116,16 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 if (wayland) {
                     dispatch_input_queue(window.display, false);
                 } else {
-                    pump_display(window, false);
+                    // Events only, and nothing else.
+                    //
+                    // This used to call the whole display pump, which on
+                    // X11 also takes the lock the present path needs and
+                    // re-checks the window size, every time round a loop
+                    // that runs every few milliseconds. The Wayland side
+                    // has always done only what this does: drain what has
+                    // already arrived.
+                    std::lock_guard<std::mutex> lock(wayland_mutex());
+                    stud::android_glue::native_window_pump_x11_events_only();
                 }
                 n = stud::android_glue::native_window_drain_input_events(
                     reinterpret_cast<HostInputEvent*>(out.data()), capacity);
@@ -3127,8 +3136,24 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 int wait_ms = static_cast<int>(left.count());
                 if (wait_ms <= 0) wait_ms = 1;
                 if (!wayland) {
-                    // X11 has no fd to wait on here; it is pumped above.
-                    std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+                    // The X connection has a socket like any other, so
+                    // wait on it rather than sleeping in a loop: the same
+                    // shape as the Wayland branch below, one wake when
+                    // something actually arrives instead of a timer that
+                    // fires whether or not anything did.
+                    const int x_fd = stud::android_glue::native_window_x11_fd();
+                    if (x_fd < 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+                        continue;
+                    }
+                    pollfd xp{x_fd, POLLIN, 0};
+                    if (::poll(&xp, 1, wait_ms) > 0 && (xp.revents & POLLIN) != 0) {
+                        std::lock_guard<std::mutex> lock(wayland_mutex());
+                        stud::android_glue::native_window_pump_x11_events_only();
+                    }
+                    n = stud::android_glue::native_window_drain_input_events(
+                        reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+                    if (n > 0) break;
                     continue;
                 }
                 // Asleep until the compositor actually says something,
@@ -3615,7 +3640,11 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 }
                 VkXlibSurfaceCreateInfoKHR xinfo{};
                 xinfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-                xinfo.dpy = static_cast<Display*>(window.x11_display);
+                // The driver's own connection, not the one the event pump
+                // reads; see native_window_x11_vk_display().
+                void* vk_dpy = stud::android_glue::native_window_x11_vk_display();
+                if (vk_dpy == nullptr) vk_dpy = window.x11_display;
+                xinfo.dpy = static_cast<Display*>(vk_dpy);
                 xinfo.window = static_cast<::Window>(window.x11_window);
                 VkSurfaceKHR xsurface = VK_NULL_HANDLE;
                 VkResult xr = create_xlib(reinterpret_cast<VkInstance>(a[0]), &xinfo, nullptr,
@@ -4007,6 +4036,16 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::VkWaitForFences:
         case stud::render_host::CallId::VkAcquireNextImageKHR:
         case stud::render_host::CallId::VkQueuePresentKHR:
+        // Building a swapchain is a driver call like the waits above, and
+        // on X11 it is the longest of them: the driver has to retire
+        // everything outstanding on the old swapchain first, and measured
+        // during a maximise it spent 22012ms doing so. Held under the
+        // dispatch lock, that is 22 seconds in which render-host answers
+        // nothing at all -- no input, no window size, no other
+        // connection -- which is exactly what a black, dead window on
+        // resize looked like. It touches one swapchain and the surface,
+        // not the shared GL state the lock exists for.
+        case stud::render_host::CallId::VkCreateSwapchainKHR:
         // Audio blocks until the device has taken the samples; that is
         // what paces the engine's mixer, so holding the dispatch lock
         // across it makes every other connection wait on the sound card.

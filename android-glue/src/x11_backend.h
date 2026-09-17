@@ -27,6 +27,9 @@ bool create_window(int32_t width, int32_t height);
 // The real X display and window, for EGL and for Vulkan's WSI. Null/0
 // before create_window() succeeds.
 void* display();
+// A second connection to the same server, for the Vulkan driver alone;
+// see the definition.
+void* vk_display();
 unsigned long window();
 
 // Drains everything the server has sent: resizes update the size below,
