@@ -3475,6 +3475,17 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     }
     const auto create_t0 = std::chrono::steady_clock::now();
     VkResult r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+    {
+        const double create_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - create_t0).count();
+        if (create_ms > 1000.0) {
+            std::printf("stud-render-host: the driver took %.0fms to build the swapchain "
+                        "(oldSwapchain %s, window %s)\n", create_ms,
+                        h.old_swapchain != 0 ? "given" : "none",
+                        stud::android_glue::native_window_is_visible() ? "up" : "down");
+            std::fflush(stdout);
+        }
+    }
     std::printf("stud-render-host: vkCreateSwapchainKHR -> %d (%ux%u format=%u images>=%u)\n",
                 static_cast<int>(r), h.width, h.height, h.image_format, h.min_image_count);
     std::fflush(stdout);
@@ -3891,7 +3902,22 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.swapchain_image_list.erase(images);
             }
             if (l.destroy_swapchain) {
+                // Timed for the same reason the create is: a rebuild is a
+                // destroy and a create, and 22 seconds of it has to belong
+                // to one of them. If the destroy is the slow half then
+                // what the driver waits for is the old swapchain's
+                // presents retiring, and destroying before creating rather
+                // than handing it over as oldSwapchain would change
+                // nothing; if the create is, it would.
+                const auto destroy_t0 = std::chrono::steady_clock::now();
                 l.destroy_swapchain(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
+                const double destroy_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - destroy_t0).count();
+                if (destroy_ms > 50.0) {
+                    std::printf("stud-render-host: SLOW vkDestroySwapchainKHR %.0fms\n",
+                                destroy_ms);
+                    std::fflush(stdout);
+                }
             }
             break;
         }
