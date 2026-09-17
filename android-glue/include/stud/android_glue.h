@@ -498,6 +498,19 @@ struct HostInputEvent {
     // for the longest result any standard Compose file produces, and a
     // longer one is dropped rather than cut in half.
     char composed_utf8[12] = {};
+    // kKey: every ASCII character the LIVE layout can type, anywhere, as a
+    // 128-bit set (bit c of layout_chars[c / 64]).
+    //
+    // Only the compositor knows this, and the engine's scan-code table is
+    // positional, so a key can only be moved to the position that MEANS
+    // what it types (see key_map.h) if that vacated position is still
+    // reachable some other way. On a Brazilian ABNT2 layout nothing types
+    // "`" at all, so moving its key off the US grave position is what
+    // stopped "'" from opening the Roblox inventory.
+    //
+    // All ones when unknown (no keymap yet, or the X11 backend), which is
+    // the behaviour every consumer had before this existed.
+    uint64_t layout_chars[2] = {~0ull, ~0ull};
 };
 
 // Copies up to `max` queued real input events into `out` and removes them

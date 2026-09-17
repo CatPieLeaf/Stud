@@ -380,13 +380,49 @@ inline bool is_keypad_scan_code(uint32_t scan) {
 // Only ever moves a key to the position that types the same character, so
 // a US keyboard is unaffected. Every one of its keys already sits where
 // the character says.
-inline uint32_t engine_scan_code_for_event(uint32_t reported_scan, const std::string& typed_text) {
+// A position this key must not vacate.
+//
+// Moving a key to the position that means what it types leaves the
+// position it came from claimed by nobody unless some other key on the
+// layout types the character that position stands for. When no key does,
+// that position becomes unreachable, and every binding on it is lost.
+//
+// Live case: on a Brazilian ABNT2 layout the key at the US grave position
+// types "'", and nothing anywhere on that layout types "`" (its grave is
+// a dead key, which types nothing on its own). Moving it to the
+// apostrophe position left the engine with no way to see a grave at all,
+// which is the key Roblox opens the inventory on.
+//
+// `layout_chars` is the set of ASCII characters the live layout can type
+// (HostInputEvent::layout_chars). All ones means unknown, and then every
+// position counts as reachable, which is what this did before the set
+// existed.
+inline bool position_must_be_kept(uint32_t reported_scan, char typed,
+                                  const uint64_t layout_chars[2]) {
+    char at_position = 0;
+    if (!char_for_scan_code(reported_scan, false, &at_position)) return false;
+    // Not "is it already right": the keypad's own "/" types a slash and
+    // still has to move, which is the whole reason this file moves keys.
+    const unsigned char c = static_cast<unsigned char>(at_position);
+    if (c >= 128) return false;
+    return (layout_chars[c / 64] & (1ull << (c % 64))) == 0;
+}
+
+inline uint32_t engine_scan_code_for_event(uint32_t reported_scan, const std::string& typed_text,
+                                           const uint64_t layout_chars[2]) {
     // Nothing typed (a dead key, a function key, a modifier) means there
     // is no character to place, so where it sits is all there is.
     if (typed_text.size() != 1) return reported_scan;
     if (is_keypad_scan_code(reported_scan)) return reported_scan;
+    if (position_must_be_kept(reported_scan, typed_text[0], layout_chars)) return reported_scan;
     const uint32_t canonical = canonical_scan_code_for_char(typed_text[0]);
     return canonical != 0 ? canonical : reported_scan;
+}
+
+// Everything reachable, for a caller with no keymap to answer from.
+inline uint32_t engine_scan_code_for_event(uint32_t reported_scan, const std::string& typed_text) {
+    static const uint64_t kEverything[2] = {~0ull, ~0ull};
+    return engine_scan_code_for_event(reported_scan, typed_text, kEverything);
 }
 
 }  // namespace stud::jni_bridge
