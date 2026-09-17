@@ -461,6 +461,16 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
             describe_address("pc", static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RIP]));
             print_backtrace(static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RBP]));
+            // Teardown, same reasoning as the other fatal exit below, and
+            // this is the one a closing Stud actually reaches: render-host
+            // goes first, so an engine thread still drawing faults on a
+            // connection that is already gone, wild-shaped and on a thread
+            // whose bracket an inner call had taken away. Re-raising there
+            // is what wrote a 144 MB core dump of a process one line from
+            // _exit(0), reported as linker64 crashing on close.
+            if (g_shutting_down.load(std::memory_order_relaxed)) {
+                ::_exit(0);
+            }
             ::signal(sig, SIG_DFL);
             ::raise(sig);
             return;
@@ -591,20 +601,26 @@ void ensure_trap_handler_installed() {
 
 }  // namespace
 
-void arm_abort_trap(sigjmp_buf& checkpoint) {
+TrapArm arm_abort_trap(sigjmp_buf& checkpoint) {
     ensure_trap_handler_installed();
     ensure_sigaltstack_for_current_thread();
+    const TrapArm previous{g_armed_checkpoint, g_tolerate_wild_sigsegv};
     g_armed_checkpoint = &checkpoint;
-}
-
-void arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint) {
-    arm_abort_trap(checkpoint);
-    g_tolerate_wild_sigsegv = true;
-}
-
-void disarm_abort_trap() {
-    g_armed_checkpoint = nullptr;
+    // An inner call decides for itself; the outer bracket's tolerance
+    // comes back with it at disarm.
     g_tolerate_wild_sigsegv = false;
+    return previous;
+}
+
+TrapArm arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint) {
+    const TrapArm previous = arm_abort_trap(checkpoint);
+    g_tolerate_wild_sigsegv = true;
+    return previous;
+}
+
+void disarm_abort_trap(TrapArm previous) {
+    g_armed_checkpoint = previous.checkpoint;
+    g_tolerate_wild_sigsegv = previous.tolerate_wild_sigsegv;
 }
 
 bool clear_pending_jni_exception(JNIEnv* env, const char* context) {
