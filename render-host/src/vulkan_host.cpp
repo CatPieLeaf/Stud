@@ -39,6 +39,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "stud/vulkan_forward.h"
+#include "stud/render_host_protocol.h"
 
 namespace stud::render_host {
 
@@ -2048,6 +2049,59 @@ uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
+// A mapped allocation whose pages the client and this process both map.
+//
+// The engine writes through its own mapping of a file; this process maps
+// the same file, so the bytes are already here by the time a flush names
+// the run that changed. What used to be 12.5 MB a frame down the socket
+// becomes an offset and a length, and one memcpy on this side.
+std::map<uint64_t, std::pair<void*, size_t>>& shared_writes() {
+    static std::map<uint64_t, std::pair<void*, size_t>> m;
+    return m;
+}
+
+uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t size) {
+    const std::string path = stud::render_host::shared_memory_path(shared_id);
+    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
+    const size_t length = (static_cast<size_t>(size) + page - 1) & ~(page - 1);
+    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (p == MAP_FAILED) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    auto& slot = shared_writes()[memory];
+    if (slot.first != nullptr) ::munmap(slot.first, slot.second);
+    slot = {p, length};
+    static bool said = false;
+    if (!said) {
+        said = true;
+        std::printf("stud-render-host: the engine's mapped writes are shared, not copied\n");
+        std::fflush(stdout);
+    }
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
+// The same write, with the bytes already in this process: copy the named
+// run out of the shared mapping into the real one.
+uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_t n) {
+    Loader& l = loader();
+    auto it = l.mapped.find(memory);
+    auto sh = shared_writes().find(memory);
+    if (it == l.mapped.end() || it->second == nullptr || sh == shared_writes().end() ||
+        sh->second.first == nullptr) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    if (offset + n > sh->second.second) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    std::memcpy(static_cast<uint8_t*>(it->second) + offset,
+                static_cast<const uint8_t*>(sh->second.first) + offset,
+                static_cast<size_t>(n));
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
 // The engine's writes land here: the client ships whatever it changed in
 // its staging copy, and this copies it into the real mapping.
 uint64_t vk_write_mapped_memory(uint64_t memory, uint64_t offset, const std::vector<uint8_t>& in) {
@@ -3439,16 +3493,10 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     ci.flags = h.flags;
     ci.surface = from_u64<VkSurfaceKHR>(h.surface);
     ci.minImageCount = h.min_image_count;
-    // STUD_VK_FORCE_OPAQUE_FORMAT=1 swaps a B8G8R8A8 swapchain for
-    // B8G8R8X8, whose DRM format is XR24 rather than AR24.
-    //
-    // The engine asks for an alpha format, and the driver duly allocates
-    // buffers with alpha bits the compositor is entitled to honour. The
-    // reference test (stud_try_vulkan_window), which presents correctly on
-    // this same GPU and window, gets XR24. Off by default because it is a
-    // real behaviour change to what the engine requested, not a fix in
-    // itself.
     ci.imageFormat = static_cast<VkFormat>(h.image_format);
+    // STUD_VK_FORCE_OPAQUE_FORMAT=1 swaps a UNORM swapchain for its SRGB
+    // twin. Off by default: it is a real change to what the engine asked
+    // for, not a fix in itself.
     static const bool force_opaque_format = std::getenv("STUD_VK_FORCE_OPAQUE_FORMAT") != nullptr;
     if (force_opaque_format) {
         if (ci.imageFormat == VK_FORMAT_B8G8R8A8_UNORM) {
@@ -4997,13 +5045,24 @@ VkFence repair_fence() {
 }
 
 std::set<uint64_t> g_semaphores_stud_signalled;
+// Whether that set has anything in it, readable without the lock.
+//
+// Both users sit on the frame path -- one per acquire, one per wait
+// semaphore per submit -- and outside a failed acquire the set is empty,
+// which is every frame of a normal session. A relaxed read costs an
+// instruction; taking a mutex on the engine's own render thread, a few
+// times a frame, does not.
+std::atomic<bool> g_have_stud_signalled{false};
 std::mutex g_semaphores_stud_signalled_mutex;
 
 // Marks a semaphore as consumed once a real submission waits on it.
 void note_semaphore_waited(uint64_t semaphore) {
     if (semaphore == 0) return;
+    if (!g_have_stud_signalled.load(std::memory_order_relaxed)) return;
     std::lock_guard<std::mutex> lock(g_semaphores_stud_signalled_mutex);
     g_semaphores_stud_signalled.erase(semaphore);
+    g_have_stud_signalled.store(!g_semaphores_stud_signalled.empty(),
+                                std::memory_order_relaxed);
 }
 
 // Signals the semaphore, and the fence, that a failed acquire left
@@ -5041,6 +5100,7 @@ void signal_what_the_failed_acquire_left(VkQueue queue, uint64_t semaphore, uint
     if (semaphore != 0) {
         std::lock_guard<std::mutex> lock(g_semaphores_stud_signalled_mutex);
         g_semaphores_stud_signalled.insert(semaphore);
+        g_have_stud_signalled.store(true, std::memory_order_relaxed);
     }
     static int said = 0;
     if (said < 8) {
@@ -5057,10 +5117,13 @@ void signal_what_the_failed_acquire_left(VkQueue queue, uint64_t semaphore, uint
 // signal back.
 void drain_stale_signal(VkQueue queue, uint64_t semaphore) {
     if (semaphore == 0) return;
+    if (!g_have_stud_signalled.load(std::memory_order_relaxed)) return;
     if (g_device_lost.load(std::memory_order_relaxed)) return;
     {
         std::lock_guard<std::mutex> lock(g_semaphores_stud_signalled_mutex);
         if (g_semaphores_stud_signalled.erase(semaphore) == 0) return;
+        g_have_stud_signalled.store(!g_semaphores_stud_signalled.empty(),
+                                    std::memory_order_relaxed);
     }
     Loader& l = loader();
     if (l.queue_submit == nullptr || queue == VK_NULL_HANDLE) return;
@@ -5094,8 +5157,11 @@ void forget_destroyed_fence(uint64_t fence) {
 
 void forget_destroyed_semaphore(uint64_t semaphore) {
     if (semaphore == 0) return;
+    if (!g_have_stud_signalled.load(std::memory_order_relaxed)) return;
     std::lock_guard<std::mutex> lock(g_semaphores_stud_signalled_mutex);
     g_semaphores_stud_signalled.erase(semaphore);
+    g_have_stud_signalled.store(!g_semaphores_stud_signalled.empty(),
+                                std::memory_order_relaxed);
 }
 
 void note_fence_reset(uint64_t fence) {

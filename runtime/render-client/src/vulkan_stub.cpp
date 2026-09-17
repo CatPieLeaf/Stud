@@ -306,6 +306,18 @@ struct MappedRange {
     // them. Empty whenever the barrier is in use.
     std::vector<uint8_t> staging;
     std::vector<uint8_t> shadow;
+    // Which pages of `shadow` are known to match what the host holds,
+    // one byte per page.
+    //
+    // The shadow is only ever the truth for a page Stud has actually
+    // SENT. Seeding it from the engine's own buffer instead makes every
+    // page compare equal to memory the host has never been given, and
+    // nothing is sent at all -- a white, frozen window, live-caught.
+    // A page is trusted here only after its bytes went down the socket.
+    std::vector<uint8_t> shadow_has;
+    // True when the host maps the very same pages the engine writes
+    // through, so a flush names a run instead of carrying it.
+    bool shared_with_host = false;
     uint64_t offset = 0;
     VkDevice device = VK_NULL_HANDLE;
 
@@ -559,14 +571,46 @@ void report_frame_timing() {
 // STUD_VK_MEM_STATS=1 reports both, the ratio is what says whether the
 // dirty tracking is earning its keep on a given workload.
 uint64_t g_mapped_bytes_sent = 0;
+uint64_t g_mapped_bytes_shared = 0;
+int g_shared_maps = 0;
+int g_copied_maps = 0;
 uint64_t g_mapped_bytes_asked = 0;
 
 void send_mapped_run(uint64_t memory, MappedRange& m, uint64_t rel_offset, uint64_t n) {
     uint64_t a[8] = {0, memory, m.offset + rel_offset};
-    stud::render_client::connection().call(CallId::VkWriteMappedMemory, a,
-                                            m.bytes() + rel_offset,
-                                            static_cast<uint32_t>(n), nullptr, 0, nullptr);
+    if (m.shared_with_host) {
+        g_mapped_bytes_shared += n;
+        // The bytes are already in the host's mapping of this file, so
+        // this only names the run -- and it needs no answer.
+        //
+        // call() waits for a reply. A frame has hundreds of dirty runs,
+        // and waiting for each one was the whole of the 10ms `submit`
+        // that survived sharing the pages: the bytes had stopped
+        // travelling but the round trips had not. call_void() queues it
+        // with the rest, in order, which is all this needs -- the submit
+        // that reads the memory goes down the same stream behind it.
+        a[3] = n;
+        stud::render_client::connection().call_void(CallId::VkWriteSharedMappedMemory, a);
+    } else {
+        stud::render_client::connection().call(CallId::VkWriteMappedMemory, a,
+                                                m.bytes() + rel_offset,
+                                                static_cast<uint32_t>(n), nullptr, 0, nullptr);
+    }
     g_mapped_bytes_sent += n;
+    // The host now holds these bytes, so the shadow can speak for them --
+    // and only now. Whole pages only: a page sent in part is still
+    // unknown in the rest, and claiming it would drop a later write to
+    // the part that was never sent.
+    if (m.shadow.size() == m.length() && !m.shadow_has.empty()) {
+        std::memcpy(m.shadow.data() + rel_offset, m.bytes() + rel_offset,
+                    static_cast<size_t>(n));
+        const uint64_t ps = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
+        const uint64_t first_whole = (rel_offset + ps - 1) / ps;
+        const uint64_t last_whole = (rel_offset + n) / ps;
+        for (uint64_t p = first_whole; p < last_whole && p < m.shadow_has.size(); ++p) {
+            m.shadow_has[p] = 1;
+        }
+    }
 }
 
 void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
@@ -609,6 +653,32 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
         // Snapshot, re-arm, then send. Sending first leaves a window in
         // which a write lands after its page was read and before it was
         // protected again, and that write would never be reported.
+        // A sequential run unprotects up to kMaxFaultWindowPages ahead of
+        // the page that faulted and marks them all dirty, because a fault
+        // per 4KB costs far more than sending a few pages that turn out
+        // not to have changed. Most of them are about to be written --
+        // but not all, and the rest were being sent regardless: measured
+        // in a real game at 24 MB per submit, about ten times the pages
+        // that actually faulted.
+        //
+        // So the ones that were merely opened are checked against what
+        // the host already holds, and skipped when they match. The check
+        // runs only on those pages, never on the whole mapping, so it
+        // cannot bring back the full compare the barrier replaced.
+        const uint64_t ps = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
+        const uint64_t first_page = rel_offset / ps;
+        const uint64_t last_page = (end + ps - 1) / ps;
+        std::vector<bool> opened_ahead(last_page - first_page, false);
+        for (uint64_t p = first_page; p < last_page; ++p) {
+            opened_ahead[p - first_page] = m.barrier.page_is_speculative(static_cast<size_t>(p));
+        }
+        const std::size_t len = m.length();
+        if (m.shadow.size() != len) {
+            // Nothing is known about the host's contents yet, and it must
+            // not be guessed at: every page starts untrusted.
+            m.shadow.assign(len, 0);
+            m.shadow_has.assign((len + ps - 1) / ps, 0);
+        }
         const auto runs = m.barrier.take_dirty_runs_and_protect(rel_offset, n);
         for (const auto& run : runs) {
             uint64_t run_start = run.first;
@@ -616,7 +686,29 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
             if (run_end <= rel_offset || run_start >= end) continue;
             if (run_start < rel_offset) run_start = rel_offset;
             if (run_end > end) run_end = end;
-            if (run_end > run_start) send_mapped_run(memory, m, run_start, run_end - run_start);
+            if (run_end <= run_start) continue;
+            uint64_t batch = run_start;
+            bool sending = false;
+            for (uint64_t off = run_start; off < run_end;) {
+                const uint64_t page = off / ps;
+                const uint64_t page_end = std::min<uint64_t>((page + 1) * ps, run_end);
+                bool send_this = true;
+                const bool trusted = page < m.shadow_has.size() && m.shadow_has[page] != 0;
+                if (trusted && page >= first_page && page < last_page &&
+                    opened_ahead[page - first_page]) {
+                    send_this = std::memcmp(m.bytes() + off, m.shadow.data() + off,
+                                            static_cast<size_t>(page_end - off)) != 0;
+                }
+                if (send_this && !sending) {
+                    batch = off;
+                    sending = true;
+                } else if (!send_this && sending) {
+                    send_mapped_run(memory, m, batch, off - batch);
+                    sending = false;
+                }
+                off = page_end;
+            }
+            if (sending) send_mapped_run(memory, m, batch, run_end - batch);
         }
         return;
     }
@@ -1638,7 +1730,48 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
     // compare-based path back for an A/B.
     static const bool barrier_ok = std::getenv("STUD_VK_NO_WRITE_BARRIER") == nullptr &&
                                    stud::render_client::install_write_barrier();
-    if (!barrier_ok || !slot.barrier.allocate(static_cast<size_t>(size))) {
+    // Back the barrier with a file the host maps too, so a flush only has
+    // to say WHICH bytes moved instead of carrying them. Best effort: if
+    // the host will not take it, this falls back to the plain mapping and
+    // the socket, exactly as before.
+    bool landed_shared = false;
+    if (barrier_ok) {
+        SharedAllocation bounce;
+        if (create_shared_allocation(size, bounce)) {
+            const std::string path = stud::render_host::shared_memory_path(bounce.id);
+            const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+            if (fd >= 0) {
+                if (slot.barrier.allocate_backed_by(static_cast<size_t>(size), fd)) {
+                    uint64_t sa[8] = {to_u64(device), to_u64(memory), bounce.id, size};
+                    const uint64_t sr = stud::render_client::connection().call(
+                        CallId::VkShareMappedMemory, sa, nullptr, 0, nullptr, 0, nullptr);
+                    landed_shared = static_cast<VkResult>(static_cast<int32_t>(sr)) == VK_SUCCESS;
+                    slot.shared_with_host = landed_shared;
+                }
+                ::close(fd);
+            }
+            // The client's own mapping of it is not needed: the barrier
+            // holds the pages through its own.
+            if (bounce.address != nullptr) ::munmap(bounce.address, bounce.length);
+            unlink_shared_allocation_name(bounce.id);
+        }
+    }
+    if (landed_shared) {
+        ++g_shared_maps;
+    } else {
+        ++g_copied_maps;
+        // Once per size class, so a mapping that had to fall back says so
+        // without a line per allocation.
+        static std::set<uint64_t> said;
+        const uint64_t mb = size / (1024 * 1024);
+        if (said.insert(mb).second) {
+            std::printf("stud: vulkan-client: a %llu MB mapping could not be shared with the "
+                        "host; its writes go through the socket\n",
+                        static_cast<unsigned long long>(mb));
+            std::fflush(stdout);
+        }
+    }
+    if (!landed_shared && (!barrier_ok || !slot.barrier.allocate(static_cast<size_t>(size)))) {
         slot.staging.assign(static_cast<size_t>(size), 0);
         *ppData = slot.staging.data();
         return VK_SUCCESS;
@@ -2644,19 +2777,21 @@ void flush_all_mapped_memory() {
             // counts ioctls, and the two are being compared on traffic.
             if (stud::render_client::UffdScan::available()) {
                 std::printf(
-                    "stud: vk mapped flush: %d submits, %llu KB sent of %llu KB asked, "
+                    "stud: vk mapped flush: %d submits, %llu KB sent (%llu KB shared) of %llu KB asked, %d shared maps, %d copied maps, "
                     "%llu scans reporting %llu pages (uffd-scan)\n",
                     submits, (unsigned long long)(g_mapped_bytes_sent / 1024),
-                    (unsigned long long)(g_mapped_bytes_asked / 1024),
-                    stud::render_client::UffdScan::scan_count(),
+                    (unsigned long long)(g_mapped_bytes_shared / 1024),
+                    (unsigned long long)(g_mapped_bytes_asked / 1024), g_shared_maps,
+                    g_copied_maps, stud::render_client::UffdScan::scan_count(),
                     stud::render_client::UffdScan::pages_reported());
             } else {
                 std::printf(
-                    "stud: vk mapped flush: %d submits, %llu KB sent of %llu KB asked, "
+                    "stud: vk mapped flush: %d submits, %llu KB sent (%llu KB shared) of %llu KB asked, %d shared maps, %d copied maps, "
                     "%llu write faults\n",
                     submits, (unsigned long long)(g_mapped_bytes_sent / 1024),
-                    (unsigned long long)(g_mapped_bytes_asked / 1024),
-                    stud::render_client::barrier_fault_count());
+                    (unsigned long long)(g_mapped_bytes_shared / 1024),
+                    (unsigned long long)(g_mapped_bytes_asked / 1024), g_shared_maps,
+                    g_copied_maps, stud::render_client::barrier_fault_count());
             }
             std::fflush(stdout);
         }
