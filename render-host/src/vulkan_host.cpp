@@ -24,6 +24,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <mutex>
+#include <shared_mutex>
 #include <condition_variable>
 #include <set>
 #include <unordered_map>
@@ -1596,8 +1597,15 @@ uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& 
 // still does not block everything else in render-host, and enough that
 // nobody asks the driver about a surface while it is building a swapchain
 // for it.
-std::mutex& surface_mutex() {
-    static std::mutex m;
+// Readers share it; only a swapchain build excludes them.
+//
+// The engine asks about this surface constantly -- 5100 capability
+// queries in one measured session -- and those have never needed to be
+// serialised against EACH OTHER, only against a build. A plain mutex made
+// every one of them wait for the last, on the frame path, which is a cost
+// this never meant to add.
+std::shared_mutex& surface_mutex() {
+    static std::shared_mutex m;
     return m;
 }
 
@@ -1609,7 +1617,7 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkSurfaceCapabilitiesKHR caps{};
-    std::unique_lock<std::mutex> surface_lock(surface_mutex());
+    std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = l.get_physical_device_surface_capabilities(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)),
         from_u64<VkSurfaceKHR>(surface), &caps);
@@ -2084,7 +2092,7 @@ uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
-    std::lock_guard<std::mutex> surface_lock(surface_mutex());
+    std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = l.get_surface_formats(pd, surf, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -2118,7 +2126,7 @@ uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
-    std::lock_guard<std::mutex> surface_lock(surface_mutex());
+    std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = l.get_surface_present_modes(pd, surf, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -2148,7 +2156,7 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkBool32 supported = VK_FALSE;
-    std::lock_guard<std::mutex> surface_lock(surface_mutex());
+    std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = l.get_surface_support(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)), queue_family,
         from_u64<VkSurfaceKHR>(surface), &supported);
@@ -2509,6 +2517,11 @@ bool upscale_work_finished(UpscaleChain& c, uint64_t timeout_ns) {
 // swept later -- the frame that replaced them does not need them gone,
 // only unused.
 std::vector<UpscaleChain> g_retired_chains;
+// Whether that vector has anything in it, readable without taking the
+// lock. The sweep runs on every present, and every present but the few
+// after a rebuild has nothing to sweep -- so the common case is one
+// relaxed atomic load and nothing else.
+std::atomic<bool> g_have_retired_chains{false};
 // Guards it. A retired chain is pushed from whichever thread destroyed a
 // swapchain and swept from whichever thread next builds or presents one,
 // and vkCreateSwapchainKHR is deliberately exempt from the dispatch lock
@@ -2520,6 +2533,7 @@ void destroy_upscale_chain(UpscaleChain& c);
 // Frees whatever retired chains the GPU has since finished with. Called
 // wherever a new chain is built, which is the only place they accumulate.
 void sweep_retired_chains() {
+    if (!g_have_retired_chains.load(std::memory_order_relaxed)) return;
     Loader& l = loader();
     if (l.device == VK_NULL_HANDLE) return;
     std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
@@ -2540,6 +2554,7 @@ void sweep_retired_chains() {
             ++i;
         }
     }
+    g_have_retired_chains.store(!g_retired_chains.empty(), std::memory_order_relaxed);
 }
 
 void destroy_upscale_chain(UpscaleChain& c) {
@@ -2558,6 +2573,7 @@ void destroy_upscale_chain(UpscaleChain& c) {
         {
             std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
             g_retired_chains.push_back(std::move(c));
+            g_have_retired_chains.store(true, std::memory_order_relaxed);
         }
         c = UpscaleChain{};
         return;
@@ -3557,7 +3573,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     {
         // Nobody queries this surface while it is being built on; see
         // surface_mutex().
-        std::lock_guard<std::mutex> surface_lock(surface_mutex());
+        std::unique_lock<std::shared_mutex> surface_lock(surface_mutex());
         r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
     }
     {
