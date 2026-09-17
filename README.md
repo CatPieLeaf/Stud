@@ -238,8 +238,10 @@ Stud then shows up in Discover, GNOME Software and your application menu like an
 sudo apt install ./stud_*_amd64.deb
 ```
 
-Built against whatever Qt the distribution carries, so an Ubuntu LTS gets a package
-that matches its own Qt rather than one that refuses to install.
+Built on Ubuntu 24.04, against the oldest Qt it claims to support: a Qt program runs
+on the version it was built against and everything newer, never anything older, so
+this installs and starts on 24.04, Debian 13, 26.04 and the Mint releases built on
+them.
 
 ## 🔷 A R C H  ( P A C M A N )
 
@@ -272,12 +274,15 @@ each release and carries everything it needs. The manifest it is built from is i
 
 ## ⬛ C P A K
 
+<a href="https://cpak.it/store/apps/stud"><img src=".github/get-it-on-cpak.png" alt="Get it on cpak" width="220"></a>
+
 ```bash
 cpak install github.com/CatPieLeaf/Stud
 ```
 
 [cpak](https://github.com/Containerpak/cpak) installs from an OCI image and runs it
-rootless. The image is published to `ghcr.io/catpieleaf/stud` with each release.
+rootless. The image is published to `ghcr.io/catpieleaf/stud` with each release, and
+Stud is listed in the [cpak store](https://cpak.it/store/apps/stud).
 
 ## 🟠 A P P I M A G E  ( A N Y _ D I S T R O )
 
@@ -295,7 +300,7 @@ chmod +x Stud-x86_64.AppImage
 > [!NOTE]
 > `bubblewrap` is deliberately **not** bundled in the AppImage: it needs the AppArmor or SELinux policy your own distribution ships alongside it. Install it from your package manager (`bubblewrap`); the AppImage will tell you if it is missing. The rpm, deb and Arch packages depend on it, so those pull it in for you, and the Flatpak builds its own inside the sandbox.
 >
-> Every package here is built on a current distribution, which puts a floor of glibc 2.43 under all of them: Fedora 44+, Ubuntu 26.04+ and current rolling releases. That includes the AppImage, which also carries its own Qt and Breeze. Older than that, build from source.
+> Most packages here are built on a current distribution, which puts a floor of glibc 2.43 under them: Fedora 44+, Ubuntu 26.04+ and current rolling releases. That includes the AppImage, which also carries its own Qt and Breeze. The deb is the exception, deliberately: it is built on Ubuntu 24.04, against the oldest Qt it claims to support, so it also runs on 24.04, Debian 13 and the Mint releases built on them. Older than that, build from source.
 
 <br>
 
