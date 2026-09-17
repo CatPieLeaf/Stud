@@ -26,6 +26,13 @@
 </div>
 
 <br>
+
+<p align="center">
+  <a href="https://github.com/CatPieLeaf/Stud/releases"><img src=".github/get-it-on-github.png" alt="Get it on GitHub" height="70"></a>
+  <a href="https://cpak.it/store/apps/stud"><img src=".github/get-it-on-cpak.png" alt="Get it on cpak" height="70"></a>
+</p>
+
+<br>
 <div align="center">
   <h1>🖼️</h1>
   <h4 id="screenshots">S C R E E N S H O T S</h4>
@@ -273,8 +280,6 @@ each release and carries everything it needs. The manifest it is built from is i
 `packaging/flatpak`.
 
 ## ⬛ C P A K
-
-<a href="https://cpak.it/store/apps/stud"><img src=".github/get-it-on-cpak.png" alt="Get it on cpak" width="220"></a>
 
 ```bash
 cpak install github.com/CatPieLeaf/Stud
