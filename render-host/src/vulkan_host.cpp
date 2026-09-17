@@ -2201,6 +2201,10 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
 // at all. The pass is replaced with EASU+RCAS once this sync is proven.
 struct UpscaleChain {
     VkSwapchainKHR real = VK_NULL_HANDLE;
+    // Set only on a retired chain: the swapchain whose images this pass
+    // is still writing into, to be destroyed once it has finished. See
+    // sweep_retired_chains().
+    VkSwapchainKHR destroy_with_chain = VK_NULL_HANDLE;
     VkExtent2D engine{};
     VkExtent2D present{};
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -2476,6 +2480,11 @@ bool upscale_work_finished(UpscaleChain& c, uint64_t timeout_ns) {
 // swept later -- the frame that replaced them does not need them gone,
 // only unused.
 std::vector<UpscaleChain> g_retired_chains;
+// Guards it. A retired chain is pushed from whichever thread destroyed a
+// swapchain and swept from whichever thread next builds or presents one,
+// and vkCreateSwapchainKHR is deliberately exempt from the dispatch lock
+// (it blocks in the driver), so those are genuinely different threads.
+std::mutex g_retired_chains_mutex;
 
 void destroy_upscale_chain(UpscaleChain& c);
 
@@ -2484,12 +2493,20 @@ void destroy_upscale_chain(UpscaleChain& c);
 void sweep_retired_chains() {
     Loader& l = loader();
     if (l.device == VK_NULL_HANDLE) return;
+    std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
     for (size_t i = 0; i < g_retired_chains.size();) {
         if (upscale_work_finished(g_retired_chains[i], 0)) {
             UpscaleChain done = std::move(g_retired_chains[i]);
             g_retired_chains.erase(g_retired_chains.begin() + static_cast<long>(i));
             done.in_flight.assign(done.in_flight.size(), false);
+            const VkSwapchainKHR held = done.destroy_with_chain;
+            done.destroy_with_chain = VK_NULL_HANDLE;
             destroy_upscale_chain(done);
+            // The swapchain this pass was writing into, held back until
+            // now for exactly that reason.
+            if (held != VK_NULL_HANDLE && l.destroy_swapchain != nullptr) {
+                l.destroy_swapchain(l.device, held, nullptr);
+            }
         } else {
             ++i;
         }
@@ -2509,7 +2526,10 @@ void destroy_upscale_chain(UpscaleChain& c) {
                         "went away; keeping it until the GPU is done with it\n");
             std::fflush(stdout);
         }
-        g_retired_chains.push_back(std::move(c));
+        {
+            std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+            g_retired_chains.push_back(std::move(c));
+        }
         c = UpscaleChain{};
         return;
     }
@@ -3939,11 +3959,40 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             g_swapchain_ci.erase(handle);
             // Stud's own offscreen images and the pass that reads them go
             // with the swapchain they belong to.
+            //
+            // And the swapchain does not go anywhere while that pass is
+            // still running. destroy_upscale_chain() defers a chain whose
+            // work has not finished, which is right -- but destroying the
+            // swapchain underneath it anyway leaves the GPU writing into
+            // images that no longer exist, and that is how a GPU hangs.
+            //
+            // Live-caught on Wayland with FSR on, in this order: "the
+            // upscale pass was still running when its swapchain went away;
+            // keeping it until the GPU is done with it", a present that
+            // blocked for 12006ms and then succeeded, and the engine's own
+            // vkWaitForFences coming back VK_ERROR_DEVICE_LOST with
+            // "DeviceRecovery trigger: endRender reason=hung". The
+            // driver's reset is what ended the freeze.
+            //
+            // So the swapchain is handed to the retired chain and
+            // destroyed with it, once the fences say the GPU has let go.
+            bool swapchain_held_by_chain = false;
             {
                 auto chain = g_upscale_chains.find(handle);
                 if (chain != g_upscale_chains.end()) {
+                    size_t retired_before = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+                        retired_before = g_retired_chains.size();
+                    }
                     destroy_upscale_chain(chain->second);
                     g_upscale_chains.erase(chain);
+                    std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+                    if (g_retired_chains.size() > retired_before) {
+                        g_retired_chains.back().destroy_with_chain =
+                            from_u64<VkSwapchainKHR>(live);
+                        swapchain_held_by_chain = true;
+                    }
                 }
             }
             auto images = l.swapchain_image_list.find(handle);
@@ -3954,6 +4003,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                     l.retired_images.insert(image);
                 }
                 l.swapchain_image_list.erase(images);
+            }
+            if (swapchain_held_by_chain) {
+                // Destroyed by sweep_retired_chains(), with the pass that
+                // is still writing into it.
+                break;
             }
             if (l.destroy_swapchain) {
                 // Timed for the same reason the create is: a rebuild is a
@@ -5818,6 +5872,11 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             }
         }
     }
+
+    // Anything a rebuild had to hold on to, freed as soon as the GPU has
+    // finished with it. Costs one lock and an empty-vector check when
+    // there is nothing to sweep, which is every ordinary frame.
+    sweep_retired_chains();
 
 present_without_upscale:
     // Held across the present itself. It blocks in the driver, so this
