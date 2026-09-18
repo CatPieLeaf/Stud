@@ -493,6 +493,11 @@ enum class CallId : uint32_t {
     // are readable by anything running as this user.
     StoreSecret,
     LoadSecret,
+    // Forget one. The in-buffer is the name, like LoadSecret's. This is
+    // what a logout needs: the engine clears the session cookie and the
+    // stored copy has to go with it, or the next launch retries a
+    // credential the server has already revoked.
+    DeleteSecret,
     // Many recorded commands in one request.
     //
     // A command's wire header is 88 bytes, eight argument slots and the
@@ -946,6 +951,7 @@ inline const char* call_id_name(CallId id) {
         "VkHostHasProc",
         "StoreSecret",
         "LoadSecret",
+        "DeleteSecret",
         "VkCmdRecordBatch",
         "SetPointerLocked",
         "GlRenderbufferStorageMultisample",

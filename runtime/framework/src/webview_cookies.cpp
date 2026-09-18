@@ -13,6 +13,11 @@ std::function<void(const std::string&)>& session_cookie_sink() {
     return f;
 }
 
+std::function<void(const std::string&)>& cookie_cleared_sink() {
+    static std::function<void(const std::string&)> sink;
+    return sink;
+}
+
 std::function<void(const std::string&)>& account_list_cookie_sink() {
     static std::function<void(const std::string&)> f;
     return f;
@@ -55,6 +60,10 @@ void set_session_cookie_sink(std::function<void(const std::string&)> sink) {
     session_cookie_sink() = std::move(sink);
 }
 
+void set_cookie_cleared_sink(std::function<void(const std::string&)> sink) {
+    cookie_cleared_sink() = std::move(sink);
+}
+
 void set_account_list_cookie_sink(std::function<void(const std::string&)> sink) {
     account_list_cookie_sink() = std::move(sink);
 }
@@ -70,7 +79,22 @@ void note_engine_cookies(const std::string& /*url*/, const std::vector<std::stri
         const std::string name = cookie_name(header);
         if (name != ".ROBLOSECURITY" && name != "rbxas") continue;
         const std::string value = cookie_value(header);
-        if (is_cleared(value)) continue;
+        // A cleared cookie is the engine saying this session is over --
+        // a logout. Skipping it (which is what used to happen here) left
+        // the stored copy behind, so the next launch came up holding a
+        // credential the server had already revoked.
+        //
+        // Dropping the in-memory copy matters as much as the stored one:
+        // current_session_cookies() is what a web-view panel is opened
+        // with, and a panel must not be handed a dead session.
+        if (is_cleared(value)) {
+            {
+                std::lock_guard<std::mutex> lock(current_mutex());
+                current().erase(name);
+            }
+            if (cookie_cleared_sink()) cookie_cleared_sink()(name);
+            continue;
+        }
         // A real .ROBLOSECURITY is long; a short one is a placeholder,
         // not a session.
         if (name == ".ROBLOSECURITY" && value.size() < 32) continue;
