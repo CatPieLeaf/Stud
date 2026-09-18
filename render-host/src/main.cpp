@@ -2379,6 +2379,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                                      static_cast<uint32_t>(a[4]));
         case CallId::VkWriteMappedMemory:
             return stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
+        case CallId::VkReadMappedMemory:
+            return stud::render_host::vk_read_mapped_memory(a[1], a[2], a[3], out, out_len);
         case CallId::VkShareMappedMemory:
             return stud::render_host::vk_share_mapped_memory(a[1], a[2], a[3]);
         case CallId::VkWriteSharedMappedMemory:

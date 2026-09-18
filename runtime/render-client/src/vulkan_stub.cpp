@@ -435,9 +435,19 @@ std::map<uint64_t, EmulatedImage>& emulated_images() {
 struct BufferBinding {
     uint64_t memory = 0;
     uint64_t offset = 0;
+    // What the buffer was created with. A readback out of it has to be
+    // fetched from the host, and this is the only bound on how far; see
+    // fetch_pending_readbacks().
+    uint64_t size = 0;
 };
 std::map<uint64_t, BufferBinding>& buffer_bindings() {
     static std::map<uint64_t, BufferBinding> m;
+    return m;
+}
+// Sizes as created, kept until the buffer is bound. Same lock as
+// buffer_bindings().
+std::map<uint64_t, uint64_t>& buffer_sizes() {
+    static std::map<uint64_t, uint64_t> m;
     return m;
 }
 // Whether a format Stud CAN decode actually needs decoding on this
@@ -508,6 +518,38 @@ std::vector<PendingDecode>& pending_decodes() {
     static std::vector<PendingDecode> v;
     return v;
 }
+
+// A vkCmdCopyImageToBuffer whose result the GPU writes into memory the
+// host could NOT import, so the engine's own pages never see it.
+//
+// Where the import works -- every NVIDIA session -- the GPU writes
+// straight into the pages the engine reads and there is nothing to do,
+// which is why this whole path did not exist. AMD refuses the import
+// (amdgpu's userptr is ANONONLY, Stud's mapping is file-backed), so every
+// readback there landed in the host's private copy and the engine read
+// whatever happened to be in its own: uninitialised memory, which is
+// exactly what "random textures" and "squares of horizontal noise" are.
+//
+// Recorded when the copy is recorded, promoted to awaiting when the
+// command buffer is submitted, and fetched once something has waited for
+// that submit to finish.
+struct PendingReadback {
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    uint64_t memory = 0;
+    uint64_t offset = 0;
+    uint64_t size = 0;
+};
+std::vector<PendingReadback>& recorded_readbacks() {
+    static std::vector<PendingReadback> v;
+    return v;
+}
+std::vector<PendingReadback>& awaiting_readbacks() {
+    static std::vector<PendingReadback> v;
+    return v;
+}
+// Read without the lock on the path every fence wait takes, so a session
+// that never reads anything back pays one relaxed load.
+std::atomic<bool> g_have_readbacks{false};
 
 std::map<uint64_t, ScratchPool>& scratch_pools() {
     static std::map<uint64_t, ScratchPool> m;
@@ -668,6 +710,31 @@ uint64_t g_mapped_bytes_asked = 0;
 
 void send_mapped_run(uint64_t memory, MappedRange& m, uint64_t rel_offset, uint64_t n) {
     uint64_t a[8] = {0, memory, m.offset + rel_offset};
+    // Inside an action on the writer thread -- the texture decode -- this
+    // has to go down the socket right here. Queueing it would put it
+    // behind the submit that reads it, and a blocking call would wait for
+    // a reply that only this thread can read. See Client::write_inline().
+    if (stud::render_client::connection().on_writer_thread()) {
+        a[3] = n;
+        const bool sent =
+            m.shared_with_host
+                ? stud::render_client::connection().write_inline(CallId::VkWriteSharedMappedMemory,
+                                                                 a, nullptr, 0)
+                : stud::render_client::connection().write_inline(CallId::VkWriteMappedMemory, a,
+                                                                 m.bytes() + rel_offset,
+                                                                 static_cast<uint32_t>(n));
+        if (!sent) {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                std::fprintf(stderr,
+                             "stud: vulkan-client: could not send a decoded texture inline\n");
+            }
+        }
+        if (m.shared_with_host) g_mapped_bytes_shared += n;
+        g_mapped_bytes_sent += n;
+        return;
+    }
     if (m.shared_with_host) {
         g_mapped_bytes_shared += n;
         // The bytes are already in the host's mapping of this file, so
@@ -957,6 +1024,13 @@ extern "C" {
 bool emulating(VkFormat format);
 // Defined below, next to the decode scratch it works on.
 void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted);
+// Brings back anything the GPU wrote into memory the host could not
+// share with this process. Cheap and silent when there is nothing to
+// bring back, which is every session where the import works.
+void fetch_pending_readbacks();
+// Moves the readbacks recorded against these command buffers to
+// awaiting, now that a submit will actually run them.
+void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted);
 // Defined below, next to the emulation decision it belongs to; needed at
 // device creation, which comes first in this file.
 bool driver_supports_format(VkPhysicalDevice physicalDevice, VkFormat format);
@@ -1711,6 +1785,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkDeviceWaitIdle(VkDevice device) {
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         ++frame_timing().wait_idle_calls;
     }
+    // Everything submitted has finished, so anything read back is ready.
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) fetch_pending_readbacks();
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
 
@@ -2165,6 +2241,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateBuffer(VkDevice device,
         char shape[sizeof(uint64_t) * 4];
         std::memcpy(shape, &a[1], sizeof(shape));
         mem_req_cache().remember_shape(to_u64(*pBuffer), std::string(shape, sizeof(shape)));
+        std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+        buffer_sizes()[to_u64(*pBuffer)] = pCreateInfo->size;
     }
     return r;
 }
@@ -2194,7 +2272,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindBufferMemory(VkDevice device, VkBuffer
         // Only needed to find a staging buffer's bytes when a copy out of
         // it has to be decoded; see stud_vkCmdCopyBufferToImage.
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
-        buffer_bindings()[to_u64(buffer)] = BufferBinding{to_u64(memory), memoryOffset};
+        const auto size_it = buffer_sizes().find(to_u64(buffer));
+        buffer_bindings()[to_u64(buffer)] = BufferBinding{
+            to_u64(memory), memoryOffset,
+            size_it == buffer_sizes().end() ? 0 : size_it->second};
     }
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
@@ -2280,6 +2361,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyBuffer(VkDevice device, VkBuffer handle
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         buffer_bindings().erase(to_u64(handle));
+        buffer_sizes().erase(to_u64(handle));
         // The driver reuses handles; a stale shape would answer for the
         // next object to get this one's number.
         mem_req_cache().forget(to_u64(handle));
@@ -2891,6 +2973,12 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         auto it = scratch_pools().find(to_u64(cb));
         if (it != scratch_pools().end()) it->second.used = 0;
+        // And anything recorded into it that was never submitted is gone
+        // with the re-record, so it must not be collected later.
+        auto& recorded = recorded_readbacks();
+        recorded.erase(std::remove_if(recorded.begin(), recorded.end(),
+                                      [cb](const PendingReadback& rb) { return rb.cb == cb; }),
+                       recorded.end());
     }
     uint64_t a[8] = {to_u64(cb), bi != nullptr ? bi->flags : 0};
     if (!sync_command_buffer_calls()) {
@@ -3043,6 +3131,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
     // Stays here, on the engine's own thread: this has to keep program
     // order with the engine's writes to its mapped memory.
     flush_all_mapped_memory();
+    // Any readback recorded into these command buffers is now really
+    // going to run, so it becomes something to go and collect.
+    arm_pending_readbacks(submitted);
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
     w.u32(submitCount);
@@ -3116,6 +3207,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fe
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
                 .count();
     }
+    // The engine waited because it is about to look at what the submit
+    // produced. If any of that was a readback into memory the host does
+    // not share, this is the moment it has to be real.
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) fetch_pending_readbacks();
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
 
@@ -3772,6 +3867,80 @@ const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t lengt
     return range.bytes() + local;
 }
 
+void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted) {
+    std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+    auto& recorded = recorded_readbacks();
+    if (recorded.empty()) return;
+    auto& awaiting = awaiting_readbacks();
+    for (size_t i = 0; i < recorded.size();) {
+        const bool in_this_submit =
+            std::find(submitted.begin(), submitted.end(), recorded[i].cb) != submitted.end();
+        if (in_this_submit) {
+            awaiting.push_back(recorded[i]);
+            recorded.erase(recorded.begin() + static_cast<long>(i));
+        } else {
+            ++i;
+        }
+    }
+    g_have_readbacks.store(!awaiting.empty(), std::memory_order_relaxed);
+}
+
+void fetch_pending_readbacks() {
+    if (!g_have_readbacks.load(std::memory_order_relaxed)) return;
+    std::vector<PendingReadback> take;
+    {
+        std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+        take.swap(awaiting_readbacks());
+        g_have_readbacks.store(false, std::memory_order_relaxed);
+    }
+    if (take.empty()) return;
+    std::vector<uint8_t> bytes;
+    for (const PendingReadback& rb : take) {
+        // The engine's own mapping of this allocation is where the result
+        // has to end up. Taken fresh each time: an allocation can be
+        // unmapped between the copy and the wait.
+        uint8_t* dst = nullptr;
+        uint64_t dst_length = 0;
+        {
+            std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+            auto mit = mapped_ranges().find(rb.memory);
+            if (mit == mapped_ranges().end()) continue;
+            MappedRange& range = mit->second;
+            if (rb.offset < range.offset) continue;
+            const uint64_t local = rb.offset - range.offset;
+            if (local >= range.length()) continue;
+            dst = range.bytes() + local;
+            dst_length = range.length() - local;
+        }
+        if (dst == nullptr) continue;
+        const uint64_t want = std::min<uint64_t>(rb.size, dst_length);
+        if (want == 0) continue;
+        bytes.assign(static_cast<size_t>(want), 0);
+        uint64_t a[8] = {0, rb.memory, rb.offset, want};
+        uint32_t written = 0;
+        const uint64_t r = stud::render_client::connection().call(
+            CallId::VkReadMappedMemory, a, nullptr, 0, bytes.data(),
+            static_cast<uint32_t>(bytes.size()), &written);
+        if (static_cast<VkResult>(static_cast<int32_t>(r)) != VK_SUCCESS || written == 0) {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                std::fprintf(stderr,
+                             "stud: vulkan-client: could not read a GPU readback back from the "
+                             "host (result %d, %u bytes)\n",
+                             static_cast<int>(static_cast<int32_t>(r)), written);
+            }
+            continue;
+        }
+        // Writing through the engine's own mapping, so the write barrier
+        // sees it exactly as it sees the engine's writes: these pages are
+        // marked dirty and go back to the host on the next flush. That is
+        // one redundant send of bytes the host already has, only for a
+        // readback, and correctness first.
+        std::memcpy(dst, bytes.data(), std::min<size_t>(written, static_cast<size_t>(want)));
+    }
+}
+
 // Decodes everything recorded since the last submit.
 //
 // This runs at submit rather than at record time on purpose. A copy is
@@ -4269,6 +4438,28 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyImageToBuffer(VkCommandBuffer cb, VkIma
         w.u32(c.imageExtent.width);
         w.u32(c.imageExtent.height);
         w.u32(c.imageExtent.depth);
+    }
+    // Where the GPU's result cannot reach the engine on its own, remember
+    // to go and get it; see PendingReadback.
+    {
+        std::lock_guard<std::recursive_mutex> emu_lock(emulation_mutex());
+        auto bit = buffer_bindings().find(to_u64(dst));
+        if (bit != buffer_bindings().end() && bit->second.size != 0) {
+            std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+            const bool shared = shared_allocations().count(bit->second.memory) != 0;
+            const bool mapped = mapped_ranges().count(bit->second.memory) != 0;
+            if (!shared && mapped) {
+                recorded_readbacks().push_back(
+                    PendingReadback{cb, bit->second.memory, bit->second.offset, bit->second.size});
+                static bool said = false;
+                if (!said) {
+                    said = true;
+                    std::printf("stud: vulkan-client: this device's readbacks land in memory the "
+                                "host could not share; fetching them back explicitly\n");
+                    std::fflush(stdout);
+                }
+            }
+        }
     }
     record(cb, vk_wire::CmdKind::CopyImageToBuffer, in);
 }

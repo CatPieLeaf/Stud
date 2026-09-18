@@ -159,6 +159,11 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset);
 uint64_t vk_free_memory(uint64_t memory);
 uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t flags);
 uint64_t vk_write_mapped_memory(uint64_t memory, uint64_t offset, const std::vector<uint8_t>& in);
+// What the host's own copy of a mapped allocation holds now. The GPU
+// writes a readback into it, and where the host could not import the
+// engine's pages that is the only copy there is.
+uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
+                               std::vector<uint8_t>& out, uint32_t* out_len);
 // A mapped allocation both processes map, and a write whose bytes are
 // therefore already here; see the definitions.
 uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t size);

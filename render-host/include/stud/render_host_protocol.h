@@ -703,6 +703,19 @@ enum class CallId : uint32_t {
     // see, so a flush only has to name the run that changed.
     VkShareMappedMemory,
     VkWriteSharedMappedMemory,
+
+    // The other direction: what the HOST's copy of a mapped allocation
+    // holds right now.
+    //
+    // Only needed where the host could not import the engine's own pages.
+    // When it can, the GPU writes straight into memory the engine has
+    // mapped and a readback is simply there -- which is every NVIDIA
+    // session, and is why this was missing. AMD refuses the import
+    // outright (amdgpu's userptr is ANONONLY and Stud's mapping is
+    // file-backed), so every host-visible allocation is copied there, and
+    // vkCmdCopyImageToBuffer had no path back at all: the copy ran and
+    // the engine read whatever was already in its own pages.
+    VkReadMappedMemory,
 };
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -958,9 +971,10 @@ inline const char* call_id_name(CallId id) {
         "PollDeepLink",
         "VkShareMappedMemory",
         "VkWriteSharedMappedMemory",
+        "VkReadMappedMemory",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VkWriteSharedMappedMemory) + 1,
+                      static_cast<size_t>(CallId::VkReadMappedMemory) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
@@ -1567,10 +1581,49 @@ public:
         std::lock_guard<std::mutex> lock(call_mutex_);
         if (writer_started_) return;
         writer_started_ = true;
-        std::thread([this] { writer_loop(); }).detach();
+        std::thread([this] {
+            writer_thread_ = std::this_thread::get_id();
+            writer_loop();
+        }).detach();
     }
 
     bool writer_active() const { return writer_started_; }
+
+    // True on the thread that owns the socket, i.e. inside an action.
+    bool on_writer_thread() const {
+        return writer_started_ && std::this_thread::get_id() == writer_thread_;
+    }
+
+    // Sends a request from INSIDE an action, at the point the action runs.
+    //
+    // An action runs in the middle of the writer's own batch: the bytes
+    // that follow it -- the submit that reads whatever the action just
+    // produced -- are already snapshotted and are written the moment the
+    // action returns. Anything the action queues normally therefore lands
+    // in the NEXT batch, behind that submit, which is the wrong order and
+    // silent: the GPU reads the buffer before its contents are named.
+    // Live-caught as decoded textures arriving one submit late -- another
+    // texture's content in their place -- on any device where the host
+    // cannot import the engine's pages and the bytes really have to
+    // travel. Where the import works nothing is sent at all, which is why
+    // this never showed on the machine it was written on.
+    //
+    // A blocking call() is not an option here either: it waits for a
+    // reply only the writer thread can read, and this IS that thread.
+    // So the request goes straight down the socket, reply-free, in the
+    // one place where doing that is ordered correctly by construction.
+    bool write_inline(CallId id, const uint64_t args[8], const void* in_buffer, uint32_t in_len) {
+        if (!on_writer_thread()) return false;
+        Header hdr{};
+        hdr.call_id = id;
+        for (int i = 0; i < 8; ++i) hdr.args[i] = args[i];
+        hdr.flags = Header::kNoReply;
+        hdr.in_buffer_len = in_len;
+        hdr.out_buffer_len = 0;
+        if (!write_all(&hdr, sizeof(hdr))) return false;
+        if (in_len > 0 && in_buffer != nullptr && !write_all(in_buffer, in_len)) return false;
+        return true;
+    }
 
     // Puts a piece of work INTO the stream, to run on the writer thread
     // when everything queued before it has been written and before
@@ -1733,6 +1786,9 @@ private:
     std::deque<Mark> marks_;
     std::condition_variable writer_wake_;
     bool writer_started_ = false;
+    // Which thread runs writer_loop(), so an action can tell that it is
+    // on it; see write_inline().
+    std::thread::id writer_thread_{};
     std::map<uint32_t, uint64_t> stats_by_id_;
     uint64_t stats_void_calls_ = 0;
     uint64_t stats_void_ns_ = 0;

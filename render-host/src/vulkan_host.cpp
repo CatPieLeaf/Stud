@@ -285,6 +285,10 @@ struct Loader {
     // into its own staging copy in Process B; these are where those bytes
     // land.
     std::map<uint64_t, void*> mapped;
+    // How many bytes of each of those a vkMapMemory asked for, so a read
+    // back out of one can be refused rather than run off the end. Zero
+    // where the size is not known (VK_WHOLE_SIZE).
+    std::map<uint64_t, uint64_t> mapped_size;
 
     // Which objects lead to the screen. A frame can look perfectly busy
     // thousands of draws, successful presents, and still be black if
@@ -997,6 +1001,10 @@ bool device_supports_extension(const char* name) {
     return false;
 }
 
+// Retired upscale passes cannot outlive the surface they present to or
+// the device they were built on; see flush_retired_chains().
+void flush_retired_chains(const char* why);
+
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -1089,6 +1097,13 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     ci.enabledExtensionCount = static_cast<uint32_t>(ext_ptrs.size());
     ci.ppEnabledExtensionNames = ext_ptrs.empty() ? nullptr : ext_ptrs.data();
     ci.pEnabledFeatures = hdr.has_enabled_features != 0 ? &enabled_features : nullptr;
+
+    // The engine builds a whole new device when it rebuilds its renderer,
+    // and l.device is replaced here. Anything still deferred against the
+    // outgoing one has to go now, while its device, its queue and its
+    // resolved commands are still the current ones -- afterwards it could
+    // only be destroyed with a device it was never created on.
+    flush_retired_chains("the engine builds a new device");
 
     VkDevice device = VK_NULL_HANDLE;
     l.physical_device =
@@ -2029,6 +2044,7 @@ uint64_t vk_free_memory(uint64_t memory) {
     Loader& l = loader();
     if (l.free_memory == nullptr) return 0;
     l.mapped.erase(memory);
+    l.mapped_size.erase(memory);
     l.free_memory(l.device, from_u64<VkDeviceMemory>(memory), nullptr);
     // The import keeps the pages alive as long as the memory object does,
     // so the mapping is dropped only now.
@@ -2046,6 +2062,7 @@ uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t
         l.map_memory(l.device, from_u64<VkDeviceMemory>(memory), offset, size, flags, &p);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     l.mapped[memory] = p;
+    l.mapped_size[memory] = size == VK_WHOLE_SIZE ? 0 : size;
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
@@ -2114,11 +2131,34 @@ uint64_t vk_write_mapped_memory(uint64_t memory, uint64_t offset, const std::vec
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
+uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
+                               std::vector<uint8_t>& out, uint32_t* out_len) {
+    Loader& l = loader();
+    auto it = l.mapped.find(memory);
+    if (it == l.mapped.end() || it->second == nullptr) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    // The caller asks for a range of its own allocation; this process
+    // knows only that it mapped the whole thing, so a request past the end
+    // is the caller's bug and is refused rather than read.
+    const auto size_it = l.mapped_size.find(memory);
+    const uint64_t mapped_size = size_it == l.mapped_size.end() ? 0 : size_it->second;
+    if (mapped_size != 0 && offset + size > mapped_size) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    out.resize(static_cast<size_t>(size));
+    std::memcpy(out.data(), static_cast<const uint8_t*>(it->second) + offset,
+                static_cast<size_t>(size));
+    *out_len = static_cast<uint32_t>(size);
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
 uint64_t vk_unmap_memory(uint64_t memory) {
     Loader& l = loader();
     if (l.unmap_memory == nullptr) return 0;
     l.unmap_memory(l.device, from_u64<VkDeviceMemory>(memory));
     l.mapped.erase(memory);
+    l.mapped_size.erase(memory);
     return 0;
 }
 
@@ -2582,7 +2622,10 @@ std::atomic<bool> g_have_retired_chains{false};
 // (it blocks in the driver), so those are genuinely different threads.
 std::mutex g_retired_chains_mutex;
 
-void destroy_upscale_chain(UpscaleChain& c);
+// `force` destroys the chain even if its GPU work has not finished,
+// instead of deferring it again. Only for the points where deferring
+// is itself the bug: see flush_retired_chains().
+void destroy_upscale_chain(UpscaleChain& c, bool force = false);
 
 // Frees whatever retired chains the GPU has since finished with. Called
 // wherever a new chain is built, which is the only place they accumulate.
@@ -2611,12 +2654,70 @@ void sweep_retired_chains() {
     g_have_retired_chains.store(!g_retired_chains.empty(), std::memory_order_relaxed);
 }
 
-void destroy_upscale_chain(UpscaleChain& c) {
+// Finishes every retired chain now, whether or not the GPU has let go.
+//
+// Deferring a chain is right while the renderer carries on -- the frame
+// that replaced it does not need it gone, only unused -- but there are
+// two moments where deferring is itself the bug, because the thing the
+// chain is holding stops being destroyable:
+//
+//   * the engine destroys the surface. A swapchain still alive on that
+//     surface makes destroying it undefined, and the Wayland WSI does not
+//     forgive it: live-caught as a window backgrounded mid-game, a
+//     present that blocked 12006ms, the engine tearing its RenderView
+//     down while the pass was still running ("keeping it until the GPU is
+//     done with it"), and then the rebuild's own
+//     vkCreateSwapchainKHR -> VK_ERROR_SURFACE_LOST_KHR. The engine does
+//     not check that one: it dereferenced null on the next line, Stud
+//     recovered the fault by exiting that thread, and the render died
+//     while the process and its tray icon stayed up.
+//   * the engine builds a new device. l.device is replaced, and a chain
+//     built on the outgoing device could then only be destroyed with a
+//     device it was never created on.
+//
+// So both points call this, and it waits the same bounded second
+// destroy_upscale_chain() would have, then destroys regardless. The
+// alternative at these two points is not "wait a little longer", it is a
+// swapchain that can never be destroyed at all.
+void flush_retired_chains(const char* why) {
+    if (!g_have_retired_chains.load(std::memory_order_relaxed)) return;
+    Loader& l = loader();
+    if (l.device == VK_NULL_HANDLE) return;
+    std::vector<UpscaleChain> taken;
+    {
+        std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+        taken.swap(g_retired_chains);
+        g_have_retired_chains.store(false, std::memory_order_relaxed);
+    }
+    if (taken.empty()) return;
+    std::printf("stud-render-host: finishing %zu retired upscale pass(es) before %s\n",
+                taken.size(), why);
+    std::fflush(stdout);
+    for (UpscaleChain& c : taken) {
+        // Give the GPU the same second it would have had, then take the
+        // chain apart whether it used it or not.
+        const bool quiet = upscale_work_finished(c, 1000000000ull);
+        if (!quiet) {
+            std::printf("stud-render-host: a retired upscale pass was still running; destroying it "
+                        "anyway, its surface is going away\n");
+            std::fflush(stdout);
+        }
+        c.in_flight.assign(c.in_flight.size(), false);
+        const VkSwapchainKHR held = c.destroy_with_chain;
+        c.destroy_with_chain = VK_NULL_HANDLE;
+        destroy_upscale_chain(c, /*force=*/true);
+        if (held != VK_NULL_HANDLE && l.destroy_swapchain != nullptr) {
+            l.destroy_swapchain(l.device, held, nullptr);
+        }
+    }
+}
+
+void destroy_upscale_chain(UpscaleChain& c, bool force) {
     Loader& l = loader();
     if (l.device == VK_NULL_HANDLE) return;
     // One second is far longer than any frame this pass records, and far
     // shorter than "never".
-    if (!upscale_work_finished(c, 1000000000ull)) {
+    if (!force && !upscale_work_finished(c, 1000000000ull)) {
         static int said = 0;
         if (said < 8) {
             ++said;
@@ -3623,6 +3724,21 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         // surface_mutex().
         std::unique_lock<std::shared_mutex> surface_lock(surface_mutex());
         r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+        // A surface that still has a swapchain on it refuses the next
+        // one, and whether that reads as SURFACE_LOST or
+        // NATIVE_WINDOW_IN_USE is the driver's choice. The two call sites
+        // of flush_retired_chains() should mean there is nothing left
+        // holding this surface -- but if the engine reached here by some
+        // order they do not cover, one deferred pass must not cost the
+        // whole renderer. So: let go of everything and ask once more.
+        if (r == VK_ERROR_SURFACE_LOST_KHR || r == VK_ERROR_NATIVE_WINDOW_IN_USE_KHR) {
+            std::printf("stud-render-host: vkCreateSwapchainKHR refused the surface (%d); letting "
+                        "go of anything still holding it and retrying once\n",
+                        static_cast<int>(r));
+            std::fflush(stdout);
+            flush_retired_chains("retrying a refused swapchain");
+            r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+        }
     }
     {
         const double create_ms = std::chrono::duration<double, std::milli>(
@@ -4105,6 +4221,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         }
         case K::Surface:
+            // Nothing may still be presenting to it. A deferred upscale
+            // pass holds its swapchain, and a swapchain outliving its
+            // surface is what left the WSI answering SURFACE_LOST to
+            // every later vkCreateSwapchainKHR.
+            flush_retired_chains("the engine destroys its surface");
             if (l.destroy_surface) {
                 l.destroy_surface(l.instance, from_u64<VkSurfaceKHR>(handle), nullptr);
             }
