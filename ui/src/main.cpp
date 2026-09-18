@@ -153,7 +153,14 @@ void terminate_stale_processes() {
     for (pid_t pid : engine) ::kill(pid, SIGTERM);
     // Long enough for Process B's own teardown (LeaveGame/DestroyApp are
     // bounded waits of their own), short enough not to stall a restart.
-    wait_for(engine, 20);
+    //
+    // One second was not long enough, measured against a real in-game
+    // close: LeaveGame alone takes about 500ms before the engine has sent
+    // its disconnect, and DestroyApp runs after it -- so render-host was
+    // being stopped part-way through the one sequence that tells the
+    // server the player has gone. This only ever waits while something is
+    // still alive, so a session that ends promptly still ends promptly.
+    wait_for(engine, 60);
     for (pid_t pid : hosts) ::kill(pid, SIGTERM);
     wait_for(hosts, 20);
 
