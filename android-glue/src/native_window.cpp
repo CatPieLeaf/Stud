@@ -1493,6 +1493,31 @@ const xdg_surface_listener kShellSurfaceListener = {
 // that buffer stands for), and ANativeWindow_getWidth/getHeight (what
 // the engine believes its surface is). Called from both the compositor's
 // configure and its preferred_scale, since either can change the answer.
+// Why nothing in this file commits the surface to publish state.
+//
+// Wayland surface state -- the viewport destination, the opaque region,
+// the buffer scale -- is double-buffered: a request stages it, and the
+// NEXT wl_surface.commit publishes it, atomically, together with whatever
+// buffer that commit attaches. The renderer owns those commits (the EGL
+// or Vulkan driver makes one per frame), so staging here and letting the
+// frame publish it is what keeps a buffer and the size it is meant to be
+// shown at in the same atomic update.
+//
+// Committing from here instead publishes the new state against the
+// buffer that happens to be attached already -- or against no buffer at
+// all, before the first frame -- and does it from a different thread than
+// the one presenting. On a compositor that configures once and leaves the
+// window alone, the mismatched frame is over before anyone sees it. On a
+// tiling compositor it is not: niri sizes the window itself in the very
+// first configure and re-configures whenever a neighbour appears, so
+// every one of those empty commits lands in a window that is actively
+// being resized, which is the reported "flickers, showing no UI, until
+// you resize it by hand" -- a manual resize ends it because it forces a
+// fresh configure and a full frame that finally agree.
+//
+// Stud drives xdg-shell by hand rather than through a toolkit, so the
+// state machine is Stud's own to get right: there is nothing underneath
+// that will paper over a commit made at the wrong moment.
 void apply_window_geometry(ANativeWindow* window, const char* reason) {
     if (window == nullptr) return;
     const int32_t logical_w = window->logical_width.load();
@@ -1517,8 +1542,16 @@ void apply_window_geometry(ANativeWindow* window, const char* reason) {
         // size as the window's logical size, which is exactly the "mini
         // window" bug in reverse: a 1.25x buffer would make the window
         // 25% larger every time the scale was applied.
+        //
+        // Set, NOT committed. Surface state is double-buffered: it
+        // applies on the next commit, and the next commit belongs to the
+        // renderer, which makes it atomically with the buffer that
+        // matches it. Committing here instead publishes a new destination
+        // against whatever buffer is already attached -- or against none
+        // at all, before the first frame -- which is a frame the
+        // compositor has to show with the two disagreeing. See
+        // commit_belongs_to_the_frame() below for the whole reasoning.
         wp_viewport_set_destination(window->viewport, logical_w, logical_h);
-        wl_surface_commit(window->surface);
     }
     g_logical_width.store(logical_w);
     g_logical_height.store(logical_h);
@@ -2355,7 +2388,6 @@ void native_window_set_opaque(::ANativeWindow* window) {
     // the viewport destination uses.
     wl_region_add(region, 0, 0, window->logical_width.load(), window->logical_height.load());
     wl_surface_set_opaque_region(window->surface, region);
-    wl_surface_commit(window->surface);
     wl_region_destroy(region);
 }
 
@@ -2367,13 +2399,11 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
         // protocol).
         wp_viewport_set_destination(window->viewport, window->logical_width.load(),
                                      window->logical_height.load());
-        wl_surface_commit(window->surface);
         return;
     }
     const int32_t integer_scale = g_render_scale_120.load() / kScaleUnit;
     if (integer_scale > 1) {
         wl_surface_set_buffer_scale(window->surface, integer_scale);
-        wl_surface_commit(window->surface);
     }
 }
 
@@ -2400,14 +2430,12 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
         // exclusive by protocol).
         wp_viewport_set_destination(window->viewport, window->logical_width.load(),
                                      window->logical_height.load());
-        wl_surface_commit(window->surface);
     } else {
         // No fractional-scale/viewporter on this compositor: fall back to
         // integer buffer scale, which is all wl_output.scale can express.
         const int32_t integer_scale = g_render_scale_120.load() / kScaleUnit;
         if (integer_scale > 1) {
             wl_surface_set_buffer_scale(window->surface, integer_scale);
-            wl_surface_commit(window->surface);
         }
     }
     window->egl_window = wl_egl_window_create(window->surface, width, height);
