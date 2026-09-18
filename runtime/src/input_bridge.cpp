@@ -1013,6 +1013,486 @@ std::function<void(int device_id, bool can_rumble)>& gamepad_presence_hook() {
     static std::function<void(int, bool)> hook;
     return hook;
 }
+// One controller event, on its way to the engine.
+//
+// Seven arms of dispatch_event()'s switch, moved together because they
+// share nothing with the pointer and key handling around them -- not the
+// pointer position, not the text state, nothing but the resolved entry
+// points.
+//
+// The evdev corner recorded in CLAUDE.md lives in here: the positional
+// button names do not describe what drivers send, an axis event carries a
+// vector rather than a scalar, and the button entry point takes isDown
+// rather than Android's own action. Those bodies are unchanged.
+void dispatch_gamepad_event(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                            JNIEnv* jni_env) {
+    using Ev = stud::android_glue::HostInputEvent;
+    switch (ev.type) {
+        case Ev::kGamepadConnect: {
+            if (fns.gamepad_connect == nullptr) return;
+            const jint device_id = static_cast<jint>(ev.b);
+            const jint type = static_cast<jint>(ev.a);
+            call_trapping_abort(fns.gamepad_connect, jni_env, nullptr, device_id, type);
+            std::printf("stud: gamepad %d connected to the engine (type %d)\n",
+                        static_cast<int>(device_id), static_cast<int>(type));
+            std::fflush(stdout);
+            // v1 of the connect event says whether this pad has force
+            // feedback; see render-host/src/gamepad.cpp.
+            if (gamepad_presence_hook()) {
+                gamepad_presence_hook()(static_cast<int>(device_id), ev.y != 0.0f);
+            }
+            return;
+        }
+        // What the pad can do, announced BEFORE it is said to have
+        // arrived, the real app does the same (`E(deviceId, type)` runs
+        // immediately before the connect call). A pad that reports no
+        // keys is a pad with no bindings, which looks exactly like a
+        // controller that does nothing.
+        //
+        // These arrive before the connect event, so they carry the
+        // gamepad type themselves rather than waiting for it.
+        case Ev::kGamepadSupportedKey: {
+            if (fns.gamepad_supported_key == nullptr) return;
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d supports key %u = %d\n", static_cast<int>(ev.b),
+                            ev.code, ev.a != 0.0f ? 1 : 0);
+            }
+            call_trapping_abort(fns.gamepad_supported_key, jni_env, nullptr,
+                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
+                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
+                                static_cast<jint>(ev.y));
+            return;
+        }
+        case Ev::kGamepadSupportedAxis: {
+            if (fns.gamepad_supported_motion == nullptr) return;
+            const jint device_id = static_cast<jint>(ev.b);
+            const jint axis = static_cast<jint>(ev.code);
+            const jboolean present =
+                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE);
+            const jint type = static_cast<jint>(ev.y);
+            // Direction -1 for every axis, and additionally +1 for the
+            // two hat axes, exactly what the real caller registers
+            // (jadx, `kl/e.java`'s own `E()`), not both directions for
+            // everything.
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d supports axis %d = %d\n", static_cast<int>(device_id),
+                            static_cast<int>(axis), present != 0 ? 1 : 0);
+            }
+            call_trapping_abort(fns.gamepad_supported_motion, jni_env, nullptr, device_id, axis,
+                                -1, present, type);
+            if (axis == 15 || axis == 16) {
+                call_trapping_abort(fns.gamepad_supported_motion, jni_env, nullptr, device_id,
+                                    axis, 1, present, type);
+            }
+            return;
+        }
+        case Ev::kGamepadDisconnect: {
+            if (gamepad_presence_hook()) {
+                gamepad_presence_hook()(static_cast<int>(ev.b), false);
+            }
+            if (fns.gamepad_disconnect == nullptr) return;
+            call_trapping_abort(fns.gamepad_disconnect, jni_env, nullptr,
+                                static_cast<jint>(ev.b));
+            return;
+        }
+        case Ev::kGamepadButton: {
+            if (fns.gamepad_button == nullptr) return;
+            // 1 is pressed, 0 is released, NOT Android's ACTION_DOWN/UP
+            // constants, which are the other way round. The real caller
+            // converts explicitly (jadx, the app's own key listener:
+            // `i11 = keyEvent.getAction() == 0 ? 1 : 0`), so sending the
+            // raw action inverts every edge: a press arrives as a release
+            // and the release that follows arrives as a press, leaving the
+            // button latched down forever. Live symptom: one tap and the
+            // character jumps continuously.
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d key %u %s\n", static_cast<int>(ev.b), ev.code,
+                            ev.a != 0.0f ? "down" : "up");
+                std::fflush(stdout);
+            }
+            call_trapping_abort(fns.gamepad_button, jni_env, nullptr,
+                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
+                                ev.a != 0.0f ? 1 : 0);
+            return;
+        }
+        case Ev::kGamepadAxis: {
+            if (fns.gamepad_axis == nullptr) return;
+            // The entry point takes a VECTOR, not a scalar: render-host
+            // has already built the exact triple the real caller sends
+            // (a stick's two components on both of its axis ids, a
+            // trigger or hat value in the third float).
+            if (input_trace_enabled()) {
+                std::printf("stud: pad %d axis %u = (%.3f, %.3f, %.3f)\n",
+                            static_cast<int>(ev.b), ev.code, ev.x, ev.y, ev.a);
+                std::fflush(stdout);
+            }
+            call_trapping_abort(fns.gamepad_axis, jni_env, nullptr,
+                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
+                                ev.x, ev.y, ev.a);
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+
+// One key event, on its way to the engine.
+//
+// The largest arm of dispatch_event()'s switch by a wide margin, and the
+// most self-contained: it touches neither the pointer position the other
+// arms carry between them nor anything else they share, only the event,
+// the resolved entry points and the JNI environment.
+//
+// What it does is not simple, and the comments inside record why: a key
+// released into a text box stays released until it is really let go, the
+// engine discards key events while a box has focus, and a repeat is the
+// key still being down rather than a fresh press. All of that is exactly
+// as it was; only its surroundings changed.
+void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                        JNIEnv* jni_env) {
+            bool down = ev.a != 0.0f;
+            // What this process believes is held. android-glue keeps its
+            // own set for focus changes, but a Lua TextBox taking focus is
+            // something only this side ever hears about.
+            if (down) {
+                held_keys().insert(ev.code);
+            } else {
+                held_keys().erase(ev.code);
+            }
+
+            // A key already released into text entry stays released until
+            // it is really let go. Without this the next auto-repeat,
+            // 25 a second, presses it straight back down, which is why
+            // the character kept walking while its owner typed.
+            //
+            // Withheld from the ENGINE only. It still types: W was held
+            // when the chat box took focus, so W was in this set, so every
+            // W after that was dropped before it ever reached the editor
+            // and the one letter the player could not type into chat was
+            // the one they had been walking with. What has to stay
+            // untouched is the engine's own idea that the key is down; the
+            // text a keystroke produces has nothing to do with that.
+            bool held_through_text_entry = false;
+            {
+                auto& released_into_text = keys_released_into_text_entry();
+                if (released_into_text.count(ev.code) != 0) {
+                    // Withheld from the engine until the text box lets go,
+                    // releases included.
+                    //
+                    // An earlier version erased the key here on a real
+                    // release, on the reasoning that the user had let go so
+                    // the suppression was done. That was the bug: while a
+                    // text box has focus the engine discards key events, so
+                    // that release never landed either, and with the key
+                    // no longer in this set there was nothing left to
+                    // re-send when the box let go, which is the one moment
+                    // a release can actually be heard. Live-caught: the
+                    // "text box let go" line never printed because this set
+                    // was already empty.
+                    //
+                    // The set is cleared in exactly one place now, at the
+                    // moment focus is released, right after the real
+                    // releases are sent.
+                    held_through_text_entry = true;
+                }
+            }
+            // Track modifiers locally: Wayland reports them in a separate
+            // event Stud does not forward, and every synthesized KeyEvent
+            // has to carry them the way a real keyboard would.
+            static bool shift_down = false;
+            // A repeat is a press that never had a matching release, so it
+            // must not disturb the latched modifier state.
+            const bool is_repeat = ev.b != 0.0f;
+            if (is_repeat) {
+                // Modifiers themselves do not repeat usefully.
+            } else if (ev.code == 42 || ev.code == 54) {  // LEFTSHIFT / RIGHTSHIFT
+                shift_down = down;
+                g_meta_state = down ? (g_meta_state | 0x1) : (g_meta_state & ~0x1);
+            } else if (ev.code == 56 || ev.code == 100) {  // LEFTALT / RIGHTALT
+                g_meta_state = down ? (g_meta_state | 0x02) : (g_meta_state & ~0x02);
+            } else if (ev.code == 29 || ev.code == 97) {  // LEFTCTRL / RIGHTCTRL
+                g_meta_state = down ? (g_meta_state | 0x1000) : (g_meta_state & ~0x1000);
+            }
+            // Escape gives the pointer back, whatever is holding it; see
+            // g_lock_suppressed. The key still reaches the engine as
+            // normal; this only lets go of the lock alongside it.
+            if (down && !is_repeat && ev.code == 1) {  // KEY_ESC
+                if (g_drag_locked.load()) g_lock_suppressed = true;
+                apply_pointer_lock();
+            }
+            // What this key really types, according to the compositor's own
+            // keymap. Stud's own table is positional and describes a US
+            // layout, so it is only the fallback now, for the X11 backend,
+            // and for the moment before the keymap has arrived.
+            std::string typed_text;
+            if (!text_from_keymap(ev.keysym, ev.codepoint, ev.composed_utf8,
+                                  sizeof(ev.composed_utf8), &typed_text)) {
+                // Only reached with no keymap at all, the X11 backend, or
+                // the moment before wl_keyboard.keymap arrives.
+                char from_table = 0;
+                if (char_for_scan_code(ev.code, shift_down, &from_table)) {
+                    typed_text.assign(1, from_table);
+                }
+            }
+            // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
+            // real one goes through whole rather than being truncated.
+            // KeyEvent.getUnicodeChar() is a single code point, so a
+            // multi-character composed result has none to report, the
+            // text still reaches the engine through typed_text, and
+            // neither does a dead key, which types nothing on its own.
+            const jint unicode_char =
+                ev.codepoint != 0
+                    ? static_cast<jint>(ev.codepoint)
+                    : (ev.composed_utf8[0] != '\0' || typed_text.empty()
+                           ? 0
+                           : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
+            // A key pinned to its position (see position_must_be_kept) is
+            // being reported for where it sits, so the Android key code
+            // has to agree: on ABNT2 that key types "'" but is the grave
+            // the inventory is bound to, and the two arguments describing
+            // one press must not name different keys. Typing is
+            // unaffected either way, it travels as text, never as this.
+            const bool keep_position =
+                typed_text.size() == 1 && !is_keypad_scan_code(ev.code) &&
+                position_must_be_kept(ev.code, typed_text[0], ev.layout_chars);
+            const jint key_code = keep_position
+                                      ? android_key_code_for_scan_code(ev.code)
+                                      : android_key_code_for_event(ev.code, ev.keysym);
+            // The scan code is what the engine actually keys off; it
+            // indexes a table straight to a USB HID usage code, and never
+            // reads the Android key code at all. So it has to carry what
+            // the key types rather than where it sits. See
+            // engine_scan_code_for_event().
+            const jint scan_code = static_cast<jint>(
+                engine_scan_code_for_event(ev.code, typed_text, ev.layout_chars));
+
+            // Real text entry. When the engine has told us a Lua TextBox
+            // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
+            // must go back as the TextBox's whole updated contents via
+            // nativePassText, a real device does exactly this from its
+            // IME, never as key events.
+            long text_box = NativeGLJavaInterfaceStub::active_text_box();
+
+            // What a version-specific read of the engine's own
+            // focused-text-box fields found, while that probe existed: on
+            // the id-4 service singleton, 0x9c8 is null while 0xa78/0xa80
+            // both hold real pointers. An earlier reading took that null
+            // 0x9c8 for the reason typing does not echo, and is retracted.
+            // Its consumer takes 0x9c8 only as a fast path, falling through to
+            // a second path built on 0xa80, so
+            // syncTextboxTextAndCursorPosition2 really does reach the
+            // focused box. See this file's header for what actually
+            // suppresses the drawing. The probe itself is gone: it answered
+            // its question, and its offsets belong to one Roblox build.
+            // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
+            // real device performs when its keyboard opens over the GL view.
+            // This was tried twice before and disproven, but both attempts
+            // predate `java.lang.String.getBytes` existing at all, and
+            // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
+            // focused box's own text. Off by default.
+            if (down && text_box != 0 && std::getenv("STUD_IME_HANDSHAKE") != nullptr) {
+                static bool handshaken = false;
+                if (!handshaken) {
+                    handshaken = true;
+                    if (fns.get_text_box_info != nullptr) {
+                        jobject info = nullptr;
+                        call_trapping_abort_with_result(fns.get_text_box_info, info, jni_env,
+                                                        nullptr);
+                        std::printf("stud: IME handshake: nativeGetTextBoxInfo -> %s\n",
+                                    info != nullptr ? "object" : "null");
+                    }
+                    if (fns.update_keyboard_size != nullptr) {
+                        // A real open keyboard covers the bottom of the view.
+                        // The real caller only reports visible=true when the
+                        // measured height exceeds 10, so this must be a real
+                        // rectangle, not zeroes.
+                        // The event carries the live surface size, which is
+                        // the same thing the window owner reports.
+                        const jint w = static_cast<jint>(ev.surface_width);
+                        const jint h = static_cast<jint>(ev.surface_height);
+                        const jint kb_h = h / 3 > 10 ? h / 3 : 300;
+                        call_trapping_abort(fns.update_keyboard_size, jni_env, nullptr,
+                                            static_cast<jboolean>(JNI_TRUE), 0, h - kb_h, w, kb_h);
+                        std::printf("stud: IME handshake: updateKeyboardSize(true, 0,%d,%d,%d)\n",
+                                    h - kb_h, w, kb_h);
+                    }
+                    std::fflush(stdout);
+                }
+            }
+
+            if (down && text_box != 0 && fns.pass_text != nullptr) {
+                auto& ed = editor();
+                if (ed.text() != NativeGLJavaInterfaceStub::active_text_box_text()) {
+                    // The engine replaced the contents (a fresh focus, or
+                    // Lua setting the text), adopt it.
+                    ed.set_text(NativeGLJavaInterfaceStub::active_text_box_text());
+                }
+                const bool ctrl = (g_meta_state & 0x1000) != 0;
+                bool changed = false;
+                bool moved = false;
+                if (ctrl && (ev.code == 30)) {  // Ctrl+A
+                    ed.select_all();
+                    moved = true;
+                } else if (ctrl && (ev.code == 46 || ev.code == 45)) {  // Ctrl+C / Ctrl+X
+                    set_clipboard(ed.selected_text());
+                    if (ev.code == 45) changed = ed.delete_selection();  // cut
+                    moved = true;
+                } else if (ctrl && ev.code == 47) {  // Ctrl+V
+                    std::string pasted = get_clipboard();
+                    // A text box takes one line: a pasted newline ends the
+                    // paste rather than smuggling a control character in.
+                    const size_t newline = pasted.find_first_of("\r\n");
+                    if (newline != std::string::npos) pasted.resize(newline);
+                    changed = ed.insert(pasted);
+                } else if (ev.code == 14) {  // BACKSPACE
+                    changed = ed.backspace();
+                } else if (ev.code == 111) {  // DELETE
+                    changed = ed.del();
+                } else if (ev.code == 105) {  // LEFT
+                    ed.move_left(shift_down);
+                    moved = true;
+                } else if (ev.code == 106) {  // RIGHT
+                    ed.move_right(shift_down);
+                    moved = true;
+                } else if (ev.code == 102) {  // HOME
+                    ed.move_home(shift_down);
+                    moved = true;
+                } else if (ev.code == 107) {  // END
+                    ed.move_end(shift_down);
+                    moved = true;
+                } else if (ev.code == 28) {  // ENTER
+                    // Real order from RbxKeyboard.onEditorAction: sync the
+                    // text first, then report the return key, then the final
+                    // done=true nativePassText.
+                    deliver_text(fns, ed.text(), text_box, /*done=*/true);
+                    if (fns.return_pressed != nullptr) {
+                        call_trapping_abort(fns.return_pressed, jni_env, nullptr,
+                                            static_cast<jlong>(text_box));
+                    }
+                } else if (!typed_text.empty() && !ctrl) {
+                    changed = ed.insert(typed_text);
+                }
+                const std::string text = ed.text();
+                if (moved && !changed) {
+                    // Caret and selection moved without the text changing:
+                    // the engine has nothing new to receive, but what is
+                    // drawn has to follow.
+                    push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
+                                      ed.selection_end());
+                }
+                if (changed) {
+                    if (input_trace_enabled()) {
+                        // Length only, never the content, which can be a password.
+                        std::printf("stud: input bridge: nativePassText -> %zu chars\n",
+                                    text.size());
+                        std::fflush(stdout);
+                    }
+                    if (input_trace_enabled()) {
+                        static bool told_handle = false;
+                        if (!told_handle) {
+                            told_handle = true;
+                            std::printf("stud: input bridge: TextBox handle=0x%llx\n",
+                                        static_cast<unsigned long long>(text_box));
+                            std::fflush(stdout);
+                        }
+                    }
+                    NativeGLJavaInterfaceStub::set_active_text_box_text(text);
+                    deliver_text(fns, text, text_box, /*done=*/false);
+                    push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
+                                      ed.selection_end());
+                    // ...and through AGDK's own text-input callback, which
+                    // needs no Java EditText and no IME. See resolve_agdk().
+                    if (g_agdk_env != nullptr) {
+                        send_agdk_text(*g_agdk_env, g_agdk_activity_ref, text);
+                    }
+                }
+            }
+
+            // Real Android Back. The app shell leaves a page (a WebView
+            // page, a settings screen) on KEYCODE_BACK, which every real
+            // device has as a button or a gesture and which Stud had no
+            // way to send at all, leaving a user stuck on any screen
+            // whose only exit is Back, live-reported exactly that way.
+            // Escape stays KEYCODE_ESCAPE, because that is what a real
+            // hardware keyboard sends and what Roblox uses in-game for
+            // its own menu; Alt+Left is the desktop convention for
+            // "back" and is what is bound here instead.
+            // Everything above is local: the editor, the overlay, and the
+            // text the engine is told through nativePassText. Below is the
+            // key itself, which is the one thing a withheld key must not
+            // send, in either of its two paths.
+            if (held_through_text_entry) return;
+
+            const bool alt_left_back = ev.code == 105 && (g_meta_state & kMetaAlt) != 0;
+            if (alt_left_back) {
+                if (g_agdk_env != nullptr) {
+                    send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down,
+                                  static_cast<jint>(ev.code), kKeyCodeBack, unicode_char);
+                }
+                if (fns.key_event != nullptr) {
+                    call_trapping_abort(fns.key_event, jni_env, nullptr,
+                                        static_cast<jboolean>(down ? JNI_TRUE : JNI_FALSE),
+                                        static_cast<jint>(ev.code), kKeyCodeBack,
+                                        static_cast<jboolean>(JNI_FALSE));
+                }
+                if (down) {
+                    std::printf("stud: input bridge: Alt+Left -> KEYCODE_BACK\n");
+                    std::fflush(stdout);
+                }
+                return;
+            }
+
+            if (g_agdk_env != nullptr) {
+                send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, scan_code, key_code,
+                              unicode_char);
+            }
+            // One-shot per path, so a live run says exactly which of the
+            // three real key paths actually reached the engine.
+            {
+                static bool told_text = false, told_key = false;
+                if (!told_text && text_box != 0) {
+                    told_text = true;
+                    std::printf("stud: input bridge: text path ACTIVE (TextBox focused, "
+                                "pass_text=%d)\n", fns.pass_text != nullptr);
+                    std::fflush(stdout);
+                }
+                if (!told_key) {
+                    told_key = true;
+                    std::printf("stud: input bridge: nativePassKeyEvent path active "
+                                "(scan=%u->%d keycode=%d unicode=%d)\n", ev.code,
+                                scan_code, key_code, unicode_char);
+                    std::fflush(stdout);
+                }
+            }
+            if (fns.key_event == nullptr) return;
+            // Every key actually handed to the engine, one line each,
+            // immediately before the call, so a run says what the engine
+            // received rather than leaving it to be inferred from what
+            // Stud meant to send. Bounded so it cannot fill a log.
+            {
+                static int traced = 0;
+                if (traced < 60) {
+                    ++traced;
+                    std::printf("stud: key -> engine: %s scan=%u->%d keycode=%d repeat=%d "
+                                "textbox=%d\n",
+                                down ? "down" : "up  ", ev.code, scan_code, key_code,
+                                ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0);
+                    std::fflush(stdout);
+                }
+            }
+            // A held key repeats, and says so: real Android reports the
+            // same through KeyEvent.getRepeatCount(), which is exactly
+            // what this argument stands for.
+            call_trapping_abort(fns.key_event, jni_env, nullptr,
+                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
+                                scan_code,
+                                key_code,
+                                static_cast<jboolean>(ev.b != 0.0f ? JNI_TRUE : JNI_FALSE));
+            return;
+}
+
+
 
 void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, JNIEnv* jni_env,
                     float& last_x, float& last_y) {
@@ -1626,347 +2106,9 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             return;
         }
-        case Ev::kKey: {
-            bool down = ev.a != 0.0f;
-            // What this process believes is held. android-glue keeps its
-            // own set for focus changes, but a Lua TextBox taking focus is
-            // something only this side ever hears about.
-            if (down) {
-                held_keys().insert(ev.code);
-            } else {
-                held_keys().erase(ev.code);
-            }
-
-            // A key already released into text entry stays released until
-            // it is really let go. Without this the next auto-repeat,
-            // 25 a second, presses it straight back down, which is why
-            // the character kept walking while its owner typed.
-            //
-            // Withheld from the ENGINE only. It still types: W was held
-            // when the chat box took focus, so W was in this set, so every
-            // W after that was dropped before it ever reached the editor
-            // and the one letter the player could not type into chat was
-            // the one they had been walking with. What has to stay
-            // untouched is the engine's own idea that the key is down; the
-            // text a keystroke produces has nothing to do with that.
-            bool held_through_text_entry = false;
-            {
-                auto& released_into_text = keys_released_into_text_entry();
-                if (released_into_text.count(ev.code) != 0) {
-                    // Withheld from the engine until the text box lets go,
-                    // releases included.
-                    //
-                    // An earlier version erased the key here on a real
-                    // release, on the reasoning that the user had let go so
-                    // the suppression was done. That was the bug: while a
-                    // text box has focus the engine discards key events, so
-                    // that release never landed either, and with the key
-                    // no longer in this set there was nothing left to
-                    // re-send when the box let go, which is the one moment
-                    // a release can actually be heard. Live-caught: the
-                    // "text box let go" line never printed because this set
-                    // was already empty.
-                    //
-                    // The set is cleared in exactly one place now, at the
-                    // moment focus is released, right after the real
-                    // releases are sent.
-                    held_through_text_entry = true;
-                }
-            }
-            // Track modifiers locally: Wayland reports them in a separate
-            // event Stud does not forward, and every synthesized KeyEvent
-            // has to carry them the way a real keyboard would.
-            static bool shift_down = false;
-            // A repeat is a press that never had a matching release, so it
-            // must not disturb the latched modifier state.
-            const bool is_repeat = ev.b != 0.0f;
-            if (is_repeat) {
-                // Modifiers themselves do not repeat usefully.
-            } else if (ev.code == 42 || ev.code == 54) {  // LEFTSHIFT / RIGHTSHIFT
-                shift_down = down;
-                g_meta_state = down ? (g_meta_state | 0x1) : (g_meta_state & ~0x1);
-            } else if (ev.code == 56 || ev.code == 100) {  // LEFTALT / RIGHTALT
-                g_meta_state = down ? (g_meta_state | 0x02) : (g_meta_state & ~0x02);
-            } else if (ev.code == 29 || ev.code == 97) {  // LEFTCTRL / RIGHTCTRL
-                g_meta_state = down ? (g_meta_state | 0x1000) : (g_meta_state & ~0x1000);
-            }
-            // Escape gives the pointer back, whatever is holding it; see
-            // g_lock_suppressed. The key still reaches the engine as
-            // normal; this only lets go of the lock alongside it.
-            if (down && !is_repeat && ev.code == 1) {  // KEY_ESC
-                if (g_drag_locked.load()) g_lock_suppressed = true;
-                apply_pointer_lock();
-            }
-            // What this key really types, according to the compositor's own
-            // keymap. Stud's own table is positional and describes a US
-            // layout, so it is only the fallback now, for the X11 backend,
-            // and for the moment before the keymap has arrived.
-            std::string typed_text;
-            if (!text_from_keymap(ev.keysym, ev.codepoint, ev.composed_utf8,
-                                  sizeof(ev.composed_utf8), &typed_text)) {
-                // Only reached with no keymap at all, the X11 backend, or
-                // the moment before wl_keyboard.keymap arrives.
-                char from_table = 0;
-                if (char_for_scan_code(ev.code, shift_down, &from_table)) {
-                    typed_text.assign(1, from_table);
-                }
-            }
-            // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
-            // real one goes through whole rather than being truncated.
-            // KeyEvent.getUnicodeChar() is a single code point, so a
-            // multi-character composed result has none to report, the
-            // text still reaches the engine through typed_text, and
-            // neither does a dead key, which types nothing on its own.
-            const jint unicode_char =
-                ev.codepoint != 0
-                    ? static_cast<jint>(ev.codepoint)
-                    : (ev.composed_utf8[0] != '\0' || typed_text.empty()
-                           ? 0
-                           : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
-            // A key pinned to its position (see position_must_be_kept) is
-            // being reported for where it sits, so the Android key code
-            // has to agree: on ABNT2 that key types "'" but is the grave
-            // the inventory is bound to, and the two arguments describing
-            // one press must not name different keys. Typing is
-            // unaffected either way, it travels as text, never as this.
-            const bool keep_position =
-                typed_text.size() == 1 && !is_keypad_scan_code(ev.code) &&
-                position_must_be_kept(ev.code, typed_text[0], ev.layout_chars);
-            const jint key_code = keep_position
-                                      ? android_key_code_for_scan_code(ev.code)
-                                      : android_key_code_for_event(ev.code, ev.keysym);
-            // The scan code is what the engine actually keys off; it
-            // indexes a table straight to a USB HID usage code, and never
-            // reads the Android key code at all. So it has to carry what
-            // the key types rather than where it sits. See
-            // engine_scan_code_for_event().
-            const jint scan_code = static_cast<jint>(
-                engine_scan_code_for_event(ev.code, typed_text, ev.layout_chars));
-
-            // Real text entry. When the engine has told us a Lua TextBox
-            // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
-            // must go back as the TextBox's whole updated contents via
-            // nativePassText, a real device does exactly this from its
-            // IME, never as key events.
-            long text_box = NativeGLJavaInterfaceStub::active_text_box();
-
-            // What a version-specific read of the engine's own
-            // focused-text-box fields found, while that probe existed: on
-            // the id-4 service singleton, 0x9c8 is null while 0xa78/0xa80
-            // both hold real pointers. An earlier reading took that null
-            // 0x9c8 for the reason typing does not echo, and is retracted.
-            // Its consumer takes 0x9c8 only as a fast path, falling through to
-            // a second path built on 0xa80, so
-            // syncTextboxTextAndCursorPosition2 really does reach the
-            // focused box. See this file's header for what actually
-            // suppresses the drawing. The probe itself is gone: it answered
-            // its question, and its offsets belong to one Roblox build.
-            // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
-            // real device performs when its keyboard opens over the GL view.
-            // This was tried twice before and disproven, but both attempts
-            // predate `java.lang.String.getBytes` existing at all, and
-            // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
-            // focused box's own text. Off by default.
-            if (down && text_box != 0 && std::getenv("STUD_IME_HANDSHAKE") != nullptr) {
-                static bool handshaken = false;
-                if (!handshaken) {
-                    handshaken = true;
-                    if (fns.get_text_box_info != nullptr) {
-                        jobject info = nullptr;
-                        call_trapping_abort_with_result(fns.get_text_box_info, info, jni_env,
-                                                        nullptr);
-                        std::printf("stud: IME handshake: nativeGetTextBoxInfo -> %s\n",
-                                    info != nullptr ? "object" : "null");
-                    }
-                    if (fns.update_keyboard_size != nullptr) {
-                        // A real open keyboard covers the bottom of the view.
-                        // The real caller only reports visible=true when the
-                        // measured height exceeds 10, so this must be a real
-                        // rectangle, not zeroes.
-                        // The event carries the live surface size, which is
-                        // the same thing the window owner reports.
-                        const jint w = static_cast<jint>(ev.surface_width);
-                        const jint h = static_cast<jint>(ev.surface_height);
-                        const jint kb_h = h / 3 > 10 ? h / 3 : 300;
-                        call_trapping_abort(fns.update_keyboard_size, jni_env, nullptr,
-                                            static_cast<jboolean>(JNI_TRUE), 0, h - kb_h, w, kb_h);
-                        std::printf("stud: IME handshake: updateKeyboardSize(true, 0,%d,%d,%d)\n",
-                                    h - kb_h, w, kb_h);
-                    }
-                    std::fflush(stdout);
-                }
-            }
-
-            if (down && text_box != 0 && fns.pass_text != nullptr) {
-                auto& ed = editor();
-                if (ed.text() != NativeGLJavaInterfaceStub::active_text_box_text()) {
-                    // The engine replaced the contents (a fresh focus, or
-                    // Lua setting the text), adopt it.
-                    ed.set_text(NativeGLJavaInterfaceStub::active_text_box_text());
-                }
-                const bool ctrl = (g_meta_state & 0x1000) != 0;
-                bool changed = false;
-                bool moved = false;
-                if (ctrl && (ev.code == 30)) {  // Ctrl+A
-                    ed.select_all();
-                    moved = true;
-                } else if (ctrl && (ev.code == 46 || ev.code == 45)) {  // Ctrl+C / Ctrl+X
-                    set_clipboard(ed.selected_text());
-                    if (ev.code == 45) changed = ed.delete_selection();  // cut
-                    moved = true;
-                } else if (ctrl && ev.code == 47) {  // Ctrl+V
-                    std::string pasted = get_clipboard();
-                    // A text box takes one line: a pasted newline ends the
-                    // paste rather than smuggling a control character in.
-                    const size_t newline = pasted.find_first_of("\r\n");
-                    if (newline != std::string::npos) pasted.resize(newline);
-                    changed = ed.insert(pasted);
-                } else if (ev.code == 14) {  // BACKSPACE
-                    changed = ed.backspace();
-                } else if (ev.code == 111) {  // DELETE
-                    changed = ed.del();
-                } else if (ev.code == 105) {  // LEFT
-                    ed.move_left(shift_down);
-                    moved = true;
-                } else if (ev.code == 106) {  // RIGHT
-                    ed.move_right(shift_down);
-                    moved = true;
-                } else if (ev.code == 102) {  // HOME
-                    ed.move_home(shift_down);
-                    moved = true;
-                } else if (ev.code == 107) {  // END
-                    ed.move_end(shift_down);
-                    moved = true;
-                } else if (ev.code == 28) {  // ENTER
-                    // Real order from RbxKeyboard.onEditorAction: sync the
-                    // text first, then report the return key, then the final
-                    // done=true nativePassText.
-                    deliver_text(fns, ed.text(), text_box, /*done=*/true);
-                    if (fns.return_pressed != nullptr) {
-                        call_trapping_abort(fns.return_pressed, jni_env, nullptr,
-                                            static_cast<jlong>(text_box));
-                    }
-                } else if (!typed_text.empty() && !ctrl) {
-                    changed = ed.insert(typed_text);
-                }
-                const std::string text = ed.text();
-                if (moved && !changed) {
-                    // Caret and selection moved without the text changing:
-                    // the engine has nothing new to receive, but what is
-                    // drawn has to follow.
-                    push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
-                                      ed.selection_end());
-                }
-                if (changed) {
-                    if (input_trace_enabled()) {
-                        // Length only, never the content, which can be a password.
-                        std::printf("stud: input bridge: nativePassText -> %zu chars\n",
-                                    text.size());
-                        std::fflush(stdout);
-                    }
-                    if (input_trace_enabled()) {
-                        static bool told_handle = false;
-                        if (!told_handle) {
-                            told_handle = true;
-                            std::printf("stud: input bridge: TextBox handle=0x%llx\n",
-                                        static_cast<unsigned long long>(text_box));
-                            std::fflush(stdout);
-                        }
-                    }
-                    NativeGLJavaInterfaceStub::set_active_text_box_text(text);
-                    deliver_text(fns, text, text_box, /*done=*/false);
-                    push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
-                                      ed.selection_end());
-                    // ...and through AGDK's own text-input callback, which
-                    // needs no Java EditText and no IME. See resolve_agdk().
-                    if (g_agdk_env != nullptr) {
-                        send_agdk_text(*g_agdk_env, g_agdk_activity_ref, text);
-                    }
-                }
-            }
-
-            // Real Android Back. The app shell leaves a page (a WebView
-            // page, a settings screen) on KEYCODE_BACK, which every real
-            // device has as a button or a gesture and which Stud had no
-            // way to send at all, leaving a user stuck on any screen
-            // whose only exit is Back, live-reported exactly that way.
-            // Escape stays KEYCODE_ESCAPE, because that is what a real
-            // hardware keyboard sends and what Roblox uses in-game for
-            // its own menu; Alt+Left is the desktop convention for
-            // "back" and is what is bound here instead.
-            // Everything above is local: the editor, the overlay, and the
-            // text the engine is told through nativePassText. Below is the
-            // key itself, which is the one thing a withheld key must not
-            // send, in either of its two paths.
-            if (held_through_text_entry) return;
-
-            const bool alt_left_back = ev.code == 105 && (g_meta_state & kMetaAlt) != 0;
-            if (alt_left_back) {
-                if (g_agdk_env != nullptr) {
-                    send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down,
-                                  static_cast<jint>(ev.code), kKeyCodeBack, unicode_char);
-                }
-                if (fns.key_event != nullptr) {
-                    call_trapping_abort(fns.key_event, jni_env, nullptr,
-                                        static_cast<jboolean>(down ? JNI_TRUE : JNI_FALSE),
-                                        static_cast<jint>(ev.code), kKeyCodeBack,
-                                        static_cast<jboolean>(JNI_FALSE));
-                }
-                if (down) {
-                    std::printf("stud: input bridge: Alt+Left -> KEYCODE_BACK\n");
-                    std::fflush(stdout);
-                }
-                return;
-            }
-
-            if (g_agdk_env != nullptr) {
-                send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, scan_code, key_code,
-                              unicode_char);
-            }
-            // One-shot per path, so a live run says exactly which of the
-            // three real key paths actually reached the engine.
-            {
-                static bool told_text = false, told_key = false;
-                if (!told_text && text_box != 0) {
-                    told_text = true;
-                    std::printf("stud: input bridge: text path ACTIVE (TextBox focused, "
-                                "pass_text=%d)\n", fns.pass_text != nullptr);
-                    std::fflush(stdout);
-                }
-                if (!told_key) {
-                    told_key = true;
-                    std::printf("stud: input bridge: nativePassKeyEvent path active "
-                                "(scan=%u->%d keycode=%d unicode=%d)\n", ev.code,
-                                scan_code, key_code, unicode_char);
-                    std::fflush(stdout);
-                }
-            }
-            if (fns.key_event == nullptr) return;
-            // Every key actually handed to the engine, one line each,
-            // immediately before the call, so a run says what the engine
-            // received rather than leaving it to be inferred from what
-            // Stud meant to send. Bounded so it cannot fill a log.
-            {
-                static int traced = 0;
-                if (traced < 60) {
-                    ++traced;
-                    std::printf("stud: key -> engine: %s scan=%u->%d keycode=%d repeat=%d "
-                                "textbox=%d\n",
-                                down ? "down" : "up  ", ev.code, scan_code, key_code,
-                                ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0);
-                    std::fflush(stdout);
-                }
-            }
-            // A held key repeats, and says so: real Android reports the
-            // same through KeyEvent.getRepeatCount(), which is exactly
-            // what this argument stands for.
-            call_trapping_abort(fns.key_event, jni_env, nullptr,
-                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
-                                scan_code,
-                                key_code,
-                                static_cast<jboolean>(ev.b != 0.0f ? JNI_TRUE : JNI_FALSE));
+        case Ev::kKey:
+            dispatch_key_event(ev, fns, jni_env);
             return;
-        }
         case Ev::kPointerEnter:
         case Ev::kWindowRedrawNeeded: {
             // The window was just mapped, so its contents are gone.
@@ -2145,109 +2287,14 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         // Android keycodes and axis ids, so there is no mapping left to
         // get wrong here. `b` carries the device id, which the engine
         // uses to keep several pads apart.
-        case Ev::kGamepadConnect: {
-            if (fns.gamepad_connect == nullptr) return;
-            const jint device_id = static_cast<jint>(ev.b);
-            const jint type = static_cast<jint>(ev.a);
-            call_trapping_abort(fns.gamepad_connect, jni_env, nullptr, device_id, type);
-            std::printf("stud: gamepad %d connected to the engine (type %d)\n",
-                        static_cast<int>(device_id), static_cast<int>(type));
-            std::fflush(stdout);
-            // v1 of the connect event says whether this pad has force
-            // feedback; see render-host/src/gamepad.cpp.
-            if (gamepad_presence_hook()) {
-                gamepad_presence_hook()(static_cast<int>(device_id), ev.y != 0.0f);
-            }
+        case Ev::kGamepadConnect:
+        case Ev::kGamepadSupportedKey:
+        case Ev::kGamepadSupportedAxis:
+        case Ev::kGamepadDisconnect:
+        case Ev::kGamepadButton:
+        case Ev::kGamepadAxis:
+            dispatch_gamepad_event(ev, fns, jni_env);
             return;
-        }
-        // What the pad can do, announced BEFORE it is said to have
-        // arrived, the real app does the same (`E(deviceId, type)` runs
-        // immediately before the connect call). A pad that reports no
-        // keys is a pad with no bindings, which looks exactly like a
-        // controller that does nothing.
-        //
-        // These arrive before the connect event, so they carry the
-        // gamepad type themselves rather than waiting for it.
-        case Ev::kGamepadSupportedKey: {
-            if (fns.gamepad_supported_key == nullptr) return;
-            if (input_trace_enabled()) {
-                std::printf("stud: pad %d supports key %u = %d\n", static_cast<int>(ev.b),
-                            ev.code, ev.a != 0.0f ? 1 : 0);
-            }
-            call_trapping_abort(fns.gamepad_supported_key, jni_env, nullptr,
-                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
-                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
-                                static_cast<jint>(ev.y));
-            return;
-        }
-        case Ev::kGamepadSupportedAxis: {
-            if (fns.gamepad_supported_motion == nullptr) return;
-            const jint device_id = static_cast<jint>(ev.b);
-            const jint axis = static_cast<jint>(ev.code);
-            const jboolean present =
-                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE);
-            const jint type = static_cast<jint>(ev.y);
-            // Direction -1 for every axis, and additionally +1 for the
-            // two hat axes, exactly what the real caller registers
-            // (jadx, `kl/e.java`'s own `E()`), not both directions for
-            // everything.
-            if (input_trace_enabled()) {
-                std::printf("stud: pad %d supports axis %d = %d\n", static_cast<int>(device_id),
-                            static_cast<int>(axis), present != 0 ? 1 : 0);
-            }
-            call_trapping_abort(fns.gamepad_supported_motion, jni_env, nullptr, device_id, axis,
-                                -1, present, type);
-            if (axis == 15 || axis == 16) {
-                call_trapping_abort(fns.gamepad_supported_motion, jni_env, nullptr, device_id,
-                                    axis, 1, present, type);
-            }
-            return;
-        }
-        case Ev::kGamepadDisconnect: {
-            if (gamepad_presence_hook()) {
-                gamepad_presence_hook()(static_cast<int>(ev.b), false);
-            }
-            if (fns.gamepad_disconnect == nullptr) return;
-            call_trapping_abort(fns.gamepad_disconnect, jni_env, nullptr,
-                                static_cast<jint>(ev.b));
-            return;
-        }
-        case Ev::kGamepadButton: {
-            if (fns.gamepad_button == nullptr) return;
-            // 1 is pressed, 0 is released, NOT Android's ACTION_DOWN/UP
-            // constants, which are the other way round. The real caller
-            // converts explicitly (jadx, the app's own key listener:
-            // `i11 = keyEvent.getAction() == 0 ? 1 : 0`), so sending the
-            // raw action inverts every edge: a press arrives as a release
-            // and the release that follows arrives as a press, leaving the
-            // button latched down forever. Live symptom: one tap and the
-            // character jumps continuously.
-            if (input_trace_enabled()) {
-                std::printf("stud: pad %d key %u %s\n", static_cast<int>(ev.b), ev.code,
-                            ev.a != 0.0f ? "down" : "up");
-                std::fflush(stdout);
-            }
-            call_trapping_abort(fns.gamepad_button, jni_env, nullptr,
-                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
-                                ev.a != 0.0f ? 1 : 0);
-            return;
-        }
-        case Ev::kGamepadAxis: {
-            if (fns.gamepad_axis == nullptr) return;
-            // The entry point takes a VECTOR, not a scalar: render-host
-            // has already built the exact triple the real caller sends
-            // (a stick's two components on both of its axis ids, a
-            // trigger or hat value in the third float).
-            if (input_trace_enabled()) {
-                std::printf("stud: pad %d axis %u = (%.3f, %.3f, %.3f)\n",
-                            static_cast<int>(ev.b), ev.code, ev.x, ev.y, ev.a);
-                std::fflush(stdout);
-            }
-            call_trapping_abort(fns.gamepad_axis, jni_env, nullptr,
-                                static_cast<jint>(ev.b), static_cast<jint>(ev.code),
-                                ev.x, ev.y, ev.a);
-            return;
-        }
         default:
             return;
     }
