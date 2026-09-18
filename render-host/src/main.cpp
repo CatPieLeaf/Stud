@@ -2973,6 +2973,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                        ? 1
                        : 0;
         }
+        case CallId::PollWindowCloseRequested:
+            return stud::android_glue::window_close_requested() ? 1u : 0u;
         case CallId::PollWebViewClosed: {
             uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
             return pending;
@@ -4731,11 +4733,46 @@ int main(int argc, char** argv) {
         serve_extra_connections(listen_fd, fns, real_window);
         for (;;) {
             if (stud::android_glue::window_close_requested()) {
-                std::printf("stud-render-host: window close requested, shutting down\n");
-                close_open_web_views(/*wait_for_exit=*/true);
-                ::close(conn_fd);
-                ::close(listen_fd);
-                exit_now(0);
+                // Not straight out of the door. Leaving a running
+                // experience is a real message to a real Roblox server,
+                // and only the engine can send it -- which it does when
+                // Process B calls nativeAppBridgeV2LeaveGame on its way
+                // out. That call does real render work, so this process
+                // has to still be here to answer it.
+                //
+                // Exiting the instant the X was clicked took the
+                // connection away first: Process B saw a dead host,
+                // skipped its own teardown (there being nothing to tear
+                // down against) and exited, so the leave was never sent
+                // and the account stayed in the server until the server
+                // timed it out. Live-reported.
+                //
+                // So the close is reported through
+                // CallId::PollWindowCloseRequested, which Process B polls
+                // every tick, and this loop keeps serving until it
+                // disconnects of its own accord. Bounded, because a
+                // teardown that hangs must not leave a window nobody can
+                // close: at that point the leave is lost either way and
+                // the window is what the user asked for.
+                static auto closing_since = std::chrono::steady_clock::now();
+                static bool announced = false;
+                if (!announced) {
+                    announced = true;
+                    closing_since = std::chrono::steady_clock::now();
+                    std::printf("stud-render-host: window close requested, letting the engine "
+                                "leave the experience first\n");
+                    std::fflush(stdout);
+                }
+                const double waited_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - closing_since).count();
+                if (waited_ms > 6000.0) {
+                    std::printf("stud-render-host: the engine did not finish leaving in %.0fms; "
+                                "closing anyway\n", waited_ms);
+                    close_open_web_views(/*wait_for_exit=*/true);
+                    ::close(conn_fd);
+                    ::close(listen_fd);
+                    exit_now(0);
+                }
             }
             pollfd cpfds[2] = {{conn_fd, POLLIN, 0}, {wl_fd, POLLIN, 0}};
             // Pipelined requests arrive in bulk, so drain what is already
