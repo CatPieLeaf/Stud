@@ -146,7 +146,6 @@ bool ensure_ready() {
             std::fflush(stdout);
             return false;
         }
-        ::mkdir(cache_root().c_str(), 0700);
         for (unsigned bucket = 0; bucket < 256; ++bucket) {
             char dir_name[8];
             std::snprintf(dir_name, sizeof(dir_name), "%02x", bucket);

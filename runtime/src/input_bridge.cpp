@@ -2346,7 +2346,6 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         stud::jni_bridge::ensure_current_thread_attached_to_jvm();
         float last_x = 0.0f;
         float last_y = 0.0f;
-        bool g_pointer_locked = false;
         std::vector<stud::android_glue::HostInputEvent> batch(64);
         while (g_running.load(std::memory_order_relaxed)) {
             // Input's own connection, so asking for events never queues

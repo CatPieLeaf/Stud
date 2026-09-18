@@ -3,9 +3,8 @@
 // built fixtures, not a real ANGLE build, since depending on one being
 // present at a fixed system path would break on any clean machine/CI. Real
 // validation against a genuine ANGLE build (e.g. a system's bundled
-// Chromium/CEF copy) is done manually via tools/try_load.cpp's optional
-// ANGLE-path arguments, not part of this automated suite. See
-// the engineering notes, milestone M6.
+// Chromium/CEF copy) is done by running Stud itself against one, not by
+// this automated suite.
 
 #include "stud/render.h"
 
