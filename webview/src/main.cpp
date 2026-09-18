@@ -313,13 +313,20 @@ int main(int argc, char** argv) {
     window.setWindowTitle(request.title.isEmpty() ? QStringLiteral("Roblox") : request.title);
     // Stud's own icon, by theme name, with the installed file as a
     // fallback for environments whose icon theme does not resolve it.
-    QIcon icon = QIcon::fromTheme(QStringLiteral("stud"));
+    //
+    // By the APPLICATION ID, which is the name the icon is installed
+    // under (the root CMakeLists.txt renames every size to
+    // "${STUD_APP_ID}.png"). This asked for "stud" at all three steps, so
+    // the theme lookup and both fallback paths named a file that exists in
+    // no package, and a panel came up with no icon at all.
+    QIcon icon = QIcon::fromTheme(QStringLiteral(STUD_APP_ID));
     if (icon.isNull()) {
-        icon = QIcon(QStringLiteral("/usr/share/icons/hicolor/512x512/apps/stud.png"));
+        icon = QIcon(QStringLiteral("/usr/share/icons/hicolor/512x512/apps/" STUD_APP_ID ".png"));
     }
     if (icon.isNull()) {
         icon = QIcon(QDir::homePath() +
-                     QStringLiteral("/.local/share/icons/hicolor/512x512/apps/stud.png"));
+                     QStringLiteral("/.local/share/icons/hicolor/512x512/apps/"
+                                    STUD_APP_ID ".png"));
     }
     if (!icon.isNull()) window.setWindowIcon(icon);
     // These panels are a single page of the site (a message list, one

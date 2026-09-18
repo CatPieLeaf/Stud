@@ -45,18 +45,18 @@ jobs:
     # proven to work, rather than one compiled against an older glibc
     # and hoped to behave the same.
     #
-    # The cost, stated plainly: glibc 2.43 becomes the floor. The rpm
-    # needs Fedora 44 or newer, and the deb, which is produced here
-    # too, needs a distribution at least that new. Building on an
-    # older base is the usual way to keep that floor low; this trades
-    # that for the packages matching the build that actually works.
+    # The cost, stated plainly: glibc 2.43 becomes the floor for whatever
+    # this job produces. Building on an older base is the usual way to
+    # keep that floor low; this trades that for the packages matching the
+    # build that actually works.
     #
-    # If the deb needs to reach older distributions again, it has to be
-    # built somewhere older than this, in its own job.
+    # The deb is NOT built here, for exactly that reason -- it has its own
+    # job on an older base so it reaches older distributions. See the deb
+    # job further down.
     #
-    # One build of Stud, wrapped several ways: the rpm, the deb, the Arch
-    # package, the Flatpak and the cpak image all come from the install
-    # tree this job produces, so they cannot hold different binaries.
+    # One build of Stud, wrapped several ways: the rpm, the Arch package,
+    # the Flatpak and the cpak image all come from the install tree this
+    # job produces, so they cannot hold different binaries.
     #
     # The AppImage is the exception and builds its own, because it links
     # against an older glibc than this container has, which is also why
@@ -147,6 +147,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
+            -DSTUD_BUILD_TESTS=OFF \
             -DSTUD_VERSION="${TAG#v}"
           cmake --build build -j"$(nproc)"
 
@@ -224,7 +225,6 @@ jobs:
           name: packages
           path: |
             build/*.rpm
-            build/*.deb
             stud-*-x86_64.tar.zst
           if-no-files-found: error
 
@@ -678,6 +678,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
+            -DSTUD_BUILD_TESTS=OFF \
             -DSTUD_VERSION="${TAG#v}"
           cmake --build build -j"$(nproc)"
 

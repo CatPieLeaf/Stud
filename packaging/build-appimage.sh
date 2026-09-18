@@ -84,8 +84,10 @@ if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" = 1 ]; then
     # uses it to set -DSTUD_VERSION from the tag being built, so the
     # AppImage's own metadata says what the release says.
     # shellcheck disable=SC2086
+    # Tests are not run from the AppImage build and nothing in CI runs
+    # ctest at all, so compiling them here is release time for nothing.
     cmake -S "$repo_root" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-        ${STUD_CMAKE_ARGS:-} >&2
+        -DSTUD_BUILD_TESTS=OFF ${STUD_CMAKE_ARGS:-} >&2
     printf '\033[1mappimage:\033[0m building\n' >&2
     cmake --build "$build_dir" -j"$(nproc)" >&2
 else
