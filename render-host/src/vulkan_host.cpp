@@ -5591,6 +5591,37 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
     return true;
 }
 
+// What the engine is told about a suboptimal real swapchain: nothing.
+//
+// VK_SUBOPTIMAL_KHR is a SUCCESS code -- the image really was acquired,
+// the frame really was presented -- and it refers to the REAL swapchain,
+// which is Stud's, not the engine's. The engine renders into offscreen
+// images Stud hands it and Stud owns everything between those and the
+// compositor, so "the swapchain you never created is no longer ideal for
+// the surface you do not own" is not a question the engine can answer.
+//
+// It does not treat it as an answer either. It logs every one as
+// `VULKAN ERROR: vkAcquireNextImageKHR ... returned VK_SUBOPTIMAL_KHR`
+// and mishandles the frame, and what that looks like is a flickering,
+// wrongly drawn window. Live-caught on X11 under a Wayland compositor:
+// 676 unbroken suboptimal frames from launch, with the window and the
+// swapchain agreeing on 1728x971 the whole time.
+//
+// Hidden here for the same reason VK_ERROR_OUT_OF_DATE_KHR already is a
+// few lines above -- the engine has no recovery for either, and every
+// other platform it ships on never produces them -- and hidden rather
+// than fixed because there is nothing on this side to fix: the extents
+// match, rebuilding the swapchain clears it for about ten frames and it
+// returns, and the present mode makes no difference. All three were
+// measured before this was written.
+//
+// Stud's own handling above still runs; only what crosses back to the
+// engine is changed.
+uint64_t engine_visible_result(VkResult r) {
+    return static_cast<uint64_t>(
+        static_cast<int32_t>(r == VK_SUBOPTIMAL_KHR ? VK_SUCCESS : r));
+}
+
 uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore,
                                 uint64_t fence, std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -5658,7 +5689,7 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
     out.resize(sizeof(index));
     std::memcpy(out.data(), &index, sizeof(index));
     *out_len = sizeof(index);
-    return static_cast<uint64_t>(static_cast<int32_t>(r));
+    return engine_visible_result(r);
 }
 
 
@@ -6142,7 +6173,8 @@ present_without_upscale:
             }
         }
     }
-    return static_cast<uint64_t>(static_cast<int32_t>(res));
+    // Suboptimal is Stud's business, not the engine's; see engine_visible_result().
+    return engine_visible_result(res);
 }
 
 uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count, uint32_t stride,
