@@ -22,7 +22,6 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QHBoxLayout>
 #include <QLabel>
 #include <QSlider>
 #include <QLineEdit>

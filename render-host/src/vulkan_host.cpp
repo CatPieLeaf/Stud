@@ -14,10 +14,8 @@
 
 #include <dlfcn.h>
 #include <sys/syscall.h>
-#include <unistd.h>
 
 #include <chrono>
-#include <deque>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -26,7 +24,6 @@
 #include <mutex>
 #include <shared_mutex>
 #include <condition_variable>
-#include <set>
 #include <unordered_map>
 #include <atomic>
 #include <map>
