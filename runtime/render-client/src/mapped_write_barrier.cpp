@@ -243,7 +243,7 @@ void MappedWriteBarrier::mark_clean_and_protect_locked(std::size_t offset, std::
         } else {
             // Could not arm: treat everything as dirty forever rather
             // than silently dropping the engine's writes.
-            for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(1, std::memory_order_relaxed);
+            for (std::size_t p = 0; p < pages_; ++p) dirty_[p].store(1, std::memory_order_relaxed);
             dirty_pages_.store(pages_, std::memory_order_release);
             armed_ = false;
         }

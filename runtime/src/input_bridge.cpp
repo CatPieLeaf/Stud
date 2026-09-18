@@ -2753,9 +2753,10 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     // Every poll, not just the changes: a value that never
                     // changes and a query that never runs look identical
                     // in a change-only trace.
-                    static int n = 0;
-                    if ((n++ % 120) == 0) {
-                        std::printf("stud: LockCenter poll #%d ok=%d value=%d\n", n, asked ? 1 : 0,
+                    static int polls = 0;
+                    if ((polls++ % 120) == 0) {
+                        std::printf("stud: LockCenter poll #%d ok=%d value=%d\n", polls,
+                                    asked ? 1 : 0,
                                     static_cast<int>(locked));
                         std::fflush(stdout);
                     }

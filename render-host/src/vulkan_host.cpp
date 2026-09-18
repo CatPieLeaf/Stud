@@ -501,9 +501,13 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
         off += s.size() + 1;
         return s;
     };
+    // The counts are known before the loops, so the vectors are sized once
+    // instead of growing.
     std::vector<std::string> layers;
+    layers.reserve(hdr.enabled_layer_count);
     for (uint32_t i = 0; i < hdr.enabled_layer_count; ++i) layers.push_back(take_cstr());
     std::vector<std::string> extensions;
+    extensions.reserve(hdr.enabled_extension_count);
     for (uint32_t i = 0; i < hdr.enabled_extension_count; ++i) extensions.push_back(take_cstr());
 
     // The engine is an Android client, so it asks for
@@ -1047,9 +1051,13 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         off += s.size() + 1;
         return s;
     };
+    // The counts are known before the loops, so the vectors are sized once
+    // instead of growing.
     std::vector<std::string> layers;
+    layers.reserve(hdr.enabled_layer_count);
     for (uint32_t i = 0; i < hdr.enabled_layer_count; ++i) layers.push_back(take_cstr());
     std::vector<std::string> extensions;
+    extensions.reserve(hdr.enabled_extension_count);
     for (uint32_t i = 0; i < hdr.enabled_extension_count; ++i) extensions.push_back(take_cstr());
 
     VkPhysicalDeviceFeatures enabled_features{};
