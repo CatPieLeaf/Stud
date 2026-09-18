@@ -96,7 +96,37 @@
   </content_rating>
 
   <releases>
-    <release version="@STUD_VERSION@" date="2026-09-16">
+    <release version="@STUD_VERSION@" date="2026-09-17">
+      <description>
+        <p>X11 sessions, and the frame that stopped waiting on itself.</p>
+        <ul>
+          <li>Resizing or maximising a window on X11 no longer kills the
+              game. A rebuild was being asked for a size the window had
+              already left, which the driver spent twenty-two seconds
+              refusing.</li>
+          <li>The strip of desktop that showed through a window while it
+              was being resized is gone.</li>
+          <li>HiDPI on X11 rendered one pixel past the window it was
+              presenting to, which left the screen black.</li>
+          <li>A swapchain is no longer destroyed while the sharpening pass
+              is still writing into it, which is one way a session could
+              freeze for twelve seconds and recover on its own.</li>
+          <li>Nothing asks the driver about a window while a swapchain is
+              being built for it.</li>
+          <li>What the engine writes into mapped memory no longer crosses
+              a socket to reach the renderer: both processes share the
+              same pages, and only the parts that changed are named. The
+              kernel tracks which those are, so the engine is never
+              interrupted to find out.</li>
+          <li>One thread now owns the connection to the renderer. Work
+              that needs no answer is queued and left alone, so the
+              engine's own thread stops waiting to be told a queue is
+              empty.</li>
+        </ul>
+      </description>
+    </release>
+
+    <release version="1.1.3" date="2026-09-16">
       <description>
         <p>Keyboards that are not American, and a handful of things that
            only went wrong at the edges.</p>
