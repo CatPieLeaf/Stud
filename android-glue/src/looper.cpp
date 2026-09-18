@@ -239,7 +239,7 @@ bool poll_orphaned_loopers_once() {
     }
 
     bool dispatched_any = false;
-    ALooper* calling_thread_looper = t_looper;
+    const ALooper* calling_thread_looper = t_looper;
     for (ALooper* looper : loopers) {
         if (looper == calling_thread_looper) continue;  // already polled by the caller itself
 

@@ -385,7 +385,7 @@ int32_t AAudioStream_close(void* stream) {
 }
 
 int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames, int64_t timeout_ns) {
-    auto* s = static_cast<Stream*>(stream);
+    const auto* s = static_cast<Stream*>(stream);
     if (s == nullptr || !s->is_input || buffer == nullptr || frames <= 0) return 0;
     const int32_t bytes_per_frame = s->channels * 4;  // float frames, as opened
     const uint64_t args[8] = {};
@@ -412,20 +412,20 @@ int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames, int64_t ti
 
 int32_t AAudioStream_getSampleRate(void*) { return kSampleRate; }
 int32_t AAudioStream_getChannelCount(void* stream) {
-    auto* s = static_cast<Stream*>(stream);
+    const auto* s = static_cast<Stream*>(stream);
     return s != nullptr ? s->channels : kChannels;
 }
 int32_t AAudioStream_getFormat(void* stream) {
-    auto* s = static_cast<Stream*>(stream);
+    const auto* s = static_cast<Stream*>(stream);
     return s != nullptr ? s->format : AAUDIO_FORMAT_PCM_I16;
 }
 int32_t AAudioStream_getFramesPerBurst(void*) { return kFramesPerBurst; }
 int32_t AAudioStream_getBufferCapacityInFrames(void* stream) {
-    auto* s = static_cast<Stream*>(stream);
+    const auto* s = static_cast<Stream*>(stream);
     return s != nullptr ? s->buffer_capacity : kFramesPerBurst * 4;
 }
 int32_t AAudioStream_getBufferSizeInFrames(void* stream) {
-    auto* s = static_cast<Stream*>(stream);
+    const auto* s = static_cast<Stream*>(stream);
     return s != nullptr ? s->buffer_size : kFramesPerBurst * 2;
 }
 int32_t AAudioStream_setBufferSizeInFrames(void* stream, int32_t frames) {

@@ -2450,7 +2450,7 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
 }
 
 WaylandOverlayDeps overlay_deps() {
-    auto& state = wayland_state();
+    const auto& state = wayland_state();
     WaylandOverlayDeps d;
     d.display = state.display;
     d.compositor = state.compositor;
