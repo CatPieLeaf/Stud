@@ -1,6 +1,5 @@
 #include "stud/gamepad.h"
 
-#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -14,7 +13,6 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace stud::render_host::gamepad {

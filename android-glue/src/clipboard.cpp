@@ -4,7 +4,6 @@
 #include <poll.h>
 #include <unistd.h>
 
-#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>

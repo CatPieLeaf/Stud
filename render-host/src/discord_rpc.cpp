@@ -4,10 +4,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include <atomic>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <mutex>
 #include <string>
 

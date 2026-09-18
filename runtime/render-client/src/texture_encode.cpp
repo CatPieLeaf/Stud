@@ -484,7 +484,7 @@ const int kWeight4[16] = {0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 6
 
 // Little-endian bit stream into the 16-byte block.
 struct BitWriter {
-    uint8_t* out;
+    uint8_t* out = nullptr;
     int pos = 0;
     void put(uint32_t value, int bits) {
         for (int i = 0; i < bits; ++i, ++pos) {

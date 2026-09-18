@@ -18,13 +18,13 @@
 // own ALooper uses, not a fake. Built on epoll_create1/epoll_ctl/epoll_wait
 // (already in libc-shim's safe-forward set).
 struct ALooper {
-    int epoll_fd;
+    int epoll_fd = -1;
     std::atomic<int> ref_count{1};
 
     struct CallbackEntry {
-        ALooper_callbackFunc callback;
-        void* data;
-        int ident;
+        ALooper_callbackFunc callback = nullptr;
+        void* data = nullptr;
+        int ident = 0;
     };
     std::unordered_map<int, CallbackEntry> fd_callbacks;
 };

@@ -4598,8 +4598,8 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdWriteTimestamp(VkCommandBuffer cb,
 // every one of them still resolved to an unimplemented stub.
 PFN_vkVoidFunction lookup_command(const char* pName) {
     struct Entry {
-        const char* name;
-        PFN_vkVoidFunction fn;
+        const char* name = nullptr;
+        PFN_vkVoidFunction fn = nullptr;
     };
     static const Entry kCommands[] = {
         {"vkEnumerateInstanceVersion", reinterpret_cast<PFN_vkVoidFunction>(&stud_vkEnumerateInstanceVersion)},

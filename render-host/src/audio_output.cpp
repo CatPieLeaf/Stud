@@ -34,15 +34,11 @@
 
 #include <portaudio.h>
 
-#include <algorithm>
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <deque>
-#include <map>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
