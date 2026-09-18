@@ -86,6 +86,10 @@ struct Xlib {
     int (*SetIOErrorHandler)(int (*)(Display*)) = nullptr;
     int (*GetErrorText)(Display*, int, char*, int) = nullptr;
     Display* (*OpenDisplay)(const char*) = nullptr;
+    // XKB, which libX11 carries itself -- no separate library to find.
+    // Optional: a server without the extension simply leaves it null and
+    // the old press/release auto-repeat behaviour stands.
+    Bool (*SetDetectableAutoRepeat)(Display*, Bool, Bool*) = nullptr;
     int (*CloseDisplay)(Display*) = nullptr;
     Window (*CreateSimpleWindow)(Display*, Window, int, int, unsigned int, unsigned int,
                                  unsigned int, unsigned long, unsigned long) = nullptr;
@@ -273,6 +277,11 @@ bool load_xlib() {
     LOAD(SetIOErrorHandler, "XSetIOErrorHandler");
     LOAD(GetErrorText, "XGetErrorText");
     LOAD(OpenDisplay, "XOpenDisplay");
+    // Optional, and loaded without sym() on purpose: a server or an X11
+    // without XKB must not make the whole backend unavailable, it just
+    // keeps the old behaviour.
+    x.SetDetectableAutoRepeat = reinterpret_cast<decltype(x.SetDetectableAutoRepeat)>(
+        ::dlsym(x.handle, "XkbSetDetectableAutoRepeat"));
     LOAD(CloseDisplay, "XCloseDisplay");
     LOAD(CreateSimpleWindow, "XCreateSimpleWindow");
     LOAD(DestroyWindow, "XDestroyWindow");
@@ -409,6 +418,32 @@ bool available() {
             std::fprintf(stderr, "stud: android-glue: DISPLAY=%s is set but XOpenDisplay failed\n",
                          display_name);
             return false;
+        }
+        // Stop the server synthesising a RELEASE before every auto-repeat.
+        //
+        // Without this, holding a key delivers KeyRelease/KeyPress pairs
+        // that are indistinguishable from real ones, so `keys_down()`
+        // erases and re-inserts the key and the engine is told it was let
+        // go and pressed again, about 25 times a second. What that looks
+        // like in a game is an interaction that needs a key HELD -- the
+        // hold-E prompts, whose progress bar fills while the key is down
+        // -- filling a little and then stuttering between pressed and
+        // released, exactly the way a text field repeats a character.
+        // Reported as X11-only, and this is why: Wayland never sends a
+        // release for a repeat, so android-glue synthesises its own (see
+        // native_window_pump_key_repeat) and the key stays down throughout.
+        //
+        // With detectable auto-repeat the server sends repeats as bare
+        // KeyPress and one real KeyRelease at the end, which is the same
+        // shape Wayland delivers and what on_key() below now marks.
+        if (xlib().SetDetectableAutoRepeat != nullptr) {
+            Bool supported = False;
+            xlib().SetDetectableAutoRepeat(g_display, True, &supported);
+            if (supported != True) {
+                std::fprintf(stderr,
+                             "stud: android-glue: this X server has no detectable auto-repeat; a "
+                             "held key will still report as repeated presses\n");
+            }
         }
         return true;
     }();
@@ -1001,6 +1036,10 @@ void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
 
 void on_key(unsigned int keycode, bool pressed) {
     if (keycode < 8) return;  // no evdev code below this exists
+    // Already down and pressed again is an auto-repeat, not a new press.
+    // Only true once the server stops sending a release between them,
+    // which is what detectable auto-repeat above buys.
+    const bool repeat = pressed && keys_down().count(keycode - 8) != 0;
     if (pressed) {
         keys_down().insert(keycode - 8);
     } else {
@@ -1010,12 +1049,10 @@ void on_key(unsigned int keycode, bool pressed) {
     ev.type = stud::android_glue::HostInputEvent::kKey;
     ev.code = keycode - 8;
     ev.a = pressed ? 1.0f : 0.0f;
-    // X11 delivers its own auto-repeat as ordinary press events with no
-    // marker, and telling a real repeat from a fast typist needs the
-    // XKB detectable-autorepeat extension. Reported as first presses
-    // until that lands, which is the honest side to err on: a held key
-    // still reaches the engine.
-    ev.b = 0.0f;
+    // Same marker Wayland's own repeat sets, which is what
+    // KeyEvent.getRepeatCount() reports: a repeat is the key still being
+    // down, not a fresh press.
+    ev.b = repeat ? 1.0f : 0.0f;
     push(ev);
 }
 
