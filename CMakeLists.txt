@@ -138,6 +138,29 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(libjnivm)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 
+# Stud's own code is warning-clean under -Wextra; this dependency is not,
+# and its headers are included by nearly every target here. Marking them
+# SYSTEM keeps the raised floor below pointed at Stud rather than at
+# somebody else's tree, and stops a dependency update from failing a build
+# that turns warnings into errors.
+foreach(jnivm_target jnivm fake-jni)
+    if(TARGET ${jnivm_target})
+        get_target_property(jnivm_includes ${jnivm_target} INTERFACE_INCLUDE_DIRECTORIES)
+        if(jnivm_includes)
+            set_target_properties(${jnivm_target} PROPERTIES
+                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${jnivm_includes}")
+        endif()
+    endif()
+endforeach()
+
+# The warning floor for Stud's own targets.
+#
+# Deliberately added here rather than per target: every directory below
+# inherits it, and the bionic sub-build under runtime/ is a separate CMake
+# project that does not, which is correct -- it compiles against a real
+# bionic with the NDK's own flags.
+add_compile_options(-Wextra)
+
 # Defined BEFORE the subdirectories, because render-host looks for the
 # NDK's own glslc through it to compile the upscale shaders. Declared
 # after add_subdirectory(render-host) it was still empty at the point
