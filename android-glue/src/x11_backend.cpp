@@ -866,6 +866,30 @@ void on_motion(int x_pos, int y_pos) {
         rel.x = dx;
         rel.y = dy;
         push(rel);
+        // And put the pointer back in the middle before it runs out of
+        // window, exactly as the locked branch above does.
+        //
+        // The grab confines the pointer, so without this it reaches the
+        // edge, stops producing motion, and the spin stops with it -- a
+        // camera that cannot turn past the boundary, which is simply
+        // wrong. Raw motion has no such limit because it comes from the
+        // device rather than from a position, which is why this is only
+        // needed, and only done, when XI2 is not there.
+        const int margin = 64;
+        const int w = g_width.load();
+        const int h = g_height.load();
+        if (x_pos < margin || y_pos < margin || x_pos > w - margin || y_pos > h - margin) {
+            Xlib& x = xlib();
+            if (x.WarpPointer != nullptr) {
+                // The absolute position below still reports where the
+                // pointer really is; only the next delta is measured from
+                // the centre, so the warp itself never becomes movement.
+                x.WarpPointer(g_display, 0, g_window, 0, 0, 0, 0, w / 2, h / 2);
+                if (x.Flush != nullptr) x.Flush(g_display);
+                g_pointer_x = static_cast<float>(w / 2);
+                g_pointer_y = static_cast<float>(h / 2);
+            }
+        }
     }
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kPointerMotion;
