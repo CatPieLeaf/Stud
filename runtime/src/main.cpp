@@ -342,6 +342,196 @@ std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
     }
     return {};  // nothing asked for: leave the engine's own default alone
 }
+// The window changed size, so everyone who lays out against it is told.
+//
+// Lifted whole out of main()'s poll loop. The debounce state below is
+// function-local static, as it was before the move, and is used nowhere
+// else -- which is itself the argument for it living here rather than in
+// the middle of a 2400-line function.
+void poll_window_resize(stud::jni_bridge::BionicAwareJvm& jvm,
+                        const stud::linker::LoadedLibrary& lib,
+                        const std::shared_ptr<stud::jni_bridge::PlatformParams>&
+                            v2_platform_params,
+                        const stud::jni_bridge::GameActivityLifecycleResult& lifecycle,
+                        float layout_density, int32_t& real_window_width,
+                        int32_t& real_window_height) {
+        // Real window resizes. Process C owns the window and the compositor
+        // talks to it, so this side has to ask; the protocol is deliberately
+        // client-initiated, and once per 250ms loop iteration is far cheaper
+        // than a second channel. Real Android re-delivers onSurfaceChanged on
+        // every geometry change, without it the engine keeps rendering at
+        // the size it was told at boot while the window has already grown,
+        // which showed up as the old, smaller image sitting in a larger frame
+        // with the desktop visible through the rest of it.
+        {
+            uint64_t size_args[8] = {};
+            uint64_t packed = stud::render_client::connection().call(
+                stud::render_host::CallId::GetWindowSize, size_args, nullptr, 0, nullptr, 0,
+                nullptr);
+            if (packed != 0) {
+                const int32_t w = static_cast<int32_t>(packed >> 32);
+                const int32_t h = static_cast<int32_t>(packed & 0xffffffffu);
+                // Once the drag STOPS, and never twice at once.
+                //
+                // Dragging a window edge produces a new size every few
+                // milliseconds; this loop saw a few a second and told the
+                // engine about every one. Each telling is a real
+                // UpdateSurfaceApp, which rebuilds its render targets and
+                // can take seconds, and it was called straight from here,
+                // so the loop sat in it while the next sizes piled up
+                // behind. Live-caught while shrinking a window: two
+                // "still running/blocked after 8000ms" in a row and then
+                // the engine never came back.
+                //
+                // So: remember the newest size, wait for it to hold still,
+                // then tell the engine once, on a thread of its own, and
+                // do not start another until that one is done. A resize is
+                // not a frame; arriving a quarter of a second late costs
+                // nothing.
+                static std::atomic<bool> resize_in_flight{false};
+                static int32_t pending_w = 0;
+                static int32_t pending_h = 0;
+                static auto last_change = std::chrono::steady_clock::now();
+                if (w > 0 && h > 0 && (w != real_window_width || h != real_window_height)) {
+                    real_window_width = w;
+                    real_window_height = h;
+                    pending_w = w;
+                    pending_h = h;
+                    last_change = std::chrono::steady_clock::now();
+                    // Cheap and immediate: these only write numbers down.
+                    stud::jni_bridge::set_real_display_metrics(w, h, layout_density);
+                    // AGDK's own callback, for correctness, a real device
+                    // sends it on every geometry change. Live-measured, the
+                    // engine ignores it for sizing: its surface handling is
+                    // entirely in the V2 app bridge, so the call below is what
+                    // actually moves its render targets.
+                    stud::jni_bridge::dispatch_surface_changed(jvm, lifecycle, w, h);
+                }
+                // Telling the V2 app bridge about a resize is opt-in, and
+                // off, because it does not come back.
+                //
+                // nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams is
+                // the call the engine uses to ADOPT a surface, and handing
+                // it the same surface again for a size change wedges it:
+                // live-caught on both backends, "still running/blocked
+                // after 8000ms" and the engine never renders again. It is
+                // also not needed. Stud answers the engine's own surface
+                // capabilities with the size it should render at, so a
+                // resize reaches it the way it reaches any Vulkan program:
+                // the swapchain goes out of date and the engine rebuilds
+                // it, which is exactly what its own log shows it doing.
+                //
+                // STUD_V2_RESIZE_NOTIFY=1 restores the call for anyone who
+                // wants to measure it again.
+                static const bool notify_v2_resize =
+                    std::getenv("STUD_V2_RESIZE_NOTIFY") != nullptr;
+                const auto settled = std::chrono::steady_clock::now() - last_change;
+                if (notify_v2_resize && pending_w > 0 &&
+                    settled > std::chrono::milliseconds(300) && !resize_in_flight.load()) {
+                    pending_w = 0;
+                    pending_h = 0;
+                    resize_in_flight.store(true);
+                    std::thread([&jvm, &lib, v2_platform_params, &lifecycle] {
+                        stud::jni_bridge::ensure_current_thread_attached_to_jvm();
+                        stud::jni_bridge::notify_surface_resized(jvm, lib, v2_platform_params,
+                                                                 lifecycle.surface);
+                        resize_in_flight.store(false);
+                    }).detach();
+                }
+            }
+        }
+}
+
+
+// What a web-view panel, or a second launcher, hands back.
+//
+// Four polls that belong together and share nothing with the rest of the
+// event loop: a panel that closed, a navigation it declined to follow,
+// anything its page sent over the JavaScript bridge, and a deep link from
+// another stud-ui. Pulled out of main()'s poll loop, which is the only
+// place any of them can be noticed.
+//
+// The bodies are exactly what they were inside the loop; only their
+// surroundings changed.
+void poll_web_view_and_deep_links(stud::jni_bridge::BionicAwareJvm& jvm,
+                                  const stud::linker::LoadedLibrary& lib,
+                                  const std::shared_ptr<stud::jni_bridge::PlatformParams>&
+                                      v2_platform_params,
+                                  const std::shared_ptr<stud::jni_bridge::DeviceParams>&
+                                      v2_device_params,
+                                  const stud::jni_bridge::GameActivityLifecycleResult& lifecycle) {
+        // A closed web-view panel has to be reported back, or the Lua
+        // app keeps showing the placeholder screen it puts behind one.
+        {
+            uint64_t webview_args[8] = {};
+            const uint64_t closed = stud::render_client::connection().call(
+                stud::render_host::CallId::PollWebViewClosed, webview_args, nullptr, 0, nullptr, 0,
+                nullptr);
+            for (uint64_t i = 0; i < closed; ++i) {
+                stud::jni_bridge::publish_webview_closed(jvm, lib);
+            }
+        }
+        // A navigation the panel handed over rather than following. The
+        // engine is asked whether it wants the URL; its answer arrives
+        // on the subscription registered at bring-up.
+        {
+            std::vector<char> url(8 * 1024);
+            for (;;) {
+                uint64_t args[8] = {};
+                uint32_t written = 0;
+                const uint64_t got = stud::render_client::connection().call(
+                    stud::render_host::CallId::PollWebViewNavigation, args, nullptr, 0, url.data(),
+                    static_cast<uint32_t>(url.size()), &written);
+                if (got == 0 || written == 0) break;
+                stud::jni_bridge::ask_engine_about_url(
+                    jvm, lib,
+                    std::string(url.data(), std::min<size_t>(written, url.size())));
+            }
+        }
+        // Anything the page sent through its JavaScript bridge, in the
+        // order it sent it. A login challenge answers this way, so a
+        // dropped message means an OTP or captcha that completes on
+        // screen and never finishes the login.
+        {
+            std::vector<char> message(64 * 1024);
+            for (;;) {
+                uint64_t args[8] = {};
+                uint32_t written = 0;
+                const uint64_t got = stud::render_client::connection().call(
+                    stud::render_host::CallId::PollWebViewMessage, args, nullptr, 0, message.data(),
+                    static_cast<uint32_t>(message.size()), &written);
+                if (got == 0 || written == 0) break;
+                stud::jni_bridge::signal_webview_javascript(
+                    jvm, lib, std::string(message.data(), std::min<size_t>(written, message.size())));
+            }
+        }
+        // A deep link handed over by a second stud-ui, because someone
+        // clicked a game in a browser while this session was already
+        // playing. The old answer was a dialog telling them to close the
+        // window they were using.
+        {
+            std::vector<char> link(4096);
+            for (;;) {
+                uint64_t args[8] = {};
+                uint32_t written = 0;
+                const uint64_t got = stud::render_client::connection().call(
+                    stud::render_host::CallId::PollDeepLink, args, nullptr, 0, link.data(),
+                    static_cast<uint32_t>(link.size()), &written);
+                if (got == 0 || written == 0) break;
+                const std::string uri(link.data(), std::min<size_t>(written, link.size()));
+                // The URI is never logged: it carries a one-time join
+                // ticket. Its length is enough to see that one arrived.
+                std::printf("stud: a deep link arrived from a second launch (%zu bytes)\n",
+                            uri.size());
+                std::fflush(stdout);
+                stud::jni_bridge::join_experience_from_deep_link(jvm, lib, uri, v2_platform_params,
+                                                                 v2_device_params,
+                                                                 lifecycle.surface);
+            }
+        }
+}
+
+
 
 
 int main(int argc, char** argv) {
@@ -2556,91 +2746,9 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Real window resizes. Process C owns the window and the compositor
-        // talks to it, so this side has to ask; the protocol is deliberately
-        // client-initiated, and once per 250ms loop iteration is far cheaper
-        // than a second channel. Real Android re-delivers onSurfaceChanged on
-        // every geometry change, without it the engine keeps rendering at
-        // the size it was told at boot while the window has already grown,
-        // which showed up as the old, smaller image sitting in a larger frame
-        // with the desktop visible through the rest of it.
-        {
-            uint64_t size_args[8] = {};
-            uint64_t packed = stud::render_client::connection().call(
-                stud::render_host::CallId::GetWindowSize, size_args, nullptr, 0, nullptr, 0,
-                nullptr);
-            if (packed != 0) {
-                const int32_t w = static_cast<int32_t>(packed >> 32);
-                const int32_t h = static_cast<int32_t>(packed & 0xffffffffu);
-                // Once the drag STOPS, and never twice at once.
-                //
-                // Dragging a window edge produces a new size every few
-                // milliseconds; this loop saw a few a second and told the
-                // engine about every one. Each telling is a real
-                // UpdateSurfaceApp, which rebuilds its render targets and
-                // can take seconds, and it was called straight from here,
-                // so the loop sat in it while the next sizes piled up
-                // behind. Live-caught while shrinking a window: two
-                // "still running/blocked after 8000ms" in a row and then
-                // the engine never came back.
-                //
-                // So: remember the newest size, wait for it to hold still,
-                // then tell the engine once, on a thread of its own, and
-                // do not start another until that one is done. A resize is
-                // not a frame; arriving a quarter of a second late costs
-                // nothing.
-                static std::atomic<bool> resize_in_flight{false};
-                static int32_t pending_w = 0;
-                static int32_t pending_h = 0;
-                static auto last_change = std::chrono::steady_clock::now();
-                if (w > 0 && h > 0 && (w != real_window_width || h != real_window_height)) {
-                    real_window_width = w;
-                    real_window_height = h;
-                    pending_w = w;
-                    pending_h = h;
-                    last_change = std::chrono::steady_clock::now();
-                    // Cheap and immediate: these only write numbers down.
-                    stud::jni_bridge::set_real_display_metrics(w, h, layout_density);
-                    // AGDK's own callback, for correctness, a real device
-                    // sends it on every geometry change. Live-measured, the
-                    // engine ignores it for sizing: its surface handling is
-                    // entirely in the V2 app bridge, so the call below is what
-                    // actually moves its render targets.
-                    stud::jni_bridge::dispatch_surface_changed(jvm, lifecycle, w, h);
-                }
-                // Telling the V2 app bridge about a resize is opt-in, and
-                // off, because it does not come back.
-                //
-                // nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams is
-                // the call the engine uses to ADOPT a surface, and handing
-                // it the same surface again for a size change wedges it:
-                // live-caught on both backends, "still running/blocked
-                // after 8000ms" and the engine never renders again. It is
-                // also not needed. Stud answers the engine's own surface
-                // capabilities with the size it should render at, so a
-                // resize reaches it the way it reaches any Vulkan program:
-                // the swapchain goes out of date and the engine rebuilds
-                // it, which is exactly what its own log shows it doing.
-                //
-                // STUD_V2_RESIZE_NOTIFY=1 restores the call for anyone who
-                // wants to measure it again.
-                static const bool notify_v2_resize =
-                    std::getenv("STUD_V2_RESIZE_NOTIFY") != nullptr;
-                const auto settled = std::chrono::steady_clock::now() - last_change;
-                if (notify_v2_resize && pending_w > 0 &&
-                    settled > std::chrono::milliseconds(300) && !resize_in_flight.load()) {
-                    pending_w = 0;
-                    pending_h = 0;
-                    resize_in_flight.store(true);
-                    std::thread([&jvm, &lib, v2_platform_params, &lifecycle] {
-                        stud::jni_bridge::ensure_current_thread_attached_to_jvm();
-                        stud::jni_bridge::notify_surface_resized(jvm, lib, v2_platform_params,
-                                                                 lifecycle.surface);
-                        resize_in_flight.store(false);
-                    }).detach();
-                }
-            }
-        }
+        // The window changed size; see poll_window_resize().
+        poll_window_resize(jvm, lib, v2_platform_params, lifecycle, layout_density,
+                           real_window_width, real_window_height);
         // The user closed the window.
         //
         // This arrives as a message rather than as a dead socket on
@@ -2659,75 +2767,8 @@ int main(int argc, char** argv) {
                 break;
             }
         }
-        // A closed web-view panel has to be reported back, or the Lua
-        // app keeps showing the placeholder screen it puts behind one.
-        {
-            uint64_t webview_args[8] = {};
-            const uint64_t closed = stud::render_client::connection().call(
-                stud::render_host::CallId::PollWebViewClosed, webview_args, nullptr, 0, nullptr, 0,
-                nullptr);
-            for (uint64_t i = 0; i < closed; ++i) {
-                stud::jni_bridge::publish_webview_closed(jvm, lib);
-            }
-        }
-        // A navigation the panel handed over rather than following. The
-        // engine is asked whether it wants the URL; its answer arrives
-        // on the subscription registered at bring-up.
-        {
-            std::vector<char> url(8 * 1024);
-            for (;;) {
-                uint64_t args[8] = {};
-                uint32_t written = 0;
-                const uint64_t got = stud::render_client::connection().call(
-                    stud::render_host::CallId::PollWebViewNavigation, args, nullptr, 0, url.data(),
-                    static_cast<uint32_t>(url.size()), &written);
-                if (got == 0 || written == 0) break;
-                stud::jni_bridge::ask_engine_about_url(
-                    jvm, lib,
-                    std::string(url.data(), std::min<size_t>(written, url.size())));
-            }
-        }
-        // Anything the page sent through its JavaScript bridge, in the
-        // order it sent it. A login challenge answers this way, so a
-        // dropped message means an OTP or captcha that completes on
-        // screen and never finishes the login.
-        {
-            std::vector<char> message(64 * 1024);
-            for (;;) {
-                uint64_t args[8] = {};
-                uint32_t written = 0;
-                const uint64_t got = stud::render_client::connection().call(
-                    stud::render_host::CallId::PollWebViewMessage, args, nullptr, 0, message.data(),
-                    static_cast<uint32_t>(message.size()), &written);
-                if (got == 0 || written == 0) break;
-                stud::jni_bridge::signal_webview_javascript(
-                    jvm, lib, std::string(message.data(), std::min<size_t>(written, message.size())));
-            }
-        }
-        // A deep link handed over by a second stud-ui, because someone
-        // clicked a game in a browser while this session was already
-        // playing. The old answer was a dialog telling them to close the
-        // window they were using.
-        {
-            std::vector<char> link(4096);
-            for (;;) {
-                uint64_t args[8] = {};
-                uint32_t written = 0;
-                const uint64_t got = stud::render_client::connection().call(
-                    stud::render_host::CallId::PollDeepLink, args, nullptr, 0, link.data(),
-                    static_cast<uint32_t>(link.size()), &written);
-                if (got == 0 || written == 0) break;
-                const std::string uri(link.data(), std::min<size_t>(written, link.size()));
-                // The URI is never logged: it carries a one-time join
-                // ticket. Its length is enough to see that one arrived.
-                std::printf("stud: a deep link arrived from a second launch (%zu bytes)\n",
-                            uri.size());
-                std::fflush(stdout);
-                stud::jni_bridge::join_experience_from_deep_link(jvm, lib, uri, v2_platform_params,
-                                                                 v2_device_params,
-                                                                 lifecycle.surface);
-            }
-        }
+        // Everything a web-view panel or a second launcher hands back.
+        poll_web_view_and_deep_links(jvm, lib, v2_platform_params, v2_device_params, lifecycle);
         // User-reported bug, fixed: closing the real window
         // (stud-render-host, Process C) used to leave this process
         // running forever. Treat a lost render connection as this
