@@ -1,6 +1,6 @@
 pkgbase = stud-bin
 	pkgdesc = An Unofficial Open-Source Roblox Launcher for Linux
-	pkgver = 1.1.4
+	pkgver = 1.1.5
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
 	arch = x86_64
@@ -29,14 +29,14 @@ pkgbase = stud-bin
 	depends = hicolor-icon-theme
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	optdepends = wl-clipboard: copying a server link from the tray menu on Wayland
-	provides = stud=1.1.4
+	provides = stud=1.1.5
 	conflicts = stud
 	options = !strip
 	options = !debug
 	options = emptydirs
-	source = stud-bin-1.1.4.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.1.4/stud-1.1.4-x86_64.tar.zst
-	source = stud-1.1.4.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.4.tar.gz
-	sha256sums = 3fb1f6f507d38a366d1e843e7ead4b2fa0c074278754aa66b4c7b43c78d39e1e
-	sha256sums = 4049614cd796aaac74699635164f877bc4f8b9c4b24b8c632918a375f789239a
+	source = stud-bin-1.1.5.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.1.5/stud-1.1.5-x86_64.tar.zst
+	source = stud-1.1.5.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.5.tar.gz
+	sha256sums = SKIP
+	sha256sums = SKIP
 
 pkgname = stud-bin

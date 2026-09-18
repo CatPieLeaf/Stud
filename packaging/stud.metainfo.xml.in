@@ -98,6 +98,27 @@
   <releases>
     <release version="@STUD_VERSION@" date="2026-09-17">
       <description>
+        <p>Textures on AMD, and a window that survives being put away.</p>
+        <ul>
+          <li>Textures on AMD are the ones they are meant to be. A decoded
+              texture was reaching the GPU one frame after the drawing
+              that read it, so another texture's content took its place.
+              It only ever showed where the two processes cannot share
+              the pages the engine writes through, which is every AMD
+              card.</li>
+          <li>What the GPU reads back — the avatar and clothing images the
+              engine composes for itself — now reaches the engine instead
+              of being written somewhere it could never see.</li>
+          <li>Leaving the game in the background no longer takes the
+              picture with it. The window's swapchain was outliving the
+              surface it drew to, and everything built afterwards was
+              refused.</li>
+        </ul>
+      </description>
+    </release>
+
+    <release version="1.1.4" date="2026-09-17">
+      <description>
         <p>X11 sessions, and the frame that stopped waiting on itself.</p>
         <ul>
           <li>Resizing or maximising a window on X11 no longer kills the
