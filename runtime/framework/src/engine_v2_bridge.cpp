@@ -108,7 +108,7 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
 }
 
 // Shared JNI plumbing for one UpdateSurfaceApp+UpdateSurfaceGame
-// pair, factored out of the STUD_ENABLE_V2_STARTAPP-gated block below
+// pair, factored out of the StartApp block below
 // so run_engine_v2_sequence()'s own default path can reuse it. Real
 // evidence for calling this on the default path at all: a real, working
 // Sober session's own FLog capture (see the engineering notes) shows both
@@ -594,7 +594,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         // function already drives, both UpdateSurfaceApp and
         // UpdateSurfaceGame fire twice each, right after
         // StartGameWithParam completes, previously only ever called
-        // from the STUD_ENABLE_V2_STARTAPP-gated block below, a
+        // from the StartApp block below, a
         // different real context (a StartApp prerequisite), so the
         // default path never made these calls at all. Gated on the call
         // actually completing normally (not trapped, not still running)
@@ -658,7 +658,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // `pauseBeforeResume` branch), consistent with calling it at a
     // point in the real lifecycle it isn't meant to run yet. Default
     // OFF now, opt-in via STUD_ENABLE_V2_RESUMEGAME=1, same pattern as
-    // STUD_ENABLE_V2_STARTAPP above.
+    // the StartApp call above (STUD_DISABLE_V2_STARTAPP skips it).
     if (void* addr = lib.find_symbol(
             "Java_com_roblox_engine_jni_NativeGLInterface_"
             "nativeAppBridgeV2ResumeGameWithPlatformParams");

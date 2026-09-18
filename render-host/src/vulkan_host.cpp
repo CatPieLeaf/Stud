@@ -1593,6 +1593,16 @@ uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& 
     return write_pod(req, out, out_len);
 }
 
+// STUD_VK_TRACE_PASSES: what each render pass targets, and the layout
+// transitions on swapchain images. Read once, from the three places that
+// report them -- the swapchain-image barriers included, which is why the
+// barrier site below reads this and not STUD_VK_TRACE_BARRIERS (that one
+// is for barriers Stud DROPS, a different question).
+bool vk_trace_passes_enabled() {
+    static const bool on = std::getenv("STUD_VK_TRACE_PASSES") != nullptr;
+    return on;
+}
+
 // One thread at a time on the surface.
 //
 // vkCreateSwapchainKHR is deliberately outside the dispatch lock -- it
@@ -6237,7 +6247,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // renders into, and how big. A frame's worth of draws going
             // into a 1x1 or zero-sized area looks exactly like a black
             // screen from the outside.
-            static const bool trace_passes = std::getenv("STUD_VK_TRACE_PASSES") != nullptr;
+            const bool trace_passes = vk_trace_passes_enabled();
             static int pass_no = 0;
             // Re-arm on every resize: the interesting passes are the ones
             // recorded just after the window changed, not the first 40 of
@@ -6322,7 +6332,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 l.traced_pass = -1;
             }
             if (l.in_screen_pass) {
-                static const bool trace = std::getenv("STUD_VK_TRACE_PASSES") != nullptr;
+                const bool trace = vk_trace_passes_enabled();
                 static int reported = 0;
                 if (trace && reported < 12) {
                     std::printf("stud-render-host: SCREEN PASS ended: %llu draw(s), %llu bind(s)\n",
@@ -6559,7 +6569,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // swapchain images. A swapchain image presented in the wrong
             // layout shows as black, and the transition is the engine's
             // job to record, so it is worth knowing whether it does.
-            static const bool trace_barriers = std::getenv("STUD_VK_TRACE_PASSES") != nullptr;
+            const bool trace_barriers = vk_trace_passes_enabled();
             if (trace_barriers) {
                 static int reported = 0;
                 for (const auto& b : img) {
