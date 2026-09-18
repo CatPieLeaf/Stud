@@ -178,3 +178,11 @@ add_test(NAME mapped_write_barrier_test COMMAND stud_mapped_write_barrier_test)
 #
 # handle_segv=0 is required: the barrier's write faults are its mechanism,
 # not crashes, so TSan must leave SIGSEGV to the test's own handler.
+
+# Every STUD_* variable the source reads is in docs/environment.md.
+#
+# The source root is passed in rather than discovered, so the test scans
+# the tree it was built from wherever ctest runs it.
+add_executable(stud_env_documented_test env_documented_test.cpp)
+add_test(NAME env_documented_test
+         COMMAND stud_env_documented_test "${CMAKE_SOURCE_DIR}")
