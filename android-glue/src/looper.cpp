@@ -149,7 +149,10 @@ ALooper* ALooper_prepare(int /*opts*/) {
         return t_looper;
     }
     int epfd = ::epoll_create1(0);
-    t_looper = new ALooper{epfd};
+    // The rest of ALooper default-constructs; naming the fd alone left
+    // -Wextra pointing at the members that do not need naming.
+    t_looper = new ALooper{};
+    t_looper->epoll_fd = epfd;
     if (looper_trace_enabled())
         std::fprintf(stderr, "stud: [ALooper] ALooper_prepare() tid=%ld created t_looper=%p\n",
                  static_cast<long>(::syscall(SYS_gettid)), static_cast<void*>(t_looper));
