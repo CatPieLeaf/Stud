@@ -680,9 +680,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     // PT_INTERP string to resolve to any particular path.
     argv_storage.push_back("/system/lib64/linker64");
     argv_storage.push_back(config.executable_path);
-    for (const std::string& arg : config.args) {
-        argv_storage.push_back(arg);
-    }
+    argv_storage.insert(argv_storage.end(), config.args.begin(), config.args.end());
 
     // Direct follow-up once net.dns1/net.dns2 (the property-area
     // approach above) were confirmed absent from this libc.so's actual
@@ -801,7 +799,7 @@ pid_t launch_process_b(const ProcessBConfig& config) {
         // the same --dns-servers tail after Process B's own arguments.
         std::vector<std::string> argv_storage = {"/system/lib64/linker64",
                                                  config.executable_path};
-        for (const std::string& arg : config.args) argv_storage.push_back(arg);
+        argv_storage.insert(argv_storage.end(), config.args.begin(), config.args.end());
         std::vector<std::string> servers = real_host_nameservers();
         if (!servers.empty()) {
             std::string joined = servers[0];
