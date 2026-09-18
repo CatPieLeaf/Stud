@@ -885,14 +885,16 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
         send_mapped_run(memory, m, rel_offset, n);
         return;
     }
-    constexpr uint64_t kChunk = 4096;
+    // Named apart from the file-scope kChunk (64), which is a template
+    // expansion width and has nothing to do with this byte count.
+    constexpr uint64_t kCompareChunk = 4096;
     const uint8_t* cur = m.staging.data();
     uint8_t* shadow = m.shadow.data();
     const uint64_t end = rel_offset + n;
     uint64_t run_start = 0;
     bool in_run = false;
-    for (uint64_t off = rel_offset; off < end; off += kChunk) {
-        const uint64_t len = std::min<uint64_t>(kChunk, end - off);
+    for (uint64_t off = rel_offset; off < end; off += kCompareChunk) {
+        const uint64_t len = std::min<uint64_t>(kCompareChunk, end - off);
         const bool dirty = std::memcmp(cur + off, shadow + off, len) != 0;
         if (dirty && !in_run) {
             run_start = off;

@@ -389,9 +389,9 @@ void draw(const TextOverlaySpec& spec, Overlay& o, const WaylandOverlayDeps& dep
     if (caret_on() && spec.selection_end <= spec.selection_begin) {
         const int cx = static_cast<int>(std::lround(origin_xf +
                                                     static_cast<float>(caret_26_6) / 64.0f));
-        const int top = baseline - ascender;
+        const int caret_top = baseline - ascender;
         const int caret_w = size_px >= 24.0f ? 2 : 1;
-        for (int y = top; y < top + line_h; ++y) {
+        for (int y = caret_top; y < caret_top + line_h; ++y) {
             for (int k = 0; k < caret_w; ++k) {
                 blend_pixel(px, o.width, o.width, o.height, cx + k, y, 255, spec.argb);
             }
