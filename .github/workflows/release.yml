@@ -75,6 +75,7 @@ jobs:
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build \
             qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
             wayland-devel wayland-protocols-devel libxkbcommon-devel \
+            libXi-devel \
             libglvnd-devel vulkan-loader-devel vulkan-headers \
             freetype-devel portaudio-devel openssl-devel \
             curl unzip tar xz zstd python3 e2fsprogs findutils cpio
@@ -503,7 +504,7 @@ jobs:
             kde-style-breeze \
             libwayland-dev libwayland-egl-backend-dev wayland-protocols \
             libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-            libxkbcommon-dev portaudio19-dev
+            libxkbcommon-dev portaudio19-dev libxi-dev
 
       - uses: actions/checkout@v7
         with:
@@ -630,7 +631,7 @@ jobs:
             qt6-wayland qt6-wayland-dev \
             libwayland-dev libwayland-egl-backend-dev wayland-protocols \
             libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-            libxkbcommon-dev portaudio19-dev
+            libxkbcommon-dev portaudio19-dev libxi-dev
 
       - uses: actions/checkout@v7
         with:

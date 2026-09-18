@@ -24,6 +24,7 @@ pkgbase = stud
 	depends = libglvnd
 	depends = libx11
 	depends = libxext
+	depends = libxi
 	depends = portaudio
 	depends = freetype2
 	depends = wayland

@@ -43,6 +43,7 @@ depends=(
   'libglvnd'
   'libx11'
   'libxext'
+  'libxi'
   'portaudio'
   'freetype2'
   'wayland'
