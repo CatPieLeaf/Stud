@@ -33,7 +33,7 @@ target_link_libraries(stud_diag_launch_direct PRIVATE stud_bionic_runtime stud_i
 # sub-build has run at least once, so on a fresh configure this target
 # is skipped rather than failing the whole generate step. Re-run cmake
 # after a first successful build to get it.
-find_package(PkgConfig REQUIRED)
+# PkgConfig is already found at the top of this file.
 pkg_check_modules(VulkanLoader IMPORTED_TARGET vulkan)
 set(STUD_TEXDEC_DIR "${CMAKE_CURRENT_BINARY_DIR}/../runtime-prefix/src/runtime-build/texdec")
 if (VulkanLoader_FOUND AND EXISTS "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp")

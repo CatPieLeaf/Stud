@@ -7,6 +7,10 @@
 find_package(Qt6 REQUIRED COMPONENTS Widgets WebEngineWidgets Network)
 
 add_executable(stud-webview src/main.cpp)
+# The icon is installed under the application id, not under "stud", so the
+# panel needs to know that id to find it. Same define every other target
+# that names the application already carries.
+target_compile_definitions(stud-webview PRIVATE STUD_APP_ID="${STUD_APP_ID}")
 # stud/webview_user_agent.h, the agent string has to be the same one the
 # engine reports to Roblox, so both build it from the same header.
 target_include_directories(stud-webview PRIVATE

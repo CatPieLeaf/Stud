@@ -1,19 +1,9 @@
 set(STUD_RENDER_SOURCES src/render.cpp)
 
 if(STUD_ENABLE_DEV_RENDER_TOGGLE)
-    include(FetchContent)
-    # Same dependency jni-bridge already vendors for its own JSON config
-    # (flag_overrides.cpp), guarded so re-declaring it here is a no-op
-    # if jni-bridge's subdirectory already made it available first.
-    if(NOT TARGET nlohmann_json::nlohmann_json)
-        FetchContent_Declare(
-            nlohmann_json
-            GIT_REPOSITORY https://github.com/nlohmann/json.git
-            GIT_TAG        v3.11.3
-        )
-        set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-        FetchContent_MakeAvailable(nlohmann_json)
-    endif()
+    # nlohmann_json is fetched once at the top level; see the root
+    # CMakeLists.txt. The comment that used to sit here named jni-bridge,
+    # a directory that no longer exists.
     list(APPEND STUD_RENDER_SOURCES src/dev_backend_config.cpp)
 endif()
 

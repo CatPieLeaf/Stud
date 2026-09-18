@@ -1,7 +1,9 @@
 # Packaging
 
-One install tree, three formats. `cmake --install` lays down a relocatable
-layout. The deb and the rpm are that tree packaged. The AppImage is that
+One install tree, six formats: the rpm, the deb, the Arch package, the
+AppImage, the Flatpak and the cpak image. `cmake --install` lays down a
+relocatable layout. The deb and the rpm are that tree packaged. The AppImage
+is that
 tree plus its dependencies.
 
 ```
@@ -73,6 +75,5 @@ appstreamcli validate build/packaging/<app-id>.metainfo.xml
 desktop-file-validate build/packaging/<app-id>.desktop
 ```
 
-**Screenshots are missing.** A centre still lists Stud without them, just
-badly. They need hosting somewhere stable, then adding to the component as
-`<screenshots>`.
+Screenshots live in `packaging/screenshots/` and are referenced from the
+component's own `<screenshots>` block in `stud.metainfo.xml.in`.
