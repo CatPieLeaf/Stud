@@ -2425,6 +2425,18 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             std::fflush(stdout);
             return ok ? 1 : 0;
         }
+        case CallId::DeleteSecret: {
+            // The name only; there is no value to carry and nothing here
+            // ever sees one.
+            const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            if (name.empty()) return 0;
+            const bool ok =
+                run_ui_secret_helper("--delete-secret", name, std::string(), nullptr);
+            std::printf("stud-render-host: forgot secret \"%s\"%s\n", name.c_str(),
+                        ok ? "" : " (the keyring helper reported a failure)");
+            std::fflush(stdout);
+            return ok ? 1 : 0;
+        }
         case CallId::LoadSecret: {
             const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
             if (name.empty()) return 0;
