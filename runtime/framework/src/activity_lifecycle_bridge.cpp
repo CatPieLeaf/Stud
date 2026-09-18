@@ -56,7 +56,7 @@ ActivityLifecycleBridgeResult run_activity_lifecycle_bridge(FakeJni::Jvm& jvm,
         const char* suffix;
         bool* called_field;
     };
-    Step steps[] = {
+    const Step steps[] = {
         {"OnPreCreated", &result.pre_created_called},
         {"OnCreated", &result.created_called},
         {"OnPostCreated", &result.post_created_called},
@@ -90,7 +90,7 @@ ActivityPauseStopBridgeResult run_activity_pause_stop_bridge(FakeJni::Jvm& jvm,
         const char* suffix;
         bool* called_field;
     };
-    Step steps[] = {
+    const Step steps[] = {
         {"OnPrePaused", &result.pre_paused_called},
         {"OnPaused", &result.paused_called},
         {"OnPostPaused", &result.post_paused_called},

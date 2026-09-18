@@ -464,7 +464,7 @@ uint64_t audio_open_stream(int sample_rate, int channels, int bytes_per_frame) {
     // Only 16-bit interleaved PCM at the device's own rate is accepted:
     // the client asks the engine for exactly that, and silently
     // mis-reading the samples would be worse than refusing.
-    Device& d = device();
+    const Device& d = device();
     if (bytes_per_frame != channels * d.bytes_per_sample || channels != d.channels ||
         sample_rate != d.rate) {
         std::printf("stud-render-host: audio: refusing %d Hz / %d ch / %d bytes-per-frame (the "

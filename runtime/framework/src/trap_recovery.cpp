@@ -458,7 +458,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // near_stack nor near_null, exactly the class this opt-in
         // exists for, silently unable to ever take effect.
         if (!near_stack && !near_null && !g_tolerate_wild_sigsegv) {
-            auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
+            const auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
             describe_address("pc", static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RIP]));
             print_backtrace(static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RBP]));
             // Teardown, same reasoning as the other fatal exit below, and
@@ -545,7 +545,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     // installed, rather than looping back into this same handler
     // forever.
     {
-        auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
+        const auto* uctx2 = static_cast<ucontext_t*>(ucontext_raw);
         describe_address("pc", static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RIP]));
         print_backtrace(static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RBP]));
     }

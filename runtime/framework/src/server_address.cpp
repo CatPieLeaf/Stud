@@ -27,7 +27,7 @@ std::set<unsigned long long> own_socket_inodes() {
     std::set<unsigned long long> inodes;
     DIR* dir = ::opendir("/proc/self/fd");
     if (dir == nullptr) return inodes;
-    while (dirent* e = ::readdir(dir)) {
+    while (const dirent* e = ::readdir(dir)) {
         char link[64];
         std::snprintf(link, sizeof(link), "/proc/self/fd/%s", e->d_name);
         char target[256];

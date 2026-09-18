@@ -66,7 +66,7 @@ void prune_once() {
         const std::string dir = cache_root() + "/" + dir_name;
         DIR* dir_handle = ::opendir(dir.c_str());
         if (dir_handle == nullptr) continue;
-        while (dirent* entry = ::readdir(dir_handle)) {
+        while (const dirent* entry = ::readdir(dir_handle)) {
             if (entry->d_name[0] == '.') continue;
             const std::string path = dir + "/" + entry->d_name;
             struct stat info {};
