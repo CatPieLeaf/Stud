@@ -1793,10 +1793,17 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                     std::fflush(stdout);
                 }
             }
+            // The clock reads follow the switch, not just the print. Both
+            // are cheap (clock_gettime is a vDSO call, not a syscall), but
+            // measuring something nobody reads is still the wrong shape --
+            // and this is the same conditional idiom the Vulkan client's
+            // own frame timing uses.
             static const bool time_swap = std::getenv("STUD_TIME_SWAP") != nullptr;
-            auto t_swap_start = std::chrono::steady_clock::now();
+            const auto t_swap_start = time_swap ? std::chrono::steady_clock::now()
+                                                : std::chrono::steady_clock::time_point{};
             uint64_t r = fns.eglSwapBuffers_(g_displays.at(a[0]), g_surfaces.at(a[1])) == EGL_TRUE;
-            auto t_after_swap = std::chrono::steady_clock::now();
+            const auto t_after_swap = time_swap ? std::chrono::steady_clock::now()
+                                                : std::chrono::steady_clock::time_point{};
             if (r == 0) {
                 // A failing swap presents nothing: the engine draws a full
                 // frame and the window stays black. Report the real EGL error
