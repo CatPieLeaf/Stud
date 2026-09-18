@@ -28,6 +28,7 @@ endif()
 set(ANDROID_GLUE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue")
 
 set(RENDER_HOST_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../render-host")
+set(CPU_COMPAT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../cpu-compat")
 add_library(stud_runtime_render_host_protocol STATIC
     "${RENDER_HOST_SRC}/src/render_host_protocol.cpp"
 )
@@ -322,13 +323,19 @@ target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 
 add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp
                                     src/pthread_create_interpose.cpp
-                                    src/android_log_interpose.cpp src/pthread_tls_interpose.cpp)
+                                    src/android_log_interpose.cpp src/pthread_tls_interpose.cpp
+                                    # The SIGILL shim, compiled in rather than linked: the
+                                    # stud_cpu_compat library is built by the host compiler
+                                    # and this is a bionic ELF built by the NDK.
+                                    "${CPU_COMPAT_SRC}/src/cpu_compat.cpp"
+                                    "${CPU_COMPAT_SRC}/src/x86_emulator.cpp")
 # The render client lives in five separate .so files and finds this
 # executable's stud_note_shutting_down() by name at runtime; without
 # --export-dynamic the symbol is not in the dynamic table and dlsym
 # returns null, silently.
 target_link_options(stud-runtime-bionic PRIVATE -Wl,--export-dynamic)
 target_include_directories(stud-runtime-bionic PRIVATE
+    "${CPU_COMPAT_SRC}/include"
     "${ANDROID_GLUE_SRC}/include"
     "${FRAMEWORK_SRC}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../bionic-symbol-lookup/include"
