@@ -1478,6 +1478,932 @@ int wayland_poll_ms() {
     return ms;
 }
 
+// The calls that are not graphics: secrets, the web view, deep links, the
+// clipboard, audio input, rumble, refresh rates, the text overlay and
+// input polling.
+//
+// Split out of dispatch(), which was 2331 lines and is the function every
+// call from both other processes passes through. These 33 cases sat in the
+// middle of it and share nothing with the GL, EGL and Vulkan cases around
+// them -- no `fns`, no pixel-buffer resolution, no draw tracing -- so they
+// come out whole.
+//
+// std::optional rather than a bool-and-out-parameter so that every case
+// body below is EXACTLY what it was inside the switch: a `return <value>;`
+// converts to the optional on its own. Nothing in the bodies was touched
+// by the move, which is the only reason a split of this size is reviewable.
+// An id that is not one of these returns nullopt and dispatch() carries on
+// to its own switch.
+std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& window,
+                                               const std::vector<uint8_t>& in,
+                                               std::vector<uint8_t>& out, uint32_t* out_len) {
+    const uint64_t* a = hdr.args;
+    switch (hdr.call_id) {
+        case CallId::StoreSecret: {
+            // "<name>\n<value>". The name is a plain slug; the value is
+            // a real credential and is never logged, not even a prefix.
+            const std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
+            const auto newline = payload.find('\n');
+            if (newline == std::string::npos) return 0;
+            const std::string name = payload.substr(0, newline);
+            std::string value = payload.substr(newline + 1);
+            if (name.empty() || value.empty()) return 0;
+            const size_t value_bytes = value.size();
+            value.push_back('\n');
+            const bool ok = run_ui_secret_helper("--store-secret", name, value, nullptr);
+            std::printf("stud-render-host: handed secret \"%s\" to the keyring helper "
+                        "(%zu bytes)%s\n",
+                        name.c_str(), value_bytes, ok ? "" : ", could not start it");
+            std::fflush(stdout);
+            return ok ? 1 : 0;
+        }
+        case CallId::DeleteSecret: {
+            // The name only; there is no value to carry and nothing here
+            // ever sees one.
+            const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            if (name.empty()) return 0;
+            const bool ok =
+                run_ui_secret_helper("--delete-secret", name, std::string(), nullptr);
+            std::printf("stud-render-host: forgot secret \"%s\"%s\n", name.c_str(),
+                        ok ? "" : " (the keyring helper reported a failure)");
+            std::fflush(stdout);
+            return ok ? 1 : 0;
+        }
+        case CallId::LoadSecret: {
+            const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
+            if (name.empty()) return 0;
+            std::string value;
+            const bool ok = run_ui_secret_helper("--load-secret", name, std::string(), &value);
+            while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
+                value.pop_back();
+            }
+            std::printf("stud-render-host: read secret \"%s\" from safe storage: %s (%zu bytes, "
+                        "helper ok=%d)\n",
+                        name.c_str(), value.empty() ? "absent" : "present", value.size(),
+                        static_cast<int>(ok));
+            std::fflush(stdout);
+            if (value.empty()) return 0;
+            const uint32_t n =
+                static_cast<uint32_t>(std::min<size_t>(value.size(), hdr.out_buffer_len));
+            out.resize(n);
+            std::memcpy(out.data(), value.data(), n);
+            *out_len = n;
+            return 1;
+        }
+        case CallId::OpenWebView: {
+            // Payload: url \n title \n cookie..., handed to the viewer
+            // on its stdin so no credential is ever visible in a command
+            // line or an environment block.
+            std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
+            const auto first_newline = payload.find('\n');
+            const std::string url = payload.substr(0, first_newline);
+
+            // args[0] != 0 means the caller already knows this belongs to
+            // the desktop, not the viewer: it came from the LINKING
+            // protocol (GuiService:OpenBrowserWindow), not the web-view
+            // one. Stud does not have to guess from the URL, and must
+            // not, since blog.roblox.com is a panel while a corp.roblox.com
+            // careers page is not.
+            if (a[0] != 0) {
+                const bool studio = url.rfind("roblox-studio:", 0) == 0;
+                const bool http = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+                if (!http && !studio) {
+                    std::printf("stud-render-host: refusing to open a URL with an unexpected "
+                                "scheme\n");
+                    std::fflush(stdout);
+                    return 0;
+                }
+                // Passed as one argv entry, never through a shell: a URL
+                // from the engine is data, not a command line.
+                //
+                // NO setsid() here, deliberately. Detaching the child from
+                // this session makes the compositor treat the browser as
+                // an unrelated background launch, so the window opens
+                // behind Stud instead of coming to the front, exactly
+                // what the user saw. Keeping the session lets the
+                // activation token propagate and the browser raise itself.
+                // Ask the compositor for an activation token first. A
+                // Wayland compositor will not let a process raise its own
+                // window unencouraged; that is focus-stealing
+                // prevention, so a browser launched without one opens
+                // BEHIND Stud. The token, minted against Stud's own
+                // surface, is how a launcher says the user asked for
+                // this. Both variable names are set because which one a
+                // program reads depends on its toolkit.
+                const std::string token =
+                    stud::android_glue::native_window_activation_token(g_real_window);
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    // Prefer the desktop portal, which takes the
+                    // activation token as an explicit ARGUMENT.
+                    //
+                    // Setting XDG_ACTIVATION_TOKEN in the environment and
+                    // calling xdg-open was tried and does not work: the
+                    // token really is minted (logged), but xdg-open hands
+                    // the URL on through a .desktop entry or D-Bus and
+                    // the environment does not survive that hop, so the
+                    // browser never sees it and opens unfocused.
+                    //
+                    // The URL is still a separate argv entry, never
+                    // interpolated into a shell command.
+                    if (!token.empty()) {
+                        ::setenv("XDG_ACTIVATION_TOKEN", token.c_str(), 1);
+                        ::setenv("DESKTOP_STARTUP_ID", token.c_str(), 1);
+                        const std::string options =
+                            "{'activation_token': <'" + token + "'>}";
+                        ::execlp("gdbus", "gdbus", "call", "--session", "--dest",
+                                 "org.freedesktop.portal.Desktop", "--object-path",
+                                 "/org/freedesktop/portal/desktop", "--method",
+                                 "org.freedesktop.portal.OpenURI.OpenURI", "", url.c_str(),
+                                 options.c_str(), nullptr);
+                        // Only reached if gdbus is missing entirely.
+                    }
+                    ::execlp("xdg-open", "xdg-open", url.c_str(), nullptr);
+                    ::_exit(127);
+                }
+                if (pid > 0) {
+                    std::thread([pid] { int st = 0; ::waitpid(pid, &st, 0); }).detach();
+                }
+                std::printf("stud-render-host: handed %s link to the desktop (activation token: "
+                            "%s)\n",
+                            studio ? "a Roblox Studio" : "an external",
+                            token.empty() ? "none. It will open unfocused" : "yes");
+                std::fflush(stdout);
+                return 1;
+            }
+
+            // Everything the WebView protocol asks for opens in the
+            // viewer, including blog.roblox.com, user-confirmed as the
+            // right behaviour, and it is what a device does too.
+            //
+            // A domain test was tried and removed: it classified the
+            // Newsroom as external because blog.roblox.com is not the
+            // main site, which was wrong. The app's own `windowType`
+            // field cannot decide it either, live-captured as EMPTY for
+            // both an in-app panel (Messages) and the blog. So this
+            // protocol carries no signal saying "hand this to the
+            // system", and anything that really needs a browser must
+            // arrive by some other route.
+            //
+            // Non-http URLs are still refused: this path spawns a viewer
+            // holding real session cookies, and a scheme it cannot render
+            // has no business here.
+            if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
+                std::printf("stud-render-host: refusing a non-http web-view URL\n");
+                std::fflush(stdout);
+                return 0;
+            }
+            int pipe_fds[2] = {-1, -1};
+            if (::pipe(pipe_fds) != 0) return 0;
+            // A second pipe, the other way: the page's JavaScript bridge
+            // answers through the viewer's stdout (see
+            // read_web_view_output), which is how a login challenge
+            // reports that it is done.
+            int out_fds[2] = {-1, -1};
+            if (::pipe(out_fds) != 0) {
+                ::close(pipe_fds[0]);
+                ::close(pipe_fds[1]);
+                return 0;
+            }
+            const pid_t pid = ::fork();
+            if (pid == 0) {
+                ::close(pipe_fds[1]);
+                ::close(out_fds[0]);
+                ::dup2(pipe_fds[0], STDIN_FILENO);
+                ::dup2(out_fds[1], STDOUT_FILENO);
+                // The viewer's stderr goes the same way as its stdout, so
+                // whatever the page reports lands in Stud's own session
+                // log. Qt otherwise routes its logging through journald
+                // on this desktop, where a failing challenge page was
+                // invisible in the one file a user can be asked for.
+                ::dup2(out_fds[1], STDERR_FILENO);
+                ::setenv("QT_FORCE_STDERR_LOGGING", "1", 1);
+                // MangoHud belongs to the game window, never to a web
+                // view. This process carries its environment (the layer,
+                // and on the OpenGL paths its dlopen/dlsym shim on
+                // LD_PRELOAD), and a child inherits all of it, which
+                // put MangoHud inside QtWebEngine, where it crashes the
+                // viewer. Live-reported: a panel that dies on open with
+                // the overlay enabled.
+                //
+                // Stripped rather than worked around: an overlay on a
+                // message list is not a thing anyone asked for, so there
+                // is nothing here to preserve.
+                ::unsetenv("MANGOHUD");
+                ::unsetenv("MANGOHUD_CONFIG");
+                ::unsetenv("MANGOHUD_CONFIGFILE");
+                ::unsetenv("MANGOHUD_DLSYM");
+                if (const char* preload = ::getenv("LD_PRELOAD");
+                    preload != nullptr && *preload != '\0') {
+                    // Keep whatever else the user preloads; drop only
+                    // MangoHud's own libraries. The separator is a colon
+                    // or a space, both of which the loader accepts.
+                    std::string kept;
+                    const std::string value(preload);
+                    size_t start = 0;
+                    while (start <= value.size()) {
+                        const size_t end = value.find_first_of(": ", start);
+                        const std::string entry =
+                            value.substr(start, end == std::string::npos ? std::string::npos
+                                                                         : end - start);
+                        if (!entry.empty() && entry.find("angoHud") == std::string::npos &&
+                            entry.find("angohud") == std::string::npos) {
+                            if (!kept.empty()) kept += ':';
+                            kept += entry;
+                        }
+                        if (end == std::string::npos) break;
+                        start = end + 1;
+                    }
+                    if (kept.empty()) {
+                        ::unsetenv("LD_PRELOAD");
+                    } else {
+                        ::setenv("LD_PRELOAD", kept.c_str(), 1);
+                    }
+                }
+                // And the Vulkan layer, for a viewer that reaches a real
+                // driver through QtWebEngine's own GPU process.
+                ::setenv("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_MANGOHUD_overlay_*", 1);
+                ::close(pipe_fds[0]);
+                ::close(out_fds[1]);
+                ::setsid();
+                // Next to this binary first, so a build tree runs its own
+                // viewer rather than one that happens to be installed.
+                std::string own_dir;
+                {
+                    char buf[4096];
+                    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+                    if (n > 0) {
+                        buf[n] = '\0';
+                        const std::string exe(buf);
+                        const auto slash = exe.find_last_of('/');
+                        if (slash != std::string::npos) own_dir = exe.substr(0, slash);
+                    }
+                }
+                if (!own_dir.empty()) {
+                    // Build tree first, then an install tree, where the
+                    // viewer is this binary's own neighbour.
+                    const std::string sibling = own_dir + "/../webview/stud-webview";
+                    ::execl(sibling.c_str(), "stud-webview", nullptr);
+                    const std::string installed = own_dir + "/stud-webview";
+                    ::execl(installed.c_str(), "stud-webview", nullptr);
+                }
+                ::execlp("stud-webview", "stud-webview", nullptr);
+                ::_exit(127);
+            }
+            ::close(pipe_fds[0]);
+            ::close(out_fds[1]);
+            if (pid < 0) {
+                ::close(pipe_fds[1]);
+                ::close(out_fds[0]);
+                return 0;
+            }
+            std::thread(read_web_view_output, out_fds[0]).detach();
+            // The sentinel ends the request; the pipe itself stays open,
+            // because a blocked navigation is answered down it later.
+            // Without the sentinel the viewer would read its cookies
+            // until EOF, which now never comes.
+            std::string request = payload;
+            if (request.empty() || request.back() != '\n') request.push_back('\n');
+            request += "END\n";
+            const char* bytes = request.data();
+            size_t left = request.size();
+            while (left > 0) {
+                const ssize_t written = ::write(pipe_fds[1], bytes, left);
+                if (written <= 0) break;
+                bytes += written;
+                left -= static_cast<size_t>(written);
+            }
+            {
+                const int previous = g_webview_stdin.exchange(pipe_fds[1]);
+                if (previous >= 0) ::close(previous);
+            }
+            track_web_view(pid);
+            std::thread([pid] {
+                int status = 0;
+                ::waitpid(pid, &status, 0);
+                // Reaped, so it is no longer ours to kill, and the pid
+                // must not be signalled again once the kernel is free to
+                // reuse it.
+                forget_web_view(pid);
+                {
+                    const int fd = g_webview_stdin.exchange(-1);
+                    if (fd >= 0) ::close(fd);
+                }
+                g_webview_closed.fetch_add(1, std::memory_order_relaxed);
+                std::printf("stud-render-host: web-view window closed\n");
+                std::fflush(stdout);
+            }).detach();
+            std::printf("stud-render-host: opened the web-view panel\n");
+            std::fflush(stdout);
+            return 1;
+        }
+        case CallId::PollWebViewMessage: {
+            std::string message;
+            {
+                std::lock_guard<std::mutex> lock(g_webview_message_mutex);
+                if (g_webview_messages.empty()) return 0;
+                message = std::move(g_webview_messages.front());
+                g_webview_messages.pop_front();
+            }
+            // The out-buffer is the handler's to size, same as every
+            // other call that answers with bytes.
+            out.assign(message.begin(), message.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::DeliverDeepLink: {
+            std::string uri(reinterpret_cast<const char*>(in.data()), in.size());
+            if (uri.empty()) return 0;
+            // Read before the string is moved into the queue below,
+            // reading it after reported 0 bytes every time, which is what
+            // a moved-from string is.
+            const size_t payload_bytes = uri.size();
+            const bool has_token = uri.find("activationToken=") != std::string::npos;
+            {
+                std::lock_guard<std::mutex> lock(g_deep_link_mutex);
+                // Two links queued at once means the first was never
+                // acted on; keep the newest rather than replaying a stale
+                // one at whatever the person just asked for.
+                while (g_deep_links.size() >= 4) g_deep_links.pop_front();
+                g_deep_links.push_back(std::move(uri));
+            }
+            // Raise the window, if the launch carried a token to do it
+            // with. Stud may well be minimised or behind the browser the
+            // link was clicked in, joining a game into a window nobody
+            // can see is not much of an answer.
+            //
+            // Handled here rather than in Process B because this process
+            // owns the Wayland surface; the token is consumed and does
+            // not travel on with the rest of the payload.
+            {
+                const std::string key = "activationToken=";
+                // Said out loud, because the second stud-ui's own stderr
+                // goes nowhere. It has no terminal and is not teed into
+                // the session log, so a missing token was invisible
+                // from both ends.
+                std::printf("stud-render-host: deep link payload %zu bytes, activation token %s\n",
+                            payload_bytes,
+                            has_token ? "present" : "ABSENT");
+                std::fflush(stdout);
+                size_t at = 0;
+                bool raised = false;
+                while (at < uri.size()) {
+                    size_t end = uri.find('\n', at);
+                    if (end == std::string::npos) end = uri.size();
+                    if (uri.compare(at, key.size(), key) == 0) {
+                        raised = true;
+                        const std::string token = uri.substr(at + key.size(), end - at - key.size());
+                        // Same window the activation-token getter above
+                        // uses; the one real surface this process owns.
+                        stud::android_glue::native_window_activate(g_real_window, token.c_str());
+                        std::printf("stud-render-host: raising the window for the new link\n");
+                        break;
+                    }
+                    at = end + 1;
+                }
+                if (!raised) {
+                    // No token from the launcher. Mint one against this
+                    // window and spend it here.
+                    //
+                    // Self-activation, and deliberately so: the same call
+                    // the outgoing path above uses attaches the serial of
+                    // a real input event on this seat, which is the thing
+                    // a compositor actually checks. It is the only
+                    // in-protocol way to come forward when whatever
+                    // launched the link passed nothing, and a launcher
+                    // that passes nothing is common, since the token only
+                    // exists if the entry asked for startup notification
+                    // AND the launcher honoured it.
+                    //
+                    // If the compositor declines, nothing happens and the
+                    // window stays put, which is the same outcome as
+                    // doing nothing at all.
+                    const std::string own =
+                        stud::android_glue::native_window_activation_token(g_real_window);
+                    if (!own.empty()) {
+                        stud::android_glue::native_window_activate(g_real_window, own.c_str());
+                        std::printf("stud-render-host: no token given, raising with our own\n");
+                    } else {
+                        std::printf("stud-render-host: could not mint an activation token\n");
+                    }
+                    // Last resort, and compositor-specific on purpose.
+                    //
+                    // xdg-activation is the only way a Wayland client can
+                    // be raised, and both of its paths are exhausted by
+                    // this point: measured on a real KDE session, the
+                    // launcher passes NO token to a URL handler even with
+                    // StartupNotify set, and a token Stud mints for
+                    // itself is refused, correctly, because the
+                    // serial it carries is from Stud's last input, which
+                    // is stale when the user was clicking in a browser.
+                    // That refusal is the protocol working as designed.
+                    //
+                    // So this asks the compositor directly, through
+                    // KWin's own scripting interface. It is NOT a general
+                    // way to raise a window and must not be copied as
+                    // one: it works on KDE and is a silent no-op
+                    // everywhere else, where the gdbus call simply finds
+                    // no org.kde.KWin to talk to.
+                    raise_through_kwin();
+                    std::fflush(stdout);
+                }
+            }
+            // The URI itself is never logged: a deep link carries a
+            // one-time join ticket.
+            std::printf("stud-render-host: a second launch handed over a deep link\n");
+            std::fflush(stdout);
+            return 1;
+        }
+        case CallId::PollDeepLink: {
+            std::string uri;
+            {
+                std::lock_guard<std::mutex> lock(g_deep_link_mutex);
+                if (g_deep_links.empty()) return 0;
+                uri = std::move(g_deep_links.front());
+                g_deep_links.pop_front();
+            }
+            out.assign(uri.begin(), uri.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::PollWebViewNavigation: {
+            std::string url;
+            {
+                std::lock_guard<std::mutex> lock(g_webview_navigation_mutex);
+                if (g_webview_navigations.empty()) return 0;
+                url = std::move(g_webview_navigations.front());
+                g_webview_navigations.pop_front();
+            }
+            out.assign(url.begin(), url.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::WebViewLoadUrl: {
+            const int fd = g_webview_stdin.load();
+            if (fd < 0 || in.empty()) return 0;
+            std::string line = (a[0] != 0 ? std::string("drop ") : std::string("load ")) +
+                               std::string(reinterpret_cast<const char*>(in.data()), in.size()) +
+                               "\n";
+            size_t left = line.size();
+            const char* bytes = line.data();
+            while (left > 0) {
+                const ssize_t written = ::write(fd, bytes, left);
+                if (written <= 0) return 0;
+                bytes += written;
+                left -= static_cast<size_t>(written);
+            }
+            return 1;
+        }
+        case CallId::CanWarpPointer:
+            return stud::android_glue::native_window_can_warp_pointer() ? 1 : 0;
+        case CallId::WarpPointer:
+            stud::android_glue::native_window_warp_pointer(
+                g_real_window, static_cast<float>(a[0]) / 256.0f,
+                static_cast<float>(a[1]) / 256.0f);
+            return 0;
+        case CallId::SetPointerConfined:
+            stud::android_glue::native_window_set_pointer_confined(g_real_window, a[0] != 0);
+            return 0;
+        case CallId::CopyToClipboard: {
+            if (in.empty()) return 0;
+            const std::string text(reinterpret_cast<const char*>(in.data()), in.size());
+            // Through a helper that keeps serving the selection after
+            // this returns.
+            //
+            // A clipboard is not a store: whoever puts something on it
+            // owns it and has to hand it over when a paste asks, so a
+            // process that sets it and exits copies nothing. This one
+            // cannot hold it either, on Wayland an offer needs the
+            // serial of a real input event and this process has no
+            // clipboard plumbing at all, so wl-copy (Wayland) and
+            // xclip/xsel (X11) do it, each of which forks and stays.
+            //
+            // The text is never logged: an invite link carries a
+            // one-time code.
+            static const char* const kWayland[] = {"wl-copy", nullptr};
+            static const char* const kXclip[] = {"xclip", "-selection", "clipboard", nullptr};
+            static const char* const kXsel[] = {"xsel", "--input", "--clipboard", nullptr};
+            const bool wayland = ::getenv("WAYLAND_DISPLAY") != nullptr;
+            const char* const* candidates[3] = {};
+            if (wayland) {
+                candidates[0] = kWayland;
+                candidates[1] = kXclip;
+                candidates[2] = kXsel;
+            } else {
+                candidates[0] = kXclip;
+                candidates[1] = kXsel;
+                candidates[2] = kWayland;
+            }
+            for (const char* const* argv_template : candidates) {
+                if (argv_template == nullptr) continue;
+                int fds[2] = {-1, -1};
+                if (::pipe(fds) != 0) return 0;
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    ::close(fds[1]);
+                    ::dup2(fds[0], STDIN_FILENO);
+                    ::close(fds[0]);
+                    // Its own session: the helper outlives this call and
+                    // must not die with the game window.
+                    ::setsid();
+                    char* argv[8] = {};
+                    size_t n = 0;
+                    for (; argv_template[n] != nullptr && n < 7; ++n) {
+                        argv[n] = const_cast<char*>(argv_template[n]);
+                    }
+                    ::execvp(argv[0], argv);
+                    ::_exit(127);
+                }
+                ::close(fds[0]);
+                if (pid < 0) {
+                    ::close(fds[1]);
+                    return 0;
+                }
+                size_t left = text.size();
+                const char* bytes = text.data();
+                while (left > 0) {
+                    const ssize_t written = ::write(fds[1], bytes, left);
+                    if (written <= 0) break;
+                    bytes += written;
+                    left -= static_cast<size_t>(written);
+                }
+                ::close(fds[1]);
+                // wl-copy and xclip both fork a server and the parent
+                // exits, so this wait is short and tells us whether the
+                // tool was there at all.
+                int status = 0;
+                ::waitpid(pid, &status, 0);
+                const bool ran = WIFEXITED(status) && WEXITSTATUS(status) != 127;
+                if (ran) {
+                    std::printf("stud-render-host: copied %zu bytes to the clipboard via %s\n",
+                                text.size(), argv_template[0]);
+                    std::fflush(stdout);
+                    return 1;
+                }
+            }
+            std::printf("stud-render-host: nothing to copy with, install wl-clipboard "
+                        "(Wayland) or xclip (X11)\n");
+            std::fflush(stdout);
+            return 0;
+        }
+        case CallId::CloseWebView: {
+            // The app asked, so the viewer's exit is not a user closing
+            // the panel, but reporting it either way is what a real
+            // device does (its own activity publishes windowClosed from
+            // onDestroy however it was closed), and the app ignores the
+            // echo of a close it requested itself.
+            close_open_web_views();
+            return 1;
+        }
+        case CallId::AudioOpenInputStream:
+            return stud::render_host::audio_open_input_stream(static_cast<int>(a[0]),
+                                                              static_cast<int>(a[1]));
+        case CallId::AudioReadFrames: {
+            out.resize(hdr.out_buffer_len);
+            const uint64_t written =
+                stud::render_host::audio_read_frames(out.data(), out.size());
+            out.resize(static_cast<size_t>(written));
+            *out_len = static_cast<uint32_t>(written);
+            return written;
+        }
+        case CallId::AudioCloseInputStream:
+            stud::render_host::audio_close_input_stream();
+            return 1;
+        case CallId::SetGamepadRumble: {
+            // Magnitudes arrive in 1/1000ths: the header carries ints.
+            return stud::render_host::gamepad::set_rumble(
+                       static_cast<int>(a[0]), static_cast<float>(a[1]) / 1000.0f,
+                       static_cast<float>(a[2]) / 1000.0f, static_cast<int>(a[3]))
+                       ? 1
+                       : 0;
+        }
+        case CallId::PollWindowCloseRequested:
+            return stud::android_glue::window_close_requested() ? 1u : 0u;
+        case CallId::PollWebViewClosed: {
+            uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
+            return pending;
+        }
+        case CallId::GetDisplayRefreshRate:
+            return static_cast<uint64_t>(stud::android_glue::display_refresh_mhz());
+        case CallId::GetSupportedRefreshRates: {
+            const auto rates = stud::android_glue::display_supported_refresh_mhz();
+            out.resize(rates.size() * sizeof(uint32_t));
+            for (std::size_t i = 0; i < rates.size(); ++i) {
+                const auto value = static_cast<uint32_t>(rates[i]);
+                std::memcpy(out.data() + i * sizeof(uint32_t), &value, sizeof(value));
+            }
+            *out_len = static_cast<uint32_t>(out.size());
+            return rates.size();
+        }
+        case CallId::SetTextOverlay: {
+            // The engine's own TextBox, standing in for the Android
+            // EditText a real device would lay over the GL view. See
+            // stud/text_overlay.h.
+            stud::android_glue::TextOverlaySpec spec;
+            spec.visible = (a[0] & 1u) != 0;
+            spec.password = (a[0] & 2u) != 0;
+            auto unpack_float = [](uint64_t word, int half) {
+                const auto bits = static_cast<uint32_t>(half == 0 ? (word & 0xffffffffu)
+                                                                  : (word >> 32));
+                float value = 0.0f;
+                std::memcpy(&value, &bits, sizeof(value));
+                return value;
+            };
+            spec.x = unpack_float(a[1], 0);
+            spec.y = unpack_float(a[1], 1);
+            spec.width = unpack_float(a[2], 0);
+            spec.height = unpack_float(a[2], 1);
+            float font_size = 0.0f;
+            const auto font_bits = static_cast<uint32_t>(a[3] & 0xffffffffu);
+            std::memcpy(&font_size, &font_bits, sizeof(font_size));
+            const auto font_enum = static_cast<int32_t>(a[3] >> 32);
+            spec.argb = static_cast<uint32_t>(a[4] & 0xffffffffu);
+            spec.caret = static_cast<int32_t>(a[4] >> 32);
+            spec.x_alignment = static_cast<int32_t>(a[5] & 0xffffffffu);
+            spec.y_alignment = static_cast<int32_t>(a[5] >> 32);
+            spec.selection_begin = static_cast<int32_t>(a[6] & 0xffffffffu);
+            spec.selection_end = static_cast<int32_t>(a[6] >> 32);
+            spec.text.assign(reinterpret_cast<const char*>(in.data()), in.size());
+            const RobloxFont font = roblox_font_for(font_enum);
+            spec.font_path = font.path;
+            // Roblox's TextSize, turned into an em.
+            //
+            // `fromRbxFontRatio` is the font's own upem/(ascender -
+            // descender), verified against the real files (Arimo
+            // 0.895105, HWYGOTH 0.903342, PressStart2P 0.976168, each
+            // matching the APK's mapping exactly). Multiplying by it
+            // makes the LINE HEIGHT equal TextSize, which is what
+            // Roblox's own documentation says TextSize means.
+            //
+            // Measured against the engine, that comes out too small: the
+            // same chat box is visibly bigger when the engine draws it
+            // (unfocused) than when this overlay does (focused).
+            // Which is right depends on the id: a legacy Enum.Font is
+            // converted by its ratio, a modern FontFace is not (its
+            // ratio is 1.0). See roblox_font_for.
+            spec.pixel_size = font_size * font.ratio;
+            // The line box stays Roblox's own TextSize whatever the em is.
+            spec.line_height = font_size;
+            spec.letter_spacing = font.letter_spacing;
+            stud::android_glue::set_text_overlay(spec);
+            return 1;
+        }
+        case CallId::SetClipboardText: {
+            stud::android_glue::clipboard_set_text(
+                std::string(reinterpret_cast<const char*>(in.data()), in.size()));
+            return 1;
+        }
+        case CallId::GetClipboardText: {
+            const std::string text = stud::android_glue::clipboard_get_text();
+            out.assign(text.begin(), text.end());
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.size();
+        }
+        case CallId::TextOverlayOffsetAtX:
+            return static_cast<uint64_t>(
+                stud::android_glue::text_overlay_offset_at_x(static_cast<float>(
+                    static_cast<int32_t>(a[0]))));
+        case CallId::GetWindowBufferScale:
+            // Waits for the compositor's real fractional scale rather
+            // than answering with the integer fallback. Process B asks
+            // once, before the engine starts, and keeps the answer for
+            // the whole session, so a wrong answer here is wrong
+            // everywhere, permanently.
+            return static_cast<uint64_t>(
+                stud::android_glue::native_window_wait_for_display_scale_120());
+        case CallId::GetDisplayOutputGeometry: {
+            int32_t px_w = 0, px_h = 0, mm_w = 0, mm_h = 0;
+            stud::android_glue::display_output_geometry(&px_w, &px_h, &mm_w, &mm_h);
+            auto pack = [](int32_t v) -> uint64_t {
+                if (v < 0) return 0;
+                return static_cast<uint64_t>(v > 0xffff ? 0xffff : v);
+            };
+            return (pack(px_w) << 48) | (pack(px_h) << 32) | (pack(mm_w) << 16) | pack(mm_h);
+        }
+        case CallId::EndSession: {
+            // Exits inside the handler, so nothing is written back. The
+            // caller is quitting anyway and wants the window gone before
+            // it starts its own teardown; see the CallId's own comment.
+            std::printf("stud-render-host: the session ended, shutting down\n");
+            close_open_web_views(/*wait_for_exit=*/true);
+            exit_now(0);
+        }
+        case CallId::SetGamePresence: {
+            // "<placeId> <jobId>", or empty for the app shell. The
+            // metadata lookup (name, creator, thumbnail) needs HTTPS and
+            // JSON, so it runs in stud-ui one-shot, the same helper
+            // shape as the keyring and the region lookup.
+            std::string body(reinterpret_cast<const char*>(in.data()), in.size());
+            // The tray offers "copy server link" and is a separate
+            // process, so the link is left where it can read it. Its
+            // absence is what "not in a game" looks like from there.
+            const std::string invite_path = []() {
+                const char* xdg = std::getenv("XDG_RUNTIME_DIR");
+                return std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/invite";
+            }();
+            if (body.empty()) {
+                std::printf("stud-render-host: Discord presence: the app shell\n");
+                std::fflush(stdout);
+                ::unlink(invite_path.c_str());
+                stud::render_host::discord_rpc_set_game({});
+                return 0;
+            }
+            std::string info;
+            if (!run_ui_secret_helper("--game-info", body, std::string(), &info) || info.empty()) {
+                return 0;
+            }
+            // One field per line, in a fixed order, so no JSON parser is
+            // needed on this side: name, creator, thumbnail, join url.
+            stud::render_host::GamePresence presence;
+            std::string* fields[] = {&presence.universe_name, &presence.creator_name,
+                                      &presence.thumbnail_url, &presence.join_url};
+            size_t start = 0;
+            for (size_t i = 0; i < 4 && start <= info.size(); ++i) {
+                const size_t nl = info.find('\n', start);
+                const size_t end = nl == std::string::npos ? info.size() : nl;
+                *fields[i] = info.substr(start, end - start);
+                if (nl == std::string::npos) break;
+                start = nl + 1;
+            }
+            // Written before the join-button setting is applied: the tray
+            // entry is the user asking for the link explicitly, which is a
+            // different question from putting it on a public presence.
+            if (!presence.join_url.empty()) {
+                if (FILE* f = std::fopen(invite_path.c_str(), "w")) {
+                    std::fputs(presence.join_url.c_str(), f);
+                    std::fclose(f);
+                }
+            }
+            if (!g_discord_join_button) presence.join_url.clear();
+            std::printf("stud-render-host: Discord presence: %s by %s%s\n",
+                        presence.universe_name.c_str(), presence.creator_name.c_str(),
+                        presence.join_url.empty() ? "" : " (with a join button)");
+            std::fflush(stdout);
+            presence.started_at = static_cast<int64_t>(::time(nullptr));
+            stud::render_host::discord_rpc_set_game(presence);
+            return 0;
+        }
+        case CallId::NotifyServerRegion: {
+            // Fire and forget: a join must never wait on a lookup, and a
+            // failed one simply produces no notification.
+            std::string ip(reinterpret_cast<const char*>(in.data()), in.size());
+            if (ip.empty()) return 0;
+            std::printf("stud-render-host: looking up the region for the game server\n");
+            std::fflush(stdout);
+            run_ui_helper_detached("--notify-region", ip);
+            return 0;
+        }
+        case CallId::SetPointerLocked:
+            stud::android_glue::native_window_set_pointer_locked(g_real_window, a[0] != 0);
+            return 0;
+        case CallId::PollInputEvents: {
+            // Real seat events queued by android-glue's own Wayland
+            // listeners (this process already dispatches that fd in its
+            // main poll loop). Reply with as many as the client's buffer
+            // can hold; the rest stay queued for the next poll.
+            // Pump the display HERE, first.
+            //
+            // A pointer event only reaches the queue when something
+            // dispatches Wayland, and the main loop does that at most
+            // every STUD_WL_POLL_MS (50ms), and not at all while a busy
+            // client keeps the connection saturated, which is exactly
+            // when the mouse is moving. The hand could therefore be up to
+            // a twentieth of a second ahead of the queue before Process B
+            // even asked. Pumping at the moment input is requested makes
+            // the answer as fresh as the compositor has it.
+            using stud::android_glue::HostInputEvent;
+            size_t capacity = hdr.out_buffer_len / sizeof(HostInputEvent);
+            if (capacity == 0) return 0;
+            out.resize(capacity * sizeof(HostInputEvent));
+            size_t n = 0;
+            // Wait for one, if the caller said it may.
+            //
+            // A pointer event only enters the queue when something
+            // dispatches Wayland, and the main loop does that on a
+            // timeout (and not at all while a busy client keeps the
+            // connection saturated, which is exactly when the mouse is
+            // moving). So the pump happens HERE, and rather than answer
+            // "nothing yet" and be asked again a few milliseconds later,
+            // the reply waits on the compositor's own fd and leaves the
+            // instant an event lands.
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(static_cast<int>(a[0]));
+            const bool wayland = !window.on_x11() && window.display != nullptr;
+            const int wl_fd = wayland ? wl_display_get_fd(window.display) : -1;
+            for (;;) {
+                // Whatever the driver's own reads already put on the
+                // queue, first and for free.
+                if (wayland) {
+                    dispatch_input_queue(window.display, false);
+                } else {
+                    // Events only, and nothing else.
+                    //
+                    // This used to call the whole display pump, which on
+                    // X11 also takes the lock the present path needs and
+                    // re-checks the window size, every time round a loop
+                    // that runs every few milliseconds. The Wayland side
+                    // has always done only what this does: drain what has
+                    // already arrived.
+                    std::lock_guard<std::mutex> lock(wayland_mutex());
+                    stud::android_glue::native_window_pump_x11_events_only();
+                }
+                n = stud::android_glue::native_window_drain_input_events(
+                    reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+                if (n > 0) break;
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+                int wait_ms = static_cast<int>(left.count());
+                if (wait_ms <= 0) wait_ms = 1;
+                if (!wayland) {
+                    // The X connection has a socket like any other, so
+                    // wait on it rather than sleeping in a loop: the same
+                    // shape as the Wayland branch below, one wake when
+                    // something actually arrives instead of a timer that
+                    // fires whether or not anything did.
+                    const int x_fd = stud::android_glue::native_window_x11_fd();
+                    if (x_fd < 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+                        continue;
+                    }
+                    pollfd xp{x_fd, POLLIN, 0};
+                    if (::poll(&xp, 1, wait_ms) > 0 && (xp.revents & POLLIN) != 0) {
+                        std::lock_guard<std::mutex> lock(wayland_mutex());
+                        stud::android_glue::native_window_pump_x11_events_only();
+                    }
+                    n = stud::android_glue::native_window_drain_input_events(
+                        reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+                    if (n > 0) break;
+                    continue;
+                }
+                // Asleep until the compositor actually says something,
+                // one wake, and only if there is something to read.
+                pollfd wl{wl_fd, POLLIN, 0};
+                if (::poll(&wl, 1, wait_ms) > 0 && (wl.revents & POLLIN) != 0) {
+                    dispatch_input_queue(window.display, true);
+                    n = stud::android_glue::native_window_drain_input_events(
+                        reinterpret_cast<HostInputEvent*>(out.data()), capacity);
+                    if (n > 0) break;
+                }
+                // A controller is evdev, not the compositor, so it is not
+                // what this waits on. It is drained below, at most one
+                // wait late, which is no worse than the timer this
+                // replaces.
+            }
+
+            // Controllers are read here rather than by android-glue: they
+            // come from evdev, not from the compositor, and Process B's
+            // sandbox has a synthetic /dev by design. They ride the same
+            // queue so there is one path in and one drain.
+            if (n < capacity) {
+                static std::vector<stud::render_host::gamepad::Event> pad_events;
+                pad_events.clear();
+                stud::render_host::gamepad::poll(pad_events);
+                auto* slots = reinterpret_cast<HostInputEvent*>(out.data());
+                for (const auto& pad : pad_events) {
+                    if (n >= capacity) break;  // the rest arrive next poll
+                    HostInputEvent& slot = slots[n++];
+                    slot = HostInputEvent{};
+                    switch (pad.type) {
+                        case stud::render_host::gamepad::Event::kConnect:
+                            slot.type = HostInputEvent::kGamepadConnect;
+                            break;
+                        case stud::render_host::gamepad::Event::kDisconnect:
+                            slot.type = HostInputEvent::kGamepadDisconnect;
+                            break;
+                        case stud::render_host::gamepad::Event::kButton:
+                            slot.type = HostInputEvent::kGamepadButton;
+                            break;
+                        case stud::render_host::gamepad::Event::kSupportedKey:
+                            slot.type = HostInputEvent::kGamepadSupportedKey;
+                            break;
+                        case stud::render_host::gamepad::Event::kSupportedAxis:
+                            slot.type = HostInputEvent::kGamepadSupportedAxis;
+                            break;
+                        default:
+                            slot.type = HostInputEvent::kGamepadAxis;
+                            break;
+                    }
+                    slot.code = static_cast<uint32_t>(pad.code);
+                    // An axis is a vector: all three floats travel. Every
+                    // other kind uses the first one only.
+                    slot.x = pad.v0;
+                    slot.y = pad.v1;
+                    slot.a = pad.type == stud::render_host::gamepad::Event::kAxis ? pad.v2
+                                                                                  : pad.v0;
+                    slot.b = static_cast<float>(pad.device_id);
+                }
+            }
+            out.resize(n * sizeof(HostInputEvent));
+            *out_len = static_cast<uint32_t>(out.size());
+            return n;
+        }
+        default:
+            return std::nullopt;
+    }
+}
+
+
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
@@ -2435,905 +3361,13 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::VkGetPhysicalDeviceImageFormatProperties2:
             return stud::render_host::vk_get_image_format_properties2(
                 a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::StoreSecret: {
-            // "<name>\n<value>". The name is a plain slug; the value is
-            // a real credential and is never logged, not even a prefix.
-            const std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
-            const auto newline = payload.find('\n');
-            if (newline == std::string::npos) return 0;
-            const std::string name = payload.substr(0, newline);
-            std::string value = payload.substr(newline + 1);
-            if (name.empty() || value.empty()) return 0;
-            const size_t value_bytes = value.size();
-            value.push_back('\n');
-            const bool ok = run_ui_secret_helper("--store-secret", name, value, nullptr);
-            std::printf("stud-render-host: handed secret \"%s\" to the keyring helper "
-                        "(%zu bytes)%s\n",
-                        name.c_str(), value_bytes, ok ? "" : ", could not start it");
-            std::fflush(stdout);
-            return ok ? 1 : 0;
-        }
-        case CallId::DeleteSecret: {
-            // The name only; there is no value to carry and nothing here
-            // ever sees one.
-            const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
-            if (name.empty()) return 0;
-            const bool ok =
-                run_ui_secret_helper("--delete-secret", name, std::string(), nullptr);
-            std::printf("stud-render-host: forgot secret \"%s\"%s\n", name.c_str(),
-                        ok ? "" : " (the keyring helper reported a failure)");
-            std::fflush(stdout);
-            return ok ? 1 : 0;
-        }
-        case CallId::LoadSecret: {
-            const std::string name(reinterpret_cast<const char*>(in.data()), in.size());
-            if (name.empty()) return 0;
-            std::string value;
-            const bool ok = run_ui_secret_helper("--load-secret", name, std::string(), &value);
-            while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
-                value.pop_back();
+        // Everything that is not graphics lives in its own function; see
+        // dispatch_platform_call().
+        default:
+            if (auto handled = dispatch_platform_call(hdr, window, in, out, out_len)) {
+                return *handled;
             }
-            std::printf("stud-render-host: read secret \"%s\" from safe storage: %s (%zu bytes, "
-                        "helper ok=%d)\n",
-                        name.c_str(), value.empty() ? "absent" : "present", value.size(),
-                        static_cast<int>(ok));
-            std::fflush(stdout);
-            if (value.empty()) return 0;
-            const uint32_t n =
-                static_cast<uint32_t>(std::min<size_t>(value.size(), hdr.out_buffer_len));
-            out.resize(n);
-            std::memcpy(out.data(), value.data(), n);
-            *out_len = n;
-            return 1;
-        }
-        case CallId::OpenWebView: {
-            // Payload: url \n title \n cookie..., handed to the viewer
-            // on its stdin so no credential is ever visible in a command
-            // line or an environment block.
-            std::string payload(reinterpret_cast<const char*>(in.data()), in.size());
-            const auto first_newline = payload.find('\n');
-            const std::string url = payload.substr(0, first_newline);
-
-            // args[0] != 0 means the caller already knows this belongs to
-            // the desktop, not the viewer: it came from the LINKING
-            // protocol (GuiService:OpenBrowserWindow), not the web-view
-            // one. Stud does not have to guess from the URL, and must
-            // not, since blog.roblox.com is a panel while a corp.roblox.com
-            // careers page is not.
-            if (a[0] != 0) {
-                const bool studio = url.rfind("roblox-studio:", 0) == 0;
-                const bool http = url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
-                if (!http && !studio) {
-                    std::printf("stud-render-host: refusing to open a URL with an unexpected "
-                                "scheme\n");
-                    std::fflush(stdout);
-                    return 0;
-                }
-                // Passed as one argv entry, never through a shell: a URL
-                // from the engine is data, not a command line.
-                //
-                // NO setsid() here, deliberately. Detaching the child from
-                // this session makes the compositor treat the browser as
-                // an unrelated background launch, so the window opens
-                // behind Stud instead of coming to the front, exactly
-                // what the user saw. Keeping the session lets the
-                // activation token propagate and the browser raise itself.
-                // Ask the compositor for an activation token first. A
-                // Wayland compositor will not let a process raise its own
-                // window unencouraged; that is focus-stealing
-                // prevention, so a browser launched without one opens
-                // BEHIND Stud. The token, minted against Stud's own
-                // surface, is how a launcher says the user asked for
-                // this. Both variable names are set because which one a
-                // program reads depends on its toolkit.
-                const std::string token =
-                    stud::android_glue::native_window_activation_token(g_real_window);
-                const pid_t pid = ::fork();
-                if (pid == 0) {
-                    // Prefer the desktop portal, which takes the
-                    // activation token as an explicit ARGUMENT.
-                    //
-                    // Setting XDG_ACTIVATION_TOKEN in the environment and
-                    // calling xdg-open was tried and does not work: the
-                    // token really is minted (logged), but xdg-open hands
-                    // the URL on through a .desktop entry or D-Bus and
-                    // the environment does not survive that hop, so the
-                    // browser never sees it and opens unfocused.
-                    //
-                    // The URL is still a separate argv entry, never
-                    // interpolated into a shell command.
-                    if (!token.empty()) {
-                        ::setenv("XDG_ACTIVATION_TOKEN", token.c_str(), 1);
-                        ::setenv("DESKTOP_STARTUP_ID", token.c_str(), 1);
-                        const std::string options =
-                            "{'activation_token': <'" + token + "'>}";
-                        ::execlp("gdbus", "gdbus", "call", "--session", "--dest",
-                                 "org.freedesktop.portal.Desktop", "--object-path",
-                                 "/org/freedesktop/portal/desktop", "--method",
-                                 "org.freedesktop.portal.OpenURI.OpenURI", "", url.c_str(),
-                                 options.c_str(), nullptr);
-                        // Only reached if gdbus is missing entirely.
-                    }
-                    ::execlp("xdg-open", "xdg-open", url.c_str(), nullptr);
-                    ::_exit(127);
-                }
-                if (pid > 0) {
-                    std::thread([pid] { int st = 0; ::waitpid(pid, &st, 0); }).detach();
-                }
-                std::printf("stud-render-host: handed %s link to the desktop (activation token: "
-                            "%s)\n",
-                            studio ? "a Roblox Studio" : "an external",
-                            token.empty() ? "none. It will open unfocused" : "yes");
-                std::fflush(stdout);
-                return 1;
-            }
-
-            // Everything the WebView protocol asks for opens in the
-            // viewer, including blog.roblox.com, user-confirmed as the
-            // right behaviour, and it is what a device does too.
-            //
-            // A domain test was tried and removed: it classified the
-            // Newsroom as external because blog.roblox.com is not the
-            // main site, which was wrong. The app's own `windowType`
-            // field cannot decide it either, live-captured as EMPTY for
-            // both an in-app panel (Messages) and the blog. So this
-            // protocol carries no signal saying "hand this to the
-            // system", and anything that really needs a browser must
-            // arrive by some other route.
-            //
-            // Non-http URLs are still refused: this path spawns a viewer
-            // holding real session cookies, and a scheme it cannot render
-            // has no business here.
-            if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
-                std::printf("stud-render-host: refusing a non-http web-view URL\n");
-                std::fflush(stdout);
-                return 0;
-            }
-            int pipe_fds[2] = {-1, -1};
-            if (::pipe(pipe_fds) != 0) return 0;
-            // A second pipe, the other way: the page's JavaScript bridge
-            // answers through the viewer's stdout (see
-            // read_web_view_output), which is how a login challenge
-            // reports that it is done.
-            int out_fds[2] = {-1, -1};
-            if (::pipe(out_fds) != 0) {
-                ::close(pipe_fds[0]);
-                ::close(pipe_fds[1]);
-                return 0;
-            }
-            const pid_t pid = ::fork();
-            if (pid == 0) {
-                ::close(pipe_fds[1]);
-                ::close(out_fds[0]);
-                ::dup2(pipe_fds[0], STDIN_FILENO);
-                ::dup2(out_fds[1], STDOUT_FILENO);
-                // The viewer's stderr goes the same way as its stdout, so
-                // whatever the page reports lands in Stud's own session
-                // log. Qt otherwise routes its logging through journald
-                // on this desktop, where a failing challenge page was
-                // invisible in the one file a user can be asked for.
-                ::dup2(out_fds[1], STDERR_FILENO);
-                ::setenv("QT_FORCE_STDERR_LOGGING", "1", 1);
-                // MangoHud belongs to the game window, never to a web
-                // view. This process carries its environment (the layer,
-                // and on the OpenGL paths its dlopen/dlsym shim on
-                // LD_PRELOAD), and a child inherits all of it, which
-                // put MangoHud inside QtWebEngine, where it crashes the
-                // viewer. Live-reported: a panel that dies on open with
-                // the overlay enabled.
-                //
-                // Stripped rather than worked around: an overlay on a
-                // message list is not a thing anyone asked for, so there
-                // is nothing here to preserve.
-                ::unsetenv("MANGOHUD");
-                ::unsetenv("MANGOHUD_CONFIG");
-                ::unsetenv("MANGOHUD_CONFIGFILE");
-                ::unsetenv("MANGOHUD_DLSYM");
-                if (const char* preload = ::getenv("LD_PRELOAD");
-                    preload != nullptr && *preload != '\0') {
-                    // Keep whatever else the user preloads; drop only
-                    // MangoHud's own libraries. The separator is a colon
-                    // or a space, both of which the loader accepts.
-                    std::string kept;
-                    const std::string value(preload);
-                    size_t start = 0;
-                    while (start <= value.size()) {
-                        const size_t end = value.find_first_of(": ", start);
-                        const std::string entry =
-                            value.substr(start, end == std::string::npos ? std::string::npos
-                                                                         : end - start);
-                        if (!entry.empty() && entry.find("angoHud") == std::string::npos &&
-                            entry.find("angohud") == std::string::npos) {
-                            if (!kept.empty()) kept += ':';
-                            kept += entry;
-                        }
-                        if (end == std::string::npos) break;
-                        start = end + 1;
-                    }
-                    if (kept.empty()) {
-                        ::unsetenv("LD_PRELOAD");
-                    } else {
-                        ::setenv("LD_PRELOAD", kept.c_str(), 1);
-                    }
-                }
-                // And the Vulkan layer, for a viewer that reaches a real
-                // driver through QtWebEngine's own GPU process.
-                ::setenv("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_MANGOHUD_overlay_*", 1);
-                ::close(pipe_fds[0]);
-                ::close(out_fds[1]);
-                ::setsid();
-                // Next to this binary first, so a build tree runs its own
-                // viewer rather than one that happens to be installed.
-                std::string own_dir;
-                {
-                    char buf[4096];
-                    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-                    if (n > 0) {
-                        buf[n] = '\0';
-                        const std::string exe(buf);
-                        const auto slash = exe.find_last_of('/');
-                        if (slash != std::string::npos) own_dir = exe.substr(0, slash);
-                    }
-                }
-                if (!own_dir.empty()) {
-                    // Build tree first, then an install tree, where the
-                    // viewer is this binary's own neighbour.
-                    const std::string sibling = own_dir + "/../webview/stud-webview";
-                    ::execl(sibling.c_str(), "stud-webview", nullptr);
-                    const std::string installed = own_dir + "/stud-webview";
-                    ::execl(installed.c_str(), "stud-webview", nullptr);
-                }
-                ::execlp("stud-webview", "stud-webview", nullptr);
-                ::_exit(127);
-            }
-            ::close(pipe_fds[0]);
-            ::close(out_fds[1]);
-            if (pid < 0) {
-                ::close(pipe_fds[1]);
-                ::close(out_fds[0]);
-                return 0;
-            }
-            std::thread(read_web_view_output, out_fds[0]).detach();
-            // The sentinel ends the request; the pipe itself stays open,
-            // because a blocked navigation is answered down it later.
-            // Without the sentinel the viewer would read its cookies
-            // until EOF, which now never comes.
-            std::string request = payload;
-            if (request.empty() || request.back() != '\n') request.push_back('\n');
-            request += "END\n";
-            const char* bytes = request.data();
-            size_t left = request.size();
-            while (left > 0) {
-                const ssize_t written = ::write(pipe_fds[1], bytes, left);
-                if (written <= 0) break;
-                bytes += written;
-                left -= static_cast<size_t>(written);
-            }
-            {
-                const int previous = g_webview_stdin.exchange(pipe_fds[1]);
-                if (previous >= 0) ::close(previous);
-            }
-            track_web_view(pid);
-            std::thread([pid] {
-                int status = 0;
-                ::waitpid(pid, &status, 0);
-                // Reaped, so it is no longer ours to kill, and the pid
-                // must not be signalled again once the kernel is free to
-                // reuse it.
-                forget_web_view(pid);
-                {
-                    const int fd = g_webview_stdin.exchange(-1);
-                    if (fd >= 0) ::close(fd);
-                }
-                g_webview_closed.fetch_add(1, std::memory_order_relaxed);
-                std::printf("stud-render-host: web-view window closed\n");
-                std::fflush(stdout);
-            }).detach();
-            std::printf("stud-render-host: opened the web-view panel\n");
-            std::fflush(stdout);
-            return 1;
-        }
-        case CallId::PollWebViewMessage: {
-            std::string message;
-            {
-                std::lock_guard<std::mutex> lock(g_webview_message_mutex);
-                if (g_webview_messages.empty()) return 0;
-                message = std::move(g_webview_messages.front());
-                g_webview_messages.pop_front();
-            }
-            // The out-buffer is the handler's to size, same as every
-            // other call that answers with bytes.
-            out.assign(message.begin(), message.end());
-            *out_len = static_cast<uint32_t>(out.size());
-            return out.size();
-        }
-        case CallId::DeliverDeepLink: {
-            std::string uri(reinterpret_cast<const char*>(in.data()), in.size());
-            if (uri.empty()) return 0;
-            // Read before the string is moved into the queue below,
-            // reading it after reported 0 bytes every time, which is what
-            // a moved-from string is.
-            const size_t payload_bytes = uri.size();
-            const bool has_token = uri.find("activationToken=") != std::string::npos;
-            {
-                std::lock_guard<std::mutex> lock(g_deep_link_mutex);
-                // Two links queued at once means the first was never
-                // acted on; keep the newest rather than replaying a stale
-                // one at whatever the person just asked for.
-                while (g_deep_links.size() >= 4) g_deep_links.pop_front();
-                g_deep_links.push_back(std::move(uri));
-            }
-            // Raise the window, if the launch carried a token to do it
-            // with. Stud may well be minimised or behind the browser the
-            // link was clicked in, joining a game into a window nobody
-            // can see is not much of an answer.
-            //
-            // Handled here rather than in Process B because this process
-            // owns the Wayland surface; the token is consumed and does
-            // not travel on with the rest of the payload.
-            {
-                const std::string key = "activationToken=";
-                // Said out loud, because the second stud-ui's own stderr
-                // goes nowhere. It has no terminal and is not teed into
-                // the session log, so a missing token was invisible
-                // from both ends.
-                std::printf("stud-render-host: deep link payload %zu bytes, activation token %s\n",
-                            payload_bytes,
-                            has_token ? "present" : "ABSENT");
-                std::fflush(stdout);
-                size_t at = 0;
-                bool raised = false;
-                while (at < uri.size()) {
-                    size_t end = uri.find('\n', at);
-                    if (end == std::string::npos) end = uri.size();
-                    if (uri.compare(at, key.size(), key) == 0) {
-                        raised = true;
-                        const std::string token = uri.substr(at + key.size(), end - at - key.size());
-                        // Same window the activation-token getter above
-                        // uses; the one real surface this process owns.
-                        stud::android_glue::native_window_activate(g_real_window, token.c_str());
-                        std::printf("stud-render-host: raising the window for the new link\n");
-                        break;
-                    }
-                    at = end + 1;
-                }
-                if (!raised) {
-                    // No token from the launcher. Mint one against this
-                    // window and spend it here.
-                    //
-                    // Self-activation, and deliberately so: the same call
-                    // the outgoing path above uses attaches the serial of
-                    // a real input event on this seat, which is the thing
-                    // a compositor actually checks. It is the only
-                    // in-protocol way to come forward when whatever
-                    // launched the link passed nothing, and a launcher
-                    // that passes nothing is common, since the token only
-                    // exists if the entry asked for startup notification
-                    // AND the launcher honoured it.
-                    //
-                    // If the compositor declines, nothing happens and the
-                    // window stays put, which is the same outcome as
-                    // doing nothing at all.
-                    const std::string own =
-                        stud::android_glue::native_window_activation_token(g_real_window);
-                    if (!own.empty()) {
-                        stud::android_glue::native_window_activate(g_real_window, own.c_str());
-                        std::printf("stud-render-host: no token given, raising with our own\n");
-                    } else {
-                        std::printf("stud-render-host: could not mint an activation token\n");
-                    }
-                    // Last resort, and compositor-specific on purpose.
-                    //
-                    // xdg-activation is the only way a Wayland client can
-                    // be raised, and both of its paths are exhausted by
-                    // this point: measured on a real KDE session, the
-                    // launcher passes NO token to a URL handler even with
-                    // StartupNotify set, and a token Stud mints for
-                    // itself is refused, correctly, because the
-                    // serial it carries is from Stud's last input, which
-                    // is stale when the user was clicking in a browser.
-                    // That refusal is the protocol working as designed.
-                    //
-                    // So this asks the compositor directly, through
-                    // KWin's own scripting interface. It is NOT a general
-                    // way to raise a window and must not be copied as
-                    // one: it works on KDE and is a silent no-op
-                    // everywhere else, where the gdbus call simply finds
-                    // no org.kde.KWin to talk to.
-                    raise_through_kwin();
-                    std::fflush(stdout);
-                }
-            }
-            // The URI itself is never logged: a deep link carries a
-            // one-time join ticket.
-            std::printf("stud-render-host: a second launch handed over a deep link\n");
-            std::fflush(stdout);
-            return 1;
-        }
-        case CallId::PollDeepLink: {
-            std::string uri;
-            {
-                std::lock_guard<std::mutex> lock(g_deep_link_mutex);
-                if (g_deep_links.empty()) return 0;
-                uri = std::move(g_deep_links.front());
-                g_deep_links.pop_front();
-            }
-            out.assign(uri.begin(), uri.end());
-            *out_len = static_cast<uint32_t>(out.size());
-            return out.size();
-        }
-        case CallId::PollWebViewNavigation: {
-            std::string url;
-            {
-                std::lock_guard<std::mutex> lock(g_webview_navigation_mutex);
-                if (g_webview_navigations.empty()) return 0;
-                url = std::move(g_webview_navigations.front());
-                g_webview_navigations.pop_front();
-            }
-            out.assign(url.begin(), url.end());
-            *out_len = static_cast<uint32_t>(out.size());
-            return out.size();
-        }
-        case CallId::WebViewLoadUrl: {
-            const int fd = g_webview_stdin.load();
-            if (fd < 0 || in.empty()) return 0;
-            std::string line = (a[0] != 0 ? std::string("drop ") : std::string("load ")) +
-                               std::string(reinterpret_cast<const char*>(in.data()), in.size()) +
-                               "\n";
-            size_t left = line.size();
-            const char* bytes = line.data();
-            while (left > 0) {
-                const ssize_t written = ::write(fd, bytes, left);
-                if (written <= 0) return 0;
-                bytes += written;
-                left -= static_cast<size_t>(written);
-            }
-            return 1;
-        }
-        case CallId::CanWarpPointer:
-            return stud::android_glue::native_window_can_warp_pointer() ? 1 : 0;
-        case CallId::WarpPointer:
-            stud::android_glue::native_window_warp_pointer(
-                g_real_window, static_cast<float>(a[0]) / 256.0f,
-                static_cast<float>(a[1]) / 256.0f);
-            return 0;
-        case CallId::SetPointerConfined:
-            stud::android_glue::native_window_set_pointer_confined(g_real_window, a[0] != 0);
-            return 0;
-        case CallId::CopyToClipboard: {
-            if (in.empty()) return 0;
-            const std::string text(reinterpret_cast<const char*>(in.data()), in.size());
-            // Through a helper that keeps serving the selection after
-            // this returns.
-            //
-            // A clipboard is not a store: whoever puts something on it
-            // owns it and has to hand it over when a paste asks, so a
-            // process that sets it and exits copies nothing. This one
-            // cannot hold it either, on Wayland an offer needs the
-            // serial of a real input event and this process has no
-            // clipboard plumbing at all, so wl-copy (Wayland) and
-            // xclip/xsel (X11) do it, each of which forks and stays.
-            //
-            // The text is never logged: an invite link carries a
-            // one-time code.
-            static const char* const kWayland[] = {"wl-copy", nullptr};
-            static const char* const kXclip[] = {"xclip", "-selection", "clipboard", nullptr};
-            static const char* const kXsel[] = {"xsel", "--input", "--clipboard", nullptr};
-            const bool wayland = ::getenv("WAYLAND_DISPLAY") != nullptr;
-            const char* const* candidates[3] = {};
-            if (wayland) {
-                candidates[0] = kWayland;
-                candidates[1] = kXclip;
-                candidates[2] = kXsel;
-            } else {
-                candidates[0] = kXclip;
-                candidates[1] = kXsel;
-                candidates[2] = kWayland;
-            }
-            for (const char* const* argv_template : candidates) {
-                if (argv_template == nullptr) continue;
-                int fds[2] = {-1, -1};
-                if (::pipe(fds) != 0) return 0;
-                const pid_t pid = ::fork();
-                if (pid == 0) {
-                    ::close(fds[1]);
-                    ::dup2(fds[0], STDIN_FILENO);
-                    ::close(fds[0]);
-                    // Its own session: the helper outlives this call and
-                    // must not die with the game window.
-                    ::setsid();
-                    char* argv[8] = {};
-                    size_t n = 0;
-                    for (; argv_template[n] != nullptr && n < 7; ++n) {
-                        argv[n] = const_cast<char*>(argv_template[n]);
-                    }
-                    ::execvp(argv[0], argv);
-                    ::_exit(127);
-                }
-                ::close(fds[0]);
-                if (pid < 0) {
-                    ::close(fds[1]);
-                    return 0;
-                }
-                size_t left = text.size();
-                const char* bytes = text.data();
-                while (left > 0) {
-                    const ssize_t written = ::write(fds[1], bytes, left);
-                    if (written <= 0) break;
-                    bytes += written;
-                    left -= static_cast<size_t>(written);
-                }
-                ::close(fds[1]);
-                // wl-copy and xclip both fork a server and the parent
-                // exits, so this wait is short and tells us whether the
-                // tool was there at all.
-                int status = 0;
-                ::waitpid(pid, &status, 0);
-                const bool ran = WIFEXITED(status) && WEXITSTATUS(status) != 127;
-                if (ran) {
-                    std::printf("stud-render-host: copied %zu bytes to the clipboard via %s\n",
-                                text.size(), argv_template[0]);
-                    std::fflush(stdout);
-                    return 1;
-                }
-            }
-            std::printf("stud-render-host: nothing to copy with, install wl-clipboard "
-                        "(Wayland) or xclip (X11)\n");
-            std::fflush(stdout);
-            return 0;
-        }
-        case CallId::CloseWebView: {
-            // The app asked, so the viewer's exit is not a user closing
-            // the panel, but reporting it either way is what a real
-            // device does (its own activity publishes windowClosed from
-            // onDestroy however it was closed), and the app ignores the
-            // echo of a close it requested itself.
-            close_open_web_views();
-            return 1;
-        }
-        case CallId::AudioOpenInputStream:
-            return stud::render_host::audio_open_input_stream(static_cast<int>(a[0]),
-                                                              static_cast<int>(a[1]));
-        case CallId::AudioReadFrames: {
-            out.resize(hdr.out_buffer_len);
-            const uint64_t written =
-                stud::render_host::audio_read_frames(out.data(), out.size());
-            out.resize(static_cast<size_t>(written));
-            *out_len = static_cast<uint32_t>(written);
-            return written;
-        }
-        case CallId::AudioCloseInputStream:
-            stud::render_host::audio_close_input_stream();
-            return 1;
-        case CallId::SetGamepadRumble: {
-            // Magnitudes arrive in 1/1000ths: the header carries ints.
-            return stud::render_host::gamepad::set_rumble(
-                       static_cast<int>(a[0]), static_cast<float>(a[1]) / 1000.0f,
-                       static_cast<float>(a[2]) / 1000.0f, static_cast<int>(a[3]))
-                       ? 1
-                       : 0;
-        }
-        case CallId::PollWindowCloseRequested:
-            return stud::android_glue::window_close_requested() ? 1u : 0u;
-        case CallId::PollWebViewClosed: {
-            uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
-            return pending;
-        }
-        case CallId::GetDisplayRefreshRate:
-            return static_cast<uint64_t>(stud::android_glue::display_refresh_mhz());
-        case CallId::GetSupportedRefreshRates: {
-            const auto rates = stud::android_glue::display_supported_refresh_mhz();
-            out.resize(rates.size() * sizeof(uint32_t));
-            for (std::size_t i = 0; i < rates.size(); ++i) {
-                const auto value = static_cast<uint32_t>(rates[i]);
-                std::memcpy(out.data() + i * sizeof(uint32_t), &value, sizeof(value));
-            }
-            *out_len = static_cast<uint32_t>(out.size());
-            return rates.size();
-        }
-        case CallId::SetTextOverlay: {
-            // The engine's own TextBox, standing in for the Android
-            // EditText a real device would lay over the GL view. See
-            // stud/text_overlay.h.
-            stud::android_glue::TextOverlaySpec spec;
-            spec.visible = (a[0] & 1u) != 0;
-            spec.password = (a[0] & 2u) != 0;
-            auto unpack_float = [](uint64_t word, int half) {
-                const auto bits = static_cast<uint32_t>(half == 0 ? (word & 0xffffffffu)
-                                                                  : (word >> 32));
-                float value = 0.0f;
-                std::memcpy(&value, &bits, sizeof(value));
-                return value;
-            };
-            spec.x = unpack_float(a[1], 0);
-            spec.y = unpack_float(a[1], 1);
-            spec.width = unpack_float(a[2], 0);
-            spec.height = unpack_float(a[2], 1);
-            float font_size = 0.0f;
-            const auto font_bits = static_cast<uint32_t>(a[3] & 0xffffffffu);
-            std::memcpy(&font_size, &font_bits, sizeof(font_size));
-            const auto font_enum = static_cast<int32_t>(a[3] >> 32);
-            spec.argb = static_cast<uint32_t>(a[4] & 0xffffffffu);
-            spec.caret = static_cast<int32_t>(a[4] >> 32);
-            spec.x_alignment = static_cast<int32_t>(a[5] & 0xffffffffu);
-            spec.y_alignment = static_cast<int32_t>(a[5] >> 32);
-            spec.selection_begin = static_cast<int32_t>(a[6] & 0xffffffffu);
-            spec.selection_end = static_cast<int32_t>(a[6] >> 32);
-            spec.text.assign(reinterpret_cast<const char*>(in.data()), in.size());
-            const RobloxFont font = roblox_font_for(font_enum);
-            spec.font_path = font.path;
-            // Roblox's TextSize, turned into an em.
-            //
-            // `fromRbxFontRatio` is the font's own upem/(ascender -
-            // descender), verified against the real files (Arimo
-            // 0.895105, HWYGOTH 0.903342, PressStart2P 0.976168, each
-            // matching the APK's mapping exactly). Multiplying by it
-            // makes the LINE HEIGHT equal TextSize, which is what
-            // Roblox's own documentation says TextSize means.
-            //
-            // Measured against the engine, that comes out too small: the
-            // same chat box is visibly bigger when the engine draws it
-            // (unfocused) than when this overlay does (focused).
-            // Which is right depends on the id: a legacy Enum.Font is
-            // converted by its ratio, a modern FontFace is not (its
-            // ratio is 1.0). See roblox_font_for.
-            spec.pixel_size = font_size * font.ratio;
-            // The line box stays Roblox's own TextSize whatever the em is.
-            spec.line_height = font_size;
-            spec.letter_spacing = font.letter_spacing;
-            stud::android_glue::set_text_overlay(spec);
-            return 1;
-        }
-        case CallId::SetClipboardText: {
-            stud::android_glue::clipboard_set_text(
-                std::string(reinterpret_cast<const char*>(in.data()), in.size()));
-            return 1;
-        }
-        case CallId::GetClipboardText: {
-            const std::string text = stud::android_glue::clipboard_get_text();
-            out.assign(text.begin(), text.end());
-            *out_len = static_cast<uint32_t>(out.size());
-            return out.size();
-        }
-        case CallId::TextOverlayOffsetAtX:
-            return static_cast<uint64_t>(
-                stud::android_glue::text_overlay_offset_at_x(static_cast<float>(
-                    static_cast<int32_t>(a[0]))));
-        case CallId::GetWindowBufferScale:
-            // Waits for the compositor's real fractional scale rather
-            // than answering with the integer fallback. Process B asks
-            // once, before the engine starts, and keeps the answer for
-            // the whole session, so a wrong answer here is wrong
-            // everywhere, permanently.
-            return static_cast<uint64_t>(
-                stud::android_glue::native_window_wait_for_display_scale_120());
-        case CallId::GetDisplayOutputGeometry: {
-            int32_t px_w = 0, px_h = 0, mm_w = 0, mm_h = 0;
-            stud::android_glue::display_output_geometry(&px_w, &px_h, &mm_w, &mm_h);
-            auto pack = [](int32_t v) -> uint64_t {
-                if (v < 0) return 0;
-                return static_cast<uint64_t>(v > 0xffff ? 0xffff : v);
-            };
-            return (pack(px_w) << 48) | (pack(px_h) << 32) | (pack(mm_w) << 16) | pack(mm_h);
-        }
-        case CallId::EndSession: {
-            // Exits inside the handler, so nothing is written back. The
-            // caller is quitting anyway and wants the window gone before
-            // it starts its own teardown; see the CallId's own comment.
-            std::printf("stud-render-host: the session ended, shutting down\n");
-            close_open_web_views(/*wait_for_exit=*/true);
-            exit_now(0);
-        }
-        case CallId::SetGamePresence: {
-            // "<placeId> <jobId>", or empty for the app shell. The
-            // metadata lookup (name, creator, thumbnail) needs HTTPS and
-            // JSON, so it runs in stud-ui one-shot, the same helper
-            // shape as the keyring and the region lookup.
-            std::string body(reinterpret_cast<const char*>(in.data()), in.size());
-            // The tray offers "copy server link" and is a separate
-            // process, so the link is left where it can read it. Its
-            // absence is what "not in a game" looks like from there.
-            const std::string invite_path = []() {
-                const char* xdg = std::getenv("XDG_RUNTIME_DIR");
-                return std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/invite";
-            }();
-            if (body.empty()) {
-                std::printf("stud-render-host: Discord presence: the app shell\n");
-                std::fflush(stdout);
-                ::unlink(invite_path.c_str());
-                stud::render_host::discord_rpc_set_game({});
-                return 0;
-            }
-            std::string info;
-            if (!run_ui_secret_helper("--game-info", body, std::string(), &info) || info.empty()) {
-                return 0;
-            }
-            // One field per line, in a fixed order, so no JSON parser is
-            // needed on this side: name, creator, thumbnail, join url.
-            stud::render_host::GamePresence presence;
-            std::string* fields[] = {&presence.universe_name, &presence.creator_name,
-                                      &presence.thumbnail_url, &presence.join_url};
-            size_t start = 0;
-            for (size_t i = 0; i < 4 && start <= info.size(); ++i) {
-                const size_t nl = info.find('\n', start);
-                const size_t end = nl == std::string::npos ? info.size() : nl;
-                *fields[i] = info.substr(start, end - start);
-                if (nl == std::string::npos) break;
-                start = nl + 1;
-            }
-            // Written before the join-button setting is applied: the tray
-            // entry is the user asking for the link explicitly, which is a
-            // different question from putting it on a public presence.
-            if (!presence.join_url.empty()) {
-                if (FILE* f = std::fopen(invite_path.c_str(), "w")) {
-                    std::fputs(presence.join_url.c_str(), f);
-                    std::fclose(f);
-                }
-            }
-            if (!g_discord_join_button) presence.join_url.clear();
-            std::printf("stud-render-host: Discord presence: %s by %s%s\n",
-                        presence.universe_name.c_str(), presence.creator_name.c_str(),
-                        presence.join_url.empty() ? "" : " (with a join button)");
-            std::fflush(stdout);
-            presence.started_at = static_cast<int64_t>(::time(nullptr));
-            stud::render_host::discord_rpc_set_game(presence);
-            return 0;
-        }
-        case CallId::NotifyServerRegion: {
-            // Fire and forget: a join must never wait on a lookup, and a
-            // failed one simply produces no notification.
-            std::string ip(reinterpret_cast<const char*>(in.data()), in.size());
-            if (ip.empty()) return 0;
-            std::printf("stud-render-host: looking up the region for the game server\n");
-            std::fflush(stdout);
-            run_ui_helper_detached("--notify-region", ip);
-            return 0;
-        }
-        case CallId::SetPointerLocked:
-            stud::android_glue::native_window_set_pointer_locked(g_real_window, a[0] != 0);
-            return 0;
-        case CallId::PollInputEvents: {
-            // Real seat events queued by android-glue's own Wayland
-            // listeners (this process already dispatches that fd in its
-            // main poll loop). Reply with as many as the client's buffer
-            // can hold; the rest stay queued for the next poll.
-            // Pump the display HERE, first.
-            //
-            // A pointer event only reaches the queue when something
-            // dispatches Wayland, and the main loop does that at most
-            // every STUD_WL_POLL_MS (50ms), and not at all while a busy
-            // client keeps the connection saturated, which is exactly
-            // when the mouse is moving. The hand could therefore be up to
-            // a twentieth of a second ahead of the queue before Process B
-            // even asked. Pumping at the moment input is requested makes
-            // the answer as fresh as the compositor has it.
-            using stud::android_glue::HostInputEvent;
-            size_t capacity = hdr.out_buffer_len / sizeof(HostInputEvent);
-            if (capacity == 0) return 0;
-            out.resize(capacity * sizeof(HostInputEvent));
-            size_t n = 0;
-            // Wait for one, if the caller said it may.
-            //
-            // A pointer event only enters the queue when something
-            // dispatches Wayland, and the main loop does that on a
-            // timeout (and not at all while a busy client keeps the
-            // connection saturated, which is exactly when the mouse is
-            // moving). So the pump happens HERE, and rather than answer
-            // "nothing yet" and be asked again a few milliseconds later,
-            // the reply waits on the compositor's own fd and leaves the
-            // instant an event lands.
-            const auto deadline = std::chrono::steady_clock::now() +
-                                  std::chrono::milliseconds(static_cast<int>(a[0]));
-            const bool wayland = !window.on_x11() && window.display != nullptr;
-            const int wl_fd = wayland ? wl_display_get_fd(window.display) : -1;
-            for (;;) {
-                // Whatever the driver's own reads already put on the
-                // queue, first and for free.
-                if (wayland) {
-                    dispatch_input_queue(window.display, false);
-                } else {
-                    // Events only, and nothing else.
-                    //
-                    // This used to call the whole display pump, which on
-                    // X11 also takes the lock the present path needs and
-                    // re-checks the window size, every time round a loop
-                    // that runs every few milliseconds. The Wayland side
-                    // has always done only what this does: drain what has
-                    // already arrived.
-                    std::lock_guard<std::mutex> lock(wayland_mutex());
-                    stud::android_glue::native_window_pump_x11_events_only();
-                }
-                n = stud::android_glue::native_window_drain_input_events(
-                    reinterpret_cast<HostInputEvent*>(out.data()), capacity);
-                if (n > 0) break;
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= deadline) break;
-                auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-                int wait_ms = static_cast<int>(left.count());
-                if (wait_ms <= 0) wait_ms = 1;
-                if (!wayland) {
-                    // The X connection has a socket like any other, so
-                    // wait on it rather than sleeping in a loop: the same
-                    // shape as the Wayland branch below, one wake when
-                    // something actually arrives instead of a timer that
-                    // fires whether or not anything did.
-                    const int x_fd = stud::android_glue::native_window_x11_fd();
-                    if (x_fd < 0) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
-                        continue;
-                    }
-                    pollfd xp{x_fd, POLLIN, 0};
-                    if (::poll(&xp, 1, wait_ms) > 0 && (xp.revents & POLLIN) != 0) {
-                        std::lock_guard<std::mutex> lock(wayland_mutex());
-                        stud::android_glue::native_window_pump_x11_events_only();
-                    }
-                    n = stud::android_glue::native_window_drain_input_events(
-                        reinterpret_cast<HostInputEvent*>(out.data()), capacity);
-                    if (n > 0) break;
-                    continue;
-                }
-                // Asleep until the compositor actually says something,
-                // one wake, and only if there is something to read.
-                pollfd wl{wl_fd, POLLIN, 0};
-                if (::poll(&wl, 1, wait_ms) > 0 && (wl.revents & POLLIN) != 0) {
-                    dispatch_input_queue(window.display, true);
-                    n = stud::android_glue::native_window_drain_input_events(
-                        reinterpret_cast<HostInputEvent*>(out.data()), capacity);
-                    if (n > 0) break;
-                }
-                // A controller is evdev, not the compositor, so it is not
-                // what this waits on. It is drained below, at most one
-                // wait late, which is no worse than the timer this
-                // replaces.
-            }
-
-            // Controllers are read here rather than by android-glue: they
-            // come from evdev, not from the compositor, and Process B's
-            // sandbox has a synthetic /dev by design. They ride the same
-            // queue so there is one path in and one drain.
-            if (n < capacity) {
-                static std::vector<stud::render_host::gamepad::Event> pad_events;
-                pad_events.clear();
-                stud::render_host::gamepad::poll(pad_events);
-                auto* slots = reinterpret_cast<HostInputEvent*>(out.data());
-                for (const auto& pad : pad_events) {
-                    if (n >= capacity) break;  // the rest arrive next poll
-                    HostInputEvent& slot = slots[n++];
-                    slot = HostInputEvent{};
-                    switch (pad.type) {
-                        case stud::render_host::gamepad::Event::kConnect:
-                            slot.type = HostInputEvent::kGamepadConnect;
-                            break;
-                        case stud::render_host::gamepad::Event::kDisconnect:
-                            slot.type = HostInputEvent::kGamepadDisconnect;
-                            break;
-                        case stud::render_host::gamepad::Event::kButton:
-                            slot.type = HostInputEvent::kGamepadButton;
-                            break;
-                        case stud::render_host::gamepad::Event::kSupportedKey:
-                            slot.type = HostInputEvent::kGamepadSupportedKey;
-                            break;
-                        case stud::render_host::gamepad::Event::kSupportedAxis:
-                            slot.type = HostInputEvent::kGamepadSupportedAxis;
-                            break;
-                        default:
-                            slot.type = HostInputEvent::kGamepadAxis;
-                            break;
-                    }
-                    slot.code = static_cast<uint32_t>(pad.code);
-                    // An axis is a vector: all three floats travel. Every
-                    // other kind uses the first one only.
-                    slot.x = pad.v0;
-                    slot.y = pad.v1;
-                    slot.a = pad.type == stud::render_host::gamepad::Event::kAxis ? pad.v2
-                                                                                  : pad.v0;
-                    slot.b = static_cast<float>(pad.device_id);
-                }
-            }
-            out.resize(n * sizeof(HostInputEvent));
-            *out_len = static_cast<uint32_t>(out.size());
-            return n;
-        }
+            break;
         case CallId::GlTexStorage2D:
             trace_texture_upload("storage", g_bound_texture_2d, static_cast<GLint>(a[1]),
                                  static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
