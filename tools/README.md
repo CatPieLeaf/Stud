@@ -1,8 +1,13 @@
 # tools
 
-Standalone diagnostics and the dependency setup script. None of these are
-part of Stud itself; nothing in `ui/`, `runtime/` or `render-host/`
-depends on them.
+Three kinds of thing live here: the dependency setup script, the release
+pipeline's own checkers, and standalone diagnostics.
+
+Only the diagnostics are optional. `setup.sh` fetches what the build needs,
+`png_to_argb_header.py` is a build step (`android-glue/CMakeLists.txt` runs
+it to turn the cursor PNGs into a header), and the Python checkers under
+"release tooling" below are run by `.github/workflows/release.yml` -- a
+release fails without them.
 
 - **`setup.sh`**: fetches the three third-party dependencies into
   `third_party/` (the NDK, an ANGLE build, a real extracted bionic).

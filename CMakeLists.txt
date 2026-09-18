@@ -148,6 +148,20 @@ unset(CMAKE_POLICY_VERSION_MINIMUM)
 set(STUD_ANDROID_NDK_ROOT "${STUD_THIRD_PARTY_DIR}/android-ndk-r28c" CACHE PATH
     "Path to the Android NDK used to build Stud's bionic runtime process")
 
+# nlohmann_json, once, for every host-side target that wants it
+# (stud-config, stud-ipc and render's dev toggle). Those three each used to
+# declare it themselves, guarded, which is three places to bump a version
+# in. The bionic sub-build under runtime/ is a separate CMake project and
+# keeps its own declaration by necessity.
+include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(nlohmann_json)
+
 add_subdirectory(bionic-runtime)
 add_subdirectory(cpu-compat)
 add_subdirectory(android-glue)
