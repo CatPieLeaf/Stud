@@ -487,6 +487,28 @@ public:
         std::printf("stud: LocalStorage seeded current user id=%lld\n", user_id);
         std::fflush(stdout);
     }
+    // Forgets the signed-in account, which is what a logout is.
+    //
+    // The same two lines deleteCurrentUserValues() runs, reachable from
+    // outside the JNI surface because on a logout the engine never calls
+    // it. Live-caught: signing out cleared the .ROBLOSECURITY cookie and
+    // routed the app back to Landing, while this store kept the revoked
+    // session for that account, encrypted in the keyring, indefinitely.
+    //
+    // Only the CURRENT user. Roblox keeps several accounts signed in at
+    // once and each has its own entry here, so signing out of one must
+    // leave the others exactly as they were.
+    static void forget_current_user_values() {
+        const long long user = current_user();
+        if (user == 0) return;
+        const size_t erased = store().erase(user);
+        current_user() = 0;
+        persist();
+        std::printf("stud: LocalStorage forgot the signed-out account id=%lld (%s)\n", user,
+                    erased != 0 ? "its stored values are gone" : "it had no stored values");
+        std::fflush(stdout);
+    }
+
     static void seed_secure_value(long long user_id, const std::string& key,
                                    const std::string& value) {
         auto& slot = store()[user_id][key];
