@@ -2588,6 +2588,24 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // The user closed the window.
+        //
+        // This arrives as a message rather than as a dead socket on
+        // purpose: leaving a running experience is something only the
+        // engine can tell the server, and it only does so if the teardown
+        // below actually runs. render-host stays up and keeps answering
+        // until this process has gone through it.
+        {
+            uint64_t close_args[8] = {};
+            if (stud::render_client::connection().call(
+                    stud::render_host::CallId::PollWindowCloseRequested, close_args, nullptr, 0,
+                    nullptr, 0, nullptr) != 0) {
+                std::printf("stud: the window was closed, leaving the experience\n");
+                std::fflush(stdout);
+                g_should_keep_running.store(false, std::memory_order_relaxed);
+                break;
+            }
+        }
         // A closed web-view panel has to be reported back, or the Lua
         // app keeps showing the placeholder screen it puts behind one.
         {

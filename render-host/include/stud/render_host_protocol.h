@@ -716,6 +716,17 @@ enum class CallId : uint32_t {
     // vkCmdCopyImageToBuffer had no path back at all: the copy ran and
     // the engine read whatever was already in its own pages.
     VkReadMappedMemory,
+
+    // Whether the user has closed the window.
+    //
+    // Process B has to hear about this rather than simply losing its
+    // socket: leaving a running experience is a real message to a real
+    // Roblox server, and the engine only sends it if something calls
+    // nativeAppBridgeV2LeaveGame. render-host exiting the instant the
+    // titlebar X is clicked took the connection away first, so the
+    // teardown never ran and the account stayed in the server until it
+    // timed out.
+    PollWindowCloseRequested,
 };
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -972,9 +983,10 @@ inline const char* call_id_name(CallId id) {
         "VkShareMappedMemory",
         "VkWriteSharedMappedMemory",
         "VkReadMappedMemory",
+        "PollWindowCloseRequested",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VkReadMappedMemory) + 1,
+                      static_cast<size_t>(CallId::PollWindowCloseRequested) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
