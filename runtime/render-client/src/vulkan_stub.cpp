@@ -97,6 +97,12 @@ VkResult enumerate_properties(const char* layer_name, uint32_t* pCount, VkT* pPr
 
     const uint32_t have = (written - sizeof(uint32_t)) / sizeof(WireT);
     const uint32_t n = count < have ? count : have;
+    // What is really in pProperties when this returns. The PVRTC entry
+    // below is written AT index n, so reporting n alone said "there are n
+    // extensions" while having written n + 1 -- the emulated extension was
+    // handed over and then hidden, so nothing could ever find it. The
+    // engine only uses PVRTC formats if it sees this extension.
+    uint32_t written_back = n;
     for (uint32_t i = 0; i < n; ++i) {
         WireT w{};
         std::memcpy(&w, out.data() + sizeof(uint32_t) + i * sizeof(WireT), sizeof(WireT));
@@ -1283,7 +1289,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumerateDeviceExtensionProperties(
     // own.
     const bool advertise_pvrtc = emulating(VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG);
     if (advertise_pvrtc) ++count;
-    ++count;
     if (pProperties == nullptr) {
         *pPropertyCount = count;
         return static_cast<VkResult>(static_cast<int32_t>(r));
@@ -1291,6 +1296,12 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumerateDeviceExtensionProperties(
     const uint32_t have =
         (written - sizeof(uint32_t)) / sizeof(vk_wire::ExtensionProperties);
     const uint32_t n = count < have ? count : have;
+    // What is really in pProperties when this returns. The PVRTC entry is
+    // written AT index n, so reporting n alone said "there are n
+    // extensions" while having written n + 1 -- the emulated extension was
+    // handed over and then hidden, and the engine only uses PVRTC formats
+    // if it finds this extension.
+    uint32_t written_back = n;
     for (uint32_t i = 0; i < n; ++i) {
         vk_wire::ExtensionProperties w{};
         std::memcpy(&w, out.data() + sizeof(uint32_t) + i * sizeof(w), sizeof(w));
@@ -1302,6 +1313,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumerateDeviceExtensionProperties(
         std::snprintf(pProperties[n].extensionName, sizeof(pProperties[n].extensionName), "%s",
                       VK_IMG_FORMAT_PVRTC_EXTENSION_NAME);
         pProperties[n].specVersion = VK_IMG_FORMAT_PVRTC_SPEC_VERSION;
+        ++written_back;
     }
     // Deliberately NOT advertising VK_GOOGLE_display_timing, though Stud
     // implements it above and could. Measured: advertising it changes
@@ -1313,7 +1325,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumerateDeviceExtensionProperties(
     // history behind it, claiming support buys nothing and risks a
     // consumer that does use it. The implementation stays, so it is one
     // line away if that ever changes.
-    *pPropertyCount = n;
+    *pPropertyCount = written_back;
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
 
