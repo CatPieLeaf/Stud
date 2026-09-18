@@ -2743,93 +2743,45 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
         c = UpscaleChain{};
         return;
     }
-    for (auto v : c.src_views) {
-        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
-            l.destroy_image_view(l.device, v, nullptr);
-        }
-    }
-    for (auto v : c.dst_views) {
-        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
-            l.destroy_image_view(l.device, v, nullptr);
-        }
-    }
-    if (c.descriptor_pool != VK_NULL_HANDLE && l.destroy_descriptor_pool != nullptr) {
-        l.destroy_descriptor_pool(l.device, c.descriptor_pool, nullptr);
-    }
-    if (c.sharpen_pool != VK_NULL_HANDLE && l.destroy_descriptor_pool != nullptr) {
-        l.destroy_descriptor_pool(l.device, c.sharpen_pool, nullptr);
-    }
-    if (c.pipeline != VK_NULL_HANDLE && l.destroy_pipeline != nullptr) {
-        l.destroy_pipeline(l.device, c.pipeline, nullptr);
-    }
-    if (c.pipeline_layout != VK_NULL_HANDLE && l.destroy_pipeline_layout != nullptr) {
-        l.destroy_pipeline_layout(l.device, c.pipeline_layout, nullptr);
-    }
-    if (c.set_layout != VK_NULL_HANDLE && l.destroy_descriptor_set_layout != nullptr) {
-        l.destroy_descriptor_set_layout(l.device, c.set_layout, nullptr);
-    }
-    if (c.sampler != VK_NULL_HANDLE && l.destroy_sampler != nullptr) {
-        l.destroy_sampler(l.device, c.sampler, nullptr);
-    }
-    if (c.shader != VK_NULL_HANDLE && l.destroy_shader_module != nullptr) {
-        l.destroy_shader_module(l.device, c.shader, nullptr);
-    }
-    if (c.sharpen_shader != VK_NULL_HANDLE && l.destroy_shader_module != nullptr) {
-        l.destroy_shader_module(l.device, c.sharpen_shader, nullptr);
-    }
-    if (c.sharpen_pipeline != VK_NULL_HANDLE && l.destroy_pipeline != nullptr) {
-        l.destroy_pipeline(l.device, c.sharpen_pipeline, nullptr);
-    }
-    for (auto v : c.sharpen_src_views) {
-        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
-            l.destroy_image_view(l.device, v, nullptr);
-        }
-    }
-    for (auto v : c.sharpen_dst_views) {
-        if (v != VK_NULL_HANDLE && l.destroy_image_view != nullptr) {
-            l.destroy_image_view(l.device, v, nullptr);
-        }
-    }
-    for (auto img : c.sharpened) {
-        if (img != VK_NULL_HANDLE && l.destroy_image != nullptr) {
-            l.destroy_image(l.device, img, nullptr);
-        }
-    }
-    for (auto mem : c.sharpened_memory) {
-        if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
-    }
-    for (auto f : c.fence) {
-        if (f != VK_NULL_HANDLE && l.destroy_fence != nullptr) l.destroy_fence(l.device, f, nullptr);
-    }
-    for (auto sem : c.done) {
-        if (sem != VK_NULL_HANDLE && l.destroy_semaphore != nullptr) {
-            l.destroy_semaphore(l.device, sem, nullptr);
-        }
-    }
-    if (c.pool != VK_NULL_HANDLE && l.destroy_command_pool != nullptr) {
-        l.destroy_command_pool(l.device, c.pool, nullptr);
-    }
-    for (auto img : c.offscreen) {
-        if (img != VK_NULL_HANDLE && l.destroy_image != nullptr) {
-            l.destroy_image(l.device, img, nullptr);
-        }
-    }
-    for (auto img : c.staging) {
-        if (img != VK_NULL_HANDLE && l.destroy_image != nullptr) {
-            l.destroy_image(l.device, img, nullptr);
-        }
-    }
-    for (auto mem : c.memory) {
-        if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
-    }
-    for (auto mem : c.staging_memory) {
-        if (mem != VK_NULL_HANDLE && l.free_memory != nullptr) l.free_memory(l.device, mem, nullptr);
-    }
-    for (auto sem : c.retired) {
-        if (sem != VK_NULL_HANDLE && l.destroy_semaphore != nullptr) {
-            l.destroy_semaphore(l.device, sem, nullptr);
-        }
-    }
+    // Every line below was the same three: check the handle, check the
+    // entry point the driver may not have, then call it. Fifteen copies of
+    // that is where this function's complexity came from, not the work it
+    // does.
+    //
+    // Deliberately does NOT null the handle afterwards, because the
+    // original did not either: `c` is assigned a fresh UpscaleChain at the
+    // end, which is what clears it, and a half-cleared chain in between
+    // would be a different thing than what shipped.
+    const auto destroy = [&l](auto fn, auto handle) {
+        if (handle != VK_NULL_HANDLE && fn != nullptr) fn(l.device, handle, nullptr);
+    };
+    const auto destroy_all = [&destroy](auto fn, const auto& handles) {
+        for (auto h : handles) destroy(fn, h);
+    };
+
+    destroy_all(l.destroy_image_view, c.src_views);
+    destroy_all(l.destroy_image_view, c.dst_views);
+    destroy(l.destroy_descriptor_pool, c.descriptor_pool);
+    destroy(l.destroy_descriptor_pool, c.sharpen_pool);
+    destroy(l.destroy_pipeline, c.pipeline);
+    destroy(l.destroy_pipeline_layout, c.pipeline_layout);
+    destroy(l.destroy_descriptor_set_layout, c.set_layout);
+    destroy(l.destroy_sampler, c.sampler);
+    destroy(l.destroy_shader_module, c.shader);
+    destroy(l.destroy_shader_module, c.sharpen_shader);
+    destroy(l.destroy_pipeline, c.sharpen_pipeline);
+    destroy_all(l.destroy_image_view, c.sharpen_src_views);
+    destroy_all(l.destroy_image_view, c.sharpen_dst_views);
+    destroy_all(l.destroy_image, c.sharpened);
+    destroy_all(l.free_memory, c.sharpened_memory);
+    destroy_all(l.destroy_fence, c.fence);
+    destroy_all(l.destroy_semaphore, c.done);
+    destroy(l.destroy_command_pool, c.pool);
+    destroy_all(l.destroy_image, c.offscreen);
+    destroy_all(l.destroy_image, c.staging);
+    destroy_all(l.free_memory, c.memory);
+    destroy_all(l.free_memory, c.staging_memory);
+    destroy_all(l.destroy_semaphore, c.retired);
     c = UpscaleChain{};
 }
 
