@@ -2488,13 +2488,11 @@ int main(int argc, char** argv) {
             for (const auto& header : live) {
                 const auto eq = header.find('=');
                 const std::string name = eq == std::string::npos ? header : header.substr(0, eq);
-                bool already = false;
-                for (const auto& have : cookies) {
-                    if (have.rfind(name + "=", 0) == 0) {
-                        already = true;
-                        break;
-                    }
-                }
+                const std::string prefix = name + "=";
+                const bool already =
+                    std::any_of(cookies.begin(), cookies.end(), [&prefix](const auto& have) {
+                        return have.rfind(prefix, 0) == 0;
+                    });
                 if (!already) cookies.push_back(header);
             }
             // The theme the app is running in, as the site's own cookie.
