@@ -205,8 +205,8 @@ bool enable_raw_motion(Display* display) {
         xi.handle = ::dlopen("libXi.so.6", RTLD_NOW | RTLD_LOCAL);
         if (xi.handle == nullptr) {
             std::fprintf(stderr,
-                         "stud: android-glue: no libXi.so.6, so a camera spin stops at the edge "
-                         "of the window (%s)\n",
+                         "stud: android-glue: no libXi.so.6, so pointer motion comes from the "
+                         "window rather than the device; the camera still spins freely (%s)\n",
                          ::dlerror());
             return false;
         }
