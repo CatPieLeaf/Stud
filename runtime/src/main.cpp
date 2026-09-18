@@ -2149,6 +2149,13 @@ int main(int argc, char** argv) {
         std::printf("stud: the engine cleared %s, so the stored copy is forgotten too\n",
                     cookie_name.c_str());
         std::fflush(stdout);
+        // The session also lives in the local-storage document, per
+        // account, and the engine does not clear it on the way out even
+        // though it has the call to do so. See
+        // forget_current_user_values().
+        if (cookie_name == ".ROBLOSECURITY") {
+            stud::jni_bridge::LocalStoragePlatformStub::forget_current_user_values();
+        }
     });
     stud::jni_bridge::subscribe_to_experience_launch(jvm, lib);
     // Android's runtime permissions, which nothing in this process has
