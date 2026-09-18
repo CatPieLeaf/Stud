@@ -74,7 +74,19 @@ option(STUD_ENABLE_DEV_RENDER_TOGGLE "Enable the prototype-only dev render-backe
 # they all come from here.
 set(STUD_APP_ID "io.github.catpieleaf.Stud" CACHE STRING
     "Reverse-DNS application id: desktop entry, AppStream component and Wayland app_id")
-set(STUD_VERSION "1.1.5" CACHE STRING "Stud version, used for packages and AppStream")
+set(STUD_VERSION "${PROJECT_VERSION}" CACHE STRING
+    "Stud version, used for packages and AppStream")
+# A cache entry is written once and then kept, so bumping the version above
+# leaves an existing build directory building and REPORTING the old one --
+# which is exactly how a freshly built Stud still called itself 1.1.4. A
+# packager passing -DSTUD_VERSION is doing it deliberately and is left
+# alone; anyone else is told what to run.
+if(NOT STUD_VERSION STREQUAL PROJECT_VERSION)
+  message(WARNING
+    "STUD_VERSION is ${STUD_VERSION} but this source tree is ${PROJECT_VERSION}. "
+    "This build directory was configured before the bump; re-run cmake with "
+    "-DSTUD_VERSION=${PROJECT_VERSION} to build what the tree says it is.")
+endif()
 
 # Where an install puts things. Defined before any add_subdirectory()
 # below, because a subdirectory is processed where it is added and would
