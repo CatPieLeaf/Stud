@@ -1057,6 +1057,13 @@ struct ResponseHeader {
 // this race, not a hang inside Roblox's own code. Fixed by serializing
 // the whole round-trip with a mutex, so `call()` is atomic with respect
 // to other threads sharing the same Client.
+// STUD_IPC_STATS: round-trip counts and wall time per frame. Read once
+// rather than once per method that reports them.
+inline bool ipc_stats_enabled() {
+    static const bool on = std::getenv("STUD_IPC_STATS") != nullptr;
+    return on;
+}
+
 class Client {
 public:
     bool connect_to(const std::string& path) {
@@ -1137,7 +1144,7 @@ public:
         // request, block for a reply, so this is the number that decides
         // Stud's frame rate ceiling, and it should be measured before the
         // protocol is changed to chase it.
-        static const bool stats = std::getenv("STUD_IPC_STATS") != nullptr;
+        const bool stats = ipc_stats_enabled();
         std::chrono::steady_clock::time_point call_start;
         if (stats) call_start = std::chrono::steady_clock::now();
         // STUD_IPC_TOP=1: which call ids the round-trips actually go to.
@@ -1411,7 +1418,7 @@ public:
 
     void call_void(CallId id, const uint64_t (&args)[8], const void* in_buffer = nullptr,
                    uint32_t in_len = 0, uint64_t pixel_buffer_offset_plus_one = 0) {
-        static const bool stats = std::getenv("STUD_IPC_STATS") != nullptr;
+        const bool stats = ipc_stats_enabled();
         std::chrono::steady_clock::time_point t0;
         if (stats) t0 = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lock(call_mutex_);

@@ -30,6 +30,10 @@ namespace stud::jni_bridge {
 
 namespace {
 
+// Defined further down, beside the other small helpers; declared here
+// because the pointer-confine and lock paths above it trace too.
+bool input_trace_enabled();
+
 std::atomic<bool> g_running{false};
 FakeJni::Jvm* g_jvm = nullptr;
 
@@ -389,7 +393,7 @@ void set_pointer_confined(bool confined) {
     a[0] = confined ? 1 : 0;
     stud::render_client::connection().call(CallId::SetPointerConfined, a, nullptr, 0, nullptr, 0,
                                            nullptr);
-    if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
+    if (input_trace_enabled()) {
         std::printf("stud: pointer %s the window for the drag\n",
                     confined ? "confined to" : "released from");
         std::fflush(stdout);
@@ -414,7 +418,7 @@ void set_pointer_locked(bool locked) {
     if (locked == g_drag_locked.load()) return;
     g_drag_locked.store(locked);
     if (!locked) g_resync_after_unlock.store(true);
-    if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
+    if (input_trace_enabled()) {
         std::printf("stud: pointer lock %s\n", locked ? "ON" : "off");
         std::fflush(stdout);
     }
@@ -930,6 +934,12 @@ float wheel_scale() {
     return scale;
 }
 
+// STUD_INPUT_TRACE, read once.
+//
+// Six call sites used to call getenv() themselves, on live input paths --
+// every pointer confine, every lock change, every focus event -- so a
+// disabled trace still cost a lookup per event. One cached answer now,
+// declared in the header above so the early sites can reach it too.
 bool input_trace_enabled() {
     static const bool on = std::getenv("STUD_INPUT_TRACE") != nullptr;
     return on;
@@ -1848,13 +1858,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                                       ed.selection_end());
                 }
                 if (changed) {
-                    if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
+                    if (input_trace_enabled()) {
                         // Length only, never the content, which can be a password.
                         std::printf("stud: input bridge: nativePassText -> %zu chars\n",
                                     text.size());
                         std::fflush(stdout);
                     }
-                    if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
+                    if (input_trace_enabled()) {
                         static bool told_handle = false;
                         if (!told_handle) {
                             told_handle = true;
@@ -2021,7 +2031,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     g_agdk_activity_ref, g_agdk.on_window_focus_changed, g_agdk.handle,
                     static_cast<jboolean>(focused ? JNI_TRUE : JNI_FALSE));
             }
-            if (std::getenv("STUD_INPUT_TRACE") != nullptr) {
+            if (input_trace_enabled()) {
                 std::printf("stud: input bridge: window focus %s\n", focused ? "gained" : "lost");
                 std::fflush(stdout);
             }
@@ -2485,7 +2495,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 for (size_t i = 0; i < count; ++i) {
                     if (batch[i].type < 14) ++counts[batch[i].type];
                 }
-                static const bool input_trace = std::getenv("STUD_INPUT_TRACE") != nullptr;
+                const bool input_trace = input_trace_enabled();
                 auto now = std::chrono::steady_clock::now();
                 if (input_trace && now - last_report > std::chrono::seconds(2)) {
                     last_report = now;
@@ -2727,7 +2737,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 }
                 if (asked) {
                     static int last_reported = -1;
-                    if (std::getenv("STUD_INPUT_TRACE") != nullptr && locked != last_reported) {
+                    if (input_trace_enabled() && locked != last_reported) {
                         last_reported = locked;
                         std::printf("stud: engine LockCenter = %d\n", static_cast<int>(locked));
                         std::fflush(stdout);
