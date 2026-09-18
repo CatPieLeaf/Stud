@@ -231,7 +231,7 @@ void draw(const TextOverlaySpec& spec, Overlay& o, const WaylandOverlayDeps& dep
     auto* px = static_cast<uint32_t*>(o.pixels);
     std::memset(px, 0, o.mapped);
 
-    Face* f = spec.font_path.empty() ? nullptr : face_for(spec.font_path);
+    const Face* f = spec.font_path.empty() ? nullptr : face_for(spec.font_path);
     if (f == nullptr) return;
     FT_Face face = f->face;
     const float size_px = spec.pixel_size > 1.0f ? spec.pixel_size : 1.0f;

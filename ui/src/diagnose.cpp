@@ -200,7 +200,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
     // even loaded for a device Vulkan did not report.
     std::string nodes;
     if (DIR* dir = ::opendir("/dev/dri")) {
-        while (dirent* entry = ::readdir(dir)) {
+        while (const dirent* entry = ::readdir(dir)) {
             const std::string name = entry->d_name;
             if (name.rfind("render", 0) != 0 && name.rfind("card", 0) != 0) continue;
             if (!nodes.empty()) nodes += ", ";

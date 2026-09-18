@@ -74,7 +74,7 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     jobject game_activity_instance = env.createLocalReference(main_game_activity);
     jobject configuration_instance = env.createLocalReference(std::make_shared<ConfigurationStub>());
 
-    ALooper* looper_on_this_thread = ALooper_forThread();
+    const ALooper* looper_on_this_thread = ALooper_forThread();
     if (looper_on_this_thread == nullptr) {
         // AGDK's own initializeNativeCode returns null on this, silently.
         std::fprintf(stderr, "stud: no ALooper on the thread calling initializeNativeCode\n");

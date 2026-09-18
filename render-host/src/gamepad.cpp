@@ -456,7 +456,7 @@ void read_device(Device& device, std::vector<Event>& out, bool& died) {
 void scan(std::vector<Event>& out) {
     DIR* dir = ::opendir("/dev/input");
     if (dir == nullptr) return;
-    while (dirent* entry = ::readdir(dir)) {
+    while (const dirent* entry = ::readdir(dir)) {
         if (std::strncmp(entry->d_name, "event", 5) != 0) continue;
         const std::string path = std::string("/dev/input/") + entry->d_name;
         if (devices().count(path) != 0) continue;

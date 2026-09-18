@@ -329,7 +329,7 @@ std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs_
 
 bool MappedWriteBarrier::handle_write_fault(void* addr) {
     if (base_ == nullptr || !armed_) return false;
-    auto* p = static_cast<uint8_t*>(addr);
+    const auto* p = static_cast<uint8_t*>(addr);
     const std::size_t ps = page_size();
     if (p < base_ || p >= base_ + pages_ * ps) return false;
     std::lock_guard<std::mutex> guard(lock_);
