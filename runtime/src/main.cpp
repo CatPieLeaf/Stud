@@ -40,6 +40,7 @@
 #include "stud/android_glue.h"
 #include "stud/stud_paths.h"
 #include "stud/app_bridge.h"
+#include "stud/cpu_compat.h"
 #include "stud/bionic_jvm.h"
 #include "stud/bootstrap.h"
 #include "stud/canonical_vm_registry.h"
@@ -66,6 +67,7 @@
 #include "stud/native_settings.h"
 #include "render_client_common.h"
 #include "stud/input_bridge.h"
+#include "stud/haptics_bridge.h"
 #include "stud/start_app_params.h"
 #include "stud/start_game_params.h"
 #include "stud/ndk_types.h"
@@ -346,6 +348,32 @@ int main(int argc, char** argv) {
     // Before anything else prints: the session log Process A named, so
     // this process's whole bring-up is in it (stud/session_log.h).
     stud::logging::start_session_log_from_env();
+
+    // The CPU shim, before libroblox is loaded, because it exists to
+    // catch instructions libroblox itself executes.
+    //
+    // Deliberately NOT a conflict with trap_recovery: that one claims
+    // SIGABRT, SIGTRAP and SIGSEGV (trap_recovery.cpp's own sigaction
+    // calls), and this claims SIGILL, which nothing else here touches.
+    //
+    // Honest about what this is worth: the emulation cannot be proven on
+    // a machine that already has the instructions, and every machine
+    // this has run on does. What IS proven here is the refusal below --
+    // a CPU without SSE4.1 cannot run the engine at all, and saying so
+    // beats a SIGILL crash inside libroblox with no explanation.
+    {
+        const auto features = stud::cpu_compat::detect_cpu_features();
+        if (!stud::cpu_compat::meets_minimum_requirements(features)) {
+            std::fprintf(stderr,
+                         "stud: this CPU is missing SSE4.1, which the engine needs throughout; "
+                         "Stud cannot run here\n");
+            return 1;
+        }
+        if (!features.popcnt && stud::cpu_compat::install_sigill_handler()) {
+            std::printf("stud: this CPU has no POPCNT; emulating it on SIGILL\n");
+            std::fflush(stdout);
+        }
+    }
 
     // Process B's own fatal-signal handling is trap_recovery's, which
     // recovers rather than reports. It installs itself later and must
@@ -2736,6 +2764,8 @@ int main(int argc, char** argv) {
         // Same reasoning as the teardown below: the engine's threads are
         // still live and are about to lose the process under them.
         stud::jni_bridge::note_shutting_down();
+        stud::jni_bridge::stop_input_bridge();
+        stud::jni_bridge::stop_haptics();
         std::printf("stud: no render host to shut down against, exiting\n");
         std::fflush(stdout);
         std::fflush(stderr);
@@ -2750,6 +2780,11 @@ int main(int argc, char** argv) {
     // From here the engine is being destroyed under its own still-running
     // threads, so a fault on one of them is the teardown, not a bug.
     stud::jni_bridge::note_shutting_down();
+    // The two threads Stud owns here, told to stop before the engine is
+    // destroyed under them. Both only store a flag, so neither waits on
+    // anything and neither can hold the teardown up.
+    stud::jni_bridge::stop_input_bridge();
+    stud::jni_bridge::stop_haptics();
     try {
         stud::jni_bridge::run_engine_v2_teardown(jvm, lib);
     } catch (const std::exception& e) {
