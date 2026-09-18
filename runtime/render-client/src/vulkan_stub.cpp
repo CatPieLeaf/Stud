@@ -3482,7 +3482,6 @@ void record(VkCommandBuffer cb, vk_wire::CmdKind kind, const std::vector<uint8_t
             std::fflush(stderr);
         }
     }
-    uint64_t a[8] = {to_u64(cb), static_cast<uint64_t>(kind)};
     if (frame_timing_enabled()) {
         ++frame_timing().cmds;
         frame_timing().cmd_bytes += in.size();
@@ -3505,7 +3504,6 @@ void record(VkCommandBuffer cb, vk_wire::CmdKind kind, const std::vector<uint8_t
 void record_bytes(VkCommandBuffer cb, vk_wire::CmdKind kind, const void* in, size_t len) {
     const auto rec_t0 = frame_timing_enabled() ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};
-    uint64_t a[8] = {to_u64(cb), static_cast<uint64_t>(kind)};
     if (frame_timing_enabled()) {
         ++frame_timing().cmds;
         ++frame_timing().f_cmds;

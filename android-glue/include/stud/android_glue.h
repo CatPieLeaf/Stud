@@ -12,8 +12,8 @@
 // surface, provided here as real, working implementations, not stubs.
 //
 // Found necessary by actually trying to load the real extracted
-// libroblox.so through the loader (tools/try_load.cpp), the first
-// unresolved symbol was AAssetManager_fromJava, none of these 27 symbols
+// libroblox.so through the loader: the first unresolved symbol was
+// AAssetManager_fromJava, none of these 27 symbols
 // (from M1's original 546-symbol survey) had a home in libc-shim or
 // jni-bridge as scoped. See the engineering notes.
 //
