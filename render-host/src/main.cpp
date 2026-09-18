@@ -4848,6 +4848,10 @@ int main(int argc, char** argv) {
         // which is exactly the case where Process B exits first and the
         // window is meant to go with it.
         std::printf("stud-render-host: the engine disconnected, shutting down\n");
+        // Let go of the Discord socket. discord_rpc_set_game({}) already
+        // clears what is displayed when a game ends; this is the other
+        // half, for the process ending.
+        stud::render_host::discord_rpc_stop();
         close_open_web_views(/*wait_for_exit=*/true);
         ::close(conn_fd);
         ::close(listen_fd);
