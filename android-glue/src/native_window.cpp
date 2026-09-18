@@ -663,6 +663,9 @@ const wl_pointer_listener kPointerListener = {
     .axis_discrete = pointer_axis_discrete,
     .axis_value120 = pointer_axis_value120,
     .axis_relative_direction = pointer_axis_relative_direction,
+    // Version 10 added this; Stud drives the cursor itself and does not
+    // act on a compositor warp.
+    .warp = nullptr,
 };
 
 // The compositor's own keymap, which is the only authority on what any
@@ -1100,6 +1103,11 @@ const wl_output_listener kOutputListener = {
     .mode = output_mode,
     .done = output_done,
     .scale = output_scale,
+    // Version 4 of the protocol added these. Stud identifies outputs by
+    // the wl_output itself, so neither is needed; listed rather than left
+    // out so the struct says that on purpose.
+    .name = nullptr,
+    .description = nullptr,
 };
 
 void xdg_output_logical_size(void* data, zxdg_output_v1*, int32_t width, int32_t height) {
