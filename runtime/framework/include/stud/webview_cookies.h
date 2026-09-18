@@ -43,6 +43,19 @@ void set_session_cookie_sink(std::function<void(const std::string&)> sink);
 // the active one, survives a restart.
 void set_account_list_cookie_sink(std::function<void(const std::string&)> sink);
 
+// Called when the engine CLEARS one of the two cookies above, which is
+// what a logout looks like from here. The argument is the cookie name,
+// not a value: there is no value left to pass.
+//
+// Per-account logout needs nothing more than this. `rbxas` carries the
+// SET of signed-in accounts and is reissued by the server on every
+// switch and every logout, so when one account signs out the engine
+// forwards a NEW rbxas without it and the ordinary sink above stores
+// that. Stud never parses or edits the list; removing one account
+// without disturbing the others is the server's own doing. This sink is
+// only for the case where a cookie is emptied outright.
+void set_cookie_cleared_sink(std::function<void(const std::string&)> sink);
+
 // Called from the engine's own callback thread with the raw Set-Cookie
 // headers it just saw.
 void note_engine_cookies(const std::string& url, const std::vector<std::string>& headers);

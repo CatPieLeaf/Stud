@@ -1386,6 +1386,30 @@ int main(int argc, char** argv) {
         return ok ? 0 : 1;
     }
 
+    // Forgetting a credential, which is what a logout is.
+    //
+    // On a failure the value is overwritten with an empty one instead.
+    // The entry surviving is not the danger; a NEXT LAUNCH finding a
+    // usable credential in it is, and an empty value is not usable. A
+    // locked or unreachable keyring is exactly when that matters.
+    if (argc > 2 && std::string(argv[1]) == "--delete-secret") {
+        const QString name = QString::fromUtf8(argv[2]);
+        stud::ui::delete_credential(name);
+        stud::ui::delete_secret(name);
+        if (stud::ui::load_secret(name)) {
+            QString error;
+            const bool blanked = stud::ui::store_secret(name, QString(), &error);
+            std::fprintf(stderr,
+                         "stud: --delete-secret: \"%s\" survived the delete; %s\n", argv[2],
+                         blanked ? "overwrote it with an empty value"
+                                 : "could not overwrite it either");
+            return blanked ? 0 : 1;
+        }
+        std::printf("stud: secret \"%s\" forgotten\n", argv[2]);
+        std::fflush(stdout);
+        return 0;
+    }
+
     if (argc > 2 && std::string(argv[1]) == "--load-secret") {
         const auto value = stud::ui::load_secret(QString::fromUtf8(argv[2]));
         if (!value) {

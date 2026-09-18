@@ -2132,6 +2132,24 @@ int main(int argc, char** argv) {
                     value.size());
         std::fflush(stdout);
     });
+    // A logout: the engine cleared a cookie, so the stored copy goes too.
+    //
+    // Same route the storing sinks above take -- Process B does not own
+    // the keyring, render-host does -- and the same name mapping, so a
+    // cleared cookie forgets exactly the secret its value was kept in.
+    stud::jni_bridge::set_cookie_cleared_sink([](const std::string& cookie_name) {
+        const char* secret = cookie_name == "rbxas" ? kAccountListSecretName
+                           : cookie_name == ".ROBLOSECURITY" ? kSessionCookieSecretName
+                                                             : nullptr;
+        if (secret == nullptr) return;
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::DeleteSecret, args, secret,
+            static_cast<uint32_t>(std::strlen(secret)), nullptr, 0, nullptr);
+        std::printf("stud: the engine cleared %s, so the stored copy is forgotten too\n",
+                    cookie_name.c_str());
+        std::fflush(stdout);
+    });
     stud::jni_bridge::subscribe_to_experience_launch(jvm, lib);
     // Android's runtime permissions, which nothing in this process has
     // ever answered; see permissions_bridge.h. Voice chat asks for the
