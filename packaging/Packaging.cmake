@@ -65,7 +65,7 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # itself, it does not assume a distribution's package name, and naming
 # the package instead is what rpmlint calls explicit-lib-dependency.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()(64bit)")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit)")
 # Weak, both of them: mangohud is a Settings toggle, and wl-clipboard is
 # what the tray's "copy server link" shells out to on Wayland. Neither
 # stops Stud from running.
@@ -164,7 +164,7 @@ libqt6widgets6 (>= 6.4) | libqt6widgets6t64 (>= 6.4), \
 libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
 libqt6webenginewidgets6 (>= 6.4), \
 libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
-libwayland-client0, libxkbcommon0")
+libwayland-client0, libxkbcommon0, libxi6")
 # wl-clipboard because the tray's "copy server link" shells out to
 # wl-copy: a Wayland compositor only accepts a clipboard offer with the
 # serial of a real input event on one of the application's own surfaces,
