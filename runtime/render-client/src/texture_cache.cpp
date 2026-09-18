@@ -55,8 +55,8 @@ std::atomic<bool> g_pruning{false};
 void prune_once() {
     struct Entry {
         std::string path;
-        uint64_t bytes;
-        int64_t atime;
+        uint64_t bytes = 0;
+        int64_t atime = 0;
     };
     std::vector<Entry> entries;
     uint64_t total = 0;

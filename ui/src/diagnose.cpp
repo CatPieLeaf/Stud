@@ -1,8 +1,6 @@
 #include "diagnose.h"
 
-#include <QtCore/QDir>
 #include <QtCore/QFileInfo>
-#include <QtCore/QProcessEnvironment>
 #include <QtCore/QString>
 
 #include <array>
@@ -14,7 +12,6 @@
 #include <vector>
 
 #include <dirent.h>
-#include <cstdlib>
 #include <fcntl.h>
 #include <gnu/libc-version.h>
 #include <linux/input.h>

@@ -18,7 +18,6 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 
 #include <dlfcn.h>
 #include <unistd.h>
