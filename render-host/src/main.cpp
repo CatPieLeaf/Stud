@@ -1457,6 +1457,27 @@ void report_reply_free_failure(stud::render_host::CallId id, uint64_t result) {
     std::fflush(stdout);
 }
 
+// STUD_RENDER_CALL_TRACE: names the draw/clear calls, the swap counter
+// and the shader info logs. Read once, from the three places that trace.
+bool render_call_trace_enabled() {
+    static const bool on = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+    return on;
+}
+
+// STUD_WL_POLL_MS: how long a poll may block before Wayland is pumped
+// again. The Vulkan driver reads the display fd itself, so Stud's own
+// queue often has events waiting while the fd never becomes readable --
+// which makes this timeout, not the fd, what decides how often buffer
+// releases get dispatched. Both poll loops take the same answer.
+int wayland_poll_ms() {
+    static const int ms = [] {
+        const char* v = std::getenv("STUD_WL_POLL_MS");
+        const int n = v != nullptr ? std::atoi(v) : 0;
+        return n > 0 ? n : 50;
+    }();
+    return ms;
+}
+
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
@@ -1477,7 +1498,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
     // three calls that actually put pixels in a frame, since "the swap
     // loop runs" and "something real gets drawn" are two different real
     // facts and this project had only ever confirmed the first one.
-    static const bool draw_trace = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+    const bool draw_trace = render_call_trace_enabled();
     if (draw_trace && (hdr.call_id == CallId::GlClear || hdr.call_id == CallId::GlDrawArrays ||
                         hdr.call_id == CallId::GlDrawElements)) {
         std::printf("stud-render-host: real draw/clear call id=%d\n", static_cast<int>(hdr.call_id));
@@ -1814,7 +1835,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // side. Env-gated (same convention as
             // STUD_VULKAN_CALL_TRACE) since every real frame would
             // otherwise spam this.
-            static const bool trace = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+            const bool trace = render_call_trace_enabled();
             static uint64_t frame_count = 0;
             if (trace) {
                 ++frame_count;
@@ -1991,7 +2012,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // Real diagnostic, env-gated: libroblox's own FLog reports
             // "failed to link shader program X,Y," with no reason. The
             // real reason only exists here, in ANGLE's own info log.
-            static const bool trace = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
+            const bool trace = render_call_trace_enabled();
             if (trace) {
                 GLint status = 0;
                 fns.glGetProgramiv_(static_cast<GLuint>(a[0]), GL_LINK_STATUS, &status);
@@ -4714,12 +4735,7 @@ int main(int argc, char** argv) {
         // so Stud's own queue often has events waiting while this fd
         // never becomes readable: meaning this timeout, not the fd, is
         // what decides how often buffer releases get dispatched.
-        static const int wl_poll_ms = [] {
-            const char* v = std::getenv("STUD_WL_POLL_MS");
-            const int n = v != nullptr ? std::atoi(v) : 0;
-            return n > 0 ? n : 50;
-        }();
-        ::poll(pfds, 2, wl_poll_ms);
+        ::poll(pfds, 2, wayland_poll_ms());
         // Never wl_display_dispatch() here; see pump_wayland's own
         // comment: it can park this loop forever once ANGLE reads the
         // same queue from a render thread.
@@ -4797,12 +4813,7 @@ int main(int argc, char** argv) {
                 ::ioctl(conn_fd, FIONREAD, &pending) == 0 &&
                 static_cast<size_t>(pending) >= sizeof(Header);
             if (!have_buffered) {
-                static const int conn_poll_ms = [] {
-                    const char* v = std::getenv("STUD_WL_POLL_MS");
-                    const int n = v != nullptr ? std::atoi(v) : 0;
-                    return n > 0 ? n : 50;
-                }();
-                ::poll(cpfds, 2, conn_poll_ms);
+                ::poll(cpfds, 2, wayland_poll_ms());
                 pump_display(real_window, (cpfds[1].revents & POLLIN) != 0);
                 if (!(cpfds[0].revents & POLLIN)) continue;
             }
