@@ -6140,7 +6140,11 @@ present_without_upscale:
     // so it never sits empty through the engine's bring-up. No-op on
     // Wayland and after the first call.
     stud::android_glue::x11_ensure_mapped();
-    const int present_tid = static_cast<int>(::syscall(SYS_gettid));
+    // Cached per thread, not asked per present. gettid() has no vDSO
+    // entry, so this was a real syscall on every frame to answer a
+    // question whose answer cannot change for a given thread -- and the
+    // line it feeds prints once or twice in a session.
+    static thread_local const int present_tid = static_cast<int>(::syscall(SYS_gettid));
     static int announced_tid = -1;
     if (present_tid != announced_tid) {
         announced_tid = present_tid;
@@ -6213,6 +6217,9 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     // Which command was being recorded, for the crash handler. A
     // backtrace that stops at this function names the function and not
     // the command, which is the one thing needed to act on it.
+    // Left on deliberately. It is what makes a crash report name the last
+    // Vulkan command instead of only the function it died in, which is
+    // the one thing needed to act on a user's crash log.
     {
         char note[96];
         std::snprintf(note, sizeof(note), "vk_cmd_record kind=%u cb=%llx in=%zu", kind,
