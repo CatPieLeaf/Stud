@@ -6204,6 +6204,230 @@ uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count
     *out_len = static_cast<uint32_t>(out.size());
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
+// The commands that move pixels and bytes between buffers and images.
+//
+// Six arms of vk_cmd_record()'s switch, together because they are the same
+// shape: read a source, a destination, a layout pair and a region list off
+// the wire, then hand them to the driver. They share nothing with the
+// render-pass, binding and draw arms beside them.
+//
+// The arms below still `break` rather than return, exactly as they did
+// inside the larger switch, and that is equivalent: vk_cmd_record() does
+// nothing after its switch but `return 0`.
+void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
+                         vk_wire::Reader& r) {
+    using K = vk_wire::CmdKind;
+    switch (kind) {
+        case K::CopyBuffer: {
+            if (l.cmd_copy_buffer == nullptr) break;
+            VkBuffer src = from_u64<VkBuffer>(r.u64());
+            VkBuffer dst = from_u64<VkBuffer>(r.u64());
+            const uint32_t n = r.u32();
+            std::vector<VkBufferCopy> regions(n);
+            for (auto& c : regions) {
+                c.srcOffset = r.u64();
+                c.dstOffset = r.u64();
+                c.size = r.u64();
+            }
+            l.cmd_copy_buffer(cb, src, dst, n, regions.empty() ? nullptr : regions.data());
+            break;
+        }
+        case K::CopyBufferToImage: {
+            if (l.cmd_copy_buffer_to_image == nullptr) break;
+            VkBuffer src = from_u64<VkBuffer>(r.u64());
+            VkImage dst = from_u64<VkImage>(r.u64());
+            const uint32_t layout = r.u32();
+            const uint32_t n = r.u32();
+            std::vector<VkBufferImageCopy> regions(n);
+            for (auto& c : regions) {
+                c.bufferOffset = r.u64();
+                c.bufferRowLength = r.u32();
+                c.bufferImageHeight = r.u32();
+                c.imageSubresource.aspectMask = r.u32();
+                c.imageSubresource.mipLevel = r.u32();
+                c.imageSubresource.baseArrayLayer = r.u32();
+                c.imageSubresource.layerCount = r.u32();
+                c.imageOffset.x = static_cast<int32_t>(r.u32());
+                c.imageOffset.y = static_cast<int32_t>(r.u32());
+                c.imageOffset.z = static_cast<int32_t>(r.u32());
+                c.imageExtent.width = r.u32();
+                c.imageExtent.height = r.u32();
+                c.imageExtent.depth = r.u32();
+            }
+            l.cmd_copy_buffer_to_image(cb, src, dst, static_cast<VkImageLayout>(layout), n,
+                                        regions.empty() ? nullptr : regions.data());
+            break;
+        }
+        case K::CopyImageToBuffer: {
+            if (l.cmd_copy_image_to_buffer == nullptr) break;
+            VkImage src = from_u64<VkImage>(r.u64());
+            const uint64_t dst_handle = r.u64();
+            VkBuffer dst = from_u64<VkBuffer>(dst_handle);
+            const uint32_t layout = r.u32();
+            const uint32_t n = r.u32();
+            std::vector<VkBufferImageCopy> regions(n);
+            for (auto& c : regions) {
+                c.bufferOffset = r.u64();
+                c.bufferRowLength = r.u32();
+                c.bufferImageHeight = r.u32();
+                c.imageSubresource.aspectMask = r.u32();
+                c.imageSubresource.mipLevel = r.u32();
+                c.imageSubresource.baseArrayLayer = r.u32();
+                c.imageSubresource.layerCount = r.u32();
+                c.imageOffset.x = static_cast<int32_t>(r.u32());
+                c.imageOffset.y = static_cast<int32_t>(r.u32());
+                c.imageOffset.z = static_cast<int32_t>(r.u32());
+                c.imageExtent.width = r.u32();
+                c.imageExtent.height = r.u32();
+                c.imageExtent.depth = r.u32();
+            }
+            // The result is only visible to the engine if the buffer's
+            // memory is one of the allocations this process imported from
+            // it, then the GPU writes straight into the pages the
+            // engine has mapped. A copied allocation has no path back, so
+            // say so instead of leaving the engine to read stale bytes.
+            {
+                uint64_t memory = 0;
+                {
+                    std::lock_guard<std::mutex> lock(buffer_memory_mutex());
+                    auto it = buffer_memory().find(dst_handle);
+                    if (it != buffer_memory().end()) memory = it->second;
+                }
+                bool visible = false;
+                {
+                    std::lock_guard<std::mutex> lock(shared_memory_mutex());
+                    visible = memory != 0 && shared_memory().count(memory) != 0;
+                }
+                if (!visible) {
+                    static bool warned = false;
+                    if (!warned) {
+                        warned = true;
+                        std::printf("stud-render-host: vkCmdCopyImageToBuffer reads back into "
+                                    "memory this process does not share with the engine, the "
+                                    "copy runs, but the engine cannot see the result\n");
+                        std::fflush(stdout);
+                    }
+                }
+            }
+            l.cmd_copy_image_to_buffer(cb, src, static_cast<VkImageLayout>(layout), dst, n,
+                                        regions.empty() ? nullptr : regions.data());
+            break;
+        }
+        case K::CopyImage: {
+            if (l.cmd_copy_image == nullptr) break;
+            VkImage src = from_u64<VkImage>(r.u64());
+            const uint32_t sl = r.u32();
+            VkImage dst = from_u64<VkImage>(r.u64());
+            const uint32_t dl = r.u32();
+            const uint32_t n = r.u32();
+            std::vector<VkImageCopy> regions(n);
+            auto read_subres = [&r](VkImageSubresourceLayers& s) {
+                s.aspectMask = r.u32();
+                s.mipLevel = r.u32();
+                s.baseArrayLayer = r.u32();
+                s.layerCount = r.u32();
+            };
+            for (auto& c : regions) {
+                read_subres(c.srcSubresource);
+                c.srcOffset.x = static_cast<int32_t>(r.u32());
+                c.srcOffset.y = static_cast<int32_t>(r.u32());
+                c.srcOffset.z = static_cast<int32_t>(r.u32());
+                read_subres(c.dstSubresource);
+                c.dstOffset.x = static_cast<int32_t>(r.u32());
+                c.dstOffset.y = static_cast<int32_t>(r.u32());
+                c.dstOffset.z = static_cast<int32_t>(r.u32());
+                c.extent.width = r.u32();
+                c.extent.height = r.u32();
+                c.extent.depth = r.u32();
+            }
+            l.cmd_copy_image(cb, src, static_cast<VkImageLayout>(sl), dst,
+                              static_cast<VkImageLayout>(dl), n,
+                              regions.empty() ? nullptr : regions.data());
+            break;
+        }
+        case K::BlitImage: {
+            if (l.cmd_blit_image == nullptr) break;
+            VkImage src = from_u64<VkImage>(r.u64());
+            const uint32_t sl = r.u32();
+            VkImage dst = from_u64<VkImage>(r.u64());
+            const uint32_t dl = r.u32();
+            const uint32_t n = r.u32();
+            std::vector<VkImageBlit> regions(n);
+            auto read_subres = [&r](VkImageSubresourceLayers& s) {
+                s.aspectMask = r.u32();
+                s.mipLevel = r.u32();
+                s.baseArrayLayer = r.u32();
+                s.layerCount = r.u32();
+            };
+            for (auto& b : regions) {
+                read_subres(b.srcSubresource);
+                for (int i = 0; i < 2; ++i) {
+                    b.srcOffsets[i].x = static_cast<int32_t>(r.u32());
+                    b.srcOffsets[i].y = static_cast<int32_t>(r.u32());
+                    b.srcOffsets[i].z = static_cast<int32_t>(r.u32());
+                }
+                read_subres(b.dstSubresource);
+                for (int i = 0; i < 2; ++i) {
+                    b.dstOffsets[i].x = static_cast<int32_t>(r.u32());
+                    b.dstOffsets[i].y = static_cast<int32_t>(r.u32());
+                    b.dstOffsets[i].z = static_cast<int32_t>(r.u32());
+                }
+            }
+            const uint32_t filter = r.u32();
+            if (l.swapchain_images.count(to_u64(dst)) != 0) {
+                static int blits = 0;
+                if (blits < 3 && vk_object_trace_enabled()) {
+                    std::printf("stud-render-host: blit #%d draws to the screen\n", blits);
+                    std::fflush(stdout);
+                }
+                ++blits;
+            }
+            l.cmd_blit_image(cb, src, static_cast<VkImageLayout>(sl), dst,
+                              static_cast<VkImageLayout>(dl), n,
+                              regions.empty() ? nullptr : regions.data(),
+                              static_cast<VkFilter>(filter));
+            break;
+        }
+        case K::ResolveImage: {
+            // Same wire shape as CopyImage: VkImageResolve and VkImageCopy
+            // are laid out identically.
+            if (l.cmd_resolve_image == nullptr) break;
+            VkImage src = from_u64<VkImage>(r.u64());
+            const uint32_t sl = r.u32();
+            VkImage dst = from_u64<VkImage>(r.u64());
+            const uint32_t dl = r.u32();
+            const uint32_t n = r.u32();
+            std::vector<VkImageResolve> regions(n);
+            auto read_subres = [&r](VkImageSubresourceLayers& s) {
+                s.aspectMask = r.u32();
+                s.mipLevel = r.u32();
+                s.baseArrayLayer = r.u32();
+                s.layerCount = r.u32();
+            };
+            for (auto& c : regions) {
+                read_subres(c.srcSubresource);
+                c.srcOffset.x = static_cast<int32_t>(r.u32());
+                c.srcOffset.y = static_cast<int32_t>(r.u32());
+                c.srcOffset.z = static_cast<int32_t>(r.u32());
+                read_subres(c.dstSubresource);
+                c.dstOffset.x = static_cast<int32_t>(r.u32());
+                c.dstOffset.y = static_cast<int32_t>(r.u32());
+                c.dstOffset.z = static_cast<int32_t>(r.u32());
+                c.extent.width = r.u32();
+                c.extent.height = r.u32();
+                c.extent.depth = r.u32();
+            }
+            l.cmd_resolve_image(cb, src, static_cast<VkImageLayout>(sl), dst,
+                                 static_cast<VkImageLayout>(dl), n,
+                                 regions.empty() ? nullptr : regions.data());
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+
 
 // One entry point for the whole vkCmd* family. Every member takes a
 // command buffer, returns nothing, and differs only in payload, so
@@ -6603,210 +6827,14 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                                     img.empty() ? nullptr : img.data());
             break;
         }
-        case K::CopyBuffer: {
-            if (l.cmd_copy_buffer == nullptr) break;
-            VkBuffer src = from_u64<VkBuffer>(r.u64());
-            VkBuffer dst = from_u64<VkBuffer>(r.u64());
-            const uint32_t n = r.u32();
-            std::vector<VkBufferCopy> regions(n);
-            for (auto& c : regions) {
-                c.srcOffset = r.u64();
-                c.dstOffset = r.u64();
-                c.size = r.u64();
-            }
-            l.cmd_copy_buffer(cb, src, dst, n, regions.empty() ? nullptr : regions.data());
+        case K::CopyBuffer:
+        case K::CopyBufferToImage:
+        case K::CopyImageToBuffer:
+        case K::CopyImage:
+        case K::BlitImage:
+        case K::ResolveImage:
+            record_copy_command(static_cast<K>(kind), l, cb, r);
             break;
-        }
-        case K::CopyBufferToImage: {
-            if (l.cmd_copy_buffer_to_image == nullptr) break;
-            VkBuffer src = from_u64<VkBuffer>(r.u64());
-            VkImage dst = from_u64<VkImage>(r.u64());
-            const uint32_t layout = r.u32();
-            const uint32_t n = r.u32();
-            std::vector<VkBufferImageCopy> regions(n);
-            for (auto& c : regions) {
-                c.bufferOffset = r.u64();
-                c.bufferRowLength = r.u32();
-                c.bufferImageHeight = r.u32();
-                c.imageSubresource.aspectMask = r.u32();
-                c.imageSubresource.mipLevel = r.u32();
-                c.imageSubresource.baseArrayLayer = r.u32();
-                c.imageSubresource.layerCount = r.u32();
-                c.imageOffset.x = static_cast<int32_t>(r.u32());
-                c.imageOffset.y = static_cast<int32_t>(r.u32());
-                c.imageOffset.z = static_cast<int32_t>(r.u32());
-                c.imageExtent.width = r.u32();
-                c.imageExtent.height = r.u32();
-                c.imageExtent.depth = r.u32();
-            }
-            l.cmd_copy_buffer_to_image(cb, src, dst, static_cast<VkImageLayout>(layout), n,
-                                        regions.empty() ? nullptr : regions.data());
-            break;
-        }
-        case K::CopyImageToBuffer: {
-            if (l.cmd_copy_image_to_buffer == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
-            const uint64_t dst_handle = r.u64();
-            VkBuffer dst = from_u64<VkBuffer>(dst_handle);
-            const uint32_t layout = r.u32();
-            const uint32_t n = r.u32();
-            std::vector<VkBufferImageCopy> regions(n);
-            for (auto& c : regions) {
-                c.bufferOffset = r.u64();
-                c.bufferRowLength = r.u32();
-                c.bufferImageHeight = r.u32();
-                c.imageSubresource.aspectMask = r.u32();
-                c.imageSubresource.mipLevel = r.u32();
-                c.imageSubresource.baseArrayLayer = r.u32();
-                c.imageSubresource.layerCount = r.u32();
-                c.imageOffset.x = static_cast<int32_t>(r.u32());
-                c.imageOffset.y = static_cast<int32_t>(r.u32());
-                c.imageOffset.z = static_cast<int32_t>(r.u32());
-                c.imageExtent.width = r.u32();
-                c.imageExtent.height = r.u32();
-                c.imageExtent.depth = r.u32();
-            }
-            // The result is only visible to the engine if the buffer's
-            // memory is one of the allocations this process imported from
-            // it, then the GPU writes straight into the pages the
-            // engine has mapped. A copied allocation has no path back, so
-            // say so instead of leaving the engine to read stale bytes.
-            {
-                uint64_t memory = 0;
-                {
-                    std::lock_guard<std::mutex> lock(buffer_memory_mutex());
-                    auto it = buffer_memory().find(dst_handle);
-                    if (it != buffer_memory().end()) memory = it->second;
-                }
-                bool visible = false;
-                {
-                    std::lock_guard<std::mutex> lock(shared_memory_mutex());
-                    visible = memory != 0 && shared_memory().count(memory) != 0;
-                }
-                if (!visible) {
-                    static bool warned = false;
-                    if (!warned) {
-                        warned = true;
-                        std::printf("stud-render-host: vkCmdCopyImageToBuffer reads back into "
-                                    "memory this process does not share with the engine, the "
-                                    "copy runs, but the engine cannot see the result\n");
-                        std::fflush(stdout);
-                    }
-                }
-            }
-            l.cmd_copy_image_to_buffer(cb, src, static_cast<VkImageLayout>(layout), dst, n,
-                                        regions.empty() ? nullptr : regions.data());
-            break;
-        }
-        case K::CopyImage: {
-            if (l.cmd_copy_image == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
-            const uint32_t sl = r.u32();
-            VkImage dst = from_u64<VkImage>(r.u64());
-            const uint32_t dl = r.u32();
-            const uint32_t n = r.u32();
-            std::vector<VkImageCopy> regions(n);
-            auto read_subres = [&r](VkImageSubresourceLayers& s) {
-                s.aspectMask = r.u32();
-                s.mipLevel = r.u32();
-                s.baseArrayLayer = r.u32();
-                s.layerCount = r.u32();
-            };
-            for (auto& c : regions) {
-                read_subres(c.srcSubresource);
-                c.srcOffset.x = static_cast<int32_t>(r.u32());
-                c.srcOffset.y = static_cast<int32_t>(r.u32());
-                c.srcOffset.z = static_cast<int32_t>(r.u32());
-                read_subres(c.dstSubresource);
-                c.dstOffset.x = static_cast<int32_t>(r.u32());
-                c.dstOffset.y = static_cast<int32_t>(r.u32());
-                c.dstOffset.z = static_cast<int32_t>(r.u32());
-                c.extent.width = r.u32();
-                c.extent.height = r.u32();
-                c.extent.depth = r.u32();
-            }
-            l.cmd_copy_image(cb, src, static_cast<VkImageLayout>(sl), dst,
-                              static_cast<VkImageLayout>(dl), n,
-                              regions.empty() ? nullptr : regions.data());
-            break;
-        }
-        case K::BlitImage: {
-            if (l.cmd_blit_image == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
-            const uint32_t sl = r.u32();
-            VkImage dst = from_u64<VkImage>(r.u64());
-            const uint32_t dl = r.u32();
-            const uint32_t n = r.u32();
-            std::vector<VkImageBlit> regions(n);
-            auto read_subres = [&r](VkImageSubresourceLayers& s) {
-                s.aspectMask = r.u32();
-                s.mipLevel = r.u32();
-                s.baseArrayLayer = r.u32();
-                s.layerCount = r.u32();
-            };
-            for (auto& b : regions) {
-                read_subres(b.srcSubresource);
-                for (int i = 0; i < 2; ++i) {
-                    b.srcOffsets[i].x = static_cast<int32_t>(r.u32());
-                    b.srcOffsets[i].y = static_cast<int32_t>(r.u32());
-                    b.srcOffsets[i].z = static_cast<int32_t>(r.u32());
-                }
-                read_subres(b.dstSubresource);
-                for (int i = 0; i < 2; ++i) {
-                    b.dstOffsets[i].x = static_cast<int32_t>(r.u32());
-                    b.dstOffsets[i].y = static_cast<int32_t>(r.u32());
-                    b.dstOffsets[i].z = static_cast<int32_t>(r.u32());
-                }
-            }
-            const uint32_t filter = r.u32();
-            if (l.swapchain_images.count(to_u64(dst)) != 0) {
-                static int blits = 0;
-                if (blits < 3 && vk_object_trace_enabled()) {
-                    std::printf("stud-render-host: blit #%d draws to the screen\n", blits);
-                    std::fflush(stdout);
-                }
-                ++blits;
-            }
-            l.cmd_blit_image(cb, src, static_cast<VkImageLayout>(sl), dst,
-                              static_cast<VkImageLayout>(dl), n,
-                              regions.empty() ? nullptr : regions.data(),
-                              static_cast<VkFilter>(filter));
-            break;
-        }
-        case K::ResolveImage: {
-            // Same wire shape as CopyImage: VkImageResolve and VkImageCopy
-            // are laid out identically.
-            if (l.cmd_resolve_image == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
-            const uint32_t sl = r.u32();
-            VkImage dst = from_u64<VkImage>(r.u64());
-            const uint32_t dl = r.u32();
-            const uint32_t n = r.u32();
-            std::vector<VkImageResolve> regions(n);
-            auto read_subres = [&r](VkImageSubresourceLayers& s) {
-                s.aspectMask = r.u32();
-                s.mipLevel = r.u32();
-                s.baseArrayLayer = r.u32();
-                s.layerCount = r.u32();
-            };
-            for (auto& c : regions) {
-                read_subres(c.srcSubresource);
-                c.srcOffset.x = static_cast<int32_t>(r.u32());
-                c.srcOffset.y = static_cast<int32_t>(r.u32());
-                c.srcOffset.z = static_cast<int32_t>(r.u32());
-                read_subres(c.dstSubresource);
-                c.dstOffset.x = static_cast<int32_t>(r.u32());
-                c.dstOffset.y = static_cast<int32_t>(r.u32());
-                c.dstOffset.z = static_cast<int32_t>(r.u32());
-                c.extent.width = r.u32();
-                c.extent.height = r.u32();
-                c.extent.depth = r.u32();
-            }
-            l.cmd_resolve_image(cb, src, static_cast<VkImageLayout>(sl), dst,
-                                 static_cast<VkImageLayout>(dl), n,
-                                 regions.empty() ? nullptr : regions.data());
-            break;
-        }
         case K::ResetQueryPool: {
             if (l.cmd_reset_query_pool == nullptr) break;
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
