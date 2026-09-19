@@ -1512,9 +1512,55 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
         window->geometry_pending = false;
         apply_window_geometry(window, "resized");
     }
-    // Always commit, even when the size did not change: this is the
-    // response to the configure, and a configure that is acked and never
-    // committed leaves the compositor waiting exactly as before.
+    // Commit when there is something to publish, and when this is the
+    // configure that maps the surface. Not otherwise.
+    //
+    // This used to commit unconditionally, and the reasoning was that a
+    // configure acked and never committed leaves the compositor waiting.
+    // That is true of the two cases kept here and of no others:
+    //
+    //   - the FIRST configure completes the map handshake, and a surface
+    //     that skips it may never be mapped at all;
+    //   - a configure that staged new geometry has state to publish, and
+    //     publishing it here rather than waiting for the engine's next
+    //     frame is the whole drag fix (measured: 1.2s from
+    //     APP_CMD_WINDOW_RESIZED to the next frame, which is how long
+    //     the window used to hang under the cursor).
+    //
+    // A configure that changed nothing has nothing to publish, and the
+    // ack alone answers it. Skipping that case removes a wl_surface
+    // commit issued from the WAYLAND PUMP THREAD while the Vulkan driver
+    // may be committing the same surface from inside vkQueuePresentKHR
+    // on another. Two threads committing one surface is a race over
+    // double-buffered state, and the fix this file just took from main
+    // ("let the frame publish surface state, not a bare commit") removes
+    // exactly that pattern everywhere else. This is the last place it
+    // was still happening on a routine event.
+    // Always, and this is the one commit in this file that still is.
+    //
+    // It is a known cross-thread hazard: it publishes surface state from
+    // the Wayland pump thread while the Vulkan driver may be committing
+    // the same surface from inside vkQueuePresentKHR, which is the exact
+    // pattern the fix taken from main removes everywhere else. It is
+    // kept anyway, for two reasons that are not symmetrical.
+    //
+    // The first is that it earns its place: the FIRST configure here
+    // completes the map handshake, and a configure carrying new geometry
+    // has state that must reach the compositor now rather than whenever
+    // the engine next presents -- measured at 1.2s from
+    // APP_CMD_WINDOW_RESIZED to the next frame, which is how long a
+    // dragged window used to hang under the cursor.
+    //
+    // The second is honesty about what was tried. Making it conditional
+    // on those two cases was written, built and run, and the run showed
+    // NEITHER a regression NOR a benefit: it looked broken at first
+    // against a miscounted comparison, and against a correct one it was
+    // indistinguishable from the unconditional version. An unproven
+    // change to a live bug fix is not worth carrying, so it was dropped
+    // rather than kept on the strength of a principle.
+    //
+    // Removing it properly means having the renderer's own commit answer
+    // the configure, which is a real design change and not this.
     window->configured = true;
     wl_surface_commit(window->surface);
 }

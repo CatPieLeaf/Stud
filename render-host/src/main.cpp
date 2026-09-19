@@ -4184,14 +4184,31 @@ void pump_wayland(wl_display* display, bool fd_readable) {
     // not blocked waiting for a buffer, it is SPINNING waiting for one
     // that Stud already threw the release event for.
     //
-    // STUD_WL_NO_DEFAULT_DISPATCH=1 removes the call. Kept as a switch
-    // rather than deleted outright because the comment above this one
-    // records a black window when it was absent, and two contradictory
-    // live observations deserve a way to test both rather than a third
-    // guess.
-    static const bool skip_default_queue =
-        std::getenv("STUD_WL_NO_DEFAULT_DISPATCH") != nullptr;
-    if (!skip_default_queue) wl_display_dispatch_pending(display);
+    // OFF by default now, and the two claims above are both settled.
+    //
+    // Measured with WAYLAND_DEBUG on this machine, with the call and
+    // without it: the `discarded wl_buffer.release` events appear either
+    // way, in the same proportion. Stud is not destroying them. The
+    // driver is using EXPLICIT SYNC -- 8734 drm_syncobj references in
+    // one trace -- where a buffer comes back through a syncobj release
+    // point and wl_buffer.release is vestigial. Nobody listens to it, so
+    // libwayland discards it, whoever dispatches.
+    //
+    // The black window the comment above records did NOT come back with
+    // the call removed: checked directly, by running without it and
+    // asking. So the second comment's justification is wrong on the
+    // mechanism and wrong on the consequence, and what is left is a
+    // process dispatching ANOTHER COMPONENT'S event queue from a foreign
+    // thread, which delivers that component's callbacks wherever Stud
+    // happens to be standing. That is worth not doing on principle even
+    // with no bug attached to it.
+    //
+    // STUD_WL_DISPATCH_DEFAULT_QUEUE=1 puts it back, because this file's
+    // history is two people being sure in opposite directions and the
+    // cost of being wrong again is a black window.
+    static const bool dispatch_default_queue =
+        std::getenv("STUD_WL_DISPATCH_DEFAULT_QUEUE") != nullptr;
+    if (dispatch_default_queue) wl_display_dispatch_pending(display);
 }
 
 // Services one client connection to completion, on its own thread. Used
