@@ -337,6 +337,23 @@ struct Loader {
     // segfaulting the driver in render-host.
     std::map<uint64_t, std::vector<uint64_t>> swapchain_image_list;
     std::set<uint64_t> retired_images;
+    // Images the engine has created and never yet transitioned.
+    //
+    // A freshly created image is in VK_IMAGE_LAYOUT_UNDEFINED, and the
+    // first barrier against it must say so. The engine does exactly that
+    // for almost everything -- UNDEFINED -> TRANSFER_DST is the single
+    // most common barrier in a session, measured at 8688 of them in one
+    // startup -- but for a couple of textures it declares
+    // SHADER_READ_ONLY_OPTIMAL as the old layout of an image it has
+    // never touched. The driver is then told the image starts in a
+    // layout it is not in, which is undefined behaviour, and the
+    // validation layer catches the consequence at the draw that samples
+    // it (VUID-vkCmdDraw-None-09600: "current layout is UNDEFINED").
+    //
+    // Tracked so the first barrier can be corrected; see
+    // make_barrier_legal(). Erased on the first barrier and on destroy,
+    // so this holds only images still in their initial state.
+    std::set<uint64_t> untransitioned_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
 
@@ -1321,6 +1338,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         l.swapchain_images.clear();
         l.swapchain_views.clear();
         l.swapchain_image_list.clear();
+        l.untransitioned_images.clear();
     }
 
     l.device = device;
@@ -1789,6 +1807,9 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     // vkGetSwapchainImagesKHR already does this, for the same reason and
     // with the same comment. Ordinary images were the case it missed.
     l.retired_images.erase(to_u64(image));
+    // Brand new, so it is in UNDEFINED until a barrier says otherwise.
+    // See Loader::untransitioned_images.
+    l.untransitioned_images.insert(to_u64(image));
     // The handle, named, so a validation message about an image can be
     // tied back to what that image IS. A report says only
     // "VkImage 0x5fc00000005fc"; without this line nothing in Stud's own
@@ -2784,6 +2805,52 @@ void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* d
                         static_cast<unsigned>(all_src), static_cast<unsigned>(all_dst));
             std::fflush(stdout);
         }
+    }
+
+    // THE FIRST BARRIER AGAINST AN IMAGE THAT HAS NEVER BEEN TRANSITIONED.
+    //
+    // A newly created image is in VK_IMAGE_LAYOUT_UNDEFINED. The engine
+    // knows this and says so almost everywhere -- UNDEFINED ->
+    // TRANSFER_DST is the most common barrier it sends, 8688 of them in
+    // one measured startup. For a couple of textures it does not: the
+    // first barrier they ever receive declares SHADER_READ_ONLY_OPTIMAL
+    // as the old layout of an image nothing has touched.
+    //
+    // The driver is then told the image begins in a layout it is not in.
+    // The validation layer catches the consequence rather than the cause,
+    // at the draw that samples it:
+    //
+    //   VUID-vkCmdDraw-None-09600: ... expects VkImage ... to be in
+    //   layout SHADER_READ_ONLY_OPTIMAL -- instead, current layout is
+    //   VK_IMAGE_LAYOUT_UNDEFINED
+    //
+    // Reproducible at the Home screen within thirty seconds, on the same
+    // two 128x128 textures every run.
+    //
+    // Correcting it costs nothing that exists. A transition FROM
+    // UNDEFINED is defined to discard the image's contents, and the
+    // contents of an image that has never been written are already
+    // undefined -- so the corrected barrier throws away nothing the
+    // engine could legally have relied on, and it is what the engine
+    // would have written if its own tracking had been right.
+    for (auto& b : img) {
+        if (b.image == VK_NULL_HANDLE) continue;
+        if (b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            loader().untransitioned_images.erase(to_u64(b.image));
+            continue;
+        }
+        if (loader().untransitioned_images.erase(to_u64(b.image)) == 0) continue;
+        static int corrected = 0;
+        if (corrected < 4) {
+            ++corrected;
+            std::printf("stud-render-host: the first barrier against image %llx claimed it was "
+                        "in layout %u, but nothing had ever transitioned it out of UNDEFINED; "
+                        "corrected, which is what the driver was owed\n",
+                        static_cast<unsigned long long>(to_u64(b.image)),
+                        static_cast<unsigned>(b.oldLayout));
+            std::fflush(stdout);
+        }
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
     // PRESENT_SRC_KHR on an image that cannot be presented.
@@ -4402,6 +4469,10 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // entry does not just log noise: it aims a diagnostic at the
             // wrong render pass, which is worse than no diagnostic.
             l.swapchain_images.erase(handle);
+            // Same reasoning, and the same handle recycling: a stale
+            // entry here would let a NEW image inherit the old one's
+            // "never transitioned" state, or lose its own.
+            l.untransitioned_images.erase(handle);
             if (l.destroy_image) l.destroy_image(l.device, from_u64<VkImage>(handle), nullptr);
             break;
         case K::ImageView:
@@ -4646,6 +4717,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.mapped_size.clear();
                 g_swapchain_extents.clear();
                 l.retired_images.clear();
+                l.untransitioned_images.clear();
                 // The loss, if there was one, belonged to the device that
                 // has just gone.
                 g_device_lost.store(false, std::memory_order_relaxed);
@@ -5959,6 +6031,21 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         submits[i].pCommandBuffers = buffers[i].empty() ? nullptr : buffers[i].data();
         submits[i].signalSemaphoreCount = static_cast<uint32_t>(signals[i].size());
         submits[i].pSignalSemaphores = signals[i].empty() ? nullptr : signals[i].data();
+    }
+    // Which command buffers went to the queue, in order. The other half
+    // of the barrier trace: that one says which buffer a transition was
+    // RECORDED into, and this says when that buffer was actually
+    // submitted. A validation complaint that an image is UNDEFINED at
+    // submit is a statement about the order of these two, and nothing
+    // else in the log relates them.
+    if (std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr) {
+        for (uint32_t i = 0; i < n; ++i) {
+            for (VkCommandBuffer cb : buffers[i]) {
+                std::printf("stud-render-host: submit cb %llx\n",
+                            static_cast<unsigned long long>(to_u64(cb)));
+            }
+        }
+        std::fflush(stdout);
     }
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
     VkResult res = l.queue_submit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
@@ -7700,7 +7787,14 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // halves of one investigation.
             if (std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr) {
                 for (const VkImageMemoryBarrier& b : img) {
-                    std::printf("stud-render-host: barrier image %llx %u -> %u\n",
+                    // The command buffer matters as much as the layouts.
+                    // Validation reports a layout mismatch against the
+                    // buffer being SUBMITTED, so "which buffer holds the
+                    // transition, and was it submitted first" is the
+                    // whole question, and the image alone cannot answer
+                    // it.
+                    std::printf("stud-render-host: barrier cb %llx image %llx %u -> %u\n",
+                                static_cast<unsigned long long>(to_u64(cb)),
                                 static_cast<unsigned long long>(to_u64(b.image)),
                                 static_cast<unsigned>(b.oldLayout),
                                 static_cast<unsigned>(b.newLayout));
