@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include <dirent.h>
@@ -43,7 +44,7 @@ std::atomic<uint64_t> g_next{0};
 // writer and read a half-written entry -- accepted deliberately, because
 // the alternative is a lock on the path being measured. At worst one
 // line of a dump is nonsense.
-uint32_t this_thread() {
+uint32_t current_tid() {
     static thread_local const uint32_t id =
         static_cast<uint32_t>(::syscall(SYS_gettid));
     return id;
@@ -185,6 +186,63 @@ bool enabled() {
     return on;
 }
 
+namespace {
+
+// NOTICES A STALL THAT IS NOT INSIDE ANY VULKAN CALL.
+//
+// Every other trigger here measures the duration of one call: a fence
+// wait, a present, a submit. That misses an entire shape of failure, and
+// it did so immediately -- a real session hung for several seconds while
+// loading a game and not one threshold fired, because the time was going
+// into write() from a too-chatty diagnostic, between calls rather than
+// inside one. The freeze being hunted may have the same shape: if the
+// whole render host stops, nothing that times individual calls will ever
+// see it.
+//
+// So this watches progress itself. Events stop arriving, the watchdog
+// notices, and the dump captures the history and every thread's kernel
+// wait state WHILE THE STALL IS STILL HAPPENING -- which is the one
+// moment that has never been observed.
+void watchdog_loop() {
+    using namespace std::chrono_literals;
+    uint64_t last_seen = 0;
+    auto last_change = std::chrono::steady_clock::now();
+    bool reported = false;
+    for (;;) {
+        std::this_thread::sleep_for(100ms);
+        const uint64_t now_count = g_next.load(std::memory_order_relaxed);
+        const auto now = std::chrono::steady_clock::now();
+        if (now_count != last_seen) {
+            last_seen = now_count;
+            last_change = now;
+            reported = false;
+            continue;
+        }
+        // A window that is minimised or a session sitting on a menu can
+        // legitimately go quiet, so this must not cry wolf: it reports
+        // once per stall, and only after the gap is long enough to be a
+        // freeze rather than a pause between frames.
+        const double still = std::chrono::duration<double>(now - last_change).count();
+        if (!reported && last_seen > 0 && still > 1.0) {
+            reported = true;
+            std::printf("stud-render-host: NO PROGRESS for %.1fs -- the render host has stopped "
+                        "doing anything at all, which no per-call timer can see\n",
+                        still);
+            std::fflush(stdout);
+            dump("the render host stopped making progress");
+        }
+    }
+}
+
+void start_watchdog_once() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::thread(watchdog_loop).detach();
+    });
+}
+
+}  // namespace
+
 void record(Event e, uint64_t a, uint64_t b, uint64_t c) {
     if (!enabled()) return;
     // STUD_FLIGHT_RECORDER_SELFTEST=1 forces one dump early in the run.
@@ -204,13 +262,14 @@ void record(Event e, uint64_t a, uint64_t b, uint64_t c) {
             dump("self test: proving the recorder works before it is needed");
         }
     }
+    start_watchdog_once();
     const uint64_t slot = g_next.fetch_add(1, std::memory_order_relaxed);
     Entry& t = ring()[slot % kCapacity];
     t.when = std::chrono::steady_clock::now();
     t.a = a;
     t.b = b;
     t.c = c;
-    t.thread = this_thread();
+    t.thread = current_tid();
     t.event = e;
 }
 

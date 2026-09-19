@@ -41,13 +41,21 @@ export STUD_VK_ENGINE_CHECKPOINTS=1
 # hypothesis.
 export STUD_VK_MEM_STATS=1
 
-# Every layout transition, and every one Stud drops. This is what
-# identified the first-barrier bug.
-export STUD_VK_TRACE_BARRIERS=1
-
-# Image handles at creation, so a validation message naming a VkImage can
-# be tied to what that image is.
-export STUD_VK_TRACE_OBJECTS=1
+# NOT enabled here, deliberately: STUD_VK_TRACE_BARRIERS and
+# STUD_VK_TRACE_OBJECTS.
+#
+# They were the scaffolding that found the first-barrier bug, and they
+# print one line per barrier with a flush. Measured on a real session:
+# 363,311 barrier lines in the first 400,000, 354MB in a few minutes,
+# and a multi-second hang when the engine loaded a game -- render-host
+# blocked on write(), which LOOKS exactly like the freeze being hunted
+# and is not it. A diagnostic that manufactures the symptom is worse
+# than none.
+#
+# Nothing is lost by leaving them off: the flight recorder already
+# records every barrier and every image creation into the ring, with no
+# I/O at all, and prints them only when something actually goes wrong.
+# Enable them by hand for a short targeted run, never for a long one.
 
 # The validation layer, which reports the offending call at the moment it
 # is made instead of leaving a freeze to be explained afterwards. It
@@ -84,18 +92,18 @@ echo "Session ended. What was captured:"
 printf '  %-28s %s\n' "session log" "$(wc -l < "$LOG" 2>/dev/null || echo 0) lines"
 if [ -f "$FR" ]; then
     printf '  %-28s %s\n' "flight recorder dumps" \
-        "$(grep -c 'stud flight recorder' "$FR" 2>/dev/null || echo 0)"
+        "$(grep -c 'stud flight recorder' "$FR" 2>/dev/null || true)"
 else
     printf '  %-28s %s\n' "flight recorder dumps" "0 (nothing triggered)"
 fi
 printf '  %-28s %s\n' "device losses" \
-    "$(grep -c 'THE VULKAN DEVICE WAS LOST' "$LOG" 2>/dev/null || echo 0)"
-printf '  %-28s %s\n' "stuck fences" "$(grep -c 'FENCE STUCK' "$LOG" 2>/dev/null || echo 0)"
+    "$(grep -c 'THE VULKAN DEVICE WAS LOST' "$LOG" 2>/dev/null || true)"
+printf '  %-28s %s\n' "stuck fences" "$(grep -c 'FENCE STUCK' "$LOG" 2>/dev/null || true)"
 printf '  %-28s %s\n' "slow fence waits" \
-    "$(grep -c 'SLOW vkWaitForFences' "$LOG" 2>/dev/null || echo 0)"
+    "$(grep -c 'SLOW vkWaitForFences' "$LOG" 2>/dev/null || true)"
 printf '  %-28s %s\n' "slow presents" \
-    "$(grep -c 'SLOW vkQueuePresentKHR' "$LOG" 2>/dev/null || echo 0)"
+    "$(grep -c 'SLOW vkQueuePresentKHR' "$LOG" 2>/dev/null || true)"
 printf '  %-28s %s\n' "validation errors" \
-    "$(grep -c 'Validation Error' "$LOG" 2>/dev/null || echo 0)"
+    "$(grep -c 'Validation Error' "$LOG" 2>/dev/null || true)"
 echo
 echo "Everything needed is in $OUT"
