@@ -1789,6 +1789,16 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     // vkGetSwapchainImagesKHR already does this, for the same reason and
     // with the same comment. Ordinary images were the case it missed.
     l.retired_images.erase(to_u64(image));
+    // The handle, named, so a validation message about an image can be
+    // tied back to what that image IS. A report says only
+    // "VkImage 0x5fc00000005fc"; without this line nothing in Stud's own
+    // log ever mentions that number, and the two cannot be joined up.
+    if (vk_object_trace_enabled()) {
+        std::printf("stud-render-host: image %llx created: format=%u %ux%u usage=0x%x\n",
+                    static_cast<unsigned long long>(to_u64(image)), h.format, h.extent_width,
+                    h.extent_height, h.usage);
+        std::fflush(stdout);
+    }
     return write_handle(to_u64(image), out, out_len);
 }
 
@@ -7681,6 +7691,22 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // driver inside render-host, taking the whole session with
             // it; dropping the barrier loses a layout transition for an
             // image that is never going to be presented anyway.
+            // Every transition that SURVIVES, not just the dropped ones.
+            //
+            // The drop counter answers "did Stud throw one away". It
+            // cannot answer "was one ever recorded at all", and that is
+            // the question a validation report about an image stuck in
+            // UNDEFINED actually asks. Same switch, because they are two
+            // halves of one investigation.
+            if (std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr) {
+                for (const VkImageMemoryBarrier& b : img) {
+                    std::printf("stud-render-host: barrier image %llx %u -> %u\n",
+                                static_cast<unsigned long long>(to_u64(b.image)),
+                                static_cast<unsigned>(b.oldLayout),
+                                static_cast<unsigned>(b.newLayout));
+                }
+                std::fflush(stdout);
+            }
             {
                 const size_t before = img.size();
                 // Counted apart, because the two arms mean opposite

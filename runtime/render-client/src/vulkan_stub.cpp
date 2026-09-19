@@ -3164,12 +3164,16 @@ void flush_all_mapped_memory() {
             if (stud::render_client::UffdScan::available()) {
                 std::printf(
                     "stud: vk mapped flush: %d submits, %llu KB sent (%llu KB shared) of %llu KB asked, %d shared maps, %d copied maps, "
-                    "%llu scans reporting %llu pages (uffd-scan)\n",
+                    "%llu scans reporting %llu pages in %.1fms total (max %.3fms, %llu over 1ms) "
+                    "(uffd-scan)\n",
                     submits, (unsigned long long)(g_mapped_bytes_sent / 1024),
                     (unsigned long long)(g_mapped_bytes_shared / 1024),
                     (unsigned long long)(g_mapped_bytes_asked / 1024), g_shared_maps,
                     g_copied_maps, stud::render_client::UffdScan::scan_count(),
-                    stud::render_client::UffdScan::pages_reported());
+                    stud::render_client::UffdScan::pages_reported(),
+                    stud::render_client::UffdScan::scan_time_ns() / 1e6,
+                    stud::render_client::UffdScan::scan_time_max_ns() / 1e6,
+                    stud::render_client::UffdScan::slow_scans());
             } else {
                 std::printf(
                     "stud: vk mapped flush: %d submits, %llu KB sent (%llu KB shared) of %llu KB asked, %d shared maps, %d copied maps, "
