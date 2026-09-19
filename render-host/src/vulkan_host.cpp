@@ -1289,6 +1289,40 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // says otherwise.
     g_device_lost.store(false, std::memory_order_relaxed);
 
+    // A HANDLE VALUE ONLY MEANS ANYTHING ON THE DEVICE THAT MINTED IT.
+    //
+    // These four are keyed by a bare uint64 with no device in the key,
+    // and the engine builds a device while still using the previous one
+    // (the mode probe does exactly that -- a real session logged four
+    // vkCreateDevice calls and one vkDestroyDevice). Non-dispatchable
+    // handles are per-device and small and dense, so the new device
+    // hands out the same values the old one did.
+    //
+    // retired_images is the one that bites. K::PipelineBarrier DROPS
+    // every image barrier whose handle is in it, and its own comment at
+    // that site says a retired drop means "a real layout transition is
+    // being silently thrown away, which is Stud's bug". Carrying a dead
+    // device's handles forward means a LIVE image on the new device
+    // inherits that verdict and never gets transitioned at all -- which
+    // is exactly what the validation layer caught:
+    //
+    //   VUID-vkCmdDraw-None-09600: expects VkImage ... to be in layout
+    //   SHADER_READ_ONLY_OPTIMAL -- instead, current layout is UNDEFINED
+    //
+    // for two images, seconds after startup, which is when the probe
+    // runs. Cleared rather than made device-aware because none of these
+    // four hold anything the old device still needs: they are caches of
+    // "which handles are swapchain images", and the old swapchain is
+    // gone with its device. The memory tables deliberately are NOT
+    // touched here -- the driver is still importing those pages, and
+    // dropping them early is what segfaulted inside libnvidia-glcore.
+    if (l.device != VK_NULL_HANDLE && l.device != device) {
+        l.retired_images.clear();
+        l.swapchain_images.clear();
+        l.swapchain_views.clear();
+        l.swapchain_image_list.clear();
+    }
+
     l.device = device;
     if (l.get_device_proc_addr != nullptr) {
         auto dev = [&l](const char* n) { return l.get_device_proc_addr(l.device, n); };
@@ -7613,6 +7647,25 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                         ++dropped_null;
                     } else if (l.retired_images.count(to_u64(b.image)) != 0) {
                         ++dropped_retired;
+                        // ONCE, by default, because this arm is Stud's
+                        // own bug by the comment above's own admission
+                        // and it had no default voice at all: the only
+                        // report was behind STUD_VK_TRACE_BARRIERS, so
+                        // 2.1 million thrown-away transitions in one
+                        // session said nothing. The validation layer
+                        // found the consequence before Stud ever
+                        // mentioned the cause.
+                        static bool said = false;
+                        if (!said) {
+                            said = true;
+                            std::printf(
+                                "stud-render-host: dropped a layout transition for image %llx "
+                                "because Stud has it marked retired while the engine is still "
+                                "using it -- that image now sits in the layout it last held. "
+                                "STUD_VK_TRACE_BARRIERS=1 counts them.\n",
+                                static_cast<unsigned long long>(to_u64(b.image)));
+                            std::fflush(stdout);
+                        }
                     }
                 }
                 img.erase(std::remove_if(img.begin(), img.end(),
