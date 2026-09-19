@@ -4161,7 +4161,37 @@ void pump_wayland(wl_display* display, bool fd_readable) {
     // Dispatching it here is safe: a proxy with no listener discards its
     // events either way, and the driver's own dispatch remains
     // authoritative for anything it does listen to.
-    wl_display_dispatch_pending(display);
+    //
+    // THAT REASONING IS WRONG, and this is the switch that proves it.
+    //
+    // A WAYLAND_DEBUG trace of a real session shows 454 of these in
+    // thirty seconds:
+    //
+    //   discarded wl_buffer#N.release()
+    //
+    // and the buffers are created with
+    // zwp_linux_buffer_params_v1.create_immed -- dmabuf, which makes
+    // them the VULKAN DRIVER'S swapchain buffers, not Stud's own wl_shm
+    // cursor or overlay buffers. "Discarded" is libwayland's word for an
+    // event delivered to a proxy with no listener and then thrown away.
+    // Once it is thrown away the driver can never see it, no matter how
+    // often it dispatches its own queue afterwards.
+    //
+    // What that costs was finally measured rather than guessed: a
+    // vkQueuePresentKHR that took 12006ms with 0.0ms of it waiting for
+    // Stud's queue, and the presenting thread sampled DURING the stall
+    // in state R with wchan 0 -- running, not sleeping. The driver is
+    // not blocked waiting for a buffer, it is SPINNING waiting for one
+    // that Stud already threw the release event for.
+    //
+    // STUD_WL_NO_DEFAULT_DISPATCH=1 removes the call. Kept as a switch
+    // rather than deleted outright because the comment above this one
+    // records a black window when it was absent, and two contradictory
+    // live observations deserve a way to test both rather than a third
+    // guess.
+    static const bool skip_default_queue =
+        std::getenv("STUD_WL_NO_DEFAULT_DISPATCH") != nullptr;
+    if (!skip_default_queue) wl_display_dispatch_pending(display);
 }
 
 // Services one client connection to completion, on its own thread. Used
