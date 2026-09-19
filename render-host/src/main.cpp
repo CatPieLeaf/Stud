@@ -4355,6 +4355,21 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         // elsewhere. The standalone stud_try_vulkan_window test, which
         // does everything on one thread, presented 300 frames correctly
         // on the same GPU and window. That is what narrowed it here.
+        //
+        // The `true` is fd_readable, and it is deliberate rather than an
+        // oversight, which is worth writing down because it reads as one:
+        // the main loop below asks poll() and passes the answer, and this
+        // caller asserts it on every present.
+        //
+        // It is safe. libwayland reads the socket with MSG_DONTWAIT, so
+        // wl_display_read_events() on an empty socket returns instead of
+        // blocking -- and a present path that blocked on an empty socket
+        // would have wedged Stud on its first frame rather than rarely.
+        // Asking poll() here instead was tried on paper and is worse: it
+        // costs the same syscall it saves, and it opens a window where
+        // data arriving between the poll and the read is left for the
+        // next pump, which delays exactly the buffer-release events this
+        // call exists to dispatch.
         if (hdr.call_id == CallId::VkQueuePresentKHR) {
             pump_display(real_window, true);
         }
