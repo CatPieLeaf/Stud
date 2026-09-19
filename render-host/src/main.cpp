@@ -224,9 +224,29 @@ const std::unordered_map<int32_t, RobloxFont>& font_table() {
 
 // The ids the APK's own mapping describes are legacy Enum.Font values,
 // which run to 51 in this build. Anything above that is a modern
-// FontFace, which the mapping says nothing about, and, measured
-// against the engine, needs no conversion at all: its TextSize IS the em.
+// FontFace, which the mapping does not key by id -- but it does carry the
+// ratio for the FILE such a FontFace resolves to, which is what
+// ratio_for_font_file() below reads.
 constexpr int32_t kLastLegacyFontEnum = 51;
+
+// What one point of TextSize is worth, in em, for the overlay.
+//
+// Read once. The engine sends a text update on every keystroke and a
+// config file is not worth opening that often; a changed setting is
+// picked up on the next launch, like every other setting here.
+float text_overlay_font_ratio() {
+    static const float ratio = [] {
+        try {
+            return stud::config::load_settings(stud::config::default_config_path())
+                .text_overlay_font_ratio;
+        } catch (const std::exception&) {
+            // A broken or unreadable config must not cost the overlay its
+            // text; the struct's own default is the honest answer.
+            return stud::config::StudSettings{}.text_overlay_font_ratio;
+        }
+    }();
+    return ratio;
+}
 
 RobloxFont roblox_font_for(int32_t font_enum) {
     const auto& table = font_table();
@@ -239,16 +259,21 @@ RobloxFont roblox_font_for(int32_t font_enum) {
     }
     RobloxFont f;
     if (font_enum > kLastLegacyFontEnum) {
-        // A FontFace, not a legacy enum, in-game chat is one (font=100,
-        // TextSize 14 in a box exactly 14 tall). Two things follow, both
-        // measured against the engine drawing the same box unfocused:
-        // the em is the TextSize itself (a legacy ratio here made the
-        // text a visible 26% short), and the typeface is Roblox's
-        // current default rather than the legacy Source Sans.
-        f.ratio = 1.0f;
+        // A FontFace, not a legacy enum; in-game chat is one (font=100,
+        // TextSize 14). The typeface is Roblox's current default rather
+        // than the legacy Source Sans.
+        //
+        // The ratio is the configured one, because this is the case no
+        // file can answer. Both ends were tried against the engine and
+        // both were wrong: the mapping and the font agree on
+        // 0.7936507937 for BuilderSans (upem 1000 over an
+        // ascender-to-descender span of 1260), which draws visibly
+        // smaller than the engine, and treating TextSize as the em
+        // outright draws visibly larger. A legacy id needs none of this;
+        // the mapping states its ratio and it is right.
+        f.ratio = text_overlay_font_ratio();
         f.path = assets_dir() + "/content/fonts/BuilderSans-Regular.otf";
         if (::access(f.path.c_str(), R_OK) != 0) {
-            f.ratio = 0.795f;
             f.path = assets_dir() + "/fonts/SourceSansPro-Regular.ttf";
         }
         return f;
@@ -2135,12 +2160,11 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             // makes the LINE HEIGHT equal TextSize, which is what
             // Roblox's own documentation says TextSize means.
             //
-            // Measured against the engine, that comes out too small: the
-            // same chat box is visibly bigger when the engine draws it
-            // (unfocused) than when this overlay does (focused).
-            // Which is right depends on the id: a legacy Enum.Font is
-            // converted by its ratio, a modern FontFace is not (its
-            // ratio is 1.0). See roblox_font_for.
+            // Every font gets its own ratio from that mapping, legacy
+            // enum and modern FontFace alike; see roblox_font_for. The
+            // one case that did not -- FontFace, pinned at 1.0 -- is
+            // exactly the one that drew the focused chat box larger than
+            // the engine draws it unfocused.
             spec.pixel_size = font_size * font.ratio;
             // The line box stays Roblox's own TextSize whatever the em is.
             spec.line_height = font_size;

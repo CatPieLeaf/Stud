@@ -102,6 +102,19 @@ StudSettings load_settings(const std::string& path) {
         // the field's own comment for why that ceiling and not another.
         result.upscale_sharpness_percent = percent < 0 ? 0 : (percent > 125 ? 125 : percent);
     }
+    if (doc.contains("textOverlayFontRatio")) {
+        if (!doc.at("textOverlayFontRatio").is_number()) {
+            throw SettingsError("stud: config '" + path +
+                                "' has a non-numeric \"textOverlayFontRatio\"");
+        }
+        const double ratio = doc.at("textOverlayFontRatio").get<double>();
+        // Clamped to the range either side of which the overlay is
+        // obviously wrong rather than merely off: below the font's own
+        // metric ratio it is smaller than anything the engine draws, and
+        // above 1.0 the em exceeds the TextSize itself.
+        const double clamped = ratio < 0.5 ? 0.5 : (ratio > 1.5 ? 1.5 : ratio);
+        result.text_overlay_font_ratio = static_cast<float>(clamped);
+    }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
@@ -231,6 +244,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.erase("upscaleQualityPercent");
     doc.erase("upscaleTargetPercent");
     doc["upscaleSharpnessPercent"] = settings.upscale_sharpness_percent;
+    doc["textOverlayFontRatio"] = settings.text_overlay_font_ratio;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
