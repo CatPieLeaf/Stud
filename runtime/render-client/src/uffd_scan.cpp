@@ -1,6 +1,7 @@
 #include "uffd_scan.h"
 
 #include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -139,6 +140,22 @@ Kernel& kernel() {
 
 std::atomic<unsigned long long> g_scans{0};
 std::atomic<unsigned long long> g_pages{0};
+// What the ioctl actually costs, in nanoseconds.
+//
+// PM_SCAN_WP_MATCHING does not merely READ the page tables, it rewrites
+// the write-protect bit on every page it reports -- which means a TLB
+// shootdown, and on a multicore machine that is an IPI to every core.
+// flush_all_mapped_memory() runs this over every live mapping at every
+// submit, and a real session held 38-47 mappings at once.
+//
+// That is the standing hypothesis for a lag that takes the WHOLE desktop
+// with it while the GPU sits idle: the cost would land on every process
+// on the machine, not just Stud. Nothing measured it, so it stayed a
+// hypothesis. This is the measurement, and it needs no bad phase to
+// produce an answer -- if a scan is microseconds the idea is dead.
+std::atomic<unsigned long long> g_scan_ns{0};
+std::atomic<unsigned long long> g_scan_ns_max{0};
+std::atomic<unsigned long long> g_slow_scans{0};
 
 }  // namespace
 
@@ -231,7 +248,36 @@ bool UffdScan::take_written_and_protect(void* base, std::size_t offset, std::siz
         arg.category_mask = PAGE_IS_WRITTEN;
         arg.return_mask = PAGE_IS_WRITTEN;
 
+        const auto scan_t0 = std::chrono::steady_clock::now();
         const long n = ::ioctl(k.pagemap, PAGEMAP_SCAN, &arg);
+        {
+            const auto ns = static_cast<unsigned long long>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - scan_t0)
+                    .count());
+            g_scan_ns.fetch_add(ns, std::memory_order_relaxed);
+            // A plain max, raced deliberately: an occasional lost update
+            // costs one sample and this must not take a lock on the path
+            // it is measuring.
+            if (ns > g_scan_ns_max.load(std::memory_order_relaxed)) {
+                g_scan_ns_max.store(ns, std::memory_order_relaxed);
+            }
+            // 1ms in a call that runs tens of times per submit is the
+            // threshold where this stops being bookkeeping and starts
+            // being the frame.
+            if (ns > 1000000ull) {
+                g_slow_scans.fetch_add(1, std::memory_order_relaxed);
+                static std::atomic<int> said{0};
+                if (said.fetch_add(1, std::memory_order_relaxed) < 8) {
+                    std::fprintf(stderr,
+                                 "stud: vulkan-client: a PAGEMAP_SCAN took %.2fms over %llu KB -- "
+                                 "it rewrites page protection, so the cost lands on every core\n",
+                                 static_cast<double>(ns) / 1e6,
+                                 static_cast<unsigned long long>((end - cursor) / 1024));
+                    std::fflush(stderr);
+                }
+            }
+        }
         if (n < 0) {
             static bool reported = false;
             if (!reported) {
@@ -260,5 +306,10 @@ bool UffdScan::take_written_and_protect(void* base, std::size_t offset, std::siz
 
 unsigned long long UffdScan::scan_count() { return g_scans.load(std::memory_order_relaxed); }
 unsigned long long UffdScan::pages_reported() { return g_pages.load(std::memory_order_relaxed); }
+unsigned long long UffdScan::scan_time_ns() { return g_scan_ns.load(std::memory_order_relaxed); }
+unsigned long long UffdScan::scan_time_max_ns() {
+    return g_scan_ns_max.load(std::memory_order_relaxed);
+}
+unsigned long long UffdScan::slow_scans() { return g_slow_scans.load(std::memory_order_relaxed); }
 
 }  // namespace stud::render_client

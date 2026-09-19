@@ -56,6 +56,12 @@ public:
     // two mechanisms can be compared on the same workload.
     static unsigned long long scan_count();
     static unsigned long long pages_reported();
+    // What the scans cost. PM_SCAN_WP_MATCHING rewrites page protection
+    // and so shoots down TLBs on every core, which is why the total
+    // matters and not just the count; see uffd_scan.cpp.
+    static unsigned long long scan_time_ns();
+    static unsigned long long scan_time_max_ns();
+    static unsigned long long slow_scans();
 };
 
 }  // namespace stud::render_client
