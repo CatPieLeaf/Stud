@@ -354,6 +354,22 @@ struct Loader {
     // Tracked so the first barrier can be corrected; see
     // make_barrier_legal(). Erased on the first barrier and on destroy,
     // so this holds only images still in their initial state.
+    // Every VkDeviceMemory this device has handed out and not freed.
+    //
+    // The spec requires every child object to be destroyed before
+    // vkDestroyDevice, and the validation layer caught Stud breaking it
+    // on EVERY device destroy in every session measured: "VkDevice has
+    // 14 leaked objects that have not been destroyed", the first five of
+    // them VkDeviceMemory.
+    //
+    // The leak is the engine's -- it drops its renderer without freeing
+    // what it allocated -- but it only became a spec violation when Stud
+    // started destroying the device rather than keeping one for the life
+    // of the process. Destroying a device out from under live objects is
+    // the same shape as the driver bug that misbehaves when an instance
+    // dies while other objects can still reach the present path, so it
+    // is worth not doing.
+    std::set<uint64_t> live_memory;
     std::set<uint64_t> untransitioned_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
@@ -2336,6 +2352,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     // black.
     out.resize(sizeof(uint64_t) * 2);
     const uint64_t handle_value = to_u64(memory);
+    l.live_memory.insert(handle_value);
     const uint64_t shared_flag = imported ? 1u : 0u;
     std::memcpy(out.data(), &handle_value, sizeof(handle_value));
     std::memcpy(out.data() + sizeof(handle_value), &shared_flag, sizeof(shared_flag));
@@ -2368,6 +2385,7 @@ std::map<uint64_t, std::pair<void*, size_t>>& shared_writes();
 uint64_t vk_free_memory(uint64_t memory) {
     Loader& l = loader();
     if (l.free_memory == nullptr) return 0;
+    l.live_memory.erase(memory);
     l.mapped.erase(memory);
     l.mapped_size.erase(memory);
     l.free_memory(l.device, from_u64<VkDeviceMemory>(memory), nullptr);
@@ -4759,6 +4777,40 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 }
                 l.probe_queue = VK_NULL_HANDLE;
                 l.have_first_queue_family = false;
+
+                // The engine's own allocations, freed before the device
+                // that owns them.
+                //
+                // Not tidiness: "All child objects created on device that
+                // can be destroyed or freed must have been destroyed or
+                // freed prior to destroying device" is a hard
+                // requirement, and the validation layer caught Stud
+                // breaking it on every single device destroy -- "VkDevice
+                // has 14 leaked objects", VkDeviceMemory among them.
+                //
+                // The engine dropped its renderer without freeing them,
+                // which is its business while a device lives forever. It
+                // stopped being harmless when Stud began destroying the
+                // device, so Stud cleans up after it rather than handing
+                // the driver a device with live children -- the same
+                // shape as the bug that makes this driver misbehave when
+                // objects outlive what created them.
+                //
+                // Freed here, AFTER device_wait_idle above and after
+                // Stud's own chains are gone, so nothing is still reading
+                // them; and before the mappings below are dropped,
+                // because unmapping pages the driver still imports is
+                // what segfaulted inside libnvidia-glcore once already.
+                if (l.free_memory != nullptr && !l.live_memory.empty()) {
+                    std::printf("stud-render-host: freeing %zu memory allocation(s) the engine "
+                                "left behind, before destroying the device that owns them\n",
+                                l.live_memory.size());
+                    std::fflush(stdout);
+                    for (uint64_t m : l.live_memory) {
+                        l.free_memory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
+                    }
+                }
+                l.live_memory.clear();
 
                 if (l.destroy_device != nullptr) l.destroy_device(l.device, nullptr);
                 l.device = VK_NULL_HANDLE;
