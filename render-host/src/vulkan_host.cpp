@@ -48,6 +48,16 @@ namespace {
 // a resize can be seen; NOT used to force VK_ERROR_OUT_OF_DATE_KHR;
 // see swapchain_is_out_of_date's own comment for the live result of
 // trying that.
+// Once the driver has lost the device, every further call on it is
+// meaningless and some are lethal: a vkQueueSubmit issued after the loss
+// is where NVIDIA's driver segfaulted, live-caught, inside the very next
+// acquire. So Stud stops issuing repair work of its own at that point.
+//
+// Cleared when the engine builds a NEW device: the loss belonged to the
+// old one, and leaving it set turned the first loss of a session into a
+// permanent, one-way disabling of three repair paths.
+std::atomic<bool> g_device_lost{false};
+
 std::map<uint64_t, VkExtent2D> g_swapchain_extents;
 
 // Atomic because they are written by whichever thread pumps Wayland and
@@ -269,6 +279,9 @@ struct Loader {
     PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image = nullptr;
     PFN_vkCmdCopyImage cmd_copy_image = nullptr;
     PFN_vkCmdBlitImage cmd_blit_image = nullptr;
+    // VK_NV_device_diagnostic_checkpoints. Null unless the driver has it.
+    PFN_vkCmdSetCheckpointNV cmd_set_checkpoint = nullptr;
+    PFN_vkGetQueueCheckpointDataNV get_queue_checkpoint_data = nullptr;
     PFN_vkCmdResolveImage cmd_resolve_image = nullptr;
     PFN_vkCmdResetQueryPool cmd_reset_query_pool = nullptr;
     PFN_vkCmdWriteTimestamp cmd_write_timestamp = nullptr;
@@ -1006,6 +1019,10 @@ bool device_supports_extension(const char* name) {
 // the device they were built on; see flush_retired_chains().
 void flush_retired_chains(const char* why);
 
+// Defined below, after the tables it clears: drops everything Stud still
+// remembers about a device the engine has replaced.
+void forget_old_device_state();
+
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -1088,6 +1105,40 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         if (!already) extensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     }
 
+    // Before anything below asks what this device supports.
+    //
+    // device_supports_extension() reads l.physical_device, and this used
+    // to be assigned further down, at the vkCreateDevice call itself --
+    // so every check up here ran against VK_NULL_HANDLE, returned false,
+    // and silently added nothing. The external-memory-host block below
+    // has been dead the whole time for that reason, not because the
+    // driver lacks it. Caught because a checkpoint extension that
+    // vulkaninfo lists as present kept resolving to null entry points.
+    l.physical_device =
+        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
+
+    // Checkpoints, so a hung GPU can say where it stopped.
+    //
+    // A device lost to a context-switch timeout tells you nothing about
+    // WHICH work hung: the engine's own submissions and Stud's upscale
+    // pass are on the same queue, and afterwards both look equally
+    // guilty. These markers are written as the GPU passes them, and the
+    // driver keeps the last ones it reached across the loss, so one
+    // freeze names its own cause instead of needing a run with the
+    // suspect turned off and another with it on -- which is no use at all
+    // for a fault that appears at random, minutes apart.
+    //
+    // Recording a marker is a write, not a barrier or a stall, so this is
+    // left on rather than hidden behind a switch: a diagnostic that is off
+    // when the rare thing happens has no value.
+    if (device_supports_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME)) {
+        bool already = false;
+        for (const std::string& e : extensions) {
+            if (e == VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME) already = true;
+        }
+        if (!already) extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    }
+
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
 
@@ -1111,8 +1162,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     flush_retired_chains("the engine builds a new device");
 
     VkDevice device = VK_NULL_HANDLE;
-    l.physical_device =
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
+    // l.physical_device was set above, before the support checks.
     VkResult r = l.create_device(l.physical_device, &ci, nullptr, &device);
     std::printf("stud-render-host: vkCreateDevice -> %d (queues=%zu extensions=%zu chain=%u)\n",
                 static_cast<int>(r), queues.size(), ext_ptrs.size(), hdr.chain_node_count);
@@ -1129,6 +1179,48 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // engine logged a wall of "VULKAN ERROR: vkCreateSemaphore ...
     // returned -3" before giving up with "Failed to allocate image
     // memory".
+    // A NEW device means every per-device thing Stud remembered about the
+    // old one is now a lie.
+    //
+    // The engine tears its renderer down and builds it again -- on a mode
+    // probe, and after every device loss it recovers from: 4 to 6
+    // vkCreateDevice calls in a typical session. None of this state was
+    // being reset, which had two consequences.
+    //
+    // The memory one: entries keyed by handles from a device nobody can
+    // reach any more are never erased, because the only erase sites are
+    // engine-issued destroys naming handles the engine has already thrown
+    // away. An upscale chain stranded that way takes its offscreen,
+    // staging and sharpened images, their memory, views, pools,
+    // pipelines, semaphores and fences with it -- the largest
+    // allocations here. Measured from the engine's own side: 1941 MB
+    // climbing to 2230 MB across four recoveries, while the scene being
+    // drawn got SIMPLER.
+    //
+    // The correctness one: drivers reuse handle values, so a fresh
+    // VkBuffer can collide with a dead one still in the table and be
+    // answered for with the wrong allocation.
+    //
+    // Deliberately NOT destroying the old device here. Doing that safely
+    // needs to know the engine has stopped using every object on it, and
+    // Stud does not know that; see case K::Device in vk_destroy_handle().
+    // Dropping Stud's own references is separate from, and safer than,
+    // destroying the device, and it is what stops the tables growing.
+    if (l.device != VK_NULL_HANDLE && l.device != device) forget_old_device_state();
+
+    // The device loss that prompted the rebuild belongs to the OLD device.
+    //
+    // This flag is what stops Stud issuing repair work on a device the
+    // driver has given up on, and it was set with exchange(true) and never
+    // once set back. So the first loss in a session permanently disabled
+    // three repairs -- the failed-acquire signal, the stale-signal drain
+    // and the orphaned-fence signal -- for the whole remaining life of the
+    // process, on a device that no longer exists. A session that took one
+    // loss became a structurally different program from one that had not,
+    // with an identical startup log. The new device is healthy until it
+    // says otherwise.
+    g_device_lost.store(false, std::memory_order_relaxed);
+
     l.device = device;
     if (l.get_device_proc_addr != nullptr) {
         auto dev = [&l](const char* n) { return l.get_device_proc_addr(l.device, n); };
@@ -1272,6 +1364,21 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
             reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(dev("vkCmdCopyImageToBuffer"));
         l.cmd_copy_image = reinterpret_cast<PFN_vkCmdCopyImage>(dev("vkCmdCopyImage"));
         l.cmd_blit_image = reinterpret_cast<PFN_vkCmdBlitImage>(dev("vkCmdBlitImage"));
+        l.cmd_set_checkpoint =
+            reinterpret_cast<PFN_vkCmdSetCheckpointNV>(dev("vkCmdSetCheckpointNV"));
+        l.get_queue_checkpoint_data =
+            reinterpret_cast<PFN_vkGetQueueCheckpointDataNV>(dev("vkGetQueueCheckpointDataNV"));
+        // Said at startup, because the answer decides what a later "no
+        // checkpoints" line MEANS: with the entry points resolved it says
+        // the GPU never reached Stud's own work, and without them it says
+        // only that nothing was ever recorded.
+        std::printf("stud-render-host: GPU checkpoints %s\n",
+                    (l.cmd_set_checkpoint != nullptr && l.get_queue_checkpoint_data != nullptr)
+                        ? "are available; Stud's own passes are marked, so a device loss can say "
+                          "where the GPU stopped"
+                        : "are NOT available on this driver; a device loss will not be able to say "
+                          "where the GPU stopped");
+        std::fflush(stdout);
         l.cmd_resolve_image = reinterpret_cast<PFN_vkCmdResolveImage>(dev("vkCmdResolveImage"));
         l.cmd_reset_query_pool =
             reinterpret_cast<PFN_vkCmdResetQueryPool>(dev("vkCmdResetQueryPool"));
@@ -2055,6 +2162,9 @@ uint64_t vk_free_memory_shared_cleanup(uint64_t memory) {
     return 1;
 }
 
+// Defined below; vk_free_memory() drops this mapping too.
+std::map<uint64_t, std::pair<void*, size_t>>& shared_writes();
+
 uint64_t vk_free_memory(uint64_t memory) {
     Loader& l = loader();
     if (l.free_memory == nullptr) return 0;
@@ -2064,6 +2174,19 @@ uint64_t vk_free_memory(uint64_t memory) {
     // The import keeps the pages alive as long as the memory object does,
     // so the mapping is dropped only now.
     vk_free_memory_shared_cleanup(memory);
+    // ...and so is the write-sharing mmap for the same memory. This was
+    // the one table with no erase site at all: every mapping made by
+    // vk_share_mapped_memory() stayed for the life of the process, and
+    // was only ever unmapped if the very same VkDeviceMemory handle value
+    // happened to be shared a second time. Address space and map nodes
+    // both leaked, on every session, with or without a device loss.
+    {
+        auto w = shared_writes().find(memory);
+        if (w != shared_writes().end()) {
+            if (w->second.first != nullptr) ::munmap(w->second.first, w->second.second);
+            shared_writes().erase(w);
+        }
+    }
     return 0;
 }
 
@@ -2363,6 +2486,13 @@ struct UpscaleChain {
     // reset is needed. The fence is what says the previous submit of THIS
     // buffer has finished, which a re-submit requires.
     std::vector<VkCommandBuffer> cmd;
+    // One per image, recorded once: nothing but the barrier that makes the
+    // swapchain image presentable. Submitted when the upscale pass is
+    // skipped, because the ONLY transition to PRESENT_SRC_KHR lives inside
+    // the pass's own command buffer -- so a skipped frame used to present
+    // an image in whatever layout it last held, and
+    // VK_IMAGE_LAYOUT_UNDEFINED for an index the pass had never run on.
+    std::vector<VkCommandBuffer> cmd_present_only;
     std::vector<VkSemaphore> done;
     // Semaphores a failed present may have left signalled.
     //
@@ -2725,6 +2855,30 @@ void flush_retired_chains(const char* why) {
             l.destroy_swapchain(l.device, held, nullptr);
         }
     }
+}
+
+void forget_old_device_state() {
+        std::printf("stud-render-host: the engine built a second device; dropping what Stud "
+                    "still remembered about the last one (%zu upscale chains, %zu swapchain "
+                    "extents, %zu buffer bindings, %zu shared mappings)\n",
+                    g_upscale_chains.size(), g_swapchain_extents.size(),
+                    buffer_memory().size(), shared_memory().size());
+        std::fflush(stdout);
+        g_upscale_chains.clear();
+        g_swapchain_extents.clear();
+        {
+            std::lock_guard<std::mutex> lock(buffer_memory_mutex());
+            buffer_memory().clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(shared_memory_mutex());
+            shared_memory().clear();
+        }
+        for (auto& w : shared_writes()) {
+            if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
+        }
+        shared_writes().clear();
+    
 }
 
 void destroy_upscale_chain(UpscaleChain& c, bool force) {
@@ -3166,6 +3320,9 @@ bool record_upscale_blits(UpscaleChain& c) {
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         if (l.begin_command_buffer(c.cmd[i], &bi) != VK_SUCCESS) return false;
+        if (l.cmd_set_checkpoint != nullptr) {
+            l.cmd_set_checkpoint(c.cmd[i], "stud upscale: pass begin");
+        }
 
         // Where the two images have to be for the pass that follows: the
         // compute path samples the engine's image and writes the real one
@@ -3226,7 +3383,13 @@ bool record_upscale_blits(UpscaleChain& c) {
             l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                  sizeof(push), &push);
             // 8x8 per group, matching the shader's own local size.
+            if (l.cmd_set_checkpoint != nullptr) {
+                l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU dispatch");
+            }
             l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
+            if (l.cmd_set_checkpoint != nullptr) {
+                l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU done");
+            }
 
             // RCAS, at the output resolution, over what EASU just wrote.
             if (c.sharpen) {
@@ -3264,7 +3427,13 @@ bool record_upscale_blits(UpscaleChain& c) {
                 sharpen_push.sharpness = upscale_sharpness();
                 l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                      sizeof(sharpen_push), &sharpen_push);
+                if (l.cmd_set_checkpoint != nullptr) {
+                    l.cmd_set_checkpoint(c.cmd[i], "stud upscale: RCAS sharpen dispatch");
+                }
                 l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
+                if (l.cmd_set_checkpoint != nullptr) {
+                    l.cmd_set_checkpoint(c.cmd[i], "stud upscale: RCAS sharpen done");
+                }
             }
 
             // Hand the result to the swapchain: same size, so this is a
@@ -3333,6 +3502,29 @@ bool record_upscale_blits(UpscaleChain& c) {
         // Always the swapchain image here: both paths end with it as a
         // transfer destination, the compute one via the hand-over blit.
         after_dst.image = c.real_images[i];
+
+        // The same destination barrier on its own, in its own buffer, for
+        // the frames that skip the pass. oldLayout UNDEFINED because the
+        // image may never have been through the pass at all, and
+        // UNDEFINED is the one old layout that is always legal to
+        // transition from; its contents are discarded, which is already
+        // true of a frame the pass did not write.
+        if (i < c.cmd_present_only.size() && c.cmd_present_only[i] != VK_NULL_HANDLE) {
+            VkCommandBufferBeginInfo pbi{};
+            pbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (l.begin_command_buffer(c.cmd_present_only[i], &pbi) == VK_SUCCESS) {
+                VkImageMemoryBarrier make_presentable = after_dst;
+                make_presentable.srcAccessMask = 0;
+                make_presentable.dstAccessMask = 0;
+                make_presentable.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                make_presentable.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                l.cmd_pipeline_barrier(c.cmd_present_only[i],
+                                       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                                       nullptr, 1, &make_presentable);
+                l.end_command_buffer(c.cmd_present_only[i]);
+            }
+        }
 
         VkImageMemoryBarrier after[2] = {after_src, after_dst};
         // BOTH stages that actually did the work, and this was wrong.
@@ -3483,6 +3675,16 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbai.commandBufferCount = count;
         ok = l.allocate_command_buffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
+    }
+    if (ok) {
+        pending.cmd_present_only.resize(count, VK_NULL_HANDLE);
+        VkCommandBufferAllocateInfo cbai{};
+        cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbai.commandPool = pending.pool;
+        cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbai.commandBufferCount = count;
+        ok = l.allocate_command_buffers(l.device, &cbai,
+                                        pending.cmd_present_only.data()) == VK_SUCCESS;
     }
     for (uint32_t i = 0; ok && i < count; ++i) {
         VkSemaphoreCreateInfo sci{};
@@ -5085,14 +5287,80 @@ void note_acquire_failed(uint64_t swapchain, bool failed) {
 // vk_queue_submit), and if the engine hands the same one back to another
 // acquire first, the stale signal is consumed with an empty wait before
 // the acquire runs.
-// Once the driver has lost the device, every further call on it is
-// meaningless and some are lethal: a vkQueueSubmit issued after the loss
-// is where NVIDIA's driver segfaulted, live-caught, inside the very next
-// acquire. So Stud stops issuing repair work of its own at that point.
-std::atomic<bool> g_device_lost{false};
+// Declared with the other file globals near the top, because
+// vk_create_device() clears it long before this point in the file.
 
-void note_result(VkResult r) {
-    if (r == VK_ERROR_DEVICE_LOST) g_device_lost.store(true, std::memory_order_relaxed);
+// What the GPU had actually reached when it died.
+//
+// The driver keeps the checkpoints a queue passed through across a device
+// loss, so this is the one question worth asking at that moment: did the
+// GPU stop inside Stud's own upscale pass, or somewhere in the engine's
+// work? Printed rather than interpreted -- a marker that is present says
+// the GPU got that far, and the absence of Stud's markers says it did
+// not reach them at all.
+void report_checkpoints_after_loss() {
+    Loader& l = loader();
+    if (l.get_queue_checkpoint_data == nullptr) {
+        std::printf("stud-render-host: no checkpoint data: the driver does not offer "
+                    "VK_NV_device_diagnostic_checkpoints, so where the GPU stopped is unknown\n");
+        std::fflush(stdout);
+        return;
+    }
+    // The queue Stud's own work goes to; the same one the engine's
+    // submissions pass through, which is the point -- both are visible
+    // in one checkpoint list.
+    VkQueue q = l.probe_queue;
+    if (q == VK_NULL_HANDLE) {
+        std::printf("stud-render-host: no queue recorded yet, so no checkpoints to read\n");
+        std::fflush(stdout);
+        return;
+    }
+    uint32_t n = 0;
+    l.get_queue_checkpoint_data(q, &n, nullptr);
+    if (n == 0) {
+        std::printf("stud-render-host: the queue reported no checkpoints at all, so the GPU "
+                    "did not reach any of Stud's own recorded work\n");
+        std::fflush(stdout);
+        return;
+    }
+    std::vector<VkCheckpointDataNV> data(n);
+    for (auto& d : data) {
+        d.sType = VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV;
+        d.pNext = nullptr;
+    }
+    l.get_queue_checkpoint_data(q, &n, data.data());
+    std::printf("stud-render-host: the GPU's last checkpoints before the loss (%u):\n", n);
+    for (uint32_t i = 0; i < n; ++i) {
+        const char* name = data[i].pCheckpointMarker != nullptr
+                               ? static_cast<const char*>(data[i].pCheckpointMarker)
+                               : "(unnamed)";
+        std::printf("stud-render-host:   stage 0x%x reached \"%s\"\n",
+                    static_cast<unsigned>(data[i].stage), name);
+    }
+    std::fflush(stdout);
+}
+
+void note_result(VkResult r, const char* where) {
+    if (r != VK_ERROR_DEVICE_LOST) return;
+    // Said once, loudly, and never behind a switch.
+    //
+    // The device being lost is the difference between "Stud is slow" and
+    // "the GPU went away and everything on it is gone", and the two look
+    // identical from the outside: the window stops, audio keeps playing
+    // because it is not on the GPU, and if the driver recovers, the
+    // engine rebuilds every resource it had -- which is why every texture
+    // reloads from its lowest mip afterwards. Without this line a report
+    // of that says only "it froze for ten seconds", and the log agrees
+    // with everything and explains nothing.
+    if (!g_device_lost.exchange(true, std::memory_order_relaxed)) {
+        std::printf("stud-render-host: THE VULKAN DEVICE WAS LOST, reported by %s. The GPU "
+                    "dropped its work; the engine has to rebuild everything it had there, so "
+                    "expect a stall and every texture to stream in again. Stud stops issuing "
+                    "work of its own from here.\n",
+                    where != nullptr ? where : "an unnamed call");
+        std::fflush(stdout);
+        report_checkpoints_after_loss();
+    }
 }
 
 // Waits for a repair submission to finish before returning to the engine.
@@ -5116,7 +5384,7 @@ void wait_for_repair(VkFence fence) {
     // 100ms is far longer than an empty batch takes and short enough that
     // a wedged queue does not become a wedged window.
     const VkResult r = l.wait_for_fences(l.device, 1, &fence, VK_TRUE, 100000000ull);
-    note_result(r);
+    note_result(r, "vkWaitForFences");
     if (r == VK_SUCCESS && l.reset_fences != nullptr) l.reset_fences(l.device, 1, &fence);
 }
 
@@ -5183,7 +5451,7 @@ void signal_what_the_failed_acquire_left(VkQueue queue, uint64_t semaphore, uint
         // Stud's to wait on; wait for the queue instead, for the same
         // reason.
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        note_result(l.queue_wait_idle(queue));
+        note_result(l.queue_wait_idle(queue), "vkQueueWaitIdle");
     }
     if (semaphore != 0) {
         std::lock_guard<std::mutex> lock(g_semaphores_stud_signalled_mutex);
@@ -5347,7 +5615,7 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
     VkResult res = l.queue_submit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
                                    from_u64<VkFence>(fence));
-    note_result(res);
+    note_result(res, "vkQueueSubmit");
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
@@ -5451,6 +5719,19 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
                     n, static_cast<unsigned long long>(timeout), static_cast<int>(res));
         std::fflush(stdout);
     }
+    // The engine's own wait is a place the device really is lost: a GPU
+    // that stops retiring work is noticed HERE first, because this is the
+    // call that sits on the fence. It was the one result in this file
+    // that nobody told, so g_device_lost stayed false through a real
+    // loss and Stud went on issuing work of its own afterwards -- which
+    // the flag exists precisely to stop, since a submit after the loss is
+    // where the driver was seen to segfault.
+    //
+    // Caught in a live trace: `SLOW vkWaitForFences 4463.0ms -> -4`, with
+    // the kernel logging `Xid 109 CTX SWITCH TIMEOUT` against
+    // stud-render-host at the same second, and not one line in Stud's own
+    // output saying the device had gone.
+    note_result(res, "vkWaitForFences (the engine's own)");
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
@@ -5471,17 +5752,40 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
     const uint32_t n = r.u32();
     std::vector<VkFence> fences(n);
     for (auto& f : fences) f = from_u64<VkFence>(r.u64());
-    // Hold the reset until nothing is waiting on any of these fences. The
-    // wait is bounded (see vk_wait_for_fences), so this cannot deadlock on
-    // a fence that never signals; it just runs after that wait gives up.
+    // Hold the reset until nothing is waiting on any of these fences.
+    //
+    // BOUNDED, and it has to be. The comment here used to say the wait
+    // could not deadlock "because vk_wait_for_fences is bounded" -- it is
+    // not. That function slices its wait into one-second pieces but only
+    // decrements and gives up when the timeout is not UINT64_MAX, and
+    // UINT64_MAX is exactly what the engine passes. So a fence that never
+    // signals keeps its entry in fences_being_waited_on() for ever, and
+    // this wait, which was unbounded too, would have blocked here for
+    // ever with it.
+    //
+    // Two seconds is far longer than any real overlap between a reset and
+    // a wait on the same fence, and giving up is safe: resetting a fence
+    // another thread is waiting on is a validation error, not a crash,
+    // and it is strictly better than wedging this connection.
     {
         std::unique_lock<std::mutex> lock(fence_wait_mutex());
-        fence_wait_cv().wait(lock, [&fences] {
+        const bool clear = fence_wait_cv().wait_for(lock, std::chrono::seconds(2), [&fences] {
             for (const VkFence f : fences) {
                 if (fences_being_waited_on().count(to_u64(f)) != 0) return false;
             }
             return true;
         });
+        if (!clear) {
+            static bool said = false;
+            if (!said) {
+                said = true;
+                std::printf("stud-render-host: resetting a fence something is still waiting on; "
+                            "the wait has not finished in two seconds and is not going to. This "
+                            "means a fence was never signalled -- see the FENCE STUCK line "
+                            "above.\n");
+                std::fflush(stdout);
+            }
+        }
     }
     VkResult res = l.reset_fences(l.device, n, fences.empty() ? nullptr : fences.data());
     return static_cast<uint64_t>(static_cast<int32_t>(res));
@@ -5625,7 +5929,7 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
                                  from_u64<VkSemaphore>(semaphore), from_u64<VkFence>(fence),
                                  &index);
     }
-    note_result(r);
+    note_result(r, "vkAcquireNextImageKHR");
     // A retry that succeeded really did acquire an image, so the present
     // that follows is the engine's own and must not be dropped.
     if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) note_acquire_failed(swapchain, false);
@@ -5776,6 +6080,57 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     }
     l.free_memory(l.device, memory, nullptr);
     l.destroy_buffer(l.device, buffer, nullptr);
+}
+
+
+// Make the swapchain image legal to present when the upscale pass did not
+// run.
+//
+// The pass's own command buffer carries the only transition to
+// PRESENT_SRC_KHR, so every path that skips it used to hand the
+// presentation engine an image in whatever layout it last held --
+// UNDEFINED for an index the pass had never run on, which is
+// VUID-VkPresentInfoKHR-pImageIndices-01430 and undefined behaviour on a
+// driver that enforces it.
+//
+// Submitted exactly like the pass it replaces: it consumes the engine's
+// own wait semaphores and signals the same done[index] the present then
+// waits on, so the semaphore bookkeeping is identical to the working
+// path. On failure it changes nothing and the caller presents as it did
+// before.
+//
+// It does NOT put the engine's frame on screen -- that frame is in
+// offscreen[i] and only the pass moves it. A skipped frame still shows
+// the previous contents. Making it legal is the part that matters for
+// stability; showing the right pixels needs the pass to run.
+void make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
+                              VkPresentInfoKHR& pi,
+                              std::vector<VkSemaphore>& upscaled_waits) {
+    Loader& l = loader();
+    if (index >= c.cmd_present_only.size() || c.cmd_present_only[index] == VK_NULL_HANDLE ||
+        index >= c.done.size() || l.queue_submit == nullptr) {
+        return;
+    }
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    std::vector<VkPipelineStageFlags> stages(pi.waitSemaphoreCount,
+                                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    si.waitSemaphoreCount = pi.waitSemaphoreCount;
+    si.pWaitSemaphores = pi.pWaitSemaphores;
+    si.pWaitDstStageMask = stages.empty() ? nullptr : stages.data();
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &c.cmd_present_only[index];
+    si.signalSemaphoreCount = 1;
+    si.pSignalSemaphores = &c.done[index];
+    VkResult sr = VK_ERROR_UNKNOWN;
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, VK_NULL_HANDLE);
+    }
+    if (sr != VK_SUCCESS) return;
+    upscaled_waits.assign(1, c.done[index]);
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = upscaled_waits.data();
 }
 
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
@@ -6009,7 +6364,18 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     upscaled_waits.push_back(c.done[index]);
                     pi.waitSemaphoreCount = 1;
                     pi.pWaitSemaphores = upscaled_waits.data();
+                    make_presentable_on_skip(c, index, queue, pi, upscaled_waits);
                 } else {
+                    // Nothing was submitted, so nothing will ever signal
+                    // c.fence[index] -- which was reset just above. Leaving
+                    // in_flight set marks this index as having GPU work
+                    // outstanding for ever: every later present of it burns
+                    // the full fence timeout and skips the pass, and
+                    // upscale_work_finished() never returns true again, so
+                    // the chain is deferred for ever and the swapchain it
+                    // holds is never destroyed. That is a presentable pool
+                    // that shrinks and never recovers.
+                    c.in_flight[index] = false;
                     static bool said = false;
                     if (!said) {
                         said = true;
@@ -6055,12 +6421,67 @@ present_without_upscale:
             static int said = 0;
             if (said < 24) {
                 ++said;
-                std::printf("stud-render-host: SLOW vkQueuePresentKHR %.1fms -> %d\n", present_ms,
-                            static_cast<int>(res));
+                // Split, because the total answers nothing on its own.
+                //
+                // present_t0 is taken BEFORE the queue lock, so this span
+                // covers two quite different waits: queuing behind another
+                // thread that holds the queue, which is Stud's own
+                // problem, and the driver's own call, which is the
+                // compositor's or the GPU's. A twelve-second present was
+                // traced with only the total to go on and the two were
+                // indistinguishable; they are not any more.
+                const double lock_ms = std::chrono::duration<double, std::milli>(
+                    lock_t - present_t0).count();
+                const double driver_ms = std::chrono::duration<double, std::milli>(
+                    present_t1 - lock_t).count();
+                std::printf("stud-render-host: SLOW vkQueuePresentKHR %.1fms -> %d "
+                            "(waiting for the queue %.1fms, inside the driver %.1fms)\n",
+                            present_ms, static_cast<int>(res), lock_ms, driver_ms);
                 std::fflush(stdout);
             }
         }
     }
+    // A census of what Stud itself is still holding.
+    //
+    // Some sessions freeze repeatedly and some never do, with identical
+    // startup logs, and the user's reading is that something accumulates
+    // on the bad ones. Nothing Stud printed could confirm or deny that:
+    // the write barrier's own counters are flat, texture errors do not
+    // correlate, and an event-rate profile of a freezing session against
+    // a clean one differs only in how much the player moved.
+    //
+    // So this counts the things that could grow without anyone noticing.
+    // Every one of them is a container Stud adds to and is supposed to
+    // erase from; a number that climbs across a session and never comes
+    // down is the accumulation, and a session where they all stay flat
+    // says the idea is wrong. Printed rarely, so it costs nothing.
+    {
+        static uint64_t presents_seen = 0;
+        if ((++presents_seen % 1800) == 0) {
+            size_t shared = 0;
+            size_t buffers = 0;
+            {
+                std::lock_guard<std::mutex> lock(shared_memory_mutex());
+                shared = shared_memory().size();
+            }
+            {
+                std::lock_guard<std::mutex> lock(buffer_memory_mutex());
+                buffers = buffer_memory().size();
+            }
+            size_t retired = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+                retired = g_retired_chains.size();
+            }
+            std::printf("stud-render-host: still held after %llu presents: %zu shared mappings, "
+                        "%zu buffer bindings, %zu upscale chains, %zu retired chains, "
+                        "%zu swapchain extents\n",
+                        static_cast<unsigned long long>(presents_seen), shared, buffers,
+                        g_upscale_chains.size(), retired, g_swapchain_extents.size());
+            std::fflush(stdout);
+        }
+    }
+
     static const bool time_presents = std::getenv("STUD_VK_HOST_TIME") != nullptr;
     if (time_presents) {
         static int n = 0;
@@ -6081,7 +6502,7 @@ present_without_upscale:
             suboptimal = 0;
         }
     }
-    note_result(res);
+    note_result(res, "vkQueuePresentKHR");
     if (res == VK_ERROR_OUT_OF_DATE_KHR && ns > 0 && !chains.empty()) {
         // Same reasoning as the acquire above: rebuild and report success.
         // The frame itself is lost, which is one frame during a resize.
