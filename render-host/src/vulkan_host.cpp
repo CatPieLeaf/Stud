@@ -2417,11 +2417,23 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 
 // Which present mode the swapchain actually gets.
 //
-// The engine asks for FIFO, which is v-sync: one frame per refresh, and a
-// hard ceiling at the display's rate however much headroom the machine
-// has. MAILBOX renders as fast as it can and shows the newest finished
-// frame at each refresh. No tearing, no ceiling, and IMMEDIATE is the
-// uncapped fallback that every driver has, at the cost of tearing.
+// The engine asks for IMMEDIATE -- observed, not assumed: every session
+// logs `present mode 0 -> 1 (mailbox)`, and 0 is
+// VK_PRESENT_MODE_IMMEDIATE_KHR. This comment used to say FIFO, which
+// sent one investigation looking for a mismatch that was not there.
+//
+// FIFO is v-sync: one frame per refresh, and a hard ceiling at the
+// display's rate however much headroom the machine has. MAILBOX renders
+// as fast as it can and shows the newest finished frame at each refresh:
+// no tearing, no ceiling. IMMEDIATE is the uncapped one every driver has,
+// at the cost of tearing.
+//
+// The image count is left exactly as the engine asked, and that is
+// correct rather than an oversight: it asks for 3, which is the ordinary
+// triple buffer for IMMEDIATE and is also precisely what MAILBOX wants --
+// one displayed, one queued and replaceable, one being drawn. The
+// surface here allows 2 to 8. Substituting the mode does not imply the
+// count has to move with it.
 //
 // Only ever a substitution among modes the driver advertises FOR THIS
 // SURFACE, asked for each time rather than assumed: presenting with a
