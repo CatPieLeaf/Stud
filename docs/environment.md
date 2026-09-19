@@ -146,6 +146,7 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_DUMP_FRAME` | off | Reads the frame back before the swap and writes it out. The honest check for "is the window really black". **perf** |
 | `STUD_DUMP_FRAME_PATH` | a temp file | Where those frames go. |
 | `STUD_VK_PROBE_PIXELS` | off | Reads a swapchain image back and says whether it is all black. **perf** — a full queue wait. |
+| `STUD_WL_NO_PRESENT_PUMP` | off | Stops Stud reading the Wayland connection from the thread that just returned from `vkQueuePresentKHR`, leaving the main loop to pump it. The driver reads the same connection from inside its own present; this is the last place Stud touches it from a foreign thread. **perf** — buffer releases are then dispatched on the main loop's cadence. |
 | `STUD_WL_DISPATCH_DEFAULT_QUEUE` | off | Puts back Stud's dispatch of the Vulkan driver's own default Wayland queue. Off because a client has no business dispatching another component's queue from a foreign thread; the black window this once caused did not return without it. |
 | `STUD_FLIGHT_RECORDER` | off | Records submits, fence waits, presents, acquires and barriers into a ring in memory and dumps the recent history whenever the device is lost, a fence sticks, or a wait or present runs long. Nothing is printed until a trigger fires. |
 | `STUD_FLIGHT_RECORDER_PATH` | stdout only | Also append each flight-recorder dump to this file, which survives a terminal that scrolled away. |
