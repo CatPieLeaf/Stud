@@ -969,6 +969,36 @@ std::set<uint32_t>& host_visible_memory_types() {
     return t;
 }
 
+// Host-visible types that are NOT coherent, and the allocations made
+// from them.
+//
+// Coherent memory is the only kind that needs flushing behind the
+// engine's back: the spec says a host write to it is visible to the
+// device immediately, which across a process boundary is never true
+// unless Stud ships it. NON-coherent memory carries the opposite
+// contract -- the engine must call vkFlushMappedMemoryRanges itself,
+// and Stud implements that call -- so scanning those mappings at every
+// submit is work with no one waiting for it.
+//
+// It is not free work. Under uffd-scan each mapping costs a
+// PAGEMAP_SCAN ioctl with PM_SCAN_WP_MATCHING, which rewrites page
+// table protection bits and therefore shoots down TLBs on every core.
+// flush_all_mapped_memory() runs at every submit over every live
+// mapping, and a real session held 38-47 of them at once.
+//
+// Deliberately conservative: a type is only listed once the memory
+// properties have actually been read, so anything unknown keeps the old
+// behaviour and is still scanned.
+std::set<uint32_t>& non_coherent_memory_types() {
+    static std::set<uint32_t> t;
+    return t;
+}
+
+std::set<uint64_t>& non_coherent_allocations() {
+    static std::set<uint64_t> a;
+    return a;
+}
+
 bool shared_memory_enabled() {
     // STUD_NO_SHARED_MEMORY=1 returns to copying, which is what this has
     // to be measured against.
@@ -1221,9 +1251,12 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetPhysicalDeviceMemoryProperties(
                                             &written);
     read_pod(out.data(), written, *pMemoryProperties, "VkPhysicalDeviceMemoryProperties");
     for (uint32_t i = 0; i < pMemoryProperties->memoryTypeCount; ++i) {
-        if ((pMemoryProperties->memoryTypes[i].propertyFlags &
-             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+        const VkMemoryPropertyFlags f = pMemoryProperties->memoryTypes[i].propertyFlags;
+        if ((f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
             host_visible_memory_types().insert(i);
+            if ((f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0) {
+                non_coherent_memory_types().insert(i);
+            }
         }
     }
 }
@@ -1839,6 +1872,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
         return result != VK_SUCCESS ? result : VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
     *pMemory = from_u64<VkDeviceMemory>(handle);
+    // Recorded now, while the type index is still in hand: the flush path
+    // only ever sees the memory handle. See non_coherent_memory_types().
+    if (non_coherent_memory_types().count(pAllocateInfo->memoryTypeIndex) != 0) {
+        non_coherent_allocations().insert(handle);
+    }
     // Share it only if the host says it really imported those pages. When
     // the driver refuses the import the host allocates ordinary memory
     // instead, and handing the engine the shared pointer anyway would mean
@@ -1867,6 +1905,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
     {
         std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
         mapped_ranges().erase(to_u64(memory));
+        non_coherent_allocations().erase(to_u64(memory));
     }
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
@@ -3097,6 +3136,22 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetCommandPool(VkDevice device, VkComman
 void flush_all_mapped_memory() {
     std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     for (auto& kv : mapped_ranges()) {
+        // Non-coherent memory is the engine's own to flush, and it does
+        // so through vkFlushMappedMemoryRanges, which Stud implements.
+        // Scanning it here as well is a page-table rewrite and a
+        // cross-core TLB shootdown that nothing is waiting on. See
+        // non_coherent_memory_types() for why that is expensive enough
+        // to be worth skipping, and why "unknown" still gets scanned.
+        if (non_coherent_allocations().count(kv.first) != 0) {
+            static bool said = false;
+            if (!said) {
+                said = true;
+                std::printf("stud: vulkan-client: skipping non-coherent mappings in the "
+                            "per-submit flush; the engine flushes those itself\n");
+                std::fflush(stdout);
+            }
+            continue;
+        }
         push_mapped_bytes(kv.first, 0, VK_WHOLE_SIZE);
     }
     static const bool stats = std::getenv("STUD_VK_MEM_STATS") != nullptr;
