@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -279,9 +281,29 @@ void dump(const char* why) {
     // crowd of consequent failures, and each of them would otherwise
     // dump the same history and push the first one out of the terminal.
     std::lock_guard<std::mutex> lock(dump_mutex());
-    static int dumps = 0;
-    if (dumps >= 12) return;
-    ++dumps;
+    // Budgeted PER REASON, not globally.
+    //
+    // A single global cap of twelve was tried and it threw away the one
+    // dump that mattered: a session spent its whole budget on the
+    // watchdog noticing ordinary loading pauses, and when a device loss
+    // finally arrived -- the rarest and most informative trigger there
+    // is -- the counter was exhausted and nothing was written. The
+    // checkpoints named the failing command in the log and the history
+    // behind it was silently dropped.
+    //
+    // So the noisy triggers get a small allowance and cannot crowd out
+    // the rare ones. A device loss happens at most a handful of times in
+    // a session and every one of them is worth keeping.
+    static std::map<std::string, int> used;
+    const std::string key = why != nullptr ? why : "?";
+    const bool rare = key.find("device was lost") != std::string::npos ||
+                      key.find("present ran long") != std::string::npos ||
+                      key.find("not signalled") != std::string::npos ||
+                      key.find("submit failed") != std::string::npos;
+    const int budget = rare ? 8 : 3;
+    int& spent = used[key];
+    if (spent >= budget) return;
+    ++spent;
 
     const uint64_t total = g_next.load(std::memory_order_relaxed);
     if (total == 0) return;

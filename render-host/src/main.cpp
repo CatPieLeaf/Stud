@@ -4417,7 +4417,39 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         // data arriving between the poll and the read is left for the
         // next pump, which delays exactly the buffer-release events this
         // call exists to dispatch.
-        if (hdr.call_id == CallId::VkQueuePresentKHR) {
+        //
+        // STUD_WL_NO_PRESENT_PUMP=1 leaves this out, and it is the last
+        // thing Stud does that no ordinary game does.
+        //
+        // A normal Vulkan game does not share its Wayland connection
+        // with the driver: the toolkit owns the display and the driver's
+        // WSI is the only other reader. Stud reads it HERE, with
+        // prepare_read / read_events / dispatch, on the very thread that
+        // just returned from vkQueuePresentKHR, after every present --
+        // and the driver then enters the next present and reads the same
+        // connection itself. libwayland coordinates reads per
+        // connection, so a read or a cancel from Stud lands in the
+        // middle of the driver's own.
+        //
+        // Why that is the remaining suspect: the freeze is a 12006ms
+        // SPIN inside the driver's present (thread in state R, wchan 0,
+        // GPU idle, no Xid), and on Stud's side the frame it happens on
+        // is indistinguishable from the eighty healthy frames before it
+        // -- same barriers, same two command buffers, every other
+        // present in that window under 247us. Nothing in what Stud
+        // SUBMITS explains it, which leaves what Stud does to the
+        // connection the driver is using.
+        //
+        // A switch rather than a deletion: this pump exists because
+        // presents once did not complete without it (the main loop was
+        // blocked on the same dispatch mutex, so nothing serviced the
+        // display and every frame returned VK_SUCCESS while showing
+        // nothing). The main loop still pumps on its own cadence, so
+        // removing this should cost latency rather than correctness --
+        // should, which is why it is measured and not assumed.
+        static const bool no_present_pump =
+            std::getenv("STUD_WL_NO_PRESENT_PUMP") != nullptr;
+        if (hdr.call_id == CallId::VkQueuePresentKHR && !no_present_pump) {
             pump_display(real_window, true);
         }
         if ((hdr.flags & Header::kNoReply) != 0) continue;
