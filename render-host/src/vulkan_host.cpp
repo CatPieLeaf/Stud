@@ -11,6 +11,7 @@
 #include "stud/vulkan_host.h"
 #include "stud/android_glue.h"
 #include "stud/session_log.h"
+#include "flight_recorder.h"
 
 #include <dlfcn.h>
 #include <sys/syscall.h>
@@ -1810,6 +1811,7 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     // Brand new, so it is in UNDEFINED until a barrier says otherwise.
     // See Loader::untransitioned_images.
     l.untransitioned_images.insert(to_u64(image));
+    fr::record(fr::Event::Note, to_u64(image), h.format, h.usage);
     // The handle, named, so a validation message about an image can be
     // tied back to what that image IS. A report says only
     // "VkImage 0x5fc00000005fc"; without this line nothing in Stud's own
@@ -4124,6 +4126,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     std::fflush(stdout);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     g_swapchain_extents[to_u64(swapchain)] = ci.imageExtent;
+    fr::record(fr::Event::SwapchainNew, to_u64(swapchain), ci.imageExtent.width,
+               ci.imageExtent.height);
     {
         // Kept so Stud can build this swapchain again at a new size
         // without the engine's help. The family list is copied, since the
@@ -5780,6 +5784,11 @@ void note_result(VkResult r, const char* where) {
         std::fflush(stdout);
         report_checkpoints_after_loss();
         report_device_fault_after_loss();
+        // Last, so it follows the checkpoints and the fault report in
+        // the log: those say WHERE the GPU stopped and WHAT it faulted
+        // on, and this says what led up to it.
+        fr::record(fr::Event::DeviceLost);
+        fr::dump("the device was lost");
     }
 }
 
@@ -5952,6 +5961,70 @@ void note_fence_submitted(uint64_t fence) {
     g_fences_reset_unsubmitted.erase(fence);
 }
 
+// A rolling picture of how the session is behaving, printed with the
+// census rather than only when something goes wrong.
+//
+// Both remaining bugs are about LATENCY, and latency has no signature in
+// a log that prints only outliers: a session that is quietly degrading
+// looks exactly like a healthy one until the first 250ms wait. These
+// counters make the degradation itself visible, which is the thing the
+// "some runs are cursed" reading has never been able to test.
+std::atomic<uint64_t> g_wait_n{0};
+std::atomic<uint64_t> g_wait_us{0};
+std::atomic<uint64_t> g_wait_us_max{0};
+std::atomic<uint64_t> g_wait_over_50{0};
+std::atomic<uint64_t> g_wait_over_250{0};
+std::atomic<uint64_t> g_present_n{0};
+std::atomic<uint64_t> g_present_us{0};
+std::atomic<uint64_t> g_present_us_max{0};
+std::atomic<uint64_t> g_present_over_50{0};
+
+void note_latency(std::atomic<uint64_t>& n, std::atomic<uint64_t>& sum,
+                  std::atomic<uint64_t>& peak, double ms) {
+    const auto us = static_cast<uint64_t>(ms * 1000.0);
+    n.fetch_add(1, std::memory_order_relaxed);
+    sum.fetch_add(us, std::memory_order_relaxed);
+    // Raced on purpose: a lost sample costs one peak, a lock would cost
+    // every caller.
+    if (us > peak.load(std::memory_order_relaxed)) peak.store(us, std::memory_order_relaxed);
+}
+
+// WHEN each fence's work reached the queue.
+//
+// A slow vkWaitForFences on its own is ambiguous, and that ambiguity is
+// the whole reason the system lag is still unexplained: "the fence took
+// 300ms" is consistent both with a GPU that was busy for 300ms and with
+// work that finished in 2ms whose completion nobody was told about for
+// the other 298. Those need opposite fixes. Subtracting the submit time
+// separates them, and nothing was recording it.
+std::mutex& fence_submit_time_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::map<uint64_t, std::chrono::steady_clock::time_point>& fence_submit_times() {
+    static std::map<uint64_t, std::chrono::steady_clock::time_point> m;
+    return m;
+}
+
+void note_fence_submit_time(uint64_t fence) {
+    if (fence == 0) return;
+    std::lock_guard<std::mutex> lock(fence_submit_time_mutex());
+    fence_submit_times()[fence] = std::chrono::steady_clock::now();
+}
+
+// Milliseconds since this fence's work was submitted, or -1 if this
+// fence has never been submitted -- which is itself worth seeing, since
+// waiting on a fence nothing submitted can only ever end in a timeout.
+double ms_since_fence_submitted(uint64_t fence) {
+    if (fence == 0) return -1.0;
+    std::lock_guard<std::mutex> lock(fence_submit_time_mutex());
+    auto it = fence_submit_times().find(fence);
+    if (it == fence_submit_times().end()) return -1.0;
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                      it->second)
+        .count();
+}
+
 // Signals whatever the engine left behind, so its next wait can finish.
 void signal_fences_the_engine_reset(VkQueue queue) {
     Loader& l = loader();
@@ -6047,10 +6120,29 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         }
         std::fflush(stdout);
     }
+    {
+        uint64_t first_cb = 0;
+        uint32_t total_cbs = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+            total_cbs += static_cast<uint32_t>(buffers[i].size());
+            if (first_cb == 0 && !buffers[i].empty()) first_cb = to_u64(buffers[i][0]);
+        }
+        fr::record(fr::Event::Submit, fence, first_cb, total_cbs);
+        // When this fence's work was handed to the GPU.
+        //
+        // This is the number the lag investigation has been missing. A
+        // slow vkWaitForFences says the fence took 300ms to signal; it
+        // does NOT say whether the GPU had the work for 300ms or for
+        // 2ms. Those are opposite diagnoses -- a busy GPU versus a
+        // wakeup that never came -- and nothing recorded the submit
+        // time, so they could not be told apart.
+        if (fence != 0) note_fence_submit_time(fence);
+    }
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
     VkResult res = l.queue_submit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
                                    from_u64<VkFence>(fence));
     note_result(res, "vkQueueSubmit");
+    if (res != VK_SUCCESS) fr::dump("a queue submit failed");
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
@@ -6111,6 +6203,9 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
     // Announce the wait so a reset for the same fence cannot land in the
     // middle of it and take the signal away.
     FenceWaitGuard wait_guard(fences);
+    const uint64_t first_fence = fences.empty() ? 0 : to_u64(fences[0]);
+    fr::record(fr::Event::WaitBegin, first_fence, n,
+               timeout == UINT64_MAX ? 0 : timeout / 1000000ull);
     const auto t0 = std::chrono::steady_clock::now();
     // Never wait unbounded in one call.
     //
@@ -6139,21 +6234,44 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
             if (waited >= 5.0 * static_cast<double>(reports + 1)) {
                 ++reports;
                 std::printf("stud-render-host: FENCE STUCK: %u fence(s) have not signalled in "
-                            "%.0fs (wait_all=%u, engine timeout=%llu). The GPU has not retired "
-                            "the submission they belong to.\n",
-                            n, waited, wait_all,
-                            static_cast<unsigned long long>(timeout));
+                            "%.0fs (wait_all=%u, engine timeout=%llu, fence %llx submitted "
+                            "%.1fms ago). The GPU has not retired the submission they belong "
+                            "to.\n",
+                            n, waited, wait_all, static_cast<unsigned long long>(timeout),
+                            static_cast<unsigned long long>(first_fence),
+                            ms_since_fence_submitted(first_fence));
                 std::fflush(stdout);
+                fr::dump("a fence has not signalled in 5s");
             }
         }
     }
     const double ms = std::chrono::duration<double, std::milli>(
                           std::chrono::steady_clock::now() - t0).count();
+    fr::record(fr::Event::WaitEnd, first_fence, static_cast<uint64_t>(static_cast<int32_t>(res)),
+               static_cast<uint64_t>(ms * 1000.0));
+    note_latency(g_wait_n, g_wait_us, g_wait_us_max, ms);
+    if (ms > 50.0) g_wait_over_50.fetch_add(1, std::memory_order_relaxed);
+    if (ms > 250.0) g_wait_over_250.fetch_add(1, std::memory_order_relaxed);
     if (ms > 50.0) {
-        std::printf("stud-render-host: SLOW vkWaitForFences %.1fms (n=%u timeout=%llu) -> %d\n", ms,
-                    n, static_cast<unsigned long long>(timeout), static_cast<int>(res));
+        // The submit age is the point of this line.
+        //
+        // "waited 300ms" says nothing on its own. "waited 300ms for work
+        // submitted 302ms ago" is a GPU that was busy. "waited 300ms for
+        // work submitted 2ms ago" is work that finished almost at once
+        // and a completion nobody heard about, which is a different bug
+        // with a different fix. The lag has been stuck on exactly this
+        // ambiguity.
+        const double since = ms_since_fence_submitted(first_fence);
+        std::printf("stud-render-host: SLOW vkWaitForFences %.1fms (n=%u timeout=%llu) -> %d "
+                    "[fence %llx submitted %.1fms ago]\n",
+                    ms, n, static_cast<unsigned long long>(timeout), static_cast<int>(res),
+                    static_cast<unsigned long long>(first_fence), since);
         std::fflush(stdout);
     }
+    // A wait this long is the system lag's own signature: hundreds of
+    // them, every one returning success, with the GPU idle. This is the
+    // one chance to see what surrounded it.
+    if (ms > 250.0) fr::dump("a fence wait ran long");
     // The engine's own wait is a place the device really is lost: a GPU
     // that stops retiring work is noticed HERE first, because this is the
     // call that sits on the fence. It was the one result in this file
@@ -6365,6 +6483,11 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
                                  &index);
     }
     note_result(r, "vkAcquireNextImageKHR");
+    fr::record(fr::Event::AcquireEnd, swapchain,
+               static_cast<uint64_t>(static_cast<int32_t>(r)),
+               static_cast<uint64_t>(
+                   std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0)
+                       .count()));
     // A retry that succeeded really did acquire an image, so the present
     // that follows is the engine's own and must not be dropped.
     if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) note_acquire_failed(swapchain, false);
@@ -7005,6 +7128,8 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // does hold submits from other threads for its duration -- which is
     // exactly the serialisation the spec asks for, and what was missing.
     VkResult res;
+    fr::record(fr::Event::PresentBegin, ns > 0 && !chains.empty() ? to_u64(chains[0]) : 0,
+               indices.empty() ? 0 : indices[0]);
     const auto present_t0 = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point present_t1;
     std::chrono::steady_clock::time_point lock_t;
@@ -7013,6 +7138,11 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         lock_t = std::chrono::steady_clock::now();
         res = l.queue_present(from_u64<VkQueue>(queue), &pi);
         present_t1 = std::chrono::steady_clock::now();
+        fr::record(fr::Event::PresentEnd, static_cast<uint64_t>(static_cast<int32_t>(res)),
+                   static_cast<uint64_t>(
+                       std::chrono::duration<double, std::micro>(present_t1 - present_t0).count()),
+                   static_cast<uint64_t>(
+                       std::chrono::duration<double, std::micro>(present_t1 - lock_t).count()));
     }
     // What the present itself costs THIS process, which the client's own
     // frame breakdown cannot see: it hands the present over and returns.
@@ -7024,7 +7154,9 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     {
         const double present_ms = std::chrono::duration<double, std::milli>(
             present_t1 - present_t0).count();
+        note_latency(g_present_n, g_present_us, g_present_us_max, present_ms);
         if (present_ms > 50.0) {
+            g_present_over_50.fetch_add(1, std::memory_order_relaxed);
             static int said = 0;
             if (said < 24) {
                 ++said;
@@ -7046,6 +7178,9 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                             present_ms, static_cast<int>(res), lock_ms, driver_ms);
                 std::fflush(stdout);
             }
+            // The 12006ms present is the freeze's oldest signature and
+            // nothing has ever seen what preceded one.
+            fr::dump("a present ran long");
         }
     }
     // A census of what Stud itself is still holding.
@@ -7085,6 +7220,29 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                         "%zu swapchain extents\n",
                         static_cast<unsigned long long>(presents_seen), shared, buffers,
                         g_upscale_chains.size(), retired, g_swapchain_extents.size());
+            // Latency beside the census, so degradation and accumulation
+            // can be read off the same line at the same moment. If the
+            // "cursed run" idea is right, one of these two rises while
+            // the other does not, and that is the whole question.
+            const uint64_t wn = g_wait_n.exchange(0, std::memory_order_relaxed);
+            const uint64_t wus = g_wait_us.exchange(0, std::memory_order_relaxed);
+            const uint64_t wmax = g_wait_us_max.exchange(0, std::memory_order_relaxed);
+            const uint64_t w50 = g_wait_over_50.exchange(0, std::memory_order_relaxed);
+            const uint64_t w250 = g_wait_over_250.exchange(0, std::memory_order_relaxed);
+            const uint64_t pn = g_present_n.exchange(0, std::memory_order_relaxed);
+            const uint64_t pus = g_present_us.exchange(0, std::memory_order_relaxed);
+            const uint64_t pmax = g_present_us_max.exchange(0, std::memory_order_relaxed);
+            const uint64_t p50 = g_present_over_50.exchange(0, std::memory_order_relaxed);
+            std::printf("stud-render-host: since the last census: %llu fence waits (mean %.2fms, "
+                        "max %.1fms, %llu over 50ms, %llu over 250ms), %llu presents (mean "
+                        "%.2fms, max %.1fms, %llu over 50ms)\n",
+                        static_cast<unsigned long long>(wn),
+                        wn ? static_cast<double>(wus) / wn / 1000.0 : 0.0, wmax / 1000.0,
+                        static_cast<unsigned long long>(w50),
+                        static_cast<unsigned long long>(w250),
+                        static_cast<unsigned long long>(pn),
+                        pn ? static_cast<double>(pus) / pn / 1000.0 : 0.0, pmax / 1000.0,
+                        static_cast<unsigned long long>(p50));
             std::fflush(stdout);
         }
     }
@@ -7785,6 +7943,11 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // the question a validation report about an image stuck in
             // UNDEFINED actually asks. Same switch, because they are two
             // halves of one investigation.
+            // Into the ring unconditionally: it is four stores, and a
+            // dump is worthless without the transitions that led to it.
+            for (const VkImageMemoryBarrier& b : img) {
+                fr::record(fr::Event::Barrier, to_u64(b.image), b.oldLayout, b.newLayout);
+            }
             if (std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr) {
                 for (const VkImageMemoryBarrier& b : img) {
                     // The command buffer matters as much as the layouts.
