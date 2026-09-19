@@ -111,6 +111,21 @@ struct StudSettings {
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;
+    // What one point of Roblox TextSize is, in em, for the overlay Stud
+    // draws over a focused TextBox.
+    //
+    // While a box has focus the engine stops drawing its text and Stud
+    // draws it instead, so the two renderings have to agree or the text
+    // visibly changes size as the box is clicked. The engine's own number
+    // is not discoverable from the font: Roblox's mapping and the file
+    // both say 0.7936507937 for BuilderSans (upem 1000 over an
+    // ascender-to-descender span of 1260), and that draws visibly smaller
+    // than the engine does, while treating TextSize as the em outright
+    // draws visibly larger. The truth sits between the two and was
+    // settled by looking at it, which is why it is a setting rather than
+    // a constant: a display, a font or a Roblox update can move it, and
+    // nobody should need a rebuild to put it back.
+    float text_overlay_font_ratio = 0.85f;
     // Frames per second while nobody can see the window, minimised, on
     // another workspace, or fully covered.
     //
