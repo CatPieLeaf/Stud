@@ -1019,10 +1019,6 @@ bool device_supports_extension(const char* name) {
 // the device they were built on; see flush_retired_chains().
 void flush_retired_chains(const char* why);
 
-// Defined below, after the tables it clears: drops everything Stud still
-// remembers about a device the engine has replaced.
-void forget_old_device_state();
-
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -1206,7 +1202,25 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // Stud does not know that; see case K::Device in vk_destroy_handle().
     // Dropping Stud's own references is separate from, and safer than,
     // destroying the device, and it is what stops the tables growing.
-    if (l.device != VK_NULL_HANDLE && l.device != device) forget_old_device_state();
+    // NOT clearing Stud's per-device tables here, and the attempt to do
+    // so is why this comment exists.
+    //
+    // It looked safe: a new device means the old handles are dead, so drop
+    // them. They are not. The engine builds a second device while still
+    // using the first -- the mode probe does exactly that -- and the tables
+    // describe memory the OLD device still has imported. Dropping the
+    // shared-write entries unmapped those pages out from under it, and the
+    // driver segfaulted inside libnvidia-glcore in
+    // vk_update_descriptor_set_with_template about a minute later. Live
+    // caught, and it turned a recoverable freeze into a dead renderer --
+    // the same trade the device-fault query made, for the same reason:
+    // acting on an assumption about the engine's object lifetimes that
+    // Stud is not in a position to make.
+    //
+    // The growth these tables show across a session is real and is
+    // documented in Stud-Analysis/gpu/stud-freeze.md. Fixing it needs to
+    // know when the engine has actually finished with a device, which
+    // nothing here currently knows.
 
     // The device loss that prompted the rebuild belongs to the OLD device.
     //
@@ -2855,30 +2869,6 @@ void flush_retired_chains(const char* why) {
             l.destroy_swapchain(l.device, held, nullptr);
         }
     }
-}
-
-void forget_old_device_state() {
-        std::printf("stud-render-host: the engine built a second device; dropping what Stud "
-                    "still remembered about the last one (%zu upscale chains, %zu swapchain "
-                    "extents, %zu buffer bindings, %zu shared mappings)\n",
-                    g_upscale_chains.size(), g_swapchain_extents.size(),
-                    buffer_memory().size(), shared_memory().size());
-        std::fflush(stdout);
-        g_upscale_chains.clear();
-        g_swapchain_extents.clear();
-        {
-            std::lock_guard<std::mutex> lock(buffer_memory_mutex());
-            buffer_memory().clear();
-        }
-        {
-            std::lock_guard<std::mutex> lock(shared_memory_mutex());
-            shared_memory().clear();
-        }
-        for (auto& w : shared_writes()) {
-            if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
-        }
-        shared_writes().clear();
-    
 }
 
 void destroy_upscale_chain(UpscaleChain& c, bool force) {
