@@ -58,38 +58,10 @@ namespace {
 // permanent, one-way disabling of three repair paths.
 std::atomic<bool> g_device_lost{false};
 
-// A device the engine has finished with, kept until the engine proves it
-// has moved on.
-//
-// vkDestroyDevice arriving on the wire means the engine has destroyed
-// every object it made -- that is the spec's own precondition, not a
-// guess. What it does NOT prove is that Stud is finished: this process
-// resolved its device commands from that device and may still be inside
-// one on another thread. So the device is not destroyed at that moment.
-// It is parked here with everything of Stud's that belongs to it, and
-// released once the engine has presented enough frames on the REPLACEMENT
-// device that the old one cannot still be in use.
-//
-// The mappings come with it. Unmapping them while the device still lives
-// is what segfaulted inside libnvidia-glcore in an earlier attempt: the
-// driver was still importing those pages. After the device is destroyed
-// it is not, and the same munmap is safe.
-struct RetiredDevice {
-    VkDevice device = VK_NULL_HANDLE;
-    VkCommandPool probe_pool = VK_NULL_HANDLE;
-    VkFence repair_fence = VK_NULL_HANDLE;
-    std::map<uint64_t, std::pair<void*, size_t>> writes;
-};
 // The repair submissions' one reusable fence. Declared here rather than
-// as a function-local static so a device being retired can take it along:
-// it belongs to whichever device created it.
+// as a function-local static because it belongs to whichever device
+// created it, and the device's own destroy has to be able to reach it.
 VkFence g_repair_fence = VK_NULL_HANDLE;
-
-std::vector<RetiredDevice> g_retired_devices;
-// Presents on the new device since the old one was parked. The engine
-// cannot have presented this many frames on a device it never finished
-// building, so it is proof of a working replacement rather than a timer.
-std::atomic<uint64_t> g_presents_since_new_device{0};
 
 std::map<uint64_t, VkExtent2D> g_swapchain_extents;
 
@@ -4470,37 +4442,61 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // without either destroying the device for real or keying
             // them per device; see Stud-Analysis/gpu/stud-freeze.md.
             if (from_u64<VkDevice>(handle) == l.device && l.device != VK_NULL_HANDLE) {
-                // Stud's own chains go now, while l.device still names the
-                // device they were built on. This is the only moment that
-                // is true: after the next vkCreateDevice every handle in
-                // them belongs to a device they were never created on.
+                // Destroyed HERE, while l.device still names it.
+                //
+                // Two things make this the right moment and not an
+                // assumption. The engine sending vkDestroyDevice is the
+                // spec's own precondition that it has already destroyed
+                // every object it made. And Stud's Vulkan path is
+                // single-threaded: one host thread per connection, all
+                // Vulkan traffic on one socket, and the client serialises
+                // every request on a single call_mutex_, so nothing of
+                // ours can be inside a call on this device while this one
+                // is being dispatched.
+                //
+                // It also has to be here for a duller reason: every
+                // l.destroy_* below was resolved with
+                // vkGetDeviceProcAddr(l.device, ...) and belongs to THIS
+                // device. Deferring the destroy past the next
+                // vkCreateDevice would mean calling the new device's
+                // function pointers on the old device's objects. A
+                // deferred version of this was written and measured
+                // working (see option-D-park-and-release.patch in
+                // Stud-Analysis/gpu) and then dropped for exactly that.
+                std::printf("stud-render-host: the engine is done with this device; releasing "
+                            "%zu upscale chain(s) and %zu mapping(s) with it\n",
+                            g_upscale_chains.size(), shared_writes().size());
+                std::fflush(stdout);
+
+                // Stud's own objects first: the device cannot go while
+                // they are on it, and the engine never knew about them.
                 for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
                 g_upscale_chains.clear();
                 flush_retired_chains("the engine is done with this device");
-
-                // The device itself is parked, not destroyed; see
-                // RetiredDevice. Everything of Stud's that belongs to it
-                // travels with it, and the tables are emptied here so the
-                // replacement device starts clean rather than inheriting
-                // handles that describe a device the engine has abandoned.
-                RetiredDevice parked;
-                parked.device = l.device;
-                parked.probe_pool = l.probe_pool;
-                parked.repair_fence = g_repair_fence;
-                parked.writes.swap(shared_writes());
-                g_retired_devices.push_back(std::move(parked));
-                std::printf("stud-render-host: the engine is done with this device; parked it "
-                            "with %zu mapping(s) until the next one has proved itself (%zu "
-                            "parked in total)\n",
-                            g_retired_devices.back().writes.size(), g_retired_devices.size());
-                std::fflush(stdout);
-
-                l.probe_pool = VK_NULL_HANDLE;
+                if (l.device_wait_idle != nullptr) l.device_wait_idle(l.device);
+                if (g_repair_fence != VK_NULL_HANDLE && l.destroy_fence != nullptr) {
+                    l.destroy_fence(l.device, g_repair_fence, nullptr);
+                    g_repair_fence = VK_NULL_HANDLE;
+                }
+                if (l.probe_pool != VK_NULL_HANDLE && l.destroy_command_pool != nullptr) {
+                    l.destroy_command_pool(l.device, l.probe_pool, nullptr);
+                    l.probe_pool = VK_NULL_HANDLE;
+                }
                 l.probe_queue = VK_NULL_HANDLE;
                 l.have_first_queue_family = false;
-                g_repair_fence = VK_NULL_HANDLE;
-                g_swapchain_extents.clear();
-                l.retired_images.clear();
+
+                if (l.destroy_device != nullptr) l.destroy_device(l.device, nullptr);
+                l.device = VK_NULL_HANDLE;
+
+                // Only now are these safe to drop. While the device
+                // lived, the driver was still importing the pages behind
+                // the mappings; unmapping them with it alive is what
+                // segfaulted inside libnvidia-glcore in an earlier
+                // attempt at this.
+                for (auto& w : shared_writes()) {
+                    if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
+                }
+                shared_writes().clear();
                 {
                     std::lock_guard<std::mutex> lock(buffer_memory_mutex());
                     buffer_memory().clear();
@@ -4511,7 +4507,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 }
                 l.mapped.clear();
                 l.mapped_size.clear();
-                g_presents_since_new_device.store(0, std::memory_order_relaxed);
+                g_swapchain_extents.clear();
+                l.retired_images.clear();
+                // The loss, if there was one, belonged to the device that
+                // has just gone.
+                g_device_lost.store(false, std::memory_order_relaxed);
             }
             break;
         case K::Instance:
@@ -6551,45 +6551,6 @@ present_without_upscale:
             }
         }
     }
-    // A parked device, released once the replacement has proved itself.
-    //
-    // The proof is frames: the engine cannot have presented this many on a
-    // device it did not finish building, and by then nothing of Stud's can
-    // still be inside a call on the old one -- every device command in
-    // flight was issued against the device these presents are going to.
-    // That is what makes destroying it, and unmapping what it imported,
-    // safe here and not at the moment the engine said it was finished.
-    //
-    // Deliberately frames rather than a timer: a stall is exactly when a
-    // timer would fire early, and a stall is exactly when this must not.
-    if (!g_retired_devices.empty()) {
-        constexpr uint64_t kProofFrames = 240;
-        if (g_presents_since_new_device.fetch_add(1, std::memory_order_relaxed) + 1 >=
-            kProofFrames) {
-            std::vector<RetiredDevice> releasing;
-            releasing.swap(g_retired_devices);
-            for (RetiredDevice& d : releasing) {
-                if (d.device == VK_NULL_HANDLE) continue;
-                if (d.repair_fence != VK_NULL_HANDLE && l.destroy_fence != nullptr) {
-                    l.destroy_fence(d.device, d.repair_fence, nullptr);
-                }
-                if (d.probe_pool != VK_NULL_HANDLE && l.destroy_command_pool != nullptr) {
-                    l.destroy_command_pool(d.device, d.probe_pool, nullptr);
-                }
-                if (l.device_wait_idle != nullptr) l.device_wait_idle(d.device);
-                if (l.destroy_device != nullptr) l.destroy_device(d.device, nullptr);
-                // Only now. While that device lived, the driver was still
-                // importing these pages.
-                for (auto& w : d.writes) {
-                    if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
-                }
-                std::printf("stud-render-host: released a device the engine finished with, and "
-                            "the %zu mapping(s) it held\n", d.writes.size());
-                std::fflush(stdout);
-            }
-        }
-    }
-
     // A census of what Stud itself is still holding.
     //
     // Some sessions freeze repeatedly and some never do, with identical
