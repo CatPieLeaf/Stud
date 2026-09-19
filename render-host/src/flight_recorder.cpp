@@ -8,6 +8,7 @@
 #include <mutex>
 #include <vector>
 
+#include <dirent.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -75,6 +76,108 @@ std::mutex& dump_mutex() {
     return m;
 }
 
+// Copies a small /proc file into the dump.
+void quote_proc(std::FILE* out, const char* path, const char* label, int max_lines) {
+    std::FILE* in = std::fopen(path, "r");
+    if (in == nullptr) return;
+    std::fprintf(out, "  [%s]\n", label);
+    char line[512];
+    int n = 0;
+    while (n < max_lines && std::fgets(line, sizeof(line), in) != nullptr) {
+        std::fprintf(out, "    %s", line);
+        ++n;
+    }
+    std::fclose(in);
+}
+
+// WHERE EVERY THREAD IS SLEEPING, at the moment of the trigger.
+//
+// This is the one measurement the system lag has always needed and never
+// got. A fence wait that takes 300ms and then SUCCEEDS, with the GPU at
+// 9%, means the work finished and the wakeup was late -- and the only
+// thing that distinguishes a late wakeup in the driver from one in the
+// scheduler, the compositor socket or a futex is which kernel function
+// each thread is parked in.
+//
+// It was going to be a script the user ran during an episode. That is a
+// bad plan: the episode is unpredictable, the evidence dies with the
+// process, and asking someone to catch it by hand is what made this
+// investigation unbearable. The process can read its own /proc, so it
+// does, automatically, at exactly the right instant.
+void dump_system_state(std::FILE* out) {
+    std::fprintf(out, "  ---- system state at the trigger ----\n");
+    quote_proc(out, "/proc/loadavg", "loadavg", 1);
+    quote_proc(out, "/proc/pressure/cpu", "pressure/cpu", 2);
+    quote_proc(out, "/proc/pressure/memory", "pressure/memory", 2);
+    quote_proc(out, "/proc/pressure/io", "pressure/io", 2);
+
+    // Context switches say whether this process is being descheduled a
+    // lot, which a wakeup-latency problem would show and a busy-GPU one
+    // would not.
+    std::FILE* st = std::fopen("/proc/self/status", "r");
+    if (st != nullptr) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), st) != nullptr) {
+            if (std::strncmp(line, "Threads:", 8) == 0 ||
+                std::strncmp(line, "VmRSS:", 6) == 0 ||
+                std::strncmp(line, "VmSwap:", 7) == 0 ||
+                std::strncmp(line, "voluntary_ctxt", 14) == 0 ||
+                std::strncmp(line, "nonvoluntary_ctxt", 17) == 0) {
+                std::fprintf(out, "    %s", line);
+            }
+        }
+        std::fclose(st);
+    }
+
+    std::fprintf(out, "  [threads: tid state wchan name]\n");
+    // opendir, not popen: this runs while the device is lost or a fence
+    // is stuck, and forking a shell from a process in that state is a
+    // way to turn a diagnostic into a second failure.
+    DIR* dir = ::opendir("/proc/self/task");
+    if (dir == nullptr) return;
+    int shown = 0;
+    while (shown < 96) {
+        const dirent* ent = ::readdir(dir);
+        if (ent == nullptr) break;
+        if (ent->d_name[0] == '.') continue;
+        const char* tid = ent->d_name;
+        char path[256];
+        char wchan[128] = "?";
+        char comm[128] = "?";
+        char state[8] = "?";
+        std::snprintf(path, sizeof(path), "/proc/self/task/%s/wchan", tid);
+        if (std::FILE* f = std::fopen(path, "r")) {
+            if (std::fgets(wchan, sizeof(wchan), f) == nullptr) std::strcpy(wchan, "?");
+            std::fclose(f);
+        }
+        std::snprintf(path, sizeof(path), "/proc/self/task/%s/comm", tid);
+        if (std::FILE* f = std::fopen(path, "r")) {
+            if (std::fgets(comm, sizeof(comm), f) != nullptr) {
+                if (char* c = std::strchr(comm, '\n')) *c = '\0';
+            }
+            std::fclose(f);
+        }
+        // The state is the field after the LAST ')': a thread name can
+        // contain spaces and brackets, and Stud's do, which shifts every
+        // column of /proc/<tid>/stat and makes field 3 the wrong thing.
+        std::snprintf(path, sizeof(path), "/proc/self/task/%s/stat", tid);
+        if (std::FILE* f = std::fopen(path, "r")) {
+            char buf[1024];
+            if (std::fgets(buf, sizeof(buf), f) != nullptr) {
+                const char* close = std::strrchr(buf, ')');
+                if (close != nullptr && close[1] != '\0' && close[2] != '\0') {
+                    state[0] = close[2];
+                    state[1] = '\0';
+                }
+            }
+            std::fclose(f);
+        }
+        std::fprintf(out, "    %-8s %-2s %-26s %s\n", tid, state, wchan, comm);
+        ++shown;
+    }
+    ::closedir(dir);
+}
+
 }  // namespace
 
 bool enabled() {
@@ -84,6 +187,23 @@ bool enabled() {
 
 void record(Event e, uint64_t a, uint64_t b, uint64_t c) {
     if (!enabled()) return;
+    // STUD_FLIGHT_RECORDER_SELFTEST=1 forces one dump early in the run.
+    //
+    // The whole point of this machinery is a session that cannot be
+    // repeated, and a recorder that turns out to be broken at the moment
+    // it was needed is worse than none: the run is spent and the user
+    // has been asked for the one thing they said they would not give
+    // again. So it proves itself on every startup it is asked to --
+    // file creation, thread enumeration, formatting and all -- while
+    // there is still time to fix it.
+    static const bool selftest = std::getenv("STUD_FLIGHT_RECORDER_SELFTEST") != nullptr;
+    if (selftest) {
+        static std::atomic<bool> done{false};
+        if (g_next.load(std::memory_order_relaxed) > 200 &&
+            !done.exchange(true, std::memory_order_relaxed)) {
+            dump("self test: proving the recorder works before it is needed");
+        }
+    }
     const uint64_t slot = g_next.fetch_add(1, std::memory_order_relaxed);
     Entry& t = ring()[slot % kCapacity];
     t.when = std::chrono::steady_clock::now();
@@ -137,6 +257,7 @@ void dump(const char* why) {
                          static_cast<unsigned long long>(t.b),
                          static_cast<unsigned long long>(t.c));
         }
+        dump_system_state(out);
         std::fprintf(out, "==== end of flight recorder (%s) ====\n", why);
         std::fflush(out);
     };
