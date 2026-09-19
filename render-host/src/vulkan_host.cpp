@@ -2500,6 +2500,13 @@ struct UpscaleChain {
     // reset is needed. The fence is what says the previous submit of THIS
     // buffer has finished, which a re-submit requires.
     std::vector<VkCommandBuffer> cmd;
+    // One per image, recorded once: nothing but the barrier that makes the
+    // swapchain image presentable. Submitted when the upscale pass is
+    // skipped, because the ONLY transition to PRESENT_SRC_KHR lives inside
+    // the pass's own command buffer -- so a skipped frame used to present
+    // an image in whatever layout it last held, and
+    // VK_IMAGE_LAYOUT_UNDEFINED for an index the pass had never run on.
+    std::vector<VkCommandBuffer> cmd_present_only;
     std::vector<VkSemaphore> done;
     // Semaphores a failed present may have left signalled.
     //
@@ -3486,6 +3493,29 @@ bool record_upscale_blits(UpscaleChain& c) {
         // transfer destination, the compute one via the hand-over blit.
         after_dst.image = c.real_images[i];
 
+        // The same destination barrier on its own, in its own buffer, for
+        // the frames that skip the pass. oldLayout UNDEFINED because the
+        // image may never have been through the pass at all, and
+        // UNDEFINED is the one old layout that is always legal to
+        // transition from; its contents are discarded, which is already
+        // true of a frame the pass did not write.
+        if (i < c.cmd_present_only.size() && c.cmd_present_only[i] != VK_NULL_HANDLE) {
+            VkCommandBufferBeginInfo pbi{};
+            pbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (l.begin_command_buffer(c.cmd_present_only[i], &pbi) == VK_SUCCESS) {
+                VkImageMemoryBarrier make_presentable = after_dst;
+                make_presentable.srcAccessMask = 0;
+                make_presentable.dstAccessMask = 0;
+                make_presentable.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                make_presentable.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                l.cmd_pipeline_barrier(c.cmd_present_only[i],
+                                       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                                       nullptr, 1, &make_presentable);
+                l.end_command_buffer(c.cmd_present_only[i]);
+            }
+        }
+
         VkImageMemoryBarrier after[2] = {after_src, after_dst};
         // BOTH stages that actually did the work, and this was wrong.
         //
@@ -3635,6 +3665,16 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbai.commandBufferCount = count;
         ok = l.allocate_command_buffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
+    }
+    if (ok) {
+        pending.cmd_present_only.resize(count, VK_NULL_HANDLE);
+        VkCommandBufferAllocateInfo cbai{};
+        cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbai.commandPool = pending.pool;
+        cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbai.commandBufferCount = count;
+        ok = l.allocate_command_buffers(l.device, &cbai,
+                                        pending.cmd_present_only.data()) == VK_SUCCESS;
     }
     for (uint32_t i = 0; ok && i < count; ++i) {
         VkSemaphoreCreateInfo sci{};
@@ -4361,11 +4401,49 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             }
             break;
         case K::Device:
-            // Deliberately not destroyed: this process owns exactly one
-            // device for its whole life, and the engine tears its
-            // renderer down and rebuilds it repeatedly (once per mode
-            // probe). Destroying it here would invalidate every resolved
-            // device command while the engine still holds them.
+            // The real VkDevice is still deliberately NOT destroyed: the
+            // engine tears its renderer down and rebuilds it repeatedly
+            // (once per mode probe, and after every recovery), and
+            // destroying it here would invalidate every resolved device
+            // command while the engine still holds them. The comment that
+            // used to sit here also claimed this process owns exactly one
+            // device for its whole life; it does not -- a session creates
+            // four to six.
+            //
+            // What IS safe to let go of is Stud's own upscale chains.
+            // They are built here, referenced by nothing the engine can
+            // see, and this message is the engine saying it has finished
+            // with the device they live on. Destroying them now, while
+            // l.device is still that device, is the only moment it can be
+            // done correctly: after the next vkCreateDevice, l.device
+            // names a different device and every handle in these chains
+            // belongs to a device it was never created on.
+            //
+            // They are the largest allocations in this file -- full
+            // resolution offscreen, staging and sharpened images, their
+            // memory, views, descriptor pools, pipelines, semaphores and
+            // fences, per swapchain image -- and stranding one per
+            // recovery is the measured climb from 1941 MB to 2230 MB
+            // across four of them, while the scene being drawn got
+            // simpler.
+            //
+            // Deliberately NOT touching shared_memory(), buffer_memory()
+            // or shared_writes() here. Those describe memory the engine
+            // imported, and the real device is still alive underneath, so
+            // the driver may still reference those pages. An earlier
+            // attempt to free them at a new device's creation unmapped
+            // pages out from under the driver and segfaulted inside
+            // libnvidia-glcore. Their growth is real and is not fixable
+            // without either destroying the device for real or keying
+            // them per device; see Stud-Analysis/gpu/stud-freeze.md.
+            if (from_u64<VkDevice>(handle) == l.device && !g_upscale_chains.empty()) {
+                std::printf("stud-render-host: the engine is done with this device; releasing "
+                            "%zu upscale chain(s) built on it\n", g_upscale_chains.size());
+                std::fflush(stdout);
+                for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
+                g_upscale_chains.clear();
+                flush_retired_chains("the engine is done with this device");
+            }
             break;
         case K::Instance:
             // Same reasoning as Device.
@@ -6033,6 +6111,56 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
 }
 
 
+// Make the swapchain image legal to present when the upscale pass did not
+// run.
+//
+// The pass's own command buffer carries the only transition to
+// PRESENT_SRC_KHR, so every path that skips it used to hand the
+// presentation engine an image in whatever layout it last held --
+// UNDEFINED for an index the pass had never run on, which is
+// VUID-VkPresentInfoKHR-pImageIndices-01430 and undefined behaviour on a
+// driver that enforces it.
+//
+// Submitted exactly like the pass it replaces: it consumes the engine's
+// own wait semaphores and signals the same done[index] the present then
+// waits on, so the semaphore bookkeeping is identical to the working
+// path. On failure it changes nothing and the caller presents as it did
+// before.
+//
+// It does NOT put the engine's frame on screen -- that frame is in
+// offscreen[i] and only the pass moves it. A skipped frame still shows
+// the previous contents. Making it legal is the part that matters for
+// stability; showing the right pixels needs the pass to run.
+void make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
+                              VkPresentInfoKHR& pi,
+                              std::vector<VkSemaphore>& upscaled_waits) {
+    Loader& l = loader();
+    if (index >= c.cmd_present_only.size() || c.cmd_present_only[index] == VK_NULL_HANDLE ||
+        index >= c.done.size() || l.queue_submit == nullptr) {
+        return;
+    }
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    std::vector<VkPipelineStageFlags> stages(pi.waitSemaphoreCount,
+                                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    si.waitSemaphoreCount = pi.waitSemaphoreCount;
+    si.pWaitSemaphores = pi.pWaitSemaphores;
+    si.pWaitDstStageMask = stages.empty() ? nullptr : stages.data();
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &c.cmd_present_only[index];
+    si.signalSemaphoreCount = 1;
+    si.pSignalSemaphores = &c.done[index];
+    VkResult sr = VK_ERROR_UNKNOWN;
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, VK_NULL_HANDLE);
+    }
+    if (sr != VK_SUCCESS) return;
+    upscaled_waits.assign(1, c.done[index]);
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = upscaled_waits.data();
+}
+
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     Loader& l = loader();
     if (l.queue_present == nullptr) {
@@ -6275,6 +6403,20 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     // holds is never destroyed. That is a presentable pool
                     // that shrinks and never recovers.
                     c.in_flight[index] = false;
+                    // The pass did not run, so nothing transitioned this
+                    // image to PRESENT_SRC_KHR.
+                    //
+                    // THE FAILURE BRANCH, and only it. Called from the
+                    // success branch by mistake, this submitted a second
+                    // command buffer that waited on the very semaphore the
+                    // pass had just signalled and signalled it again --
+                    // a self-dependency and a double-signal of a binary
+                    // semaphore, once per frame. It cost 10 fps in Stud,
+                    // and the unsignalled fences it left on the shared
+                    // buffers propagated to the compositor: the iGPU
+                    // logged `Fence expiration time out` against the
+                    // browser and the taskbar, and the desktop artefacted.
+                    make_presentable_on_skip(c, index, queue, pi, upscaled_waits);
                     static bool said = false;
                     if (!said) {
                         said = true;
