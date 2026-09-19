@@ -2550,10 +2550,45 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateSampler(VkDevice device,
     return create_from_payload<VkSampler, CallId::VkCreateSampler>(a, in, pSampler);
 }
 
+// Says once, loudly, that this wire dropped something it was given.
+//
+// NOT a fix. Carrying specialization constants means serialising the map
+// entries and the data blob on both sides, and carrying a descriptor
+// layout's pNext means reconstructing the binding-flags chain -- neither
+// is worth writing on the chance the engine might use it. These say
+// whether it actually does, which is the thing nobody knew.
+//
+// Both are silent by nature: a dropped specialization constant compiles
+// the shader with a default and computes the wrong thing without a word,
+// and a dropped binding-flags chain gives the host a layout of a
+// different shape from the one the engine believes it made. That is
+// exactly the kind of drop worth a line in the log rather than a guess.
+void report_dropped(const void* present, const char* what, const char* where) {
+    if (present == nullptr) return;
+    // One per kind: these are per-pipeline and per-layout calls, and the
+    // engine makes thousands.
+    static std::set<std::string> said;
+    const std::string key = std::string(where) + "/" + what;
+    if (!said.insert(key).second) return;
+    std::fprintf(stderr,
+                 "stud: vulkan-client: %s was given %s, which this wire DROPS -- it never "
+                 "reaches the real driver\n",
+                 where, what);
+    std::fflush(stderr);
+}
+
+void report_dropped_specialization(const void* spec, const char* where) {
+    report_dropped(spec, "specialization constants", where);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDescriptorSetLayout(
     VkDevice device, const VkDescriptorSetLayoutCreateInfo* ci, const VkAllocationCallbacks*,
     VkDescriptorSetLayout* pLayout) {
     if (ci == nullptr || pLayout == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    // Chiefly VkDescriptorSetLayoutBindingFlagsCreateInfo: the
+    // UPDATE_AFTER_BIND / PARTIALLY_BOUND / VARIABLE_DESCRIPTOR_COUNT
+    // flags that descriptor indexing needs.
+    report_dropped(ci->pNext, "a pNext chain", "vkCreateDescriptorSetLayout");
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
     w.u32(ci->flags);
@@ -2743,6 +2778,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateGraphicsPipelines(
         w.u32(ci.stageCount);
         for (uint32_t i = 0; i < ci.stageCount; ++i) {
             const auto& st = ci.pStages[i];
+            report_dropped_specialization(st.pSpecializationInfo, "vkCreateGraphicsPipelines");
             w.u32(st.flags);
             w.u32(st.stage);
             w.u64(to_u64(st.module));
@@ -2897,6 +2933,13 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateComputePipelines(
     if (pCreateInfos == nullptr || pPipelines == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     for (uint32_t p = 0; p < createInfoCount; ++p) {
         const VkComputePipelineCreateInfo& ci = pCreateInfos[p];
+        // Specialization constants are NOT carried over the wire, so if
+        // the engine ever sends any, every shader here compiles with the
+        // defaults instead -- which silently changes workgroup sizes,
+        // loop bounds and which branches survive. Whether the engine
+        // uses them at all was unknown, and guessing either way is how a
+        // "cleanup" breaks a renderer, so it says so instead.
+        report_dropped_specialization(ci.stage.pSpecializationInfo, "vkCreateComputePipelines");
         std::vector<uint8_t> in;
         vk_wire::Writer w(in);
         w.u64(to_u64(cache));
