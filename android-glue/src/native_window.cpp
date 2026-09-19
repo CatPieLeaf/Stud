@@ -1457,6 +1457,14 @@ struct ANativeWindow {
     std::atomic<int32_t> logical_width{0};
     std::atomic<int32_t> logical_height{0};
     bool configured = false;
+    // A size from xdg_toplevel.configure that has not been applied yet.
+    //
+    // xdg-shell delivers a configure as several events and ends it with
+    // xdg_surface.configure, and the state it describes may only be
+    // applied after that serial is acked. Applying it as the toplevel
+    // event arrived meant the commit went out BEFORE the ack, so it
+    // answered no configure at all; see xdg_surface_configure().
+    bool geometry_pending = false;
     // The real Surface jobject this window is cached under (window_cache(),
     // below), so ANativeWindow_release() can clean up its cache entry when
     // the window is genuinely destroyed, null if this window was never
@@ -1473,13 +1481,42 @@ namespace {
 // this). xdg_toplevel's own configure (size/state) is informational
 // only for Stud's purposes right now (no real resize handling built
 // yet), the ack+recommit is what matters here.
+// Defined below; the configure handler applies geometry after its ack.
+void apply_window_geometry(ANativeWindow* window, const char* reason);
+
 void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     auto* window = static_cast<ANativeWindow*>(data);
+    // Ack, THEN apply, THEN commit. That order is the whole point of this
+    // function and it is not cosmetic.
+    //
+    // Dragging a maximized window out to floating used to leave the window
+    // itself stuck under the cursor for a second or two before it moved.
+    // Traced: the compositor's configure arrived, Stud resized and
+    // committed from the toplevel handler, and only afterwards acked the
+    // serial here. A commit that precedes its ack answers nothing, so the
+    // compositor had no acknowledged size to move the window at, and had
+    // to wait for whatever Stud committed next -- which was the engine's
+    // next frame, and the engine was busy rebuilding its swapchain for the
+    // new size (measured: 1.2s from APP_CMD_WINDOW_RESIZED to
+    // APP_CMD_WINDOW_REDRAW_NEEDED, with nothing presented in between).
+    //
+    // Applying after the ack makes the surface the configured size at
+    // once, because the viewport below re-describes the buffer Stud
+    // already has rather than waiting for a new one. The engine's real
+    // frame arrives when it arrives; the window moves immediately.
+    //
+    // X11 never showed this: there the window manager moves the window
+    // itself and never waits on the client.
     xdg_surface_ack_configure(surface, serial);
-    if (!window->configured) {
-        window->configured = true;
-        wl_surface_commit(window->surface);
+    if (window->geometry_pending) {
+        window->geometry_pending = false;
+        apply_window_geometry(window, "resized");
     }
+    // Always commit, even when the size did not change: this is the
+    // response to the configure, and a configure that is acked and never
+    // committed leaves the compositor waiting exactly as before.
+    window->configured = true;
+    wl_surface_commit(window->surface);
 }
 
 const xdg_surface_listener kShellSurfaceListener = {
@@ -1605,7 +1642,8 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
     auto* window = static_cast<ANativeWindow*>(data);
     window->logical_width.store(width);
     window->logical_height.store(height);
-    apply_window_geometry(window, "resized");
+    // Applied by xdg_surface_configure(), after it acks; see there.
+    window->geometry_pending = true;
 }
 
 // Versions 4 and 5 of xdg_toplevel send these; nothing here acts on them,
