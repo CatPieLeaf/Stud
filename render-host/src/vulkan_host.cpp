@@ -3756,6 +3756,36 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     if (in.size() < sizeof(vk_wire::CreateSwapchainHeader)) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    // Let go of any swapchain Stud is still holding on this surface,
+    // BEFORE asking for another one.
+    //
+    // When the engine destroys a swapchain whose upscale pass is still
+    // running, vk_destroy_object does not destroy it: it parks the chain
+    // in g_retired_chains with destroy_with_chain set, and the real
+    // VkSwapchainKHR stays alive so the GPU can finish with it. That is
+    // correct in itself. What was missing is this: the engine then builds
+    // a NEW swapchain on the SAME wl_surface, and nothing made the old one
+    // go first.
+    //
+    // Two live swapchains on one surface is not a nuisance, it is the
+    // freeze. The retired one still owns wl_buffers attached to that
+    // surface, and the compositor will not release them, so the new
+    // swapchain presents into a pool that is short by however many the
+    // old one holds. vkQueuePresentKHR then waits for a release that
+    // cannot come, until NVIDIA's RM timeout force-completes it and
+    // returns VK_SUCCESS -- measured at 12006ms, seven times, identical
+    // to the millisecond, in both MAILBOX and IMMEDIATE, with the GPU
+    // provably idle and no kernel event.
+    //
+    // sweep_retired_chains() cannot cover this: it uses a zero timeout,
+    // so a chain whose fence has not signalled is never reclaimed, and
+    // the present path's call to it is jumped over by
+    // `goto present_without_upscale` on exactly the frames where a chain
+    // is most likely to be stuck. flush_retired_chains() waits the same
+    // bounded second destroy_upscale_chain would have and then lets go
+    // regardless, which is what the surface needs here.
+    flush_retired_chains("the engine is building another swapchain");
+
     vk_wire::CreateSwapchainHeader h{};
     std::memcpy(&h, in.data(), sizeof(h));
     std::vector<uint32_t> families(h.queue_family_count);
@@ -6212,13 +6242,45 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
 // offscreen[i] and only the pass moves it. A skipped frame still shows
 // the previous contents. Making it legal is the part that matters for
 // stability; showing the right pixels needs the pass to run.
-void make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
+// Consumes the engine's wait semaphores without presenting anything.
+//
+// Every dropped frame has to deal with them. The engine signalled them
+// with its own render submit and will signal them again next frame, and
+// signalling a binary semaphore that is still signalled is undefined and
+// wedges the queue for good -- after which the device never goes idle and
+// the engine's own vkDeviceWaitIdle never returns, which is what a
+// permanent freeze looks like from the outside.
+//
+// A submit with no command buffers and no signal semaphores is legal and
+// does exactly this and nothing else: it waits, and retires.
+void consume_engine_semaphores(uint64_t queue, const std::vector<VkSemaphore>& waits) {
+    Loader& l = loader();
+    if (waits.empty() || l.queue_submit == nullptr) return;
+    std::vector<VkPipelineStageFlags> stages(waits.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
+    si.pWaitSemaphores = waits.data();
+    si.pWaitDstStageMask = stages.data();
+    std::lock_guard<std::mutex> queue_lock(queue_mutex());
+    l.queue_submit(from_u64<VkQueue>(queue), 1, &si, VK_NULL_HANDLE);
+}
+
+// Returns whether the transition was actually submitted, because the
+// caller has to record that as outstanding GPU work: this submits a
+// command buffer and signals a semaphore, and both belong to the chain.
+// It ran with a VK_NULL_HANDLE fence while the caller cleared
+// in_flight[index], which left the submit tracked by nothing at all --
+// the next frame was then free to re-record and re-submit the same
+// command buffer, and to destroy the very semaphore this one signals,
+// while it was still running.
+bool make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
                               VkPresentInfoKHR& pi,
                               std::vector<VkSemaphore>& upscaled_waits) {
     Loader& l = loader();
     if (index >= c.cmd_present_only.size() || c.cmd_present_only[index] == VK_NULL_HANDLE ||
-        index >= c.done.size() || l.queue_submit == nullptr) {
-        return;
+        index >= c.done.size() || index >= c.fence.size() || l.queue_submit == nullptr) {
+        return false;
     }
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -6234,12 +6296,20 @@ void make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
     VkResult sr = VK_ERROR_UNKNOWN;
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, VK_NULL_HANDLE);
+        // Unsignalled is a precondition of submitting with a fence, and
+        // both callers reach here without having waited this one out: the
+        // no-semaphore path never waited at all, and the submit-failure
+        // path reset it and then failed to submit. Nothing is pending on
+        // it in either case -- the callers check in_flight first -- so the
+        // reset is legal and cheap.
+        if (l.reset_fences != nullptr) l.reset_fences(l.device, 1, &c.fence[index]);
+        sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, c.fence[index]);
     }
-    if (sr != VK_SUCCESS) return;
+    if (sr != VK_SUCCESS) return false;
     upscaled_waits.assign(1, c.done[index]);
     pi.waitSemaphoreCount = 1;
     pi.pWaitSemaphores = upscaled_waits.data();
+    return true;
 }
 
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
@@ -6269,6 +6339,12 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // present itself would sit in the queue for ever. Reported as success:
     // the engine loses one frame during a resize, which is what it loses
     // anyway on a platform where the acquire would have succeeded.
+    //
+    // FIRST, before anything else looks at the index. A failed acquire
+    // produces no image index, so whatever came off the wire is whatever
+    // the engine last used -- and every other drop below consumes the
+    // engine's semaphores, which here would be a wait on a signal that is
+    // never coming. This check has to get there first.
     bool dropped = false;
     for (const auto& chain_handle : chains) {
         if (take_acquire_failed(to_u64(chain_handle))) dropped = true;
@@ -6281,6 +6357,45 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                         "failed; nothing would ever have signalled what it waits on\n");
             std::fflush(stdout);
         }
+        sweep_retired_chains();
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
+
+    // The index came off the wire, and nothing had checked it.
+    //
+    // Process B is not hostile, so this is not a security boundary -- but
+    // the wire is also how a stale index from a swapchain that has since
+    // been rebuilt reaches the driver, and vkQueuePresentKHR with an index
+    // it never handed out is undefined behaviour inside the WSI rather
+    // than an error it reports. The pass already checked the index against
+    // its own command buffers; the present did not check anything.
+    //
+    // Only the chain knows how many images there are, so only a swapchain
+    // Stud built a chain for can be checked -- which is every swapchain
+    // the engine presents to. Dropped rather than clamped: presenting
+    // SOME OTHER image is exactly the mistake the failed-acquire path
+    // above documents, where the engine presented the last index it had
+    // used and the driver answered with VK_ERROR_DEVICE_LOST and then a
+    // segfault.
+    for (size_t i = 0; i < chains.size() && i < indices.size(); ++i) {
+        const auto known = g_upscale_chains.find(to_u64(chains[i]));
+        if (known == g_upscale_chains.end()) continue;
+        const size_t count = known->second.real_images.size();
+        if (count == 0 || indices[i] < count) continue;
+        static int said = 0;
+        if (said < 8) {
+            ++said;
+            std::printf("stud-render-host: the engine presented image index %u of a swapchain "
+                        "that has %zu; dropping this present rather than handing the driver an "
+                        "index it never gave out\n",
+                        indices[i], count);
+            std::fflush(stdout);
+        }
+        // Dropping is not free: the acquire succeeded, so the engine
+        // signalled these with its render submit and expects something to
+        // wait on them.
+        consume_engine_semaphores(queue, waits);
+        sweep_retired_chains();
         return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     }
 
@@ -6373,6 +6488,43 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                                 "presenting this frame without the upscale pass\n");
                     std::fflush(stdout);
                 }
+                // The pass is skipped here too, so nothing transitioned
+                // this image to PRESENT_SRC_KHR either.
+                //
+                // There are three ways to reach the present without the
+                // pass and only ONE of them used to transition the image:
+                // the submit-failure branch below. This one and the
+                // fence-timeout branch presented in whatever layout the
+                // image last held, and in VK_IMAGE_LAYOUT_UNDEFINED for an
+                // index the pass had never run on. Presenting an image in
+                // an undefined layout is undefined behaviour, and it is
+                // silent -- no validation layer runs in a real session.
+                //
+                // Only when this index has no work outstanding. If it
+                // does, c.done[index] already has a signal pending that
+                // some earlier present is waiting on, and signalling a
+                // binary semaphore twice is what wedges the queue for
+                // good. There is nothing to consume in this branch (the
+                // engine passed no semaphores at all), so the frame is
+                // simply dropped instead, which costs the engine the same
+                // one frame the failed-acquire path above costs it.
+                const bool tracked = index < c.in_flight.size();
+                if (tracked && !c.in_flight[index]) {
+                    c.in_flight[index] =
+                        make_presentable_on_skip(c, index, queue, pi, upscaled_waits);
+                } else if (tracked) {
+                    static int dropped_busy = 0;
+                    if (dropped_busy < 4) {
+                        ++dropped_busy;
+                        std::printf("stud-render-host: the engine presented image %u with no wait "
+                                    "semaphore while the pass on it is still running; dropping "
+                                    "this frame rather than presenting an untransitioned image\n",
+                                    index);
+                        std::fflush(stdout);
+                    }
+                    sweep_retired_chains();
+                    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+                }
             } else if (index < c.cmd.size()) {
                 // The previous submit of this image's pre-recorded command
                 // buffer has to have finished before it can be re-submitted.
@@ -6425,9 +6577,34 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     }
                 }
                 if (!image_ready) {
-                    // Straight to the present below, on the engine's own
-                    // semaphores, with no upscale submit for this frame.
-                    goto present_without_upscale;
+                    // This frame is DROPPED, not presented.
+                    //
+                    // The fence not signalling is not "the pass was slow".
+                    // It means a submit is STILL WRITING this image right
+                    // now. Presenting it hands the compositor an image the
+                    // GPU has open, in whatever layout that submit left it
+                    // -- and it does so specifically on the frames where
+                    // the GPU is already behind, which is when making
+                    // things worse costs most.
+                    //
+                    // There is no way to order the present after that
+                    // outstanding write from here: the only semaphore it
+                    // signals is c.done[index], and the previous present
+                    // is already the waiter on it. A binary semaphore has
+                    // exactly one.
+                    //
+                    // So the engine's semaphores are consumed by a submit
+                    // that does nothing whatsoever -- no command buffers,
+                    // no signal -- and the frame is thrown away. Consuming
+                    // them is the part that matters: the engine signalled
+                    // them and will signal them again next frame, and
+                    // signalling a binary semaphore that is still
+                    // signalled is what wedges the queue permanently.
+                    // Dropping without consuming would trade a bad frame
+                    // for a dead one.
+                    consume_engine_semaphores(queue, waits);
+                    sweep_retired_chains();
+                    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
                 }
                 // The stages this pass actually runs in, and that is the
                 // whole point of the mask.
@@ -6497,7 +6674,14 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                     // buffers propagated to the compositor: the iGPU
                     // logged `Fence expiration time out` against the
                     // browser and the taskbar, and the desktop artefacted.
-                    make_presentable_on_skip(c, index, queue, pi, upscaled_waits);
+                    //
+                    // Its submit is real GPU work on this image, so
+                    // in_flight follows it: cleared above because the
+                    // failed pass will never signal the fence, set again
+                    // here if the transition did get in, because that one
+                    // will.
+                    c.in_flight[index] =
+                        make_presentable_on_skip(c, index, queue, pi, upscaled_waits);
                     static bool said = false;
                     if (!said) {
                         said = true;
@@ -6513,9 +6697,14 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // Anything a rebuild had to hold on to, freed as soon as the GPU has
     // finished with it. Costs one lock and an empty-vector check when
     // there is nothing to sweep, which is every ordinary frame.
+    //
+    // There used to be a `goto present_without_upscale` that landed just
+    // past this call, so the one path that most needed the sweep -- a
+    // per-image fence that had not signalled, which is exactly when a
+    // retired chain is stuck -- was the one path that skipped it. That
+    // jump is gone: the frame is dropped there now, and every early
+    // return in this function sweeps before it leaves.
     sweep_retired_chains();
-
-present_without_upscale:
     // Held across the present itself. It blocks in the driver, so this
     // does hold submits from other threads for its duration -- which is
     // exactly the serialisation the spec asks for, and what was missing.
@@ -6668,6 +6857,7 @@ present_without_upscale:
         if (failed != g_upscale_chains.end()) {
             UpscaleChain& fc = failed->second;
             const uint32_t index = indices[0];
+            bool repaired = false;
             if (index < fc.done.size() && l.create_semaphore != nullptr) {
                 fc.retired.push_back(fc.done[index]);
                 VkSemaphoreCreateInfo sci{};
@@ -6675,6 +6865,7 @@ present_without_upscale:
                 VkSemaphore fresh = VK_NULL_HANDLE;
                 if (l.create_semaphore(l.device, &sci, nullptr, &fresh) == VK_SUCCESS) {
                     fc.done[index] = fresh;
+                    repaired = true;
                     static int said = 0;
                     if (said < 8) {
                         ++said;
@@ -6685,6 +6876,22 @@ present_without_upscale:
                     }
                 }
             }
+            // The per-index repair above is the cheap one and covers the
+            // ordinary case. When it could not run at all -- an index past
+            // the end of the chain, no vkCreateSemaphore resolved, or the
+            // create itself failing -- the semaphore this present was told
+            // to wait on is left in the state the spec calls undefined,
+            // and the next pass signals it regardless. That wedges the
+            // queue for good.
+            //
+            // This is what semaphores_tainted was written for, and until
+            // now nothing ever set it, so the wholesale rebuild it guards
+            // in vk_queue_present was unreachable code: the only repair
+            // Stud actually performed was the per-index one above. Setting
+            // it here makes the fallback real, and keeps it rare -- it
+            // costs a device-idle wait and a full set of fresh semaphores,
+            // which is not something to do on an ordinary failed present.
+            if (!repaired) fc.semaphores_tainted = true;
         }
     }
     // Suboptimal is Stud's business, not the engine's; see engine_visible_result().
