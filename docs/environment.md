@@ -146,6 +146,7 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_DUMP_FRAME` | off | Reads the frame back before the swap and writes it out. The honest check for "is the window really black". **perf** |
 | `STUD_DUMP_FRAME_PATH` | a temp file | Where those frames go. |
 | `STUD_VK_PROBE_PIXELS` | off | Reads a swapchain image back and says whether it is all black. **perf** — a full queue wait. |
+| `STUD_VK_ENGINE_CHECKPOINTS` | off | Marks the engine's own commands with GPU checkpoints, so a device loss names which command the GPU died in rather than only that Stud's pass finished. **perf** — one extra recorded command per engine command. |
 | `STUD_DUMP_BAD_SHADERS` | off | Writes out any shader that fails to compile, with its log. |
 
 ## Forcing a wrong answer on purpose

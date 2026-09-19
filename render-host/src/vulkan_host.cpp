@@ -287,6 +287,13 @@ struct Loader {
     // VK_NV_device_diagnostic_checkpoints. Null unless the driver has it.
     PFN_vkCmdSetCheckpointNV cmd_set_checkpoint = nullptr;
     PFN_vkGetQueueCheckpointDataNV get_queue_checkpoint_data = nullptr;
+    // VK_EXT_device_fault. Null unless the driver has it.
+    //
+    // Checkpoints say WHERE the GPU stopped; this says WHAT went wrong
+    // there -- the faulting addresses and the vendor's own description of
+    // the fault. On a hang they answer different halves of one question,
+    // which is why both are worth carrying.
+    PFN_vkGetDeviceFaultInfoEXT get_device_fault_info = nullptr;
     PFN_vkCmdResolveImage cmd_resolve_image = nullptr;
     PFN_vkCmdResetQueryPool cmd_reset_query_pool = nullptr;
     PFN_vkCmdWriteTimestamp cmd_write_timestamp = nullptr;
@@ -1140,12 +1147,54 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         if (!already) extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
     }
 
+    // Device fault reporting, for the same reason and the other half of
+    // the answer.
+    //
+    // The engine's own log says `DEVICE FAULT SUPPORTED` on this machine,
+    // so it asks about this extension -- but Stud never queried the
+    // report, so a device lost to a hang said only that it was lost.
+    // vkGetDeviceFaultInfoEXT names the faulting addresses and carries
+    // the vendor's own description of what happened there.
+    //
+    // The feature has to be ENABLED at device creation or the report is
+    // empty afterwards, and the engine may already be enabling it in its
+    // own pNext chain. Two copies of one sType in a chain is invalid, so
+    // the chain is walked first and Stud's own struct is added only if
+    // the engine did not bring one.
+    VkPhysicalDeviceFaultFeaturesEXT fault_features{};
+    bool engine_asked_for_fault = false;
+    for (const auto* node = reinterpret_cast<const VkBaseInStructure*>(chain); node != nullptr;
+         node = node->pNext) {
+        if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT) {
+            engine_asked_for_fault = true;
+            break;
+        }
+    }
+    bool stud_added_fault = false;
+    if (device_supports_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
+        bool already = false;
+        for (const std::string& e : extensions) {
+            if (e == VK_EXT_DEVICE_FAULT_EXTENSION_NAME) already = true;
+        }
+        if (!already) extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        if (!engine_asked_for_fault) {
+            fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+            fault_features.deviceFault = VK_TRUE;
+            stud_added_fault = true;
+        }
+    }
+
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
 
     VkDeviceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     ci.pNext = chain;
+    // Prepended, so the engine's own chain is left exactly as it sent it.
+    if (stud_added_fault) {
+        fault_features.pNext = chain;
+        ci.pNext = &fault_features;
+    }
     ci.flags = hdr.flags;
     ci.queueCreateInfoCount = static_cast<uint32_t>(queues.size());
     ci.pQueueCreateInfos = queues.empty() ? nullptr : queues.data();
@@ -1387,6 +1436,8 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
             reinterpret_cast<PFN_vkCmdSetCheckpointNV>(dev("vkCmdSetCheckpointNV"));
         l.get_queue_checkpoint_data =
             reinterpret_cast<PFN_vkGetQueueCheckpointDataNV>(dev("vkGetQueueCheckpointDataNV"));
+        l.get_device_fault_info =
+            reinterpret_cast<PFN_vkGetDeviceFaultInfoEXT>(dev("vkGetDeviceFaultInfoEXT"));
         // Said at startup, because the answer decides what a later "no
         // checkpoints" line MEANS: with the entry points resolved it says
         // the GPU never reached Stud's own work, and without them it says
@@ -5479,6 +5530,70 @@ void report_checkpoints_after_loss() {
     std::fflush(stdout);
 }
 
+// What the driver says went wrong, as opposed to where.
+//
+// Checkpoints name the last marker the GPU passed; this names the
+// addresses it faulted on and carries the vendor's own description. On a
+// hang -- a submission the GPU never retires, which is what Roblox's own
+// DeviceRecovery calls `reason=hung` -- the two together are the
+// difference between "something in the frame died" and a specific
+// address in a specific resource.
+//
+// Reported rather than acted on. Stud cannot fix a faulting address; it
+// can only make sure the log names it, because this fires seconds after a
+// freeze the user is already watching and there is no second chance to
+// ask the device, which is about to be destroyed.
+void report_device_fault_after_loss() {
+    Loader& l = loader();
+    if (l.get_device_fault_info == nullptr || l.device == VK_NULL_HANDLE) {
+        std::printf("stud-render-host: no fault report: this driver does not offer "
+                    "VK_EXT_device_fault, so what the GPU faulted on is unknown\n");
+        std::fflush(stdout);
+        return;
+    }
+    VkDeviceFaultCountsEXT counts{};
+    counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+    if (l.get_device_fault_info(l.device, &counts, nullptr) != VK_SUCCESS) {
+        std::printf("stud-render-host: the driver offers VK_EXT_device_fault but would not say "
+                    "how much fault information it has\n");
+        std::fflush(stdout);
+        return;
+    }
+    // The binary blob is vendor-private and only a vendor's own tool can
+    // read it, so it is counted and not fetched.
+    counts.vendorBinarySize = 0;
+    std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+    std::vector<VkDeviceFaultVendorInfoEXT> vendor(counts.vendorInfoCount);
+    VkDeviceFaultInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+    info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+    info.pVendorInfos = vendor.empty() ? nullptr : vendor.data();
+    if (l.get_device_fault_info(l.device, &counts, &info) != VK_SUCCESS) {
+        std::printf("stud-render-host: the driver would not hand over its fault report\n");
+        std::fflush(stdout);
+        return;
+    }
+    std::printf("stud-render-host: the driver's own fault report: \"%s\" (%u address(es), %u "
+                "vendor record(s))\n",
+                info.description, counts.addressInfoCount, counts.vendorInfoCount);
+    for (uint32_t i = 0; i < counts.addressInfoCount && i < addresses.size(); ++i) {
+        // The precision is a range, not a slack figure: the reported
+        // address is somewhere within it, so a resource is identified by
+        // masking with it rather than by an exact match.
+        std::printf("stud-render-host:   fault type %u at 0x%llx (precision 0x%llx)\n",
+                    static_cast<unsigned>(addresses[i].addressType),
+                    static_cast<unsigned long long>(addresses[i].reportedAddress),
+                    static_cast<unsigned long long>(addresses[i].addressPrecision));
+    }
+    for (uint32_t i = 0; i < counts.vendorInfoCount && i < vendor.size(); ++i) {
+        std::printf("stud-render-host:   vendor: \"%s\" (fault 0x%llx, code 0x%llx)\n",
+                    vendor[i].description,
+                    static_cast<unsigned long long>(vendor[i].vendorFaultCode),
+                    static_cast<unsigned long long>(vendor[i].vendorFaultData));
+    }
+    std::fflush(stdout);
+}
+
 void note_result(VkResult r, const char* where) {
     if (r != VK_ERROR_DEVICE_LOST) return;
     // Said once, loudly, and never behind a switch.
@@ -5499,6 +5614,7 @@ void note_result(VkResult r, const char* where) {
                     where != nullptr ? where : "an unnamed call");
         std::fflush(stdout);
         report_checkpoints_after_loss();
+        report_device_fault_after_loss();
     }
 }
 
@@ -7136,6 +7252,25 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
 
 
 
+// A stable name per command kind, for GPU checkpoints.
+//
+// A checkpoint marker is a bare pointer the driver keeps and hands back
+// AFTER the device is lost, so it has to outlive the device and never
+// move. These are built once and live for the process.
+const char* engine_command_marker(uint32_t kind) {
+    struct Names {
+        char text[256][40];
+        Names() {
+            for (int i = 0; i < 256; ++i) {
+                std::snprintf(text[i], sizeof(text[i]), "engine command kind=%d", i);
+            }
+        }
+    };
+    static const Names names;
+    static const char kOutOfRange[] = "engine command kind=(out of range)";
+    return kind < 256 ? names.text[kind] : kOutOfRange;
+}
+
 // One entry point for the whole vkCmd* family. Every member takes a
 // command buffer, returns nothing, and differs only in payload, so
 // they share a call id and, on the client side, the reply-free path.
@@ -7156,6 +7291,30 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         std::snprintf(note, sizeof(note), "vk_cmd_record kind=%u cb=%llx in=%zu", kind,
                       static_cast<unsigned long long>(cb_handle), size);
         stud::logging::set_crash_note(note);
+    }
+
+    // STUD_VK_ENGINE_CHECKPOINTS=1: mark the ENGINE's commands too.
+    //
+    // Stud's own upscale pass has been marked since checkpoints went in,
+    // and that answered exactly half the question: a real hang reported
+    // "stud upscale: RCAS sharpen done" on both stages, which proves
+    // Stud's pass FINISHED and says nothing whatsoever about which of the
+    // engine's own thousands of commands the GPU died in.
+    //
+    // Stud records those commands, so it can mark them. The marker names
+    // the command kind, so the report reads "the GPU stopped in
+    // kind=N" -- enough to tell a draw from a copy from a dispatch, which
+    // is the first fork in diagnosing a hang.
+    //
+    // BEHIND A SWITCH, unlike Stud's own markers. This is one extra
+    // recorded command per engine command, and the engine records
+    // thousands per frame (a real session logged 1466 batches and 957449
+    // triangles in one). Cheap per call, not free in bulk, and worth
+    // turning on only for a run that is hunting a hang.
+    static const bool mark_engine_commands =
+        std::getenv("STUD_VK_ENGINE_CHECKPOINTS") != nullptr;
+    if (mark_engine_commands && l.cmd_set_checkpoint != nullptr && cb != VK_NULL_HANDLE) {
+        l.cmd_set_checkpoint(cb, engine_command_marker(kind));
     }
 
     // STUD_VK_CMD_STATS=1: how many of each command actually get
