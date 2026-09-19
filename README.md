@@ -197,12 +197,17 @@ First launch opens Settings, because Stud has no Roblox APK yet. Point it at one
 <details>
 <summary>Making packages</summary>
 
-Both ship everything Stud needs (ANGLE, the bionic set, the runtime process) on top of what they declare as dependencies. Neither contains Roblox.
+All three ship everything Stud needs (ANGLE, the bionic set, the runtime process) on top of what they declare as dependencies. None of them contains Roblox.
 
 ```bash
-cd build && cpack -G RPM      # build/stud-<version>-1.x86_64.rpm
+cd build
+cpack -G RPM                  # build/stud-<version>-1.x86_64.rpm
+cpack -G DEB                  # build/stud_<version>_amd64.deb
+cd ..
 packaging/build-appimage.sh   # build-appimage/packages/Stud-x86_64.AppImage
 ```
+
+A deb built this way runs on the distribution that built it and anything newer, and on nothing older: Qt exports a symbol version per release and the loader checks it, so the floor a package sets is whatever Qt it was linked against. The released deb is built on the oldest Ubuntu it targets for exactly that reason; the deb job in `.github/workflows/release.yml` records the three versions this was measured on.
 
 The AppImage builds itself inside a container so that what it links against is a decision rather than an accident of the machine that built it. It needs `podman` or `docker`.
 </details>
