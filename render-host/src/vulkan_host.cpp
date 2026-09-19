@@ -4725,6 +4725,55 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
         a.finalLayout = static_cast<VkImageLayout>(r.u32());
     }
 
+    // THE OTHER WAY PRESENT_SRC_KHR REACHES AN IMAGE THAT CANNOT PRESENT.
+    //
+    // make_barrier_legal() rewrites PRESENT_SRC to COLOR_ATTACHMENT_OPTIMAL
+    // for images that are not presentable, and its comment records why
+    // that matters: on NVIDIA the layout carries display-specific tiling
+    // and compression, "every device loss this session had this pass
+    // running", and the same code on Intel ran clean for 41 minutes.
+    //
+    // But a barrier is not how engines usually get there. An attachment
+    // description carries initialLayout and finalLayout, and the ordinary
+    // way to finish a frame is finalLayout = PRESENT_SRC_KHR on the last
+    // pass -- no barrier involved. Those two fields were forwarded
+    // verbatim, so the remap guarded one route and left the common one
+    // open.
+    //
+    // With the upscale pass running, the images the engine calls its
+    // swapchain are Stud's offscreen ones and NONE of them can be
+    // presented, so this needs no per-image test -- which is just as
+    // well, because a render pass is created before any image is
+    // attached to it and is_presentable_image() has nothing to answer
+    // about yet. The condition is only "is the pass in play at all":
+    // with no upscaling the engine really does render into the real
+    // swapchain and PRESENT_SRC is correct, so nothing is touched.
+    const bool engine_renders_offscreen =
+        g_upscale_output_w.load(std::memory_order_relaxed) != 0 || !g_upscale_chains.empty();
+    if (engine_renders_offscreen) {
+        size_t remapped = 0;
+        for (auto& a : attachments) {
+            if (a.initialLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+                a.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                ++remapped;
+            }
+            if (a.finalLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+                a.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                ++remapped;
+            }
+        }
+        static int said = 0;
+        if (remapped > 0 && said < 4) {
+            ++said;
+            std::printf("stud-render-host: a render pass asked to leave an attachment in "
+                        "PRESENT_SRC_KHR (%zu of them); with the upscale pass running that "
+                        "image cannot be presented, so it is COLOR_ATTACHMENT_OPTIMAL instead, "
+                        "the same substitution barriers already get\n",
+                        remapped);
+            std::fflush(stdout);
+        }
+    }
+
     // Subpass attachment references are pointer arrays inside each
     // subpass, so they are read into per-subpass storage that outlives
     // the create call.
