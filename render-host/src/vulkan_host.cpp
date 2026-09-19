@@ -590,6 +590,63 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     ci.enabledExtensionCount = static_cast<uint32_t>(ext_ptrs.size());
     ci.ppEnabledExtensionNames = ext_ptrs.empty() ? nullptr : ext_ptrs.data();
 
+    // ONE REAL VkInstance, however many the engine asks for.
+    //
+    // A native Vulkan game creates one instance and keeps it for the
+    // life of the process. This engine does not: it tears its renderer
+    // down and rebuilds it repeatedly, and a real session was measured
+    // creating SIX instances and six devices, destroying five of the
+    // devices and none of the instances. Stud was faithfully making a
+    // real instance for each one, which puts this process in a state no
+    // ordinary game ever reaches.
+    //
+    // That state is a documented NVIDIA bug. libnvidia-glcore keeps its
+    // libwayland-client entry points in a PROCESS-GLOBAL dispatch table
+    // whose lifetime is tied to a single VkInstance, and it misbehaves
+    // "when multiple instances exist or when an instance is destroyed
+    // while other Vulkan objects can still invoke the present path" --
+    // which is exactly Stud, since it destroys devices while every
+    // instance stays alive. The reported symptom there is a NULL call
+    // inside vkQueuePresentKHR; the symptom here is vkQueuePresentKHR
+    // spinning for a fixed 12006ms and then returning success. Sober,
+    // which runs the same engine the same way, crashes outright.
+    //
+    // So the honest fix is not to reach that state. The engine cannot
+    // tell: it never compares instance handles, Stud already ignores
+    // vkDestroyInstance (see case K::Instance), and every one of those
+    // six creations asked for an identical layer and extension set.
+    //
+    // Reused ONLY when the new request needs nothing the live instance
+    // lacks. A request for more than it has still builds its own, because
+    // handing back an instance without an extension the caller asked for
+    // would be a different and worse lie.
+    static std::set<std::string> live_extensions;
+    static std::set<std::string> live_layers;
+    if (l.instance != VK_NULL_HANDLE) {
+        bool covered = true;
+        for (const std::string& e : extensions) {
+            if (live_extensions.count(e) == 0) covered = false;
+        }
+        for (const std::string& s : layers) {
+            if (live_layers.count(s) == 0) covered = false;
+        }
+        if (covered) {
+            static int said = 0;
+            if (said < 4) {
+                ++said;
+                std::printf("stud-render-host: the engine asked for another VkInstance; handing "
+                            "back the one that already exists, because more than one in a "
+                            "process is what the driver mishandles\n");
+                std::fflush(stdout);
+            }
+            uint64_t existing = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(l.instance));
+            out.resize(sizeof(existing));
+            std::memcpy(out.data(), &existing, sizeof(existing));
+            *out_len = sizeof(existing);
+            return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+        }
+    }
+
     VkInstance instance = VK_NULL_HANDLE;
     VkResult r = l.create_instance(&ci, nullptr, &instance);
     std::printf("stud-render-host: vkCreateInstance -> %d (layers=%zu extensions=%zu)\n",
@@ -601,6 +658,12 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     // the spec's own requirement, and the only way to reach a driver's
     // real implementations rather than the loader's trampolines.
     l.instance = instance;
+    // What this instance can do, so a later request can be answered with
+    // it instead of building a second one. See the reuse check above.
+    live_extensions.clear();
+    live_layers.clear();
+    for (const std::string& e : extensions) live_extensions.insert(e);
+    for (const std::string& s : layers) live_layers.insert(s);
     auto inst = [&l](const char* n) { return l.get_instance_proc_addr(l.instance, n); };
     l.enumerate_physical_devices =
         reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(inst("vkEnumeratePhysicalDevices"));
