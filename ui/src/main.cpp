@@ -848,6 +848,10 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     render_host_args << "--upscaling" << (settings.upscaling && !settings.hidpi ? "on" : "off");
     render_host_args << "--upscale-sharpness"
                      << QString::number(settings.upscale_sharpness_percent);
+    // TEMPORARY, with the rest of the filter comparison: which one runs.
+    // STUD_UPSCALER still wins where it is set, so a test run does not
+    // have to touch the saved settings.
+    render_host_args << "--upscaler" << QString::fromStdString(settings.upscaler_choice);
     // 0 is "no limit" in the config; render-host reads anything outside
     // 1..240 the same way, so it travels unchanged.
     render_host_args << "--background-fps" << QString::number(settings.background_fps);

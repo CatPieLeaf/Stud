@@ -107,7 +107,18 @@ struct StudSettings {
     // baseline worth comparing against. 125 is the ceiling because that is
     // where this filter's own renormaliser reaches zero; sharpen.comp maps
     // the top of the range to just short of it.
-    int upscale_sharpness_percent = 100;    // Smooth zoom: the wheel eases the camera toward the new distance
+    int upscale_sharpness_percent = 100;
+    // TEMPORARY, and the whole thing comes out together: which upscaling
+    // filter runs, while they are being compared. Stud ships one, and
+    // when it is chosen this field, its combo box, its config key and
+    // every shader but the winner's are deleted in one commit.
+    //
+    // A string rather than an enum precisely because it is temporary: it
+    // is passed straight through to STUD_UPSCALER, so the set of valid
+    // names lives in one place (choose_upscaler in vulkan_host.cpp) and
+    // nothing here has to be kept in step with it. An unknown name falls
+    // back to fsr there, with a line saying so.
+    std::string upscaler_choice = "fsr";    // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;

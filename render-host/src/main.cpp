@@ -4581,6 +4581,17 @@ int main(int argc, char** argv) {
         } else if (std::string_view(argv[i]) == "--upscale-sharpness") {
             const int percent = std::atoi(argv[i + 1]);
             if (percent >= 0 && percent <= 125) g_upscale_sharpness_percent = percent;
+        } else if (std::string_view(argv[i]) == "--upscaler") {
+            // TEMPORARY, with the rest of the filter comparison. Set as
+            // the environment variable the render side already reads, so
+            // there is one parser for these names and it lives next to
+            // the shaders it chooses between; an unknown one falls back
+            // to fsr there and says so.
+            //
+            // setenv's third argument is 0 deliberately: STUD_UPSCALER
+            // set by hand outranks the saved setting, so a test run does
+            // not have to go through Settings and change what is saved.
+            ::setenv("STUD_UPSCALER", argv[i + 1], 0);
         }
     }
     // Latch the scale before any window or surface exists, so the very
