@@ -4809,19 +4809,30 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // them; and before the mappings below are dropped,
                 // because unmapping pages the driver still imports is
                 // what segfaulted inside libnvidia-glcore once already.
-                // Buffers first, then the memory they were bound to.
-                // Destroying a buffer after its memory is freed is a use
-                // of freed memory; the spec's own ordering, and the
-                // reason this is not folded into the loop below.
-                if (l.destroy_buffer != nullptr && !l.live_buffers.empty()) {
-                    std::printf("stud-render-host: destroying %zu buffer(s) the engine left "
-                                "behind\n",
-                                l.live_buffers.size());
-                    std::fflush(stdout);
-                    for (uint64_t b : l.live_buffers) {
-                        l.destroy_buffer(l.device, from_u64<VkBuffer>(b), nullptr);
-                    }
-                }
+                // THE BUFFERS ARE DELIBERATELY LEFT ALONE. Do not add
+                // a loop here that destroys them.
+                //
+                // It was tried, to close the rest of the "VkDevice has N
+                // leaked objects" report, and it CRASHED. The sequence,
+                // 155 log lines apart in one session:
+                //
+                //   destroying 14 buffer(s) the engine left behind
+                //   ...
+                //   CRASH, signal 11, fault address 0xf8
+                //   last: vk_cmd_record kind=14   (CopyBufferToImage)
+                //
+                // inside libnvidia-glcore, with a matching
+                // "vkCmdCopyBufferToImage(): srcBuffer Invalid VkBuffer
+                // Object" from the validation layer. The engine keeps
+                // using those handles after it has abandoned the device
+                // they belong to, so destroying them turns a leak into a
+                // dangling pointer the driver dereferences.
+                //
+                // Measured either way in back-to-back sessions: freeing
+                // the memory alone gave 0 crashes and 0 invalid buffers;
+                // adding the buffer destroy gave 1 of each. A leak the
+                // validation layer complains about is better than a
+                // segfault.
                 l.live_buffers.clear();
 
                 if (l.free_memory != nullptr && !l.live_memory.empty()) {
