@@ -1508,9 +1508,11 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     // X11 never showed this: there the window manager moves the window
     // itself and never waits on the client.
     xdg_surface_ack_configure(surface, serial);
+    bool published_geometry = false;
     if (window->geometry_pending) {
         window->geometry_pending = false;
         apply_window_geometry(window, "resized");
+        published_geometry = true;
     }
     // Commit when there is something to publish, and when this is the
     // configure that maps the surface. Not otherwise.
@@ -1536,33 +1538,37 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     // ("let the frame publish surface state, not a bare commit") removes
     // exactly that pattern everywhere else. This is the last place it
     // was still happening on a routine event.
-    // Always, and this is the one commit in this file that still is.
+    // Committed only when this configure has something to publish.
     //
-    // It is a known cross-thread hazard: it publishes surface state from
-    // the Wayland pump thread while the Vulkan driver may be committing
-    // the same surface from inside vkQueuePresentKHR, which is the exact
-    // pattern the fix taken from main removes everywhere else. It is
-    // kept anyway, for two reasons that are not symmetrical.
+    // Two cases need it, and nothing else does:
     //
-    // The first is that it earns its place: the FIRST configure here
-    // completes the map handshake, and a configure carrying new geometry
-    // has state that must reach the compositor now rather than whenever
-    // the engine next presents -- measured at 1.2s from
-    // APP_CMD_WINDOW_RESIZED to the next frame, which is how long a
-    // dragged window used to hang under the cursor.
+    //   the FIRST configure completes the map handshake, and a surface
+    //   that skips it may never be mapped at all;
     //
-    // The second is honesty about what was tried. Making it conditional
-    // on those two cases was written, built and run, and the run showed
-    // NEITHER a regression NOR a benefit: it looked broken at first
-    // against a miscounted comparison, and against a correct one it was
-    // indistinguishable from the unconditional version. An unproven
-    // change to a live bug fix is not worth carrying, so it was dropped
-    // rather than kept on the strength of a principle.
+    //   a configure carrying a NEW SIZE has staged state -- the viewport
+    //   destination -- and publishing it here rather than waiting for
+    //   the engine's next frame is the whole drag fix (measured: 1.2s
+    //   from APP_CMD_WINDOW_RESIZED to the next frame, which is how long
+    //   a dragged window used to hang under the cursor).
     //
-    // Removing it properly means having the renderer's own commit answer
-    // the configure, which is a real design change and not this.
+    // Every other configure is answered by the ack alone. That removes
+    // the last routine wl_surface commit Stud issues from the Wayland
+    // pump thread while the Vulkan driver may be committing the same
+    // surface from inside vkQueuePresentKHR -- two threads publishing
+    // double-buffered surface state, where Stud's commit can publish the
+    // driver's half-staged frame and the driver's own commit then
+    // publishes nothing, leaving the compositor holding a buffer it
+    // never releases and the driver polling for a release that cannot
+    // come. It polls for 12006ms, every time, and returns VK_SUCCESS.
+    //
+    // This was tried once before and reverted as unproven. It was: the
+    // conditional could not fire, because geometry_pending was set on
+    // EVERY configure including focus-only ones (fixed above), so the
+    // "only when there is something to publish" test was always true.
+    // It is real now, and there is a capture behind it.
+    const bool first_configure = !window->configured;
     window->configured = true;
-    wl_surface_commit(window->surface);
+    if (first_configure || published_geometry) wl_surface_commit(window->surface);
 }
 
 const xdg_surface_listener kShellSurfaceListener = {
@@ -1719,10 +1725,28 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
         return;
     }
     auto* window = static_cast<ANativeWindow*>(data);
+    // Only when the size ACTUALLY changed.
+    //
+    // A compositor sends a configure for any state change, not just a
+    // resize: focusing the window, unfocusing it, tiling it, changing a
+    // decoration. Every one of those carries the current width and
+    // height, so setting this unconditionally made "the geometry is
+    // pending" true for events that changed no geometry at all -- and
+    // xdg_surface_configure() then published a wl_surface commit for
+    // each of them, from the Wayland pump thread, while the Vulkan
+    // driver may be committing the same surface from inside
+    // vkQueuePresentKHR on another.
+    //
+    // Live-caught: five focus flips in sixteen log lines, and the next
+    // line is
+    //   SLOW vkQueuePresentKHR 12006.9ms -> 0
+    //     (waiting for the queue 0.0ms, inside the driver 12006.9ms)
+    const bool size_changed = width != window->logical_width.load() ||
+                              height != window->logical_height.load();
     window->logical_width.store(width);
     window->logical_height.store(height);
     // Applied by xdg_surface_configure(), after it acks; see there.
-    window->geometry_pending = true;
+    if (size_changed) window->geometry_pending = true;
 }
 
 // Versions 4 and 5 of xdg_toplevel send these; nothing here acts on them,
