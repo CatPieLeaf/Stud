@@ -19,6 +19,12 @@ set(SharpenShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sharpen_spv.h")
 # FSR1's two, and one texture fetch on a flat pixel to EASU's twelve.
 set(SgsrShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sgsr.comp")
 set(SgsrShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_spv.h")
+# And NVIDIA's. Unlike the other two this one #includes its algorithm
+# from the vendored SDK rather than carrying it, so it needs an include
+# path; NIS_Scaler.h is used exactly as NVIDIA ship it.
+set(NisShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/nis.comp")
+set(NisShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/nis_spv.h")
+set(NisIncludeDir "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nvidia-image-scaling/NIS")
 find_program(StudGlslc glslc
     HINTS "${STUD_ANDROID_NDK_ROOT}/shader-tools/linux-x86_64"
     NO_CMAKE_FIND_ROOT_PATH)
@@ -47,6 +53,15 @@ if(StudGlslc)
                 -o "${SgsrShaderHeader}" "${SgsrShaderSrc}"
         DEPENDS "${SgsrShaderSrc}"
         COMMENT "Compiling the SGSR upscale shader to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT "${NisShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -I "${NisIncludeDir}"
+                -o "${NisShaderHeader}" "${NisShaderSrc}"
+        DEPENDS "${NisShaderSrc}" "${NisIncludeDir}/NIS_Scaler.h"
+        COMMENT "Compiling the NIS upscale shader to SPIR-V"
     )
 else()
     # Without glslc the upscaler cannot exist; an empty array makes that a
@@ -86,10 +101,16 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SgsrShaderHeader}"
         COMMENT "glslc not found, building without the SGSR shader"
     )
+    add_custom_command(
+        OUTPUT "${NisShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${NisShaderHeader}"
+        COMMENT "glslc not found, building without the NIS shader"
+    )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
-target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${NisShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${NisIncludeDir}")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
     stud_config
