@@ -30,7 +30,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_BACKGROUND_FPS` | `30` | Frames per second while the window is not focused. Above 240 or below 1 disables the throttle entirely. |
 | `STUD_FORCE_REFRESH_HZ` | from the compositor | What refresh rate the engine is told the display runs at. |
 | `STUD_UPSCALING` | from settings | `on` or `off`, overriding the upscale pass without writing to the configuration. |
-| `STUD_UPSCALER` | `fsr` | Which spatial upscaler runs: `fsr` (FSR1, EASU then RCAS, two dispatches) or `sgsr` (SGSR1, one dispatch that scales and sharpens together, and a single bilinear fetch wherever the neighbourhood is flat). Both are history-free, which is the only kind Stud can run: the engine hands it no motion vectors. |
+| `STUD_UPSCALER` | `fsr` | Which spatial upscaler runs: `fsr` (FSR1, EASU then RCAS, two dispatches), `sgsr` (SGSR1, one dispatch that scales and sharpens together, and a single bilinear fetch wherever the neighbourhood is flat), or `nis` (NVIDIA NVScaler, one dispatch, table-driven directional filters; keeps the converting blit, so it pays one full-resolution pass the other two do not). All three are history-free, which is the only kind Stud can run: the engine hands it no motion vectors. Scaffolding for choosing between them — Stud ships one. |
 | `STUD_MAX_WINDOWS` | `1` | Raises the window cap. Diagnostic only; more than one real window is not a supported configuration. |
 | `STUD_RESIZE_SETTLE_MS` | `80` | How long a window size must hold still before it is acted on. `0` acts on every configure. |
 | `STUD_WL_POLL_MS` | `50` | How long the poll loops may block before Wayland is pumped again. |

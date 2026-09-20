@@ -13,6 +13,14 @@
 #include "stud/session_log.h"
 #include "flight_recorder.h"
 
+// NVIDIA's own header, included as C++ rather than reimplemented: it
+// carries both the coefficient tables the shader samples and
+// NVScalerUpdateConfig(), which derives the twenty-eight constants the
+// shader wants from a sharpness and a pair of viewport sizes. Deriving
+// those by hand is exactly the kind of thing that produces an upscaler
+// that looks subtly wrong.
+#include "NIS_Config.h"
+
 #include <dlfcn.h>
 #include <sys/syscall.h>
 
@@ -121,21 +129,29 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 //
 // Which is better is a judgement about pictures, not a measurement, so
 // this is a switch rather than a decision taken here.
-enum class Upscaler { Fsr1, Sgsr1 };
+enum class Upscaler { Fsr1, Sgsr1, Nis };
 
 Upscaler choose_upscaler() {
     static const Upscaler choice = [] {
         const char* v = std::getenv("STUD_UPSCALER");
         const std::string name(v != nullptr ? v : "fsr");
-        const Upscaler picked = name == "sgsr" ? Upscaler::Sgsr1 : Upscaler::Fsr1;
-        if (v != nullptr && name != "sgsr" && name != "fsr") {
+        Upscaler picked = Upscaler::Fsr1;
+        if (name == "sgsr") {
+            picked = Upscaler::Sgsr1;
+        } else if (name == "nis") {
+            picked = Upscaler::Nis;
+        } else if (v != nullptr && name != "fsr") {
             std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; "
-                        "using fsr. Try fsr or sgsr.\n",
+                        "using fsr. Try fsr, sgsr or nis.\n",
                         v);
         }
-        std::printf("stud-render-host: upscaler: %s\n",
-                    picked == Upscaler::Sgsr1 ? "sgsr (one pass, scale and sharpen together)"
-                                              : "fsr (EASU then RCAS)");
+        const char* described = "fsr (EASU then RCAS)";
+        if (picked == Upscaler::Sgsr1) {
+            described = "sgsr (one pass, scale and sharpen together)";
+        } else if (picked == Upscaler::Nis) {
+            described = "nis (NVScaler, one pass, keeps the converting blit)";
+        }
+        std::printf("stud-render-host: upscaler: %s\n", described);
         std::fflush(stdout);
         return picked;
     }();
@@ -248,6 +264,10 @@ struct Loader {
     PFN_vkBindImageMemory bind_image_memory = nullptr;
     PFN_vkFreeMemory free_memory = nullptr;
     PFN_vkMapMemory map_memory = nullptr;
+    // Only NIS needs this: its coefficient tables are written straight
+    // into linear-tiled images, and a linear image's rows are only where
+    // the driver says they are.
+    PFN_vkGetImageSubresourceLayout get_image_subresource_layout = nullptr;
     PFN_vkUnmapMemory unmap_memory = nullptr;
     PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = nullptr;
     PFN_vkCreateSwapchainKHR create_swapchain = nullptr;
@@ -1546,6 +1566,8 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         l.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(dev("vkBindImageMemory"));
         l.free_memory = reinterpret_cast<PFN_vkFreeMemory>(dev("vkFreeMemory"));
         l.map_memory = reinterpret_cast<PFN_vkMapMemory>(dev("vkMapMemory"));
+        l.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(
+            dev("vkGetImageSubresourceLayout"));
         l.unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(dev("vkUnmapMemory"));
         l.flush_mapped_memory_ranges =
             reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(dev("vkFlushMappedMemoryRanges"));
@@ -2871,6 +2893,23 @@ struct UpscaleChain {
     // sharpness is zero, in which case EASU's output goes straight to the
     // swapchain and the second image and dispatch are never created.
     bool sharpen = false;
+    // NVScaler instead of EASU. Its descriptor layout is its own -- a
+    // separate sampler and three sampled images, where the other two
+    // upscalers need one combined image sampler -- and it dispatches in
+    // 32x24 blocks of 256 threads rather than 8x8. Everything else about
+    // the chain is shared.
+    bool nis = false;
+    // The two lookup tables NVScaler's directional filters read. Small
+    // (2x64 texels), never written after build, and linear-tiled in
+    // host-visible memory so they can be filled with a memcpy instead of
+    // a staging buffer and a copy submit.
+    VkImage coef_scaler = VK_NULL_HANDLE;
+    VkImage coef_usm = VK_NULL_HANDLE;
+    VkDeviceMemory coef_scaler_memory = VK_NULL_HANDLE;
+    VkDeviceMemory coef_usm_memory = VK_NULL_HANDLE;
+    VkImageView coef_scaler_view = VK_NULL_HANDLE;
+    VkImageView coef_usm_view = VK_NULL_HANDLE;
+    NISConfig nis_config{};
     VkShaderModule shader = VK_NULL_HANDLE;
     VkShaderModule sharpen_shader = VK_NULL_HANDLE;
     VkPipeline sharpen_pipeline = VK_NULL_HANDLE;
@@ -2915,6 +2954,13 @@ struct UpscalePush {
     // Whether this pass writes blue and red swapped. See upscale.comp.
     int32_t swap_rb;
 };
+
+// What NVScaler's push range actually carries: the twenty-eight scalars
+// of NISConfig. sizeof(NISConfig) is 256, because the SDK declares it
+// NIS_ALIGNED(256) for its own constant-buffer use, and a push range
+// that big is refused -- 128 bytes is all an implementation must offer.
+constexpr uint32_t kNisPushBytes = 28 * sizeof(float);
+static_assert(kNisPushBytes <= 128, "a push range must fit what every device guarantees");
 
 // Whether a byte-for-byte copy out of an R8G8B8A8 image lands correctly
 // in this swapchain format, given the shader stored its channels
@@ -3307,6 +3353,13 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
     destroy(l.destroy_descriptor_set_layout, c.set_layout);
     destroy(l.destroy_sampler, c.sampler);
     destroy(l.destroy_shader_module, c.shader);
+    // NVScaler's lookup tables, present only on a NIS chain.
+    destroy(l.destroy_image_view, c.coef_scaler_view);
+    destroy(l.destroy_image_view, c.coef_usm_view);
+    destroy(l.destroy_image, c.coef_scaler);
+    destroy(l.destroy_image, c.coef_usm);
+    destroy(l.free_memory, c.coef_scaler_memory);
+    destroy(l.free_memory, c.coef_usm_memory);
     destroy(l.destroy_shader_module, c.sharpen_shader);
     destroy(l.destroy_pipeline, c.sharpen_pipeline);
     destroy_all(l.destroy_image_view, c.sharpen_src_views);
@@ -3338,6 +3391,102 @@ void destroy_upscale_chain_keeping_offscreen(UpscaleChain& c) {
     c.memory.swap(memory);
     c.engine = engine;
     c.format = format;
+}
+
+// One of NVScaler's two lookup tables, as an image the shader can
+// texelFetch.
+//
+// 64 phases of 8 filter taps, which is 2 RGBA32F texels wide and 64
+// rows tall -- 2KB. Small enough that the usual staging buffer, copy
+// submit and fence wait would be more machinery than the data: the
+// image is created with linear tiling in host-visible memory and filled
+// with a memcpy instead.
+//
+// Linear tiling is the part that can fail. Support for it is optional
+// per format, so it is asked about rather than assumed, and a driver
+// that will not sample a linear R32G32B32A32_SFLOAT leaves NIS
+// unavailable -- which falls back to FSR rather than to a black window.
+//
+// Rows are placed where vkGetImageSubresourceLayout says, not packed:
+// the driver is free to pad them.
+bool build_nis_coefficients(const float table[64][8], VkImage& image, VkDeviceMemory& memory,
+                            VkImageView& view) {
+    Loader& l = loader();
+    if (l.create_image == nullptr || l.map_memory == nullptr || l.create_image_view == nullptr ||
+        l.get_image_subresource_layout == nullptr || l.get_image_memory_requirements == nullptr ||
+        l.allocate_memory == nullptr || l.bind_image_memory == nullptr ||
+        l.get_physical_device_memory_properties == nullptr ||
+        l.get_physical_device_format_properties == nullptr) {
+        return false;
+    }
+    constexpr VkFormat kFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+    VkFormatProperties fp{};
+    l.get_physical_device_format_properties(l.physical_device, kFormat, &fp);
+    if ((fp.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0) {
+        std::printf("stud-render-host: this driver will not sample a linear "
+                    "R32G32B32A32_SFLOAT, so NIS has nowhere to put its coefficients\n");
+        std::fflush(stdout);
+        return false;
+    }
+
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = kFormat;
+    ici.extent = {2, 64, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_LINEAR;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // Written by the host before anything reads it, which is what this
+    // layout is for.
+    ici.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    if (l.create_image(l.device, &ici, nullptr, &image) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements req{};
+    l.get_image_memory_requirements(l.device, image, &req);
+    VkPhysicalDeviceMemoryProperties props{};
+    l.get_physical_device_memory_properties(l.physical_device, &props);
+    uint32_t chosen = UINT32_MAX;
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        const bool usable = (req.memoryTypeBits & (1u << i)) != 0;
+        const VkMemoryPropertyFlags want =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if (usable && (props.memoryTypes[i].propertyFlags & want) == want) {
+            chosen = i;
+            break;
+        }
+    }
+    if (chosen == UINT32_MAX) return false;
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = chosen;
+    if (l.allocate_memory(l.device, &ai, nullptr, &memory) != VK_SUCCESS) return false;
+    if (l.bind_image_memory(l.device, image, memory, 0) != VK_SUCCESS) return false;
+
+    VkImageSubresource sub{};
+    sub.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    VkSubresourceLayout sub_layout{};
+    l.get_image_subresource_layout(l.device, image, &sub, &sub_layout);
+
+    void* mapped = nullptr;
+    if (l.map_memory(l.device, memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) return false;
+    auto* bytes = static_cast<uint8_t*>(mapped) + sub_layout.offset;
+    for (uint32_t row = 0; row < 64; ++row) {
+        std::memcpy(bytes + row * sub_layout.rowPitch, table[row], 8 * sizeof(float));
+    }
+    // Left mapped: coherent memory, written once, never touched again.
+
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = kFormat;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    return l.create_image_view(l.device, &vci, nullptr, &view) == VK_SUCCESS;
 }
 
 // Device-local memory for an offscreen colour target. No host access is
@@ -3408,14 +3557,39 @@ bool build_upscale_compute(UpscaleChain& c) {
     static const uint32_t kSgsrSpv[] =
 #include "sgsr_spv.h"
         ;
+    static const uint32_t kNisSpv[] =
+#include "nis_spv.h"
+        ;
     // Same bindings, same push constants, same 8x8 group: the two
     // shaders are interchangeable in everything but their arithmetic,
     // which is what lets one descriptor layout and one pipeline layout
     // serve both.
-    const bool sgsr = choose_upscaler() == Upscaler::Sgsr1;
-    const uint32_t* code = sgsr ? kSgsrSpv : kUpscaleSpv;
-    const size_t code_size = sgsr ? sizeof(kSgsrSpv) : sizeof(kUpscaleSpv);
+    const Upscaler wanted = choose_upscaler();
+    const bool sgsr = wanted == Upscaler::Sgsr1;
+    c.nis = wanted == Upscaler::Nis;
+    const uint32_t* code = kUpscaleSpv;
+    size_t code_size = sizeof(kUpscaleSpv);
+    if (sgsr) {
+        code = kSgsrSpv;
+        code_size = sizeof(kSgsrSpv);
+    } else if (c.nis) {
+        code = kNisSpv;
+        code_size = sizeof(kNisSpv);
+    }
     if (code_size < 32) return false;  // built without glslc
+
+    // NVScaler's lookup tables, before anything that would have to be
+    // unwound if they fail. Falling back to FSR is handled by the caller
+    // seeing this build fail; a half-built NIS chain is not a state
+    // worth having.
+    if (c.nis) {
+        if (!build_nis_coefficients(coef_scale, c.coef_scaler, c.coef_scaler_memory,
+                                    c.coef_scaler_view) ||
+            !build_nis_coefficients(coef_usm, c.coef_usm, c.coef_usm_memory,
+                                    c.coef_usm_view)) {
+            return false;
+        }
+    }
 
     VkShaderModuleCreateInfo smci{};
     smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -3436,18 +3610,42 @@ bool build_upscale_compute(UpscaleChain& c) {
     sci.maxLod = 0.0f;
     if (l.create_sampler(l.device, &sci, nullptr, &c.sampler) != VK_SUCCESS) return false;
 
-    VkDescriptorSetLayoutBinding bindings[2]{};
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    // Two layouts, because NIS asks for its inputs differently: a
+    // sampler on its own and three sampled images, where EASU and SGSR
+    // take one combined image sampler. That is NIS_Scaler.h's doing --
+    // its GLSL builds sampler2D() from the two halves -- not a choice
+    // made here.
+    VkDescriptorSetLayoutBinding bindings[5]{};
+    uint32_t binding_count = 2;
+    for (auto& b : bindings) b.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    if (c.nis) {
+        binding_count = 5;
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        bindings[0].descriptorCount = 1;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        bindings[1].descriptorCount = 1;
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[2].descriptorCount = 1;
+        bindings[3].binding = 3;
+        bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        bindings[3].descriptorCount = 1;
+        bindings[4].binding = 4;
+        bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        bindings[4].descriptorCount = 1;
+    } else {
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[0].descriptorCount = 1;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[1].descriptorCount = 1;
+    }
     VkDescriptorSetLayoutCreateInfo dslci{};
     dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dslci.bindingCount = 2;
+    dslci.bindingCount = binding_count;
     dslci.pBindings = bindings;
     if (l.create_descriptor_set_layout(l.device, &dslci, nullptr, &c.set_layout) != VK_SUCCESS) {
         return false;
@@ -3456,7 +3654,12 @@ bool build_upscale_compute(UpscaleChain& c) {
     VkPushConstantRange range{};
     range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     range.offset = 0;
-    range.size = sizeof(UpscalePush);
+    // NISConfig is declared NIS_ALIGNED(256), so sizeof() is its padding
+    // and not its contents: the shader's block is twenty-eight scalars,
+    // 112 bytes, which is what fits the 128-byte push range every
+    // implementation guarantees. Pushing sizeof(NISConfig) would ask for
+    // 256 and fail to create the layout.
+    range.size = c.nis ? kNisPushBytes : sizeof(UpscalePush);
     VkPipelineLayoutCreateInfo plci{};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plci.setLayoutCount = 1;
@@ -3480,15 +3683,27 @@ bool build_upscale_compute(UpscaleChain& c) {
     }
 
     const auto count = static_cast<uint32_t>(c.offscreen.size());
-    VkDescriptorPoolSize sizes[2]{};
-    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[0].descriptorCount = count;
-    sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    sizes[1].descriptorCount = count;
+    VkDescriptorPoolSize sizes[3]{};
+    uint32_t size_count = 2;
+    if (c.nis) {
+        size_count = 3;
+        sizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+        sizes[0].descriptorCount = count;
+        // The engine's image plus both coefficient tables, per set.
+        sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        sizes[1].descriptorCount = count * 3;
+        sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        sizes[2].descriptorCount = count;
+    } else {
+        sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sizes[0].descriptorCount = count;
+        sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        sizes[1].descriptorCount = count;
+    }
     VkDescriptorPoolCreateInfo dpci{};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dpci.maxSets = count;
-    dpci.poolSizeCount = 2;
+    dpci.poolSizeCount = size_count;
     dpci.pPoolSizes = sizes;
     if (l.create_descriptor_pool(l.device, &dpci, nullptr, &c.descriptor_pool) != VK_SUCCESS) {
         return false;
@@ -3553,6 +3768,48 @@ bool build_upscale_compute(UpscaleChain& c) {
         VkDescriptorImageInfo dst{};
         dst.imageView = c.dst_views[i];
         dst.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        if (c.nis) {
+            // The same views, described the other way round: the sampler
+            // on its own, the engine's image as a plain sampled image,
+            // and the two lookup tables beside it. Their layout is
+            // PREINITIALIZED and never transitioned -- GENERAL is what a
+            // linear host-written image is sampled in.
+            VkDescriptorImageInfo sampler_only{};
+            sampler_only.sampler = c.sampler;
+            VkDescriptorImageInfo sampled_src{};
+            sampled_src.imageView = c.src_views[i];
+            sampled_src.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo scaler{};
+            scaler.imageView = c.coef_scaler_view;
+            scaler.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkDescriptorImageInfo usm{};
+            usm.imageView = c.coef_usm_view;
+            usm.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            VkWriteDescriptorSet writes[5]{};
+            for (auto& w : writes) {
+                w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                w.dstSet = c.sets[i];
+                w.descriptorCount = 1;
+            }
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            writes[0].pImageInfo = &sampler_only;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[1].pImageInfo = &sampled_src;
+            writes[2].dstBinding = 2;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[2].pImageInfo = &dst;
+            writes[3].dstBinding = 3;
+            writes[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[3].pImageInfo = &scaler;
+            writes[4].dstBinding = 4;
+            writes[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[4].pImageInfo = &usm;
+            l.update_descriptor_sets(l.device, 5, writes, 0, nullptr);
+            continue;
+        }
         VkWriteDescriptorSet writes[2]{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = c.sets[i];
@@ -3578,7 +3835,9 @@ bool build_upscale_compute(UpscaleChain& c) {
     // SGSR has no second pass to build: it sharpens as it scales, and
     // its own edge term already carries the sharpness setting. Running
     // RCAS over its output would sharpen what has been sharpened.
-    if (choose_upscaler() == Upscaler::Sgsr1) return true;
+    // NIS is the same: NVScaler's sharpening is inside the same
+    // dispatch, driven by the config block rather than by a pass.
+    if (choose_upscaler() != Upscaler::Fsr1) return true;
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"
@@ -3780,13 +4039,44 @@ bool record_upscale_blits(UpscaleChain& c) {
             // swapchain's order. vkCmdCopyImage allows two different
             // formats when they are the same size, which R8G8B8A8 and
             // B8G8R8A8 are.
+            // NIS is excluded: NVScaler stores through NIS_Scaler.h's own
+            // NVTEX_STORE, so its output cannot be pre-swizzled the way
+            // EASU's and SGSR's can, and a byte copy would land with red
+            // and blue exchanged. It keeps the converting blit, and pays
+            // the full-resolution pass the other two no longer do.
             const bool copy_hand_over =
-                l.cmd_copy_image != nullptr && hand_over_can_be_a_copy(c.format);
+                !c.nis && l.cmd_copy_image != nullptr && hand_over_can_be_a_copy(c.format);
             const int32_t swap_rb =
                 (copy_hand_over && swapchain_wants_bgra(c.format)) ? 1 : 0;
             l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
             l.cmd_bind_descriptor_sets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
                                        c.pipeline_layout, 0, 1, &c.sets[i], 0, nullptr);
+            if (c.nis) {
+                // NVScaler's own constants, derived by the SDK rather
+                // than by hand, and its own dispatch shape: 32x24 pixels
+                // per group against the 8x8 the other two use.
+                //
+                // Sharpness is Stud's 0.0-1.25 mapped onto the 0-1
+                // slider NVScalerUpdateConfig expects, where 0.5 is its
+                // neutral point; 1.0 here lands at 0.5 there so the
+                // default setting means the same thing across all three
+                // upscalers.
+                NISConfig config{};
+                const float slider = std::min(1.0f, upscale_sharpness() * 0.5f);
+                NVScalerUpdateConfig(config, slider, 0, 0, c.engine.width, c.engine.height,
+                                     c.engine.width, c.engine.height, 0, 0, c.present.width,
+                                     c.present.height, c.present.width, c.present.height);
+                l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                                     kNisPushBytes, &config);
+                if (l.cmd_set_checkpoint != nullptr) {
+                    l.cmd_set_checkpoint(c.cmd[i], "stud upscale: NVScaler dispatch");
+                }
+                l.cmd_dispatch(c.cmd[i], (c.present.width + 31) / 32, (c.present.height + 23) / 24,
+                               1);
+                if (l.cmd_set_checkpoint != nullptr) {
+                    l.cmd_set_checkpoint(c.cmd[i], "stud upscale: NVScaler done");
+                }
+            } else {
             UpscalePush push{};
             push.src_w = static_cast<int32_t>(c.engine.width);
             push.src_h = static_cast<int32_t>(c.engine.height);
@@ -3805,6 +4095,8 @@ bool record_upscale_blits(UpscaleChain& c) {
             l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
             if (l.cmd_set_checkpoint != nullptr) {
                 l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU done");
+            }
+
             }
 
             // RCAS, at the output resolution, over what EASU just wrote.
@@ -4181,7 +4473,8 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
                     built.engine.width, built.engine.height, built.present.width,
                     built.present.height, count,
-                    built.compute ? (choose_upscaler() == Upscaler::Sgsr1
+                    built.compute ? (built.nis ? "NVScaler"
+                                     : choose_upscaler() == Upscaler::Sgsr1
                                          ? "SGSR"
                                          : (built.sharpen ? "EASU + RCAS" : "EASU"))
                                   : "linear blit");
