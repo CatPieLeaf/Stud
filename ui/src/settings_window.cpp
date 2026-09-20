@@ -209,16 +209,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscalerCombo_->addItem("SGSR1", QStringLiteral("sgsr"));
     upscalerCombo_->addItem("SGSR1 - edge direction", QStringLiteral("sgsr-ed"));
     upscalerCombo_->addItem("RAVU-Zoom", QStringLiteral("ravu"));
-    upscalerCombo_->addItem("Lanczos-2", QStringLiteral("lanczos"));
-    upscalerCombo_->addItem("Bicubic - Catmull-Rom", QStringLiteral("bicubic"));
     upscalerCombo_->setToolTip(
         "Which filter rebuilds the frame at full resolution. Temporary, while these are\n"
         "being compared: Stud will ship one of them and this control will go away.\n"
         "\n"
-        "FSR1 and SGSR1 reconstruct edges; Lanczos and bicubic do not, and are cheaper.\n"
-        "RAVU-Zoom looks its filter weights up in a trained table.\n"
-        "Only FSR1 uses the sharpening slider above as a separate pass; the others either\n"
-        "sharpen as they scale or not at all.\n"
+        "FSR1 and SGSR1 reconstruct edges from the pixels; RAVU-Zoom looks its filter\n"
+        "weights up in a trained table.\n"
+        "SGSR sharpens as it scales, so the slider above feeds its own edge term; FSR1\n"
+        "and RAVU use the slider for a separate sharpening pass after them.\n"
         "Applies on the next start, so use the restart button beside Save.");
     upscalerRow->addWidget(upscalerCombo_);
     upscalerRow->addStretch();

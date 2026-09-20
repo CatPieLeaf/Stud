@@ -21,11 +21,6 @@ set(SgsrShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sgsr.comp")
 set(SgsrShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_spv.h")
 # The same source again, as the reference's UseEdgeDirection variant.
 set(SgsrEdShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_ed_spv.h")
-# The two analytic filters, for the cheap end of the comparison.
-set(BicubicShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/bicubic.comp")
-set(BicubicShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/bicubic_spv.h")
-set(LanczosShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lanczos.comp")
-set(LanczosShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/lanczos_spv.h")
 # RAVU-Zoom, which unlike the others carries a trained weight table as
 # well as a shader. The table is generated from the vendored hook rather
 # than checked in twice, so the two cannot drift.
@@ -95,22 +90,6 @@ if(StudGlslc)
         COMMENT "Compiling the SGSR edge-direction shader to SPIR-V"
     )
     add_custom_command(
-        OUTPUT "${BicubicShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
-                -o "${BicubicShaderHeader}" "${BicubicShaderSrc}"
-        DEPENDS "${BicubicShaderSrc}"
-        COMMENT "Compiling the bicubic upscale shader to SPIR-V"
-    )
-    add_custom_command(
-        OUTPUT "${LanczosShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
-                -o "${LanczosShaderHeader}" "${LanczosShaderSrc}"
-        DEPENDS "${LanczosShaderSrc}"
-        COMMENT "Compiling the Lanczos upscale shader to SPIR-V"
-    )
-    add_custom_command(
         OUTPUT "${RavuShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
@@ -163,18 +142,6 @@ else()
         COMMENT "glslc not found, building without the SGSR edge-direction shader"
     )
     add_custom_command(
-        OUTPUT "${BicubicShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${BicubicShaderHeader}"
-        COMMENT "glslc not found, building without the bicubic shader"
-    )
-    add_custom_command(
-        OUTPUT "${LanczosShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${LanczosShaderHeader}"
-        COMMENT "glslc not found, building without the Lanczos shader"
-    )
-    add_custom_command(
         OUTPUT "${RavuShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuShaderHeader}"
@@ -182,7 +149,7 @@ else()
     )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${BicubicShaderHeader}" "${LanczosShaderHeader}" "${RavuShaderHeader}" "${RavuLutHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${RavuShaderHeader}" "${RavuLutHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
