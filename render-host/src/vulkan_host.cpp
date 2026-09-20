@@ -2946,6 +2946,9 @@ struct UpscaleChain {
     // third descriptor -- its trained weight table -- which the others
     // have no use for, so a RAVU chain's descriptor layout is its own.
     bool ravu = false;
+    // What the recorded hand-over actually is, so the log reports it
+    // rather than recomputing it.
+    bool copies_hand_over = false;
     // One pair of timestamps per image, written either side of that
     // image's recorded pass. See upscale_timing_enabled().
     VkQueryPool timing_pool = VK_NULL_HANDLE;
@@ -4144,6 +4147,7 @@ bool record_upscale_blits(UpscaleChain& c) {
             // B8G8R8A8 are.
             const bool copy_hand_over =
                 l.cmd_copy_image != nullptr && hand_over_can_be_a_copy(c.format);
+            c.copies_hand_over = copy_hand_over;
             const int32_t swap_rb =
                 (copy_hand_over && swapchain_wants_bgra(c.format)) ? 1 : 0;
             l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
@@ -4564,14 +4568,23 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         // sharpen inside their own dispatch get one, and only when the
         // setting is above zero -- so "no sharpening pass" is the normal
         // state for SGSR and a silent failure for FSR or RAVU.
-        std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s, %s)\n",
+        // The hand-over too, read back from what the recording actually
+        // did rather than worked out again here. A log that recomputes
+        // a decision can disagree with the decision, and this one did:
+        // with the copy path forced off for a measurement it went on
+        // reporting a copy, because it was asking the same question
+        // rather than reporting the answer.
+        std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s, %s, %s)\n",
                     built.engine.width, built.engine.height, built.present.width,
                     built.present.height, count,
                     built.compute ? upscaler_name(built.sharpen) : "linear blit",
                     !built.compute            ? "no sharpening"
                     : upscaler_sharpens_itself() ? "sharpening inside the pass"
                     : built.sharpen           ? "with an RCAS pass after it"
-                                              : "NO sharpening pass");
+                                              : "NO sharpening pass",
+                    !built.compute            ? "blitting"
+                    : built.copies_hand_over  ? "handed over by copy"
+                                              : "handed over by a CONVERTING BLIT");
         std::fflush(stdout);
     }
 }
@@ -6649,9 +6662,11 @@ void report_upscale_timing(UpscaleChain& c, uint32_t index) {
     const double us = static_cast<double>(stamps[1] - stamps[0]) * period_ns / 1000.0;
     static double total = 0.0;
     static double worst = 0.0;
+    static double best = 0.0;
     static uint64_t samples = 0;
     total += us;
     if (us > worst) worst = us;
+    if (best == 0.0 || us < best) best = us;
     // Every 600 frames: often enough to watch a change, rare enough that
     // the line itself is not the cost.
     if (++samples >= 600) {
@@ -6660,17 +6675,28 @@ void report_upscale_timing(UpscaleChain& c, uint32_t index) {
         // bigger output is not a more expensive pass. Comparing two
         // filters measured at 1920x990 and 1728x972 by their raw
         // milliseconds overstates the first by 13%.
+        //
+        // And the CHEAPEST frame, not only the mean, because the mean is
+        // not comparable between runs for a filter whose cost depends on
+        // what is on screen. SGSR read 0.241 and 0.094ms per megapixel
+        // in two runs of the same build -- a wider spread than the
+        // difference between that build and one compiled at a different
+        // precision, which made the precision unmeasurable. The minimum
+        // is the quiet-screen floor and is the number to compare
+        // filters by; the mean says what a session actually paid.
         const double mean_us = total / static_cast<double>(samples);
         const double mpix =
             static_cast<double>(c.present.width) * c.present.height / 1000000.0;
-        std::printf("stud-render-host: the %s pass took a mean %.3fms on the GPU over %llu "
-                    "frames, worst %.3fms, at %ux%u -- %.3fms per megapixel\n",
-                    upscaler_name(c.sharpen), mean_us / 1000.0,
-                    static_cast<unsigned long long>(samples), worst / 1000.0, c.present.width,
-                    c.present.height, mpix > 0.0 ? mean_us / 1000.0 / mpix : 0.0);
+        const double per_mpix = mpix > 0.0 ? 1.0 / (1000.0 * mpix) : 0.0;
+        std::printf("stud-render-host: the %s pass over %llu frames at %ux%u: cheapest "
+                    "%.3fms (%.3fms/MPix), mean %.3fms (%.3fms/MPix), worst %.3fms\n",
+                    upscaler_name(c.sharpen), static_cast<unsigned long long>(samples),
+                    c.present.width, c.present.height, best / 1000.0, best * per_mpix,
+                    mean_us / 1000.0, mean_us * per_mpix, worst / 1000.0);
         std::fflush(stdout);
         total = 0.0;
         worst = 0.0;
+        best = 0.0;
         samples = 0;
     }
 }
