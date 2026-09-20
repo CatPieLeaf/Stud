@@ -183,10 +183,11 @@ void dump_system_state(std::FILE* out) {
 
 }  // namespace
 
-bool enabled() {
-    static const bool on = std::getenv("STUD_FLIGHT_RECORDER") != nullptr;
-    return on;
-}
+namespace detail {
+// Read once, before main() touches anything, so the hot path's inline
+// check is a plain relaxed load with no guard variable.
+std::atomic<bool> g_on{std::getenv("STUD_FLIGHT_RECORDER") != nullptr};
+}  // namespace detail
 
 namespace {
 
@@ -245,8 +246,7 @@ void start_watchdog_once() {
 
 }  // namespace
 
-void record(Event e, uint64_t a, uint64_t b, uint64_t c) {
-    if (!enabled()) return;
+void record_event(Event e, uint64_t a, uint64_t b, uint64_t c) {
     // STUD_FLIGHT_RECORDER_SELFTEST=1 forces one dump early in the run.
     //
     // The whole point of this machinery is a session that cannot be
