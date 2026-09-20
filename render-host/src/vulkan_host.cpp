@@ -7933,12 +7933,19 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     // Left on deliberately. It is what makes a crash report name the last
     // Vulkan command instead of only the function it died in, which is
     // the one thing needed to act on a user's crash log.
-    {
-        char note[96];
-        std::snprintf(note, sizeof(note), "vk_cmd_record kind=%u cb=%llx in=%zu", kind,
-                      static_cast<unsigned long long>(cb_handle), size);
-        stud::logging::set_crash_note(note);
-    }
+    //
+    // Four stores, not two snprintf calls. This runs for EVERY Vulkan
+    // command the engine records -- thousands per frame -- and it used
+    // to format a string here and then format it again inside
+    // set_crash_note(). Formatted string work on this path is not a
+    // breadcrumb, it is a share of the frame budget, and it had been
+    // paid on every command since the breadcrumb was added.
+    //
+    // The crash handler formats these instead, once, and only if the
+    // process is dying anyway.
+    stud::logging::set_crash_fields("vk_cmd_record kind cb in", kind,
+                                    static_cast<unsigned long long>(cb_handle),
+                                    static_cast<unsigned long long>(size));
 
     // STUD_VK_ENGINE_CHECKPOINTS=1: mark the ENGINE's commands too.
     //

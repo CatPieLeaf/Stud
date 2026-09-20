@@ -185,6 +185,29 @@ inline char* crash_note_storage() {
     return note;
 }
 
+// The same breadcrumb, without formatting anything until it is needed.
+//
+// set_crash_note() costs two snprintf calls -- the caller's, and the
+// "%s" copy inside it -- and vk_cmd_record was calling it for EVERY
+// Vulkan command the engine records, thousands per frame. Formatted
+// string work on that path is not a breadcrumb, it is a frame budget.
+//
+// So the values are stored raw, which is four plain stores, and the
+// formatting happens in the handler, where it is paid once and only if
+// the process is dying anyway. `what` must be a string literal: nothing
+// is copied.
+struct CrashFields {
+    const char* what;
+    unsigned long long a;
+    unsigned long long b;
+    unsigned long long c;
+};
+
+inline CrashFields* crash_fields_storage() {
+    static CrashFields fields{nullptr, 0, 0, 0};
+    return &fields;
+}
+
 inline void crash_handler(int sig, siginfo_t* info, void*) {
     const char* name = crash_process_name();
     char digits[3] = {static_cast<char>('0' + (sig / 10) % 10),
@@ -216,6 +239,22 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
         ::write(STDERR_FILENO, "\n", 1);
     }
 
+    // The unformatted form, printed with the same write/hex primitives
+    // the rest of this handler uses, since snprintf is not safe here.
+    if (const CrashFields* f = crash_fields_storage(); f->what != nullptr) {
+        const char* label = "stud: last: ";
+        ::write(STDERR_FILENO, label, ::strlen(label));
+        ::write(STDERR_FILENO, f->what, ::strlen(f->what));
+        const char* sep = " ";
+        ::write(STDERR_FILENO, sep, 1);
+        write_hex(f->a);
+        ::write(STDERR_FILENO, sep, 1);
+        write_hex(f->b);
+        ::write(STDERR_FILENO, sep, 1);
+        write_hex(f->c);
+        ::write(STDERR_FILENO, "\n", 1);
+    }
+
     // backtrace() can allocate the first time it runs, which is not
     // allowed here, install_crash_reporter() calls it once up front so
     // that by now it cannot. backtrace_symbols_fd writes with write(2)
@@ -237,13 +276,27 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
 }
 
 }  // namespace detail
-// Leaves a breadcrumb for the crash handler to print. Cheap enough to
-// call on a hot path: one snprintf into fixed storage, no allocation.
-// Overwritten each time, so it names the last thing attempted rather
-// than keeping a history nothing would read.
+// Leaves a breadcrumb for the crash handler to print. Overwritten each
+// time, so it names the last thing attempted rather than keeping a
+// history nothing would read.
+//
+// NOT for a hot path, whatever this comment used to say. It formats
+// twice -- once in the caller and once here -- and it was being called
+// per Vulkan command. Use set_crash_fields() there instead.
 inline void set_crash_note(const char* text) {
     char* note = detail::crash_note_storage();
     std::snprintf(note, 192, "%s", text);
+}
+
+// The hot-path form: four stores, no formatting. `what` must outlive the
+// call, so pass a string literal. See detail::CrashFields.
+inline void set_crash_fields(const char* what, unsigned long long a = 0,
+                             unsigned long long b = 0, unsigned long long c = 0) {
+    detail::CrashFields* f = detail::crash_fields_storage();
+    f->what = what;
+    f->a = a;
+    f->b = b;
+    f->c = c;
 }
 
 // Names this process in the session log if it dies of a fatal signal.
