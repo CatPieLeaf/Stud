@@ -42,6 +42,11 @@ third_party/*
 # out of the tree would leave that shader with nothing to be checked
 # against, which is how its first version came to be wrong.
 !third_party/fidelityfx-fsr1/
+# And Qualcomm's SGSR1, for exactly the same reason: render-host/shaders/
+# sgsr.comp is a port of it, and a port with no reference in the tree is
+# how the EASU shader's first version came to be wrong. A few KB,
+# BSD-3-Clause, and the licence has to travel with it.
+!third_party/snapdragon-gsr/
 # Same reasoning for the one vendored Wayland protocol: pointer-warp-v1 is
 # staging and young enough that a distribution a release behind does not
 # ship it, and a build should not fail over how new the host happens to
