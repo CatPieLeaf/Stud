@@ -4085,38 +4085,42 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     ci.flags = h.flags;
     ci.surface = from_u64<VkSurfaceKHR>(h.surface);
-    // MORE IMAGES THAN THE ENGINE ASKED FOR, because the count it asks
-    // for is not the count that ends up in rotation.
+    // THE ENGINE'S OWN COUNT, forwarded untouched. Raising it does not
+    // help, and that is measured rather than assumed.
     //
-    // Measured with WAYLAND_DEBUG: the swapchain is created with the
-    // engine's 3 and only TWO ever reach the compositor -- wl_buffer#138
-    // and #141, 458 and 459 attaches across a minute, the third created
-    // and never attached once. The engine's loop is strictly serial
-    // (acquire, present, acquire, present; 59 of each over indices 0 and
-    // 1 in one flight-recorder window) so it never holds more than one
-    // image, and the driver keeps handing back the one it just freed.
+    // The reasoning that said it would: a WAYLAND_DEBUG trace shows the
+    // swapchain created with the engine's 3 while only TWO images are
+    // ever in rotation -- 59 acquires and 59 presents over indices 0 and
+    // 1 alone in one flight-recorder window, wl_buffer pairs carrying
+    // 458 and 459 attaches across a minute. Presentation is effectively
+    // double-buffered, one image with the compositor and one being
+    // drawn, with nothing to absorb a late release. A late release then
+    // has to be waited out, and the driver waits 12006ms -- every
+    // measured freeze, to within half a millisecond, spinning inside
+    // vkQueuePresentKHR with the GPU idle and none of it in Stud's own
+    // queue lock.
     //
-    // That leaves presentation double-buffered in practice: one image
-    // with the compositor, one being drawn, and NOTHING to absorb a late
-    // release. When a release is late the present has to wait it out,
-    // and the driver waits 12006ms -- every measured freeze, to within
-    // half a millisecond, spinning inside vkQueuePresentKHR with the GPU
-    // idle and none of it in Stud's own queue lock.
+    // SO FOUR WAS TRIED, and the swapchain really did get four images.
+    // It changed nothing: the freeze came back at 12005.7ms, and the
+    // flight recorder shows why -- 83 acquires in that window and STILL
+    // only indices 0 and 1 ever returned. vkAcquireNextImageKHR does not
+    // hand out the extra images at all. The driver keeps exactly two in
+    // the application's rotation however many the swapchain holds, so
+    // the count is not a lever at any value the surface allows.
     //
-    // Asking for more gives the driver a free image to hand out while
-    // the compositor still holds the last one. Clamped to what the
-    // surface actually allows rather than assumed: a count outside
-    // minImageCount..maxImageCount is undefined behaviour, and a
-    // maxImageCount of 0 means "no limit" in the spec, which a naive
-    // std::min would read as zero images.
+    // That constraint is the part worth keeping. Anyone looking at the
+    // two-image rotation will reach for this number first; it has been
+    // tried, it is not the answer, and the extra images cost memory for
+    // nothing.
     //
-    // STUD_SWAPCHAIN_IMAGES=N overrides; =engine forwards the engine's
-    // own request untouched, which is the control.
+    // STUD_SWAPCHAIN_IMAGES=N still asks for N, clamped to the surface's
+    // own minImageCount..maxImageCount (a maxImageCount of 0 means "no
+    // limit" in the spec, which a naive clamp would read as zero).
     ci.minImageCount = h.min_image_count;
     {
         static const std::string choice = [] {
             const char* v = std::getenv("STUD_SWAPCHAIN_IMAGES");
-            return std::string(v != nullptr ? v : "4");
+            return std::string(v != nullptr ? v : "engine");
         }();
         if (choice != "engine" && l.get_physical_device_surface_capabilities != nullptr &&
             l.physical_device != VK_NULL_HANDLE) {
