@@ -2878,7 +2878,26 @@ struct UpscalePush {
     int32_t dst_w;
     int32_t dst_h;
     float sharpness;
+    // Whether this pass writes blue and red swapped. See upscale.comp.
+    int32_t swap_rb;
 };
+
+// Whether a byte-for-byte copy out of an R8G8B8A8 image lands correctly
+// in this swapchain format, given the shader stored its channels
+// swapped. Both are 4-byte formats, which is what vkCmdCopyImage
+// requires of two different formats, and the swizzle is the only
+// difference between them.
+bool swapchain_wants_bgra(VkFormat format) {
+    return format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
+}
+
+// And whether the hand-over may be a copy at all: only for the formats
+// above and their identically-ordered counterparts, so anything else --
+// a 10-bit or floating-point swapchain -- keeps the converting blit.
+bool hand_over_can_be_a_copy(VkFormat format) {
+    return swapchain_wants_bgra(format) || format == VK_FORMAT_R8G8B8A8_UNORM ||
+           format == VK_FORMAT_R8G8B8A8_SRGB;
+}
 
 std::map<uint64_t, UpscaleChain> g_upscale_chains;
 
@@ -3698,6 +3717,24 @@ bool record_upscale_blits(UpscaleChain& c) {
                                0, 0, nullptr, 0, nullptr, 2, before);
 
         if (c.compute) {
+            // The hand-over to the swapchain used to be a full-screen
+            // vkCmdBlitImage at the same size with VK_FILTER_NEAREST: no
+            // resampling, no scaling, a whole pass over every output
+            // pixel whose only job was turning the shader's RGBA into the
+            // swapchain's BGRA. Measured on an RTX 3050 at Home, the
+            // three compute-path passes together cost about 28 points of
+            // SM at 140fps, and this was one of the three.
+            //
+            // A copy cannot swizzle, but the shader can: whichever pass
+            // writes last stores blue and red the other way round, and
+            // the copy then moves bytes that are already in the
+            // swapchain's order. vkCmdCopyImage allows two different
+            // formats when they are the same size, which R8G8B8A8 and
+            // B8G8R8A8 are.
+            const bool copy_hand_over =
+                l.cmd_copy_image != nullptr && hand_over_can_be_a_copy(c.format);
+            const int32_t swap_rb =
+                (copy_hand_over && swapchain_wants_bgra(c.format)) ? 1 : 0;
             l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
             l.cmd_bind_descriptor_sets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
                                        c.pipeline_layout, 0, 1, &c.sets[i], 0, nullptr);
@@ -3707,6 +3744,9 @@ bool record_upscale_blits(UpscaleChain& c) {
             push.dst_w = static_cast<int32_t>(c.present.width);
             push.dst_h = static_cast<int32_t>(c.present.height);
             push.sharpness = 0.0f;  // EASU does no sharpening; RCAS below does
+            // Only when nothing reads this back: the sharpening pass's
+            // arithmetic is defined on the real channel order.
+            push.swap_rb = c.sharpen ? 0 : swap_rb;
             l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                  sizeof(push), &push);
             // 8x8 per group, matching the shader's own local size.
@@ -3752,6 +3792,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                 sharpen_push.dst_w = static_cast<int32_t>(c.present.width);
                 sharpen_push.dst_h = static_cast<int32_t>(c.present.height);
                 sharpen_push.sharpness = upscale_sharpness();
+                sharpen_push.swap_rb = swap_rb;
                 l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                      sizeof(sharpen_push), &sharpen_push);
                 if (l.cmd_set_checkpoint != nullptr) {
@@ -3786,17 +3827,31 @@ bool record_upscale_blits(UpscaleChain& c) {
                                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
                                    hand_over);
 
-            VkImageBlit same{};
-            same.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            same.srcOffsets[0] = {0, 0, 0};
-            same.srcOffsets[1] = {static_cast<int32_t>(c.present.width),
-                                  static_cast<int32_t>(c.present.height), 1};
-            same.dstSubresource = same.srcSubresource;
-            same.dstOffsets[0] = same.srcOffsets[0];
-            same.dstOffsets[1] = same.srcOffsets[1];
-            l.cmd_blit_image(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                             c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &same,
-                             VK_FILTER_NEAREST);
+            if (copy_hand_over) {
+                VkImageCopy whole{};
+                whole.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                whole.srcOffset = {0, 0, 0};
+                whole.dstSubresource = whole.srcSubresource;
+                whole.dstOffset = {0, 0, 0};
+                whole.extent = {c.present.width, c.present.height, 1};
+                l.cmd_copy_image(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                 c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                 &whole);
+            } else {
+                // A swapchain format this cannot move byte-for-byte, so
+                // the converting blit stays.
+                VkImageBlit same{};
+                same.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                same.srcOffsets[0] = {0, 0, 0};
+                same.srcOffsets[1] = {static_cast<int32_t>(c.present.width),
+                                      static_cast<int32_t>(c.present.height), 1};
+                same.dstSubresource = same.srcSubresource;
+                same.dstOffsets[0] = same.srcOffsets[0];
+                same.dstOffsets[1] = same.srcOffsets[1];
+                l.cmd_blit_image(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                 c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &same,
+                                 VK_FILTER_NEAREST);
+            }
         } else {
         VkImageBlit region{};
         region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};

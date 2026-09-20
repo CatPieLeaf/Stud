@@ -31,6 +31,12 @@ layout(push_constant) uniform Params {
     ivec2 src_size;
     ivec2 dst_size;
     float sharpness;  // not used here: sharpening is its own pass
+    // Store blue and red the other way round, so a plain byte copy lands
+    // this image correctly in a BGRA swapchain. Set only on whichever
+    // pass writes last -- this one when sharpening is off, sharpen.comp
+    // when it is on -- because the sharpening pass reads this output back
+    // and its arithmetic is defined on the real channel order.
+    int swap_rb;
 } p;
 
 // FsrEasuTapF. `off` is the tap's offset from the resolve position, and
@@ -170,5 +176,5 @@ void main() {
     vec3 max4 = max(max(f, g), max(j, k));
     vec3 colour = min(max4, max(min4, accum / max(weight, 1.0 / 32768.0)));
 
-    imageStore(dst, out_pos, vec4(colour, 1.0));
+    imageStore(dst, out_pos, vec4(p.swap_rb != 0 ? colour.bgr : colour, 1.0));
 }

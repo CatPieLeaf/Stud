@@ -22,6 +22,9 @@ layout(push_constant) uniform Params {
     ivec2 src_size;
     ivec2 dst_size;
     float sharpness;  // 0 = none, 1 = strongest
+    // See upscale.comp: the last pass to write swizzles, so the hand-over
+    // to the swapchain is a byte copy rather than a converting blit.
+    int swap_rb;
 } p;
 
 float luma(vec3 c) { return c.g + 0.5 * (c.r + c.b); }
@@ -69,5 +72,6 @@ void main() {
     // makes this incapable of ringing, however hard it is pushed.
     vec3 lo = min(e, mn);
     vec3 hi = max(e, mx);
-    imageStore(dst, pos, vec4(clamp(sharpened, lo, hi), 1.0));
+    vec3 out_colour = clamp(sharpened, lo, hi);
+    imageStore(dst, pos, vec4(p.swap_rb != 0 ? out_colour.bgr : out_colour, 1.0));
 }
