@@ -1568,7 +1568,36 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     // It is real now, and there is a capture behind it.
     const bool first_configure = !window->configured;
     window->configured = true;
-    if (first_configure || published_geometry) wl_surface_commit(window->surface);
+    const bool commit_now = first_configure || published_geometry;
+    // Says, in numbers, that the change above actually does what it
+    // claims: how many configures were answered by the ack alone rather
+    // than by a commit from this thread.
+    //
+    // Worth counting because the previous attempt at this LOOKED right
+    // and was inert -- the test it was gated on was true for every
+    // configure, so nothing changed and the short run that "verified" it
+    // proved nothing. A count is the difference between seeing the fix
+    // work and assuming it.
+    {
+        static int committed = 0;
+        static int ack_only = 0;
+        if (commit_now) {
+            ++committed;
+        } else {
+            ++ack_only;
+        }
+        // Rare enough to print every time early, then only on powers of
+        // two: a window that is being dragged produces a burst of these
+        // and the log is not where a drag should be measured.
+        const int total = committed + ack_only;
+        if (total <= 8 || (total & (total - 1)) == 0) {
+            std::printf("stud: android-glue: %d configure(s): %d committed (first map or a real "
+                        "resize), %d answered by the ack alone\n",
+                        total, committed, ack_only);
+            std::fflush(stdout);
+        }
+    }
+    if (commit_now) wl_surface_commit(window->surface);
 }
 
 const xdg_surface_listener kShellSurfaceListener = {
