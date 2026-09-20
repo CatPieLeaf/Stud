@@ -781,32 +781,81 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
 
-    std::vector<VkPhysicalDevice> devices;
+    // The full list, always read in full: the index the user chose is an
+    // index into THIS order, the same one the settings window enumerated
+    // against, so it has to be resolved before anything is hidden.
+    std::vector<VkPhysicalDevice> all;
+    if (count > 0) {
+        all.resize(count);
+        uint32_t got = count;
+        r = l.enumerate_physical_devices(l.instance, &got, all.data());
+        if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
+            return static_cast<uint64_t>(static_cast<int32_t>(r));
+        }
+        all.resize(got);
+    }
+
+    // Honour the GPU chosen in Settings by offering that device and no
+    // other.
+    //
+    // This used to rotate the chosen device to the front and hand over
+    // the whole list, on the reasoning that the engine "takes the first
+    // device it can use". It does not. It scores the devices itself and
+    // prefers the discrete one, so on a hybrid laptop the choice was
+    // advisory and lost every time: with the list 0=Intel, 1=NVIDIA,
+    // 2=llvmpipe and Intel chosen, the engine built its VkDevice on the
+    // NVIDIA at index 1 -- 35 open fds on /dev/nvidia0, MangoHud naming
+    // the RTX 3050, the system monitor showing it at 100%.
+    //
+    // Worse, the rotate was guarded on `index != 0`, so choosing the
+    // FIRST device -- the integrated GPU, the whole point of the setting
+    // on a machine like that -- could not do anything even in principle.
+    //
+    // A list of one is the only thing an engine cannot pick around. A
+    // stale index, one past the end of what the driver reports, still
+    // falls back to offering everything, because a saved setting that no
+    // longer names a real GPU must not leave Stud with no GPU at all.
+    std::vector<VkPhysicalDevice> offered = all;
+    const bool honoured = g_preferred_device_index < all.size();
+    if (honoured) {
+        offered.assign(1, all[g_preferred_device_index]);
+    }
+    static bool announced_choice = false;
+    if (!announced_choice) {
+        announced_choice = true;
+        if (honoured) {
+            std::printf("stud-render-host: offering only the GPU at index %u, as chosen in "
+                        "Settings (%zu enumerated)\n",
+                        g_preferred_device_index, all.size());
+        } else if (!all.empty()) {
+            std::printf("stud-render-host: the saved GPU choice (index %u) is past the %zu "
+                        "device(s) this driver reports; offering all of them\n",
+                        g_preferred_device_index, all.size());
+        }
+        std::fflush(stdout);
+    }
+
+    // Two-call enumeration, answered against the filtered list rather
+    // than the driver's: a count query reports how many are on offer, a
+    // fill query returns up to what the caller had room for, and short
+    // room is VK_INCOMPLETE as the spec requires. The driver's own
+    // result cannot be passed through here, since it counted devices
+    // this process is no longer offering.
+    const uint32_t available = static_cast<uint32_t>(offered.size());
     uint32_t returned = 0;
-    if (capacity > 0 && count > 0) {
-        returned = count < capacity ? count : capacity;
-        devices.resize(returned);
-        r = l.enumerate_physical_devices(l.instance, &returned, devices.data());
+    if (capacity > 0) {
+        returned = available < capacity ? available : capacity;
+        if (capacity < available) r = VK_INCOMPLETE;
+        else r = VK_SUCCESS;
+    } else {
+        r = VK_SUCCESS;
     }
 
-    // Honour the GPU chosen in Settings by putting it first. The engine
-    // picks from this list itself and takes the first device it can use,
-    // so ordering is the honest way to express a preference; every
-    // device is still offered, exactly as the driver reported it, and a
-    // stale index simply leaves the order alone.
-    if (g_preferred_device_index != 0 && g_preferred_device_index < devices.size()) {
-        std::rotate(devices.begin(), devices.begin() + g_preferred_device_index,
-                    devices.begin() + g_preferred_device_index + 1);
-        std::printf("stud-render-host: preferring the GPU at index %u, as chosen in Settings\n",
-                    g_preferred_device_index);
-    }
-
-
-    const uint32_t reported = capacity > 0 ? returned : count;
+    const uint32_t reported = capacity > 0 ? returned : available;
     out.resize(sizeof(uint32_t) + sizeof(uint64_t) * returned);
     std::memcpy(out.data(), &reported, sizeof(reported));
     for (uint32_t i = 0; i < returned; ++i) {
-        uint64_t h = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(devices[i]));
+        uint64_t h = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(offered[i]));
         std::memcpy(out.data() + sizeof(uint32_t) + i * sizeof(h), &h, sizeof(h));
     }
     *out_len = static_cast<uint32_t>(out.size());
