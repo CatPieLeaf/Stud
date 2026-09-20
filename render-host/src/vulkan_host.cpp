@@ -4872,10 +4872,20 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
 
                 // Stud's own objects first: the device cannot go while
                 // they are on it, and the engine never knew about them.
+                // TIMED, because this teardown is where joining a game
+                // stalls and which step costs it was guesswork. Measured
+                // at 2.7 seconds of dead time between the engine's last
+                // log line and its next. Device destroy happens a handful
+                // of times a session, so a few clocks and one line cost
+                // nothing and settle it.
+                const auto teardown_t0 = std::chrono::steady_clock::now();
                 for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
                 g_upscale_chains.clear();
+                const auto after_chains = std::chrono::steady_clock::now();
                 flush_retired_chains("the engine is done with this device");
+                const auto after_flush = std::chrono::steady_clock::now();
                 if (l.device_wait_idle != nullptr) l.device_wait_idle(l.device);
+                const auto after_idle = std::chrono::steady_clock::now();
                 if (g_repair_fence != VK_NULL_HANDLE && l.destroy_fence != nullptr) {
                     l.destroy_fence(l.device, g_repair_fence, nullptr);
                     g_repair_fence = VK_NULL_HANDLE;
@@ -4947,7 +4957,20 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 }
                 l.live_memory.clear();
 
+                const auto after_frees = std::chrono::steady_clock::now();
                 if (l.destroy_device != nullptr) l.destroy_device(l.device, nullptr);
+                const auto after_destroy = std::chrono::steady_clock::now();
+                {
+                    auto ms = [](auto a, auto b) {
+                        return std::chrono::duration<double, std::milli>(b - a).count();
+                    };
+                    std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
+                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f\n",
+                                ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
+                                ms(after_chains, after_flush), ms(after_flush, after_idle),
+                                ms(after_idle, after_frees), ms(after_frees, after_destroy));
+                    std::fflush(stdout);
+                }
                 l.device = VK_NULL_HANDLE;
 
                 // Only now are these safe to drop. While the device

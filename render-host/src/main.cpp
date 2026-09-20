@@ -155,6 +155,11 @@ void throttle_while_hidden() {
     last = std::chrono::steady_clock::now();
 }
 
+// Defined far below, next to the frame caps themselves. Declared here
+// because the command-batch loop has to run it for each sub-call, and
+// that loop sits well above the definition.
+void throttle_before_dispatch(stud::render_host::CallId id);
+
 namespace {
 
 // Roblox's own font table, read from the assets the app itself reads it
@@ -2426,7 +2431,6 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             return std::nullopt;
     }
 }
-
 
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
