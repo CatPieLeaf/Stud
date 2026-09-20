@@ -1,0 +1,148 @@
+#version 450
+
+// Snapdragon Game Super Resolution 1, as an alternative to EASU+RCAS.
+//
+//     Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc.
+//     SPDX-License-Identifier: BSD-3-Clause
+//
+// Ported from the vendored reference at
+// third_party/snapdragon-gsr/sgsr/v1/include/glsl/sgsr1_shader_mobile.frag,
+// not from a recollection of it -- the same rule the EASU shader's own
+// comment records the cost of breaking. The arithmetic below is
+// Qualcomm's, unchanged; what differs is the shell: a compute entry
+// point writing a storage image instead of a fragment one writing an
+// attachment, the viewport vector built from push constants rather than
+// a uniform, and the operation mode fixed to RGBA.
+//
+// Why this exists beside upscale.comp: SGSR does the scaling AND the
+// sharpening in one pass, where FSR1 needs two, and it takes a single
+// bilinear sample for any pixel whose neighbourhood is flat. EASU pays
+// for twelve taps on every pixel no matter what is in them. On a screen
+// that is mostly flat colour -- a menu, a UI -- that is the difference
+// between twelve fetches per pixel and one.
+//
+// STUD_UPSCALER picks between them; see choose_upscaler().
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
+
+layout(push_constant) uniform Params {
+    ivec2 src_size;
+    ivec2 dst_size;
+    float sharpness;
+    // See upscale.comp: the last pass to write swizzles, so the
+    // hand-over to the swapchain is a byte copy rather than a
+    // converting blit. SGSR is always the last pass, since it sharpens
+    // as it scales.
+    int swap_rb;
+} p;
+
+// The reference's own constant: below this much local contrast the
+// pixel is flat, and the single bilinear sample already taken is the
+// answer. This early-out is the whole performance argument for SGSR.
+const float kEdgeThreshold = 8.0 / 255.0;
+
+// The reference operates on one channel as a luma stand-in, and for
+// RGBA mode that channel is green. Both the gather and the indexing
+// below must name the same one, and textureGather's component has to be
+// a constant, so it is spelled out rather than passed in.
+const int kLumaChannel = 1;
+
+float fastLanczos2(float x) {
+    float wA = x - 4.0;
+    float wB = x * wA - wA;
+    wA *= wA;
+    return wB * wA;
+}
+
+vec2 weightY(float dx, float dy, float c, float std) {
+    float x = ((dx * dx) + (dy * dy)) * 0.55 + clamp(abs(c) * std, 0.0, 1.0);
+    float w = fastLanczos2(x);
+    return vec2(w, w * c);
+}
+
+void main() {
+    ivec2 out_pos = ivec2(gl_GlobalInvocationID.xy);
+    if (out_pos.x >= p.dst_size.x || out_pos.y >= p.dst_size.y) return;
+
+    // The reference's ViewportInfo[0]: texel size in xy, texture size in
+    // zw, both of the SOURCE image.
+    vec2 src_size = vec2(p.src_size);
+    vec4 viewport = vec4(1.0 / src_size.x, 1.0 / src_size.y, src_size.x, src_size.y);
+
+    // Where this output pixel lands in the source, in normalised
+    // coordinates: the same 0..1 the fragment shader's varying carried.
+    vec2 uv = (vec2(out_pos) + 0.5) / vec2(p.dst_size);
+
+    // Stud's sharpness setting arrives as 0.0-1.25, where 1.0 is
+    // ordinary strength; SGSR's own default is 2.0 on its scale, so 1.0
+    // maps there. A setting of zero means the user asked for no
+    // sharpening, but SGSR cannot be asked for none -- the sharpening IS
+    // the reconstruction -- so it falls back to the reference default
+    // rather than dividing the edge term away to nothing.
+    float edgeSharpness = p.sharpness > 0.0 ? p.sharpness * 2.0 : 2.0;
+
+    vec4 color;
+    color.xyz = textureLod(src, uv, 0.0).xyz;
+
+    vec2 imgCoord = ((uv * viewport.zw) + vec2(-0.5, 0.5));
+    vec2 imgCoordPixel = floor(imgCoord);
+    vec2 coord = (imgCoordPixel * viewport.xy);
+    vec2 pl = (imgCoord + (-imgCoordPixel));
+    vec4 left = textureGather(src, coord, kLumaChannel);
+
+    float edgeVote = abs(left.z - left.y) + abs(color[kLumaChannel] - left.y) +
+                     abs(color[kLumaChannel] - left.z);
+    if (edgeVote > kEdgeThreshold) {
+        coord.x += viewport.x;
+
+        vec4 right = textureGather(src, coord + vec2(viewport.x, 0.0), kLumaChannel);
+        vec4 upDown;
+        upDown.xy = textureGather(src, coord + vec2(0.0, -viewport.y), kLumaChannel).wz;
+        upDown.zw = textureGather(src, coord + vec2(0.0, viewport.y), kLumaChannel).yx;
+
+        float mean = (left.y + left.z + right.x + right.w) * 0.25;
+        left = left - vec4(mean);
+        right = right - vec4(mean);
+        upDown = upDown - vec4(mean);
+        color.w = color[kLumaChannel] - mean;
+
+        float sum = (((((abs(left.x) + abs(left.y)) + abs(left.z)) + abs(left.w)) +
+                      (((abs(right.x) + abs(right.y)) + abs(right.z)) + abs(right.w))) +
+                     (((abs(upDown.x) + abs(upDown.y)) + abs(upDown.z)) + abs(upDown.w)));
+        float std = 2.181818 / sum;
+
+        vec2 aWY = weightY(pl.x, pl.y + 1.0, upDown.x, std);
+        aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, std);
+        aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, std);
+        aWY += weightY(pl.x, pl.y - 2.0, upDown.w, std);
+        aWY += weightY(pl.x + 1.0, pl.y - 1.0, left.x, std);
+        aWY += weightY(pl.x, pl.y - 1.0, left.y, std);
+        aWY += weightY(pl.x, pl.y, left.z, std);
+        aWY += weightY(pl.x + 1.0, pl.y, left.w, std);
+        aWY += weightY(pl.x - 1.0, pl.y - 1.0, right.x, std);
+        aWY += weightY(pl.x - 2.0, pl.y - 1.0, right.y, std);
+        aWY += weightY(pl.x - 2.0, pl.y, right.z, std);
+        aWY += weightY(pl.x - 1.0, pl.y, right.w, std);
+
+        float finalY = aWY.y / aWY.x;
+
+        float maxY = max(max(left.y, left.z), max(right.x, right.w));
+        float minY = min(min(left.y, left.z), min(right.x, right.w));
+        finalY = clamp(edgeSharpness * finalY, minY, maxY);
+
+        float deltaY = finalY - color.w;
+
+        // The reference's own bound on how far one pixel may move,
+        // which is what keeps high-contrast input from ringing.
+        deltaY = clamp(deltaY, -23.0 / 255.0, 23.0 / 255.0);
+
+        color.x = clamp((color.x + deltaY), 0.0, 1.0);
+        color.y = clamp((color.y + deltaY), 0.0, 1.0);
+        color.z = clamp((color.z + deltaY), 0.0, 1.0);
+    }
+
+    imageStore(dst, out_pos, vec4(p.swap_rb != 0 ? color.zyx : color.xyz, 1.0));
+}

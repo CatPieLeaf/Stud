@@ -108,6 +108,40 @@ void vk_set_on_x11(bool on_x11) { g_on_x11 = on_x11; }
 // before its renormaliser reaches zero (see sharpen.comp).
 std::atomic<int32_t> g_upscale_sharpness_percent{100};
 
+// Which spatial upscaler turns the engine's image into the presented
+// one. Both are single-image, no-history algorithms, which is the only
+// kind Stud can run: it has no motion vectors and no depth from the
+// engine, so FSR2, SGSR2 and everything else temporal is out regardless
+// of what it would look like.
+//
+//   fsr   FSR1: EASU then RCAS, two dispatches, twelve taps on every
+//         pixel whether or not there is an edge in it.
+//   sgsr  SGSR1: one dispatch that scales and sharpens together, and one
+//         bilinear fetch for any pixel whose neighbourhood is flat.
+//
+// Which is better is a judgement about pictures, not a measurement, so
+// this is a switch rather than a decision taken here.
+enum class Upscaler { Fsr1, Sgsr1 };
+
+Upscaler choose_upscaler() {
+    static const Upscaler choice = [] {
+        const char* v = std::getenv("STUD_UPSCALER");
+        const std::string name(v != nullptr ? v : "fsr");
+        const Upscaler picked = name == "sgsr" ? Upscaler::Sgsr1 : Upscaler::Fsr1;
+        if (v != nullptr && name != "sgsr" && name != "fsr") {
+            std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; "
+                        "using fsr. Try fsr or sgsr.\n",
+                        v);
+        }
+        std::printf("stud-render-host: upscaler: %s\n",
+                    picked == Upscaler::Sgsr1 ? "sgsr (one pass, scale and sharpen together)"
+                                              : "fsr (EASU then RCAS)");
+        std::fflush(stdout);
+        return picked;
+    }();
+    return choice;
+}
+
 float upscale_sharpness() {
     return static_cast<float>(g_upscale_sharpness_percent.load(std::memory_order_relaxed)) / 100.0f;
 }
@@ -3371,12 +3405,22 @@ bool build_upscale_compute(UpscaleChain& c) {
     static const uint32_t kUpscaleSpv[] =
 #include "upscale_spv.h"
         ;
-    if (sizeof(kUpscaleSpv) < 32) return false;  // built without glslc
+    static const uint32_t kSgsrSpv[] =
+#include "sgsr_spv.h"
+        ;
+    // Same bindings, same push constants, same 8x8 group: the two
+    // shaders are interchangeable in everything but their arithmetic,
+    // which is what lets one descriptor layout and one pipeline layout
+    // serve both.
+    const bool sgsr = choose_upscaler() == Upscaler::Sgsr1;
+    const uint32_t* code = sgsr ? kSgsrSpv : kUpscaleSpv;
+    const size_t code_size = sgsr ? sizeof(kSgsrSpv) : sizeof(kUpscaleSpv);
+    if (code_size < 32) return false;  // built without glslc
 
     VkShaderModuleCreateInfo smci{};
     smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    smci.codeSize = sizeof(kUpscaleSpv);
-    smci.pCode = kUpscaleSpv;
+    smci.codeSize = code_size;
+    smci.pCode = code;
     if (l.create_shader_module(l.device, &smci, nullptr, &c.shader) != VK_SUCCESS) return false;
 
     // Linear filtering with clamped edges: the shader takes its own taps,
@@ -3530,6 +3574,11 @@ bool build_upscale_compute(UpscaleChain& c) {
     // Zero means no sharpening at all: no second image, no second
     // dispatch, and the upscale's own output goes straight to the
     // swapchain.
+    //
+    // SGSR has no second pass to build: it sharpens as it scales, and
+    // its own edge term already carries the sharpness setting. Running
+    // RCAS over its output would sharpen what has been sharpened.
+    if (choose_upscaler() == Upscaler::Sgsr1) return true;
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"
@@ -4132,7 +4181,9 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
                     built.engine.width, built.engine.height, built.present.width,
                     built.present.height, count,
-                    built.compute ? (built.sharpen ? "EASU + RCAS" : "EASU")
+                    built.compute ? (choose_upscaler() == Upscaler::Sgsr1
+                                         ? "SGSR"
+                                         : (built.sharpen ? "EASU + RCAS" : "EASU"))
                                   : "linear blit");
         std::fflush(stdout);
     }
