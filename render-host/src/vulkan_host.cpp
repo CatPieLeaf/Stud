@@ -126,10 +126,16 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 //            The cheap end of the comparison.
 //   lanczos  Lanczos-2 with anti-ringing, sixteen point fetches. What
 //            EASU's fastLanczos2 is an approximation of.
+//   ravu     RAVU-Zoom r2: builds a structure tensor from the
+//            neighbourhood's luma, reduces it to an edge angle, a
+//            strength and a coherence, and looks the filter weights up
+//            in a trained table. The only one here that does not decide
+//            its weights by arithmetic -- and the only one carrying
+//            746KB of data and an LGPL licence.
 //
 // Which is better is a judgement about pictures, not a measurement, so
 // this is a switch rather than a decision taken here.
-enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Bicubic, Lanczos };
+enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Bicubic, Lanczos, Ravu };
 
 Upscaler choose_upscaler() {
     static const Upscaler choice = [] {
@@ -149,9 +155,12 @@ Upscaler choose_upscaler() {
         } else if (name == "lanczos") {
             picked = Upscaler::Lanczos;
             described = "lanczos (Lanczos-2 with anti-ringing)";
+        } else if (name == "ravu") {
+            picked = Upscaler::Ravu;
+            described = "ravu (RAVU-Zoom r2, trained weight table)";
         } else if (v != nullptr && name != "fsr") {
             std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; using fsr. "
-                        "Try fsr, sgsr, sgsr-ed, bicubic or lanczos.\n",
+                        "Try fsr, sgsr, sgsr-ed, bicubic, lanczos or ravu.\n",
                         v);
         }
         std::printf("stud-render-host: upscaler: %s\n", described);
@@ -170,6 +179,7 @@ const char* upscaler_name(bool sharpen) {
         case Upscaler::Sgsr1Ed: return "SGSR edge-direction";
         case Upscaler::Bicubic: return "Catmull-Rom bicubic";
         case Upscaler::Lanczos: return "Lanczos-2";
+        case Upscaler::Ravu: return "RAVU-Zoom r2";
         case Upscaler::Fsr1: break;
     }
     return sharpen ? "EASU + RCAS" : "EASU";
@@ -2904,6 +2914,13 @@ struct UpscaleChain {
     // sharpness is zero, in which case EASU's output goes straight to the
     // swapchain and the second image and dispatch are never created.
     bool sharpen = false;
+    // RAVU-Zoom instead of one of the arithmetic filters. It binds a
+    // third descriptor -- its trained weight table -- which the others
+    // have no use for, so a RAVU chain's descriptor layout is its own.
+    bool ravu = false;
+    VkImage lut = VK_NULL_HANDLE;
+    VkDeviceMemory lut_memory = VK_NULL_HANDLE;
+    VkImageView lut_view = VK_NULL_HANDLE;
     VkShaderModule shader = VK_NULL_HANDLE;
     VkShaderModule sharpen_shader = VK_NULL_HANDLE;
     VkPipeline sharpen_pipeline = VK_NULL_HANDLE;
@@ -3340,6 +3357,10 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
     destroy(l.destroy_descriptor_set_layout, c.set_layout);
     destroy(l.destroy_sampler, c.sampler);
     destroy(l.destroy_shader_module, c.shader);
+    // RAVU's weight table, present only on a RAVU chain.
+    destroy(l.destroy_image_view, c.lut_view);
+    destroy(l.destroy_image, c.lut);
+    destroy(l.free_memory, c.lut_memory);
     destroy(l.destroy_shader_module, c.sharpen_shader);
     destroy(l.destroy_pipeline, c.sharpen_pipeline);
     destroy_all(l.destroy_image_view, c.sharpen_src_views);
@@ -3371,6 +3392,193 @@ void destroy_upscale_chain_keeping_offscreen(UpscaleChain& c) {
     c.memory.swap(memory);
     c.engine = engine;
     c.format = format;
+}
+
+// Defined just below; the weight-table upload wants it and sits above it.
+bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory);
+
+// RAVU-Zoom's trained weight table, as an image the shader samples.
+//
+// 18x2592 rgba float32, 746KB, uploaded once at chain build and never
+// touched again. Device-local and optimally tiled, through a staging
+// buffer.
+//
+// Device-local is not a detail. The same table put in host-visible
+// memory -- which is what an earlier attempt at NVIDIA's upscaler did,
+// to save writing this function -- means every sample crosses PCIe on a
+// discrete GPU, and a filter that samples its table four times per
+// output pixel at 1.9 MPix and 140fps then issues around a billion
+// uncached reads a second. Measured: 24 slow presents and 131 slow fence
+// waits over 16,200 frames, against zero for the upscalers that read
+// nothing but their input, with presents stalling up to 3584ms inside
+// the driver while the GPU sat idle. Anything a shader reads per-pixel
+// belongs in device-local memory.
+bool upload_ravu_lut(UpscaleChain& c) {
+    Loader& l = loader();
+    if (l.create_image == nullptr || l.create_image_view == nullptr ||
+        l.create_buffer == nullptr || l.get_buffer_memory_requirements == nullptr ||
+        l.bind_buffer_memory == nullptr || l.destroy_buffer == nullptr ||
+        l.map_memory == nullptr || l.allocate_memory == nullptr || l.free_memory == nullptr ||
+        l.get_physical_device_memory_properties == nullptr ||
+        l.create_command_pool == nullptr || l.allocate_command_buffers == nullptr ||
+        l.begin_command_buffer == nullptr || l.end_command_buffer == nullptr ||
+        l.cmd_pipeline_barrier == nullptr || l.cmd_copy_buffer_to_image == nullptr ||
+        l.queue_submit == nullptr || l.create_fence == nullptr ||
+        l.wait_for_fences == nullptr || l.destroy_fence == nullptr ||
+        l.destroy_command_pool == nullptr || l.get_device_queue == nullptr ||
+        !l.have_first_queue_family) {
+        return false;
+    }
+
+    static const uint32_t kRavuLut[] =
+#include "ravu_lut.h"
+        ;
+    // 18 * 2592 texels of four float32 each. Built without a Python
+    // interpreter this is the empty array, and RAVU is simply absent.
+    constexpr uint32_t kLutWidth = 18;
+    constexpr uint32_t kLutHeight = 2592;
+    if (sizeof(kRavuLut) != kLutWidth * kLutHeight * 4 * sizeof(uint32_t)) {
+        std::printf("stud-render-host: the RAVU weight table is %zu bytes, not the %zu its "
+                    "size says; RAVU is unavailable\n",
+                    sizeof(kRavuLut),
+                    static_cast<size_t>(kLutWidth) * kLutHeight * 4 * sizeof(uint32_t));
+        std::fflush(stdout);
+        return false;
+    }
+
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    ici.extent = {kLutWidth, kLutHeight, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (l.create_image(l.device, &ici, nullptr, &c.lut) != VK_SUCCESS) return false;
+    if (!allocate_offscreen_memory(c.lut, c.lut_memory)) return false;
+
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = c.lut;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = ici.format;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (l.create_image_view(l.device, &vci, nullptr, &c.lut_view) != VK_SUCCESS) return false;
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = sizeof(kRavuLut);
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (l.create_buffer(l.device, &bci, nullptr, &staging) != VK_SUCCESS) return false;
+    VkMemoryRequirements req{};
+    l.get_buffer_memory_requirements(l.device, staging, &req);
+    VkPhysicalDeviceMemoryProperties props{};
+    l.get_physical_device_memory_properties(l.physical_device, &props);
+    uint32_t chosen = UINT32_MAX;
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        const VkMemoryPropertyFlags want =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if ((req.memoryTypeBits & (1u << i)) != 0 &&
+            (props.memoryTypes[i].propertyFlags & want) == want) {
+            chosen = i;
+            break;
+        }
+    }
+    if (chosen == UINT32_MAX) return false;
+    VkMemoryAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = chosen;
+    if (l.allocate_memory(l.device, &mai, nullptr, &staging_memory) != VK_SUCCESS) return false;
+    if (l.bind_buffer_memory(l.device, staging, staging_memory, 0) != VK_SUCCESS) return false;
+    void* mapped = nullptr;
+    if (l.map_memory(l.device, staging_memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) {
+        return false;
+    }
+    std::memcpy(mapped, kRavuLut, sizeof(kRavuLut));
+    if (l.unmap_memory != nullptr) l.unmap_memory(l.device, staging_memory);
+
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pci{};
+    pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pci.queueFamilyIndex = l.first_queue_family;
+    if (l.create_command_pool(l.device, &pci, nullptr, &pool) != VK_SUCCESS) return false;
+    VkCommandBufferAllocateInfo cbai{};
+    cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cbai.commandPool = pool;
+    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    bool ok = l.allocate_command_buffers(l.device, &cbai, &cb) == VK_SUCCESS;
+    if (ok) {
+        VkCommandBufferBeginInfo cbbi{};
+        cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        ok = l.begin_command_buffer(cb, &cbbi) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = c.lut;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                               &barrier);
+
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {kLutWidth, kLutHeight, 1};
+        l.cmd_copy_buffer_to_image(cb, staging, c.lut, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                   &region);
+
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                               &barrier);
+        ok = l.end_command_buffer(cb) == VK_SUCCESS;
+    }
+    VkFence fence = VK_NULL_HANDLE;
+    if (ok) {
+        VkFenceCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        ok = l.create_fence(l.device, &fci, nullptr, &fence) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkQueue queue = VK_NULL_HANDLE;
+        l.get_device_queue(l.device, l.first_queue_family, 0, &queue);
+        VkSubmitInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cb;
+        {
+            std::lock_guard<std::mutex> queue_lock(queue_mutex());
+            ok = l.queue_submit(queue, 1, &si, fence) == VK_SUCCESS;
+        }
+        if (ok) ok = l.wait_for_fences(l.device, 1, &fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
+    }
+    if (fence != VK_NULL_HANDLE) l.destroy_fence(l.device, fence, nullptr);
+    l.destroy_command_pool(l.device, pool, nullptr);
+    l.destroy_buffer(l.device, staging, nullptr);
+    l.free_memory(l.device, staging_memory, nullptr);
+    return ok;
 }
 
 // Device-local memory for an offscreen colour target. No host access is
@@ -3450,6 +3658,9 @@ bool build_upscale_compute(UpscaleChain& c) {
     static const uint32_t kLanczosSpv[] =
 #include "lanczos_spv.h"
         ;
+    static const uint32_t kRavuSpv[] =
+#include "ravu_spv.h"
+        ;
     // Same bindings, same push constants, same 8x8 group: the two
     // shaders are interchangeable in everything but their arithmetic,
     // which is what lets one descriptor layout and one pipeline layout
@@ -3477,10 +3688,20 @@ bool build_upscale_compute(UpscaleChain& c) {
             code = kLanczosSpv;
             code_size = sizeof(kLanczosSpv);
             break;
+        case Upscaler::Ravu:
+            code = kRavuSpv;
+            code_size = sizeof(kRavuSpv);
+            break;
         case Upscaler::Fsr1:
             break;
     }
     if (code_size < 32) return false;  // built without glslc
+
+    // Before anything that would have to be unwound: a chain that
+    // cannot have its weight table is not a RAVU chain, and failing here
+    // falls back to FSR rather than leaving a half-built one.
+    c.ravu = wanted == Upscaler::Ravu;
+    if (c.ravu && !upload_ravu_lut(c)) return false;
 
     VkShaderModuleCreateInfo smci{};
     smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -3501,7 +3722,9 @@ bool build_upscale_compute(UpscaleChain& c) {
     sci.maxLod = 0.0f;
     if (l.create_sampler(l.device, &sci, nullptr, &c.sampler) != VK_SUCCESS) return false;
 
-    VkDescriptorSetLayoutBinding bindings[2]{};
+    // Three bindings for RAVU, two for everything else: only RAVU reads
+    // anything besides the engine's image.
+    VkDescriptorSetLayoutBinding bindings[3]{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -3510,9 +3733,13 @@ bool build_upscale_compute(UpscaleChain& c) {
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     VkDescriptorSetLayoutCreateInfo dslci{};
     dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dslci.bindingCount = 2;
+    dslci.bindingCount = c.ravu ? 3 : 2;
     dslci.pBindings = bindings;
     if (l.create_descriptor_set_layout(l.device, &dslci, nullptr, &c.set_layout) != VK_SUCCESS) {
         return false;
@@ -3547,7 +3774,8 @@ bool build_upscale_compute(UpscaleChain& c) {
     const auto count = static_cast<uint32_t>(c.offscreen.size());
     VkDescriptorPoolSize sizes[2]{};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[0].descriptorCount = count;
+    // The engine's image, and for RAVU the weight table beside it.
+    sizes[0].descriptorCount = c.ravu ? count * 2 : count;
     sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     sizes[1].descriptorCount = count;
     VkDescriptorPoolCreateInfo dpci{};
@@ -3618,7 +3846,7 @@ bool build_upscale_compute(UpscaleChain& c) {
         VkDescriptorImageInfo dst{};
         dst.imageView = c.dst_views[i];
         dst.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        VkWriteDescriptorSet writes[2]{};
+        VkWriteDescriptorSet writes[3]{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = c.sets[i];
         writes[0].dstBinding = 0;
@@ -3629,6 +3857,18 @@ bool build_upscale_compute(UpscaleChain& c) {
         writes[1].dstBinding = 1;
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[1].pImageInfo = &dst;
+        if (c.ravu) {
+            VkDescriptorImageInfo table{};
+            table.sampler = c.sampler;
+            table.imageView = c.lut_view;
+            table.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            writes[2] = writes[0];
+            writes[2].dstBinding = 2;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].pImageInfo = &table;
+            l.update_descriptor_sets(l.device, 3, writes, 0, nullptr);
+            continue;
+        }
         l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
     }
     c.compute = true;
