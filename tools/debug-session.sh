@@ -32,9 +32,24 @@ export STUD_FLIGHT_RECORDER=1
 export STUD_FLIGHT_RECORDER_PATH="$FR"
 
 # Which engine command the GPU died in, rather than only that Stud's own
-# pass finished. Costs an extra recorded command per engine command, and
-# is worth it exactly once.
-export STUD_VK_ENGINE_CHECKPOINTS=1
+# pass finished.
+#
+# OFF by default, and that is a correction. This costs a
+# vkCmdSetCheckpointNV per engine command and the engine records
+# thousands per frame; the comment where it is implemented says plainly
+# that it is "worth turning on only for a run that is hunting a hang",
+# and then it was made a default here anyway. Measured against the same
+# build with it and the validation layer off: render-host went from
+# 62.3% CPU to 9.9%, load average 7.42 to 2.94.
+#
+# That tax was being paid by every session, including the ones being
+# used to judge whether a fix had worked.
+#
+# STUD_DEBUG_CHECKPOINTS=1 turns it back on for a run that is
+# specifically chasing a device loss and wants the failing command named.
+if [ -n "$STUD_DEBUG_CHECKPOINTS" ]; then
+    export STUD_VK_ENGINE_CHECKPOINTS=1
+fi
 
 # Mapped-memory traffic and the cost of the page-table scans, so the
 # "is Stud's own bookkeeping the lag" question has numbers rather than a
@@ -66,7 +81,15 @@ export STUD_VK_MEM_STATS=1
 # STUD_DEBUG_NO_VALIDATION=1 leaves it off. It is the heaviest thing
 # here, and if it changes the timing enough to hide the bugs, that is the
 # first switch to try without.
-if [ -z "$STUD_DEBUG_NO_VALIDATION" ] && \
+# OPT-IN, also a correction. Synchronization validation tracks every
+# resource access on every command and is the single most expensive
+# thing in this file. It earned its place -- it found the
+# first-barrier-lies-about-UNDEFINED bug -- but leaving it on by default
+# meant every freeze test ran on a build slowed enough to change the
+# timing being measured.
+#
+# STUD_DEBUG_VALIDATION=1 enables it.
+if [ -n "$STUD_DEBUG_VALIDATION" ] && \
    [ -f /usr/lib/stud/angle/angledata/VkLayer_khronos_validation.json ]; then
     export VK_LAYER_PATH=/usr/lib/stud/angle/angledata
     export VK_LOADER_LAYERS_ENABLE=VK_LAYER_KHRONOS_validation
