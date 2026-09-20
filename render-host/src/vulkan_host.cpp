@@ -3993,7 +3993,16 @@ bool build_upscale_compute(UpscaleChain& c) {
     if (sharpen_ok) {
         VkDescriptorPoolSize ssizes[2]{};
         ssizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        ssizes[0].descriptorCount = count;
+        // Sized for the LAYOUT, not for what the sharpening shader
+        // uses. These sets are allocated with c.set_layout, which on a
+        // RAVU chain declares two combined image samplers -- the source
+        // and the weight table -- even though sharpen.comp touches only
+        // the first. A pool sized for one per set then fails allocation
+        // with OUT_OF_POOL_MEMORY, sharpen_ok goes false, and RAVU ends
+        // up with no sharpening pass at all: the setting exists, the
+        // slider moves, and nothing happens. Live-caught exactly that
+        // way.
+        ssizes[0].descriptorCount = c.ravu ? count * 2 : count;
         ssizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         ssizes[1].descriptorCount = count;
         // The first pool was sized for one set per image; the second pass
@@ -4550,11 +4559,19 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         pending.in_flight.assign(count, false);
         g_upscale_chains[to_u64(swapchain)] = std::move(pending);
         const UpscaleChain& built = g_upscale_chains[to_u64(swapchain)];
-        std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
+        // Says whether a sharpening pass is attached, because whether
+        // one is has been guessed at twice. Only the filters that do not
+        // sharpen inside their own dispatch get one, and only when the
+        // setting is above zero -- so "no sharpening pass" is the normal
+        // state for SGSR and a silent failure for FSR or RAVU.
+        std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s, %s)\n",
                     built.engine.width, built.engine.height, built.present.width,
                     built.present.height, count,
-                    built.compute ? upscaler_name(built.sharpen)
-                                  : "linear blit");
+                    built.compute ? upscaler_name(built.sharpen) : "linear blit",
+                    !built.compute            ? "no sharpening"
+                    : upscaler_sharpens_itself() ? "sharpening inside the pass"
+                    : built.sharpen           ? "with an RCAS pass after it"
+                                              : "NO sharpening pass");
         std::fflush(stdout);
     }
 }
