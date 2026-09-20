@@ -370,6 +370,12 @@ struct Loader {
     // dies while other objects can still reach the present path, so it
     // is worth not doing.
     std::set<uint64_t> live_memory;
+    // And the buffers, for the same reason. Freeing the memory alone was
+    // not enough: the leak report went from VkDeviceMemory to VkBuffer,
+    // in the same counts, because the engine drops both. A buffer must
+    // be destroyed BEFORE the memory it is bound to is freed, which is
+    // the order used at the destroy site.
+    std::set<uint64_t> live_buffers;
     std::set<uint64_t> untransitioned_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
@@ -4416,6 +4422,7 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
         std::fflush(stdout);
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
+    l.live_buffers.insert(to_u64(buffer));
     return write_handle(to_u64(buffer), out, out_len);
 }
 
@@ -4540,6 +4547,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 std::lock_guard<std::mutex> lock(buffer_memory_mutex());
                 buffer_memory().erase(handle);
             }
+            l.live_buffers.erase(handle);
             if (l.destroy_buffer) l.destroy_buffer(l.device, from_u64<VkBuffer>(handle), nullptr);
             break;
         }
@@ -4801,6 +4809,21 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // them; and before the mappings below are dropped,
                 // because unmapping pages the driver still imports is
                 // what segfaulted inside libnvidia-glcore once already.
+                // Buffers first, then the memory they were bound to.
+                // Destroying a buffer after its memory is freed is a use
+                // of freed memory; the spec's own ordering, and the
+                // reason this is not folded into the loop below.
+                if (l.destroy_buffer != nullptr && !l.live_buffers.empty()) {
+                    std::printf("stud-render-host: destroying %zu buffer(s) the engine left "
+                                "behind\n",
+                                l.live_buffers.size());
+                    std::fflush(stdout);
+                    for (uint64_t b : l.live_buffers) {
+                        l.destroy_buffer(l.device, from_u64<VkBuffer>(b), nullptr);
+                    }
+                }
+                l.live_buffers.clear();
+
                 if (l.free_memory != nullptr && !l.live_memory.empty()) {
                     std::printf("stud-render-host: freeing %zu memory allocation(s) the engine "
                                 "left behind, before destroying the device that owns them\n",
