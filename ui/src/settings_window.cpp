@@ -194,12 +194,43 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         sharpnessValueLabel_->setText(QString::number(value) + "%");
     });
 
+    // TEMPORARY: which filter does the upscaling, while they are being
+    // compared. Stud ships one; this control, the setting behind it and
+    // every shader but the winner's come out in one commit once it is
+    // picked.
+    //
+    // The data on each item is the name choose_upscaler() parses, so
+    // adding a filter means adding a line here and a line there, and
+    // nothing in between has to know about it.
+    auto* upscalerRow = new QHBoxLayout();
+    upscalerRow->addWidget(new QLabel("Filter (temporary)", this));
+    upscalerCombo_ = new QComboBox(this);
+    upscalerCombo_->addItem("FSR1 - EASU + RCAS", QStringLiteral("fsr"));
+    upscalerCombo_->addItem("SGSR1", QStringLiteral("sgsr"));
+    upscalerCombo_->addItem("SGSR1 - edge direction", QStringLiteral("sgsr-ed"));
+    upscalerCombo_->addItem("RAVU-Zoom", QStringLiteral("ravu"));
+    upscalerCombo_->addItem("Lanczos-2", QStringLiteral("lanczos"));
+    upscalerCombo_->addItem("Bicubic - Catmull-Rom", QStringLiteral("bicubic"));
+    upscalerCombo_->setToolTip(
+        "Which filter rebuilds the frame at full resolution. Temporary, while these are\n"
+        "being compared: Stud will ship one of them and this control will go away.\n"
+        "\n"
+        "FSR1 and SGSR1 reconstruct edges; Lanczos and bicubic do not, and are cheaper.\n"
+        "RAVU-Zoom looks its filter weights up in a trained table.\n"
+        "Only FSR1 uses the sharpening slider above as a separate pass; the others either\n"
+        "sharpen as they scale or not at all.\n"
+        "Applies on the next start, so use the restart button beside Save.");
+    upscalerRow->addWidget(upscalerCombo_);
+    upscalerRow->addStretch();
+    graphics->addLayout(upscalerRow);
+
     // The output resolution only means anything while the upscaler is the
     // thing producing the frame.
     auto sync_upscale_controls = [this]() {
         const bool available = !hidpiCheck_->isChecked();
         upscalingCheck_->setEnabled(available);
         upscaleSharpnessSlider_->setEnabled(available && upscalingCheck_->isChecked());
+        upscalerCombo_->setEnabled(available && upscalingCheck_->isChecked());
     };
     connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
         sync_upscale_controls();
@@ -355,6 +386,11 @@ void SettingsWindow::installResets() {
     add(upscalingCheck_, [this, d] { upscalingCheck_->setChecked(d.upscaling); });
     add(upscaleSharpnessSlider_,
         [this, d] { upscaleSharpnessSlider_->setValue(d.upscale_sharpness_percent); });
+    // TEMPORARY, with the rest of the filter comparison.
+    add(upscalerCombo_, [this, d] {
+        const int index = upscalerCombo_->findData(QString::fromStdString(d.upscaler_choice));
+        upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
+    });
     add(smoothZoomCheck_, [this, d] { smoothZoomCheck_->setChecked(d.smooth_zoom); });
     add(backgroundFpsSlider_, [this, d] {
         // Unlimited is stored as 0 and lives at the far end of the slider,
@@ -416,6 +452,15 @@ void SettingsWindow::loadFromDisk() {
     followDpiCheck_->setEnabled(settings.hidpi);
     upscalingCheck_->setChecked(settings.upscaling);
     upscalingCheck_->setEnabled(!settings.hidpi);
+    {
+        // TEMPORARY, with the rest of the filter comparison. An
+        // unrecognised name leaves the box on its first entry rather
+        // than adding one nothing can render.
+        const int index = upscalerCombo_->findData(
+            QString::fromStdString(settings.upscaler_choice));
+        upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
+        upscalerCombo_->setEnabled(!settings.hidpi && settings.upscaling);
+    }
     {
         upscaleSharpnessSlider_->setValue(settings.upscale_sharpness_percent);
         sharpnessValueLabel_->setText(QString::number(settings.upscale_sharpness_percent) + "%");
@@ -710,6 +755,8 @@ void SettingsWindow::onSaveClicked() {
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
     settings.upscale_sharpness_percent = upscaleSharpnessSlider_->value();
+    // TEMPORARY, with the rest of the filter comparison.
+    settings.upscaler_choice = upscalerCombo_->currentData().toString().toStdString();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
                                   ? stud::config::kBackgroundFpsNoLimit

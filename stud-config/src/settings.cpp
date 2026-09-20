@@ -92,6 +92,15 @@ StudSettings load_settings(const std::string& path) {
         }
         result.upscaling = doc.at("upscaling").get<bool>();
     }
+    if (doc.contains("upscalerChoice")) {
+        if (!doc.at("upscalerChoice").is_string()) {
+            throw SettingsError("stud: config '" + path + "' has a non-string \"upscalerChoice\"");
+        }
+        // Not validated against a list here: the names are
+        // choose_upscaler()'s, in the render host, and an unknown one
+        // falls back to fsr there rather than refusing to start.
+        result.upscaler_choice = doc.at("upscalerChoice").get<std::string>();
+    }
     if (doc.contains("upscaleSharpnessPercent")) {
         if (!doc.at("upscaleSharpnessPercent").is_number_integer()) {
             throw SettingsError("stud: config '" + path +
@@ -244,6 +253,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.erase("upscaleQualityPercent");
     doc.erase("upscaleTargetPercent");
     doc["upscaleSharpnessPercent"] = settings.upscale_sharpness_percent;
+    doc["upscalerChoice"] = settings.upscaler_choice;
     doc["textOverlayFontRatio"] = settings.text_overlay_font_ratio;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
