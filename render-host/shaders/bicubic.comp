@@ -1,0 +1,89 @@
+#version 450
+
+// Catmull-Rom bicubic, as the cheap end of the upscaler comparison.
+//
+// Nothing vendored and nothing ported: unlike EASU and SGSR this is a
+// textbook separable kernel, and the weights below are the Catmull-Rom
+// basis (B=0, C=1/2) written out as polynomials in the fractional
+// position. There is no tuned constant here to get wrong.
+//
+// Nine bilinear fetches, not sixteen point ones. A 4x4 bicubic needs
+// sixteen taps, but each axis' inner pair of weights can be folded into
+// a single bilinear fetch placed between the two texels, at
+// w2/(w1+w2) of the way across -- the hardware's own linear filter then
+// does that part of the sum. 4x4 becomes 3x3, which is the whole reason
+// this is worth measuring against a twelve-tap edge-adaptive filter.
+//
+// It has no idea what an edge is. Expect it to be the softest of the
+// options and the cheapest; whether that trade is worth taking at 1.25x
+// is what the comparison is for.
+//
+// STUD_UPSCALER=bicubic.
+
+precision mediump float;
+precision highp int;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
+
+layout(push_constant) uniform Params {
+    ivec2 src_size;
+    ivec2 dst_size;
+    // Unused: a bicubic has no sharpening stage. Kept so every upscaler
+    // shares one push layout and one pipeline layout.
+    float sharpness;
+    int swap_rb;
+} p;
+
+void main() {
+    ivec2 out_pos = ivec2(gl_GlobalInvocationID.xy);
+    if (out_pos.x >= p.dst_size.x || out_pos.y >= p.dst_size.y) return;
+
+    highp vec2 src_size = vec2(p.src_size);
+    highp vec2 uv = (vec2(out_pos) + 0.5) / vec2(p.dst_size);
+
+    // Where this output pixel lands among the source texels, and where
+    // the nearest texel centre is.
+    highp vec2 sample_pos = uv * src_size;
+    highp vec2 tex_pos1 = floor(sample_pos - 0.5) + 0.5;
+    vec2 f = vec2(sample_pos - tex_pos1);
+
+    // The Catmull-Rom basis at f, for the four taps along each axis.
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+
+    // The two inner taps, folded into one fetch each.
+    vec2 w12 = w1 + w2;
+    vec2 offset12 = w2 / w12;
+
+    highp vec2 tex_pos0 = (tex_pos1 - 1.0) / src_size;
+    highp vec2 tex_pos3 = (tex_pos1 + 2.0) / src_size;
+    highp vec2 tex_pos12 = (tex_pos1 + offset12) / src_size;
+
+    vec3 colour = vec3(0.0);
+    colour += textureLod(src, vec2(tex_pos0.x, tex_pos0.y), 0.0).rgb * w0.x * w0.y;
+    colour += textureLod(src, vec2(tex_pos12.x, tex_pos0.y), 0.0).rgb * w12.x * w0.y;
+    colour += textureLod(src, vec2(tex_pos3.x, tex_pos0.y), 0.0).rgb * w3.x * w0.y;
+
+    colour += textureLod(src, vec2(tex_pos0.x, tex_pos12.y), 0.0).rgb * w0.x * w12.y;
+    colour += textureLod(src, vec2(tex_pos12.x, tex_pos12.y), 0.0).rgb * w12.x * w12.y;
+    colour += textureLod(src, vec2(tex_pos3.x, tex_pos12.y), 0.0).rgb * w3.x * w12.y;
+
+    colour += textureLod(src, vec2(tex_pos0.x, tex_pos3.y), 0.0).rgb * w0.x * w3.y;
+    colour += textureLod(src, vec2(tex_pos12.x, tex_pos3.y), 0.0).rgb * w12.x * w3.y;
+    colour += textureLod(src, vec2(tex_pos3.x, tex_pos3.y), 0.0).rgb * w3.x * w3.y;
+
+    // Catmull-Rom's outer lobes are negative, so it can overshoot on a
+    // hard edge; the weights sum to one, but the result need not lie
+    // inside the values that produced it.
+    colour = clamp(colour, 0.0, 1.0);
+
+    // See upscale.comp: the last pass to write swizzles, so the
+    // hand-over to the swapchain is a byte copy rather than a
+    // converting blit.
+    imageStore(dst, out_pos, vec4(p.swap_rb != 0 ? colour.bgr : colour, 1.0));
+}

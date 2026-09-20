@@ -19,6 +19,13 @@ set(SharpenShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sharpen_spv.h")
 # FSR1's two, and one texture fetch on a flat pixel to EASU's twelve.
 set(SgsrShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sgsr.comp")
 set(SgsrShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_spv.h")
+# The same source again, as the reference's UseEdgeDirection variant.
+set(SgsrEdShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_ed_spv.h")
+# The two analytic filters, for the cheap end of the comparison.
+set(BicubicShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/bicubic.comp")
+set(BicubicShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/bicubic_spv.h")
+set(LanczosShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lanczos.comp")
+set(LanczosShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/lanczos_spv.h")
 find_program(StudGlslc glslc
     HINTS "${STUD_ANDROID_NDK_ROOT}/shader-tools/linux-x86_64"
     NO_CMAKE_FIND_ROOT_PATH)
@@ -47,6 +54,31 @@ if(StudGlslc)
                 -o "${SgsrShaderHeader}" "${SgsrShaderSrc}"
         DEPENDS "${SgsrShaderSrc}"
         COMMENT "Compiling the SGSR upscale shader to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT "${SgsrEdShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -DSTUD_SGSR_EDGE_DIRECTION
+                -o "${SgsrEdShaderHeader}" "${SgsrShaderSrc}"
+        DEPENDS "${SgsrShaderSrc}"
+        COMMENT "Compiling the SGSR edge-direction shader to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT "${BicubicShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -o "${BicubicShaderHeader}" "${BicubicShaderSrc}"
+        DEPENDS "${BicubicShaderSrc}"
+        COMMENT "Compiling the bicubic upscale shader to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT "${LanczosShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -o "${LanczosShaderHeader}" "${LanczosShaderSrc}"
+        DEPENDS "${LanczosShaderSrc}"
+        COMMENT "Compiling the Lanczos upscale shader to SPIR-V"
     )
 else()
     # Without glslc the upscaler cannot exist; an empty array makes that a
@@ -86,9 +118,27 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SgsrShaderHeader}"
         COMMENT "glslc not found, building without the SGSR shader"
     )
+    add_custom_command(
+        OUTPUT "${SgsrEdShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SgsrEdShaderHeader}"
+        COMMENT "glslc not found, building without the SGSR edge-direction shader"
+    )
+    add_custom_command(
+        OUTPUT "${BicubicShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${BicubicShaderHeader}"
+        COMMENT "glslc not found, building without the bicubic shader"
+    )
+    add_custom_command(
+        OUTPUT "${LanczosShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${LanczosShaderHeader}"
+        COMMENT "glslc not found, building without the Lanczos shader"
+    )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${BicubicShaderHeader}" "${LanczosShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
