@@ -3885,6 +3885,22 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
     // translation at all.
     uint32_t count = 0;
     l.get_swapchain_images(l.device, swapchain, &count, nullptr);
+    // HOW MANY IMAGES THE REAL SWAPCHAIN ACTUALLY HAS.
+    //
+    // Never logged before, and it turns out to be the number that
+    // matters. A WAYLAND_DEBUG trace of a real session shows exactly two
+    // wl_buffers in rotation -- 458 and 459 attaches of the same pair
+    // across a minute -- so presentation is effectively double-buffered:
+    // one image on screen, one being drawn, and every present waiting on
+    // the compositor to release the other. There is no third buffer to
+    // absorb a late release, and the driver's wait for one is the
+    // 12006ms stall.
+    //
+    // minImageCount is only a MINIMUM, so a request for three can still
+    // leave the driver alternating two if nothing ever has three
+    // outstanding. This says which of those it is.
+    std::printf("stud-render-host: the real swapchain has %u image(s)\n", count);
+    std::fflush(stdout);
     pending.real_images.resize(count);
     l.get_swapchain_images(l.device, swapchain, &count, pending.real_images.data());
     pending.real = swapchain;
