@@ -22,6 +22,18 @@
 // between twelve fetches per pixel and one.
 //
 // STUD_UPSCALER picks between them; see choose_upscaler().
+//
+// Compiled twice. With STUD_SGSR_EDGE_DIRECTION defined this becomes the
+// reference's UseEdgeDirection variant, which is a second shader in the
+// same Qualcomm repo
+// (sgsr1_shader_mobile_edge_direction.frag): instead of weighting a tap
+// by its distance alone, it estimates the local edge direction from the
+// same gathered luma it already has and stretches the kernel along it.
+// Twelve taps either way; what changes is the weight each one gets, plus
+// one inversesqrt and a slightly different normalisation of `std`.
+// Kept as one source with an #ifdef because that is how the reference
+// keeps it, and because two files that must stay in step is how the
+// second one silently stops matching.
 
 // The reference opens with `precision mediump float`, and that is not
 // incidental: SGSR's arithmetic was designed against reduced precision,
@@ -70,11 +82,42 @@ float fastLanczos2(float x) {
     return wB * wA;
 }
 
+#ifdef STUD_SGSR_EDGE_DIRECTION
+// The edge's direction, from the gathered luma either side of it. The
+// constant guards the reciprocal square root against a neighbourhood
+// with no gradient at all.
+vec2 edgeDirection(vec4 left, vec4 right) {
+    vec2 dir;
+    float RxLz = (right.x + (-left.z));
+    float RwLy = (right.w + (-left.y));
+    vec2 delta;
+    delta.x = (RxLz + RwLy);
+    delta.y = (RxLz + (-RwLy));
+    float lengthInv = inversesqrt((delta.x * delta.x + 3.075740e-05) + (delta.y * delta.y));
+    dir.x = (delta.x * lengthInv);
+    dir.y = (delta.y * lengthInv);
+    return dir;
+}
+
+// `data` carries std in x and the edge direction in yz. A tap along the
+// edge is pulled in, a tap across it is pushed out.
+vec2 weightY(float dx, float dy, float c, vec3 data) {
+    float std = data.x;
+    vec2 dir = data.yz;
+
+    float edgeDis = ((dx * dir.y) + (dy * dir.x));
+    float x = (((dx * dx) + (dy * dy)) +
+               ((edgeDis * edgeDis) * ((clamp(((c * c) * std), 0.0, 1.0) * 0.7) + -1.0)));
+    float w = fastLanczos2(x);
+    return vec2(w, w * c);
+}
+#else
 vec2 weightY(float dx, float dy, float c, float std) {
     float x = ((dx * dx) + (dy * dy)) * 0.55 + clamp(abs(c) * std, 0.0, 1.0);
     float w = fastLanczos2(x);
     return vec2(w, w * c);
 }
+#endif
 
 void main() {
     ivec2 out_pos = ivec2(gl_GlobalInvocationID.xy);
@@ -125,20 +168,29 @@ void main() {
         float sum = (((((abs(left.x) + abs(left.y)) + abs(left.z)) + abs(left.w)) +
                       (((abs(right.x) + abs(right.y)) + abs(right.z)) + abs(right.w))) +
                      (((abs(upDown.x) + abs(upDown.y)) + abs(upDown.z)) + abs(upDown.w)));
-        float std = 2.181818 / sum;
+        // The two variants normalise this differently, and the
+        // edge-direction one squares it: its weight uses c*c where the
+        // base uses abs(c), so `std` has to be on the matching scale.
+#ifdef STUD_SGSR_EDGE_DIRECTION
+        float sumMean = 1.014185e+01 / sum;
+        float std = (sumMean * sumMean);
+        vec3 data = vec3(std, edgeDirection(left, right));
+#else
+        float data = 2.181818 / sum;
+#endif
 
-        vec2 aWY = weightY(pl.x, pl.y + 1.0, upDown.x, std);
-        aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, std);
-        aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, std);
-        aWY += weightY(pl.x, pl.y - 2.0, upDown.w, std);
-        aWY += weightY(pl.x + 1.0, pl.y - 1.0, left.x, std);
-        aWY += weightY(pl.x, pl.y - 1.0, left.y, std);
-        aWY += weightY(pl.x, pl.y, left.z, std);
-        aWY += weightY(pl.x + 1.0, pl.y, left.w, std);
-        aWY += weightY(pl.x - 1.0, pl.y - 1.0, right.x, std);
-        aWY += weightY(pl.x - 2.0, pl.y - 1.0, right.y, std);
-        aWY += weightY(pl.x - 2.0, pl.y, right.z, std);
-        aWY += weightY(pl.x - 1.0, pl.y, right.w, std);
+        vec2 aWY = weightY(pl.x, pl.y + 1.0, upDown.x, data);
+        aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, data);
+        aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, data);
+        aWY += weightY(pl.x, pl.y - 2.0, upDown.w, data);
+        aWY += weightY(pl.x + 1.0, pl.y - 1.0, left.x, data);
+        aWY += weightY(pl.x, pl.y - 1.0, left.y, data);
+        aWY += weightY(pl.x, pl.y, left.z, data);
+        aWY += weightY(pl.x + 1.0, pl.y, left.w, data);
+        aWY += weightY(pl.x - 1.0, pl.y - 1.0, right.x, data);
+        aWY += weightY(pl.x - 2.0, pl.y - 1.0, right.y, data);
+        aWY += weightY(pl.x - 2.0, pl.y, right.z, data);
+        aWY += weightY(pl.x - 1.0, pl.y, right.w, data);
 
         float finalY = aWY.y / aWY.x;
 

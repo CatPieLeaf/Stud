@@ -114,32 +114,65 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 // engine, so FSR2, SGSR2 and everything else temporal is out regardless
 // of what it would look like.
 //
-//   fsr   FSR1: EASU then RCAS, two dispatches, twelve taps on every
-//         pixel whether or not there is an edge in it.
-//   sgsr  SGSR1: one dispatch that scales and sharpens together, and one
-//         bilinear fetch for any pixel whose neighbourhood is flat.
+//   fsr      FSR1: EASU then RCAS, two dispatches, twelve taps on every
+//            pixel whether or not there is an edge in it.
+//   sgsr     SGSR1: one dispatch that scales and sharpens together, and
+//            one bilinear fetch for any pixel whose neighbourhood is
+//            flat.
+//   sgsr-ed  The same, as the reference's UseEdgeDirection variant: the
+//            twelve taps are weighted along an estimated edge direction
+//            rather than by distance alone.
+//   bicubic  Catmull-Rom, nine bilinear fetches, no notion of an edge.
+//            The cheap end of the comparison.
+//   lanczos  Lanczos-2 with anti-ringing, sixteen point fetches. What
+//            EASU's fastLanczos2 is an approximation of.
 //
 // Which is better is a judgement about pictures, not a measurement, so
 // this is a switch rather than a decision taken here.
-enum class Upscaler { Fsr1, Sgsr1 };
+enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Bicubic, Lanczos };
 
 Upscaler choose_upscaler() {
     static const Upscaler choice = [] {
         const char* v = std::getenv("STUD_UPSCALER");
         const std::string name(v != nullptr ? v : "fsr");
-        const Upscaler picked = name == "sgsr" ? Upscaler::Sgsr1 : Upscaler::Fsr1;
-        if (v != nullptr && name != "sgsr" && name != "fsr") {
-            std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; "
-                        "using fsr. Try fsr or sgsr.\n",
+        Upscaler picked = Upscaler::Fsr1;
+        const char* described = "fsr (EASU then RCAS)";
+        if (name == "sgsr") {
+            picked = Upscaler::Sgsr1;
+            described = "sgsr (one pass, scale and sharpen together)";
+        } else if (name == "sgsr-ed") {
+            picked = Upscaler::Sgsr1Ed;
+            described = "sgsr-ed (SGSR weighted along the edge direction)";
+        } else if (name == "bicubic") {
+            picked = Upscaler::Bicubic;
+            described = "bicubic (Catmull-Rom, nine bilinear fetches)";
+        } else if (name == "lanczos") {
+            picked = Upscaler::Lanczos;
+            described = "lanczos (Lanczos-2 with anti-ringing)";
+        } else if (v != nullptr && name != "fsr") {
+            std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; using fsr. "
+                        "Try fsr, sgsr, sgsr-ed, bicubic or lanczos.\n",
                         v);
         }
-        std::printf("stud-render-host: upscaler: %s\n",
-                    picked == Upscaler::Sgsr1 ? "sgsr (one pass, scale and sharpen together)"
-                                              : "fsr (EASU then RCAS)");
+        std::printf("stud-render-host: upscaler: %s\n", described);
         std::fflush(stdout);
         return picked;
     }();
     return choice;
+}
+
+// What to call the pass in the log. The engine's own name for it is
+// "upscale"; this says which one actually ran, because a line that says
+// EASU whichever shader was built is worse than no line.
+const char* upscaler_name(bool sharpen) {
+    switch (choose_upscaler()) {
+        case Upscaler::Sgsr1: return "SGSR";
+        case Upscaler::Sgsr1Ed: return "SGSR edge-direction";
+        case Upscaler::Bicubic: return "Catmull-Rom bicubic";
+        case Upscaler::Lanczos: return "Lanczos-2";
+        case Upscaler::Fsr1: break;
+    }
+    return sharpen ? "EASU + RCAS" : "EASU";
 }
 
 float upscale_sharpness() {
@@ -3408,13 +3441,45 @@ bool build_upscale_compute(UpscaleChain& c) {
     static const uint32_t kSgsrSpv[] =
 #include "sgsr_spv.h"
         ;
+    static const uint32_t kSgsrEdSpv[] =
+#include "sgsr_ed_spv.h"
+        ;
+    static const uint32_t kBicubicSpv[] =
+#include "bicubic_spv.h"
+        ;
+    static const uint32_t kLanczosSpv[] =
+#include "lanczos_spv.h"
+        ;
     // Same bindings, same push constants, same 8x8 group: the two
     // shaders are interchangeable in everything but their arithmetic,
     // which is what lets one descriptor layout and one pipeline layout
     // serve both.
-    const bool sgsr = choose_upscaler() == Upscaler::Sgsr1;
-    const uint32_t* code = sgsr ? kSgsrSpv : kUpscaleSpv;
-    const size_t code_size = sgsr ? sizeof(kSgsrSpv) : sizeof(kUpscaleSpv);
+    // Every one of these has the same two bindings, the same push
+    // constants and the same 8x8 group, so one descriptor layout and one
+    // pipeline layout serve all of them and only the module changes.
+    const Upscaler wanted = choose_upscaler();
+    const uint32_t* code = kUpscaleSpv;
+    size_t code_size = sizeof(kUpscaleSpv);
+    switch (wanted) {
+        case Upscaler::Sgsr1:
+            code = kSgsrSpv;
+            code_size = sizeof(kSgsrSpv);
+            break;
+        case Upscaler::Sgsr1Ed:
+            code = kSgsrEdSpv;
+            code_size = sizeof(kSgsrEdSpv);
+            break;
+        case Upscaler::Bicubic:
+            code = kBicubicSpv;
+            code_size = sizeof(kBicubicSpv);
+            break;
+        case Upscaler::Lanczos:
+            code = kLanczosSpv;
+            code_size = sizeof(kLanczosSpv);
+            break;
+        case Upscaler::Fsr1:
+            break;
+    }
     if (code_size < 32) return false;  // built without glslc
 
     VkShaderModuleCreateInfo smci{};
@@ -3578,7 +3643,10 @@ bool build_upscale_compute(UpscaleChain& c) {
     // SGSR has no second pass to build: it sharpens as it scales, and
     // its own edge term already carries the sharpness setting. Running
     // RCAS over its output would sharpen what has been sharpened.
-    if (choose_upscaler() == Upscaler::Sgsr1) return true;
+    // Only FSR1 has one: everything else either sharpens inside its own
+    // dispatch or does not sharpen at all, and running RCAS over the
+    // result would sharpen what has already been sharpened.
+    if (choose_upscaler() != Upscaler::Fsr1) return true;
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"
@@ -4181,9 +4249,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         std::printf("stud-render-host: upscale %ux%u -> %ux%u (%u images, %s)\n",
                     built.engine.width, built.engine.height, built.present.width,
                     built.present.height, count,
-                    built.compute ? (choose_upscaler() == Upscaler::Sgsr1
-                                         ? "SGSR"
-                                         : (built.sharpen ? "EASU + RCAS" : "EASU"))
+                    built.compute ? upscaler_name(built.sharpen)
                                   : "linear blit");
         std::fflush(stdout);
     }
