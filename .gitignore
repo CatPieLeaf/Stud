@@ -47,6 +47,11 @@ third_party/*
 # how the EASU shader's first version came to be wrong. A few KB,
 # BSD-3-Clause, and the licence has to travel with it.
 !third_party/snapdragon-gsr/
+# And the one mpv prescaler hook, which is both the reference AND the
+# weight table: tools/gen_ravu_lut.py generates the header render-host
+# embeds straight out of it, so the build needs the file present, not
+# just the reader.
+!third_party/mpv-prescalers/
 # Same reasoning for the one vendored Wayland protocol: pointer-warp-v1 is
 # staging and young enough that a distribution a release behind does not
 # ship it, and a build should not fail over how new the host happens to

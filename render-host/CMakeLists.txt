@@ -26,6 +26,36 @@ set(BicubicShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/bicubic.comp")
 set(BicubicShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/bicubic_spv.h")
 set(LanczosShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lanczos.comp")
 set(LanczosShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/lanczos_spv.h")
+# RAVU-Zoom, which unlike the others carries a trained weight table as
+# well as a shader. The table is generated from the vendored hook rather
+# than checked in twice, so the two cannot drift.
+set(RavuShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ravu.comp")
+set(RavuShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_spv.h")
+set(RavuHook "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook")
+set(RavuLutHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_lut.h")
+# Optional, like glslc: a machine without a Python interpreter builds
+# everything else and simply has no RAVU, rather than failing.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_Interpreter_FOUND)
+    message(WARNING
+        "Stud: no Python 3 interpreter, building WITHOUT the RAVU-Zoom weight "
+        "table. Its entry in STUD_UPSCALER will fall back to FSR.")
+    add_custom_command(
+        OUTPUT "${RavuLutHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuLutHeader}"
+        COMMENT "No Python 3, building without the RAVU-Zoom weight table"
+    )
+else()
+add_custom_command(
+    OUTPUT "${RavuLutHeader}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ravu_lut.py"
+            "${RavuHook}" "${RavuLutHeader}"
+    DEPENDS "${RavuHook}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ravu_lut.py"
+    COMMENT "Generating the RAVU-Zoom weight table"
+)
+endif()
 find_program(StudGlslc glslc
     HINTS "${STUD_ANDROID_NDK_ROOT}/shader-tools/linux-x86_64"
     NO_CMAKE_FIND_ROOT_PATH)
@@ -79,6 +109,14 @@ if(StudGlslc)
                 -o "${LanczosShaderHeader}" "${LanczosShaderSrc}"
         DEPENDS "${LanczosShaderSrc}"
         COMMENT "Compiling the Lanczos upscale shader to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT "${RavuShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -o "${RavuShaderHeader}" "${RavuShaderSrc}"
+        DEPENDS "${RavuShaderSrc}"
+        COMMENT "Compiling the RAVU-Zoom upscale shader to SPIR-V"
     )
 else()
     # Without glslc the upscaler cannot exist; an empty array makes that a
@@ -136,9 +174,15 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${LanczosShaderHeader}"
         COMMENT "glslc not found, building without the Lanczos shader"
     )
+    add_custom_command(
+        OUTPUT "${RavuShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuShaderHeader}"
+        COMMENT "glslc not found, building without the RAVU-Zoom shader"
+    )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${BicubicShaderHeader}" "${LanczosShaderHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${BicubicShaderHeader}" "${LanczosShaderHeader}" "${RavuShaderHeader}" "${RavuLutHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
