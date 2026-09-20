@@ -170,6 +170,50 @@ Upscaler choose_upscaler() {
     return choice;
 }
 
+// STUD_UPSCALE_TIME=1: how long the upscale pass takes ON THE GPU, from
+// a timestamp either side of its own command buffer.
+//
+// This exists because sampling the process's SM utilisation does not
+// answer the question. Two attempts at comparing upscalers that way
+// produced numbers that could not be reconciled: the same shader at the
+// same resolution measured 55-58% in one session and 82.5% in another,
+// and within a single session at Home the figure swung between 38 and
+// 90 as the carousel played a video. SM% measures the machine, and the
+// machine is not holding still.
+//
+// A timestamp around the pass measures the pass. What else is on screen
+// changes how often it runs, not how long it takes.
+//
+// Costs two timestamp writes per frame, which is why it is off by
+// default, and needs the device to support them at all -- a queue whose
+// timestampValidBits is zero reports nothing rather than nonsense.
+bool upscale_timing_enabled() {
+    static const bool on = std::getenv("STUD_UPSCALE_TIME") != nullptr;
+    return on;
+}
+
+// Whether this filter does its own sharpening inside its dispatch.
+//
+// SGSR's reconstruction IS its sharpening -- the edge term it adds is
+// the whole algorithm, not a stage after it -- and Lanczos' slider
+// drives how far its anti-ringing clamp lets the kernel overshoot. Both
+// read the sharpness out of the push constants. FSR1, RAVU and bicubic
+// do not sharpen at all on their own, so for them the slider has to
+// mean the separate RCAS pass.
+bool upscaler_sharpens_itself() {
+    switch (choose_upscaler()) {
+        case Upscaler::Sgsr1:
+        case Upscaler::Sgsr1Ed:
+        case Upscaler::Lanczos:
+            return true;
+        case Upscaler::Fsr1:
+        case Upscaler::Bicubic:
+        case Upscaler::Ravu:
+            return false;
+    }
+    return false;
+}
+
 // What to call the pass in the log. The engine's own name for it is
 // "upscale"; this says which one actually ran, because a line that says
 // EASU whichever shader was built is worse than no line.
@@ -2918,6 +2962,9 @@ struct UpscaleChain {
     // third descriptor -- its trained weight table -- which the others
     // have no use for, so a RAVU chain's descriptor layout is its own.
     bool ravu = false;
+    // One pair of timestamps per image, written either side of that
+    // image's recorded pass. See upscale_timing_enabled().
+    VkQueryPool timing_pool = VK_NULL_HANDLE;
     VkImage lut = VK_NULL_HANDLE;
     VkDeviceMemory lut_memory = VK_NULL_HANDLE;
     VkImageView lut_view = VK_NULL_HANDLE;
@@ -3357,6 +3404,7 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
     destroy(l.destroy_descriptor_set_layout, c.set_layout);
     destroy(l.destroy_sampler, c.sampler);
     destroy(l.destroy_shader_module, c.shader);
+    destroy(l.destroy_query_pool, c.timing_pool);
     // RAVU's weight table, present only on a RAVU chain.
     destroy(l.destroy_image_view, c.lut_view);
     destroy(l.destroy_image, c.lut);
@@ -3433,15 +3481,16 @@ bool upload_ravu_lut(UpscaleChain& c) {
     static const uint32_t kRavuLut[] =
 #include "ravu_lut.h"
         ;
-    // 18 * 2592 texels of four float32 each. Built without a Python
-    // interpreter this is the empty array, and RAVU is simply absent.
+    // 18 * 2592 texels of four halves each, two halves to a word. Built
+    // without a Python interpreter this is the empty array, and RAVU is
+    // simply absent.
     constexpr uint32_t kLutWidth = 18;
     constexpr uint32_t kLutHeight = 2592;
-    if (sizeof(kRavuLut) != kLutWidth * kLutHeight * 4 * sizeof(uint32_t)) {
+    if (sizeof(kRavuLut) != kLutWidth * kLutHeight * 4 * sizeof(uint16_t)) {
         std::printf("stud-render-host: the RAVU weight table is %zu bytes, not the %zu its "
                     "size says; RAVU is unavailable\n",
                     sizeof(kRavuLut),
-                    static_cast<size_t>(kLutWidth) * kLutHeight * 4 * sizeof(uint32_t));
+                    static_cast<size_t>(kLutWidth) * kLutHeight * 4 * sizeof(uint16_t));
         std::fflush(stdout);
         return false;
     }
@@ -3449,7 +3498,13 @@ bool upload_ravu_lut(UpscaleChain& c) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    // Half, which is the format the hook itself declares and what mpv
+    // uploads: the weights are trained against that precision, so
+    // float32 here would be twice the bytes for accuracy the algorithm
+    // never asked for -- and this table is sampled four times per
+    // output pixel, which is where RAVU spends its time. The conversion
+    // is checked at build time; see tools/gen_ravu_lut.py.
+    ici.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     ici.extent = {kLutWidth, kLutHeight, 1};
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
@@ -3772,6 +3827,18 @@ bool build_upscale_compute(UpscaleChain& c) {
     }
 
     const auto count = static_cast<uint32_t>(c.offscreen.size());
+    // Two timestamps per image: before the pass and after it.
+    if (upscale_timing_enabled() && l.create_query_pool != nullptr &&
+        l.cmd_write_timestamp != nullptr && l.cmd_reset_query_pool != nullptr &&
+        l.get_query_pool_results != nullptr) {
+        VkQueryPoolCreateInfo qpci{};
+        qpci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qpci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qpci.queryCount = count * 2;
+        if (l.create_query_pool(l.device, &qpci, nullptr, &c.timing_pool) != VK_SUCCESS) {
+            c.timing_pool = VK_NULL_HANDLE;
+        }
+    }
     VkDescriptorPoolSize sizes[2]{};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // The engine's image, and for RAVU the weight table beside it.
@@ -3883,10 +3950,11 @@ bool build_upscale_compute(UpscaleChain& c) {
     // SGSR has no second pass to build: it sharpens as it scales, and
     // its own edge term already carries the sharpness setting. Running
     // RCAS over its output would sharpen what has been sharpened.
-    // Only FSR1 has one: everything else either sharpens inside its own
-    // dispatch or does not sharpen at all, and running RCAS over the
-    // result would sharpen what has already been sharpened.
-    if (choose_upscaler() != Upscaler::Fsr1) return true;
+    // Built for every filter that does not sharpen inside its own
+    // dispatch -- FSR1, RAVU and bicubic -- so the sharpness slider
+    // means something for all of them. Running it over SGSR or Lanczos
+    // would sharpen what has already been sharpened.
+    if (upscaler_sharpens_itself()) return true;
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"
@@ -4023,6 +4091,13 @@ bool record_upscale_blits(UpscaleChain& c) {
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         if (l.begin_command_buffer(c.cmd[i], &bi) != VK_SUCCESS) return false;
+        if (c.timing_pool != VK_NULL_HANDLE) {
+            // Reset inside the same buffer, so a re-submitted recording
+            // does not read the previous frame's values.
+            l.cmd_reset_query_pool(c.cmd[i], c.timing_pool, i * 2, 2);
+            l.cmd_write_timestamp(c.cmd[i], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, c.timing_pool,
+                                  i * 2);
+        }
         if (l.cmd_set_checkpoint != nullptr) {
             l.cmd_set_checkpoint(c.cmd[i], "stud upscale: pass begin");
         }
@@ -4100,7 +4175,14 @@ bool record_upscale_blits(UpscaleChain& c) {
             push.src_h = static_cast<int32_t>(c.engine.height);
             push.dst_w = static_cast<int32_t>(c.present.width);
             push.dst_h = static_cast<int32_t>(c.present.height);
-            push.sharpness = 0.0f;  // EASU does no sharpening; RCAS below does
+            // Zero for the filters that have a separate RCAS pass after
+            // them, which is what that pass is for. For the ones that
+            // sharpen as they scale this is the setting itself, and
+            // hardcoding it to zero here is what made the slider do
+            // nothing for SGSR, its edge-direction variant and Lanczos:
+            // they read this field, found zero, and fell back to their
+            // own defaults.
+            push.sharpness = upscaler_sharpens_itself() ? upscale_sharpness() : 0.0f;
             // Only when nothing reads this back: the sharpening pass's
             // arithmetic is defined on the real channel order.
             push.swap_rb = c.sharpen ? 0 : swap_rb;
@@ -4286,6 +4368,10 @@ bool record_upscale_blits(UpscaleChain& c) {
         l.cmd_pipeline_barrier(c.cmd[i], pass_stage | VK_PIPELINE_STAGE_TRANSFER_BIT,
                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
                                nullptr, 2, after);
+        if (c.timing_pool != VK_NULL_HANDLE) {
+            l.cmd_write_timestamp(c.cmd[i], VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, c.timing_pool,
+                                  i * 2 + 1);
+        }
         if (l.end_command_buffer(c.cmd[i]) != VK_SUCCESS) return false;
     }
     return true;
@@ -6526,6 +6612,66 @@ void note_result(VkResult r, const char* where) {
     }
 }
 
+// Reads back the previous submission's timestamps for this image and
+// reports the pass's own GPU time periodically.
+//
+// Read WITHOUT waiting: the pair being read belongs to a submission that
+// has already been waited on, because this index's fence is waited
+// before it is reused. VK_QUERY_RESULT_WAIT_BIT here would stall the
+// frame to measure it, which would be measuring the measurement.
+void report_upscale_timing(UpscaleChain& c, uint32_t index) {
+    Loader& l = loader();
+    if (c.timing_pool == VK_NULL_HANDLE || l.get_query_pool_results == nullptr) return;
+
+    uint64_t stamps[2] = {0, 0};
+    const VkResult r = l.get_query_pool_results(l.device, c.timing_pool, index * 2, 2,
+                                                sizeof(stamps), stamps, sizeof(uint64_t),
+                                                VK_QUERY_RESULT_64_BIT);
+    // NOT_READY on the first frames of an index, which is ordinary.
+    if (r != VK_SUCCESS || stamps[1] <= stamps[0]) return;
+
+    // Ticks to nanoseconds is the device's own scale, and a queue that
+    // cannot timestamp says so with zero valid bits rather than by
+    // failing.
+    static float period_ns = 0.0f;
+    static bool period_known = false;
+    if (!period_known) {
+        period_known = true;
+        if (l.get_physical_device_properties != nullptr &&
+            l.physical_device != VK_NULL_HANDLE) {
+            VkPhysicalDeviceProperties props{};
+            l.get_physical_device_properties(l.physical_device, &props);
+            period_ns = props.limits.timestampPeriod;
+        }
+        if (period_ns <= 0.0f) {
+            std::printf("stud-render-host: this device does not report a timestamp period, "
+                        "so the upscale pass cannot be timed\n");
+            std::fflush(stdout);
+        }
+    }
+    if (period_ns <= 0.0f) return;
+
+    const double us = static_cast<double>(stamps[1] - stamps[0]) * period_ns / 1000.0;
+    static double total = 0.0;
+    static double worst = 0.0;
+    static uint64_t samples = 0;
+    total += us;
+    if (us > worst) worst = us;
+    // Every 600 frames: often enough to watch a change, rare enough that
+    // the line itself is not the cost.
+    if (++samples >= 600) {
+        std::printf("stud-render-host: the %s pass took a mean %.3fms on the GPU over %llu "
+                    "frames, worst %.3fms, at %ux%u\n",
+                    upscaler_name(c.sharpen), total / static_cast<double>(samples) / 1000.0,
+                    static_cast<unsigned long long>(samples), worst / 1000.0, c.present.width,
+                    c.present.height);
+        std::fflush(stdout);
+        total = 0.0;
+        worst = 0.0;
+        samples = 0;
+    }
+}
+
 // Waits for a repair submission to finish before returning to the engine.
 //
 // Not optional, and it is what a first version of this got wrong: these
@@ -7808,6 +7954,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 }
                 if (sr == VK_SUCCESS) {
                     c.in_flight[index] = true;
+                    report_upscale_timing(c, index);
                     // The present now waits on the pass, not on the
                     // engine, the engine's own semaphores have already
                     // been consumed by the submit above, and waiting on

@@ -108,6 +108,7 @@ All of these are off by default and most cost something to turn on.
 | `STUD_VK_FRAME_TIME` | Per-frame acquire/submit/present/fence/record breakdown, worst frame, commands and KB per frame. | **perf** — brackets every command |
 | `STUD_VK_SLOW_FRAMES` | One line per frame that missed its deadline, with the breakdown. | **perf** |
 | `STUD_VK_MEM_STATS` | Bytes sent against bytes asked for, shared against copied mappings. | low |
+| `STUD_UPSCALE_TIME` | The upscale pass's own GPU time, from a timestamp either side of it: mean and worst over each 600 frames. The way to compare upscalers — process SM% measures the machine, which does not hold still. | low — two timestamp writes a frame |
 | `STUD_VK_MEMREQ_STATS` | Memory-requirement cache hit rate. | low |
 | `STUD_VK_HOST_TIME` | Present queue-lock and driver time, host side. | low |
 | `STUD_IPC_STATS` | Round trips per frame and their wall time. | **perf** |
