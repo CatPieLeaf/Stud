@@ -2633,12 +2633,31 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // no tearing, no ceiling. IMMEDIATE is the uncapped one every driver has,
 // at the cost of tearing.
 //
-// The image count is left exactly as the engine asked, and that is
-// correct rather than an oversight: it asks for 3, which is the ordinary
-// triple buffer for IMMEDIATE and is also precisely what MAILBOX wants --
-// one displayed, one queued and replaceable, one being drawn. The
-// surface here allows 2 to 8. Substituting the mode does not imply the
-// count has to move with it.
+// The image count is left exactly as the engine asked: 3, which is the
+// ordinary triple buffer for IMMEDIATE and is what MAILBOX wants on
+// paper -- one displayed, one queued and replaceable, one being drawn.
+// The surface here allows 2 to 8.
+//
+// MEASURED, AND IT DOES NOT WORK OUT THAT WAY. A WAYLAND_DEBUG trace of
+// a real session shows the swapchain really does have 3 images and only
+// TWO of them ever reach the compositor: wl_buffer#138 and #141, 458 and
+// 459 attaches across one minute, the third created and never attached
+// once. The engine's loop is strictly serial -- acquire, present,
+// acquire, present, 59 of each in one flight-recorder window, indices 0
+// and 1 only -- so it never has more than one image in hand, and the
+// driver keeps handing back the one it just freed.
+//
+// That leaves presentation effectively double-buffered whatever the mode
+// says: one image with the compositor, one being drawn, and nothing to
+// absorb a late release. It is the shape the 12006ms stall has --
+// vkQueuePresentKHR spinning inside the driver (thread in state R,
+// wchan 0) with the GPU idle and 0.0ms of it in Stud's own queue lock.
+//
+// Not yet acted on, and deliberately so: raising the count was tried
+// once and measured inert, and IMMEDIATE was tried and still froze. What
+// is missing before changing this again is a trace of a freeze that
+// happens with NO focus change, which is what would say whether the
+// third image is the fix or just the most visible anomaly.
 //
 // Only ever a substitution among modes the driver advertises FOR THIS
 // SURFACE, asked for each time rather than assumed: presenting with a
