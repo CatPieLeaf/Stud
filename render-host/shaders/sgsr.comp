@@ -23,6 +23,19 @@
 //
 // STUD_UPSCALER picks between them; see choose_upscaler().
 
+// The reference opens with `precision mediump float`, and that is not
+// incidental: SGSR's arithmetic was designed against reduced precision,
+// and the first port here dropped it and ran everything at full float.
+// Restoring it is not a quality trade -- it is the shader as written --
+// and glslang turns these qualifiers into RelaxedPrecision, which needs
+// no device feature and no fallback, unlike an explicit float16_t port.
+//
+// Coordinates stay highp, exactly where the reference keeps them: the
+// image-space position and the gather offsets are where reduced
+// precision would actually show.
+precision mediump float;
+precision highp int;
+
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D src;
@@ -69,12 +82,12 @@ void main() {
 
     // The reference's ViewportInfo[0]: texel size in xy, texture size in
     // zw, both of the SOURCE image.
-    vec2 src_size = vec2(p.src_size);
-    vec4 viewport = vec4(1.0 / src_size.x, 1.0 / src_size.y, src_size.x, src_size.y);
+    highp vec2 src_size = vec2(p.src_size);
+    highp vec4 viewport = vec4(1.0 / src_size.x, 1.0 / src_size.y, src_size.x, src_size.y);
 
     // Where this output pixel lands in the source, in normalised
     // coordinates: the same 0..1 the fragment shader's varying carried.
-    vec2 uv = (vec2(out_pos) + 0.5) / vec2(p.dst_size);
+    highp vec2 uv = (vec2(out_pos) + 0.5) / vec2(p.dst_size);
 
     // Stud's sharpness setting arrives as 0.0-1.25, where 1.0 is
     // ordinary strength; SGSR's own default is 2.0 on its scale, so 1.0
@@ -87,9 +100,9 @@ void main() {
     vec4 color;
     color.xyz = textureLod(src, uv, 0.0).xyz;
 
-    vec2 imgCoord = ((uv * viewport.zw) + vec2(-0.5, 0.5));
-    vec2 imgCoordPixel = floor(imgCoord);
-    vec2 coord = (imgCoordPixel * viewport.xy);
+    highp vec2 imgCoord = ((uv * viewport.zw) + vec2(-0.5, 0.5));
+    highp vec2 imgCoordPixel = floor(imgCoord);
+    highp vec2 coord = (imgCoordPixel * viewport.xy);
     vec2 pl = (imgCoord + (-imgCoordPixel));
     vec4 left = textureGather(src, coord, kLumaChannel);
 
