@@ -4085,7 +4085,68 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     ci.flags = h.flags;
     ci.surface = from_u64<VkSurfaceKHR>(h.surface);
+    // MORE IMAGES THAN THE ENGINE ASKED FOR, because the count it asks
+    // for is not the count that ends up in rotation.
+    //
+    // Measured with WAYLAND_DEBUG: the swapchain is created with the
+    // engine's 3 and only TWO ever reach the compositor -- wl_buffer#138
+    // and #141, 458 and 459 attaches across a minute, the third created
+    // and never attached once. The engine's loop is strictly serial
+    // (acquire, present, acquire, present; 59 of each over indices 0 and
+    // 1 in one flight-recorder window) so it never holds more than one
+    // image, and the driver keeps handing back the one it just freed.
+    //
+    // That leaves presentation double-buffered in practice: one image
+    // with the compositor, one being drawn, and NOTHING to absorb a late
+    // release. When a release is late the present has to wait it out,
+    // and the driver waits 12006ms -- every measured freeze, to within
+    // half a millisecond, spinning inside vkQueuePresentKHR with the GPU
+    // idle and none of it in Stud's own queue lock.
+    //
+    // Asking for more gives the driver a free image to hand out while
+    // the compositor still holds the last one. Clamped to what the
+    // surface actually allows rather than assumed: a count outside
+    // minImageCount..maxImageCount is undefined behaviour, and a
+    // maxImageCount of 0 means "no limit" in the spec, which a naive
+    // std::min would read as zero images.
+    //
+    // STUD_SWAPCHAIN_IMAGES=N overrides; =engine forwards the engine's
+    // own request untouched, which is the control.
     ci.minImageCount = h.min_image_count;
+    {
+        static const std::string choice = [] {
+            const char* v = std::getenv("STUD_SWAPCHAIN_IMAGES");
+            return std::string(v != nullptr ? v : "4");
+        }();
+        if (choice != "engine" && l.get_physical_device_surface_capabilities != nullptr &&
+            l.physical_device != VK_NULL_HANDLE) {
+            const uint32_t want = static_cast<uint32_t>(std::atoi(choice.c_str()));
+            VkSurfaceCapabilitiesKHR caps{};
+            if (want > 0 && l.get_physical_device_surface_capabilities(
+                                l.physical_device, ci.surface, &caps) == VK_SUCCESS) {
+                uint32_t asked = want > h.min_image_count ? want : h.min_image_count;
+                if (asked < caps.minImageCount) asked = caps.minImageCount;
+                // 0 means no maximum; only clamp when there is one.
+                if (caps.maxImageCount != 0 && asked > caps.maxImageCount) {
+                    asked = caps.maxImageCount;
+                }
+                if (asked != ci.minImageCount) {
+                    static bool said = false;
+                    if (!said) {
+                        said = true;
+                        std::printf("stud-render-host: asking for %u swapchain images instead of "
+                                    "the engine's %u (the surface allows %u to %u); two were "
+                                    "reaching the compositor and a late buffer release had "
+                                    "nothing to absorb it\n",
+                                    asked, h.min_image_count, caps.minImageCount,
+                                    caps.maxImageCount);
+                        std::fflush(stdout);
+                    }
+                    ci.minImageCount = asked;
+                }
+            }
+        }
+    }
     ci.imageFormat = static_cast<VkFormat>(h.image_format);
     // STUD_VK_FORCE_OPAQUE_FORMAT=1 swaps a UNORM swapchain for its SRGB
     // twin. Off by default: it is a real change to what the engine asked
