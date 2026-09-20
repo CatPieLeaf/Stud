@@ -19,12 +19,19 @@
 // table of filter weights. The other filters decide how to weight a tap
 // from arithmetic; this one looks the answer up.
 //
-// The table is 18x2592 rgba, 746KB, uploaded device-local once at chain
-// build. Note that the hook declares it `rgba16f` while the data it
-// carries is float32 -- verified by decoding, not assumed: as float16
-// the values come out as nonsense like -10136, and as float32 every one
-// of the 186,624 falls inside [-4,4]. It is uploaded as
-// R32G32B32A32_SFLOAT accordingly.
+// The table is 18x2592 rgba, uploaded device-local once at chain build
+// as HALF -- 373KB. The hook declares rgba16f and carries float32 data;
+// the format it declares is the right one, since mpv uploads half and
+// the weights are trained at that precision, and this table is sampled
+// four times per output pixel. tools/gen_ravu_lut.py does the
+// conversion and fails the build if any weight does not survive it.
+//
+// mpv also ships a COMPUTE variant that loads the shared neighbourhood
+// into LDS once per workgroup instead of re-fetching sixteen taps per
+// pixel. It was ported and measured here, and it is SLOWER: 0.557ms per
+// megapixel against 0.537 for this one, with a worse tail. The taps
+// were already hitting the texture cache, and the barrier and the LDS
+// round trip cost more than the redundant fetches did.
 //
 // Note the licence. Unlike FSR1 (MIT) and SGSR (BSD-3-Clause) this is
 // LGPL-3.0-or-later, which is a different question for a shipped binary

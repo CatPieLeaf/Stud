@@ -122,10 +122,6 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 //   sgsr-ed  The same, as the reference's UseEdgeDirection variant: the
 //            twelve taps are weighted along an estimated edge direction
 //            rather than by distance alone.
-//   bicubic  Catmull-Rom, nine bilinear fetches, no notion of an edge.
-//            The cheap end of the comparison.
-//   lanczos  Lanczos-2 with anti-ringing, sixteen point fetches. What
-//            EASU's fastLanczos2 is an approximation of.
 //   ravu     RAVU-Zoom r2: builds a structure tensor from the
 //            neighbourhood's luma, reduces it to an edge angle, a
 //            strength and a coherence, and looks the filter weights up
@@ -135,7 +131,7 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 //
 // Which is better is a judgement about pictures, not a measurement, so
 // this is a switch rather than a decision taken here.
-enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Bicubic, Lanczos, Ravu };
+enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Ravu };
 
 Upscaler choose_upscaler() {
     static const Upscaler choice = [] {
@@ -149,18 +145,12 @@ Upscaler choose_upscaler() {
         } else if (name == "sgsr-ed") {
             picked = Upscaler::Sgsr1Ed;
             described = "sgsr-ed (SGSR weighted along the edge direction)";
-        } else if (name == "bicubic") {
-            picked = Upscaler::Bicubic;
-            described = "bicubic (Catmull-Rom, nine bilinear fetches)";
-        } else if (name == "lanczos") {
-            picked = Upscaler::Lanczos;
-            described = "lanczos (Lanczos-2 with anti-ringing)";
         } else if (name == "ravu") {
             picked = Upscaler::Ravu;
             described = "ravu (RAVU-Zoom r2, trained weight table)";
         } else if (v != nullptr && name != "fsr") {
             std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; using fsr. "
-                        "Try fsr, sgsr, sgsr-ed, bicubic, lanczos or ravu.\n",
+                        "Try fsr, sgsr, sgsr-ed or ravu.\n",
                         v);
         }
         std::printf("stud-render-host: upscaler: %s\n", described);
@@ -195,19 +185,15 @@ bool upscale_timing_enabled() {
 // Whether this filter does its own sharpening inside its dispatch.
 //
 // SGSR's reconstruction IS its sharpening -- the edge term it adds is
-// the whole algorithm, not a stage after it -- and Lanczos' slider
-// drives how far its anti-ringing clamp lets the kernel overshoot. Both
-// read the sharpness out of the push constants. FSR1, RAVU and bicubic
-// do not sharpen at all on their own, so for them the slider has to
-// mean the separate RCAS pass.
+// the whole algorithm, not a stage after it -- so it reads the setting
+// out of the push constants. FSR1 and RAVU do not sharpen at all on
+// their own, so for them the slider means the separate RCAS pass.
 bool upscaler_sharpens_itself() {
     switch (choose_upscaler()) {
         case Upscaler::Sgsr1:
         case Upscaler::Sgsr1Ed:
-        case Upscaler::Lanczos:
             return true;
         case Upscaler::Fsr1:
-        case Upscaler::Bicubic:
         case Upscaler::Ravu:
             return false;
     }
@@ -221,8 +207,6 @@ const char* upscaler_name(bool sharpen) {
     switch (choose_upscaler()) {
         case Upscaler::Sgsr1: return "SGSR";
         case Upscaler::Sgsr1Ed: return "SGSR edge-direction";
-        case Upscaler::Bicubic: return "Catmull-Rom bicubic";
-        case Upscaler::Lanczos: return "Lanczos-2";
         case Upscaler::Ravu: return "RAVU-Zoom r2";
         case Upscaler::Fsr1: break;
     }
@@ -3707,12 +3691,6 @@ bool build_upscale_compute(UpscaleChain& c) {
     static const uint32_t kSgsrEdSpv[] =
 #include "sgsr_ed_spv.h"
         ;
-    static const uint32_t kBicubicSpv[] =
-#include "bicubic_spv.h"
-        ;
-    static const uint32_t kLanczosSpv[] =
-#include "lanczos_spv.h"
-        ;
     static const uint32_t kRavuSpv[] =
 #include "ravu_spv.h"
         ;
@@ -3734,14 +3712,6 @@ bool build_upscale_compute(UpscaleChain& c) {
         case Upscaler::Sgsr1Ed:
             code = kSgsrEdSpv;
             code_size = sizeof(kSgsrEdSpv);
-            break;
-        case Upscaler::Bicubic:
-            code = kBicubicSpv;
-            code_size = sizeof(kBicubicSpv);
-            break;
-        case Upscaler::Lanczos:
-            code = kLanczosSpv;
-            code_size = sizeof(kLanczosSpv);
             break;
         case Upscaler::Ravu:
             code = kRavuSpv;
@@ -3951,9 +3921,9 @@ bool build_upscale_compute(UpscaleChain& c) {
     // its own edge term already carries the sharpness setting. Running
     // RCAS over its output would sharpen what has been sharpened.
     // Built for every filter that does not sharpen inside its own
-    // dispatch -- FSR1, RAVU and bicubic -- so the sharpness slider
-    // means something for all of them. Running it over SGSR or Lanczos
-    // would sharpen what has already been sharpened.
+    // dispatch -- FSR1 and RAVU -- so the sharpness slider means
+    // something for both. Running it over SGSR would sharpen what has
+    // already been sharpened.
     if (upscaler_sharpens_itself()) return true;
     if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
@@ -4188,11 +4158,19 @@ bool record_upscale_blits(UpscaleChain& c) {
             push.swap_rb = c.sharpen ? 0 : swap_rb;
             l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                  sizeof(push), &push);
-            // 8x8 per group, matching the shader's own local size.
+            // Matching the shaders' own local size, rounded up, so the
+            // last group in each direction runs invocations past the
+            // edge of the image; every shader here checks that before
+            // it stores.
             if (l.cmd_set_checkpoint != nullptr) {
                 l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU dispatch");
             }
-            l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
+            // 8 for every filter: RAVU's compute variant, which wanted
+            // 32, measured slower than the plain one and was withdrawn.
+            const uint32_t group_w = 8u;
+            const uint32_t group_h = 8u;
+            l.cmd_dispatch(c.cmd[i], (c.present.width + group_w - 1) / group_w,
+                           (c.present.height + group_h - 1) / group_h, 1);
             if (l.cmd_set_checkpoint != nullptr) {
                 l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU done");
             }
@@ -6660,11 +6638,19 @@ void report_upscale_timing(UpscaleChain& c, uint32_t index) {
     // Every 600 frames: often enough to watch a change, rare enough that
     // the line itself is not the cost.
     if (++samples >= 600) {
+        // Per megapixel as well as outright, because the window is not
+        // the same size between runs and a pass that costs more at a
+        // bigger output is not a more expensive pass. Comparing two
+        // filters measured at 1920x990 and 1728x972 by their raw
+        // milliseconds overstates the first by 13%.
+        const double mean_us = total / static_cast<double>(samples);
+        const double mpix =
+            static_cast<double>(c.present.width) * c.present.height / 1000000.0;
         std::printf("stud-render-host: the %s pass took a mean %.3fms on the GPU over %llu "
-                    "frames, worst %.3fms, at %ux%u\n",
-                    upscaler_name(c.sharpen), total / static_cast<double>(samples) / 1000.0,
+                    "frames, worst %.3fms, at %ux%u -- %.3fms per megapixel\n",
+                    upscaler_name(c.sharpen), mean_us / 1000.0,
                     static_cast<unsigned long long>(samples), worst / 1000.0, c.present.width,
-                    c.present.height);
+                    c.present.height, mpix > 0.0 ? mean_us / 1000.0 / mpix : 0.0);
         std::fflush(stdout);
         total = 0.0;
         worst = 0.0;
