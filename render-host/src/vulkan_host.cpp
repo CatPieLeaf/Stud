@@ -7364,6 +7364,30 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
                 retired = g_retired_chains.size();
             }
+            // Images created and never transitioned out of UNDEFINED.
+            //
+            // These are exactly the candidates for
+            // VUID-vkCmdDraw-None-09600 ("expects VkImage ... to be in
+            // SHADER_READ_ONLY_OPTIMAL -- instead, current layout is
+            // UNDEFINED"), and naming them is the only way to tell the
+            // two causes apart: an image whose FIRST barrier lied about
+            // where it started, which make_barrier_legal() corrects, and
+            // an image that never receives a barrier at all, which it
+            // cannot. The first fix was verified on a short single-device
+            // run and the error came back during real play on different
+            // images, so the difference matters.
+            if (!l.untransitioned_images.empty()) {
+                std::printf("stud-render-host: %zu image(s) created and never transitioned out "
+                            "of UNDEFINED; first few:",
+                            l.untransitioned_images.size());
+                int shown = 0;
+                for (uint64_t h : l.untransitioned_images) {
+                    if (shown++ >= 6) break;
+                    std::printf(" %llx", static_cast<unsigned long long>(h));
+                }
+                std::printf("\n");
+                std::fflush(stdout);
+            }
             std::printf("stud-render-host: still held after %llu presents: %zu shared mappings, "
                         "%zu buffer bindings, %zu upscale chains, %zu retired chains, "
                         "%zu swapchain extents\n",

@@ -2465,6 +2465,37 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroySurfaceKHR(VkInstance instance, VkSurfa
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkDestroyDevice(VkDevice device, const VkAllocationCallbacks*) {
+    // FORGET THE DECODE SCRATCH FIRST. It belongs to the device that is
+    // about to die.
+    //
+    // scratch_pools() holds a VkBuffer per command buffer, plus the
+    // retired ones growth left behind, and they are deliberately kept
+    // alive because work may still reference them. Nothing cleared them
+    // when the device went away, so the next texture upload after a
+    // device rebuild reused the pool for that command buffer and
+    // recorded vkCmdCopyBufferToImage against a buffer belonging to a
+    // destroyed device.
+    //
+    // That is a dangling handle, and the driver dereferences it:
+    //
+    //   vkCmdCopyBufferToImage(): srcBuffer Invalid VkBuffer Object
+    //   CRASH, signal 11, fault address 0xf8
+    //   last: vk_cmd_record kind=14   (CopyBufferToImage)
+    //
+    // inside libnvidia-glcore. It needs a device rebuild to happen at
+    // all, which is why it shows up when switching games and not while
+    // sitting in one.
+    //
+    // FORGOTTEN, NOT DESTROYED. Destroying them here would be the same
+    // mistake in the other direction -- the host learned that the hard
+    // way when destroying the engine's abandoned buffers turned a leak
+    // into exactly this crash. The device teardown reclaims them; all
+    // that is needed is that nothing reaches for them afterwards.
+    {
+        std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+        scratch_pools().clear();
+        pending_decodes().clear();
+    }
     destroy_handle(device, vk_wire::DestroyKind::Device, to_u64(device));
 }
 
