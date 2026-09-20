@@ -1568,7 +1568,27 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     // It is real now, and there is a capture behind it.
     const bool first_configure = !window->configured;
     window->configured = true;
-    const bool commit_now = first_configure || published_geometry;
+    // ALWAYS, and the narrowing below is only counted, never applied.
+    //
+    // Committing only on the first configure and on a real resize was
+    // tried twice. The second attempt genuinely changed behaviour (the
+    // counter proved it: 14 of 16 configures answered by the ack alone)
+    // and it did NOT stop the freeze -- and under a slower build, with
+    // the validation layer and a protocol trace running, it left the
+    // window invisible: the surface mapped, and then
+    //
+    //   SceneManager: resizing main targets to 1382x777
+    //
+    // every five seconds with no wl_surface.attach and no present, ever.
+    // The compositor is waiting for a commit that answers the configure,
+    // and the ack alone does not satisfy it here.
+    //
+    // So the cross-thread hazard stays, documented, and the counter
+    // below keeps reporting what a narrowing WOULD have skipped. Closing
+    // it needs the renderer's own commit to answer the configure, which
+    // is a design change rather than a condition on this line.
+    const bool commit_now = true;
+    const bool would_skip = !(first_configure || published_geometry);
     // Says, in numbers, that the change above actually does what it
     // claims: how many configures were answered by the ack alone rather
     // than by a commit from this thread.
@@ -1581,18 +1601,18 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     {
         static int committed = 0;
         static int ack_only = 0;
-        if (commit_now) {
-            ++committed;
-        } else {
+        if (would_skip) {
             ++ack_only;
+        } else {
+            ++committed;
         }
         // Rare enough to print every time early, then only on powers of
         // two: a window that is being dragged produces a burst of these
         // and the log is not where a drag should be measured.
         const int total = committed + ack_only;
         if (total <= 8 || (total & (total - 1)) == 0) {
-            std::printf("stud: android-glue: %d configure(s): %d committed (first map or a real "
-                        "resize), %d answered by the ack alone\n",
+            std::printf("stud: android-glue: %d configure(s): %d needed the commit (first map "
+                        "or a real resize), %d did not (all are committed; see above)\n",
                         total, committed, ack_only);
             std::fflush(stdout);
         }
