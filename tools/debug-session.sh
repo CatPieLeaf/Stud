@@ -76,6 +76,31 @@ if [ -z "$STUD_DEBUG_NO_VALIDATION" ] && \
     export VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
 fi
 
+# WAYLAND_DEBUG: every protocol message, with a timestamp.
+#
+# This is the decisive measurement for the 12006ms freeze and it is the
+# one thing never captured. Everything is known about that stall except
+# what the driver is waiting FOR: the thread spins inside
+# vkQueuePresentKHR (state R, wchan 0) with the GPU idle, no Xid, and
+# `waiting for the queue 0.0ms`, so it is not Stud's lock and not the
+# GPU -- it is the driver waiting on the compositor. The protocol trace
+# says which message it sent last and what never came back.
+#
+# It goes to the same file as everything else on purpose: the session
+# log already carries the SLOW line, and interleaved output is what makes
+# the two correlate without guessing at clocks.
+#
+# NOTE WHEN READING IT: the SLOW line prints when the present RETURNS,
+# at the END of the twelve seconds. Anything logged just before it
+# happened DURING the stall, not before it -- which is how a run of
+# focus changes (a user alt-tabbing to see why the game had stopped)
+# was once read as the cause.
+#
+# STUD_DEBUG_NO_WAYLAND_TRACE=1 turns it off if the volume is a problem.
+if [ -z "$STUD_DEBUG_NO_WAYLAND_TRACE" ]; then
+    export WAYLAND_DEBUG=1
+fi
+
 echo "Stud debug session"
 echo "  log:             $LOG"
 echo "  flight recorder: $FR"
