@@ -1426,49 +1426,6 @@ public:
         reserve_queue_once();
         if (!command_batch_.empty()) emit_command_batch_locked();
 
-        // A FRAME'S END GOES AS ITS OWN REQUEST, never inside a batch.
-        //
-        // Everything else reply-free is packed into one GlCommandBatch,
-        // which the host decodes and dispatches sub-call by sub-call --
-        // past the per-call hook that paces frames, and past the rule
-        // that keeps a driver-blocking call off the dispatch lock. So
-        // once presents became reply-free, BOTH frame caps quietly
-        // stopped working on the Vulkan path: the background one that is
-        // supposed to stop drawing for a window nobody is looking at, and
-        // the display-rate one. Nothing said so, because a cap that never
-        // runs looks exactly like a cap that is not needed.
-        //
-        // Measured, not deduced: `hooked 0` in the per-second record
-        // while that same second presented frames.
-        //
-        // It also cost an investigation. Grepping a session for the
-        // background cap's own "frames are being paced" line found
-        // nothing, and that was read as proof the window had never been
-        // backgrounded. The line was missing because the cap could not
-        // run, not because the state never happened.
-        //
-        // One request a frame, against the thousands this batches, so the
-        // batching it gives up is the batching that never mattered.
-        if (id == CallId::VkQueuePresentKHR || id == CallId::EglSwapBuffers) {
-            emit_gl_batch_locked();
-            Header hdr{};
-            hdr.call_id = id;
-            for (int i = 0; i < 8; ++i) hdr.args[i] = args[i];
-            hdr.pixel_buffer_offset_plus_one = pixel_buffer_offset_plus_one;
-            hdr.flags = Header::kNoReply;
-            hdr.in_buffer_len = in_len;
-            hdr.out_buffer_len = 0;
-            const size_t at = queue_.size();
-            queue_.resize(at + sizeof(hdr) + in_len);
-            std::memcpy(queue_.data() + at, &hdr, sizeof(hdr));
-            if (in_len > 0 && in_buffer != nullptr) {
-                std::memcpy(queue_.data() + at + sizeof(hdr), in_buffer, in_len);
-            }
-            if (queue_.size() >= kQueueFlushBytes) hand_off_locked();
-            writer_wake_.notify_one();
-            return;
-        }
-
         // Built straight into the queue rather than on the stack and
         // copied in.
         //
