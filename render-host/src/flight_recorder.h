@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 // A ring buffer of what just happened, dumped the moment something goes
@@ -44,10 +45,33 @@ enum class Event : uint32_t {
     Note,          // a=arbitrary, b=arbitrary, c=arbitrary
 };
 
-// Records one event. Cheap enough for every submit and every barrier:
-// one clock read, one atomic increment, four stores. No allocation, no
-// formatting, no lock held across anything that can block.
-void record(Event e, uint64_t a = 0, uint64_t b = 0, uint64_t c = 0);
+// Whether anything is being recorded, as an inline read.
+//
+// This is on the hot path -- vk_cmd_record replays every barrier the
+// engine sends, thousands per frame -- so when the recorder is off the
+// cost has to be a single predictable branch and nothing else. It used
+// to be an out-of-line call into record(), which then checked a local
+// static and returned; that is a call, a guard-variable load and a
+// branch per barrier, paid by every shipped copy of Stud forever.
+//
+// Set once at startup from STUD_FLIGHT_RECORDER. Relaxed because it
+// never changes after that and nothing orders against it.
+namespace detail {
+extern std::atomic<bool> g_on;
+}
+
+inline bool enabled() { return detail::g_on.load(std::memory_order_relaxed); }
+
+// Out of line: only reached when recording is actually on.
+void record_event(Event e, uint64_t a, uint64_t b, uint64_t c);
+
+// Records one event. Cheap enough for every submit and every barrier
+// WHEN ON: one clock read, one atomic increment, four stores. When off,
+// one branch.
+inline void record(Event e, uint64_t a = 0, uint64_t b = 0, uint64_t c = 0) {
+    if (!enabled()) return;
+    record_event(e, a, b, c);
+}
 
 // Writes the recent history out, newest last, with timestamps relative
 // to now. Goes to stdout and, when STUD_FLIGHT_RECORDER_PATH is set, to
@@ -58,9 +82,5 @@ void record(Event e, uint64_t a = 0, uint64_t b = 0, uint64_t c = 0);
 // other failures behind it, and twenty identical dumps would bury the
 // first one, which is the only one that matters.
 void dump(const char* why);
-
-// Whether anything is being recorded. Off unless STUD_FLIGHT_RECORDER is
-// set, so an ordinary session pays nothing but a predictable branch.
-bool enabled();
 
 }  // namespace stud::render_host::fr

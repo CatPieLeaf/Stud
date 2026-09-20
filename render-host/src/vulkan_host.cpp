@@ -26,6 +26,7 @@
 #include <shared_mutex>
 #include <condition_variable>
 #include <unordered_map>
+#include <unordered_set>
 #include <atomic>
 #include <map>
 #include <set>
@@ -369,14 +370,14 @@ struct Loader {
     // the same shape as the driver bug that misbehaves when an instance
     // dies while other objects can still reach the present path, so it
     // is worth not doing.
-    std::set<uint64_t> live_memory;
+    std::unordered_set<uint64_t> live_memory;
     // And the buffers, for the same reason. Freeing the memory alone was
     // not enough: the leak report went from VkDeviceMemory to VkBuffer,
     // in the same counts, because the engine drops both. A buffer must
     // be destroyed BEFORE the memory it is bound to is freed, which is
     // the order used at the destroy site.
-    std::set<uint64_t> live_buffers;
-    std::set<uint64_t> untransitioned_images;
+    std::unordered_set<uint64_t> live_buffers;
+    std::unordered_set<uint64_t> untransitioned_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
 
@@ -6255,8 +6256,20 @@ std::map<uint64_t, std::chrono::steady_clock::time_point>& fence_submit_times() 
     return m;
 }
 
+// OFF unless the flight recorder is on, because this is pure diagnostics
+// on a hot path.
+//
+// It exists so a slow fence wait can say "waited 300ms for work
+// submitted 302ms ago" (a busy GPU) rather than "waited 300ms for work
+// submitted 2ms ago" (a completion nobody heard about) -- a real
+// distinction, and worth having while investigating. But it takes a
+// mutex and writes a std::map entry on EVERY submit, and the engine
+// submits several times a frame, forever, in every shipped copy.
+//
+// Tied to the recorder rather than given a switch of its own: the number
+// is only readable next to a flight-recorder dump anyway.
 void note_fence_submit_time(uint64_t fence) {
-    if (fence == 0) return;
+    if (fence == 0 || !fr::enabled()) return;
     std::lock_guard<std::mutex> lock(fence_submit_time_mutex());
     fence_submit_times()[fence] = std::chrono::steady_clock::now();
 }
