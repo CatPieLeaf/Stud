@@ -58,6 +58,31 @@ def main() -> int:
                     r"textureLod(\1, \2, 0.0);", joined)
     joined = joined.replace("return vec4(res, 1.0);", "")
 
+    # Skip the anti-ringing work where it provably does nothing.
+    #
+    # Ringing is overshoot at an edge. On a flat neighbourhood the soft
+    # minimum and maximum collapse onto the value itself and the clamp
+    # changes nothing -- but the shader pays for it anyway: four table
+    # samples and eight groups of five mat4x3 squarings, around 576
+    # multiplies, on every pixel including a blank wall.
+    #
+    # The test is free, because the structure tensor has already
+    # produced `lambda` before this block runs, and the threshold is
+    # mpv's own: 0.004 is where its trained `strength` leaves the
+    # flattest bucket. Using that boundary rather than one invented here
+    # means the pixels skipped are exactly the ones the reference itself
+    # classifies as having no edge in them.
+    if anti_ringing:
+        start = joined.index("w = textureLod(lut_ar,")
+        end = joined.index("res = mix(res, clamp(res, lo, hi)")
+        end = joined.index("\n", end) + 1
+        block = joined[start:end]
+        indented = "\n".join(("    " + l) if l.strip() else l for l in block.splitlines())
+        joined = (joined[:start] +
+                  "if (lambda >= 0.004) {  // see tools/gen_ravu.py: no edge, no ringing\n" +
+                  indented + "\n}\n" +
+                  joined[end:])
+
     leftovers = sorted({w for w in re.findall(r"\w*(?:HOOKED|ravu_zoom_lut)\w*", joined)})
     if leftovers:
         sys.stderr.write(f"{src_path}: unsubstituted mpv vocabulary: {leftovers}\n")
