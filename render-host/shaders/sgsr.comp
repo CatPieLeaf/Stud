@@ -132,13 +132,27 @@ void main() {
     // coordinates: the same 0..1 the fragment shader's varying carried.
     highp vec2 uv = (vec2(out_pos) + 0.5) / vec2(p.dst_size);
 
-    // Stud's sharpness setting arrives as 0.0-1.25, where 1.0 is
-    // ordinary strength; SGSR's own default is 2.0 on its scale, so 1.0
-    // maps there. A setting of zero means the user asked for no
-    // sharpening, but SGSR cannot be asked for none -- the sharpening IS
-    // the reconstruction -- so it falls back to the reference default
-    // rather than dividing the edge term away to nothing.
-    float edgeSharpness = p.sharpness > 0.0 ? p.sharpness * 2.0 : 2.0;
+    // Stud's sharpness setting, 0.0-1.25, onto the reference's own scale.
+    //
+    // This used to be `sharpness > 0 ? sharpness * 2.0 : 2.0`, which was
+    // wrong at both ends. At zero it jumped to 2.0 -- the reference's
+    // FULL default -- so the bottom of the slider did the opposite of
+    // what it says. And the top half, 1.0 to 1.25, mapped to 2.0-2.5,
+    // where nothing visibly changes: what this number scales is clamped
+    // twice below, first into the neighbourhood's own range and then to
+    // +/-23/255, so past about 2 it is pushing against a limit rather
+    // than sharpening. The slider appeared inert on SGSR for that
+    // reason, which is exactly how it was reported.
+    //
+    // Piecewise, so 100% still lands on 2.0 -- the value Qualcomm
+    // calibrated -- while the ends reach somewhere:
+    //
+    //     0%    0.5   visibly soft; the reconstruction still runs, it
+    //                 just corrects less
+    //     100%  2.0   the reference's own default
+    //     125%  3.0   as far as the clamps allow before it saturates
+    float edgeSharpness = p.sharpness <= 1.0 ? 0.5 + p.sharpness * 1.5
+                                             : 2.0 + (p.sharpness - 1.0) * 4.0;
 
     vec4 color;
     color.xyz = textureLod(src, uv, 0.0).xyz;
