@@ -1613,9 +1613,9 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             //     lastX = x; lastY = y;
             //     nativePassMouseMove(x, y, dx, dy);
             //
-            // That is the whole of it. The position passed is the
-            // pointer's own, every time, and the camera rotates from the
-            // deltas beside it.
+            // Nothing else runs on that path. The position passed is
+            // the pointer's own, every time, and the camera rotates from
+            // the deltas beside it.
             //
             // NO PAN. onTouch() returns y(motionEvent) for a real mouse
             // before it ever reaches the GestureDetector, so

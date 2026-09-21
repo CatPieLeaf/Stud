@@ -142,17 +142,17 @@ std::atomic<unsigned long long> g_scans{0};
 std::atomic<unsigned long long> g_pages{0};
 // What the ioctl actually costs, in nanoseconds.
 //
-// PM_SCAN_WP_MATCHING does not merely READ the page tables, it rewrites
-// the write-protect bit on every page it reports -- which means a TLB
-// shootdown, and on a multicore machine that is an IPI to every core.
+// PM_SCAN_WP_MATCHING reads the page tables and rewrites the
+// write-protect bit on every page it reports, so each call costs a TLB
+// shootdown: an IPI to every core on a multicore machine.
 // flush_all_mapped_memory() runs this over every live mapping at every
 // submit, and a real session held 38-47 mappings at once.
 //
-// That is the standing hypothesis for a lag that takes the WHOLE desktop
-// with it while the GPU sits idle: the cost would land on every process
-// on the machine, not just Stud. Nothing measured it, so it stayed a
-// hypothesis. This is the measurement, and it needs no bad phase to
-// produce an answer -- if a scan is microseconds the idea is dead.
+// That made it the first suspect for a lag that takes the whole desktop
+// down while the GPU sits idle, since the cost lands on every process on
+// the machine. Measured over 3552 scans in a real session: 0.144 ms
+// worst case, which is far too small to explain it. The counters stay
+// because the lag is still unexplained and this rules one cause out.
 std::atomic<unsigned long long> g_scan_ns{0};
 std::atomic<unsigned long long> g_scan_ns_max{0};
 std::atomic<unsigned long long> g_slow_scans{0};

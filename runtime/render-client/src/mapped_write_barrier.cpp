@@ -176,7 +176,7 @@ std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::take_dirty_
     if (base_ == nullptr) return {};
     if (uffd_) {
         // One ioctl: what was written, and re-armed, with nothing able to
-        // happen between the two. This is the whole reason for uffd-scan.
+        // happen between the two. Closing that gap is what uffd-scan is for.
         std::vector<std::pair<std::size_t, std::size_t>> runs;
         if (!UffdScan::take_written_and_protect(base_, offset, len, runs)) {
             // The kernel refused. Report the whole asked range rather than

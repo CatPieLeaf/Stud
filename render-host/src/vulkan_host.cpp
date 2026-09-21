@@ -934,8 +934,8 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
     // the RTX 3050, the system monitor showing it at 100%.
     //
     // Worse, the rotate was guarded on `index != 0`, so choosing the
-    // FIRST device -- the integrated GPU, the whole point of the setting
-    // on a machine like that -- could not do anything even in principle.
+    // FIRST device -- the integrated GPU, and the likeliest choice on a
+    // machine like that -- could not do anything even in principle.
     //
     // A list of one is the only thing an engine cannot pick around. A
     // stale index, one past the end of what the driver reports, still
@@ -6941,12 +6941,12 @@ void note_latency(std::atomic<uint64_t>& n, std::atomic<uint64_t>& sum,
 
 // WHEN each fence's work reached the queue.
 //
-// A slow vkWaitForFences on its own is ambiguous, and that ambiguity is
-// the whole reason the system lag is still unexplained: "the fence took
-// 300ms" is consistent both with a GPU that was busy for 300ms and with
-// work that finished in 2ms whose completion nobody was told about for
-// the other 298. Those need opposite fixes. Subtracting the submit time
-// separates them, and nothing was recording it.
+// A slow vkWaitForFences on its own is ambiguous: "the fence took 300ms"
+// is consistent both with a GPU that was busy for 300ms and with work
+// that finished in 2ms whose completion nobody was told about for the
+// other 298. Those need opposite fixes, and telling them apart is what
+// the system lag still needs. Subtracting the submit time separates
+// them, and nothing was recording it.
 std::mutex& fence_submit_time_mutex() {
     static std::mutex m;
     return m;
@@ -8271,9 +8271,9 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                         static_cast<unsigned long long>(presents_seen), shared, buffers,
                         g_upscale_chains.size(), retired, g_swapchain_extents.size());
             // Latency beside the census, so degradation and accumulation
-            // can be read off the same line at the same moment. If the
-            // "cursed run" idea is right, one of these two rises while
-            // the other does not, and that is the whole question.
+            // can be read off the same line at the same moment. If a
+            // session degrades as it runs, one of these two rises while
+            // the other does not.
             const uint64_t wn = g_wait_n.exchange(0, std::memory_order_relaxed);
             const uint64_t wus = g_wait_us.exchange(0, std::memory_order_relaxed);
             const uint64_t wmax = g_wait_us_max.exchange(0, std::memory_order_relaxed);
