@@ -185,19 +185,11 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscalerCombo_->setToolTip(
         "Which filter rebuilds the frame at full resolution.\n"
         "\n"
-        "RAVU-Zoom AR is the better picture, and the more expensive. It looks its filter\n"
-        "weights up in a table trained offline, which is what makes it the sharper of the\n"
-        "two, and clamps every pixel into the range its own neighbourhood spans so it\n"
-        "cannot trace a bright or dark border around a hard edge.\n"
+        "RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
+        "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
         "\n"
-        "SGSR1 ED is the lightweight one. It reconstructs edges from the pixels\n"
-        "themselves, with no table to read, and costs roughly a third of what RAVU does.\n"
-        "Choose it if the frame rate matters more than the picture, which on a laptop or\n"
-        "an integrated GPU it usually will.\n"
-        "\n"
-        "Neither has a sharpness setting: both run pinned at maximum, because below that\n"
-        "each of them only gets worse.\n"
-        "Applies on the next start, so use the restart button beside Save.");
+        "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
+        "The one to pick on a laptop or an integrated GPU.");
     upscalerRow->addWidget(upscalerCombo_);
     upscalerRow->addStretch();
     graphics->addLayout(upscalerRow);
