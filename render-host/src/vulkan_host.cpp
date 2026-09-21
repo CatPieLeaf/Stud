@@ -484,12 +484,12 @@ struct Loader {
     // dies while other objects can still reach the present path, so it
     // is worth not doing.
     std::unordered_set<uint64_t> live_memory;
-    // And the buffers, for the same reason. Freeing the memory alone was
-    // not enough: the leak report went from VkDeviceMemory to VkBuffer,
-    // in the same counts, because the engine drops both. A buffer must
-    // be destroyed BEFORE the memory it is bound to is freed, which is
-    // the order used at the destroy site.
-    std::unordered_set<uint64_t> live_buffers;
+    // No live_buffers set here any more. One was kept alongside
+    // live_memory so the engine's dropped buffers could be destroyed
+    // with the memory they sit in, and 7ca61d2 took that destroy back
+    // out because it crashed the driver. The bookkeeping outlived its
+    // only reader: an insert on every vkCreateBuffer and an erase on
+    // every destroy, thousands a session, feeding nothing.
     std::unordered_set<uint64_t> untransitioned_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
@@ -5119,7 +5119,6 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
         std::fflush(stdout);
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
-    l.live_buffers.insert(to_u64(buffer));
     return write_handle(to_u64(buffer), out, out_len);
 }
 
@@ -5244,7 +5243,6 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 std::lock_guard<std::mutex> lock(buffer_memory_mutex());
                 buffer_memory().erase(handle);
             }
-            l.live_buffers.erase(handle);
             if (l.destroy_buffer) l.destroy_buffer(l.device, from_u64<VkBuffer>(handle), nullptr);
             break;
         }
@@ -5540,7 +5538,10 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // adding the buffer destroy gave 1 of each. A leak the
                 // validation layer complains about is better than a
                 // segfault.
-                l.live_buffers.clear();
+                //
+                // Nothing to clear here any more: the set that was kept
+                // for that destroy went with it. See Loader, where
+                // live_buffers used to sit.
 
                 if (l.free_memory != nullptr && !l.live_memory.empty()) {
                     std::printf("stud-render-host: freeing %zu memory allocation(s) the engine "
