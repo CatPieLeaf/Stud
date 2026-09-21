@@ -1469,8 +1469,19 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
             // Every key actually handed to the engine, one line each,
             // immediately before the call, so a run says what the engine
             // received rather than leaving it to be inferred from what
-            // Stud meant to send. Bounded so it cannot fill a log.
-            {
+            // Stud meant to send.
+            //
+            // BEHIND STUD_INPUT_TRACE, which is where it always belonged.
+            // It used to run in every session, bounded to 60 events so it
+            // could not fill a log -- but the bound was the wrong
+            // protection. These lines are scan codes and key codes, which
+            // is what was typed, and the first sixty keystrokes of a
+            // session are the ones most likely to be a login. The session
+            // log exists to be exported and sent to someone, and this
+            // project's own rule is that a password, a cookie or a
+            // TextBox's contents never reach it. A keystroke is all three
+            // by another name.
+            if (input_trace_enabled()) {
                 static int traced = 0;
                 if (traced < 60) {
                     ++traced;
