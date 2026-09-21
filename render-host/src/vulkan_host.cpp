@@ -4494,8 +4494,6 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
     // minImageCount is only a MINIMUM, so a request for three can still
     // leave the driver alternating two if nothing ever has three
     // outstanding. This says which of those it is.
-    std::printf("stud-render-host: the real swapchain has %u image(s)\n", count);
-    std::fflush(stdout);
     pending.real_images.resize(count);
     l.get_swapchain_images(l.device, swapchain, &count, pending.real_images.data());
     pending.real = swapchain;
