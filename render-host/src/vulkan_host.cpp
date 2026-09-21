@@ -213,6 +213,23 @@ const char* upscaler_name(bool sharpen) {
 // edgeSharpness are constants rather than push-constant reads, so the
 // mapping and its branch are gone from the SPIR-V.
 
+// The last surface extent Stud answered the engine with, and the
+// extent the engine last built a swapchain at. Kept as plain atomics
+// rather than read out of g_swapchain_ci, because the comparison
+// happens on the present and acquire paths and that map is not theirs
+// to walk.
+//
+// These exist for one question: has the engine's swapchain gone stale
+// against the surface? Not "is it the window's size" -- with upscaling
+// the engine renders SMALLER than the window by design, so that
+// comparison is wrong every frame. The right operand is what
+// vkGetPhysicalDeviceSurfaceCapabilitiesKHR told the engine, which is
+// the number the engine itself would have built against.
+std::atomic<uint32_t> g_engine_surface_w{0};
+std::atomic<uint32_t> g_engine_surface_h{0};
+std::atomic<uint32_t> g_engine_swapchain_w{0};
+std::atomic<uint32_t> g_engine_swapchain_h{0};
+
 std::atomic<uint32_t> g_upscale_output_w{0};
 std::atomic<uint32_t> g_upscale_output_h{0};
 // Whether the pass may use its shaders. See the header.
@@ -2189,6 +2206,13 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
                 std::fflush(stdout);
             }
         }
+    }
+    // Whatever the engine is about to be told, substituted or not. See
+    // g_engine_surface_w.
+    if (caps.currentExtent.width != kUndefinedExtent &&
+        caps.currentExtent.height != kUndefinedExtent) {
+        g_engine_surface_w.store(caps.currentExtent.width, std::memory_order_relaxed);
+        g_engine_surface_h.store(caps.currentExtent.height, std::memory_order_relaxed);
     }
     write_pod(caps, out, out_len);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -4735,6 +4759,12 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     }
     ci.imageColorSpace = static_cast<VkColorSpaceKHR>(h.image_color_space);
     ci.imageExtent = {h.width, h.height};
+    // What the ENGINE asked for, recorded before Stud substitutes its
+    // own extent below for the upscale pass. This is the size the engine
+    // believes its swapchain is, so it is the one worth comparing
+    // against the surface; see engine_swapchain_is_stale().
+    g_engine_swapchain_w.store(h.width, std::memory_order_relaxed);
+    g_engine_swapchain_h.store(h.height, std::memory_order_relaxed);
     ci.imageArrayLayers = h.image_array_layers;
     ci.imageUsage = h.image_usage;
     ci.imageSharingMode = static_cast<VkSharingMode>(h.sharing_mode);
@@ -7375,9 +7405,54 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
 //
 // Stud's own handling above still runs; only what crosses back to the
 // engine is changed.
+// Whether the engine's swapchain no longer matches the surface it was
+// built against.
+//
+// This is the one case where suboptimal has to reach the engine. Stud
+// cannot fix it from this side: recreate_real_swapchain() is off by
+// default and says why -- a rebuilt swapchain can come back with a
+// different image count than the images the engine is already holding.
+// Only the engine can rebuild its own, and suboptimal is the signal it
+// rebuilds on.
+bool engine_swapchain_is_stale() {
+    const uint32_t sw = g_engine_surface_w.load(std::memory_order_relaxed);
+    const uint32_t sh = g_engine_surface_h.load(std::memory_order_relaxed);
+    const uint32_t cw = g_engine_swapchain_w.load(std::memory_order_relaxed);
+    const uint32_t ch = g_engine_swapchain_h.load(std::memory_order_relaxed);
+    if (sw == 0 || sh == 0 || cw == 0 || ch == 0) return false;
+    return sw != cw || sh != ch;
+}
+
 uint64_t engine_visible_result(VkResult r) {
-    return static_cast<uint64_t>(
-        static_cast<int32_t>(r == VK_SUBOPTIMAL_KHR ? VK_SUCCESS : r));
+    if (r != VK_SUBOPTIMAL_KHR) return static_cast<uint64_t>(static_cast<int32_t>(r));
+    // Hidden while the extents agree, which is the case the comment
+    // above describes and the only one measured when it was written.
+    if (!engine_swapchain_is_stale()) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
+    // Stale, so the engine is told. Live-caught on COSMIC: the engine
+    // built its swapchain at 1728x972 -- Stud's default, because the
+    // real size had not arrived yet -- the window then turned out to be
+    // 1280x630, and vkCreateSwapchainKHR was never called again. 4803
+    // consecutive suboptimal presents over 40 seconds, a window with a
+    // black bezel around content that never grew into it, no working
+    // input, and it only came right when the user dragged the window
+    // edge and forced a real resize.
+    static uint32_t said_w = 0;
+    static uint32_t said_h = 0;
+    const uint32_t sw = g_engine_surface_w.load(std::memory_order_relaxed);
+    const uint32_t sh = g_engine_surface_h.load(std::memory_order_relaxed);
+    if (sw != said_w || sh != said_h) {
+        said_w = sw;
+        said_h = sh;
+        std::printf("stud-render-host: the engine's swapchain is %ux%u and the surface is "
+                    "%ux%u, so VK_SUBOPTIMAL_KHR is being passed through for it to rebuild "
+                    "on\n",
+                    g_engine_swapchain_w.load(std::memory_order_relaxed),
+                    g_engine_swapchain_h.load(std::memory_order_relaxed), sw, sh);
+        std::fflush(stdout);
+    }
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUBOPTIMAL_KHR));
 }
 
 uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore,
