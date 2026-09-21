@@ -92,6 +92,7 @@ add_executable(stud-ui
     src/main.cpp
     src/desktop_entry.cpp
     src/diagnose.cpp
+    src/log_collector.cpp
     src/settings_window.cpp
     src/update_check.cpp
     src/tray.cpp

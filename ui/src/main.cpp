@@ -23,6 +23,7 @@
 #include <iostream>
 #include "desktop_entry.h"
 #include "gpu_enum.h"
+#include "log_collector.h"
 #include "diagnose.h"
 #include "deep_link_handoff.h"
 #include "launch_uri.h"
@@ -716,7 +717,35 @@ void start_session_log() {
     // inherit it, render-host through its QProcess environment, and
     // Process B through bwrap's own --setenv (see config.extra_env).
     qputenv("STUD_LOG_FILE", path.toUtf8());
-    stud::logging::start_session_log(path.toStdString());
+
+    // Process A collects; B and C throw lines at it.
+    //
+    // Every process used to write this file itself, inline, on whatever
+    // thread produced the line -- which is how a single printf on the
+    // render thread froze a game join for seconds (431b9b5). Now the
+    // engine's side of logging is a write into a kernel socket buffer
+    // with no disk behind it, and the batching happens here instead, in
+    // the process that has nothing to be late for.
+    //
+    // If the collector cannot start, STUD_LOG_SOCKET stays unset and the
+    // children write the file themselves, exactly as before.
+    const QString socket_path = log_dir.filePath(QStringLiteral("collector.sock"));
+    if (stud::ui::start_log_collector(socket_path.toStdString(), path.toStdString())) {
+        qputenv("STUD_LOG_SOCKET", socket_path.toUtf8());
+        // Whatever ends this session -- the window's X, the tray's Exit,
+        // leaving from inside Roblox -- the last batch goes out then and
+        // there rather than at the next tick of the timer. A crash
+        // already does this when the report appears; a user leaving
+        // deserves the same complete file, and aboutToQuit is the one
+        // place every one of those paths passes through.
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp,
+                         []() { stud::ui::flush_log_collector(); });
+        // A goes through its own socket too, so all three processes take
+        // one path and this one owns no special case.
+        stud::logging::start_session_log_dispatch(socket_path.toStdString());
+    } else {
+        stud::logging::start_session_log(path.toStdString());
+    }
     stud::logging::install_crash_reporter("stud-ui");
     std::printf("stud: session log: %s\n", path.toUtf8().constData());
 }
@@ -1222,6 +1251,14 @@ void show_crash_dialog(const QString& which_process) {
     // answer is handled when it arrives instead of being waited for.
     qApp->setQuitOnLastWindowClosed(false);
     g_crash_dialog_open = true;
+    // On disk NOW, not at the next tick of the batch timer.
+    //
+    // The process that died has already thrown every line it produced at
+    // this one, so this is the moment they all become a file -- and it
+    // happens when the report appears, not when the user clicks Export.
+    // Someone who just closes this dialog must still be left with a
+    // complete log; Export only copies a file that is already finished.
+    stud::ui::flush_log_collector();
 
     auto* box = new QMessageBox;
     box->setAttribute(Qt::WA_DeleteOnClose);
@@ -1246,12 +1283,21 @@ void show_crash_dialog(const QString& which_process) {
 
     QObject::connect(box, &QMessageBox::finished, qApp, [box, export_button, log]() {
         if (export_button != nullptr && box->clickedButton() == export_button) {
-            const QString suggested =
-                QDir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation))
-                    .filePath(QFileInfo(log).fileName());
-            const QString target = QFileDialog::getSaveFileName(
-                nullptr, QStringLiteral("Export Stud log"), suggested,
-                QStringLiteral("Log files (*.log);;All files (*)"));
+            QFileDialog dialog(nullptr, QStringLiteral("Export Stud log"));
+            dialog.setAcceptMode(QFileDialog::AcceptSave);
+            dialog.setFileMode(QFileDialog::AnyFile);
+            dialog.setNameFilter(QStringLiteral("Log files (*.log);;All files (*)"));
+            dialog.setDirectory(
+                QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+            // The name of the log being exported, stated on its own: a
+            // full path handed to getSaveFileName() had its filename half
+            // ignored, and the export came out under the previous
+            // session's name, on top of the previous session's file.
+            dialog.selectFile(QFileInfo(log).fileName());
+            const QString target =
+                dialog.exec() == QDialog::Accepted && !dialog.selectedFiles().isEmpty()
+                    ? dialog.selectedFiles().first()
+                    : QString();
             if (!target.isEmpty()) {
                 QFile::remove(target);
                 if (!QFile::copy(log, target)) {

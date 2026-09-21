@@ -9,6 +9,8 @@
 #if defined(__GLIBC__)
 #include <execinfo.h>
 #endif
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -99,9 +101,54 @@ inline void* tee_thread(void* arg) {
 // Tees this process's stdout and stderr into `path`. Safe to call with an
 // empty path (does nothing) and safe to call when the file cannot be
 // opened, output simply keeps going where it already went.
+// Where this process's output goes, once it has been teed.
+//
+// Two destinations exist and they differ only in the fd: Process A opens
+// the log FILE, while B and C open a SOCKET to Process A. The tee thread
+// below does not care which -- it write()s a chunk and moves on -- and
+// that is the whole point of the arrangement.
+//
+// A write to that socket is a copy into a kernel buffer, with no disk
+// behind it, so a process is never made to wait on file I/O to say
+// something. Batching happens once, in Process A, on its way to the
+// file. Nothing is held back on this side, so nothing can be lost in
+// transit: by the time a process dies, every line it ever produced is
+// already in A's hands.
+inline bool start_session_log_to_fd(int destination_fd);
+
 inline bool start_session_log(const std::string& path) {
     if (path.empty()) return false;
     const int log_fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (log_fd < 0) return false;
+    return start_session_log_to_fd(log_fd);
+}
+
+// The socket Process A collects on. Named beside the log it feeds.
+inline std::string session_log_socket_path_from_env() {
+    const char* value = std::getenv("STUD_LOG_SOCKET");
+    return (value != nullptr && *value != '\0') ? value : std::string();
+}
+
+// Connects to Process A's collector and tees into it. Used by B and C.
+inline bool start_session_log_dispatch(const std::string& socket_path) {
+    if (socket_path.empty()) return false;
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return false;
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socket_path.size() + 1 > sizeof(addr.sun_path)) {
+        ::close(fd);
+        return false;
+    }
+    std::memcpy(addr.sun_path, socket_path.c_str(), socket_path.size() + 1);
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        ::close(fd);
+        return false;
+    }
+    return start_session_log_to_fd(fd);
+}
+
+inline bool start_session_log_to_fd(int log_fd) {
     if (log_fd < 0) return false;
 
     int pipe_fds[2] = {-1, -1};
@@ -403,6 +450,12 @@ inline void install_crash_reporter(const char* process_name) {
 }
 
 inline bool start_session_log_from_env() {
+    // The socket wins when Process A offers one: B and C should be
+    // dispatching to it rather than each writing the same file. Falling
+    // back to the file keeps a process started on its own still able to
+    // log.
+    const std::string socket_path = session_log_socket_path_from_env();
+    if (!socket_path.empty() && start_session_log_dispatch(socket_path)) return true;
     return start_session_log(session_log_path_from_env());
 }
 
