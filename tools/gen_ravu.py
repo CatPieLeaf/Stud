@@ -1,75 +1,129 @@
+#!/usr/bin/env python3
+"""Turn an mpv RAVU-Zoom hook into the compute shader render-host compiles.
+
+    gen_ravu.py <hook> <out.comp>
+
+Handles both the plain hook and the anti-ringing one, which differ in
+whether they bind a second weight table.
+
+The body is mpv's, mechanically substituted rather than retyped: the
+gradient weights and the LUT indexing are trained constants with nothing
+in them a reader could check by eye, which is exactly the case where
+transcribing from a reference goes wrong quietly. upscale.comp's own
+comment records what that cost the first time.
+
+What this supplies, because mpv's hook vocabulary is not Stud's:
+
+    HOOKED_pos * HOOKED_size  -> uv * src_size
+    HOOKED_tex(c)             -> textureLod(src, c, 0.0)
+    HOOKED_pt                 -> 1/src_size
+    texture(ravu_zoom_lut2,)  -> textureLod(lut,)
+    texture(..._lut2_ar,)     -> textureLod(lut_ar,)
+    return vec4(res, 1.0)     -> a store, with the swizzle Stud's
+                                 byte-copy hand-over needs
+"""
+
 import re
+import sys
 
-src = "/home/catpieleaf/.claude/jobs/76daf66d/tmp/prescalers/ravu-zoom-r2-rgb.hook"
-dst = "/home/catpieleaf/Stud-Folder/Stud/.claude/worktrees/perf-latency/render-host/shaders/ravu.comp"
 
-text = open(src).read()
-lines = text.splitlines()
+def main() -> int:
+    if len(sys.argv) != 3:
+        sys.stderr.write(__doc__)
+        return 2
+    src_path, out_path = sys.argv[1], sys.argv[2]
 
-begin = next(i for i, l in enumerate(lines) if l.startswith("vec4 hook()"))
-end = next(i for i, l in enumerate(lines) if l.startswith("//!TEXTURE"))
-body = lines[begin + 1:end]
-# drop the trailing "}" of hook()
-while body and body[-1].strip() in ("}", ""):
-    body.pop()
+    lines = open(src_path).read().splitlines()
+    begin = next(i for i, l in enumerate(lines) if l.startswith("vec4 hook()"))
+    end = next(i for i, l in enumerate(lines) if l.startswith("//!TEXTURE"))
+    body = lines[begin + 1:end]
+    while body and body[-1].strip() in ("}", ""):
+        body.pop()
 
-joined = "\n".join(body)
+    consts = [l for l in lines[:begin]
+              if l.startswith("const ") or l.startswith("#define")]
 
-# mpv's hook vocabulary -> ours. Order matters: the longest first.
-joined = joined.replace("HOOKED_pos * HOOKED_size", "uv * src_size")
-joined = re.sub(r"HOOKED_tex\((.*?)\)\.xyz",
-                lambda m: "textureLod(src, " + m.group(1) + ", 0.0).xyz",
-                joined)
-joined = joined.replace("HOOKED_pt", "inv_src_size")
-joined = joined.replace("texture(ravu_zoom_lut2,", "textureLod(lut,")
-# textureLod needs its lod argument; the substitution above left two-arg calls.
-joined = re.sub(r"textureLod\(lut, ([^;]*?)\);", r"textureLod(lut, \1, 0.0);", joined)
-joined = joined.replace("return vec4(res, 1.0);", "")
+    joined = "\n".join(body)
+    anti_ringing = "ravu_zoom_lut2_ar" in joined
 
-# also carry over the two constants declared above hook()
-consts = [l for l in lines[:begin]
-          if l.startswith("const ") or l.startswith("#define")]
+    # Longest patterns first, so the _ar table is not mangled by the
+    # substitution for the plain one.
+    joined = joined.replace("HOOKED_pos * HOOKED_size", "uv * src_size")
+    joined = re.sub(r"HOOKED_tex\((.*?)\)\.xyz",
+                    lambda m: "textureLod(src, " + m.group(1) + ", 0.0).xyz", joined)
+    joined = joined.replace("HOOKED_pt", "inv_src_size")
+    joined = joined.replace("texture(ravu_zoom_lut2_ar,", "textureLod(lut_ar,")
+    joined = joined.replace("texture(ravu_zoom_lut2,", "textureLod(lut,")
+    joined = re.sub(r"textureLod\((lut|lut_ar), ([^;]*?)\);",
+                    r"textureLod(\1, \2, 0.0);", joined)
+    joined = joined.replace("return vec4(res, 1.0);", "")
 
-header = '''#version 450
+    leftovers = sorted({w for w in re.findall(r"\w*(?:HOOKED|ravu_zoom_lut)\w*", joined)})
+    if leftovers:
+        sys.stderr.write(f"{src_path}: unsubstituted mpv vocabulary: {leftovers}\n")
+        return 1
 
-// RAVU-Zoom (r2, RGB), a trained upscaler from mpv's prescaler set.
+    name = "RAVU-Zoom-AR" if anti_ringing else "RAVU-Zoom"
+    ar_note = '''//
+// This is the ANTI-RINGING variant. Plain RAVU reconstructs an edge from
+// trained weights that have negative lobes, so it can overshoot on hard
+// edges -- which looks like a bright or dark border traced around
+// things, and was reported exactly that way. This one builds a soft
+// local minimum and maximum from a SECOND trained table and clamps the
+// result into them, so the output cannot leave the range its own
+// neighbourhood spans. Structurally incapable of ringing, the same
+// property that makes SGSR and RCAS ring-free.
+//
+// It costs a second set of table samples and the pow() chain that
+// shapes them, which is why the plain one is kept beside it.''' \
+        if anti_ringing else '''//
+// The plain variant: no clamp on the output, so its trained weights'
+// negative lobes can overshoot and trace a border around hard edges.
+// See ravu_ar.comp, which bounds it.'''
+
+    ar_binding = '''
+// The second trained table, for the soft minimum and maximum the result
+// is clamped into. Only the anti-ringing variant binds it.
+layout(set = 0, binding = 3) uniform sampler2D lut_ar;''' if anti_ringing else ""
+
+    header = f'''#version 450
+
+// {name} (r2, RGB), a trained upscaler from mpv's prescaler set.
 //
 //     Copyright the mpv-prescalers authors.
 //     SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// GENERATED, not written: the body below is the hook() of
-// third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook with mpv's texture
-// vocabulary mechanically substituted for Stud's, by
-// tools/gen_ravu.py. It is not retyped, because the gradient weights
-// and the LUT indexing arithmetic are trained constants and there is
-// nothing in them a reader could check by eye -- which is exactly the
-// case where transcribing from a reference goes wrong quietly.
+// GENERATED by tools/gen_ravu.py from
+// third_party/mpv-prescalers/{src_path.split("/")[-1]} -- see that
+// script for what it substitutes and why the body is not retyped.
 //
 // What it does, unlike every other upscaler here: it builds a structure
 // tensor from the 4x4 neighbourhood's luma, reduces it to an edge angle,
-// a strength and a coherence, and uses those three to index a trained
-// table of filter weights. The other filters decide how to weight a tap
-// from arithmetic; this one looks the answer up.
+// a strength and a coherence, and uses those three to index a table of
+// filter weights trained offline. The others decide a tap's weight by
+// arithmetic; this one looks it up.
+{ar_note}
 //
-// The table is 18x2592 rgba, uploaded device-local once at chain build
-// as HALF -- 373KB. The hook declares rgba16f and carries float32 data;
-// the format it declares is the right one, since mpv uploads half and
-// the weights are trained at that precision, and this table is sampled
-// four times per output pixel. tools/gen_ravu_lut.py does the
-// conversion and fails the build if any weight does not survive it.
+// The tables are 18x2592 rgba, uploaded device-local once at chain build
+// as HALF. The hook declares rgba16f and carries float32 data; the
+// format it declares is the right one, since mpv uploads half and the
+// weights are trained at that precision, and a table is sampled four
+// times per output pixel. tools/gen_ravu_lut.py does the conversion and
+// fails the build if any weight does not survive it.
 //
 // mpv also ships a COMPUTE variant that loads the shared neighbourhood
 // into LDS once per workgroup instead of re-fetching sixteen taps per
 // pixel. It was ported and measured here, and it is SLOWER: 0.557ms per
-// megapixel against 0.537 for this one, with a worse tail. The taps
-// were already hitting the texture cache, and the barrier and the LDS
-// round trip cost more than the redundant fetches did.
+// megapixel against 0.537, with a worse tail. The taps were already
+// hitting the texture cache, and the barrier and the LDS round trip cost
+// more than the redundant fetches did.
 //
-// Note the licence. Unlike FSR1 (MIT) and SGSR (BSD-3-Clause) this is
-// LGPL-3.0-or-later, which is a different question for a shipped binary
-// and has to be settled before it could be the one Stud keeps.
-//
-// STUD_UPSCALER=ravu.
+// Precision is left at the default. The structure tensor takes
+// eigenvalues, a sqrt and an atan over small gradients and then
+// quantises the angle into 24 buckets; reduced precision there could
+// move a pixel between buckets, which is a different picture rather than
+// a cheaper one. The weight tables ARE half -- that is where the
+// bandwidth was.
 
 precision highp float;
 precision highp int;
@@ -80,27 +134,20 @@ layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
 // The trained weights. Its own binding, which is why a RAVU chain needs
 // a descriptor layout the other upscalers do not.
-layout(set = 0, binding = 2) uniform sampler2D lut;
+layout(set = 0, binding = 2) uniform sampler2D lut;{ar_binding}
 
-layout(push_constant) uniform Params {
+layout(push_constant) uniform Params {{
     ivec2 src_size_i;
     ivec2 dst_size;
-    // Unused: RAVU has no sharpening stage of its own.
+    // Unused: RAVU does no sharpening of its own, so the setting drives
+    // the separate RCAS pass after it instead.
     float sharpness;
     int swap_rb;
-} p;
+}} p;
 
 '''
 
-footer = '''
-    // See upscale.comp: the last pass to write swizzles, so the
-    // hand-over to the swapchain is a byte copy rather than a
-    // converting blit.
-    imageStore(dst, out_pos, vec4(p.swap_rb != 0 ? res.bgr : res, 1.0));
-}
-'''
-
-main_open = '''void main() {
+    main_open = '''void main() {
     ivec2 out_pos = ivec2(gl_GlobalInvocationID.xy);
     if (out_pos.x >= p.dst_size.x || out_pos.y >= p.dst_size.y) return;
 
@@ -110,7 +157,20 @@ main_open = '''void main() {
 
 '''
 
-out = header + "\n".join(consts) + "\n\n" + main_open + joined + footer
-open(dst, "w").write(out)
-print(f"wrote {dst}: {len(out.splitlines())} lines")
-print("constants carried over:", consts)
+    footer = '''
+    // See upscale.comp: the last pass to write swizzles, so the
+    // hand-over to the swapchain is a byte copy rather than a converting
+    // blit.
+    imageStore(dst, out_pos, vec4(p.swap_rb != 0 ? res.bgr : res, 1.0));
+}
+'''
+
+    out = header + "\n".join(consts) + "\n\n" + main_open + joined + footer
+    open(out_path, "w").write(out)
+    print(f"{out_path}: {len(out.splitlines())} lines, "
+          f"{'anti-ringing' if anti_ringing else 'plain'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

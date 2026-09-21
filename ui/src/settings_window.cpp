@@ -218,12 +218,17 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscalerCombo_->addItem("SGSR1", QStringLiteral("sgsr"));
     upscalerCombo_->addItem("SGSR1 - edge direction", QStringLiteral("sgsr-ed"));
     upscalerCombo_->addItem("RAVU-Zoom", QStringLiteral("ravu"));
+    upscalerCombo_->addItem("RAVU-Zoom - anti-ringing", QStringLiteral("ravu-ar"));
     upscalerCombo_->setToolTip(
         "Which filter rebuilds the frame at full resolution. Temporary, while these are\n"
         "being compared: Stud will ship one of them and this control will go away.\n"
         "\n"
         "FSR1 and SGSR1 reconstruct edges from the pixels; RAVU-Zoom looks its filter\n"
         "weights up in a trained table.\n"
+        "\n"
+        "RAVU-Zoom's weights can overshoot a hard edge and trace a bright or dark border\n"
+        "around things. The anti-ringing variant clamps each pixel into the range its own\n"
+        "neighbourhood spans, which cannot ring, at the cost of a second table lookup.\n"
         "SGSR sharpens as it scales, so the slider above feeds its own edge term; FSR1\n"
         "and RAVU use the slider for a separate sharpening pass after them.\n"
         "Applies on the next start, so use the restart button beside Save.");
