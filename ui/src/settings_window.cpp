@@ -182,8 +182,17 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscaleSharpnessSlider_->setMaximumWidth(200);
     upscaleSharpnessSlider_->setToolTip(
         "How hard the upscaler sharpens what it produces. 100% is full strength and the\n"
-        "default; 0 turns the pass off entirely; above 100 is extra bite, which can look\n"
-        "scratched on flat art, and Roblox UI is mostly flat art.\n"
+        "default; above 100 is extra bite, which can look scratched on flat art, and\n"
+        "Roblox UI is mostly flat art.\n"
+        "\n"
+        "What it does depends on the filter, because they sharpen in different places:\n"
+        "  FSR1 and RAVU-Zoom   a separate sharpening pass, which 0% removes entirely.\n"
+        "  SGSR1                its own edge term, since SGSR sharpens as it scales.\n"
+        "                       0% is as soft as it goes rather than off: the sharpening\n"
+        "                       IS the reconstruction, so it cannot be removed.\n"
+        "\n"
+        "Turning it to 0 does not make RAVU-Zoom soft either. Its trained weights\n"
+        "reconstruct crisp edges by themselves; 0% removes the extra pass, not that.\n"
         "Applies on the next start, so use the restart button beside Save.");
     sharpRow->addWidget(upscaleSharpnessSlider_);
     sharpnessValueLabel_ = new QLabel(this);
