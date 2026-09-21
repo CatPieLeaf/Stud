@@ -3119,6 +3119,21 @@ void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* d
         return (access & ~transfer_access) != 0;
     };
 
+    // The stages decide first, and usually decide there is nothing to do.
+    //
+    // Collecting every barrier's access mask is the expensive half of this
+    // check, and it was being paid on every vkCmdPipelineBarrier the
+    // engine sends -- thousands per frame -- to answer a question the
+    // stage masks alone already answer for a general stage. Measured over
+    // a real session: this widening fired ZERO times, so the whole cost
+    // bought nothing. Hoisting the cheap test in front of the loops keeps
+    // the safety net for the driver that needs it and stops charging
+    // every other frame for it.
+    const bool src_could_be_narrow = (*src_stage & ~transfer_only) == 0 &&
+                                     (*src_stage & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) == 0;
+    const bool dst_could_be_narrow = (*dst_stage & ~transfer_only) == 0 &&
+                                     (*dst_stage & VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) == 0;
+    if (src_could_be_narrow || dst_could_be_narrow) {
     VkAccessFlags all_src = 0;
     VkAccessFlags all_dst = 0;
     for (const auto& b : mem) { all_src |= b.srcAccessMask; all_dst |= b.dstAccessMask; }
@@ -3136,6 +3151,7 @@ void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* d
                         static_cast<unsigned>(all_src), static_cast<unsigned>(all_dst));
             std::fflush(stdout);
         }
+    }
     }
 
     // THE FIRST BARRIER AGAINST AN IMAGE THAT HAS NEVER BEEN TRANSITIONED.
