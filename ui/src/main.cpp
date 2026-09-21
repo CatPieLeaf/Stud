@@ -738,8 +738,28 @@ void start_session_log() {
         // already does this when the report appears; a user leaving
         // deserves the same complete file, and aboutToQuit is the one
         // place every one of those paths passes through.
-        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp,
-                         []() { stud::ui::flush_log_collector(); });
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, []() {
+            stud::ui::flush_log_collector();
+            // And take the session's notes with it.
+            //
+            // The watcher deletes them when it sees them, but it only
+            // looks once a second and Process A often quits first, which
+            // left a .clean note behind after most ordinary exits. They
+            // are meaningless once this process is gone -- the next
+            // session clears stale ones before trusting anything -- so
+            // the litter was pure noise in the log directory.
+            const QString clean =
+                QString::fromStdString(stud::logging::clean_exit_marker_path());
+            const QString crash =
+                QString::fromStdString(stud::logging::crash_marker_path());
+            if (!clean.isEmpty()) QFile::remove(clean);
+            if (!crash.isEmpty()) QFile::remove(crash);
+            // The collector's socket, too: it is named per session
+            // directory and nothing outlives this process that could use
+            // it.
+            const QByteArray sock = qgetenv("STUD_LOG_SOCKET");
+            if (!sock.isEmpty()) QFile::remove(QString::fromUtf8(sock));
+        });
         // A goes through its own socket too, so all three processes take
         // one path and this one owns no special case.
         stud::logging::start_session_log_dispatch(socket_path.toStdString());
@@ -1213,6 +1233,20 @@ bool g_tray_is_holding = false;
 // Whether a crash report is on screen. The tray's session watchdog
 // asks, because a crash is exactly when it would otherwise quit.
 bool g_crash_dialog_open = false;
+// How the session ended, decided once by the crash watcher.
+//
+// This used to be "does the .clean note still exist", asked by two
+// different places -- and the watcher DELETES that note when it reads it,
+// so the tray's own check then saw it missing, concluded the session had
+// not ended cleanly, and deferred forever. Stud stayed running after
+// every ordinary close. The note answers the question once; this
+// remembers the answer.
+enum class SessionEnd { Running, Clean, Crashed };
+SessionEnd g_session_end = SessionEnd::Running;
+// Whether the watcher is running at all. If it never started there is
+// nobody to decide, and the tray must not wait for an answer that is
+// never coming.
+bool g_watcher_active = false;
 }
 
 void set_tray_is_holding(bool holding) { g_tray_is_holding = holding; }
@@ -1223,9 +1257,10 @@ bool crash_dialog_is_open() { return g_crash_dialog_open; }
 // asked to. Read by the tray watchdog, which must not quit out from
 // under a crash report that has not appeared yet.
 bool session_ended_cleanly() {
-    const std::string clean = stud::logging::clean_exit_marker_path();
-    if (clean.empty()) return true;  // Cannot tell: do not hold Stud open.
-    return QFile::exists(QString::fromStdString(clean));
+    // Nobody to ask, or nothing decided yet that says otherwise: let the
+    // tray do what it always did. Only a decided crash holds Stud open.
+    if (!g_watcher_active) return true;
+    return g_session_end != SessionEnd::Crashed;
 }
 
 void set_render_host_pid(qint64 pid) { g_render_host_pid = pid; }
@@ -1341,6 +1376,7 @@ void watch_for_a_crash() {
     const QString marker = QString::fromStdString(stud::logging::crash_marker_path());
     const QString clean = QString::fromStdString(stud::logging::clean_exit_marker_path());
     if (marker.isEmpty()) return;
+    g_watcher_active = true;
     // Markers left by an earlier session are not this session's news.
     QFile::remove(marker);
     QFile::remove(clean);
@@ -1387,7 +1423,9 @@ void watch_for_a_crash() {
             // note is what means crash. The crash marker is still read
             // above when it exists, because it names the signal, but
             // nothing depends on it being there.
-            if (QFile::exists(clean)) {
+            const bool was_clean = QFile::exists(clean);
+            g_session_end = was_clean ? SessionEnd::Clean : SessionEnd::Crashed;
+            if (was_clean) {
                 QFile::remove(clean);
                 if (!g_tray_is_holding) {
                     QMetaObject::invokeMethod(qApp, &QApplication::quit,

@@ -1307,6 +1307,19 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
 // dispatch() and so needs this declared above it rather than beside the
 // accept loop where it used to live.
 [[noreturn]] void exit_now(int status) {
+    // Every deliberate shutdown leaves through here, so this is where it
+    // is recorded -- not at the individual branches.
+    //
+    // Marking one branch was not enough and could not have been: closing
+    // the window exits by "the engine disconnected", while Exit inside
+    // Roblox exits by "the session ended", and only the first was
+    // marked, so leaving from the app's own menu was reported as a
+    // crash. There are four of these and they all pass here.
+    //
+    // Status 0 only. A non-zero exit is a failure, and a failure should
+    // be reported as one rather than quietly excused. atexit() is no use
+    // for this: _exit() below deliberately skips it.
+    if (status == 0) stud::logging::note_clean_exit();
     std::fflush(nullptr);
     ::_exit(status);
 }
@@ -5055,11 +5068,6 @@ int main(int argc, char** argv) {
         // clears what is displayed when a game ends; this is the other
         // half, for the process ending.
         stud::render_host::discord_rpc_stop();
-        // Reached by closing the window, which is a shutdown the user
-        // asked for. See the signal handler's note: anything that ends
-        // this process WITHOUT passing through one of these two places
-        // is a crash as far as Process A is concerned.
-        stud::logging::note_clean_exit();
         close_open_web_views(/*wait_for_exit=*/true);
         ::close(conn_fd);
         ::close(listen_fd);
