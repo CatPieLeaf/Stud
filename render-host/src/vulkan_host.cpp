@@ -181,6 +181,11 @@ bool upscale_timing_enabled() {
     return on;
 }
 
+// The top of Stud's sharpness range, which is also where RAVU is pinned.
+constexpr float kMaxSharpness = 1.25f;
+
+bool upscaler_sharpens_itself();
+
 // Whether this filter does its own sharpening inside its dispatch.
 //
 // SGSR's reconstruction IS its sharpening -- the edge term it adds is
@@ -209,7 +214,21 @@ const char* upscaler_name(bool sharpen) {
     return "RAVU-Zoom r2 anti-ringing";
 }
 
+// The sharpness the pass actually runs at.
+//
+// RAVU-Zoom is pinned to the top of the range and does not read the
+// setting. Reported rather than assumed: below maximum its picture
+// stops being worth its cost and lands where SGSR already is, so a
+// slider that can only make it worse is a way to get a bad result by
+// accident. SGSR does read the setting -- its sharpening is its own
+// reconstruction, and the whole range of it is useful.
+//
+// kPinnedWeight in sharpen.comp is the same decision on the other side
+// of the wire: with only RAVU able to reach that pass, and RAVU pinned,
+// the strength there is a constant and the arithmetic around it is gone
+// from the SPIR-V.
 float upscale_sharpness() {
+    if (!upscaler_sharpens_itself()) return kMaxSharpness;
     return static_cast<float>(g_upscale_sharpness_percent.load(std::memory_order_relaxed)) / 100.0f;
 }
 

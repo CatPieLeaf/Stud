@@ -21,7 +21,10 @@ layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
 layout(push_constant) uniform Params {
     ivec2 src_size;
     ivec2 dst_size;
-    float sharpness;  // 0 = none, 1 = strongest
+    // Unused now: the strength is pinned, see kPinnedWeight below. Kept
+    // in the block because every upscaler shares one push layout and one
+    // pipeline layout.
+    float sharpness;
     // See upscale.comp: the last pass to write swizzles, so the hand-over
     // to the swapchain is a byte copy rather than a converting blit.
     int swap_rb;
@@ -52,7 +55,11 @@ void main() {
     // RCAS's own weight: negative, so the cross is subtracted and the
     // centre pulled up, then renormalised by (1 + 4w).
     //
-    // `sharpness` arrives as 0.0-1.25. 1.0 is RCAS's ordinary full strength
+    // The strength is PINNED at the top of the range; see kPinnedWeight.
+// What follows describes the mapping that used to be applied, and is
+// kept because it is what the constant was derived from.
+//
+// `sharpness` arrived as 0.0-1.25. 1.0 is RCAS's ordinary full strength
     // (weight 0.20, denominator 0.20) and is the default; below it the
     // effect scales down to nothing, above it the filter is pushed as far
     // as it can go.
@@ -63,9 +70,27 @@ void main() {
     // swallows, so the strongest setting would look like it did nothing at
     // all. At 0.24 the denominator is 0.04: extreme, finite, and still
     // bounded by the neighbourhood.
-    float strength = clamp(p.sharpness, 0.0, 1.25);
-    float weight = -limit * (strength <= 1.0 ? 0.20 * strength
-                                             : 0.20 + 0.16 * (strength - 1.0));
+    // Pinned at the top of the range, so this is a constant rather than
+    // a value read out of the push block.
+    //
+    // RCAS is reachable from one upscaler only: SGSR sharpens inside its
+    // own dispatch and returns before this pass is ever built, so the
+    // only thing that runs it is RAVU-Zoom -- and RAVU is pinned to
+    // maximum sharpening, because below that its picture stops being
+    // worth what it costs and lands where SGSR already is.
+    //
+    // 0.24 is what 125% mapped to: 0.20 + 0.16 * 0.25. The ceiling is
+    // 0.25, where the (1 + 4w) below is exactly zero and the result
+    // infinite, so this sits one step short of the singularity on
+    // purpose. What it buys is the denominator: 0.20 at full strength
+    // against 0.04 here, which is the difference between amplifying the
+    // centre-versus-cross difference five times and twenty-five.
+    //
+    // Written as a constant rather than folded by the compiler from a
+    // push constant, so the branch and the arithmetic are gone from the
+    // SPIR-V rather than merely cheap.
+    const float kPinnedWeight = 0.24;
+    float weight = -limit * kPinnedWeight;
     vec3 sharpened = (e + weight * (n + s + w + d)) / (1.0 + 4.0 * weight);
 
     // Never outside what the neighbourhood already spans: that is what
