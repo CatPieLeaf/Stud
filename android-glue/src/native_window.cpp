@@ -1486,8 +1486,8 @@ void apply_window_geometry(ANativeWindow* window, const char* reason);
 
 void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     auto* window = static_cast<ANativeWindow*>(data);
-    // Ack, THEN apply, THEN commit. That order is the whole point of this
-    // function and it is not cosmetic.
+    // Ack, THEN apply, THEN commit. The order is what this function is
+    // for:
     //
     // Dragging a maximized window out to floating used to leave the window
     // itself stuck under the cursor for a second or two before it moved.

@@ -1025,9 +1025,9 @@ void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_
 
     // One-shot, and only under the trace: read the real geometry the cursor
     // draw is about to use. Every piece of surrounding state has repeatedly
-    // measured healthy, so the vertex data itself is the remaining suspect,
-    // and guessing at it from the client side is what has stalled this
-    // investigation for several sessions.
+    // measured healthy, so the vertex data itself is the remaining
+    // suspect, and it cannot be settled from the client side by
+    // inspection.
     // Only sample well after start-up: the first 64x64 draws in a process are
     // boot-time UI, not the cursor, and dumping those wasted a whole pass.
     static int dumped = 0;
@@ -4447,8 +4447,8 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         // connection, so a read or a cancel from Stud lands in the
         // middle of the driver's own.
         //
-        // Why that is the remaining suspect: the freeze is a 12006ms
-        // SPIN inside the driver's present (thread in state R, wchan 0,
+        // The freeze is a 12006ms spin inside the driver's present
+        // (thread in state R, wchan 0,
         // GPU idle, no Xid), and on Stud's side the frame it happens on
         // is indistinguishable from the eighty healthy frames before it
         // -- same barriers, same two command buffers, every other

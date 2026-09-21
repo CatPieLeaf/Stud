@@ -98,15 +98,11 @@ inline void* tee_thread(void* arg) {
 }  // namespace detail
 
 
-// Tees this process's stdout and stderr into `path`. Safe to call with an
-// empty path (does nothing) and safe to call when the file cannot be
-// opened, output simply keeps going where it already went.
 // Where this process's output goes, once it has been teed.
 //
 // Two destinations exist and they differ only in the fd: Process A opens
 // the log FILE, while B and C open a SOCKET to Process A. The tee thread
-// below does not care which -- it write()s a chunk and moves on -- and
-// that is the whole point of the arrangement.
+// below does not care which: it write()s a chunk and moves on.
 //
 // A write to that socket is a copy into a kernel buffer, with no disk
 // behind it, so a process is never made to wait on file I/O to say
@@ -116,6 +112,9 @@ inline void* tee_thread(void* arg) {
 // already in A's hands.
 inline bool start_session_log_to_fd(int destination_fd);
 
+// Tees this process's stdout and stderr into `path`. Safe to call with an
+// empty path (does nothing) and safe to call when the file cannot be
+// opened, output simply keeps going where it already went.
 inline bool start_session_log(const std::string& path) {
     if (path.empty()) return false;
     const int log_fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);

@@ -3,9 +3,8 @@
 //
 // Why forward at all, rather than loading a real Vulkan driver in
 // Process B: the vendor GPU driver must never run inside a process
-// sharing bionic or foreign TLS (see the engineering notes' non-negotiable
-// constraints. That is the failure class this whole architecture
-// exists to avoid). Process C is ordinary glibc, so the real driver is
+// sharing bionic or foreign TLS; see the engineering notes'
+// non-negotiable constraints. Process C is ordinary glibc, so the real driver is
 // at home there, and Process B only ever sees Stud's own stub.
 //
 // Vulkan suits this transport far better than GLES did. Nearly every

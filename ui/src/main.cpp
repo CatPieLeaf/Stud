@@ -387,11 +387,11 @@ void keep_mangohud_out_of_this_process() {
 //
 // The Vulkan path is handled in the render host, which now offers the
 // engine the chosen device and no other -- see
-// vk_enumerate_physical_devices(). It is worth saying why that is there
-// and not here: this comment used to claim the Vulkan path "already
-// runs where it was told", and it did not. The host only reordered the
-// list, the engine scored it and took the discrete GPU anyway, and the
-// claim is what kept anyone from looking. GLX has no index at all: it
+// vk_enumerate_physical_devices(). An earlier version of this comment
+// claimed the Vulkan path already ran where it was told. It did not:
+// the host only reordered the list, the engine scored it and took the
+// discrete GPU anyway, and the wrong claim is what kept anyone from
+// looking. GLX has no index at all: it
 // hands out the system default, which on a hybrid laptop is the
 // integrated GPU, measured here as ANGLE coming up on "Mesa Intel(R)
 // Iris(R) Xe Graphics" while the setting said RTX 3050, at a third of
