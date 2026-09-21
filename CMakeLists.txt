@@ -332,12 +332,32 @@ else()
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
             DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 endif()
-# AMD's FSR1 reference headers are vendored, and render-host's upscaler is
-# EASU and RCAS ported from them, so MIT's notice travels with the build
-# output, not just with the source tree.
+# The three shader references Stud's upscalers are built from. All three
+# notices travel with the build output, not just with the source tree,
+# because what ships is compiled SPIR-V: a user who has the package has
+# the work without having the repository.
+#
+# The mpv one is the one that must not be missed. FSR1 is MIT and SGSR
+# is BSD-3-Clause, both of which ask only that the notice accompany the
+# distribution; RAVU-Zoom is LGPL-3.0-or-later, which is copyleft, and
+# AGPLv3 section 13 -- the clause that lets Stud combine with it at all
+# -- requires the Corresponding Source to travel too. The hook the
+# shader and its weight tables are generated from is that source, and it
+# is installed here beside the licence rather than only living in the
+# repository.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/fidelityfx-fsr1"
         RENAME "LICENSE-FidelityFX-FSR1.txt")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/snapdragon-gsr/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/snapdragon-gsr"
+        RENAME "LICENSE-Snapdragon-GSR.txt")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/mpv-prescalers"
+        RENAME "LICENSE-mpv-prescalers.txt")
+install(FILES
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/ravu-zoom-ar-r2-rgb.hook"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/mpv-prescalers")
 
 # The dependencies setup.sh fetched. They are not Stud's own code, but a
 # package has to carry them or the application cannot start: ANGLE is the
