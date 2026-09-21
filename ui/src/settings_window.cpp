@@ -185,14 +185,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "default; above 100 is extra bite, which can look scratched on flat art, and\n"
         "Roblox UI is mostly flat art.\n"
         "\n"
-        "What it does depends on the filter, because they sharpen in different places:\n"
-        "  FSR1 and RAVU-Zoom   a separate sharpening pass, which 0% removes entirely.\n"
-        "  SGSR1                its own edge term, since SGSR sharpens as it scales.\n"
-        "                       0% is as soft as it goes rather than off: the sharpening\n"
-        "                       IS the reconstruction, so it cannot be removed.\n"
+        "Applies to SGSR1 only, which sharpens as it scales: the slider feeds its own\n"
+        "edge term, and 0% is as soft as it goes rather than off, since the sharpening\n"
+        "IS the reconstruction.\n"
         "\n"
-        "Turning it to 0 does not make RAVU-Zoom soft either. Its trained weights\n"
-        "reconstruct crisp edges by themselves; 0% removes the extra pass, not that.\n"
+        "RAVU-Zoom ignores this and runs pinned at maximum, so the slider is greyed out\n"
+        "while it is selected.\n"
         "Applies on the next start, so use the restart button beside Save.");
     sharpRow->addWidget(upscaleSharpnessSlider_);
     sharpnessValueLabel_ = new QLabel(this);
@@ -200,7 +198,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     sharpRow->addStretch();
     graphics->addLayout(sharpRow);
     connect(upscaleSharpnessSlider_, &QSlider::valueChanged, this, [this](int value) {
-        sharpnessValueLabel_->setText(QString::number(value) + "%");
+        if (upscaleSharpnessSlider_->isEnabled()) {
+            sharpnessValueLabel_->setText(QString::number(value) + "%");
+        }
     });
 
     // TEMPORARY: which filter does the upscaling, while they are being
@@ -227,9 +227,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "SGSR1 reconstructs edges from the pixels themselves, with no table. The one to\n"
         "fall back to if RAVU costs too much here.\n"
         "\n"
-        "SGSR sharpens as it scales, so the slider above feeds its own edge term;\n"
-        "RAVU-Zoom uses the slider for a separate sharpening pass after it, which 0%\n"
-        "removes.\n"
+        "SGSR sharpens as it scales, so the slider above feeds its own edge term.\n"
+        "RAVU-Zoom ignores it: it is pinned to maximum, because below that its picture\n"
+        "stops being worth what it costs and lands where SGSR already is.\n"
         "Applies on the next start, so use the restart button beside Save.");
     upscalerRow->addWidget(upscalerCombo_);
     upscalerRow->addStretch();
@@ -240,9 +240,21 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto sync_upscale_controls = [this]() {
         const bool available = !hidpiCheck_->isChecked();
         upscalingCheck_->setEnabled(available);
-        upscaleSharpnessSlider_->setEnabled(available && upscalingCheck_->isChecked());
-        upscalerCombo_->setEnabled(available && upscalingCheck_->isChecked());
+        const bool upscaling = available && upscalingCheck_->isChecked();
+        upscalerCombo_->setEnabled(upscaling);
+        // RAVU-Zoom is pinned to maximum sharpening and does not read
+        // this, so the slider is greyed out rather than left looking
+        // live: below maximum RAVU's picture stops being worth its cost
+        // and lands where SGSR already is, which is a bad result to be
+        // able to reach by accident. SGSR does read it.
+        const bool pinned = upscalerCombo_->currentData().toString().startsWith("ravu");
+        upscaleSharpnessSlider_->setEnabled(upscaling && !pinned);
+        sharpnessValueLabel_->setText(
+            pinned ? QStringLiteral("pinned to maximum")
+                   : QString::number(upscaleSharpnessSlider_->value()) + "%");
     };
+    connect(upscalerCombo_, &QComboBox::currentIndexChanged, this,
+            [sync_upscale_controls]() { sync_upscale_controls(); });
     connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
         sync_upscale_controls();
     });
