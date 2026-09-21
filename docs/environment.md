@@ -41,6 +41,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 |---|---|---|
 | `STUD_BIONIC_DIR` | `third_party/android-bionic` | Where the extracted bionic set lives. |
 | `STUD_LOG_FILE` | unset | Tees this process's output into a session log. Process A sets it for both children, so a normal launch already has one. |
+| `STUD_LOG_SOCKET` | set by Process A | Where to throw log lines instead of writing the file. Process A collects them and writes the file in batches, so no other process ever waits on disk I/O to say something. Unset only if A's collector failed to start, in which case each process writes the file itself. |
 | `STUD_ENABLE_V2` | on | The V2 app-bridge sequence. `0` skips it; the app does not reach Home without it. |
 | `STUD_DISABLE_V2_STARTAPP` | off | Skips `StartApp`. Bisecting only. |
 | `STUD_ENABLE_V2_STARTGAME` | off | Forces the `StartGameWithParam` branch on a launch with no deep link. |
