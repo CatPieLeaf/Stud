@@ -157,23 +157,48 @@ jobs:
       # every package is made from it.
       - name: Verify embedded shaders
         # A build with no glslc silently produces an empty shader array,
-        # so FSR is present in Settings and does nothing. That shipped:
-        # the released render-host carried one SPIR-V module where a
-        # correct build carries three. -DSTUD_REQUIRE_SHADERS=ON makes
-        # the configure fail now; this checks the binary itself, because
-        # the thing that matters is what is IN it.
+        # so an upscaler is present in Settings and does nothing. That
+        # shipped once: the released render-host carried one SPIR-V
+        # module where a correct build carries three.
+        # -DSTUD_REQUIRE_SHADERS=ON makes the configure fail now; this
+        # checks the binary itself, because the thing that matters is
+        # what is IN it.
+        #
+        # The three are RAVU-Zoom anti-ringing, SGSR edge-direction, and
+        # RCAS, which sharpens after RAVU.
+        #
+        # The magic number is not counted on its own any more. It occurs
+        # by coincidence in compiled code -- it does in this very binary,
+        # once, in .text -- so the old "at least three" would have passed
+        # a build that had lost a shader and kept the accident. The
+        # header is validated instead, and the count has to be exact.
         run: |
           python3 - <<'PY'
-          import sys
+          import struct, sys
           p = "build/render-host/stud-render-host"
           blob = open(p, "rb").read()
-          # SPIR-V's magic number, little-endian, once per embedded module.
-          modules = blob.count(b"\x03\x02\x23\x07")
-          print(f"{p}: {modules} SPIR-V module(s)")
-          if modules < 3:
-              print("::error::the render host is missing embedded shaders, "
-                    "the upscale and sharpening shaders are built by glslc, "
-                    "which the configure step should have found in the NDK")
+          MAGIC = b"\x03\x02\x23\x07"
+          # A SPIR-V header is five words: magic, version, generator,
+          # bound, schema. Version is 0x00MMmm00, schema is reserved and
+          # zero, and the id bound is small. Random code satisfies the
+          # magic; it does not satisfy these.
+          modules = 0
+          at = blob.find(MAGIC)
+          while at != -1:
+              if at + 20 <= len(blob):
+                  _m, version, _g, bound, schema = struct.unpack_from("<5I", blob, at)
+                  major, minor = (version >> 16) & 0xff, (version >> 8) & 0xff
+                  if ((version & 0xff000000) == 0 and (version & 0xff) == 0
+                          and 1 <= major <= 2 and minor <= 6
+                          and schema == 0 and 0 < bound < (1 << 22)):
+                      modules += 1
+              at = blob.find(MAGIC, at + 1)
+          print(f"{p}: {modules} SPIR-V module(s), {blob.count(MAGIC)} raw magic hit(s)")
+          if modules != 3:
+              print("::error::the render host should carry exactly three embedded "
+                    "shaders -- RAVU-Zoom anti-ringing, SGSR edge-direction and "
+                    "RCAS -- and carries " + str(modules) + ". They are built by "
+                    "glslc, which the configure step should have found in the NDK.")
               sys.exit(1)
           PY
 

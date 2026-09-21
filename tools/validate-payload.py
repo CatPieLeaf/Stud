@@ -21,6 +21,34 @@ from pathlib import Path
 
 SPIRV_MAGIC = b"\x03\x02\x23\x07"
 
+
+def count_spirv_modules(blob):
+    """How many embedded SPIR-V modules a binary really carries.
+
+    Not a count of the magic number. That sequence turns up in compiled
+    code by coincidence -- it does in stud-render-host, once, in .text --
+    so counting it said four where three were embedded, and "at least
+    three" would then have passed a build that had lost a shader and kept
+    the accident. That is the exact regression this file exists to catch.
+
+    A SPIR-V header is five words: magic, version, generator, id bound,
+    schema. Version is 0x00MMmm00 with a small major and minor, schema is
+    reserved and zero in every version that exists, and the bound is the
+    module's id count. Stray code satisfies the magic and not these.
+    """
+    found = 0
+    at = blob.find(SPIRV_MAGIC)
+    while at != -1:
+        if at + 20 <= len(blob):
+            _magic, version, _gen, bound, schema = struct.unpack_from("<5I", blob, at)
+            major, minor = (version >> 16) & 0xFF, (version >> 8) & 0xFF
+            if ((version & 0xFF000000) == 0 and (version & 0xFF) == 0
+                    and 1 <= major <= 2 and minor <= 6
+                    and schema == 0 and 0 < bound < (1 << 22)):
+                found += 1
+        at = blob.find(SPIRV_MAGIC, at + 1)
+    return found
+
 # The engine's own overlay libraries, bound over /system/lib64 in the
 # sandbox. Process B dlopen()s these by name; a missing one is a failure
 # at load with no useful message.
@@ -171,17 +199,19 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         r.check(interp is not None and "linker64" in interp,
                 f"stud-runtime-bionic's interpreter is {interp!r}, not a bionic linker64")
 
-    # ---- the upscaler's shaders ----------------------------------------
+    # ---- the upscalers' shaders -----------------------------------------
     # Compiled to SPIR-V at build time and embedded. Without glslc the
-    # build silently emits an empty array, and FSR then does nothing at
-    # all while still being offered in Settings. A correct build carries
-    # three modules; a build with no shader compiler carries one.
+    # build silently emits an empty array, and the upscaler then does
+    # nothing at all while still being offered in Settings. A correct
+    # build carries exactly three: RAVU-Zoom anti-ringing, SGSR
+    # edge-direction, and RCAS, which sharpens after RAVU.
     host = private / "stud-render-host"
     if host.exists():
-        modules = host.read_bytes().count(SPIRV_MAGIC)
-        r.check(modules >= 3,
+        modules = count_spirv_modules(host.read_bytes())
+        r.check(modules == 3,
                 f"stud-render-host carries {modules} SPIR-V module(s), not the 3 a build "
-                f"with the upscale and sharpening shaders has, FSR would do nothing")
+                f"with both upscalers and the sharpening pass has; upscaling would be "
+                f"offered in Settings and do nothing")
         r.note(f"embedded SPIR-V modules: {modules}")
 
     # ---- the libraries Stud brings with it ------------------------------
