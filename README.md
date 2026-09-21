@@ -332,7 +332,9 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
  - [ANGLE](https://chromium.googlesource.com/angle/angle): the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
  - [bionic](https://android.googlesource.com/platform/bionic/): Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
  - [libjnivm](https://github.com/ChristopherHX/libjnivm): the JNI virtual machine Stud's Java layer stands on (MIT)
- - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): Stud's upscaler is EASU and RCAS ported from AMD's own reference headers, vendored at `third_party/fidelityfx-fsr1` (MIT)
+ - [mpv-prescalers](https://github.com/bjin/mpv-prescalers): Stud's upscaler is RAVU-Zoom, anti-ringing, generated from the vendored hook at `third_party/mpv-prescalers` (LGPL-3.0-or-later). A structure tensor over the neighbourhood's luma indexes a table of filter weights trained offline, and the result is clamped into the range that neighbourhood spans so it cannot trace a border around a hard edge
+ - [Snapdragon Game Super Resolution](https://github.com/SnapdragonStudios/snapdragon-gsr): the fallback upscaler, its edge-direction variant, ported from the reference at `third_party/snapdragon-gsr` (BSD-3-Clause)
+ - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): RCAS, the sharpening pass that runs after RAVU, ported from AMD's own reference headers at `third_party/fidelityfx-fsr1` (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK), [PortAudio](https://www.portaudio.com/) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The logo is an image; the font itself is not shipped with Stud
@@ -340,6 +342,8 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
 Every binary Stud redistributes carries its own licence and copyright notice. `tools/setup.sh` fetches them, and a package installs them to `/usr/share/licenses/stud/` and beside the libraries themselves.
 
 Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox engine Stud loads but never distributes. Stud is and always will be Open Source.
+
+One of the shaders above is copyleft rather than permissive, and it is worth saying why that is not a problem: LGPLv3 states that it "incorporates the terms and conditions of version 3 of the GNU General Public License", and its section 2(b) permits conveying a copy "under the GNU GPL, with none of the additional permissions of this License applicable to that copy". AGPLv3 section 13 then gives "permission to link or combine any covered work with a work licensed under version 3 of the GNU General Public License into a single combined work, and to convey the resulting work". Stud ships the hook it is generated from, which is the Corresponding Source that same section requires.
 
 [`NOTICE.md`](NOTICE.md) covers the rest: affiliation, trademarks, your Roblox account, and what does and does not leave your machine.
 

@@ -110,7 +110,17 @@ issue at https://github.com/CatPieLeaf/Stud/issues.
 
 Stud redistributes ANGLE, SwiftShader, the Vulkan loader and validation
 layers, and Android's own libc, libm, libdl and dynamic linker from AOSP.
-Every one of them is under a permissive licence and ships with its own
+Every one of those is under a permissive licence and ships with its own
 licence text and copyright notice, installed to
-`/usr/share/licenses/stud/` and kept beside the libraries themselves. The
-full credits are in the README.
+`/usr/share/licenses/stud/` and kept beside the libraries themselves.
+
+Stud also builds three shaders from vendored references, and one of them
+is copyleft rather than permissive: the upscaler is RAVU-Zoom from
+mpv-prescalers, which is LGPL-3.0-or-later, beside SGSR (BSD-3-Clause)
+and FSR1's RCAS (MIT). That combination is what AGPLv3 section 13 exists
+for -- LGPLv3 incorporates the GPLv3 terms and permits conveying under
+them, and section 13 permits combining a covered work with GPLv3 work --
+and the hooks those shaders are generated from ship in `third_party/`,
+which is the Corresponding Source that section requires.
+
+The full credits are in the README.
