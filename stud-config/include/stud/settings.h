@@ -118,7 +118,7 @@ struct StudSettings {
     // names lives in one place (choose_upscaler in vulkan_host.cpp) and
     // nothing here has to be kept in step with it. An unknown name falls
     // back to fsr there, with a line saying so.
-    std::string upscaler_choice = "fsr";    // Smooth zoom: the wheel eases the camera toward the new distance
+    std::string upscaler_choice = "ravu-ar";    // Smooth zoom: the wheel eases the camera toward the new distance
     // instead of stepping straight to it. Off is the Android build's own
     // behaviour, which is what Sober does.
     bool smooth_zoom = true;

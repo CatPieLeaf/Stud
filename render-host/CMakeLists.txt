@@ -11,21 +11,18 @@ pkg_check_modules(GlesV2 REQUIRED IMPORTED_TARGET glesv2)
 # The upscale shader, compiled to SPIR-V at build time and embedded, so
 # render-host carries no runtime file dependency for it. glslc comes with
 # the NDK this project already vendors; no new tool.
-set(UpscaleShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/upscale.comp")
-set(UpscaleShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/upscale_spv.h")
 set(SharpenShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sharpen.comp")
 set(SharpenShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sharpen_spv.h")
-# The other upscaler, chosen at runtime by STUD_UPSCALER. One pass to
-# FSR1's two, and one texture fetch on a flat pixel to EASU's twelve.
+# SGSR, the fallback upscaler, chosen at runtime by STUD_UPSCALER. Only
+# its edge-direction variant is built; the base one was dropped after the
+# comparison, and both come from this one source.
 set(SgsrShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sgsr.comp")
-set(SgsrShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_spv.h")
-# The same source again, as the reference's UseEdgeDirection variant.
 set(SgsrEdShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_ed_spv.h")
-# RAVU-Zoom, which unlike the others carries a trained weight table as
-# well as a shader. The table is generated from the vendored hook rather
-# than checked in twice, so the two cannot drift.
-set(RavuShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ravu.comp")
-set(RavuShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_spv.h")
+# RAVU-Zoom, which unlike SGSR carries trained weight tables as well as a
+# shader. They are generated from the vendored hooks rather than checked
+# in twice, so the two cannot drift. Only the anti-ringing shader is
+# built; the plain hook stays because the weight table comes from it and
+# is byte-identical to the anti-ringing hook's own copy.
 set(RavuHook "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook")
 set(RavuLutHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_lut.h")
 # The anti-ringing variant: the same filter weights, plus a second table
@@ -42,7 +39,7 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(NOT Python3_Interpreter_FOUND)
     message(WARNING
         "Stud: no Python 3 interpreter, building WITHOUT the RAVU-Zoom weight "
-        "table. Its entry in STUD_UPSCALER will fall back to FSR.")
+        "tables. STUD_UPSCALER will fall back to SGSR.")
     add_custom_command(
         OUTPUT "${RavuLutHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -78,29 +75,12 @@ find_program(StudGlslc glslc
     NO_CMAKE_FIND_ROOT_PATH)
 if(StudGlslc)
     add_custom_command(
-        OUTPUT "${UpscaleShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
-                -o "${UpscaleShaderHeader}.inc" "${UpscaleShaderSrc}"
-        COMMAND "${CMAKE_COMMAND}" -E copy "${UpscaleShaderHeader}.inc" "${UpscaleShaderHeader}"
-        DEPENDS "${UpscaleShaderSrc}"
-        COMMENT "Compiling the upscale shader to SPIR-V"
-    )
-    add_custom_command(
         OUTPUT "${SharpenShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
                 -o "${SharpenShaderHeader}" "${SharpenShaderSrc}"
         DEPENDS "${SharpenShaderSrc}"
         COMMENT "Compiling the sharpening shader to SPIR-V"
-    )
-    add_custom_command(
-        OUTPUT "${SgsrShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
-                -o "${SgsrShaderHeader}" "${SgsrShaderSrc}"
-        DEPENDS "${SgsrShaderSrc}"
-        COMMENT "Compiling the SGSR upscale shader to SPIR-V"
     )
     add_custom_command(
         OUTPUT "${SgsrEdShaderHeader}"
@@ -110,14 +90,6 @@ if(StudGlslc)
                 -o "${SgsrEdShaderHeader}" "${SgsrShaderSrc}"
         DEPENDS "${SgsrShaderSrc}"
         COMMENT "Compiling the SGSR edge-direction shader to SPIR-V"
-    )
-    add_custom_command(
-        OUTPUT "${RavuShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
-                -o "${RavuShaderHeader}" "${RavuShaderSrc}"
-        DEPENDS "${RavuShaderSrc}"
-        COMMENT "Compiling the RAVU-Zoom upscale shader to SPIR-V"
     )
     add_custom_command(
         OUTPUT "${RavuArShaderHeader}"
@@ -148,34 +120,16 @@ else()
         "Stud: glslc not found, building WITHOUT the upscale and sharpening "
         "shaders. The FSR setting will exist and do nothing.")
     add_custom_command(
-        OUTPUT "${UpscaleShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${UpscaleShaderHeader}"
-        COMMENT "glslc not found, building without the upscale shader"
-    )
-    add_custom_command(
         OUTPUT "${SharpenShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SharpenShaderHeader}"
         COMMENT "glslc not found, building without the sharpening shader"
     )
     add_custom_command(
-        OUTPUT "${SgsrShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SgsrShaderHeader}"
-        COMMENT "glslc not found, building without the SGSR shader"
-    )
-    add_custom_command(
         OUTPUT "${SgsrEdShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${SgsrEdShaderHeader}"
         COMMENT "glslc not found, building without the SGSR edge-direction shader"
-    )
-    add_custom_command(
-        OUTPUT "${RavuShaderHeader}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuShaderHeader}"
-        COMMENT "glslc not found, building without the RAVU-Zoom shader"
     )
     add_custom_command(
         OUTPUT "${RavuArShaderHeader}"
@@ -185,7 +139,7 @@ else()
     )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${RavuShaderHeader}" "${RavuLutHeader}" "${RavuArShaderHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render

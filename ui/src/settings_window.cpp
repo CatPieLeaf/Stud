@@ -214,23 +214,22 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* upscalerRow = new QHBoxLayout();
     upscalerRow->addWidget(new QLabel("Filter (temporary)", this));
     upscalerCombo_ = new QComboBox(this);
-    upscalerCombo_->addItem("FSR1 - EASU + RCAS", QStringLiteral("fsr"));
-    upscalerCombo_->addItem("SGSR1", QStringLiteral("sgsr"));
-    upscalerCombo_->addItem("SGSR1 - edge direction", QStringLiteral("sgsr-ed"));
-    upscalerCombo_->addItem("RAVU-Zoom", QStringLiteral("ravu"));
     upscalerCombo_->addItem("RAVU-Zoom - anti-ringing", QStringLiteral("ravu-ar"));
+    upscalerCombo_->addItem("SGSR1 - edge direction", QStringLiteral("sgsr-ed"));
     upscalerCombo_->setToolTip(
-        "Which filter rebuilds the frame at full resolution. Temporary, while these are\n"
-        "being compared: Stud will ship one of them and this control will go away.\n"
+        "Which filter rebuilds the frame at full resolution.\n"
         "\n"
-        "FSR1 and SGSR1 reconstruct edges from the pixels; RAVU-Zoom looks its filter\n"
-        "weights up in a trained table.\n"
+        "RAVU-Zoom looks its filter weights up in a table trained offline, which is what\n"
+        "makes it the sharpest of these; anti-ringing clamps each pixel into the range\n"
+        "its own neighbourhood spans, so it cannot trace a border around a hard edge.\n"
+        "It is also much the more expensive of the two.\n"
         "\n"
-        "RAVU-Zoom's weights can overshoot a hard edge and trace a bright or dark border\n"
-        "around things. The anti-ringing variant clamps each pixel into the range its own\n"
-        "neighbourhood spans, which cannot ring, at the cost of a second table lookup.\n"
-        "SGSR sharpens as it scales, so the slider above feeds its own edge term; FSR1\n"
-        "and RAVU use the slider for a separate sharpening pass after them.\n"
+        "SGSR1 reconstructs edges from the pixels themselves, with no table. The one to\n"
+        "fall back to if RAVU costs too much here.\n"
+        "\n"
+        "SGSR sharpens as it scales, so the slider above feeds its own edge term;\n"
+        "RAVU-Zoom uses the slider for a separate sharpening pass after it, which 0%\n"
+        "removes.\n"
         "Applies on the next start, so use the restart button beside Save.");
     upscalerRow->addWidget(upscalerCombo_);
     upscalerRow->addStretch();
