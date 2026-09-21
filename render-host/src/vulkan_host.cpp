@@ -103,11 +103,6 @@ void vk_set_preferred_device_index(uint32_t index) { g_preferred_device_index = 
 
 void vk_set_on_x11(bool on_x11) { g_on_x11 = on_x11; }
 
-// How hard the sharpening pass pulls, as a percentage: 100 is RCAS at its
-// ordinary full strength and 125 is as far as the filter can be pushed
-// before its renormaliser reaches zero (see sharpen.comp).
-std::atomic<int32_t> g_upscale_sharpness_percent{100};
-
 // Which spatial upscaler turns the engine's image into the presented
 // one. Both are single-image, no-history algorithms, which is the only
 // kind Stud can run: it has no motion vectors and no depth from the
@@ -181,11 +176,6 @@ bool upscale_timing_enabled() {
     return on;
 }
 
-// The top of Stud's sharpness range, which is also where RAVU is pinned.
-constexpr float kMaxSharpness = 1.25f;
-
-bool upscaler_sharpens_itself();
-
 // Whether this filter does its own sharpening inside its dispatch.
 //
 // SGSR's reconstruction IS its sharpening -- the edge term it adds is
@@ -214,28 +204,14 @@ const char* upscaler_name(bool sharpen) {
     return "RAVU-Zoom r2 anti-ringing";
 }
 
-// The sharpness the pass actually runs at.
-//
-// RAVU-Zoom is pinned to the top of the range and does not read the
-// setting. Reported rather than assumed: below maximum its picture
-// stops being worth its cost and lands where SGSR already is, so a
-// slider that can only make it worse is a way to get a bad result by
-// accident. SGSR does read the setting -- its sharpening is its own
-// reconstruction, and the whole range of it is useful.
-//
-// kPinnedWeight in sharpen.comp is the same decision on the other side
-// of the wire: with only RAVU able to reach that pass, and RAVU pinned,
-// the strength there is a constant and the arithmetic around it is gone
-// from the SPIR-V.
-float upscale_sharpness() {
-    if (!upscaler_sharpens_itself()) return kMaxSharpness;
-    return static_cast<float>(g_upscale_sharpness_percent.load(std::memory_order_relaxed)) / 100.0f;
-}
-
-void vk_set_upscale_sharpness_percent(int32_t percent) {
-    const int32_t clamped = percent < 0 ? 0 : (percent > 125 ? 125 : percent);
-    g_upscale_sharpness_percent.store(clamped, std::memory_order_relaxed);
-}
+// Both upscalers run pinned at the top of the range and neither reads
+// a setting; there is no longer one to read. RAVU because below maximum
+// its picture stops being worth its cost and lands where SGSR already
+// is, SGSR because softening the edges it exists to reconstruct only
+// makes it worse. The same decision is taken again on the other side of
+// the wire, where sharpen.comp's kPinnedWeight and sgsr.comp's
+// edgeSharpness are constants rather than push-constant reads, so the
+// mapping and its branch are gone from the SPIR-V.
 
 std::atomic<uint32_t> g_upscale_output_w{0};
 std::atomic<uint32_t> g_upscale_output_h{0};
@@ -3958,12 +3934,10 @@ bool build_upscale_compute(UpscaleChain& c) {
     // SGSR has no second pass to build: it sharpens as it scales, and
     // its own edge term already carries the sharpness setting. Running
     // RCAS over its output would sharpen what has been sharpened.
-    // Built for every filter that does not sharpen inside its own
-    // dispatch -- FSR1 and RAVU -- so the sharpness slider means
-    // something for both. Running it over SGSR would sharpen what has
-    // already been sharpened.
+    // Built for the filters that do not sharpen inside their own
+    // dispatch, which is RAVU alone. Running it over SGSR would sharpen
+    // what has already been sharpened.
     if (upscaler_sharpens_itself()) return true;
-    if (upscale_sharpness() <= 0.0f) return true;
     static const uint32_t kSharpenSpv[] =
 #include "sharpen_spv.h"
         ;
@@ -4200,7 +4174,11 @@ bool record_upscale_blits(UpscaleChain& c) {
             // nothing for SGSR, its edge-direction variant and Lanczos:
             // they read this field, found zero, and fell back to their
             // own defaults.
-            push.sharpness = upscaler_sharpens_itself() ? upscale_sharpness() : 0.0f;
+            // Unused by every shader now -- each pins its own strength
+            // as a constant -- but the member is still in the block, so
+            // it is given a defined value rather than whatever was on
+            // the stack.
+            push.sharpness = 0.0f;
             // Only when nothing reads this back: the sharpening pass's
             // arithmetic is defined on the real channel order.
             push.swap_rb = c.sharpen ? 0 : swap_rb;
@@ -4256,7 +4234,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                 sharpen_push.src_h = static_cast<int32_t>(c.present.height);
                 sharpen_push.dst_w = static_cast<int32_t>(c.present.width);
                 sharpen_push.dst_h = static_cast<int32_t>(c.present.height);
-                sharpen_push.sharpness = upscale_sharpness();
+                sharpen_push.sharpness = 0.0f;  // pinned in the shader
                 sharpen_push.swap_rb = swap_rb;
                 l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                      sizeof(sharpen_push), &sharpen_push);

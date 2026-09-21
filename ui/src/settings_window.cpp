@@ -159,77 +159,44 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     //
     // So it belongs to HiDPI being OFF: with HiDPI on the engine already
     // draws every real pixel and there is nothing to upscale from.
-    upscalingCheck_ = new QCheckBox("FSR Upscaler", this);
+    upscalingCheck_ = new QCheckBox("Upscaling", this);
     upscalingCheck_->setToolTip(
-        "AMD FidelityFX Super Resolution 1: rebuild the frame at full resolution instead of\n"
-        "letting the compositor stretch it. Needs HiDPI off, which is where the game renders\n"
-        "below the screen's resolution.\n"
-        "Version 1 and not 2 or 3 because those need motion vectors from the renderer, which\n"
-        "Roblox does not produce.");
+        "Rebuild the frame at full resolution instead of letting the compositor stretch it.\n"
+        "Needs HiDPI off, which is where the game renders below the screen's resolution.\n"
+        "\n"
+        "Which filter does the rebuilding is the setting below.");
     graphics->addWidget(upscalingCheck_);
 
-    // Sharpening strength. Its own control because the right amount is a
-    // matter of taste and of content, too much looks scratched.
-    auto* sharpRow = new QHBoxLayout();
-    sharpRow->addWidget(new QLabel("Sharpening", this));
-    upscaleSharpnessSlider_ = new QSlider(Qt::Horizontal, this);
-    // 0 to 125, defaulting to 100: 0 skips the pass, 100 is full strength,
-    // and 125 is where the filter's own renormaliser would reach zero,
-    // the top of the range is mapped to just short of it.
-    upscaleSharpnessSlider_->setRange(0, 125);
-    upscaleSharpnessSlider_->setSingleStep(5);
-    upscaleSharpnessSlider_->setPageStep(25);
-    upscaleSharpnessSlider_->setMaximumWidth(200);
-    upscaleSharpnessSlider_->setToolTip(
-        "How hard the upscaler sharpens what it produces. 100% is full strength and the\n"
-        "default; above 100 is extra bite, which can look scratched on flat art, and\n"
-        "Roblox UI is mostly flat art.\n"
-        "\n"
-        "Applies to SGSR1 only, which sharpens as it scales: the slider feeds its own\n"
-        "edge term, and 0% is as soft as it goes rather than off, since the sharpening\n"
-        "IS the reconstruction.\n"
-        "\n"
-        "RAVU-Zoom ignores this and runs pinned at maximum, so the slider is greyed out\n"
-        "while it is selected.\n"
-        "Applies on the next start, so use the restart button beside Save.");
-    sharpRow->addWidget(upscaleSharpnessSlider_);
-    sharpnessValueLabel_ = new QLabel(this);
-    sharpRow->addWidget(sharpnessValueLabel_);
-    sharpRow->addStretch();
-    graphics->addLayout(sharpRow);
-    connect(upscaleSharpnessSlider_, &QSlider::valueChanged, this, [this](int value) {
-        if (upscaleSharpnessSlider_->isEnabled()) {
-            sharpnessValueLabel_->setText(QString::number(value) + "%");
-        }
-    });
+    // There is no sharpness control. Both upscalers are pinned to
+    // maximum and neither reads one: RAVU because below maximum its
+    // picture stops being worth its cost and lands where SGSR already
+    // is, SGSR because softening the edges it exists to reconstruct
+    // only makes it worse. A slider whose whole travel makes the result
+    // worse is a way to get a bad result by accident.
 
-    // TEMPORARY: which filter does the upscaling, while they are being
-    // compared. Stud ships one; this control, the setting behind it and
-    // every shader but the winner's come out in one commit once it is
-    // picked.
-    //
-    // The data on each item is the name choose_upscaler() parses, so
-    // adding a filter means adding a line here and a line there, and
-    // nothing in between has to know about it.
+    // Which filter does the upscaling. The data on each item is the
+    // name choose_upscaler() parses, so adding one means a line here and
+    // a line there, and nothing in between has to know about it.
     auto* upscalerRow = new QHBoxLayout();
-    upscalerRow->addWidget(new QLabel("Filter (temporary)", this));
+    upscalerRow->addWidget(new QLabel("Upscaler", this));
     upscalerCombo_ = new QComboBox(this);
-    upscalerCombo_->addItem("RAVU-Zoom - anti-ringing", QStringLiteral("ravu-ar"));
-    upscalerCombo_->addItem("SGSR1 - edge direction", QStringLiteral("sgsr-ed"));
+    upscalerCombo_->addItem("RAVU-Zoom AR", QStringLiteral("ravu-ar"));
+    upscalerCombo_->addItem("SGSR1 ED", QStringLiteral("sgsr-ed"));
     upscalerCombo_->setToolTip(
         "Which filter rebuilds the frame at full resolution.\n"
         "\n"
-        "RAVU-Zoom looks its filter weights up in a table trained offline, which is what\n"
-        "makes it the sharpest of these; anti-ringing clamps each pixel into the range\n"
-        "its own neighbourhood spans, so it cannot trace a border around a hard edge.\n"
-        "It is also much the more expensive of the two.\n"
+        "RAVU-Zoom AR is the better picture, and the more expensive. It looks its filter\n"
+        "weights up in a table trained offline, which is what makes it the sharper of the\n"
+        "two, and clamps every pixel into the range its own neighbourhood spans so it\n"
+        "cannot trace a bright or dark border around a hard edge.\n"
         "\n"
-        "SGSR1 reconstructs edges from the pixels themselves, with no table. The one to\n"
-        "fall back to if RAVU costs too much here.\n"
+        "SGSR1 ED is the lightweight one. It reconstructs edges from the pixels\n"
+        "themselves, with no table to read, and costs roughly a third of what RAVU does.\n"
+        "Choose it if the frame rate matters more than the picture, which on a laptop or\n"
+        "an integrated GPU it usually will.\n"
         "\n"
-        "SGSR sharpens as it scales, so the slider above feeds its own edge term.\n"
-        "RAVU-Zoom ignores it: it is pinned to maximum, because below that its picture\n"
-        "stops being worth what it costs and lands where SGSR already is.\n"
+        "Neither has a sharpness setting: both run pinned at maximum, because below that\n"
+        "each of them only gets worse.\n"
         "Applies on the next start, so use the restart button beside Save.");
     upscalerRow->addWidget(upscalerCombo_);
     upscalerRow->addStretch();
@@ -242,19 +209,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         upscalingCheck_->setEnabled(available);
         const bool upscaling = available && upscalingCheck_->isChecked();
         upscalerCombo_->setEnabled(upscaling);
-        // RAVU-Zoom is pinned to maximum sharpening and does not read
-        // this, so the slider is greyed out rather than left looking
-        // live: below maximum RAVU's picture stops being worth its cost
-        // and lands where SGSR already is, which is a bad result to be
-        // able to reach by accident. SGSR does read it.
-        const bool pinned = upscalerCombo_->currentData().toString().startsWith("ravu");
-        upscaleSharpnessSlider_->setEnabled(upscaling && !pinned);
-        sharpnessValueLabel_->setText(
-            pinned ? QStringLiteral("pinned to maximum")
-                   : QString::number(upscaleSharpnessSlider_->value()) + "%");
     };
-    connect(upscalerCombo_, &QComboBox::currentIndexChanged, this,
-            [sync_upscale_controls]() { sync_upscale_controls(); });
     connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
         sync_upscale_controls();
     });
@@ -407,8 +362,6 @@ void SettingsWindow::installResets() {
     add(hidpiCheck_, [this, d] { hidpiCheck_->setChecked(d.hidpi); });
     add(followDpiCheck_, [this, d] { followDpiCheck_->setChecked(d.follow_dpi); });
     add(upscalingCheck_, [this, d] { upscalingCheck_->setChecked(d.upscaling); });
-    add(upscaleSharpnessSlider_,
-        [this, d] { upscaleSharpnessSlider_->setValue(d.upscale_sharpness_percent); });
     // TEMPORARY, with the rest of the filter comparison.
     add(upscalerCombo_, [this, d] {
         const int index = upscalerCombo_->findData(QString::fromStdString(d.upscaler_choice));
@@ -483,11 +436,6 @@ void SettingsWindow::loadFromDisk() {
             QString::fromStdString(settings.upscaler_choice));
         upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
         upscalerCombo_->setEnabled(!settings.hidpi && settings.upscaling);
-    }
-    {
-        upscaleSharpnessSlider_->setValue(settings.upscale_sharpness_percent);
-        sharpnessValueLabel_->setText(QString::number(settings.upscale_sharpness_percent) + "%");
-        upscaleSharpnessSlider_->setEnabled(!settings.hidpi && settings.upscaling);
     }
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
     // Unlimited is stored as 0 and lives at the far end of the slider.
@@ -777,7 +725,6 @@ void SettingsWindow::onSaveClicked() {
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
-    settings.upscale_sharpness_percent = upscaleSharpnessSlider_->value();
     // TEMPORARY, with the rest of the filter comparison.
     settings.upscaler_choice = upscalerCombo_->currentData().toString().toStdString();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();

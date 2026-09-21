@@ -969,7 +969,6 @@ bool g_upscaling_enabled = false;
 // window's logical size, because moving it moves the UI's size with it,
 // and neither is the output: that is the window's own resolution, which
 // the compositor shows 1:1.
-int g_upscale_sharpness_percent = 100;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
@@ -4578,9 +4577,6 @@ int main(int argc, char** argv) {
                 std::printf("stud-render-host: STUD_UPSCALING=%s overrides the setting\n", env);
                 std::fflush(stdout);
             }
-        } else if (std::string_view(argv[i]) == "--upscale-sharpness") {
-            const int percent = std::atoi(argv[i + 1]);
-            if (percent >= 0 && percent <= 125) g_upscale_sharpness_percent = percent;
         } else if (std::string_view(argv[i]) == "--upscaler") {
             // Say so when the environment is about to win, because it
             // wins SILENTLY and outlives the in-app restart button: the
@@ -4638,10 +4634,9 @@ int main(int argc, char** argv) {
         // compensating through the engine's own DPI scale makes it draw
         // square corners. All three measured on screen.
         stud::android_glue::set_render_scale_120(120);
-        stud::render_host::vk_set_upscale_sharpness_percent(g_upscale_sharpness_percent);
         std::printf("stud-render-host: upscaling: the engine renders at the window's logical "
-                    "size, Stud writes the window's own resolution, sharpening %d%%\n",
-                    g_upscale_sharpness_percent);
+                    "size, Stud writes the window's own resolution, sharpening pinned at "
+                    "maximum\n");
         std::fflush(stdout);
     }
 

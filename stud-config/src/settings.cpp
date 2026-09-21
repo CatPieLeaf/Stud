@@ -101,16 +101,6 @@ StudSettings load_settings(const std::string& path) {
         // falls back to fsr there rather than refusing to start.
         result.upscaler_choice = doc.at("upscalerChoice").get<std::string>();
     }
-    if (doc.contains("upscaleSharpnessPercent")) {
-        if (!doc.at("upscaleSharpnessPercent").is_number_integer()) {
-            throw SettingsError("stud: config '" + path +
-                                "' has a non-integer \"upscaleSharpnessPercent\"");
-        }
-        const int percent = doc.at("upscaleSharpnessPercent").get<int>();
-        // 0 skips the pass, 100 is full strength, 125 is the ceiling; see
-        // the field's own comment for why that ceiling and not another.
-        result.upscale_sharpness_percent = percent < 0 ? 0 : (percent > 125 ? 125 : percent);
-    }
     if (doc.contains("textOverlayFontRatio")) {
         if (!doc.at("textOverlayFontRatio").is_number()) {
             throw SettingsError("stud: config '" + path +
@@ -252,7 +242,6 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     // Removed: it could only work by moving the engine's own render size.
     doc.erase("upscaleQualityPercent");
     doc.erase("upscaleTargetPercent");
-    doc["upscaleSharpnessPercent"] = settings.upscale_sharpness_percent;
     doc["upscalerChoice"] = settings.upscaler_choice;
     doc["textOverlayFontRatio"] = settings.text_overlay_font_ratio;
     doc["smoothZoom"] = settings.smooth_zoom;
