@@ -324,6 +324,31 @@ std::map<std::string, std::string> stud_default_flags() {
         // which settles a question the notes had left open for a long
         // time about whether this path reaches live state at all.
         {"FFlagImprovedCursors", "True"},
+
+        // Thin, antialiased Highlight outlines instead of the thick
+        // aliased ones. Roblox's Highlight instance draws a smooth
+        // outline on the PC client and a chunky stair-stepped one on
+        // Stud and on Sober, and this is why.
+        //
+        // The engine carries two outline implementations and picks
+        // between them at runtime. Traced in the x86_64 libroblox.so
+        // that Stud actually loads: one bool decides all three draw
+        // sites -- "Highlight Outline MSAA", "Highlight
+        // Outline" and "Mobile Highlight Outline"
+        // -- and the desktop two are taken when it is true,
+        // the mobile one when it is false. The function that produces
+        // it returns true immediately if this flag is set: it reads the
+        // flag's value byte, which is the byte whose name
+        // pointer and length 0x19 (= strlen of the name below) are
+        // registered.
+        //
+        // So the name reads the right way round. It means "give mobile
+        // the real Highlight outlines", and the mobile path exists
+        // because a phone cannot afford a multisampled one. Same
+        // argument as the texture quality above: Stud is not a phone,
+        // and the engine already advertises MSAA 8 in Stud's own caps
+        // line.
+        {"FFlagHighlightOutlinesOnMobile", "True"},
     };
 }
 
