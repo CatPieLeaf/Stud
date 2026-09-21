@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "stud/stud_paths.h"
+#include "texture_encode.h"
 
 namespace stud::texture_cache {
 namespace {
@@ -175,6 +176,7 @@ void key_for(const void* src, uint64_t src_bytes, uint32_t format, uint32_t targ
         h1 = (h1 ^ value) * 0x100000001b3ull;
         h2 = (h2 ^ value) * 0xff51afd7ed558ccdull;
     };
+    mix(stud::texture_encode::kEncoderVersion);
     mix(format);
     mix(target_format);
     mix(width);
