@@ -131,7 +131,7 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 //
 // Which is better is a judgement about pictures, not a measurement, so
 // this is a switch rather than a decision taken here.
-enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Ravu };
+enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Ravu, RavuAr };
 
 Upscaler choose_upscaler() {
     static const Upscaler choice = [] {
@@ -148,9 +148,12 @@ Upscaler choose_upscaler() {
         } else if (name == "ravu") {
             picked = Upscaler::Ravu;
             described = "ravu (RAVU-Zoom r2, trained weight table)";
+        } else if (name == "ravu-ar") {
+            picked = Upscaler::RavuAr;
+            described = "ravu-ar (RAVU-Zoom r2, anti-ringing)";
         } else if (v != nullptr && name != "fsr") {
             std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; using fsr. "
-                        "Try fsr, sgsr, sgsr-ed or ravu.\n",
+                        "Try fsr, sgsr, sgsr-ed, ravu or ravu-ar.\n",
                         v);
         }
         std::printf("stud-render-host: upscaler: %s\n", described);
@@ -195,6 +198,7 @@ bool upscaler_sharpens_itself() {
             return true;
         case Upscaler::Fsr1:
         case Upscaler::Ravu:
+        case Upscaler::RavuAr:
             return false;
     }
     return false;
@@ -208,6 +212,7 @@ const char* upscaler_name(bool sharpen) {
         case Upscaler::Sgsr1: return "SGSR";
         case Upscaler::Sgsr1Ed: return "SGSR edge-direction";
         case Upscaler::Ravu: return "RAVU-Zoom r2";
+        case Upscaler::RavuAr: return "RAVU-Zoom r2 anti-ringing";
         case Upscaler::Fsr1: break;
     }
     return sharpen ? "EASU + RCAS" : "EASU";
@@ -2946,6 +2951,9 @@ struct UpscaleChain {
     // third descriptor -- its trained weight table -- which the others
     // have no use for, so a RAVU chain's descriptor layout is its own.
     bool ravu = false;
+    // The anti-ringing variant, which binds a second trained table for
+    // the soft minimum and maximum it clamps its output into.
+    bool ravu_ar = false;
     // What the recorded hand-over actually is, so the log reports it
     // rather than recomputing it.
     bool copies_hand_over = false;
@@ -2955,6 +2963,9 @@ struct UpscaleChain {
     VkImage lut = VK_NULL_HANDLE;
     VkDeviceMemory lut_memory = VK_NULL_HANDLE;
     VkImageView lut_view = VK_NULL_HANDLE;
+    VkImage lut_ar = VK_NULL_HANDLE;
+    VkDeviceMemory lut_ar_memory = VK_NULL_HANDLE;
+    VkImageView lut_ar_view = VK_NULL_HANDLE;
     VkShaderModule shader = VK_NULL_HANDLE;
     VkShaderModule sharpen_shader = VK_NULL_HANDLE;
     VkPipeline sharpen_pipeline = VK_NULL_HANDLE;
@@ -3396,6 +3407,9 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
     destroy(l.destroy_image_view, c.lut_view);
     destroy(l.destroy_image, c.lut);
     destroy(l.free_memory, c.lut_memory);
+    destroy(l.destroy_image_view, c.lut_ar_view);
+    destroy(l.destroy_image, c.lut_ar);
+    destroy(l.free_memory, c.lut_ar_memory);
     destroy(l.destroy_shader_module, c.sharpen_shader);
     destroy(l.destroy_pipeline, c.sharpen_pipeline);
     destroy_all(l.destroy_image_view, c.sharpen_src_views);
@@ -3448,7 +3462,8 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory);
 // nothing but their input, with presents stalling up to 3584ms inside
 // the driver while the GPU sat idle. Anything a shader reads per-pixel
 // belongs in device-local memory.
-bool upload_ravu_lut(UpscaleChain& c) {
+bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkImage& image,
+                     VkDeviceMemory& memory, VkImageView& view) {
     Loader& l = loader();
     if (l.create_image == nullptr || l.create_image_view == nullptr ||
         l.create_buffer == nullptr || l.get_buffer_memory_requirements == nullptr ||
@@ -3465,19 +3480,15 @@ bool upload_ravu_lut(UpscaleChain& c) {
         return false;
     }
 
-    static const uint32_t kRavuLut[] =
-#include "ravu_lut.h"
-        ;
     // 18 * 2592 texels of four halves each, two halves to a word. Built
     // without a Python interpreter this is the empty array, and RAVU is
     // simply absent.
     constexpr uint32_t kLutWidth = 18;
     constexpr uint32_t kLutHeight = 2592;
-    if (sizeof(kRavuLut) != kLutWidth * kLutHeight * 4 * sizeof(uint16_t)) {
+    if (bytes != kLutWidth * kLutHeight * 4 * sizeof(uint16_t)) {
         std::printf("stud-render-host: the RAVU weight table is %zu bytes, not the %zu its "
                     "size says; RAVU is unavailable\n",
-                    sizeof(kRavuLut),
-                    static_cast<size_t>(kLutWidth) * kLutHeight * 4 * sizeof(uint16_t));
+                    bytes, static_cast<size_t>(kLutWidth) * kLutHeight * 4 * sizeof(uint16_t));
         std::fflush(stdout);
         return false;
     }
@@ -3500,22 +3511,22 @@ bool upload_ravu_lut(UpscaleChain& c) {
     ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    if (l.create_image(l.device, &ici, nullptr, &c.lut) != VK_SUCCESS) return false;
-    if (!allocate_offscreen_memory(c.lut, c.lut_memory)) return false;
+    if (l.create_image(l.device, &ici, nullptr, &image) != VK_SUCCESS) return false;
+    if (!allocate_offscreen_memory(image, memory)) return false;
 
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = c.lut;
+    vci.image = image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = ici.format;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (l.create_image_view(l.device, &vci, nullptr, &c.lut_view) != VK_SUCCESS) return false;
+    if (l.create_image_view(l.device, &vci, nullptr, &view) != VK_SUCCESS) return false;
 
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory staging_memory = VK_NULL_HANDLE;
     VkBufferCreateInfo bci{};
     bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = sizeof(kRavuLut);
+    bci.size = bytes;
     bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (l.create_buffer(l.device, &bci, nullptr, &staging) != VK_SUCCESS) return false;
@@ -3544,7 +3555,7 @@ bool upload_ravu_lut(UpscaleChain& c) {
     if (l.map_memory(l.device, staging_memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) {
         return false;
     }
-    std::memcpy(mapped, kRavuLut, sizeof(kRavuLut));
+    std::memcpy(mapped, words, bytes);
     if (l.unmap_memory != nullptr) l.unmap_memory(l.device, staging_memory);
 
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -3575,7 +3586,7 @@ bool upload_ravu_lut(UpscaleChain& c) {
         barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = c.lut;
+        barrier.image = image;
         barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
@@ -3585,7 +3596,7 @@ bool upload_ravu_lut(UpscaleChain& c) {
         region.bufferOffset = 0;
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.imageExtent = {kLutWidth, kLutHeight, 1};
-        l.cmd_copy_buffer_to_image(cb, staging, c.lut, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+        l.cmd_copy_buffer_to_image(cb, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                    &region);
 
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -3697,6 +3708,18 @@ bool build_upscale_compute(UpscaleChain& c) {
     static const uint32_t kRavuSpv[] =
 #include "ravu_spv.h"
         ;
+    static const uint32_t kRavuArSpv[] =
+#include "ravu_ar_spv.h"
+        ;
+    // The filter weights, shared by both RAVU shaders -- the two hooks
+    // carry a byte-identical table -- and the anti-ringing one's second
+    // table beside it.
+    static const uint32_t kRavuLut[] =
+#include "ravu_lut.h"
+        ;
+    static const uint32_t kRavuLutAr[] =
+#include "ravu_lut_ar.h"
+        ;
     // Same bindings, same push constants, same 8x8 group: the two
     // shaders are interchangeable in everything but their arithmetic,
     // which is what lets one descriptor layout and one pipeline layout
@@ -3720,6 +3743,10 @@ bool build_upscale_compute(UpscaleChain& c) {
             code = kRavuSpv;
             code_size = sizeof(kRavuSpv);
             break;
+        case Upscaler::RavuAr:
+            code = kRavuArSpv;
+            code_size = sizeof(kRavuArSpv);
+            break;
         case Upscaler::Fsr1:
             break;
     }
@@ -3728,8 +3755,16 @@ bool build_upscale_compute(UpscaleChain& c) {
     // Before anything that would have to be unwound: a chain that
     // cannot have its weight table is not a RAVU chain, and failing here
     // falls back to FSR rather than leaving a half-built one.
-    c.ravu = wanted == Upscaler::Ravu;
-    if (c.ravu && !upload_ravu_lut(c)) return false;
+    c.ravu_ar = wanted == Upscaler::RavuAr;
+    c.ravu = c.ravu_ar || wanted == Upscaler::Ravu;
+    if (c.ravu &&
+        !upload_ravu_lut(c, kRavuLut, sizeof(kRavuLut), c.lut, c.lut_memory, c.lut_view)) {
+        return false;
+    }
+    if (c.ravu_ar && !upload_ravu_lut(c, kRavuLutAr, sizeof(kRavuLutAr), c.lut_ar,
+                                      c.lut_ar_memory, c.lut_ar_view)) {
+        return false;
+    }
 
     VkShaderModuleCreateInfo smci{};
     smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -3752,7 +3787,7 @@ bool build_upscale_compute(UpscaleChain& c) {
 
     // Three bindings for RAVU, two for everything else: only RAVU reads
     // anything besides the engine's image.
-    VkDescriptorSetLayoutBinding bindings[3]{};
+    VkDescriptorSetLayoutBinding bindings[4]{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -3765,9 +3800,13 @@ bool build_upscale_compute(UpscaleChain& c) {
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     VkDescriptorSetLayoutCreateInfo dslci{};
     dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dslci.bindingCount = c.ravu ? 3 : 2;
+    dslci.bindingCount = c.ravu_ar ? 4 : (c.ravu ? 3 : 2);
     dslci.pBindings = bindings;
     if (l.create_descriptor_set_layout(l.device, &dslci, nullptr, &c.set_layout) != VK_SUCCESS) {
         return false;
@@ -3814,8 +3853,9 @@ bool build_upscale_compute(UpscaleChain& c) {
     }
     VkDescriptorPoolSize sizes[2]{};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    // The engine's image, and for RAVU the weight table beside it.
-    sizes[0].descriptorCount = c.ravu ? count * 2 : count;
+    // The engine's image, plus RAVU's weight table and, for the
+    // anti-ringing variant, its second one.
+    sizes[0].descriptorCount = count * (c.ravu_ar ? 3 : (c.ravu ? 2 : 1));
     sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     sizes[1].descriptorCount = count;
     VkDescriptorPoolCreateInfo dpci{};
@@ -3886,7 +3926,7 @@ bool build_upscale_compute(UpscaleChain& c) {
         VkDescriptorImageInfo dst{};
         dst.imageView = c.dst_views[i];
         dst.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        VkWriteDescriptorSet writes[3]{};
+        VkWriteDescriptorSet writes[4]{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = c.sets[i];
         writes[0].dstBinding = 0;
@@ -3906,7 +3946,17 @@ bool build_upscale_compute(UpscaleChain& c) {
             writes[2].dstBinding = 2;
             writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[2].pImageInfo = &table;
-            l.update_descriptor_sets(l.device, 3, writes, 0, nullptr);
+            VkDescriptorImageInfo table_ar{};
+            if (c.ravu_ar) {
+                table_ar.sampler = c.sampler;
+                table_ar.imageView = c.lut_ar_view;
+                table_ar.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                writes[3] = writes[0];
+                writes[3].dstBinding = 3;
+                writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[3].pImageInfo = &table_ar;
+            }
+            l.update_descriptor_sets(l.device, c.ravu_ar ? 4 : 3, writes, 0, nullptr);
             continue;
         }
         l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
@@ -4005,7 +4055,7 @@ bool build_upscale_compute(UpscaleChain& c) {
         // up with no sharpening pass at all: the setting exists, the
         // slider moves, and nothing happens. Live-caught exactly that
         // way.
-        ssizes[0].descriptorCount = c.ravu ? count * 2 : count;
+        ssizes[0].descriptorCount = count * (c.ravu_ar ? 3 : (c.ravu ? 2 : 1));
         ssizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         ssizes[1].descriptorCount = count;
         // The first pool was sized for one set per image; the second pass

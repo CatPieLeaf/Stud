@@ -28,6 +28,14 @@ set(RavuShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ravu.comp")
 set(RavuShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_spv.h")
 set(RavuHook "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook")
 set(RavuLutHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_lut.h")
+# The anti-ringing variant: the same filter weights, plus a second table
+# used to build the soft minimum and maximum its output is clamped into.
+# The weight table is byte-identical to the plain hook's, so only the
+# second one is generated here and ravu_lut.h serves both shaders.
+set(RavuArShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ravu_ar.comp")
+set(RavuArShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_ar_spv.h")
+set(RavuArHook "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mpv-prescalers/ravu-zoom-ar-r2-rgb.hook")
+set(RavuLutArHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/ravu_lut_ar.h")
 # Optional, like glslc: a machine without a Python interpreter builds
 # everything else and simply has no RAVU, rather than failing.
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -41,6 +49,12 @@ if(NOT Python3_Interpreter_FOUND)
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuLutHeader}"
         COMMENT "No Python 3, building without the RAVU-Zoom weight table"
     )
+    add_custom_command(
+        OUTPUT "${RavuLutArHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuLutArHeader}"
+        COMMENT "No Python 3, building without the RAVU-Zoom anti-ringing table"
+    )
 else()
 add_custom_command(
     OUTPUT "${RavuLutHeader}"
@@ -49,6 +63,14 @@ add_custom_command(
             "${RavuHook}" "${RavuLutHeader}"
     DEPENDS "${RavuHook}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ravu_lut.py"
     COMMENT "Generating the RAVU-Zoom weight table"
+)
+add_custom_command(
+    OUTPUT "${RavuLutArHeader}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ravu_lut.py"
+            "${RavuArHook}" "${RavuLutArHeader}" 1
+    DEPENDS "${RavuArHook}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ravu_lut.py"
+    COMMENT "Generating the RAVU-Zoom anti-ringing table"
 )
 endif()
 find_program(StudGlslc glslc
@@ -96,6 +118,14 @@ if(StudGlslc)
                 -o "${RavuShaderHeader}" "${RavuShaderSrc}"
         DEPENDS "${RavuShaderSrc}"
         COMMENT "Compiling the RAVU-Zoom upscale shader to SPIR-V"
+    )
+    add_custom_command(
+        OUTPUT "${RavuArShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c
+                -o "${RavuArShaderHeader}" "${RavuArShaderSrc}"
+        DEPENDS "${RavuArShaderSrc}"
+        COMMENT "Compiling the RAVU-Zoom anti-ringing shader to SPIR-V"
     )
 else()
     # Without glslc the upscaler cannot exist; an empty array makes that a
@@ -147,9 +177,15 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuShaderHeader}"
         COMMENT "glslc not found, building without the RAVU-Zoom shader"
     )
+    add_custom_command(
+        OUTPUT "${RavuArShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuArShaderHeader}"
+        COMMENT "glslc not found, building without the RAVU-Zoom anti-ringing shader"
+    )
 endif()
 
-add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${RavuShaderHeader}" "${RavuLutHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+add_executable(stud-render-host "${UpscaleShaderHeader}" "${SharpenShaderHeader}" "${SgsrShaderHeader}" "${SgsrEdShaderHeader}" "${RavuShaderHeader}" "${RavuLutHeader}" "${RavuArShaderHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
