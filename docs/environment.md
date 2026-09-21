@@ -149,13 +149,11 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_DUMP_FRAME_PATH` | a temp file | Where those frames go. |
 | `STUD_VK_PROBE_PIXELS` | off | Reads a swapchain image back and says whether it is all black. **perf** — a full queue wait. |
 | `STUD_WL_NO_PRESENT_PUMP` | off | Stops Stud reading the Wayland connection from the thread that just returned from `vkQueuePresentKHR`, leaving the main loop to pump it. The driver reads the same connection from inside its own present; this is the last place Stud touches it from a foreign thread. **perf** — buffer releases are then dispatched on the main loop's cadence. |
-| `STUD_SWAPCHAIN_IMAGES` | `engine` | How many images to ask the real swapchain for, clamped to what the surface allows. Defaults to the engine's own request: raising it was tried and the driver still hands out only two indices, so the count is not a lever. |
 | `STUD_WL_DISPATCH_DEFAULT_QUEUE` | off | Puts back Stud's dispatch of the Vulkan driver's own default Wayland queue. Off because a client has no business dispatching another component's queue from a foreign thread; the black window this once caused did not return without it. |
 | `STUD_DEBUG_VALIDATION` | off | Adds the Khronos validation layer with synchronization validation to `tools/debug-session.sh`. **perf** — the heaviest switch here; it changes the timing it is used to measure. |
 | `STUD_DEBUG_CHECKPOINTS` | off | Adds a GPU checkpoint per engine command to `tools/debug-session.sh`, so a device loss names the failing command. **perf** — thousands of extra recorded commands per frame. |
 | `STUD_FLIGHT_RECORDER` | off | Records submits, fence waits, presents, acquires and barriers into a ring in memory and dumps the recent history whenever the device is lost, a fence sticks, or a wait or present runs long. Nothing is printed until a trigger fires. |
 | `STUD_FLIGHT_RECORDER_PATH` | stdout only | Also append each flight-recorder dump to this file, which survives a terminal that scrolled away. |
-| `STUD_FLIGHT_RECORDER_SELFTEST` | off | Forces one flight-recorder dump early in the run, to prove the recorder works before a session it cannot repeat depends on it. |
 | `STUD_VK_ENGINE_CHECKPOINTS` | off | Marks the engine's own commands with GPU checkpoints, so a device loss names which command the GPU died in rather than only that Stud's pass finished. **perf** — one extra recorded command per engine command. |
 | `STUD_DUMP_BAD_SHADERS` | off | Writes out any shader that fails to compile, with its log. |
 

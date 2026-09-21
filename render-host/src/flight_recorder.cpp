@@ -247,23 +247,6 @@ void start_watchdog_once() {
 }  // namespace
 
 void record_event(Event e, uint64_t a, uint64_t b, uint64_t c) {
-    // STUD_FLIGHT_RECORDER_SELFTEST=1 forces one dump early in the run.
-    //
-    // The whole point of this machinery is a session that cannot be
-    // repeated, and a recorder that turns out to be broken at the moment
-    // it was needed is worse than none: the run is spent and the user
-    // has been asked for the one thing they said they would not give
-    // again. So it proves itself on every startup it is asked to --
-    // file creation, thread enumeration, formatting and all -- while
-    // there is still time to fix it.
-    static const bool selftest = std::getenv("STUD_FLIGHT_RECORDER_SELFTEST") != nullptr;
-    if (selftest) {
-        static std::atomic<bool> done{false};
-        if (g_next.load(std::memory_order_relaxed) > 200 &&
-            !done.exchange(true, std::memory_order_relaxed)) {
-            dump("self test: proving the recorder works before it is needed");
-        }
-    }
     start_watchdog_once();
     const uint64_t slot = g_next.fetch_add(1, std::memory_order_relaxed);
     Entry& t = ring()[slot % kCapacity];
