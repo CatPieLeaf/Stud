@@ -663,9 +663,15 @@ const wl_pointer_listener kPointerListener = {
     .axis_discrete = pointer_axis_discrete,
     .axis_value120 = pointer_axis_value120,
     .axis_relative_direction = pointer_axis_relative_direction,
-    // Version 10 added this; Stud drives the cursor itself and does not
-    // act on a compositor warp.
+#ifdef WL_POINTER_WARP_SINCE_VERSION
+    // Version 11, and only present in the header on a libwayland new
+    // enough to declare it. The AppImage runner's is older, where naming
+    // the member is a hard error, so it is guarded rather than omitted:
+    // omitting it unguarded value-initializes the same nullptr but trips
+    // -Wmissing-field-initializers here. The seat above binds at 8 at the
+    // highest, so a compositor can never send this event either way.
     .warp = nullptr,
+#endif
 };
 
 // The compositor's own keymap, which is the only authority on what any
