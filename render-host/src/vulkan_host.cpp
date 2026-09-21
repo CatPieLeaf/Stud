@@ -490,7 +490,20 @@ struct Loader {
     // out because it crashed the driver. The bookkeeping outlived its
     // only reader: an insert on every vkCreateBuffer and an erase on
     // every destroy, thousands a session, feeding nothing.
-    std::unordered_set<uint64_t> untransitioned_images;
+    // What each one IS, not just that it exists. A census of 74 bare
+    // handles says only that there are 74; the format, size and usage
+    // say whether they are one render target the engine reuses or a pile
+    // of small uploads, and those are different bugs. This is what
+    // VUID-vkCmdDraw-None-09600 needs answered: the draws that sample an
+    // UNDEFINED image are sampling one of these, and nothing so far has
+    // said what kind of image never gets a barrier.
+    struct UntransitionedImage {
+        uint32_t format;
+        uint32_t width;
+        uint32_t height;
+        uint32_t usage;
+    };
+    std::unordered_map<uint64_t, UntransitionedImage> untransitioned_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
 
@@ -2058,7 +2071,9 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     l.retired_images.erase(to_u64(image));
     // Brand new, so it is in UNDEFINED until a barrier says otherwise.
     // See Loader::untransitioned_images.
-    l.untransitioned_images.insert(to_u64(image));
+    l.untransitioned_images.insert_or_assign(
+        to_u64(image),
+        Loader::UntransitionedImage{h.format, h.extent_width, h.extent_height, h.usage});
     fr::record(fr::Event::Note, to_u64(image), h.format, h.usage);
     // The handle, named, so a validation message about an image can be
     // tied back to what that image IS. A report says only
@@ -8237,13 +8252,31 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             // run and the error came back during real play on different
             // images, so the difference matters.
             if (!l.untransitioned_images.empty()) {
+                // Grouped by what they are, because "74 handles" is not a
+                // finding and "74 of one 1024x1024 sampled image" is.
+                struct Kind {
+                    uint32_t format, width, height, usage;
+                    bool operator<(const Kind& o) const {
+                        return std::tie(format, width, height, usage) <
+                               std::tie(o.format, o.width, o.height, o.usage);
+                    }
+                };
+                std::map<Kind, size_t> kinds;
+                for (const auto& [handle, info] : l.untransitioned_images) {
+                    (void)handle;
+                    ++kinds[Kind{info.format, info.width, info.height, info.usage}];
+                }
                 std::printf("stud-render-host: %zu image(s) created and never transitioned out "
-                            "of UNDEFINED; first few:",
-                            l.untransitioned_images.size());
+                            "of UNDEFINED, in %zu kind(s):",
+                            l.untransitioned_images.size(), kinds.size());
                 int shown = 0;
-                for (uint64_t h : l.untransitioned_images) {
-                    if (shown++ >= 6) break;
-                    std::printf(" %llx", static_cast<unsigned long long>(h));
+                for (const auto& [k, n] : kinds) {
+                    if (shown++ >= 8) {
+                        std::printf(" ...");
+                        break;
+                    }
+                    std::printf(" [%zux format=%u %ux%u usage=0x%x]", n, k.format, k.width,
+                                k.height, k.usage);
                 }
                 std::printf("\n");
                 std::fflush(stdout);
