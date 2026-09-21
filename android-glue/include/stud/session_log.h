@@ -12,10 +12,13 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 // One log file per Stud session, written by all three processes at once.
@@ -45,6 +48,13 @@ namespace stud::logging {
 
 namespace detail {
 
+// The session log file itself, so the crash path can write it one last
+// time without going through the pipe and its timer. See final_flush().
+inline int& log_fd_storage() {
+    static int fd = -1;
+    return fd;
+}
+
 // The real stdout, saved before the tee replaced fd 1. Children must be
 // given THIS rather than inheriting the pipe: the pipe's only reader is
 // this process's tee thread, and Process A exits within a second of
@@ -62,9 +72,70 @@ struct TeeState {
     int passthrough_fd = -1;
 };
 
+// Everything read out of the pipe and not yet written to a file.
+//
+// This exists because the obvious tee -- read a block, write it to both
+// destinations, repeat -- puts file I/O on the only path that drains the
+// pipe. When a destination is slow (a terminal doing its own scrolling, a
+// disk busy elsewhere), the drain stalls, the pipe fills at 64 KiB, and
+// then every printf in the process BLOCKS, because a write to a full
+// pipe waits. Live-caught by bisect: commit 3a71e33 added one printf on
+// the swapchain-rebuild path, which runs on the engine's render thread,
+// and the result was seconds of total freeze on a game join -- no
+// presents, the window and MangoHud both frozen on the last frame, while
+// the game's audio carried on. Nothing about that commit was wrong
+// except where it logged, which is the proof that the logger must never
+// be able to block its writers.
+//
+// So the reader does nothing but move bytes into memory, and a second
+// thread writes them out on a timer. A writer can now only ever be
+// delayed by a memcpy.
+struct Buffered {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::string pending;
+    unsigned long long dropped = 0;
+    bool reader_done = false;
+};
+
+inline Buffered& buffered() {
+    static Buffered b;
+    return b;
+}
+
+// The cap on what is held in memory. Reached only if a destination stops
+// accepting writes for seconds at a time, and the alternative to dropping
+// is growing without limit until the process is killed, which is worse
+// than losing log lines. The oldest go first and the count is reported in
+// the file, so a gap is never silent.
+inline constexpr size_t kMaxBuffered = 8u * 1024u * 1024u;
+
+// How long the writer sleeps between flushes when nothing is urgent.
+inline constexpr int kFlushIntervalMs = 2000;
+
+// Flush early rather than sit on a backlog this size.
+inline constexpr size_t kFlushThreshold = 256u * 1024u;
+
+inline void write_all(int fd, const char* data, size_t len) {
+    if (fd < 0) return;
+    size_t written = 0;
+    while (written < len) {
+        const ssize_t n = ::write(fd, data + written, len - written);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return;
+        }
+        written += static_cast<size_t>(n);
+    }
+}
+
+// Moves bytes from the pipe into memory, and does nothing else. No file
+// I/O belongs here; see Buffered.
 inline void* tee_thread(void* arg) {
     auto* state = static_cast<TeeState*>(arg);
-    char buffer[4096];
+    // Bigger than the old 4 KiB: fewer wakeups for the same bytes, and
+    // the pipe is drained in larger bites during a burst.
+    char buffer[64 * 1024];
     for (;;) {
         const ssize_t got = ::read(state->read_fd, buffer, sizeof(buffer));
         if (got < 0) {
@@ -72,23 +143,97 @@ inline void* tee_thread(void* arg) {
             break;
         }
         if (got == 0) break;
-        // Both destinations get every byte. A short or failed write to
-        // one is not worth losing the other over; this is a logger,
-        // and it must never be the reason a process stalls or dies.
-        for (int fd : {state->passthrough_fd, state->log_fd}) {
-            if (fd < 0) continue;
-            ssize_t written = 0;
-            while (written < got) {
-                const ssize_t n = ::write(fd, buffer + written, static_cast<size_t>(got - written));
-                if (n <= 0) {
-                    if (n < 0 && errno == EINTR) continue;
-                    break;
-                }
-                written += n;
+        Buffered& b = buffered();
+        {
+            std::lock_guard<std::mutex> lock(b.mutex);
+            if (b.pending.size() + static_cast<size_t>(got) > kMaxBuffered) {
+                // Oldest first. Whole buffer rather than a partial line
+                // boundary search: this path means the log is already
+                // losing, and spending time on tidiness here would make
+                // it lose more.
+                b.dropped += b.pending.size();
+                b.pending.clear();
+            }
+            b.pending.append(buffer, static_cast<size_t>(got));
+        }
+        b.wake.notify_one();
+    }
+    {
+        Buffered& b = buffered();
+        std::lock_guard<std::mutex> lock(b.mutex);
+        b.reader_done = true;
+    }
+    buffered().wake.notify_one();
+    ::close(state->read_fd);
+    return nullptr;
+}
+
+// Everything still in memory, written out now instead of at the next
+// tick of the timer.
+//
+// The crash path's whole problem is that it has no next tick: the
+// handler re-raises and the process is gone in microseconds, taking
+// however many seconds of buffered log with it. So the handler calls
+// this, and the buffer reaches the file before the process dies.
+//
+// try_lock rather than lock, because a signal can arrive on the very
+// thread already holding the mutex, and waiting for a lock that the
+// interrupted thread can no longer release would hang the crash handler
+// forever -- turning a crash into a freeze. Losing the tail of a log is
+// the better failure.
+inline void final_flush() {
+    const int fd = log_fd_storage();
+    if (fd < 0) return;
+    Buffered& b = buffered();
+    if (!b.mutex.try_lock()) return;
+    if (!b.pending.empty()) {
+        write_all(fd, b.pending.data(), b.pending.size());
+        b.pending.clear();
+    }
+    b.mutex.unlock();
+}
+
+// Writes what the reader collected, on a timer. Slow destinations delay
+// only this thread.
+inline void* writer_thread(void* arg) {
+    auto* state = static_cast<TeeState*>(arg);
+    Buffered& b = buffered();
+    for (;;) {
+        std::string batch;
+        unsigned long long dropped = 0;
+        bool finished = false;
+        {
+            std::unique_lock<std::mutex> lock(b.mutex);
+            b.wake.wait_for(lock, std::chrono::milliseconds(kFlushIntervalMs), [&b] {
+                return b.reader_done || b.pending.size() >= kFlushThreshold;
+            });
+            batch.swap(b.pending);
+            dropped = b.dropped;
+            b.dropped = 0;
+            finished = b.reader_done && batch.empty();
+        }
+        if (dropped > 0) {
+            char note[160];
+            const int n = std::snprintf(
+                note, sizeof(note),
+                "stud: session log: %llu byte(s) dropped, the log was being written slower "
+                "than it was produced\n",
+                dropped);
+            if (n > 0) {
+                write_all(state->passthrough_fd, note, static_cast<size_t>(n));
+                write_all(state->log_fd, note, static_cast<size_t>(n));
             }
         }
+        if (!batch.empty()) {
+            // Both destinations get every byte. A short or failed write
+            // to one is not worth losing the other over; this is a
+            // logger, and it must never be the reason a process stalls
+            // or dies.
+            write_all(state->passthrough_fd, batch.data(), batch.size());
+            write_all(state->log_fd, batch.data(), batch.size());
+        }
+        if (finished) break;
     }
-    ::close(state->read_fd);
     delete state;
     return nullptr;
 }
@@ -114,14 +259,48 @@ inline bool start_session_log(const std::string& path) {
     // has been replaced by the pipe.
     const int passthrough = ::dup(STDOUT_FILENO);
     detail::passthrough_fd_storage() = passthrough;
+    // What final_flush() writes to when the process is crashing.
+    detail::log_fd_storage() = log_fd;
 
-    auto* state = new detail::TeeState{pipe_fds[0], log_fd, passthrough};
-    pthread_t thread{};
-    if (::pthread_create(&thread, nullptr, detail::tee_thread, state) != 0) {
-        delete state;
+    // A bigger pipe, so an ordinary burst never even reaches the memory
+    // buffer. 64 KiB is the default and a game join produces more than
+    // that between two reads. Best-effort: the request is capped by
+    // /proc/sys/fs/pipe-max-size and failing it costs nothing, the
+    // buffer behind it is what actually guarantees the writer never
+    // blocks.
+    ::fcntl(pipe_fds[1], F_SETPIPE_SZ, 1024 * 1024);
+
+    // Two threads, and the split is the whole point: `tee_thread` only
+    // moves bytes out of the pipe, `writer_thread` does every write that
+    // can be slow. See detail::Buffered.
+    auto* reader_state = new detail::TeeState{pipe_fds[0], log_fd, passthrough};
+    auto* writer_state = new detail::TeeState{-1, log_fd, passthrough};
+    pthread_t writer{};
+    if (::pthread_create(&writer, nullptr, detail::writer_thread, writer_state) != 0) {
+        delete reader_state;
+        delete writer_state;
         ::close(pipe_fds[0]);
         ::close(pipe_fds[1]);
         ::close(log_fd);
+        if (passthrough >= 0) ::close(passthrough);
+        return false;
+    }
+    ::pthread_detach(writer);
+
+    pthread_t thread{};
+    if (::pthread_create(&thread, nullptr, detail::tee_thread, reader_state) != 0) {
+        // The writer is already running and owns writer_state; it stops
+        // on its own once the read end closes and the reader marks it
+        // done. Marking that here is what lets it exit rather than
+        // waiting out its timer forever on a log that will never start.
+        {
+            std::lock_guard<std::mutex> lock(detail::buffered().mutex);
+            detail::buffered().reader_done = true;
+        }
+        detail::buffered().wake.notify_one();
+        delete reader_state;
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
         if (passthrough >= 0) ::close(passthrough);
         return false;
     }
@@ -268,6 +447,23 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
         ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
     }
 #endif
+
+    // Everything above went to stderr, which is the pipe, so none of it
+    // is in the log file yet -- nor is whatever the session had buffered
+    // before the crash. Write it all now, because after the re-raise
+    // below there is no later.
+    //
+    // The pause first is for the reader thread, which sits blocked in
+    // read() and wakes the moment the report above is written: it needs
+    // a moment to move those bytes into the buffer that final_flush()
+    // writes out. nanosleep is one of the few sleeps that is
+    // async-signal-safe, which is why it rather than anything friendlier.
+    {
+        timespec settle{};
+        settle.tv_nsec = 5 * 1000 * 1000;  // 5ms
+        ::nanosleep(&settle, nullptr);
+    }
+    final_flush();
 
     // The real disposition, then re-raise, so the exit status and any
     // core dump are exactly what the signal would have produced.
