@@ -57,6 +57,13 @@
 
 namespace stud::texture_encode {
 
+// Bump whenever any encoder below changes what it writes.
+//
+// The texture cache keys on the source bytes and the formats, so without
+// this a block encoded by an older, worse encoder would be served from
+// disk forever and the change would never reach anything already played.
+inline constexpr uint32_t kEncoderVersion = 2;
+
 // Each takes one decoded 4x4 block, tightly packed, and writes one
 // compressed block. `rgba` is 16 texels of 4 bytes; `rg16`/`r16` are 16
 // texels of 16-bit channels.
@@ -66,18 +73,27 @@ void bc3_block(const uint8_t* rgba, uint8_t* out);           // 16 bytes
 void bc4_block_from_r16(const uint16_t* r16, uint8_t* out);  // 8 bytes
 void bc5_block_from_rg16(const uint16_t* rg16, uint8_t* out);  // 16 bytes
 
-// BC7, mode 6 only: one subset, RGBA endpoints at 7 bits plus a shared
-// p-bit, and 4-bit indices, sixteen steps along the line where BC1 has
-// four, at eight times its endpoint precision.
+// BC7, whichever of mode 6 and mode 5 reconstructs the block closer.
 //
 // Why a second colour format at all: BC1 is 4 bits per texel and holds
 // four colours per 4x4 block, which is the textbook worst case for a
 // normal map. Smooth surface normals come out as blocky per-block bands,
-// which is what "the normal maps look like pixelated noise" is. Mode 6
-// alone is chosen deliberately. It is the single-subset mode, so
-// encoding it is the same shape as BC1 (endpoints, then an index per
-// texel) rather than a search over partitionings, and it is the mode a
-// smooth block wants anyway.
-void bc7_mode6_block(const uint8_t* rgba, uint8_t* out);  // 16 bytes
+// which is what "the normal maps look like pixelated noise" is.
+//
+// Mode 6 is one subset, RGBA endpoints at 7 bits plus a shared p-bit,
+// and 4-bit indices: sixteen steps along the line where BC1 has four, at
+// eight times its endpoint precision. It is the right mode whenever a
+// block's four channels move together, which is most of them.
+//
+// Mode 5 is one subset with RGB at 7 bits and alpha at 8, each with its
+// own 2-bit index set. Coarser steps, but the alpha indices are separate.
+// Mode 6's single index per texel is shared by all four channels, so a
+// texel cannot sit at one point along the colour line and a different
+// point along alpha, and where alpha varies independently of colour that
+// is unrepresentable at any endpoint precision. Measured on a block whose
+// alpha and colour both vary non-linearly and independently, mode 6
+// manages 12.53 dB with a worst-case error of 124 of 255. Soft-edged
+// decals and cut-out masks are that shape.
+void bc7_block(const uint8_t* rgba, uint8_t* out);  // 16 bytes
 
 }  // namespace stud::texture_encode

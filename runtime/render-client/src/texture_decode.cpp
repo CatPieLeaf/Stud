@@ -435,10 +435,10 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
                 uint8_t* dst_block =
                     out + (static_cast<uint64_t>(by) * bw + bx) * target.block_bytes;
                 if (use_bc7) {
-                    // One encoder for every colour format: BC7 mode 6
-                    // carries alpha, so the punch-through and full-alpha
-                    // cases need no separate path.
-                    stud::texture_encode::bc7_mode6_block(scratch, dst_block);
+                    // One encoder for every colour format: BC7 carries
+                    // alpha, so the punch-through and full-alpha cases
+                    // need no separate path.
+                    stud::texture_encode::bc7_block(scratch, dst_block);
                     continue;
                 }
                 switch (l.codec) {
