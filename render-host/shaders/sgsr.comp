@@ -56,6 +56,8 @@ layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
 layout(push_constant) uniform Params {
     ivec2 src_size;
     ivec2 dst_size;
+    // Unused now: the strength is pinned, see edgeSharpness below. Kept
+    // in the block because every shader shares one push layout.
     float sharpness;
     // See upscale.comp: the last pass to write swizzles, so the
     // hand-over to the swapchain is a byte copy rather than a
@@ -132,6 +134,20 @@ void main() {
     // coordinates: the same 0..1 the fragment shader's varying carried.
     highp vec2 uv = (vec2(out_pos) + 0.5) / vec2(p.dst_size);
 
+    // PINNED at the top of the range, so this is a constant.
+    //
+    // Both upscalers run at maximum sharpening and neither reads a
+    // setting any more: RAVU because below maximum its picture stops
+    // being worth its cost, and SGSR for the same reason at the other
+    // end of the scale -- its whole job here is reconstructing edges,
+    // and a slider that only softens them was a way to make the result
+    // worse by accident. The control is gone, so this is a constant
+    // rather than a push-constant read, and the branch and the
+    // arithmetic below go with it.
+    //
+    // What follows is the mapping that used to be applied, kept because
+    // it is what the constant was derived from.
+    //
     // Stud's sharpness setting, 0.0-1.25, onto the reference's own scale.
     //
     // This used to be `sharpness > 0 ? sharpness * 2.0 : 2.0`, which was
@@ -151,8 +167,7 @@ void main() {
     //                 just corrects less
     //     100%  2.0   the reference's own default
     //     125%  3.0   as far as the clamps allow before it saturates
-    float edgeSharpness = p.sharpness <= 1.0 ? 0.5 + p.sharpness * 1.5
-                                             : 2.0 + (p.sharpness - 1.0) * 4.0;
+    const float edgeSharpness = 3.0;  // what 125% mapped to
 
     vec4 color;
     color.xyz = textureLod(src, uv, 0.0).xyz;

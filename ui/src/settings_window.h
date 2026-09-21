@@ -101,10 +101,8 @@ private:
     QCheckBox* hidpiCheck_;
     QCheckBox* followDpiCheck_;
     QCheckBox* upscalingCheck_;
-    QSlider* upscaleSharpnessSlider_;
     // TEMPORARY, comes out with the comparison. See StudSettings::upscaler_choice.
     QComboBox* upscalerCombo_;
-    QLabel* sharpnessValueLabel_;
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also
     // called on a palette change, hence keeping it around.

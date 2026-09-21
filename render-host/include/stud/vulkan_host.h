@@ -40,7 +40,6 @@ void vk_set_upscale_output_size(uint32_t width, uint32_t height);
 
 // How hard the upscaler's sharpening pass pulls, 0-100. Read when the
 // pass is recorded, so it applies from the next swapchain onwards.
-void vk_set_upscale_sharpness_percent(int32_t percent);
 
 // Whether the pass may use its compute shaders (EASU/RCAS) or must stay a
 // plain scaled blit.
