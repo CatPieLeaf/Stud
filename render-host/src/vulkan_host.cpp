@@ -4719,44 +4719,12 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     // tried, it is not the answer, and the extra images cost memory for
     // nothing.
     //
-    // STUD_SWAPCHAIN_IMAGES=N still asks for N, clamped to the surface's
-    // own minImageCount..maxImageCount (a maxImageCount of 0 means "no
-    // limit" in the spec, which a naive clamp would read as zero).
+    // The override that asked for a different count is gone with the
+    // experiment: it was only ever there to try the number above, the
+    // answer was no, and a switch nobody should reach for is one more
+    // thing to read past.
     ci.minImageCount = h.min_image_count;
-    {
-        static const std::string choice = [] {
-            const char* v = std::getenv("STUD_SWAPCHAIN_IMAGES");
-            return std::string(v != nullptr ? v : "engine");
-        }();
-        if (choice != "engine" && l.get_physical_device_surface_capabilities != nullptr &&
-            l.physical_device != VK_NULL_HANDLE) {
-            const uint32_t want = static_cast<uint32_t>(std::atoi(choice.c_str()));
-            VkSurfaceCapabilitiesKHR caps{};
-            if (want > 0 && l.get_physical_device_surface_capabilities(
-                                l.physical_device, ci.surface, &caps) == VK_SUCCESS) {
-                uint32_t asked = want > h.min_image_count ? want : h.min_image_count;
-                if (asked < caps.minImageCount) asked = caps.minImageCount;
-                // 0 means no maximum; only clamp when there is one.
-                if (caps.maxImageCount != 0 && asked > caps.maxImageCount) {
-                    asked = caps.maxImageCount;
-                }
-                if (asked != ci.minImageCount) {
-                    static bool said = false;
-                    if (!said) {
-                        said = true;
-                        std::printf("stud-render-host: asking for %u swapchain images instead of "
-                                    "the engine's %u (the surface allows %u to %u); two were "
-                                    "reaching the compositor and a late buffer release had "
-                                    "nothing to absorb it\n",
-                                    asked, h.min_image_count, caps.minImageCount,
-                                    caps.maxImageCount);
-                        std::fflush(stdout);
-                    }
-                    ci.minImageCount = asked;
-                }
-            }
-        }
-    }
+
     ci.imageFormat = static_cast<VkFormat>(h.image_format);
     // STUD_VK_FORCE_OPAQUE_FORMAT=1 swaps a UNORM swapchain for its SRGB
     // twin. Off by default: it is a real change to what the engine asked
