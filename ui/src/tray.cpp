@@ -9,6 +9,11 @@
 // Ends a running session, defined in main.cpp, declared here because
 // the tray is the only other caller.
 namespace stud::ui { void terminate_stud_session(); }
+// Defined in main.cpp: whether a crash report is on screen right now.
+namespace stud::ui { bool crash_dialog_is_open(); }
+// Defined in main.cpp: whether the session that just ended said it
+// meant to. See note_clean_exit().
+namespace stud::ui { bool session_ended_cleanly(); }
 
 #include "update_check.h"
 
@@ -222,6 +227,19 @@ void Tray::showUpdateAvailable(const QString& latestVersion) {
 
 void Tray::checkSessionAlive() {
     if (session_is_running()) return;
+    // A crash is exactly when the session stops running, so this watchdog
+    // and the crash report fire together -- and quitting here closes the
+    // report before it can be read. Live-caught: the dialog appeared for
+    // a split second on every crash, which looked like a Qt modality
+    // problem and was really this. The report owns the shutdown while it
+    // is up; closing it quits.
+    if (stud::ui::crash_dialog_is_open()) return;
+    // And defer BEFORE it is up, too. Waiting for the dialog to exist is
+    // a race between two one-second timers: this one noticing the
+    // session is gone, and the crash watcher deciding to report it. The
+    // clean-exit note settles it without racing -- if the session ended
+    // without one, a report is coming, and quitting now would eat it.
+    if (!stud::ui::session_ended_cleanly()) return;
     if (icon_ != nullptr) icon_->hide();
     QApplication::quit();
 }

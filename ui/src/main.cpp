@@ -44,6 +44,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QFileDialog>
+#include <QPixmap>
+#include <QPushButton>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -73,6 +76,16 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+
+// Defined at the bottom, used by the launch path above.
+namespace stud::ui {
+void set_render_host_pid(qint64 pid);
+void set_tray_is_holding(bool holding);
+bool crash_dialog_is_open();
+bool session_ended_cleanly();
+void watch_for_a_crash();
+void show_crash_dialog(const QString& which_process);
+}  // namespace stud::ui
 
 namespace {
 
@@ -884,10 +897,14 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         apply_gpu_selection_environment(env, settings, vulkan_path);
         render_host.setProcessEnvironment(env);
     }
-    if (!render_host.startDetached()) {
+    // The pid is kept, not thrown away: the supervisor below watches it
+    // to know when the session is over. See watch_for_a_crash().
+    qint64 render_host_pid = 0;
+    if (!render_host.startDetached(&render_host_pid)) {
         QMessageBox::critical(nullptr, "Stud", "Failed to start stud-render-host.");
         return;
     }
+    stud::ui::set_render_host_pid(render_host_pid);
     if (!wait_for_render_host_socket()) {
         QMessageBox::critical(nullptr, "Stud",
                                "stud-render-host did not become ready in time (no real Wayland "
@@ -1158,6 +1175,185 @@ bool stud_session_is_running() { return another_instance_is_running(); }
 // Used to put back a session that Settings had to stop to replace the
 // APK underneath it.
 void start_stud_session() { launch_game(std::nullopt); }
+
+namespace {
+qint64 g_render_host_pid = 0;
+// Whether the tray is holding this process open. Tray has no
+// accessor for it, and the launch path already knows.
+bool g_tray_is_holding = false;
+// Whether a crash report is on screen. The tray's session watchdog
+// asks, because a crash is exactly when it would otherwise quit.
+bool g_crash_dialog_open = false;
+}
+
+void set_tray_is_holding(bool holding) { g_tray_is_holding = holding; }
+
+bool crash_dialog_is_open() { return g_crash_dialog_open; }
+
+// Whether the session that just ended left the note saying it was
+// asked to. Read by the tray watchdog, which must not quit out from
+// under a crash report that has not appeared yet.
+bool session_ended_cleanly() {
+    const std::string clean = stud::logging::clean_exit_marker_path();
+    if (clean.empty()) return true;  // Cannot tell: do not hold Stud open.
+    return QFile::exists(QString::fromStdString(clean));
+}
+
+void set_render_host_pid(qint64 pid) { g_render_host_pid = pid; }
+
+// "Oops, Stud has crashed!", and a way to keep the log that says why.
+//
+// Export rather than a path to copy by hand: the session log lives under
+// ~/.local/state, which is not somewhere a user is expected to know, and
+// the whole reason it exists is to be sendable when something goes
+// wrong. It is copied rather than moved, so the original stays where a
+// later look can still find it.
+void show_crash_dialog(const QString& which_process) {
+    const QString log = QString::fromUtf8(qgetenv("STUD_LOG_FILE"));
+
+    // Shown with open() and a finished() handler, NOT exec().
+    //
+    // exec() spins a nested event loop, and this is called from a timer
+    // callback in a process that has no other window: the dialog becomes
+    // the last window the moment it appears, and quitOnLastWindowClosed
+    // then takes the whole process down with it. Live-caught -- the
+    // dialog flashed on screen for a split second and Stud exited. So the
+    // policy is turned off for as long as the dialog is up, and the
+    // answer is handled when it arrives instead of being waited for.
+    qApp->setQuitOnLastWindowClosed(false);
+    g_crash_dialog_open = true;
+
+    auto* box = new QMessageBox;
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    // Stud's own mark rather than the system's red error triangle: the
+    // same image the tray shows when Stud is out of date. Scaled
+    // smoothly because the source is larger than a dialog icon.
+    box->setIconPixmap(QPixmap(QStringLiteral(":/stud-logo-update.png"))
+                           .scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    box->setWindowTitle(QStringLiteral("Stud"));
+    box->setText(QStringLiteral("Oops, Stud has crashed!"));
+    box->setInformativeText(
+        log.isEmpty()
+            ? QStringLiteral("%1 stopped unexpectedly.").arg(which_process)
+            : QStringLiteral("%1 stopped unexpectedly.\n\nThe log for this session has been "
+                             "written and can be exported.")
+                  .arg(which_process));
+    QPushButton* export_button = nullptr;
+    if (!log.isEmpty()) {
+        export_button = box->addButton(QStringLiteral("Export logs"), QMessageBox::ActionRole);
+    }
+    box->addButton(QMessageBox::Close);
+
+    QObject::connect(box, &QMessageBox::finished, qApp, [box, export_button, log]() {
+        if (export_button != nullptr && box->clickedButton() == export_button) {
+            const QString suggested =
+                QDir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation))
+                    .filePath(QFileInfo(log).fileName());
+            const QString target = QFileDialog::getSaveFileName(
+                nullptr, QStringLiteral("Export Stud log"), suggested,
+                QStringLiteral("Log files (*.log);;All files (*)"));
+            if (!target.isEmpty()) {
+                QFile::remove(target);
+                if (!QFile::copy(log, target)) {
+                    QMessageBox::warning(nullptr, QStringLiteral("Stud"),
+                                         QStringLiteral("Could not write %1.").arg(target));
+                }
+            }
+        }
+        // The report is gone; the session really is over either way,
+        // because whatever crashed is not coming back.
+        g_crash_dialog_open = false;
+        QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
+    });
+    // show(), not open(): open() is window-modal, and this dialog has no
+    // parent window to be modal to -- stud-ui is a launcher that has no
+    // windows of its own by this point. Live-caught: the dialog was
+    // rejected the instant it appeared, finished() firing with
+    // result=0 and no button clicked, which is what a modal with nothing
+    // to attach to does. An ordinary top-level window stays put.
+    box->exec();
+}
+
+// Stays for the session so a crash has someone to report it.
+//
+// Process A otherwise hands off and exits within a second, which is the
+// right shape for a launcher and the wrong shape for a crash reporter:
+// by the time anything crashes there is no Stud process left to say so,
+// and the user is left with a window that vanished. Of the three only
+// this one is a Qt application -- render-host owns the window and
+// Process B is sandboxed -- so this is the only process that can put a
+// dialog on screen. The tray already keeps it alive for exactly this
+// reason; this extends that to every session.
+//
+// The crash itself is detected by the marker the handler writes (see
+// session_log.h's crash_marker_path()), not by watching exit statuses:
+// render-host is started detached, so it is not this process's child and
+// its status is not ours to reap. Polling rather than a file watcher
+// because the marker does not exist yet, and watching a directory for a
+// file that usually never appears is more machinery for the same answer.
+void watch_for_a_crash() {
+    const QString marker = QString::fromStdString(stud::logging::crash_marker_path());
+    const QString clean = QString::fromStdString(stud::logging::clean_exit_marker_path());
+    if (marker.isEmpty()) return;
+    // Markers left by an earlier session are not this session's news.
+    QFile::remove(marker);
+    QFile::remove(clean);
+
+    auto* timer = new QTimer(qApp);
+    timer->setInterval(1000);
+    QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, timer]() {
+        if (QFile::exists(marker)) {
+            timer->stop();
+            QString who = QStringLiteral("Stud");
+            QFile f(marker);
+            if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                const QString first = QString::fromUtf8(f.readLine()).trimmed();
+                if (!first.isEmpty()) who = first.section(' ', 0, 0);
+                f.close();
+            }
+            QFile::remove(marker);
+            show_crash_dialog(who);
+            return;
+        }
+        // Session over, nothing wrong: the launcher's job is done and
+        // holding a Qt process open past it would be a leak of its own.
+        // Liveness by the lock the render host holds for its whole life,
+        // not by its pid.
+        //
+        // QProcess::startDetached() double-forks, so the pid it hands
+        // back is not reliably the process that survives: kill(pid, 0)
+        // kept answering "alive" after the real render host had been
+        // SIGKILLed, and the watcher sat there reporting nothing and
+        // quitting nothing. The lock cannot lie -- the kernel drops it
+        // when its holder dies, however it dies -- and it is the same
+        // test the tray already trusts.
+        if (!stud_session_is_running()) {
+            timer->stop();
+            // Whether the session ending is news depends on whether
+            // anyone asked for it.
+            //
+            // Deliberately the opposite of detecting a fault: a fault
+            // detector only catches the faults it was taught, and the
+            // ways Stud dies without warning -- SIGKILL, the OOM killer,
+            // a driver taking the render host down -- run no handler and
+            // write nothing at all. So a shutdown the user chose leaves
+            // a note (see note_clean_exit()), and the ABSENCE of that
+            // note is what means crash. The crash marker is still read
+            // above when it exists, because it names the signal, but
+            // nothing depends on it being there.
+            if (QFile::exists(clean)) {
+                QFile::remove(clean);
+                if (!g_tray_is_holding) {
+                    QMetaObject::invokeMethod(qApp, &QApplication::quit,
+                                              Qt::QueuedConnection);
+                }
+                return;
+            }
+            show_crash_dialog(QStringLiteral("stud-render-host"));
+        }
+    });
+    timer->start();
+}
 
 }  // namespace stud::ui
 
@@ -1593,11 +1789,22 @@ int main(int argc, char** argv) {
                 // This process outlives the launch, so it is the one that
                 // answers a `--settings` started from the desktop entry.
                 stud::ui::SettingsWindow::listenForOpenRequests();
+                stud::ui::set_tray_is_holding(true);
+                stud::ui::watch_for_a_crash();
                 return;
             }
             std::fprintf(stderr, "stud: no system tray available, exiting after launch\n");
         }
-        QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
+        // Stay for the session anyway, to report a crash.
+        //
+        // The hand-off above is the right shape for a launcher and the
+        // wrong one for a crash reporter: whatever crashes, there has to
+        // be a process left able to say so, and of the three only this
+        // one can put a dialog on screen. It costs an idle Qt process
+        // and a one-second timer, and it quits itself the moment
+        // render-host is gone, so a normal session ends exactly where it
+        // used to.
+        stud::ui::watch_for_a_crash();
     };
 
     // No login gate. Stud logs in the way Sober does: inside the real
