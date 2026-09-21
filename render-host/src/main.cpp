@@ -4582,6 +4582,22 @@ int main(int argc, char** argv) {
             const int percent = std::atoi(argv[i + 1]);
             if (percent >= 0 && percent <= 125) g_upscale_sharpness_percent = percent;
         } else if (std::string_view(argv[i]) == "--upscaler") {
+            // Say so when the environment is about to win, because it
+            // wins SILENTLY and outlives the in-app restart button: the
+            // button restarts the children, which inherit this process's
+            // environment, so a STUD_UPSCALER left over from a test run
+            // defeats every subsequent change in Settings. Caught
+            // exactly that way -- a filter picked in Settings, restarted,
+            // and a different one ran.
+            if (const char* env = std::getenv("STUD_UPSCALER")) {
+                if (std::string_view(env) != std::string_view(argv[i + 1])) {
+                    std::printf("stud-render-host: STUD_UPSCALER=%s in the environment "
+                                "overrides the \"%s\" chosen in Settings. Unset it to let "
+                                "Settings decide.\n",
+                                env, argv[i + 1]);
+                    std::fflush(stdout);
+                }
+            }
             // TEMPORARY, with the rest of the filter comparison. Set as
             // the environment variable the render side already reads, so
             // there is one parser for these names and it lives next to
