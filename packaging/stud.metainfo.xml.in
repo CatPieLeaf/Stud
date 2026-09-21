@@ -96,7 +96,35 @@
   </content_rating>
 
   <releases>
-    <release version="@STUD_VERSION@" date="2026-09-17">
+    <release version="@STUD_VERSION@" date="2026-09-21">
+      <description>
+        <p>Sharper upscaling, a crash that explains itself, and logging
+           that stays out of the engine's way.</p>
+        <ul>
+          <li>Two upscalers to choose between, both running at full
+              sharpness: RAVU-Zoom with anti-ringing, which looks the
+              image up in a trained table and will not trace a border
+              around a hard edge, and SGSR1 edge-direction, which is much
+              the cheaper of the two.</li>
+          <li>The GPU picked in Settings is the one Stud uses. It was
+              being offered to the engine first rather than alone, so a
+              machine with two cards could still end up on the other
+              one.</li>
+          <li>When Stud stops unexpectedly it now says so, and offers the
+              log for that session. Anything that ends a session without
+              being asked to counts, including being killed outright.</li>
+          <li>Logging no longer makes the engine wait on a disk. Each
+              process hands its lines to Stud's launcher, which writes
+              them in batches, and writes immediately when something
+              goes wrong.</li>
+          <li>Keystrokes are no longer written to the session log. The
+              log is meant to be exported and sent to someone, and what
+              was typed has no business travelling with it.</li>
+        </ul>
+      </description>
+    </release>
+
+    <release version="1.1.5" date="2026-09-17">
       <description>
         <p>Textures on AMD, and a window that survives being put away.</p>
         <ul>

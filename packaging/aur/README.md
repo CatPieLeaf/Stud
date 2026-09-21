@@ -37,7 +37,7 @@ with `stud` so that building from source instead stays possible.
 The AUR repository is a separate git repository carrying two files:
 
 ```sh
-# Note the release tag has no leading "v" (1.1.5, not v1.1.5); the
+# Note the release tag has no leading "v" (1.1.6, not v1.1.6); the
 # source URLs above match that, so keep tagging the same way.
 git clone ssh://aur@aur.archlinux.org/stud-bin.git aur-stud
 cp packaging/aur/PKGBUILD.stud-bin aur-stud/PKGBUILD
@@ -48,7 +48,7 @@ cd aur-stud
 updpkgsums
 makepkg --printsrcinfo > .SRCINFO
 makepkg -si          # install it once before pushing it at anyone else
-git commit -am "stud-bin 1.1.5" && git push
+git commit -am "stud-bin 1.1.6" && git push
 ```
 
 `sha256sums` holds the digests of the release named by `pkgver`, filled in
