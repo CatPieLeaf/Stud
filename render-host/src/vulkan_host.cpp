@@ -114,46 +114,42 @@ std::atomic<int32_t> g_upscale_sharpness_percent{100};
 // engine, so FSR2, SGSR2 and everything else temporal is out regardless
 // of what it would look like.
 //
-//   fsr      FSR1: EASU then RCAS, two dispatches, twelve taps on every
-//            pixel whether or not there is an edge in it.
-//   sgsr     SGSR1: one dispatch that scales and sharpens together, and
-//            one bilinear fetch for any pixel whose neighbourhood is
-//            flat.
-//   sgsr-ed  The same, as the reference's UseEdgeDirection variant: the
-//            twelve taps are weighted along an estimated edge direction
-//            rather than by distance alone.
-//   ravu     RAVU-Zoom r2: builds a structure tensor from the
+//   ravu-ar  RAVU-Zoom r2: builds a structure tensor from the
 //            neighbourhood's luma, reduces it to an edge angle, a
 //            strength and a coherence, and looks the filter weights up
 //            in a trained table. The only one here that does not decide
 //            its weights by arithmetic -- and the only one carrying
-//            746KB of data and an LGPL licence.
+//            trained data and an LGPL licence. Anti-ringing: its output
+//            is clamped into the range its own neighbourhood spans, so
+//            it cannot trace a border around a hard edge.
+//   sgsr-ed  SGSR1 as the reference's UseEdgeDirection variant: twelve
+//            taps weighted along an estimated edge direction. The
+//            fallback, and much the cheaper of the two.
 //
 // Which is better is a judgement about pictures, not a measurement, so
 // this is a switch rather than a decision taken here.
-enum class Upscaler { Fsr1, Sgsr1, Sgsr1Ed, Ravu, RavuAr };
+// Two left. RAVU-Zoom anti-ringing is what Stud uses; SGSR's
+// edge-direction variant is kept as the fallback, because it is the
+// cheapest thing here that still reconstructs edges and it needs no
+// trained table, no second descriptor and no LGPL notice.
+//
+// FSR1, plain RAVU and base SGSR were removed after the comparison.
+// They are at the tag ravu-ar-known-good if any of them is ever wanted
+// back.
+enum class Upscaler { Sgsr1Ed, RavuAr };
 
 Upscaler choose_upscaler() {
     static const Upscaler choice = [] {
         const char* v = std::getenv("STUD_UPSCALER");
         const std::string name(v != nullptr ? v : "fsr");
-        Upscaler picked = Upscaler::Fsr1;
-        const char* described = "fsr (EASU then RCAS)";
-        if (name == "sgsr") {
-            picked = Upscaler::Sgsr1;
-            described = "sgsr (one pass, scale and sharpen together)";
-        } else if (name == "sgsr-ed") {
+        Upscaler picked = Upscaler::RavuAr;
+        const char* described = "ravu-ar (RAVU-Zoom r2, anti-ringing)";
+        if (name == "sgsr-ed") {
             picked = Upscaler::Sgsr1Ed;
             described = "sgsr-ed (SGSR weighted along the edge direction)";
-        } else if (name == "ravu") {
-            picked = Upscaler::Ravu;
-            described = "ravu (RAVU-Zoom r2, trained weight table)";
-        } else if (name == "ravu-ar") {
-            picked = Upscaler::RavuAr;
-            described = "ravu-ar (RAVU-Zoom r2, anti-ringing)";
-        } else if (v != nullptr && name != "fsr") {
-            std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; using fsr. "
-                        "Try fsr, sgsr, sgsr-ed, ravu or ravu-ar.\n",
+        } else if (v != nullptr && name != "ravu-ar") {
+            std::printf("stud-render-host: STUD_UPSCALER=%s is not a name I know; using "
+                        "ravu-ar. Try ravu-ar or sgsr-ed.\n",
                         v);
         }
         std::printf("stud-render-host: upscaler: %s\n", described);
@@ -189,15 +185,12 @@ bool upscale_timing_enabled() {
 //
 // SGSR's reconstruction IS its sharpening -- the edge term it adds is
 // the whole algorithm, not a stage after it -- so it reads the setting
-// out of the push constants. FSR1 and RAVU do not sharpen at all on
-// their own, so for them the slider means the separate RCAS pass.
+// out of the push constants. RAVU does not sharpen on its own, so for
+// it the slider means the separate RCAS pass.
 bool upscaler_sharpens_itself() {
     switch (choose_upscaler()) {
-        case Upscaler::Sgsr1:
         case Upscaler::Sgsr1Ed:
             return true;
-        case Upscaler::Fsr1:
-        case Upscaler::Ravu:
         case Upscaler::RavuAr:
             return false;
     }
@@ -209,13 +202,11 @@ bool upscaler_sharpens_itself() {
 // EASU whichever shader was built is worse than no line.
 const char* upscaler_name(bool sharpen) {
     switch (choose_upscaler()) {
-        case Upscaler::Sgsr1: return "SGSR";
         case Upscaler::Sgsr1Ed: return "SGSR edge-direction";
-        case Upscaler::Ravu: return "RAVU-Zoom r2";
-        case Upscaler::RavuAr: return "RAVU-Zoom r2 anti-ringing";
-        case Upscaler::Fsr1: break;
+        case Upscaler::RavuAr: break;
     }
-    return sharpen ? "EASU + RCAS" : "EASU";
+    (void)sharpen;
+    return "RAVU-Zoom r2 anti-ringing";
 }
 
 float upscale_sharpness() {
@@ -3696,17 +3687,8 @@ bool build_upscale_compute(UpscaleChain& c) {
         l.cmd_dispatch == nullptr) {
         return false;
     }
-    static const uint32_t kUpscaleSpv[] =
-#include "upscale_spv.h"
-        ;
-    static const uint32_t kSgsrSpv[] =
-#include "sgsr_spv.h"
-        ;
     static const uint32_t kSgsrEdSpv[] =
 #include "sgsr_ed_spv.h"
-        ;
-    static const uint32_t kRavuSpv[] =
-#include "ravu_spv.h"
         ;
     static const uint32_t kRavuArSpv[] =
 #include "ravu_ar_spv.h"
@@ -3728,27 +3710,11 @@ bool build_upscale_compute(UpscaleChain& c) {
     // constants and the same 8x8 group, so one descriptor layout and one
     // pipeline layout serve all of them and only the module changes.
     const Upscaler wanted = choose_upscaler();
-    const uint32_t* code = kUpscaleSpv;
-    size_t code_size = sizeof(kUpscaleSpv);
-    switch (wanted) {
-        case Upscaler::Sgsr1:
-            code = kSgsrSpv;
-            code_size = sizeof(kSgsrSpv);
-            break;
-        case Upscaler::Sgsr1Ed:
-            code = kSgsrEdSpv;
-            code_size = sizeof(kSgsrEdSpv);
-            break;
-        case Upscaler::Ravu:
-            code = kRavuSpv;
-            code_size = sizeof(kRavuSpv);
-            break;
-        case Upscaler::RavuAr:
-            code = kRavuArSpv;
-            code_size = sizeof(kRavuArSpv);
-            break;
-        case Upscaler::Fsr1:
-            break;
+    const uint32_t* code = kRavuArSpv;
+    size_t code_size = sizeof(kRavuArSpv);
+    if (wanted == Upscaler::Sgsr1Ed) {
+        code = kSgsrEdSpv;
+        code_size = sizeof(kSgsrEdSpv);
     }
     if (code_size < 32) return false;  // built without glslc
 
@@ -3756,7 +3722,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     // cannot have its weight table is not a RAVU chain, and failing here
     // falls back to FSR rather than leaving a half-built one.
     c.ravu_ar = wanted == Upscaler::RavuAr;
-    c.ravu = c.ravu_ar || wanted == Upscaler::Ravu;
+    c.ravu = c.ravu_ar;
     if (c.ravu &&
         !upload_ravu_lut(c, kRavuLut, sizeof(kRavuLut), c.lut, c.lut_memory, c.lut_view)) {
         return false;
