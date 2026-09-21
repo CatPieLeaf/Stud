@@ -253,6 +253,21 @@ QString find_process_b_binary() {
 // own default_socket_path() uses, matching stud::render_host::
 // default_socket_path()'s real implementation (render-host/) without
 // pulling that module into stud-ui just for one path string.
+// $XDG_RUNTIME_DIR/stud/log-collector.sock, beside the other two.
+//
+// The runtime directory is where sockets go -- it is a tmpfs, cleared on
+// logout, and already holds render-host.sock and launch.sock. This one
+// used to live in the log directory next to the session log, which read
+// as though the engine were writing a file there. It is not a file: a
+// unix socket has a name and no storage, and a write to it is a copy
+// into a kernel buffer that never reaches a disk.
+std::string log_collector_socket_path() {
+    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
+        return std::string(xdg_runtime_dir) + "/stud/log-collector.sock";
+    }
+    return "/tmp/stud-" + std::to_string(::getuid()) + "/log-collector.sock";
+}
+
 std::string render_host_socket_path() {
     if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
         return std::string(xdg_runtime_dir) + "/stud/render-host.sock";
@@ -729,7 +744,8 @@ void start_session_log() {
     //
     // If the collector cannot start, STUD_LOG_SOCKET stays unset and the
     // children write the file themselves, exactly as before.
-    const QString socket_path = log_dir.filePath(QStringLiteral("collector.sock"));
+    const QString socket_path = QString::fromStdString(log_collector_socket_path());
+    QDir().mkpath(QFileInfo(socket_path).absolutePath());
     if (stud::ui::start_log_collector(socket_path.toStdString(), path.toStdString())) {
         qputenv("STUD_LOG_SOCKET", socket_path.toUtf8());
         // Whatever ends this session -- the window's X, the tray's Exit,
