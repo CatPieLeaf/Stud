@@ -4534,6 +4534,13 @@ int main(int argc, char** argv) {
     struct sigaction sa{};
     sa.sa_handler = +[](int sig) {
         close_open_web_views();
+        // Asked for, not suffered: TERM/INT/HUP are how the tray's Exit
+        // and an ordinary close reach this process. Recording it is what
+        // stops Process A reporting a crash for a shutdown the user
+        // chose. Anything that does NOT come through here -- SIGKILL,
+        // the OOM killer, a driver fault -- leaves no note, and that
+        // absence is the crash signal.
+        stud::logging::note_clean_exit();
         // Default disposition, then re-raise, so the exit status is what
         // the signal would really have produced.
         ::signal(sig, SIG_DFL);
@@ -5048,6 +5055,11 @@ int main(int argc, char** argv) {
         // clears what is displayed when a game ends; this is the other
         // half, for the process ending.
         stud::render_host::discord_rpc_stop();
+        // Reached by closing the window, which is a shutdown the user
+        // asked for. See the signal handler's note: anything that ends
+        // this process WITHOUT passing through one of these two places
+        // is a crash as far as Process A is concerned.
+        stud::logging::note_clean_exit();
         close_open_web_views(/*wait_for_exit=*/true);
         ::close(conn_fd);
         ::close(listen_fd);
