@@ -1608,9 +1608,18 @@ int main(int argc, char** argv) {
                 if (!app.is_object()) app = nlohmann::json::object();
                 // Stud's own defaults first, so a hand-edited override
                 // of the same flag below replaces any of them.
+                std::string defaults_named;
                 for (const auto& [name, value] : stud_default_flags()) {
-                    app[client_settings_key(name, value)] = value;
+                    const std::string key = client_settings_key(name, value);
+                    app[key] = value;
+                    // Named, because up to now nothing said whether this
+                    // channel reached the engine at all, and the only way
+                    // to tell a default apart from an engine default was
+                    // to look at the screen and guess.
+                    if (!defaults_named.empty()) defaults_named += ", ";
+                    defaults_named += key;
                 }
+                std::printf("stud: applied Stud's engine defaults: %s\n", defaults_named.c_str());
                 for (const auto& [name, value] : renderer_flags) {
                     const std::string text = value ? "True" : "False";
                     app[client_settings_key(name, text)] = text;
