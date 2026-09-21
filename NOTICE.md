@@ -114,13 +114,12 @@ Every one of those is under a permissive licence and ships with its own
 licence text and copyright notice, installed to
 `/usr/share/licenses/stud/` and kept beside the libraries themselves.
 
-Stud also builds three shaders from vendored references, and one of them
-is copyleft rather than permissive: the upscaler is RAVU-Zoom from
-mpv-prescalers, which is LGPL-3.0-or-later, beside SGSR (BSD-3-Clause)
-and FSR1's RCAS (MIT). That combination is what AGPLv3 section 13 exists
-for -- LGPLv3 incorporates the GPLv3 terms and permits conveying under
-them, and section 13 permits combining a covered work with GPLv3 work --
-and the hooks those shaders are generated from ship in `third_party/`,
-which is the Corresponding Source that section requires.
+Stud also builds three shaders from vendored references. The upscaler is
+RAVU-Zoom from mpv-prescalers, LGPL-3.0-or-later, beside SGSR
+(BSD-3-Clause) and FSR1's RCAS (MIT). LGPLv3 incorporates the GPLv3
+terms and permits conveying a copy under them, and AGPLv3 section 13
+permits combining a covered work with GPLv3 work. The hooks those
+shaders are generated from ship in `third_party/`, as the Corresponding
+Source that section requires.
 
 The full credits are in the README.

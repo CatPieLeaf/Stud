@@ -343,7 +343,7 @@ Every binary Stud redistributes carries its own licence and copyright notice. `t
 
 Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox engine Stud loads but never distributes. Stud is and always will be Open Source.
 
-One of the shaders above is copyleft rather than permissive, and it is worth saying why that is not a problem: LGPLv3 states that it "incorporates the terms and conditions of version 3 of the GNU General Public License", and its section 2(b) permits conveying a copy "under the GNU GPL, with none of the additional permissions of this License applicable to that copy". AGPLv3 section 13 then gives "permission to link or combine any covered work with a work licensed under version 3 of the GNU General Public License into a single combined work, and to convey the resulting work". Stud ships the hook it is generated from, which is the Corresponding Source that same section requires.
+RAVU-Zoom is LGPL-3.0-or-later, the one copyleft shader in that list. LGPLv3 "incorporates the terms and conditions of version 3 of the GNU General Public License", and its section 2(b) permits conveying a copy "under the GNU GPL, with none of the additional permissions of this License applicable to that copy". AGPLv3 section 13 grants "permission to link or combine any covered work with a work licensed under version 3 of the GNU General Public License into a single combined work, and to convey the resulting work". The hook the shader is generated from ships in the tree, as the Corresponding Source section 13 requires.
 
 [`NOTICE.md`](NOTICE.md) covers the rest: affiliation, trademarks, your Roblox account, and what does and does not leave your machine.
 
