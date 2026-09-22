@@ -1968,22 +1968,17 @@ std::map<uint64_t, uint64_t>& present_ids() {
 // android-glue exists to contain.
 constexpr uint64_t kFramesInFlight = 2;
 
-// On with STUD_PRESENT_PACING=1, off otherwise.
+// Off with STUD_PRESENT_PACING=0.
 //
-// Opt-in, because of what it does to the default present mode. Stud
-// presents with MAILBOX unless told otherwise, and the point of MAILBOX
-// is to let the GPU run past the refresh rate and show whichever frame
-// is newest. Waiting for a frame to be DISPLAYED caps that at the
-// refresh rate by construction: the display is what the wait is on.
-//
-// That is a real trade -- frames above the refresh rate are never seen,
-// and bounding the queue is what cuts input lag -- but it is the kind
-// of trade whoever is playing should make, not one to impose on a
-// setting that exists to be uncapped.
+// On by default, and only sound because the default present mode is
+// FIFO: waiting for a frame to be DISPLAYED caps the rate at the
+// refresh rate, which is what FIFO does anyway. Against MAILBOX the
+// same wait would silently undo the reason for choosing MAILBOX, so
+// anyone setting that mode is very likely to want this off.
 bool present_pacing_enabled() {
     static const bool on = [] {
         const char* v = std::getenv("STUD_PRESENT_PACING");
-        return v != nullptr && std::strcmp(v, "0") != 0;
+        return v == nullptr || std::strcmp(v, "0") != 0;
     }();
     return on;
 }
@@ -3059,10 +3054,24 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // STUD_PRESENT_MODE=engine|mailbox|immediate|fifo|fifo-relaxed picks one.
 // `engine` forwards whatever the engine asked for, which is the control
 // for measuring whether any of this helps.
+//
+// FIFO by default, paired with the present pacing below.
+//
+// The two belong together. FIFO shows every frame that is rendered, in
+// order, one per refresh; pacing holds the queue at two frames instead
+// of letting it fill to the swapchain's depth, which is where FIFO's
+// reputation for input lag comes from. Apart, each is half an answer:
+// FIFO alone queues, and pacing alone caps MAILBOX at the refresh rate
+// while MAILBOX is still throwing rendered frames away.
+//
+// What is given up against MAILBOX is the frame rate above the refresh
+// rate, which was never displayed, and the ability to drop a late frame
+// in favour of a newer one. What is gained is a steady cadence and no
+// work rendered for nothing.
 VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR surface) {
     static const std::string choice = [] {
         const char* v = std::getenv("STUD_PRESENT_MODE");
-        return std::string(v != nullptr ? v : "mailbox");
+        return std::string(v != nullptr ? v : "fifo");
     }();
     if (choice == "engine" || surface == VK_NULL_HANDLE) return requested;
 
