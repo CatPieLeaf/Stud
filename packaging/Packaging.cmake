@@ -69,7 +69,7 @@ set(CPACK_RPM_PACKAGE_REQUIRES
 # Weak, both of them: mangohud is a Settings toggle, and wl-clipboard is
 # what the tray's "copy server link" shells out to on Wayland. Neither
 # stops Stud from running.
-set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard")
+set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard, libdecor")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 # The bundled libraries are private to Stud: nothing else may resolve
 # against them, and rpm must not advertise them as provided.
@@ -172,7 +172,7 @@ libwayland-client0, libxkbcommon0, libxi6")
 # (ui/src/tray.cpp explains it at the call site). Recommended rather than
 # required, without it that one menu entry says what is missing, and
 # everything else works.
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0")
 # The bundled libraries are private to Stud. Without this, dpkg-shlibdeps
 # reads ANGLE and the bionic set and either invents dependencies that do
 # not exist or fails outright. They are not built against the host's

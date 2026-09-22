@@ -17,9 +17,12 @@
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
+#include <libdecor.h>
 #include <xkbcommon/xkbcommon.h>
 #include "stud/key_compose.h"
 #include "stud/keymap_chars.h"
+
+#include <dlfcn.h>
 
 #include <algorithm>
 #include <chrono>
@@ -67,6 +70,102 @@ std::atomic<int32_t> g_window_height{kDefaultLogicalHeight};
 // lifetime, matches how a real Android app's single native window
 // backing works, one compositor connection reused for every
 // ANativeWindow Stud ever creates.
+// libdecor, resolved at runtime rather than linked.
+//
+// It is what draws a titlebar when the compositor will not. Most will:
+// KDE, sway, Hyprland and river all implement xdg-decoration and are
+// asked for a server-side titlebar below, which is both better looking
+// and better behaved than anything a client can draw, and leaves a
+// tiling compositor free to decide there should be no decoration at all.
+// GNOME implements none of it, and there the window came up with no
+// titlebar whatsoever, which is what this is for.
+//
+// Opened by name for the same reason Xlib and the Vulkan loader are: it
+// is then not a build dependency, and a machine without it keeps exactly
+// the behaviour it has today rather than failing to start. The real
+// header is vendored for its types, so no ABI is hand-declared.
+struct Libdecor {
+    bool tried = false;
+    void* handle = nullptr;
+    libdecor* (*create)(wl_display*, const libdecor_interface*) = nullptr;
+    void (*unref)(libdecor*) = nullptr;
+    int (*dispatch)(libdecor*, int) = nullptr;
+    libdecor_frame* (*decorate)(libdecor*, wl_surface*, const libdecor_frame_interface*,
+                                void*) = nullptr;
+    void (*frame_set_title)(libdecor_frame*, const char*) = nullptr;
+    void (*frame_set_app_id)(libdecor_frame*, const char*) = nullptr;
+    void (*frame_map)(libdecor_frame*) = nullptr;
+    void (*frame_unref)(libdecor_frame*) = nullptr;
+    void (*frame_commit)(libdecor_frame*, libdecor_state*, libdecor_configuration*) = nullptr;
+    libdecor_state* (*state_new)(int, int) = nullptr;
+    void (*state_free)(libdecor_state*) = nullptr;
+    bool (*configuration_get_content_size)(libdecor_configuration*, libdecor_frame*, int*,
+                                           int*) = nullptr;
+    bool (*configuration_get_window_state)(libdecor_configuration*,
+                                           libdecor_window_state*) = nullptr;
+};
+
+Libdecor& libdecor_api() {
+    static Libdecor d;
+    if (d.tried) return d;
+    d.tried = true;
+    d.handle = ::dlopen("libdecor-0.so.0", RTLD_NOW | RTLD_LOCAL);
+    if (d.handle == nullptr) return d;
+    auto sym = [&](const char* n) { return ::dlsym(d.handle, n); };
+    d.create = reinterpret_cast<decltype(d.create)>(sym("libdecor_new"));
+    d.unref = reinterpret_cast<decltype(d.unref)>(sym("libdecor_unref"));
+    d.dispatch = reinterpret_cast<decltype(d.dispatch)>(sym("libdecor_dispatch"));
+    d.decorate = reinterpret_cast<decltype(d.decorate)>(sym("libdecor_decorate"));
+    d.frame_set_title =
+        reinterpret_cast<decltype(d.frame_set_title)>(sym("libdecor_frame_set_title"));
+    d.frame_set_app_id =
+        reinterpret_cast<decltype(d.frame_set_app_id)>(sym("libdecor_frame_set_app_id"));
+    d.frame_map = reinterpret_cast<decltype(d.frame_map)>(sym("libdecor_frame_map"));
+    d.frame_unref = reinterpret_cast<decltype(d.frame_unref)>(sym("libdecor_frame_unref"));
+    d.frame_commit = reinterpret_cast<decltype(d.frame_commit)>(sym("libdecor_frame_commit"));
+    d.state_new = reinterpret_cast<decltype(d.state_new)>(sym("libdecor_state_new"));
+    d.state_free = reinterpret_cast<decltype(d.state_free)>(sym("libdecor_state_free"));
+    d.configuration_get_content_size =
+        reinterpret_cast<decltype(d.configuration_get_content_size)>(
+            sym("libdecor_configuration_get_content_size"));
+    d.configuration_get_window_state =
+        reinterpret_cast<decltype(d.configuration_get_window_state)>(
+            sym("libdecor_configuration_get_window_state"));
+    // All or nothing: a partial table would fail at the first null call,
+    // somewhere far from here.
+    if (d.create == nullptr || d.unref == nullptr || d.dispatch == nullptr ||
+        d.decorate == nullptr || d.frame_set_title == nullptr || d.frame_set_app_id == nullptr ||
+        d.frame_map == nullptr || d.frame_unref == nullptr || d.frame_commit == nullptr ||
+        d.state_new == nullptr || d.state_free == nullptr ||
+        d.configuration_get_content_size == nullptr ||
+        d.configuration_get_window_state == nullptr) {
+        std::fprintf(stderr, "stud: android-glue: libdecor-0.so.0 is missing entry points, "
+                             "client-side decorations are unavailable\n");
+        d.handle = nullptr;
+    }
+    return d;
+}
+
+// Who draws the titlebar.
+//
+// `auto` is the answer for everyone: the compositor if it implements
+// xdg-decoration, libdecor otherwise. The two forced settings exist
+// because the automatic answer cannot be tested on the machine that
+// picks it -- a KDE session always has xdg-decoration, so `client` is
+// the only way to see the libdecor path there at all.
+enum class DecorationMode { Auto, Server, Client };
+
+DecorationMode decoration_mode() {
+    static const DecorationMode mode = [] {
+        const char* value = std::getenv("STUD_WAYLAND_DECORATIONS");
+        if (value == nullptr) return DecorationMode::Auto;
+        if (std::strcmp(value, "server") == 0) return DecorationMode::Server;
+        if (std::strcmp(value, "client") == 0) return DecorationMode::Client;
+        return DecorationMode::Auto;
+    }();
+    return mode;
+}
+
 struct WaylandConnectionState {
     wl_display* display = nullptr;
     wl_compositor* compositor = nullptr;
@@ -87,6 +186,12 @@ struct WaylandConnectionState {
     // case, same honest-degradation pattern as every other optional
     // Wayland global here.
     zxdg_decoration_manager_v1* decoration_manager = nullptr;
+    // libdecor's context, created only when this process actually has to
+    // draw its own decorations. It runs on the DEFAULT event queue, not
+    // Stud's, because libdecor binds its own globals and there is no API
+    // to place them elsewhere; wayland_dispatch_decorations() below is
+    // what pumps it.
+    libdecor* decor_context = nullptr;
     // Real seat input (see the listeners above).
     wl_shm* shm = nullptr;
     // Real wl_subcompositor: how the text overlay (stud/text_overlay.h)
@@ -1445,6 +1550,10 @@ struct ANativeWindow {
     xdg_surface* shell_surface = nullptr;
     xdg_toplevel* toplevel = nullptr;
     zxdg_toplevel_decoration_v1* decoration = nullptr;
+    // Set instead of shell_surface/toplevel when libdecor owns this
+    // window: it creates the xdg_surface and xdg_toplevel itself, and
+    // destroying the frame destroys both.
+    libdecor_frame* decor_frame = nullptr;
     // Lazily-created EGL window backing (native_window_get_or_
     // create_egl_window() below), shared between whoever first
     // creates the render context (runtime/main.cpp) and this file's own
@@ -1817,6 +1926,86 @@ const xdg_toplevel_listener kToplevelListener = {
     .configure_bounds = xdg_toplevel_configure_bounds,
     .wm_capabilities = xdg_toplevel_wm_capabilities,
 };
+
+// libdecor's configure, which stands in for xdg_surface_configure() on
+// the path where this process draws its own decorations.
+//
+// The ordering that function documents still applies and is still
+// honoured here: apply the geometry FIRST, then hand the configuration
+// to libdecor_frame_commit(), which acks the serial and commits the
+// surface together. Nothing commits ahead of its ack.
+void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* configuration,
+                           void* user_data) {
+    auto* window = static_cast<ANativeWindow*>(user_data);
+    const Libdecor& decor = libdecor_api();
+    int width = 0;
+    int height = 0;
+    if (!decor.configuration_get_content_size(configuration, frame, &width, &height) ||
+        width <= 0 || height <= 0) {
+        // A configure carrying no size means "stay as you are", which on
+        // the first one is the size this window was created at.
+        width = window->logical_width.load();
+        height = window->logical_height.load();
+    }
+    if (width <= 0 || height <= 0) {
+        width = g_default_logical_width.load();
+        height = g_default_logical_height.load();
+    }
+    // The window state is read but not acted on, deliberately. Whether
+    // this window is tiled, maximized or fullscreen decides how the
+    // decoration is drawn -- no shadow or rounded corners against a
+    // tiled edge, no titlebar at all when fullscreen -- and libdecor
+    // does all of that itself from the same configuration. Stud's job is
+    // the content size, which already accounts for whatever the
+    // decoration takes.
+    libdecor_window_state window_state = LIBDECOR_WINDOW_STATE_NONE;
+    decor.configuration_get_window_state(configuration, &window_state);
+
+    window->logical_width.store(width);
+    window->logical_height.store(height);
+    apply_window_geometry(window, window->configured ? "resized" : "configured");
+    libdecor_state* state = decor.state_new(width, height);
+    decor.frame_commit(frame, state, configuration);
+    decor.state_free(state);
+    window->configured = true;
+}
+
+void decor_frame_close(libdecor_frame*, void*) { g_window_close_requested.store(true); }
+
+// libdecor draws into subsurfaces of this window's surface, and a
+// synchronous subsurface only becomes visible when its parent commits.
+void decor_frame_commit(libdecor_frame*, void* user_data) {
+    auto* window = static_cast<ANativeWindow*>(user_data);
+    if (window->surface != nullptr) wl_surface_commit(window->surface);
+}
+
+// Stud opens no popups of its own; the window menu belongs to libdecor.
+void decor_frame_dismiss_popup(libdecor_frame*, const char*, void*) {}
+
+// Value-initialised and then assigned, rather than written with
+// designated initialisers: libdecor pads both of its interfaces with ten
+// reserved members, and naming only the four real ones warns on every
+// build under -Wmissing-field-initializers.
+const libdecor_frame_interface kDecorFrameInterface = [] {
+    libdecor_frame_interface interface{};
+    interface.configure = decor_frame_configure;
+    interface.close = decor_frame_close;
+    interface.commit = decor_frame_commit;
+    interface.dismiss_popup = decor_frame_dismiss_popup;
+    return interface;
+}();
+
+void decor_error(libdecor*, libdecor_error error, const char* message) {
+    std::fprintf(stderr, "stud: android-glue: libdecor error %d: %s\n", static_cast<int>(error),
+                 message != nullptr ? message : "(no message)");
+    std::fflush(stderr);
+}
+
+const libdecor_interface kDecorInterface = [] {
+    libdecor_interface interface{};
+    interface.error = decor_error;
+    return interface;
+}();
 }  // namespace
 
 extern "C" {
@@ -1974,7 +2163,38 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
         window->logical_width.store(g_default_logical_width.load());
         window->logical_height.store(g_default_logical_height.load());
 
-        if (state.wm_base != nullptr) {
+        // Client-side decorations, when and only when nobody better is
+        // going to draw them. See decoration_mode() above.
+        const bool want_client_side =
+            decoration_mode() == DecorationMode::Client ||
+            (decoration_mode() == DecorationMode::Auto && state.decoration_manager == nullptr);
+        if (want_client_side && libdecor_api().handle != nullptr) {
+            Libdecor& decor = libdecor_api();
+            if (state.decor_context == nullptr) {
+                state.decor_context = decor.create(state.display, &kDecorInterface);
+            }
+            if (state.decor_context != nullptr) {
+                window->decor_frame = decor.decorate(state.decor_context, window->surface,
+                                                     &kDecorFrameInterface, window);
+            }
+            if (window->decor_frame != nullptr) {
+                decor.frame_set_title(window->decor_frame, "Stud");
+                decor.frame_set_app_id(window->decor_frame, STUD_APP_ID);
+                decor.frame_map(window->decor_frame);
+                // libdecor's objects are on the DEFAULT queue, so this is
+                // the roundtrip that lets its first configure through;
+                // the queue-specific one below would never see it.
+                wl_display_roundtrip(state.display);
+                std::printf("stud: android-glue: libdecor is drawing this window's "
+                            "decorations\n");
+                std::fflush(stdout);
+            } else {
+                std::fprintf(stderr,
+                             "stud: android-glue: libdecor could not decorate this window, "
+                             "leaving it to the compositor\n");
+            }
+        }
+        if (window->decor_frame == nullptr && state.wm_base != nullptr) {
             window->shell_surface = xdg_wm_base_get_xdg_surface(state.wm_base, window->surface);
             xdg_surface_add_listener(window->shell_surface, &kShellSurfaceListener, window);
             window->toplevel = xdg_surface_get_toplevel(window->shell_surface);
@@ -2028,6 +2248,11 @@ void ANativeWindow_release(ANativeWindow* window) {
     if (window->ref_count.fetch_sub(1) == 1) {
         if (window->surface_key != nullptr) {
             window_cache().erase(window->surface_key);
+        }
+        // Destroys the xdg_surface and xdg_toplevel it made, so the two
+        // below stay null on this path and nothing is destroyed twice.
+        if (window->decor_frame != nullptr) {
+            libdecor_api().frame_unref(window->decor_frame);
         }
         if (window->decoration != nullptr) {
             zxdg_toplevel_decoration_v1_destroy(window->decoration);
@@ -2636,6 +2861,13 @@ WaylandOverlayDeps overlay_deps() {
 }
 
 uint32_t last_input_serial() { return g_last_input_serial.load(); }
+
+void wayland_dispatch_decorations() {
+    auto& state = wayland_state();
+    if (state.decor_context == nullptr) return;
+    // Zero timeout: dispatch whatever has already arrived and return.
+    libdecor_api().dispatch(state.decor_context, 0);
+}
 
 bool window_close_requested() {
     // X11 reports the window manager's close request through its own
