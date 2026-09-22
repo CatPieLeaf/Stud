@@ -39,16 +39,24 @@ inline const Tables& tables() {
     return t;
 }
 
-// bc7enc, restricted to mode 1: the two-subset mode, and the only thing
-// asked of it here. Two partitions, because one collapses the worst case
-// and past two the numbers stop moving. No least-squares pass: it buys
-// average PSNR at the cost of a worse worst case, which is backwards for
-// this.
+// bc7enc for the blocks Stud's own encoder fits badly.
+//
+// The mask MUST keep an alpha-capable mode. Mode 1 is the two-subset mode
+// and the reason this is here, but mode 1 carries no alpha at all, and
+// bc7enc asserts on a block with alpha unless mode 5, 6 or 7 is also
+// available. Stud builds with NDEBUG, so that assert is compiled out and
+// what comes back instead is garbage -- every texture with alpha turned
+// to noise. Mode 5 and 6 cost almost nothing to leave in (93.6 ms against
+// 92.5 ms for 5+6 alone) and they are what bc7enc falls back to.
+//
+// Two partitions, because one collapses the worst case and past two the
+// numbers stop moving. No least-squares pass: it buys average PSNR at the
+// cost of a worse worst case, which is backwards for this.
 inline const bc7enc_compress_block_params& bc7_mode1_params() {
     static const bc7enc_compress_block_params p = [] {
         bc7enc_compress_block_params v;
         bc7enc_compress_block_params_init(&v);
-        v.m_mode_mask = 1u << 1;
+        v.m_mode_mask = (1u << 1) | (1u << 5) | (1u << 6);
         v.m_max_partitions = 2;
         v.m_uber_level = 0;
         v.m_try_least_squares = false;
