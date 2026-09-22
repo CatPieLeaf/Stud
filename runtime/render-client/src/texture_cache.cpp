@@ -101,7 +101,23 @@ std::string path_for(uint64_t key_high, uint64_t key_low) {
 
 // How much of it to keep. Set from the config file; the default is a
 // size a place's worth of textures fits in several times over.
-std::atomic<uint64_t> g_max_bytes{500ull * 1024ull * 1024ull};
+// 4 GiB, not 500 MB.
+//
+// 500 MB was smaller than one session's working set. Measured on a live
+// session: 5380 entries, 535 MB, in a single sitting -- already past the
+// cap before the user had finished playing. Past that point every store
+// evicts an entry that is wanted again minutes later, so the cache stops
+// being a cache and becomes a queue of things about to be re-encoded.
+// From the outside that is a place that never settles: textures climbing
+// from a low mip to full resolution, over and over, for content that was
+// encoded once already.
+//
+// The budget has to hold the mip chains of the places actually visited,
+// and a BC7 1024x1024 level alone is 1 MB. Disk is the cheap resource
+// here; re-encoding is the expensive one, at tens of milliseconds a level
+// on a thread the engine is waiting for. textureCacheMB in config.json
+// still overrides this, and 0 disables the cache entirely.
+std::atomic<uint64_t> g_max_bytes{4096ull * 1024ull * 1024ull};
 
 // Bytes stored since the last prune. The cap used to be enforced only at
 // startup, which is not a cap at all for anyone who leaves Stud running
