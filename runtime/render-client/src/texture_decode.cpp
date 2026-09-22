@@ -385,13 +385,24 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // full of them, because each thumbnail is unique. Measured directly:
     // with the cache off, scrolling Home holds a higher frame rate.
     //
-    // A 256x256 level is 64KB of BC7 and encodes in about a millisecond;
-    // hashing and writing it costs more than it will ever save. A
-    // 1024x1024 level is 1MB and tens of milliseconds, and those are the
-    // ones that come back on the next visit. The floor is set between
-    // them, so one-shot images skip the cache entirely; no hash, no
-    // write, and the textures behind the loading spikes still get it.
-    constexpr uint64_t kMinCacheableOutput = 512u * 1024u;
+    // The floor used to be 512KB, which in BC7 is a 1024x1024 level and
+    // nothing else. Every smaller level of every real texture therefore
+    // re-encoded on every single encounter, for the life of the install:
+    // of the twelve levels in one captured session, ten were below it.
+    // What that looks like is a place re-doing work it did a minute ago
+    // and never settling.
+    //
+    // 64KB is a 256x256 level. The reasoning behind the old floor was
+    // that such a level "encodes in about a millisecond", which is no
+    // longer true: a 256x256 level is 4096 blocks and costs a few
+    // milliseconds now, against roughly 50 microseconds to read it back.
+    // Caching it wins by a wide margin.
+    //
+    // It is still a floor rather than nothing, because Home's thumbnails
+    // are each unique -- hashing and writing an entry that will never be
+    // asked for again is pure loss, and scrolling Home measured faster
+    // with the cache off. Below 256x256 is where those live.
+    constexpr uint64_t kMinCacheableOutput = 64u * 1024u;
     const bool cacheable = stud::texture_cache::enabled() && output_bytes >= kMinCacheableOutput;
     if (cacheable) {
         stud::texture_cache::key_for(in, source_bytes, static_cast<uint32_t>(format),
