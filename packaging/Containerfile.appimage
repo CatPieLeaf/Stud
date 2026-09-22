@@ -46,7 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         kde-style-breeze \
         libwayland-dev libwayland-egl-backend-dev wayland-protocols \
         libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-        libxkbcommon-dev portaudio19-dev \
+        libxkbcommon-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # linuxdeploy needs these to inspect and bundle; the AppImage tools are

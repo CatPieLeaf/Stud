@@ -11,13 +11,20 @@
 // FMOD_ERR_OUTPUT_INIT, immediately before the join stalls). Audio is not
 // a nicety here; the game-start path runs through it.
 //
-// PortAudio is the backend: it is the portable abstraction over
-// ALSA/PulseAudio/PipeWire/JACK, so one implementation covers every host
-// this targets, and its callback model is exactly the shape needed,
-// PortAudio runs its own realtime thread and pulls, so nothing here has to
-// invent a clock. It is resolved at runtime with dlsym (using its real
-// header for types, so no ABI is hand-declared) rather than linked, so it
-// is not a build dependency and a machine without it degrades to silence.
+// miniaudio is the backend: it speaks ALSA, PulseAudio, JACK and OSS
+// itself rather than wrapping another library, so one implementation
+// covers every host this targets, and its callback model is exactly the
+// shape needed, it runs its own realtime thread and pulls, so nothing
+// here has to invent a clock.
+//
+// It is compiled in, which is the reason it replaced the PortAudio that
+// used to be here. That was resolved by name at runtime, so a machine
+// without libportaudio.so.2 installed had no sound at all, every package
+// Stud ships had to declare the dependency, and the AppImage had to
+// carry a private copy to fall back on. None of that is needed now.
+// miniaudio adds no link-time dependency of its own either: it opens
+// libasound, libpulse and libjack as it finds them, so the same binary
+// works on a host that has only one of the three.
 //
 // The device work must stay off the render dispatch thread. Opening a
 // device talks to the audio server and blocks; doing that inline froze the
@@ -32,7 +39,7 @@
 #include <errno.h>
 #include <cstdlib>
 
-#include <portaudio.h>
+#include "miniaudio.h"
 
 #include <condition_variable>
 #include <cstdarg>
@@ -47,19 +54,16 @@
 namespace stud::render_host {
 namespace {
 
-struct PortAudio {
+// One process-wide miniaudio context: it is what enumerates the backends
+// and holds the connection to whichever sound server answered, and both
+// the output device and the microphone are opened from it.
+struct Audio {
     bool tried = false;
-    void* handle = nullptr;
-    PaError (*Initialize)() = nullptr;
-    PaError (*OpenDefaultStream)(PaStream**, int, int, PaSampleFormat, double, unsigned long,
-                                 PaStreamCallback*, void*) = nullptr;
-    PaError (*StartStream)(PaStream*) = nullptr;
-    PaError (*StopStream)(PaStream*) = nullptr;
-    PaError (*CloseStream)(PaStream*) = nullptr;
-    const char* (*GetErrorText)(PaError) = nullptr;
+    bool ready = false;
+    ma_context context{};
 };
 
-// ALSA writes its own diagnostics straight to stderr, and PortAudio's
+// ALSA writes its own diagnostics straight to stderr, and backend
 // initialisation probes every PCM the system defines, so a normal
 // launch printed `Unknown PCM cards.pcm.rear`, `...center_lfe`,
 // `...side` and a `find_matching_chmap` complaint every time, about
@@ -117,27 +121,6 @@ void report_alsa_messages(const char* what) {
     std::fflush(stdout);
 }
 
-// Where an AppImage keeps its own copy of PortAudio: beside Stud's other
-// private libraries, and NOT on the library search path, so it is reached
-// only by being asked for by name after the host's own has been tried.
-// Empty when there is no such copy, which is every ordinary install.
-std::string bundled_portaudio_path() {
-    char buf[4096];
-    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return {};
-    buf[n] = '\0';
-    std::string exe(buf);
-    const auto slash = exe.find_last_of('/');
-    if (slash == std::string::npos) return {};
-    const std::string dir = exe.substr(0, slash);
-    for (const char* relative : {"/../lib/stud/audio/libportaudio.so.2",
-                                 "/../../lib/stud/audio/libportaudio.so.2"}) {
-        std::string candidate = dir + relative;
-        if (::access(candidate.c_str(), R_OK) == 0) return candidate;
-    }
-    return {};
-}
-
 void silence_alsa_probe_noise() {
     static bool done = false;
     if (done) return;
@@ -151,17 +134,20 @@ void silence_alsa_probe_noise() {
     if (set_handler != nullptr) set_handler(collect_alsa_message);
 }
 
-PortAudio& portaudio() {
-
-
-    static PortAudio pa;
-    if (pa.tried) return pa;
-    pa.tried = true;
+Audio& audio_context() {
+    static Audio a;
+    if (a.tried) return a;
+    a.tried = true;
     // Present this stream as "Stud", with Stud's icon, in the desktop's
-    // volume mixer. PortAudio reaches PipeWire/PulseAudio through their
-    // ALSA compatibility layer, which otherwise labels the entry with
-    // this process's own name ("PipeWire ALSA [stud-render-host]"), an
-    // implementation detail no user should have to recognise as Roblox.
+    // volume mixer.
+    //
+    // On the PulseAudio backend the application name below does this on
+    // its own, because miniaudio hands it straight to libpulse. All of
+    // this is for the ALSA path, which is what is left when there is no
+    // sound server, or when one is reached through an ALSA compatibility
+    // plugin: that plugin labels the entry with this process's own name
+    // ("PipeWire ALSA [stud-render-host]"), an implementation detail no
+    // user should have to recognise as Roblox.
     //
     // Every spelling is set because which one applies depends on which
     // server is running and which compatibility path it takes:
@@ -228,62 +214,49 @@ PortAudio& portaudio() {
              "application.icon_name=io.github.catpieleaf.Stud",
              /*overwrite=*/0);
     silence_alsa_probe_noise();
-    // The host's own PortAudio first, always.
+    // The backends to try, in this order, named explicitly rather than
+    // left to miniaudio's default list.
     //
-    // It is built against the audio stack that machine actually runs:
-    // Fedora's, for instance, has a real PipeWire host API, which a copy
-    // built elsewhere would not, so using the system one is what makes
-    // Stud appear in the volume mixer as an ordinary application rather
-    // than as a raw ALSA client.
+    // PulseAudio first, because that is what a desktop actually runs:
+    // PipeWire answers the same protocol through pipewire-pulse, and it
+    // is the path that gives Stud a real entry in the volume mixer under
+    // its own name and icon. ALSA next, for a machine with no sound
+    // server at all. Then JACK, for a system deliberately built on it,
+    // and OSS last, for the BSDs.
     //
-    // The fallback beside Stud's own binaries exists for the AppImage,
-    // which has to run on machines where PortAudio simply is not
-    // installed; it is deliberately kept out of the library search path
-    // so that it can never win over the host's.
-    pa.handle = ::dlopen("libportaudio.so.2", RTLD_NOW | RTLD_LOCAL);
-    if (pa.handle == nullptr) {
-        const std::string fallback = bundled_portaudio_path();
-        if (!fallback.empty()) {
-            pa.handle = ::dlopen(fallback.c_str(), RTLD_NOW | RTLD_LOCAL);
-            if (pa.handle != nullptr) {
-                std::printf("stud-render-host: audio: no system PortAudio, using the one "
-                            "shipped with Stud\n");
-            }
-        }
-    }
-    if (pa.handle == nullptr) {
-        std::printf("stud-render-host: no audio output (libportaudio.so.2: %s)\n", ::dlerror());
-        std::fflush(stdout);
-        return pa;
-    }
-    auto sym = [&](const char* n) { return ::dlsym(pa.handle, n); };
-    pa.Initialize = reinterpret_cast<PaError (*)()>(sym("Pa_Initialize"));
-    pa.OpenDefaultStream = reinterpret_cast<PaError (*)(PaStream**, int, int, PaSampleFormat,
-                                                        double, unsigned long, PaStreamCallback*,
-                                                        void*)>(sym("Pa_OpenDefaultStream"));
-    pa.StartStream = reinterpret_cast<PaError (*)(PaStream*)>(sym("Pa_StartStream"));
-    pa.StopStream = reinterpret_cast<PaError (*)(PaStream*)>(sym("Pa_StopStream"));
-    pa.CloseStream = reinterpret_cast<PaError (*)(PaStream*)>(sym("Pa_CloseStream"));
-    pa.GetErrorText = reinterpret_cast<const char* (*)(PaError)>(sym("Pa_GetErrorText"));
-    if (pa.Initialize == nullptr || pa.OpenDefaultStream == nullptr || pa.StartStream == nullptr) {
-        std::printf("stud-render-host: no audio output (libportaudio.so.2 is missing "
-                    "Pa_Initialize/Pa_OpenDefaultStream/Pa_StartStream)\n");
-        std::fflush(stdout);
-        pa.handle = nullptr;
-        return pa;
-    }
-    const PaError err = pa.Initialize();
-    if (err != paNoError) {
-        std::printf("stud-render-host: no audio output (Pa_Initialize: %s)\n",
-                    pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
+    // miniaudio's default list would end with its null backend, which
+    // accepts every device and plays nothing. It is compiled out
+    // (MA_NO_NULL) and left out here as well: audio that silently
+    // pretends to work is worse than audio that reports it never opened,
+    // because the report is the only way anyone finds out.
+    static const ma_backend backends[] = {
+        ma_backend_pulseaudio,
+        ma_backend_alsa,
+        ma_backend_jack,
+        ma_backend_oss,
+    };
+    ma_context_config config = ma_context_config_init();
+    // What the volume mixer shows. miniaudio hands these straight to
+    // libpulse and to JACK, so on those backends this is the whole job
+    // and none of the environment variables above are involved.
+    config.pulse.pApplicationName = "Stud";
+    config.jack.pClientName = "Stud";
+    const ma_result result = ma_context_init(
+        backends, sizeof(backends) / sizeof(backends[0]), &config, &a.context);
+    if (result != MA_SUCCESS) {
+        std::printf("stud-render-host: no audio output (no backend started: %s)\n",
+                    ma_result_description(result));
         std::fflush(stdout);
         report_alsa_messages("initialising audio");
-        pa.handle = nullptr;
+        return a;
     }
-    return pa;
+    a.ready = true;
+    std::printf("stud-render-host: audio: %s\n", ma_get_backend_name(a.context.backend));
+    std::fflush(stdout);
+    return a;
 }
 
-// Bursts queued by the client, drained by PortAudio's own thread. Bounded
+// Bursts queued by the client, drained by miniaudio's own thread. Bounded
 // and dropping the oldest on overflow: a late buffer is worth less than a
 // stalled renderer, and the client is paced by its own clock.
 constexpr size_t kMaxQueuedBursts = 20;   // ~200ms at 48 kHz in 10ms bursts
@@ -300,7 +273,11 @@ constexpr size_t kMaxQueuedBursts = 20;   // ~200ms at 48 kHz in 10ms bursts
 // come and go, and a mixer entry that appears and disappears with it would
 // be useless to control.
 struct Device {
-    PaStream* pa_stream = nullptr;
+    // ma_device is a transparent struct rather than a handle, and
+    // miniaudio requires its address to stay put for its lifetime, so it
+    // is held here by value and never copied.
+    ma_device ma_dev{};
+    bool device_open = false;
     int channels = 2;
     int rate = 48000;
     // 32-bit float, which is what the engine actually produces and what a
@@ -359,19 +336,18 @@ Device& device() {
     return d;
 }
 
-// PortAudio's realtime thread pulls from here. It must not block or
+// miniaudio's realtime thread pulls from here. It must not block or
 // allocate, so it only moves whole bursts out of the queue and pads with
 // silence when the client has not fed one yet.
-int portaudio_callback(const void*, void* output, unsigned long frames,
-                       const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void* user) {
-    auto* s = static_cast<Device*>(user);
+void playback_callback(ma_device* dev, void* output, const void* /*input*/, ma_uint32 frames) {
+    auto* s = static_cast<Device*>(dev->pUserData);
     auto* out = static_cast<uint8_t*>(output);
     const size_t wanted = static_cast<size_t>(frames) * static_cast<size_t>(s->channels) *
                           static_cast<size_t>(s->bytes_per_sample);
     const size_t capacity = s->ring.size();
     if (capacity == 0) {
         std::memset(out, 0, wanted);
-        return paContinue;
+        return;
     }
     const size_t read = s->ring_read.load(std::memory_order_relaxed);
     const size_t write = s->ring_write.load(std::memory_order_acquire);
@@ -390,40 +366,47 @@ int portaudio_callback(const void*, void* output, unsigned long frames,
         s->underruns.fetch_add(1, std::memory_order_relaxed);
     }
     s->ring_read.store(read + take, std::memory_order_release);
-    return paContinue;
 }
 
 void open_device(Device* s) {
-    PortAudio& pa = portaudio();
-    if (pa.handle != nullptr) {
-        PaStream* stream = nullptr;
-        PaError err = pa.OpenDefaultStream(&stream, /*input=*/0, s->channels,
-                                           s->bytes_per_sample == 4 ? paFloat32 : paInt16,
-                                           static_cast<double>(s->rate), /*framesPerBuffer=*/480,
-                                           portaudio_callback, s);
-        if (err == paNoError && stream != nullptr) {
-            err = pa.StartStream(stream);
-            if (err == paNoError) {
+    Audio& a = audio_context();
+    if (a.ready) {
+        ma_device_config config = ma_device_config_init(ma_device_type_playback);
+        config.playback.format = s->bytes_per_sample == 4 ? ma_format_f32 : ma_format_s16;
+        config.playback.channels = static_cast<ma_uint32>(s->channels);
+        config.sampleRate = static_cast<ma_uint32>(s->rate);
+        // 10 ms, which is the burst size the engine feeds in, so a
+        // callback consumes exactly what one write produced.
+        config.periodSizeInFrames = 480;
+        config.dataCallback = playback_callback;
+        config.pUserData = s;
+        // The per-stream label, beside the application name set on the
+        // context. A PulseAudio mixer shows both.
+        config.pulse.pStreamNamePlayback = "Stud";
+        ma_result err = ma_device_init(&a.context, &config, &s->ma_dev);
+        if (err == MA_SUCCESS) {
+            err = ma_device_start(&s->ma_dev);
+            if (err == MA_SUCCESS) {
                 std::lock_guard<std::mutex> lock(s->mutex);
-                s->pa_stream = stream;
+                s->device_open = true;
                 std::printf("stud-render-host: audio: device open (%d Hz, %d ch, %s)\n", s->rate,
                             s->channels, s->bytes_per_sample == 4 ? "float32" : "16-bit");
                 std::fflush(stdout);
             } else {
-                if (pa.CloseStream != nullptr) pa.CloseStream(stream);
-                stream = nullptr;
+                ma_device_uninit(&s->ma_dev);
             }
         }
-        if (stream == nullptr) {
+        if (!s->device_open) {
             std::printf("stud-render-host: audio: could not open a device (%s); this stream is "
                         "silent\n",
-                        pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
+                        ma_result_description(err));
             std::fflush(stdout);
+            report_alsa_messages("opening the output device");
         }
     }
 
     // Either way this thread now just waits for the close request: with a
-    // device, PortAudio drives everything from its own thread; without
+    // device, miniaudio drives everything from its own thread; without
     // one, the queue is drained below so the client's feeder keeps running
     // normally rather than backing up behind a device that never arrived.
     std::unique_lock<std::mutex> lock(s->mutex);
@@ -432,7 +415,7 @@ void open_device(Device* s) {
         // No device: keep discarding so the client's feeder keeps
         // running normally instead of backing up behind a device that
         // never arrived.
-        if (s->pa_stream == nullptr) {
+        if (!s->device_open) {
             s->ring_read.store(s->ring_write.load(std::memory_order_acquire),
                                std::memory_order_release);
         }
@@ -456,7 +439,7 @@ void audio_start_output_device() {
 }
 
 uint64_t audio_open_stream(int sample_rate, int channels, int bytes_per_frame) {
-    if (portaudio().handle == nullptr) return 0;
+    if (!audio_context().ready) return 0;
     // Only 16-bit interleaved PCM at the device's own rate is accepted:
     // the client asks the engine for exactly that, and silently
     // mis-reading the samples would be worse than refusing.
@@ -552,11 +535,11 @@ void audio_close_stream(uint64_t stream) {
 namespace {
 
 struct Capture {
-    PaStream* pa_stream = nullptr;
+    ma_device ma_dev{};
     int channels = 1;
     int rate = 48000;
     // Same single-producer/single-consumer ring as the output side, with
-    // the roles swapped: PortAudio's realtime thread writes, the engine's
+    // the roles swapped: miniaudio's realtime thread writes, the engine's
     // own thread reads. It must not lock or allocate, so it does not.
     std::vector<uint8_t> ring;
     std::atomic<size_t> ring_read{0};
@@ -570,10 +553,9 @@ Capture& capture() {
     return c;
 }
 
-int capture_callback(const void* input, void*, unsigned long frames,
-                     const PaStreamCallbackTimeInfo*, PaStreamCallbackFlags, void* user) {
-    auto* c = static_cast<Capture*>(user);
-    if (input == nullptr || c->ring.empty()) return paContinue;
+void capture_callback(ma_device* dev, void* /*output*/, const void* input, ma_uint32 frames) {
+    auto* c = static_cast<Capture*>(dev->pUserData);
+    if (input == nullptr || c->ring.empty()) return;
     const size_t bytes = static_cast<size_t>(frames) * static_cast<size_t>(c->channels) * 4;
     const size_t write = c->ring_write.load(std::memory_order_relaxed);
     const size_t read = c->ring_read.load(std::memory_order_acquire);
@@ -583,14 +565,13 @@ int capture_callback(const void* input, void*, unsigned long frames,
         // only option that keeps latency bounded, and a counter says it
         // happened rather than leaving it silent.
         c->overruns.fetch_add(1, std::memory_order_relaxed);
-        return paContinue;
+        return;
     }
     const auto* src = static_cast<const uint8_t*>(input);
     for (size_t i = 0; i < bytes; ++i) {
         c->ring[(write + i) % c->ring.size()] = src[i];
     }
     c->ring_write.store(write + bytes, std::memory_order_release);
-    return paContinue;
 }
 
 }  // namespace
@@ -598,8 +579,8 @@ int capture_callback(const void* input, void*, unsigned long frames,
 uint64_t audio_open_input_stream(int sample_rate, int channels) {
     Capture& c = capture();
     if (c.open) return 1;
-    PortAudio& pa = portaudio();
-    if (pa.handle == nullptr || pa.OpenDefaultStream == nullptr) {
+    Audio& a = audio_context();
+    if (!a.ready) {
         std::printf("stud-render-host: audio: no capture device available\n");
         std::fflush(stdout);
         return 0;
@@ -613,23 +594,30 @@ uint64_t audio_open_input_stream(int sample_rate, int channels) {
     c.ring_read.store(0);
     c.ring_write.store(0);
 
-    PaError err = pa.OpenDefaultStream(&c.pa_stream, c.channels, 0, paFloat32,
-                                       static_cast<double>(c.rate), 480, capture_callback, &c);
-    if (err != paNoError) {
+    ma_device_config config = ma_device_config_init(ma_device_type_capture);
+    config.capture.format = ma_format_f32;
+    config.capture.channels = static_cast<ma_uint32>(c.channels);
+    config.sampleRate = static_cast<ma_uint32>(c.rate);
+    config.periodSizeInFrames = 480;
+    config.dataCallback = capture_callback;
+    config.pUserData = &c;
+    // Named in the mixer as what it is, so a user looking at why their
+    // microphone light is on sees Stud and not a bare process name.
+    config.pulse.pStreamNameCapture = "Stud voice chat";
+    ma_result err = ma_device_init(&a.context, &config, &c.ma_dev);
+    if (err != MA_SUCCESS) {
         std::printf("stud-render-host: audio: could not open the microphone (%s)\n",
-                    pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
+                    ma_result_description(err));
         std::fflush(stdout);
         report_alsa_messages("opening the microphone");
-        c.pa_stream = nullptr;
         return 0;
     }
-    err = pa.StartStream(c.pa_stream);
-    if (err != paNoError) {
+    err = ma_device_start(&c.ma_dev);
+    if (err != MA_SUCCESS) {
         std::printf("stud-render-host: audio: could not start the microphone (%s)\n",
-                    pa.GetErrorText ? pa.GetErrorText(err) : "unknown error");
+                    ma_result_description(err));
         std::fflush(stdout);
-        pa.CloseStream(c.pa_stream);
-        c.pa_stream = nullptr;
+        ma_device_uninit(&c.ma_dev);
         return 0;
     }
     c.open = true;
@@ -659,12 +647,9 @@ uint64_t audio_read_frames(void* out, size_t bytes) {
 void audio_close_input_stream() {
     Capture& c = capture();
     if (!c.open) return;
-    PortAudio& pa = portaudio();
-    if (c.pa_stream != nullptr) {
-        if (pa.StopStream != nullptr) pa.StopStream(c.pa_stream);
-        if (pa.CloseStream != nullptr) pa.CloseStream(c.pa_stream);
-    }
-    c.pa_stream = nullptr;
+    // Uninit stops the device first, so the microphone is released here
+    // rather than merely left idle.
+    ma_device_uninit(&c.ma_dev);
     c.open = false;
     std::printf("stud-render-host: audio: microphone closed (%llu overrun(s))\n",
                 static_cast<unsigned long long>(c.overruns.load()));

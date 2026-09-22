@@ -144,13 +144,13 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 
 ### 1 - Install the system packages
 
-Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, EGL/GLESv2 headers, the Vulkan loader and headers, PortAudio, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
+Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, EGL/GLESv2 headers, the Vulkan loader and headers, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
 
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-devel \
   qtkeychain-qt6-devel wayland-devel wayland-protocols-devel libxkbcommon-devel \
   libglvnd-devel vulkan-loader-devel vulkan-headers freetype-devel \
-  portaudio-devel openssl-devel bubblewrap wl-clipboard
+  openssl-devel bubblewrap wl-clipboard
 ```
 
 <details>
@@ -160,7 +160,7 @@ sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-deve
 sudo apt install cmake ninja-build build-essential qt6-base-dev qt6-webengine-dev \
   qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
   libxkbcommon-dev libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev \
-  portaudio19-dev libssl-dev bubblewrap wl-clipboard
+  libssl-dev bubblewrap wl-clipboard
 ```
 </details>
 
@@ -338,7 +338,8 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
  - [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo): every emulated texture is re-encoded with it, rgbcx for BC1/BC3/BC4/BC5 and bc7enc for BC7, vendored at `third_party/bc7enc` (MIT / public domain). It replaced Stud's own block encoders, which were slower on three of the four formats and had no partitioned BC7 mode, so a 4x4 block holding two distinct colours came out as a visible square on a normal map
  - [volk](https://github.com/zeux/volk): the render host's Vulkan entry points are resolved by it, vendored at `third_party/volk` (MIT). It replaced ninety hand-written `vkGetDeviceProcAddr("vkName")` lookups, where a misspelling resolved to null and failed at runtime behind whichever guard happened to cover it
  - [xxHash](https://github.com/Cyan4973/xxHash): the texture cache's 128-bit key, vendored at `third_party/xxhash` (BSD-2-Clause). It replaced two hand-rolled FNV-1a streams and runs on every cache hit, where there is no encode to hide behind
- - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK), [PortAudio](https://www.portaudio.com/) (MIT)
+ - [miniaudio](https://github.com/mackron/miniaudio): the render host's audio device, vendored at `third_party/miniaudio` (public domain or MIT-0). It speaks ALSA, PulseAudio, JACK and OSS itself and is compiled in, replacing a PortAudio that was opened by name at runtime, so a machine without that library installed had no sound and every package had to carry the dependency
+ - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The logo is an image; the font itself is not shipped with Stud
 

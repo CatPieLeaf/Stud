@@ -21,7 +21,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
         wayland-devel wayland-protocols-devel libxkbcommon-devel \
         mesa-libEGL-devel mesa-libGLES-devel vulkan-loader-devel \
-        freetype-devel portaudio-devel openssl-devel \
+        freetype-devel openssl-devel \
     && dnf clean all
 
 COPY . /src
@@ -40,22 +40,19 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         bubblewrap \
         qt6-qtbase-gui qt6-qtwebengine qtkeychain-qt6 \
         vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libGLES \
-        portaudio freetype \
-        alsa-plugins-pulseaudio \
+        pulseaudio-libs alsa-lib freetype \
         dbus-libs libnotify \
         wl-clipboard \
         plasma-breeze-qt6 \
     && dnf clean all
 
-# ALSA needs telling where the sound goes.
-#
-# Fedora's PortAudio is built with the ALSA and JACK backends only, so it
-# never talks to PulseAudio directly; the sandbox has no /dev/snd and only
-# the sound server's socket, so ALSA found no device at all and every
-# stream opened silent ("could not open a device (Device unavailable)"),
-# with nothing appearing in the volume mixer. alsa-plugins-pulseaudio
-# above supplies the pcm, and this points the default at it.
-RUN printf 'pcm.!default { type pulse }\nctl.!default { type pulse }\n' > /etc/asound.conf
+# Nothing to bridge. This used to install alsa-plugins-pulseaudio and point
+# ALSA's default pcm at it, because Fedora's PortAudio was built with the
+# ALSA and JACK backends only and so never spoke to PulseAudio: inside a
+# sandbox with no /dev/snd and only the sound server's socket, ALSA found
+# no device at all and every stream opened silent ("could not open a
+# device (Device unavailable)"). miniaudio has a PulseAudio backend of its
+# own and is asked for it first, so libpulse above is the whole of it.
 
 # What the application looks like, and where its file dialog can reach.
 #

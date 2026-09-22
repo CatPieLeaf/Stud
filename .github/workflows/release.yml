@@ -77,7 +77,7 @@ jobs:
             wayland-devel wayland-protocols-devel libxkbcommon-devel \
             libXi-devel \
             libglvnd-devel vulkan-loader-devel vulkan-headers \
-            freetype-devel portaudio-devel openssl-devel \
+            freetype-devel openssl-devel \
             curl unzip tar xz zstd python3 e2fsprogs findutils cpio
 
       - uses: actions/checkout@v7
@@ -394,7 +394,7 @@ jobs:
           # configure step dies in FetchContent.
           pacman -Sy --noconfirm --needed base-devel cmake ninja git qt6-base qt6-webengine \
               qtkeychain-qt6 vulkan-headers vulkan-icd-loader wayland wayland-protocols \
-              libxkbcommon freetype2 portaudio
+              libxkbcommon freetype2
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_QT_ONLY=ON -DSTUD_BUILD_TESTS=OFF \
               -DSTUD_VERSION="$STUD_VERSION"
@@ -529,7 +529,7 @@ jobs:
             kde-style-breeze \
             libwayland-dev libwayland-egl-backend-dev wayland-protocols \
             libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-            libxkbcommon-dev portaudio19-dev libxi-dev
+            libxkbcommon-dev libxi-dev
 
       - uses: actions/checkout@v7
         with:
@@ -656,7 +656,7 @@ jobs:
             qt6-wayland qt6-wayland-dev \
             libwayland-dev libwayland-egl-backend-dev wayland-protocols \
             libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-            libxkbcommon-dev portaudio19-dev libxi-dev
+            libxkbcommon-dev libxi-dev
 
       - uses: actions/checkout@v7
         with:
