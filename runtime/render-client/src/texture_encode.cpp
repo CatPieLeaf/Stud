@@ -52,7 +52,29 @@ inline const Tables& tables() {
 // Two partitions, because one collapses the worst case and past two the
 // numbers stop moving. No least-squares pass: it buys average PSNR at the
 // cost of a worse worst case, which is backwards for this.
-inline const bc7enc_compress_block_params& bc7_mode1_params() {
+// bc7enc for the blocks Stud's own encoder fits badly.
+//
+// The mask is 1+5+6 rather than mode 1 alone, which is worth explaining
+// because mode 1 -- the two-subset mode -- is the whole reason bc7enc is
+// here. Two things pushed it wider.
+//
+// Mode 1 carries no alpha, and bc7enc asserts on a block with alpha
+// unless 5, 6 or 7 is available. Stud builds with NDEBUG, so that assert
+// is compiled out and a broken block comes back instead: every texture
+// with alpha turned to noise.
+//
+// And restricting it to mode 1 for opaque blocks, where that is legal,
+// measured SLOWER for identical quality -- 54.1 ms a level against 43.1,
+// with tex07 at 52.15 dB worst 4 and tex04 at 54.04 dB worst 5 either
+// way. With only mode 1 available bc7enc must run the partition search
+// on every block it is handed; with 5 and 6 there too it settles the
+// easy ones cheaply and searches only when searching pays.
+//
+// Two partitions: one collapses the worst case and past two the numbers
+// stop moving. No least-squares pass -- it buys average PSNR at the cost
+// of a worse worst case, which is backwards when the artefact being
+// chased is one bad block.
+inline const bc7enc_compress_block_params& bc7_fallback_params() {
     static const bc7enc_compress_block_params p = [] {
         bc7enc_compress_block_params v;
         bc7enc_compress_block_params_init(&v);
@@ -64,6 +86,7 @@ inline const bc7enc_compress_block_params& bc7_mode1_params() {
     }();
     return p;
 }
+
 
 // rgbcx's quality level for BC1 and BC3. Level 5 costs 13.7 ms a level
 // against the hand-written encoder's 11.7 ms; level 10 jumps to 112.9 ms.
@@ -787,7 +810,7 @@ void bc7_block(const uint8_t* rgba, uint8_t* out) {
         return;
     }
     tables();
-    bc7enc_compress_block(out, rgba, &bc7_mode1_params());
+    bc7enc_compress_block(out, rgba, &bc7_fallback_params());
 }
 
 }  // namespace stud::texture_encode
