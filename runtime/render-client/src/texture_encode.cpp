@@ -683,10 +683,17 @@ uint64_t bc7_mode5_encode(const uint8_t* rgba, uint8_t* out) {
 constexpr uint64_t kMode6GoodEnough = 64ull * 16ull;
 
 // The single-subset pair, and what it cost.
-static uint64_t bc7_single_subset(const uint8_t* rgba, uint8_t* out) {
+static uint64_t bc7_single_subset(const uint8_t* rgba, uint8_t* out, bool opaque) {
     uint8_t six[16];
     const uint64_t err6 = bc7_mode6_encode(rgba, six);
-    if (err6 <= kMode6GoodEnough) { std::memcpy(out, six, 16); return err6; }
+    // The early-out is only safe on an opaque block. Mode 6 shares one
+    // index set across all four channels, so on a block with alpha it can
+    // post a small TOTAL error while the alpha itself is off by a couple
+    // -- enough for the hidden colour behind a transparent texel to show
+    // through. Mode 5 is the single-subset mode with its own alpha
+    // indices, so it is exactly what such a block needs, and skipping it
+    // on a cheap total-error test is how the leak got in.
+    if (opaque && err6 <= kMode6GoodEnough) { std::memcpy(out, six, 16); return err6; }
     uint8_t five[16];
     const uint64_t err5 = bc7_mode5_encode(rgba, five);
     std::memcpy(out, err5 < err6 ? five : six, 16);
@@ -722,8 +729,59 @@ static uint64_t bc7_single_subset(const uint8_t* rgba, uint8_t* out) {
 constexpr uint64_t kNeedsTwoSubsets = 48;
 
 void bc7_block(const uint8_t* rgba, uint8_t* out) {
+    // A block carrying any transparency goes straight to bc7enc.
+    //
+    // Mode 6 shares ONE index set across all four channels, so a fully
+    // transparent texel's index is chosen to suit its colour and its
+    // alpha comes back near zero rather than zero. What shows on screen
+    // is the hidden canvas behind the transparent part bleeding through
+    // as a faint square. The block's total error stays small the whole
+    // time -- alpha being off by two is not much squared error -- so no
+    // threshold on total error catches it.
+    //
+    // bc7enc picks among modes 5, 6 and 7, and 5 and 7 carry alpha in
+    // their own index set. Stud's single-subset encoder keeps the opaque
+    // blocks, which is the overwhelming majority of them.
+    bool opaque = true;
+    int clear = 0;
+    for (int i = 0; i < 16; ++i) {
+        const int a = rgba[i * 4 + 3];
+        if (a != 255) opaque = false;
+        if (a == 0) ++clear;
+    }
+
+    // A fully transparent texel's colour is never seen, but the encoder
+    // does not know that and spends its endpoints reaching for it. When
+    // that hidden canvas is far from the visible colours -- white behind
+    // green, say -- the colour line is stretched across both and alpha
+    // accuracy is what gets traded away to pay for it. The clear texels
+    // then come back with alpha near zero instead of zero and the canvas
+    // shows through as a faint square.
+    //
+    // So the canvas is replaced with the average of the visible texels
+    // before encoding. It costs nothing on screen, since those texels are
+    // invisible, and it stops the canvas bleeding into its neighbours
+    // under bilinear filtering as well.
+    uint8_t fixed[64];
+    if (clear > 0 && clear < 16) {
+        int sum[3] = {0, 0, 0};
+        int seen = 0;
+        for (int i = 0; i < 16; ++i) {
+            if (rgba[i * 4 + 3] == 0) continue;
+            ++seen;
+            for (int c = 0; c < 3; ++c) sum[c] += rgba[i * 4 + c];
+        }
+        std::memcpy(fixed, rgba, 64);
+        for (int i = 0; i < 16; ++i) {
+            if (rgba[i * 4 + 3] != 0) continue;
+            for (int c = 0; c < 3; ++c)
+                fixed[i * 4 + c] = static_cast<uint8_t>(sum[c] / seen);
+        }
+        rgba = fixed;
+    }
+
     uint8_t single[16];
-    const uint64_t err = bc7_single_subset(rgba, single);
+    const uint64_t err = bc7_single_subset(rgba, single, opaque);
     if (err <= kNeedsTwoSubsets) {
         std::memcpy(out, single, 16);
         return;

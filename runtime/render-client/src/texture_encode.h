@@ -62,7 +62,7 @@ namespace stud::texture_encode {
 // The texture cache keys on the source bytes and the formats, so without
 // this a block encoded by an older, worse encoder would be served from
 // disk forever and the change would never reach anything already played.
-inline constexpr uint32_t kEncoderVersion = 8;
+inline constexpr uint32_t kEncoderVersion = 10;
 
 // Each takes one decoded 4x4 block, tightly packed, and writes one
 // compressed block. `rgba` is 16 texels of 4 bytes; `rg16`/`r16` are 16
