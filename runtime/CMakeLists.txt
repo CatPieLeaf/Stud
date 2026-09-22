@@ -285,7 +285,6 @@ add_library(stud_runtime_libvulkan SHARED
     render-client/src/texture_decode.cpp
     render-client/src/texture_cache.cpp
     render-client/src/texture_encode.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc/bc7enc.cpp"
     render-client/src/uffd_scan.cpp
     render-client/src/mapped_write_barrier.cpp
     render-client/src/render_client_common.cpp
@@ -294,8 +293,7 @@ add_library(stud_runtime_libvulkan SHARED
     "${CMAKE_CURRENT_SOURCE_DIR}/../render-host/src/vulkan_chain.cpp"
 )
 target_include_directories(stud_runtime_libvulkan PRIVATE render-client/src "${TexDecodeDir}"
-    "${TexDecodeDir}/detex" "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc")
+    "${TexDecodeDir}/detex" "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include")
 target_link_libraries(stud_runtime_libvulkan PRIVATE stud_runtime_render_host_protocol)
 set_target_properties(stud_runtime_libvulkan PROPERTIES
     OUTPUT_NAME "vulkan"
