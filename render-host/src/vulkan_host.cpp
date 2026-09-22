@@ -103,6 +103,11 @@ bool g_surface_maintenance1_enabled = false;
 // waits on a present fence checks this first: without it there are no
 // fences, and the old behaviour is what happens.
 bool g_swapchain_maintenance1_enabled = false;
+// Whether the driver will tell Stud when a frame actually reached the
+// screen. Two extensions, always enabled together: present_id tags each
+// present with a number, present_wait blocks until a given number has
+// been displayed. One is useless without the other.
+bool g_present_wait_enabled = false;
 }  // namespace
 
 // Bumped every time the window changes size, so tracing that is capped
@@ -1549,6 +1554,52 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         }
     }
 
+    // VK_KHR_present_id and VK_KHR_present_wait: when did the frame
+    // actually appear?
+    //
+    // Nothing in Vulkan answers that on its own. vkQueuePresentKHR hands
+    // the image over and returns, so a client knows when it ASKED for a
+    // frame and never when one was shown. Stud has been guessing from
+    // the wall clock, which is what the background frame cap does.
+    //
+    // present_id numbers each present; present_wait blocks until a given
+    // number has been displayed. Together they let the renderer keep a
+    // fixed number of frames in flight rather than running open loop,
+    // which is what a real device's vsync-paced swap does for the engine
+    // and what android-glue's 1ms ALooper floor is standing in for.
+    VkPhysicalDevicePresentIdFeaturesKHR present_id_features{};
+    VkPhysicalDevicePresentWaitFeaturesKHR present_wait_features{};
+    bool stud_added_present_wait = false;
+    {
+        bool engine_asked = false;
+        for (const auto* node = reinterpret_cast<const VkBaseInStructure*>(chain);
+             node != nullptr; node = node->pNext) {
+            if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR ||
+                node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR) {
+                engine_asked = true;
+                break;
+            }
+        }
+        if (!engine_asked && device_supports_extension(VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
+            device_supports_extension(VK_KHR_PRESENT_WAIT_EXTENSION_NAME)) {
+            for (const char* name : {VK_KHR_PRESENT_ID_EXTENSION_NAME,
+                                     VK_KHR_PRESENT_WAIT_EXTENSION_NAME}) {
+                bool already = false;
+                for (const std::string& e : extensions) {
+                    if (e == name) already = true;
+                }
+                if (!already) extensions.push_back(name);
+            }
+            present_id_features.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR;
+            present_id_features.presentId = VK_TRUE;
+            present_wait_features.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR;
+            present_wait_features.presentWait = VK_TRUE;
+            stud_added_present_wait = true;
+        }
+    }
+
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
 
@@ -1567,6 +1618,11 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     if (stud_added_maintenance) {
         swapchain_maintenance.pNext = chain_head;
         chain_head = &swapchain_maintenance;
+    }
+    if (stud_added_present_wait) {
+        present_id_features.pNext = chain_head;
+        present_wait_features.pNext = &present_id_features;
+        chain_head = &present_wait_features;
     }
     ci.pNext = chain_head;
     ci.flags = hdr.flags;
@@ -1605,6 +1661,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
                     "on rather than timed out\n");
         std::fflush(stdout);
     }
+
 
     // Resolve every device-level command from the device itself, now that
     // one exists. The spec requires this, vkGetDeviceProcAddr reaches
@@ -1724,6 +1781,16 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         if (l.vk.vkCreateImage == nullptr || l.vk.vkQueueSubmit == nullptr) {
             std::printf("stud-render-host: volk resolved no device entry points; the instance was "
                         "not handed to it before the device was created\n");
+            std::fflush(stdout);
+        }
+        // Only now is there a table to look the entry point up in. The
+        // extension being enabled is not the same as the command being
+        // resolvable, and calling a null one is a fault with nothing to
+        // say why.
+        g_present_wait_enabled = stud_added_present_wait && l.vk.vkWaitForPresentKHR != nullptr;
+        if (g_present_wait_enabled) {
+            std::printf("stud-render-host: present timing is available; frames are paced against "
+                        "what the display actually showed\n");
             std::fflush(stdout);
         }
 
@@ -1882,6 +1949,52 @@ VkFence take_present_fence(VkSwapchainKHR swapchain) {
     return f;
 }
 
+// The presents handed to each swapchain, numbered. present_wait takes
+// one of these numbers and blocks until that frame has been displayed.
+std::map<uint64_t, uint64_t>& present_ids() {
+    static std::map<uint64_t, uint64_t> m;
+    return m;
+}
+
+// How many frames may be in flight before the renderer waits for the
+// oldest to appear.
+//
+// Two, not one: one would mean waiting for the frame just submitted,
+// which serialises the GPU against the display and throws away the
+// overlap that makes a pipeline worth having. Two keeps the GPU busy
+// while bounding how far ahead of the screen the engine may run, which
+// is the whole point -- an unbounded queue is latency the player feels
+// as input lag, and it is the free-running that the ALooper floor in
+// android-glue exists to contain.
+constexpr uint64_t kFramesInFlight = 2;
+
+// Off with STUD_PRESENT_PACING=0, because this changes when frames are
+// handed over and that is the kind of thing worth being able to switch
+// off without a rebuild when comparing.
+bool present_pacing_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("STUD_PRESENT_PACING");
+        return v == nullptr || std::strcmp(v, "0") != 0;
+    }();
+    return on;
+}
+
+// Waits until the frame kFramesInFlight back has actually been shown.
+//
+// Bounded, and a timeout is not an error: a window the compositor has
+// stopped presenting (occluded, on another workspace) may never retire
+// its frames, and that must not become a hang. 100ms is longer than a
+// frame at any refresh rate this will meet and short enough that the
+// stall is survivable if it happens.
+void pace_against_display(VkSwapchainKHR swapchain, uint64_t submitted_id) {
+    if (!g_present_wait_enabled || !present_pacing_enabled()) return;
+    if (submitted_id <= kFramesInFlight) return;
+    Loader& l = loader();
+    if (l.vk.vkWaitForPresentKHR == nullptr || l.device == VK_NULL_HANDLE) return;
+    l.vk.vkWaitForPresentKHR(l.device, swapchain, submitted_id - kFramesInFlight,
+                             100ull * 1000ull * 1000ull);
+}
+
 // Everything still outstanding on this swapchain, waited on and then
 // released. Called immediately before the swapchain is destroyed, which
 // is the whole point: after this the driver has nothing left to wait
@@ -1921,6 +2034,7 @@ void settle_present_fences(VkSwapchainKHR swapchain) {
         }
     }
     present_fence_rings().erase(it);
+    present_ids().erase(to_u64(swapchain));
 }
 
 
@@ -7926,6 +8040,26 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // nothing: the spec wants one fence for every swapchain in the
     // present, so if any of them cannot be had the whole thing is left
     // as it was.
+    // Number this present so it can be waited for afterwards. One id
+    // per present, shared by every swapchain in it, which is what the
+    // spec asks for.
+    VkPresentIdKHR present_id_info{};
+    std::vector<uint64_t> present_id_values;
+    uint64_t paced_id = 0;
+    if (g_present_wait_enabled && ns > 0) {
+        present_id_values.reserve(ns);
+        for (uint32_t i = 0; i < ns; ++i) {
+            uint64_t& next = present_ids()[to_u64(live[i])];
+            present_id_values.push_back(++next);
+        }
+        paced_id = present_id_values[0];
+        present_id_info.sType = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+        present_id_info.swapchainCount = ns;
+        present_id_info.pPresentIds = present_id_values.data();
+        present_id_info.pNext = pi.pNext;
+        pi.pNext = &present_id_info;
+    }
+
     VkSwapchainPresentFenceInfoEXT present_fence_info{};
     std::vector<VkFence> present_fences;
     if (g_swapchain_maintenance1_enabled && ns > 0) {
@@ -8262,12 +8396,22 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         // A frame, as the profiler counts them: what Stud actually put
         // on the screen, not what the engine thought it drew.
         STUD_FRAME_MARK();
+        // Stopped here, before any pacing below: this measures what the
+        // present cost, and folding a deliberate wait for the display
+        // into it would make every healthy frame look like a slow one.
         present_t1 = std::chrono::steady_clock::now();
         fr::record(fr::Event::PresentEnd, static_cast<uint64_t>(static_cast<int32_t>(res)),
                    static_cast<uint64_t>(
                        std::chrono::duration<double, std::micro>(present_t1 - present_t0).count()),
                    static_cast<uint64_t>(
                        std::chrono::duration<double, std::micro>(present_t1 - lock_t).count()));
+    }
+    // Outside the queue lock deliberately: this waits on the DISPLAY, not
+    // on the driver's queue, and holding the lock across it would stall
+    // every other thread's submits for a frame at a time.
+    if (res == VK_SUCCESS && paced_id != 0 && !live.empty()) {
+        STUD_ZONE_NAMED("pace_against_display");
+        pace_against_display(live[0], paced_id);
     }
     // What the present itself costs THIS process, which the client's own
     // frame breakdown cannot see: it hands the present over and returns.
