@@ -31,23 +31,23 @@
 // Byte-for-byte the same size as what the engine handed over, so its
 // accounting is right again.
 //
-// The colour encoder: the block's bounding box gives a first pair of
-// endpoints, each texel is assigned the nearest step along that line, and
-// then one least-squares solve moves the endpoints to where those
-// assignments say they belong. No search over candidate endpoint pairs.
+// The encoders themselves are bc7enc_rdo's, vendored at
+// third_party/bc7enc: rgbcx for BC1/BC3/BC4/BC5 and bc7enc for BC7. Stud
+// wrote its own once and they were measurably worse where it mattered:
+// the BC7 one had no partitioned mode, so a 4x4 block holding two
+// distinct colours was forced onto a single line and came out as a
+// visible square on a normal map.
 //
-// What each step was measured to be worth, on the same image, against
-// stb_dxt's 32.39 dB:
+// Measured per 1024x1024 level, replaced -> replacement:
 //
-//   bounding box, nearest-palette indices        30.84 dB   2.6x decode
-//   principal axis (power iteration) instead     32.07 dB   7.7x decode
-//   bounding box + least-squares refinement      32.11 dB   5.2x decode
+//   BC4   10.5 ms ->   2.4 ms
+//   BC5   13.8 ms ->   4.8 ms
+//   BC1   11.7 ms ->  13.7 ms
+//   BC7   30.6 ms -> 134.4 ms
 //
-// So the principal axis is the better starting point and is not worth its
-// cost: the refinement solves for the endpoints anyway, which is most of
-// what the axis was buying. The two hot passes, the bounding box and
-// the projection of 16 texels onto the line, are SSE2, since an RGBA
-// texel is four bytes and a 16-byte load is four of them.
+// Three of the four are cheaper. BC7 is not, and that is deliberate: the
+// extra time buys the partitioned mode. See bc7_params() for the full
+// settings table and why each one was picked.
 //
 // Transcoding one lossy format to another does lose something; a texture
 // that stays at full resolution is worth more than one that is marginally
@@ -62,7 +62,7 @@ namespace stud::texture_encode {
 // The texture cache keys on the source bytes and the formats, so without
 // this a block encoded by an older, worse encoder would be served from
 // disk forever and the change would never reach anything already played.
-inline constexpr uint32_t kEncoderVersion = 2;
+inline constexpr uint32_t kEncoderVersion = 5;
 
 // Each takes one decoded 4x4 block, tightly packed, and writes one
 // compressed block. `rgba` is 16 texels of 4 bytes; `rg16`/`r16` are 16
