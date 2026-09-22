@@ -35,6 +35,7 @@
 #include <functional>
 #include <set>
 #include <thread>
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -1037,7 +1038,39 @@ bool create_shared_allocation(uint64_t size, SharedAllocation& out) {
     // mapping of a whole number of pages.
     const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
     const size_t length = (static_cast<size_t>(size) + page - 1) & ~(page - 1);
-    if (::ftruncate(fd, static_cast<off_t>(length)) != 0) {
+    // Reserve the pages now, rather than letting them be filled in on
+    // first touch.
+    //
+    // These files live in $XDG_RUNTIME_DIR, which is a tmpfs, usually
+    // sized at a tenth of RAM. ftruncate alone leaves the file sparse:
+    // it succeeds, mmap succeeds, and the pages are only allocated when
+    // something touches them. If the tmpfs is full at that moment the
+    // kernel answers the touch with SIGBUS, and the fault lands on
+    // whoever was reading or writing the mapping rather than here.
+    //
+    // Live-caught on another machine: the render host died with
+    // "CRASH in stud-render-host, signal 07" inside
+    // vk_write_shared_mapped_memory's memcpy, and the log immediately
+    // after was full of the desktop's own "No space left on device" for
+    // that same tmpfs.
+    //
+    // posix_fallocate allocates the pages here, where ENOSPC is an
+    // ordinary error: returning false means the caller simply does not
+    // share this allocation and ships the bytes down the socket as it
+    // did before sharing existed. Slower, and correct, which a crash is
+    // not. It returns the error directly and does not set errno.
+    const int reserved = ::posix_fallocate(fd, 0, static_cast<off_t>(length));
+    if (reserved != 0) {
+        if (reserved == ENOSPC) {
+            static bool said = false;
+            if (!said) {
+                said = true;
+                std::printf("stud: no room in %s for a %zu KB shared mapping; the engine's "
+                            "writes will be copied instead of shared\n",
+                            path.c_str(), length / 1024);
+                std::fflush(stdout);
+            }
+        }
         ::close(fd);
         ::unlink(path.c_str());
         return false;
