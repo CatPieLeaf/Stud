@@ -1407,7 +1407,23 @@ void note_frame_pacing() {
             const double parsed = v != nullptr ? std::atof(v) : 50.0;
             return parsed > 0.0 ? parsed : 50.0;
         }();
-        if (gap > long_frame_ms && stud::render_host::fr::enabled()) {
+        // Not until well past startup.
+        //
+        // Bringing the app up legitimately takes long frames -- swapchains
+        // are created, the world's images are uploaded -- and the first
+        // version of this trigger spent its entire dump budget on them
+        // before a game had even been joined. Measured: six dumps inside
+        // the first 28 seconds, every one of them sitting on
+        // swapchain-new or a burst of image creations.
+        //
+        // Counted in frames rather than seconds because that is what the
+        // budget is spent on, and a session that renders nothing is not
+        // warming up.
+        static uint64_t frames_seen = 0;
+        ++frames_seen;
+        constexpr uint64_t kWarmupFrames = 3000;
+        if (gap > long_frame_ms && frames_seen > kWarmupFrames &&
+            stud::render_host::fr::enabled()) {
             // Rate-limited hard: these arrive in bursts and a dump is
             // 6000 lines. The first few carry the answer.
             static int dumped = 0;
