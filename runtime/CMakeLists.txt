@@ -296,7 +296,8 @@ add_library(stud_runtime_libvulkan SHARED
 )
 target_include_directories(stud_runtime_libvulkan PRIVATE render-client/src "${TexDecodeDir}"
     "${TexDecodeDir}/detex" "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/xxhash")
 # The smaller of rgbcx's two ordering tables: 110 KB against 450 KB, same
 # algorithm, and the difference is only how many candidate orderings the
 # least-squares pass may try.

@@ -65,6 +65,11 @@ third_party/*
 # null and failed at runtime behind whichever guard covered it, where a
 # misspelling in volk's table does not compile. MIT, two files.
 !third_party/volk/
+# And xxHash, which keys the texture cache. It replaced two hand-rolled
+# FNV-1a streams: 0.067 ms against 0.025 ms over the 512 KB of a 1024x1024
+# level, which matters because it runs on every cache HIT, where there is
+# no encode to hide behind. BSD-2-Clause, one header.
+!third_party/xxhash/
 # Same reasoning for the one vendored Wayland protocol: pointer-warp-v1 is
 # staging and young enough that a distribution a release behind does not
 # ship it, and a build should not fail over how new the host happens to
