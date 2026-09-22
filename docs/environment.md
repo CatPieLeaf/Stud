@@ -119,6 +119,7 @@ All of these are off by default and most cost something to turn on.
 | `STUD_IPC_OWNERS` | Which library opened each connection. | one line each |
 | `STUD_FPS` | A frame-rate line at intervals. | low |
 | `STUD_FRAME_PACING` | Frame-interval distribution. | low |
+| `STUD_LONG_FRAME_MS` | How long a frame must take before the flight recorder dumps what led to it (default `50`). Needs `STUD_FLIGHT_RECORDER`; the slow-present trigger cannot see these, because the present itself is fast on a stuttering frame. | low |
 | `STUD_AUDIO_STATS` | Clipping and underruns in the audio feed. | low |
 
 ## Tracing

@@ -25,6 +25,7 @@
 // checked). Vulkan gets a deliberately narrower treatment; see
 // render_host_protocol.h's own doc comment for why.
 
+#include "flight_recorder.h"
 #include "stud/session_log.h"
 #include "stud/android_glue.h"
 #include "stud/text_overlay.h"
@@ -1386,7 +1387,35 @@ void note_frame_pacing() {
     static std::vector<double> intervals;
     const auto now = clock::now();
     if (last.time_since_epoch().count() != 0) {
-        intervals.push_back(std::chrono::duration<double, std::milli>(now - last).count());
+        const double gap = std::chrono::duration<double, std::milli>(now - last).count();
+        intervals.push_back(gap);
+        // A frame that took far longer than its neighbours, dumped with
+        // everything that preceded it.
+        //
+        // The slow-present trigger cannot see these. Measured over 45000
+        // frames, half of all 240-frame windows held a frame over 49ms
+        // against an 11ms median -- and only ONE slow-present dump fired
+        // in the whole session, because the present itself was fast every
+        // time. Whatever such a frame waits on, it is not the present,
+        // and nothing was recording at the moment it happened.
+        //
+        // 50ms rather than a multiple of the median: the background cap
+        // is 30fps, so a hidden window legitimately sits at 33ms and a
+        // ratio would fire on every one of those.
+        static const double long_frame_ms = [] {
+            const char* v = std::getenv("STUD_LONG_FRAME_MS");
+            const double parsed = v != nullptr ? std::atof(v) : 50.0;
+            return parsed > 0.0 ? parsed : 50.0;
+        }();
+        if (gap > long_frame_ms && stud::render_host::fr::enabled()) {
+            // Rate-limited hard: these arrive in bursts and a dump is
+            // 6000 lines. The first few carry the answer.
+            static int dumped = 0;
+            if (dumped < 6) {
+                ++dumped;
+                stud::render_host::fr::dump("a frame interval ran long");
+            }
+        }
     }
     last = now;
     if (intervals.size() < 240) return;
