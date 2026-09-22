@@ -24,9 +24,70 @@ namespace {
 // Entries are spread over 256 directories by the first byte of the key,
 // so no single directory ends up with tens of thousands of files,
 // which is what makes a cache slower than the work it saves.
+// Scoped by the encoder version.
+//
+// The key already mixes that version in, so an entry from an older
+// encoder can never be hit -- but it still sat in the directory eating
+// the size budget, and the prune below could not tell it from a live one.
+// Nine version bumps in one evening left 515 MB of dead entries against a
+// 500 MB cap, so every new encode evicted something it wanted back a
+// moment later and no place ever finished loading.
+//
+// A generation gets its own directory, and the old ones are deleted
+// whole. Eviction inside the live generation stays least-recently-used,
+// which is the right question to ask of entries that can all still be hit.
 std::string cache_root() {
-    static const std::string root = stud::paths::cache_dir() + "/textures";
+    static const std::string root = stud::paths::cache_dir() + "/textures/v" +
+                                    std::to_string(stud::texture_encode::kEncoderVersion);
     return root;
+}
+
+// Everything under textures/ that is not this generation.
+void drop_old_generations() {
+    const std::string parent = stud::paths::cache_dir() + "/textures";
+    const std::string keep = "v" + std::to_string(stud::texture_encode::kEncoderVersion);
+    DIR* dir_handle = ::opendir(parent.c_str());
+    if (dir_handle == nullptr) return;
+    uint64_t freed = 0;
+    while (const dirent* entry = ::readdir(dir_handle)) {
+        const std::string name = entry->d_name;
+        if (name == "." || name == ".." || name == keep) continue;
+        const std::string victim = parent + "/" + name;
+        // Two levels at most: the generation, then its 256 buckets.
+        DIR* gen = ::opendir(victim.c_str());
+        if (gen != nullptr) {
+            while (const dirent* bucket = ::readdir(gen)) {
+                const std::string bname = bucket->d_name;
+                if (bname == "." || bname == "..") continue;
+                const std::string bpath = victim + "/" + bname;
+                DIR* files = ::opendir(bpath.c_str());
+                if (files != nullptr) {
+                    while (const dirent* f = ::readdir(files)) {
+                        const std::string fname = f->d_name;
+                        if (fname == "." || fname == "..") continue;
+                        struct stat info {};
+                        const std::string fpath = bpath + "/" + fname;
+                        if (::stat(fpath.c_str(), &info) == 0) freed += info.st_size;
+                        ::unlink(fpath.c_str());
+                    }
+                    ::closedir(files);
+                    ::rmdir(bpath.c_str());
+                } else {
+                    struct stat info {};
+                    if (::stat(bpath.c_str(), &info) == 0) freed += info.st_size;
+                    ::unlink(bpath.c_str());
+                }
+            }
+            ::closedir(gen);
+            ::rmdir(victim.c_str());
+        }
+    }
+    ::closedir(dir_handle);
+    if (freed > 0) {
+        std::printf("stud: dropped %llu MB of texture cache from older encoders\n",
+                    static_cast<unsigned long long>(freed / (1024 * 1024)));
+        std::fflush(stdout);
+    }
 }
 
 std::string path_for(uint64_t key_high, uint64_t key_low) {
@@ -137,7 +198,9 @@ bool ensure_ready() {
         // Created before asking what it sits on, the question is about
         // the directory, so it has to exist first.
         ::mkdir(stud::paths::cache_dir().c_str(), 0700);
+        ::mkdir((stud::paths::cache_dir() + "/textures").c_str(), 0700);
         ::mkdir(cache_root().c_str(), 0700);
+        drop_old_generations();
         static const bool forced = std::getenv("STUD_TEX_CACHE_FORCE") != nullptr;
         if (!forced && on_rotational_disk()) {
             std::printf("stud: texture cache off, %s is on a spinning disk, where re-encoding "

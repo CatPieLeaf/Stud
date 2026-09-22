@@ -92,26 +92,33 @@ private:
     BlockPool() {
         unsigned hw = std::thread::hardware_concurrency();
         if (hw < 2) hw = 2;
-        // Half the machine, because encoding a block is the whole cost of
-        // this path and blocks are independent of each other.
+        // A quarter of the machine, not half, and not a flat three.
         //
-        // This used to be three workers no matter how wide the machine
-        // was. Measured on a 20-thread one, encoding a 1024x1024 level:
+        // Encoding a block is the whole cost of this path and blocks are
+        // independent, so one texture decodes faster the more threads it
+        // gets. Measured on a 20-thread machine, one 1024x1024 level:
         //
         //    1 thread   82.7 ms
-        //    4 threads  20.4 ms   <- what three workers plus the caller gave
+        //    4 threads  20.4 ms   <- what a flat three workers gave
         //    8 threads  15.1 ms
         //   12 threads  10.3 ms
         //   16 threads   9.0 ms
-        //   20 threads   9.2 ms
         //
-        // It stops improving around sixteen and the last four threads buy
-        // nothing, so taking half leaves the other half for the engine's
-        // own eight texture threads (each of which decodes inline when
-        // this pool is busy, see above) and for the render host.
-        unsigned want = hw / 2;
-        if (want < 1) want = 1;
-        if (want > 12) want = 12;
+        // But that is the wrong question during play. The engine runs
+        // EIGHT texture-loading threads of its own, and only one parallel
+        // decode happens at a time here -- the rest decode inline on the
+        // thread that asked (see run()). So streaming is already spread
+        // across the machine without this pool, and sizing the pool to
+        // half the cores just takes them away from the frame being drawn.
+        // Half measured visibly worse in a game than the flat three it
+        // replaced.
+        //
+        // A quarter keeps most of the win on a big texture -- five
+        // workers plus the caller is still around five times one thread --
+        // while leaving the engine and the render host the rest.
+        unsigned want = hw / 4;
+        if (want < 2) want = 2;
+        if (want > 6) want = 6;
         for (unsigned i = 0; i < want; ++i) {
             threads_.emplace_back([this] { worker(); });
         }
