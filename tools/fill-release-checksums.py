@@ -11,11 +11,11 @@ this fills them in from the one that does.
 Run it after a release is published, before submitting to the AUR or
 Flathub:
 
-    tools/fill-release-checksums.py 1.1.6
+    tools/fill-release-checksums.py 1.1.7
 
 With no network (or to redo it from values already in hand):
 
-    tools/fill-release-checksums.py 1.1.6 --source-sha <hex> --archive-sha <hex>
+    tools/fill-release-checksums.py 1.1.7 --source-sha <hex> --archive-sha <hex>
 
 `--check` reports what is filled in and what is still a placeholder,
 without writing anything.
