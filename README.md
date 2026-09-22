@@ -80,8 +80,9 @@
  - Runs the **real, unmodified** Roblox Android app
  - Three separate processes in the shape of a browser's, the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
  - Vulkan by default, with OpenGL through ANGLE, OpenGL, and software-rendering in Settings
- - **AMD FSR upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size, with adjustable sharpening
+ - **Upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size. Two to pick from: **RAVU-Zoom AR**, which looks each neighbourhood up in a table trained offline, and **SGSR1 ED**, the lightweight one, which reconstructs edges from the pixels alone and is the one to pick on a laptop or an integrated GPU
  - Smooth zoom in/out just like Windows client
+ - **Sound and voice chat with nothing to install**: the audio device is built into Stud rather than loaded from a library the machine might not have. It speaks PulseAudio (which is how it reaches PipeWire), ALSA, JACK and OSS
  - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring, the same safe-storage arrangement Chromium uses
  - `roblox://` links from a browser open straight into the experience
  - In-app web panels (Messages, account pages, login challenges) and private servers joined from the server list
