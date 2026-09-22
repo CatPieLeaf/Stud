@@ -433,13 +433,13 @@ chmod +x "$appdir/AppRun"
 trap - EXIT
 restore_private
 
-# Audio needs nothing bundled. render-host compiles miniaudio in and opens
-# the host's own libasound, libpulse or libjack by name, which is what the
-# PortAudio copy that used to be staged here was working around: a copy
-# built on one distribution looks for ALSA plugins at that distribution's
-# paths, finds no pipewire or pulse plugin on the user's machine, and
-# falls back to talking to the hardware directly. That was the reported
-# "audio does not work and Stud never appears in the volume mixer".
+# Audio needs nothing bundled. render-host compiles miniaudio in and
+# opens the host's own libasound, libpulse or libjack by name. Bundling
+# an audio library here would actively break it: a copy built on one
+# distribution looks for ALSA plugins at that distribution's paths, finds
+# no pipewire or pulse plugin on the user's machine, and falls back to
+# talking to the hardware directly, which is the reported "audio does not
+# work and Stud never appears in the volume mixer".
 
 
 say "packing the image"

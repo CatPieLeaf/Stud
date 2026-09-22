@@ -23,6 +23,59 @@ Comment:
  The upscaler in render-host/shaders/ is EASU and RCAS ported from these
  reference headers, so the notice covers the built shaders too.
 
+Files: third_party/snapdragon-gsr/*
+Copyright: 2023 Qualcomm Innovation Center, Inc.
+License: BSD-3-Clause
+Comment:
+ render-host/shaders/sgsr.comp is ported from this reference, so the
+ notice covers the built shader too.
+
+Files: third_party/mpv-prescalers/*
+Copyright: 2017 Bin Jin
+License: LGPL-3.0-or-later
+Comment:
+ RAVU-Zoom. The shader and its weight tables are generated from these
+ hooks, which ship with the package as the Corresponding Source.
+
+Files: third_party/bc7enc/*
+Copyright: 2020-2021 Richard Geldreich, Jr.
+License: MIT
+Comment:
+ The block encoders every emulated texture is re-encoded through.
+ Offered as MIT or public domain; taken as MIT.
+
+Files: third_party/volk/*
+Copyright: 2018-2026 Arseny Kapoulkine
+License: MIT
+Comment:
+ Resolves the render host's Vulkan entry points.
+
+Files: third_party/xxhash/*
+Copyright: 2012-2021 Yann Collet
+License: BSD-2-Clause
+Comment:
+ Keys the texture cache.
+
+Files: third_party/miniaudio/*
+Copyright: 2026 David Reid
+License: MIT-0
+Comment:
+ The render host's audio device. Offered as the Unlicense or MIT-0;
+ taken as MIT-0.
+
+Files: third_party/libdecor/*
+Copyright: 2017-2018 Red Hat Inc., 2018 Jonas Adahl, 2019 Christian Rauch
+License: MIT
+Comment:
+ The header only, for types. libdecor itself is opened by name at
+ runtime and is not redistributed.
+
+Files: third_party/wayland-protocols/*
+Copyright: 2023 the wayland-protocols contributors
+License: MIT
+Comment:
+ One staging protocol, used when the host's own copy is too old.
+
 Files: third_party/angle/*
 Copyright: 2018 The ANGLE Project Authors
 License: BSD-3-Clause
@@ -139,3 +192,51 @@ License: MIT
  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: BSD-2-Clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are
+ met:
+ .
+ * Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+ * Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+ IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: MIT-0
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the
+ "Software"), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: LGPL-3.0-or-later
+ This library is free software: you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published
+ by the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ .
+ On Debian systems the full text is at
+ /usr/share/common-licenses/LGPL-3.

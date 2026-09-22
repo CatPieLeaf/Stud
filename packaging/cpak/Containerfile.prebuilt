@@ -27,13 +27,13 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         plasma-breeze-qt6 \
     && dnf clean all
 
-# Nothing to bridge. This used to install alsa-plugins-pulseaudio and point
-# ALSA's default pcm at it, because Fedora's PortAudio was built with the
-# ALSA and JACK backends only and so never spoke to PulseAudio: inside a
-# sandbox with no /dev/snd and only the sound server's socket, ALSA found
-# no device at all and every stream opened silent ("could not open a
-# device (Device unavailable)"). miniaudio has a PulseAudio backend of its
-# own and is asked for it first, so libpulse above is the whole of it.
+# Nothing to bridge. This used to install alsa-plugins-pulseaudio and
+# point ALSA's default pcm at it, back when Stud reached the sound server
+# through ALSA only: inside a sandbox with no /dev/snd and nothing but the
+# server's socket, ALSA found no device at all and every stream opened
+# silent ("could not open a device (Device unavailable)"). miniaudio has a
+# PulseAudio backend of its own and is asked for it first, so libpulse
+# above is the whole of it.
 
 # What the application looks like, and where its file dialog can reach.
 #

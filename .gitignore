@@ -75,12 +75,12 @@ third_party/*
 # ship it, and a build should not fail over how new the host happens to
 # be. 3.5 KB, MIT, and the system copy still wins when it exists.
 !third_party/wayland-protocols/
-# And miniaudio, which is the audio device layer itself. It replaced a
-# PortAudio that was dlopen'd by name at runtime, so a machine without
-# the library installed had no sound at all and every package had to
-# carry the dependency; compiled in, audio is simply always there. One
-# header, public domain or MIT-0, and it speaks ALSA, PulseAudio, JACK
-# and OSS directly rather than through another library.
+# And miniaudio, which is the audio device layer itself. Compiled in
+# rather than opened by name at runtime, so audio is simply always
+# there: no library to be missing, no dependency for a package to
+# declare. One header, public domain or MIT-0, and it speaks ALSA,
+# PulseAudio, JACK and OSS directly rather than through another
+# library.
 !third_party/miniaudio/
 # And libdecor's header, for types only: native_window.cpp resolves every
 # entry point with dlopen, so nothing links it and a machine without the
