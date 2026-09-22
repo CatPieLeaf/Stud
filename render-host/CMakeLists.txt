@@ -5,6 +5,31 @@ target_include_directories(stud_render_host_protocol PUBLIC include)
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
+
+# Tracy's client, fetched only when the profiler is switched on, so an
+# ordinary build neither downloads nor compiles it. Pinned to a release
+# rather than a branch: a profiler that changes under the build would
+# make two measurements incomparable, which defeats the point of taking
+# them.
+if(STUD_TRACY)
+    include(FetchContent)
+    FetchContent_Declare(
+        tracy
+        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+        GIT_TAG        v0.14.1
+        GIT_SHALLOW    TRUE
+    )
+    # Tracy's own option, which defaults OFF and would otherwise build
+    # the client as a stub that collects nothing -- switched on here so
+    # -DSTUD_TRACY=ON means what it says.
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    # Collect only while a profiler is actually connected. Without this
+    # the client records from the moment Stud starts and holds it, which
+    # is wrong for a session someone leaves running and then attaches to
+    # after the stall they are chasing.
+    set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(tracy)
+endif()
 pkg_check_modules(WaylandEgl REQUIRED IMPORTED_TARGET wayland-egl)
 pkg_check_modules(Egl REQUIRED IMPORTED_TARGET egl)
 pkg_check_modules(GlesV2 REQUIRED IMPORTED_TARGET glesv2)
@@ -181,6 +206,14 @@ target_link_libraries(stud-render-host PRIVATE
     m
     ${CMAKE_DL_LIBS}
 )
+if(STUD_TRACY)
+    target_link_libraries(stud-render-host PRIVATE TracyClient)
+    # STUD_WITH_TRACY is what the markers in stud/profiling.h check;
+    # TRACY_ENABLE is what Tracy's own headers check. Both, or the
+    # markers compile away while the client is still linked in.
+    target_compile_definitions(stud-render-host PRIVATE STUD_WITH_TRACY)
+    message(STATUS "Stud: the render host is built with the Tracy profiler client")
+endif()
 if(STUD_ENABLE_DEV_RENDER_TOGGLE)
     target_compile_definitions(stud-render-host PRIVATE STUD_ENABLE_DEV_RENDER_TOGGLE)
 endif()

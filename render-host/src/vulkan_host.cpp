@@ -14,6 +14,8 @@
 #include "volk.h"
 
 #include "stud/vulkan_host.h"
+
+#include "stud/profiling.h"
 #include "stud/android_glue.h"
 #include "stud/session_log.h"
 #include "flight_recorder.h"
@@ -7825,6 +7827,7 @@ bool make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
 }
 
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
+    STUD_ZONE();
     Loader& l = loader();
     if (l.vk.vkQueuePresentKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -8252,7 +8255,13 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
         lock_t = std::chrono::steady_clock::now();
-        res = l.vk.vkQueuePresentKHR(from_u64<VkQueue>(queue), &pi);
+        {
+            STUD_ZONE_NAMED("vkQueuePresentKHR");
+            res = l.vk.vkQueuePresentKHR(from_u64<VkQueue>(queue), &pi);
+        }
+        // A frame, as the profiler counts them: what Stud actually put
+        // on the screen, not what the engine thought it drew.
+        STUD_FRAME_MARK();
         present_t1 = std::chrono::steady_clock::now();
         fr::record(fr::Event::PresentEnd, static_cast<uint64_t>(static_cast<int32_t>(res)),
                    static_cast<uint64_t>(
@@ -8771,6 +8780,7 @@ const char* engine_command_marker(uint32_t kind) {
 // command buffer, returns nothing, and differs only in payload, so
 // they share a call id and, on the client side, the reply-free path.
 uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
+    STUD_ZONE();
     Loader& l = loader();
     VkCommandBuffer cb = from_u64<VkCommandBuffer>(cb_handle);
     vk_wire::Reader r(data, size);

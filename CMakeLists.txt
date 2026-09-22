@@ -34,6 +34,19 @@ option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
 option(STUD_BUILD_QT_ONLY
        "Build only the Qt executables; skip the render host, the bionic runtime and ANGLE" OFF)
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
+# Tracy, the frame profiler, OFF and not fetched unless asked for.
+#
+# For the bugs that a log cannot catch: a stall every few seconds, a hang
+# on joining, a frame that takes 200ms once a minute. Statistical
+# profilers average those away; Tracy shows the actual frame it happened
+# in, on every thread at once, with the GPU timeline beside it.
+#
+# Never in a shipped build. The client opens a listening socket and
+# keeps a buffer per thread, which is not something a released Stud
+# should carry. This also replaces adding printf timers by hand, which
+# is how most of this project's measurements have been taken so far and
+# which perturbs the thing being measured.
+option(STUD_TRACY "Build the render host with the Tracy profiler client" OFF)
 # Whether a missing shader compiler is an error rather than a warning.
 #
 # Without glslc the upscaler is built with an empty shader array: FSR is

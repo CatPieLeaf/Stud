@@ -220,6 +220,26 @@ cd build && ctest
 ```
 </details>
 
+<details>
+<summary>Profiling a stall</summary>
+
+The problems worth profiling here are the ones a log cannot describe: a
+stall every few seconds, a join that hangs one time in ten, a frame that
+takes 200 ms and leaves no trace of which call did it.
+
+```bash
+cmake -S . -B build -DSTUD_TRACY=ON && cmake --build build
+```
+
+That builds the render host with the [Tracy](https://github.com/wolfpld/tracy)
+client, which waits for a profiler to connect and collects nothing until
+one does. Run Stud, attach Tracy's viewer, and the stalled frame is the
+one to open — an average is exactly what hides it.
+
+Off by default, and not even downloaded then: a shipped Stud carries none
+of it.
+</details>
+
 <br>
 
 <div align="center">
