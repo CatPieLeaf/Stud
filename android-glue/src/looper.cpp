@@ -88,7 +88,25 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
     // own already-documented 0-timeout call, itself only run once per
     // Stud's own ~250ms outer loop iteration, is unaffected by an extra
     // millisecond of latency here).
-    const int effective_timeout = (timeoutMillis == 0) ? 1 : timeoutMillis;
+    //
+    // The floor is adjustable, because it is a mitigation rather than
+    // the real mechanism and the real one now exists. render-host paces
+    // presents against the display (STUD_PRESENT_PACING), which is the
+    // vsync-paced swap this thread was waiting to be throttled by; with
+    // that in place the floor may no longer be earning its keep. Whether
+    // it is cannot be settled by reading the code -- the spin was found
+    // in a live syscall trace, so it has to be measured the same way.
+    //
+    // STUD_LOOPER_POLL_FLOOR_MS=0 removes it. Left at 1 by default: a
+    // thread spinning a core flat is a worse failure than a millisecond
+    // of latency, and that is the trade until someone has looked.
+    static const int poll_floor_ms = [] {
+        const char* v = std::getenv("STUD_LOOPER_POLL_FLOOR_MS");
+        if (v == nullptr) return 1;
+        const int parsed = std::atoi(v);
+        return (parsed < 0 || parsed > 100) ? 1 : parsed;
+    }();
+    const int effective_timeout = (timeoutMillis == 0) ? poll_floor_ms : timeoutMillis;
 
     while (true) {
         epoll_event ev{};
