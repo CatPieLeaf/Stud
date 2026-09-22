@@ -28,6 +28,7 @@ pkgbase = stud-bin
 	depends = hicolor-icon-theme
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	optdepends = wl-clipboard: copying a server link from the tray menu on Wayland
+	optdepends = libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME
 	provides = stud=1.1.6
 	conflicts = stud
 	options = !strip

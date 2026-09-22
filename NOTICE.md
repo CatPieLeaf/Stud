@@ -117,7 +117,10 @@ licence text and copyright notice, installed to
 Stud re-encodes every emulated texture with bc7enc_rdo, vendored at
 `third_party/bc7enc` and available under MIT or public domain, and opens
 its audio device with miniaudio, vendored at `third_party/miniaudio` and
-available under the Unlicense or MIT-0.
+available under the Unlicense or MIT-0. The header for libdecor, which
+draws the window's decorations where the compositor will not, is vendored
+at `third_party/libdecor` under the MIT licence; the library itself is
+opened by name at runtime and is not redistributed.
 
 Stud also builds three shaders from vendored references. The upscaler is
 RAVU-Zoom from mpv-prescalers, LGPL-3.0-or-later, beside SGSR

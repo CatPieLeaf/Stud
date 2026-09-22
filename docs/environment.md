@@ -34,6 +34,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_MAX_WINDOWS` | `1` | Raises the window cap. Diagnostic only; more than one real window is not a supported configuration. |
 | `STUD_RESIZE_SETTLE_MS` | `80` | How long a window size must hold still before it is acted on. `0` acts on every configure. |
 | `STUD_WL_POLL_MS` | `50` | How long the poll loops may block before Wayland is pumped again. |
+| `STUD_WAYLAND_DECORATIONS` | `auto` | Who draws the titlebar. `auto` asks the compositor when it implements xdg-decoration (KDE, sway, Hyprland, river) and falls back to libdecor when it does not (GNOME). `server` never falls back, leaving the window undecorated where the compositor declines. `client` always uses libdecor, which is the only way to see that path on a session that would otherwise never take it. Wayland only; ignored on X11, and ignored entirely when `libdecor-0.so.0` is not installed. |
 
 ## The sandbox and the engine's own bring-up
 

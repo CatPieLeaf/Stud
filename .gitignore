@@ -82,6 +82,13 @@ third_party/*
 # header, public domain or MIT-0, and it speaks ALSA, PulseAudio, JACK
 # and OSS directly rather than through another library.
 !third_party/miniaudio/
+# And libdecor's header, for types only: native_window.cpp resolves every
+# entry point with dlopen, so nothing links it and a machine without the
+# library keeps the behaviour it has. Vendored rather than required as a
+# build dependency because libdecor-0-devel is installed far less widely
+# than the library itself, and a missing development package should not
+# decide whether Stud can draw a titlebar. MIT, one file.
+!third_party/libdecor/
 
 # The real Roblox APK is user-supplied and must never be distributed.
 # Stud does not ship, mirror or download it.

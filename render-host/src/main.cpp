@@ -4225,6 +4225,10 @@ void pump_wayland(wl_display* display, bool fd_readable) {
     static const bool dispatch_default_queue =
         std::getenv("STUD_WL_DISPATCH_DEFAULT_QUEUE") != nullptr;
     if (dispatch_default_queue) wl_display_dispatch_pending(display);
+    // And libdecor, which has to be pumped separately because it keeps
+    // its objects on the default queue. A no-op unless this process is
+    // actually drawing its own decorations.
+    stud::android_glue::wayland_dispatch_decorations();
 }
 
 // Services one client connection to completion, on its own thread. Used

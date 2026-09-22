@@ -38,6 +38,7 @@ depends=(
 optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
   'wl-clipboard: copying a server link from the tray menu on Wayland'
+  'libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME'
 )
 options=(!strip !debug emptydirs)
 

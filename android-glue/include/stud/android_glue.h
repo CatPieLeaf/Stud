@@ -203,6 +203,16 @@ bool native_window_is_foreground();
 // semantics here, just an honest, checkable request flag).
 bool window_close_requested();
 
+// Pumps libdecor, and does nothing at all unless this process is drawing
+// its own window decorations (no compositor-side xdg-decoration; see
+// native_window.cpp). libdecor keeps its objects on the DEFAULT Wayland
+// event queue rather than Stud's, because it binds its own globals and
+// offers no way to place them elsewhere, so the loop that pumps Stud's
+// queue never reaches them: the titlebar would draw once and then stop
+// responding to clicks and drags. Safe to call on every pass; it never
+// blocks.
+void wayland_dispatch_decorations();
+
 // Real accessors onto ANativeWindow's Wayland backing, for the Vulkan WSI
 // shim (vulkan-wsi/) to build a VkWaylandSurfaceCreateInfoKHR from a
 // VkAndroidSurfaceCreateInfoKHR's ANativeWindow*, deliberately narrow

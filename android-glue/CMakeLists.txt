@@ -312,6 +312,18 @@ if(NOT StudX11IncludeDir)
             "build the X11 window backend, which is loaded at runtime only.")
 endif()
 target_include_directories(stud_android_glue PRIVATE "${StudX11IncludeDir}")
+
+# libdecor's header, for types only, and vendored rather than found.
+#
+# native_window.cpp resolves every libdecor entry point with dlopen and
+# dlsym, the same treatment Xlib gets above, so nothing here links it and
+# a machine without libdecor-0.so.0 keeps exactly the behaviour it has
+# today. The header is vendored instead of required as a build dependency
+# because libdecor-0-devel is not installed nearly as widely as the
+# library itself is, and a missing development package should not decide
+# whether Stud can draw a titlebar. MIT, one file.
+target_include_directories(stud_android_glue PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libdecor")
 # For jni.h (JNIEnv/jobject types used by AAssetManager_fromJava/
 # ANativeWindow_fromSurface's signatures), jnivm is already fetched by
 # jni-bridge's CMakeLists.txt, which must run before this one (see the
