@@ -139,8 +139,9 @@ else()
     )
 endif()
 
-add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
-target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(stud-render-host PRIVATE
     stud_render
     stud_config
