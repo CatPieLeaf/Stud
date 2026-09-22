@@ -734,6 +734,16 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     // the spec's own requirement, and the only way to reach a driver's
     // real implementations rather than the loader's trampolines.
     l.instance = instance;
+    // volk needs the instance before it can resolve anything device-level:
+    // vkGetDeviceProcAddr itself is an instance-level entry point, so
+    // volkLoadDeviceTable() has nothing to call until this has run. Without
+    // it the table comes back full of nulls and the first call through it
+    // takes the process down with a fault at address 0.
+    //
+    // InstanceOnly rather than volkLoadInstance(): the device-level
+    // pointers live in l.vk, per device, and loading a second global set
+    // of them would just be a way to call the wrong device's functions.
+    volkLoadInstanceOnly(instance);
     // What this instance can do, so a later request can be answered with
     // it instead of building a second one. See the reuse check above.
     live_extensions.clear();
@@ -1536,6 +1546,15 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         // loader this process already dlopen'd, handed over by
         // volkInitializeCustom() at instance creation.
         volkLoadDeviceTable(&l.vk, l.device);
+        // A table that came back empty is worth saying out loud. It means
+        // volk had no vkGetDeviceProcAddr to call, and the alternative to
+        // this line is the first call through the table faulting at
+        // address 0 with nothing to say why.
+        if (l.vk.vkCreateImage == nullptr || l.vk.vkQueueSubmit == nullptr) {
+            std::printf("stud-render-host: volk resolved no device entry points; the instance was "
+                        "not handed to it before the device was created\n");
+            std::fflush(stdout);
+        }
 
         auto dev = [&l](const char* n) { return l.get_device_proc_addr(l.device, n); };
         l.create_descriptor_update_template =
