@@ -380,6 +380,22 @@ void open_device(Device* s) {
         config.periodSizeInFrames = 480;
         config.dataCallback = playback_callback;
         config.pUserData = s;
+        // Do NOT let miniaudio clip the buffer.
+        //
+        // It hard-clips a float32 playback buffer into [-1, 1] in place
+        // after every data callback unless this is set, which is exactly
+        // the ceiling the float32 format above exists to avoid: a hot
+        // mix, loud bassy content, pinned at full scale instead of
+        // keeping its headroom until the system mixer has applied the
+        // user's volume. Live-caught as audio sounding compressed and
+        // "deepfried" on precisely those passages, the same defect the
+        // old 16-bit conversion produced and for the same reason.
+        //
+        // The sound server is the right place for this. PulseAudio and
+        // PipeWire both take float samples outside [-1, 1] and resolve
+        // them after volume, so nothing downstream needs Stud to have
+        // flattened them first.
+        config.noClip = MA_TRUE;
         // The per-stream label, beside the application name set on the
         // context. A PulseAudio mixer shows both.
         config.pulse.pStreamNamePlayback = "Stud";
@@ -389,8 +405,20 @@ void open_device(Device* s) {
             if (err == MA_SUCCESS) {
                 std::lock_guard<std::mutex> lock(s->mutex);
                 s->device_open = true;
-                std::printf("stud-render-host: audio: device open (%d Hz, %d ch, %s)\n", s->rate,
-                            s->channels, s->bytes_per_sample == 4 ? "float32" : "16-bit");
+                // What the device actually negotiated, not what was
+                // asked for. When the two differ miniaudio converts
+                // between them on every callback, and a conversion into
+                // an integer format clips exactly the peaks noClip
+                // above exists to preserve, so this is the line that
+                // says whether the samples reach the sound server
+                // untouched.
+                std::printf("stud-render-host: audio: device open (%d Hz, %d ch, %s; device is "
+                            "%u Hz, %u ch, %s)\n",
+                            s->rate, s->channels,
+                            s->bytes_per_sample == 4 ? "float32" : "16-bit",
+                            s->ma_dev.playback.internalSampleRate,
+                            s->ma_dev.playback.internalChannels,
+                            ma_get_format_name(s->ma_dev.playback.internalFormat));
                 std::fflush(stdout);
             } else {
                 ma_device_uninit(&s->ma_dev);
