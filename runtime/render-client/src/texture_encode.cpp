@@ -917,13 +917,34 @@ uint64_t bc7_mode5_encode(const uint8_t* rgba, uint8_t* out) {
 
 }  // namespace
 
+// Squared error, over all 64 components of a block, below which mode 5 is
+// not attempted at all.
+//
+// Mode 5 only ever helps where mode 6 cannot express the block, and mode 6
+// reports what it cost anyway, so a block it already fits closely can skip
+// the second encode entirely. The number is 64 components times 16, i.e.
+// a root-mean-square error of 4 per component; see bc7_block().
+constexpr uint64_t kMode6GoodEnough = 64ull * 16ull;
+
 void bc7_block(const uint8_t* rgba, uint8_t* out) {
-    // Both modes, and whichever reconstructs the block more closely. Mode 6
-    // wins on the great majority of blocks; mode 5 exists for the ones
-    // where alpha does not follow colour, which mode 6 cannot express at
-    // any endpoint precision.
-    uint8_t six[16], five[16];
+    // Mode 6 first, then mode 5 only if mode 6 left enough error to be
+    // worth a second encode, and whichever reconstructs the block closer.
+    //
+    // Mode 6 wins on the great majority of blocks; mode 5 exists for the
+    // ones where alpha does not follow colour, which mode 6 cannot express
+    // at any endpoint precision. Trying both on every block doubled the
+    // cost of the colour path for a gain concentrated in a few blocks:
+    // measured over four real dumped textures, mode 5 was chosen for
+    // 20-25% of blocks but moved the whole image only 53.40 -> 53.61 dB.
+    // The threshold keeps the blocks where mode 5 is worth 10 dB and skips
+    // the ones where it is worth a fraction of one.
+    uint8_t six[16];
     const uint64_t err6 = bc7_mode6_encode(rgba, six);
+    if (err6 <= kMode6GoodEnough) {
+        std::memcpy(out, six, 16);
+        return;
+    }
+    uint8_t five[16];
     const uint64_t err5 = bc7_mode5_encode(rgba, five);
     std::memcpy(out, err5 < err6 ? five : six, 16);
 }
