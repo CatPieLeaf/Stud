@@ -359,6 +359,23 @@ install(FILES
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/mpv-prescalers")
 
+# The four libraries compiled into Stud's own binaries. Nothing in the
+# package is a separate file for any of them, which is exactly why their
+# notices have to be installed: a user with the package has the code
+# without having this tree.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bc7enc/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/bc7enc"
+        RENAME "LICENSE-bc7enc_rdo.txt")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/volk/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/volk"
+        RENAME "LICENSE-volk.txt")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/xxhash"
+        RENAME "LICENSE-xxHash.txt")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/miniaudio"
+        RENAME "LICENSE-miniaudio.txt")
+
 # The dependencies setup.sh fetched. They are not Stud's own code, but a
 # package has to carry them or the application cannot start: ANGLE is the
 # GL translation layer, and the bionic set is the real linker and libc

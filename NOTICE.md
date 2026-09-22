@@ -114,20 +114,27 @@ Every one of those is under a permissive licence and ships with its own
 licence text and copyright notice, installed to
 `/usr/share/licenses/stud/` and kept beside the libraries themselves.
 
-Stud re-encodes every emulated texture with bc7enc_rdo, vendored at
-`third_party/bc7enc` and available under MIT or public domain, and opens
-its audio device with miniaudio, vendored at `third_party/miniaudio` and
-available under the Unlicense or MIT-0. The header for libdecor, which
-draws the window's decorations where the compositor will not, is vendored
-at `third_party/libdecor` under the MIT licence; the library itself is
+Four more are compiled into Stud's own binaries, so their notices are
+installed to `/usr/share/licenses/stud/` too:
+
+ - bc7enc_rdo, the texture block encoders (MIT or public domain)
+ - volk, the Vulkan entry-point loader (MIT)
+ - xxHash, the texture cache key (BSD-2-Clause)
+ - miniaudio, the audio device (Unlicense or MIT-0)
+
+libdecor's header is vendored for types only (MIT); the library itself is
 opened by name at runtime and is not redistributed.
 
-Stud also builds three shaders from vendored references. The upscaler is
-RAVU-Zoom from mpv-prescalers, LGPL-3.0-or-later, beside SGSR
-(BSD-3-Clause) and FSR1's RCAS (MIT). LGPLv3 incorporates the GPLv3
-terms and permits conveying a copy under them, and AGPLv3 section 13
-permits combining a covered work with GPLv3 work. The hooks those
-shaders are generated from ship in `third_party/`, as the Corresponding
-Source that section requires.
+The three upscale shaders are built from vendored references: RAVU-Zoom
+from mpv-prescalers (LGPL-3.0-or-later), SGSR (BSD-3-Clause) and FSR1's
+RCAS (MIT).
+
+RAVU-Zoom is the one copyleft item, so it is worth setting out why it is
+allowed here. LGPLv3 incorporates the terms of GPLv3, and its section
+2(b) permits conveying a copy under the GPL with none of the LGPL's
+additional permissions applying to that copy. AGPLv3 section 13 grants
+permission to combine a covered work with a GPLv3 work and to convey the
+result. The hooks the shaders are generated from ship in `third_party/`,
+as the Corresponding Source that section requires.
 
 The full credits are in the README.

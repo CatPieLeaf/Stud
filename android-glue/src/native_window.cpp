@@ -2185,7 +2185,13 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
                 // the roundtrip that lets its first configure through;
                 // the queue-specific one below would never see it.
                 wl_display_roundtrip(state.display);
-                std::printf("stud: android-glue: libdecor is drawing this window's "
+                // "managing", not "drawing": libdecor binds
+                // zxdg_decoration_manager_v1 itself, so on a compositor
+                // that offers server-side decorations it asks for those
+                // and draws nothing. Saying it draws would send anyone
+                // reading this log looking for a bug when KWin's own
+                // titlebar appears, which is the correct outcome.
+                std::printf("stud: android-glue: libdecor is managing this window's "
                             "decorations\n");
                 std::fflush(stdout);
             } else {

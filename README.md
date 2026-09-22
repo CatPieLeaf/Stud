@@ -9,7 +9,6 @@
   <img src="https://img.shields.io/badge/version-1.1.6-white?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iYmxhY2siPjxwYXRoIGQ9Ik0xMiAxLjYgMi44IDYuOHYxMC40TDEyIDIyLjRsOS4yLTUuMlY2LjhMMTIgMS42em0wIDIuMyA3IDQtNyA0LTctNCA3LTR6TTQuOCA4LjVsNi4yIDMuNnY3LjJsLTYuMi0zLjVWOC41em0xNC40IDB2Ny4zTDEzIDE5LjN2LTcuMmw2LjItMy42eiIvPjwvc3ZnPg==&style=for-the-badge&color=9a3fbd&labelColor=EBD6F5" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-white?logo=gnu&logoColor=000000&style=for-the-badge&color=4c8bf5&labelColor=D6E3FC" alt="License">
   <img src="https://img.shields.io/badge/platform-linux-white?logo=linux&logoColor=000000&style=for-the-badge&color=f5bd20&labelColor=FDEFC7" alt="Platform">
-  <a href="https://discord.gg/DSrbRk6dPp"><img src="https://img.shields.io/discord/1434166231274885313?label=support&logo=discord&style=for-the-badge&color=5965f1&labelColor=D6D9FC" alt="Discord"></a>
 </p>
 
   <p align="center">Play Roblox on Linux: the real Android app, running on your desktop.</p>
@@ -328,7 +327,6 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
- - [RakuOS](https://repo.rakuos.org/): Stud is not affiliated with RakuOS either. They were nice and let Stud redirect its support to [their Discord](https://discord.gg/DSrbRk6dPp).
  - [ANGLE](https://chromium.googlesource.com/angle/angle): the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
  - [bionic](https://android.googlesource.com/platform/bionic/): Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
  - [libjnivm](https://github.com/ChristopherHX/libjnivm): the JNI virtual machine Stud's Java layer stands on (MIT)
@@ -339,7 +337,7 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
  - [volk](https://github.com/zeux/volk): the render host's Vulkan entry points are resolved by it, vendored at `third_party/volk` (MIT). It replaced ninety hand-written `vkGetDeviceProcAddr("vkName")` lookups, where a misspelling resolved to null and failed at runtime behind whichever guard happened to cover it
  - [xxHash](https://github.com/Cyan4973/xxHash): the texture cache's 128-bit key, vendored at `third_party/xxhash` (BSD-2-Clause). It replaced two hand-rolled FNV-1a streams and runs on every cache hit, where there is no encode to hide behind
  - [libdecor](https://gitlab.freedesktop.org/libdecor/libdecor): draws the window's titlebar on a compositor that implements no server-side decorations, its header vendored at `third_party/libdecor` (MIT). Opened by name at runtime, so it is optional: without it such a compositor leaves the window undecorated, exactly as before
- - [miniaudio](https://github.com/mackron/miniaudio): the render host's audio device, vendored at `third_party/miniaudio` (public domain or MIT-0). It speaks ALSA, PulseAudio, JACK and OSS itself and is compiled in, replacing a PortAudio that was opened by name at runtime, so a machine without that library installed had no sound and every package had to carry the dependency
+ - [miniaudio](https://github.com/mackron/miniaudio): the render host's audio device, vendored at `third_party/miniaudio` (public domain or MIT-0). It speaks ALSA, PulseAudio, JACK and OSS itself and is compiled in, so audio needs no library installed and no package declares one
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The logo is an image; the font itself is not shipped with Stud
@@ -348,9 +346,7 @@ Every binary Stud redistributes carries its own licence and copyright notice. `t
 
 Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox engine Stud loads but never distributes. Stud is and always will be Open Source.
 
-RAVU-Zoom is LGPL-3.0-or-later, the one copyleft shader in that list. LGPLv3 "incorporates the terms and conditions of version 3 of the GNU General Public License", and its section 2(b) permits conveying a copy "under the GNU GPL, with none of the additional permissions of this License applicable to that copy". AGPLv3 section 13 grants "permission to link or combine any covered work with a work licensed under version 3 of the GNU General Public License into a single combined work, and to convey the resulting work". The hook the shader is generated from ships in the tree, as the Corresponding Source section 13 requires.
-
-[`NOTICE.md`](NOTICE.md) covers the rest: affiliation, trademarks, your Roblox account, and what does and does not leave your machine.
+[`NOTICE.md`](NOTICE.md) covers the rest: every third-party licence and what it requires, affiliation, trademarks, your Roblox account, and what does and does not leave your machine.
 
 ---
 <br>

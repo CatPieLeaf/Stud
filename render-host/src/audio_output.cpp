@@ -17,14 +17,12 @@
 // shape needed, it runs its own realtime thread and pulls, so nothing
 // here has to invent a clock.
 //
-// It is compiled in, which is the reason it replaced the PortAudio that
-// used to be here. That was resolved by name at runtime, so a machine
-// without libportaudio.so.2 installed had no sound at all, every package
-// Stud ships had to declare the dependency, and the AppImage had to
-// carry a private copy to fall back on. None of that is needed now.
-// miniaudio adds no link-time dependency of its own either: it opens
-// libasound, libpulse and libjack as it finds them, so the same binary
-// works on a host that has only one of the three.
+// It is compiled in rather than resolved by name at runtime, which is
+// what makes audio simply always present: no package to declare, none
+// to be missing, and nothing for a bundle to carry a private copy of.
+// It adds no link-time dependency either: it opens libasound, libpulse
+// and libjack as it finds them, so the same binary works on a host that
+// has only one of the three.
 //
 // The device work must stay off the render dispatch thread. Opening a
 // device talks to the audio server and blocks; doing that inline froze the
@@ -419,20 +417,32 @@ void open_device(Device* s) {
             if (err == MA_SUCCESS) {
                 std::lock_guard<std::mutex> lock(s->mutex);
                 s->device_open = true;
-                // What the device actually negotiated, not what was
-                // asked for. When the two differ miniaudio converts
-                // between them on every callback, and a conversion into
-                // an integer format clips exactly the peaks noClip
-                // above exists to preserve, so this is the line that
-                // says whether the samples reach the sound server
-                // untouched.
-                std::printf("stud-render-host: audio: device open (%d Hz, %d ch, %s; device is "
-                            "%u Hz, %u ch, %s)\n",
-                            s->rate, s->channels,
-                            s->bytes_per_sample == 4 ? "float32" : "16-bit",
-                            s->ma_dev.playback.internalSampleRate,
-                            s->ma_dev.playback.internalChannels,
-                            ma_get_format_name(s->ma_dev.playback.internalFormat));
+                std::printf("stud-render-host: audio: device open (%d Hz, %d ch, %s)\n", s->rate,
+                            s->channels, s->bytes_per_sample == 4 ? "float32" : "16-bit");
+                // And a warning, only when the device did not take what
+                // it was handed. Silence otherwise: the matching case is
+                // the normal one and does not need a line.
+                //
+                // This is worth saying out loud because of what it costs.
+                // When the two differ miniaudio converts on every
+                // callback, and a conversion into an integer format
+                // clamps at full scale, destroying exactly the peaks
+                // float32 output exists to preserve. That shipped once
+                // already, as audio that sounded compressed on loud,
+                // bassy passages, and it was invisible from the outside.
+                const ma_format got = s->ma_dev.playback.internalFormat;
+                const bool converting = got != ma_format_f32 ||
+                                        s->ma_dev.playback.internalSampleRate !=
+                                            static_cast<ma_uint32>(s->rate) ||
+                                        s->ma_dev.playback.internalChannels !=
+                                            static_cast<ma_uint32>(s->channels);
+                if (converting) {
+                    std::printf("stud-render-host: audio: the device took %u Hz, %u ch, %s "
+                                "instead, so every buffer is converted; an integer format here "
+                                "clips peaks above full scale\n",
+                                s->ma_dev.playback.internalSampleRate,
+                                s->ma_dev.playback.internalChannels, ma_get_format_name(got));
+                }
                 std::fflush(stdout);
             } else {
                 ma_device_uninit(&s->ma_dev);
