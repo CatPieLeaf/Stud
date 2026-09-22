@@ -30,10 +30,18 @@ const Tables& tables() {
 // Cost per 1024x1024 level, 65536 blocks, against the hand-written
 // encoder this replaces at 30.6 ms:
 //
-//   mode 6 only, no least squares            56.6 ms
-//   modes 5+6                                93.6 ms
-//   modes 1+5+6, 4 partitions               134.4 ms   <- this
+//   modes 5+6, no mode 1                     92.5 ms  48.48 dB worst 20
+//   modes 1+5+6, 2 partitions, no LS         79.6 ms  52.79 dB worst  8  <- this
+//   modes 1+5+6, 4 partitions, LS           124.2 ms  53.27 dB worst 10
 //   every mode, 16 partitions               282.4 ms
+//
+// The chosen row is cheaper than every other row that keeps mode 1 AND
+// has the lowest worst-case error of any of them. A square is one block
+// much worse than its neighbours, so worst-case is the number that
+// decides how it looks; the least-squares pass buys half a dB of average
+// PSNR for a third more time and a worse worst case, so it stays off.
+// Dropping mode 1 is not an option worth having: it is both slower than
+// this row and far worse (worst 20).
 //
 // Mode 1 is the one that matters: it is a two-subset mode, so a 4x4
 // block holding two distinct colours is no longer forced onto a single
@@ -41,22 +49,23 @@ const Tables& tables() {
 // alpha in its own index set, for blocks where alpha does not follow
 // colour. Mode 6 handles everything smooth, which is most blocks.
 //
-// Partitions stay at 4. Measured on real dumped textures, raising the
-// search past 16 changed nothing (53.24 dB against 53.27 dB), so the
-// budget goes to having the right modes rather than to searching more
-// layouts of one of them.
+// Partitions stay at 2. One is not enough (worst case collapses back to
+// 20), and past two the numbers stop moving: 4 scores identically, and
+// 64 scored 53.24 dB against 53.27 dB.
 //
-// This is not free: it is roughly four times the cost of the encoder it
-// replaces, paid once per texture and then served from the texture
-// cache. An earlier attempt shipped 282 ms a level and made loading
-// unplayable, which is why every number above is measured.
+// This is still around 2.6x the cost of the encoder it replaces, paid
+// once per texture and then served from the texture cache. An earlier
+// attempt shipped every mode at 16 partitions, 282 ms a level, and made
+// texture loading unplayable, which is why every number here is
+// measured rather than assumed.
 const bc7enc_compress_block_params& bc7_params() {
     static const bc7enc_compress_block_params p = [] {
         bc7enc_compress_block_params v;
         bc7enc_compress_block_params_init(&v);
         v.m_mode_mask = (1u << 1) | (1u << 5) | (1u << 6);
-        v.m_max_partitions = 4;
+        v.m_max_partitions = 2;
         v.m_uber_level = 0;
+        v.m_try_least_squares = false;
         return v;
     }();
     return p;
