@@ -59,6 +59,12 @@ third_party/*
 # own block encoders, which were slower on three of the four formats and
 # had no partitioned BC7 mode at all.
 !third_party/bc7enc/
+# And volk, the Vulkan meta-loader, which resolves the render host's
+# device table. It replaced ninety hand-written
+# vkGetDeviceProcAddr("vkName") lookups: a misspelling there resolved to
+# null and failed at runtime behind whichever guard covered it, where a
+# misspelling in volk's table does not compile. MIT, two files.
+!third_party/volk/
 # Same reasoning for the one vendored Wayland protocol: pointer-warp-v1 is
 # staging and young enough that a distribution a release behind does not
 # ship it, and a build should not fail over how new the host happens to

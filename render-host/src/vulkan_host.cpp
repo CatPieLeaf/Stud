@@ -8,6 +8,11 @@
 // no usable Vulkan at all, and answer "no" honestly instead of failing
 // to launch.
 
+// volk first, always: it defines VK_NO_PROTOTYPES and pulls in the Vulkan
+// headers itself. Anything that includes vulkan.h ahead of it declares the
+// entry points as functions, and volk then redeclares them as pointers.
+#include "volk.h"
+
 #include "stud/vulkan_host.h"
 #include "stud/android_glue.h"
 #include "stud/session_log.h"
@@ -35,7 +40,7 @@
 #include <type_traits>
 #include <vector>
 
-#include <vulkan/vulkan_core.h>
+#include "volk.h"
 
 #include "stud/vulkan_forward.h"
 #include "stud/render_host_protocol.h"
@@ -266,6 +271,14 @@ static_assert(vk_wire::kMaxDescriptionSize == VK_MAX_DESCRIPTION_SIZE,
 
 struct Loader {
     void* handle = nullptr;
+    // Every device-level entry point, resolved by volk
+    // (third_party/volk) rather than by ninety hand-written
+    // vkGetDeviceProcAddr("vkName") lookups. A misspelling there resolved
+    // to null and failed at runtime behind whichever guard happened to
+    // cover it; a misspelling here does not compile. The members are
+    // plain public function pointers, so the null checks this file is
+    // built on still read the same way.
+    VolkDeviceTable vk{};
     PFN_vkGetInstanceProcAddr get_instance_proc_addr = nullptr;
     PFN_vkEnumerateInstanceVersion enumerate_instance_version = nullptr;
     PFN_vkEnumerateInstanceExtensionProperties enumerate_instance_extension_properties = nullptr;
@@ -288,7 +301,6 @@ struct Loader {
     PFN_vkGetPhysicalDeviceQueueFamilyProperties get_physical_device_queue_family_properties =
         nullptr;
     PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extension_properties = nullptr;
-    PFN_vkGetMemoryHostPointerPropertiesEXT get_memory_host_pointer_properties = nullptr;
     PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2 = nullptr;
     PFN_vkCreateDevice create_device = nullptr;
     PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties = nullptr;
@@ -302,116 +314,28 @@ struct Loader {
     // driver's real implementations rather than loader trampolines.
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkGetDeviceProcAddr get_device_proc_addr = nullptr;
-    PFN_vkGetDeviceQueue get_device_queue = nullptr;
-    PFN_vkCreateCommandPool create_command_pool = nullptr;
-    PFN_vkCreateSemaphore create_semaphore = nullptr;
-    PFN_vkCreateFence create_fence = nullptr;
-    PFN_vkCreateQueryPool create_query_pool = nullptr;
-    PFN_vkCreatePipelineCache create_pipeline_cache = nullptr;
-    PFN_vkGetPipelineCacheData get_pipeline_cache_data = nullptr;
-    PFN_vkDestroyPipelineCache destroy_pipeline_cache = nullptr;
     // The rest of the destroy family. Without these the objects the
     // engine creates for every pipeline it builds were never freed,
     // measured at 2668 unimplemented destroy calls across a few
     // sessions, which is GPU memory that grows with every join.
-    PFN_vkDestroySampler destroy_sampler = nullptr;
-    PFN_vkDestroyRenderPass destroy_render_pass = nullptr;
-    PFN_vkDestroyPipeline destroy_pipeline = nullptr;
-    PFN_vkDestroyPipelineLayout destroy_pipeline_layout = nullptr;
-    PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout = nullptr;
-    PFN_vkDestroyDescriptorPool destroy_descriptor_pool = nullptr;
-    PFN_vkDestroyDescriptorUpdateTemplate destroy_descriptor_update_template = nullptr;
-    PFN_vkCreateImage create_image = nullptr;
-    PFN_vkGetImageMemoryRequirements get_image_memory_requirements = nullptr;
-    PFN_vkAllocateMemory allocate_memory = nullptr;
-    PFN_vkBindImageMemory bind_image_memory = nullptr;
-    PFN_vkFreeMemory free_memory = nullptr;
-    PFN_vkMapMemory map_memory = nullptr;
-    PFN_vkUnmapMemory unmap_memory = nullptr;
-    PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = nullptr;
-    PFN_vkCreateSwapchainKHR create_swapchain = nullptr;
-    PFN_vkGetSwapchainImagesKHR get_swapchain_images = nullptr;
     PFN_vkGetPhysicalDeviceSurfaceFormatsKHR get_surface_formats = nullptr;
     PFN_vkGetPhysicalDeviceSurfacePresentModesKHR get_surface_present_modes = nullptr;
     PFN_vkGetPhysicalDeviceSurfaceSupportKHR get_surface_support = nullptr;
     PFN_vkGetPhysicalDeviceImageFormatProperties2 get_image_format_properties2 = nullptr;
-    PFN_vkDeviceWaitIdle device_wait_idle = nullptr;
-    PFN_vkCreateBuffer create_buffer = nullptr;
-    PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements = nullptr;
-    PFN_vkBindBufferMemory bind_buffer_memory = nullptr;
-    PFN_vkCreateImageView create_image_view = nullptr;
-    PFN_vkCreateShaderModule create_shader_module = nullptr;
-    PFN_vkDestroyBuffer destroy_buffer = nullptr;
-    PFN_vkDestroyImage destroy_image = nullptr;
-    PFN_vkDestroyImageView destroy_image_view = nullptr;
-    PFN_vkDestroyShaderModule destroy_shader_module = nullptr;
-    PFN_vkDestroySemaphore destroy_semaphore = nullptr;
-    PFN_vkDestroyFence destroy_fence = nullptr;
-    PFN_vkDestroyCommandPool destroy_command_pool = nullptr;
-    PFN_vkDestroyQueryPool destroy_query_pool = nullptr;
-    PFN_vkDestroySwapchainKHR destroy_swapchain = nullptr;
     PFN_vkDestroySurfaceKHR destroy_surface = nullptr;
-    PFN_vkDestroyDevice destroy_device = nullptr;
     PFN_vkDestroyInstance destroy_instance = nullptr;
-    PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer = nullptr;
-    PFN_vkQueueWaitIdle queue_wait_idle = nullptr;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     VkCommandPool probe_pool = VK_NULL_HANDLE;
     VkQueue probe_queue = VK_NULL_HANDLE;
-    PFN_vkCreateRenderPass create_render_pass = nullptr;
-    PFN_vkCreateFramebuffer create_framebuffer = nullptr;
-    PFN_vkDestroyFramebuffer destroy_framebuffer = nullptr;
-    PFN_vkCreateSampler create_sampler = nullptr;
-    PFN_vkCreatePipelineLayout create_pipeline_layout = nullptr;
-    PFN_vkCreateDescriptorSetLayout create_descriptor_set_layout = nullptr;
-    PFN_vkCreateDescriptorPool create_descriptor_pool = nullptr;
-    PFN_vkAllocateDescriptorSets allocate_descriptor_sets = nullptr;
-    PFN_vkResetDescriptorPool reset_descriptor_pool = nullptr;
     PFN_vkCreateDescriptorUpdateTemplate create_descriptor_update_template = nullptr;
     PFN_vkUpdateDescriptorSetWithTemplate update_descriptor_set_with_template = nullptr;
-    PFN_vkCreateGraphicsPipelines create_graphics_pipelines = nullptr;
-    PFN_vkCreateComputePipelines create_compute_pipelines = nullptr;
-    PFN_vkAllocateCommandBuffers allocate_command_buffers = nullptr;
-    PFN_vkBeginCommandBuffer begin_command_buffer = nullptr;
-    PFN_vkEndCommandBuffer end_command_buffer = nullptr;
-    PFN_vkResetCommandPool reset_command_pool = nullptr;
-    PFN_vkQueueSubmit queue_submit = nullptr;
-    PFN_vkWaitForFences wait_for_fences = nullptr;
-    PFN_vkResetFences reset_fences = nullptr;
-    PFN_vkAcquireNextImageKHR acquire_next_image = nullptr;
-    PFN_vkQueuePresentKHR queue_present = nullptr;
-    PFN_vkGetQueryPoolResults get_query_pool_results = nullptr;
-    PFN_vkCmdBeginRenderPass cmd_begin_render_pass = nullptr;
-    PFN_vkCmdEndRenderPass cmd_end_render_pass = nullptr;
-    PFN_vkCmdBindPipeline cmd_bind_pipeline = nullptr;
-    PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets = nullptr;
-    PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers = nullptr;
-    PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer = nullptr;
-    PFN_vkCmdDraw cmd_draw = nullptr;
-    PFN_vkCmdDrawIndexed cmd_draw_indexed = nullptr;
-    PFN_vkCmdDispatch cmd_dispatch = nullptr;
-    PFN_vkUpdateDescriptorSets update_descriptor_sets = nullptr;
-    PFN_vkCmdPushConstants cmd_push_constants = nullptr;
-    PFN_vkCmdSetViewport cmd_set_viewport = nullptr;
-    PFN_vkCmdSetScissor cmd_set_scissor = nullptr;
-    PFN_vkCmdPipelineBarrier cmd_pipeline_barrier = nullptr;
-    PFN_vkCmdCopyBuffer cmd_copy_buffer = nullptr;
-    PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image = nullptr;
-    PFN_vkCmdCopyImage cmd_copy_image = nullptr;
-    PFN_vkCmdBlitImage cmd_blit_image = nullptr;
     // VK_NV_device_diagnostic_checkpoints. Null unless the driver has it.
-    PFN_vkCmdSetCheckpointNV cmd_set_checkpoint = nullptr;
-    PFN_vkGetQueueCheckpointDataNV get_queue_checkpoint_data = nullptr;
     // VK_EXT_device_fault. Null unless the driver has it.
     //
     // Checkpoints say WHERE the GPU stopped; this says WHAT went wrong
     // there -- the faulting addresses and the vendor's own description of
     // the fault. On a hang they answer different halves of one question,
     // which is why both are worth carrying.
-    PFN_vkGetDeviceFaultInfoEXT get_device_fault_info = nullptr;
-    PFN_vkCmdResolveImage cmd_resolve_image = nullptr;
-    PFN_vkCmdResetQueryPool cmd_reset_query_pool = nullptr;
-    PFN_vkCmdWriteTimestamp cmd_write_timestamp = nullptr;
 
     // Layout of each descriptor-update template, needed to interpret the
     // opaque blob a template update carries.
@@ -538,6 +462,9 @@ Loader& loader() {
         l.get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
             ::dlsym(l.handle, "vkGetInstanceProcAddr"));
         if (l.get_instance_proc_addr == nullptr) return l;
+        // volk uses the loader this process already opened rather than
+        // dlopen'ing its own, so there is exactly one libvulkan in play.
+        volkInitializeCustom(l.get_instance_proc_addr);
         // Captures the function pointer, not the static itself: capturing a
         // variable with static storage is deprecated in C++20.
         auto global = [get = l.get_instance_proc_addr](const char* n) {
@@ -1605,85 +1532,12 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 
     l.device = device;
     if (l.get_device_proc_addr != nullptr) {
+        // volk resolves the whole device table in one call. It uses the
+        // loader this process already dlopen'd, handed over by
+        // volkInitializeCustom() at instance creation.
+        volkLoadDeviceTable(&l.vk, l.device);
+
         auto dev = [&l](const char* n) { return l.get_device_proc_addr(l.device, n); };
-        l.get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(dev("vkGetDeviceQueue"));
-        l.create_command_pool =
-            reinterpret_cast<PFN_vkCreateCommandPool>(dev("vkCreateCommandPool"));
-        l.create_semaphore = reinterpret_cast<PFN_vkCreateSemaphore>(dev("vkCreateSemaphore"));
-        l.create_fence = reinterpret_cast<PFN_vkCreateFence>(dev("vkCreateFence"));
-        l.create_query_pool = reinterpret_cast<PFN_vkCreateQueryPool>(dev("vkCreateQueryPool"));
-        l.create_pipeline_cache =
-            reinterpret_cast<PFN_vkCreatePipelineCache>(dev("vkCreatePipelineCache"));
-        l.get_pipeline_cache_data =
-            reinterpret_cast<PFN_vkGetPipelineCacheData>(dev("vkGetPipelineCacheData"));
-        l.destroy_pipeline_cache =
-            reinterpret_cast<PFN_vkDestroyPipelineCache>(dev("vkDestroyPipelineCache"));
-        l.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(dev("vkDestroySampler"));
-        l.destroy_render_pass =
-            reinterpret_cast<PFN_vkDestroyRenderPass>(dev("vkDestroyRenderPass"));
-        l.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(dev("vkDestroyPipeline"));
-        l.destroy_pipeline_layout =
-            reinterpret_cast<PFN_vkDestroyPipelineLayout>(dev("vkDestroyPipelineLayout"));
-        l.destroy_descriptor_set_layout = reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(
-            dev("vkDestroyDescriptorSetLayout"));
-        l.destroy_descriptor_pool =
-            reinterpret_cast<PFN_vkDestroyDescriptorPool>(dev("vkDestroyDescriptorPool"));
-        l.destroy_descriptor_update_template =
-            reinterpret_cast<PFN_vkDestroyDescriptorUpdateTemplate>(
-                dev("vkDestroyDescriptorUpdateTemplate"));
-        l.create_image = reinterpret_cast<PFN_vkCreateImage>(dev("vkCreateImage"));
-        l.get_image_memory_requirements =
-            reinterpret_cast<PFN_vkGetImageMemoryRequirements>(dev("vkGetImageMemoryRequirements"));
-        l.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(dev("vkAllocateMemory"));
-        l.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(dev("vkBindImageMemory"));
-        l.free_memory = reinterpret_cast<PFN_vkFreeMemory>(dev("vkFreeMemory"));
-        l.map_memory = reinterpret_cast<PFN_vkMapMemory>(dev("vkMapMemory"));
-        l.unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(dev("vkUnmapMemory"));
-        l.flush_mapped_memory_ranges =
-            reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(dev("vkFlushMappedMemoryRanges"));
-        l.device_wait_idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(dev("vkDeviceWaitIdle"));
-        l.create_swapchain =
-            reinterpret_cast<PFN_vkCreateSwapchainKHR>(dev("vkCreateSwapchainKHR"));
-        l.get_swapchain_images =
-            reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(dev("vkGetSwapchainImagesKHR"));
-        l.create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(dev("vkCreateBuffer"));
-        l.get_buffer_memory_requirements = reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(
-            dev("vkGetBufferMemoryRequirements"));
-        l.bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(dev("vkBindBufferMemory"));
-        l.create_image_view = reinterpret_cast<PFN_vkCreateImageView>(dev("vkCreateImageView"));
-        l.create_shader_module =
-            reinterpret_cast<PFN_vkCreateShaderModule>(dev("vkCreateShaderModule"));
-        l.destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(dev("vkDestroyBuffer"));
-        l.destroy_image = reinterpret_cast<PFN_vkDestroyImage>(dev("vkDestroyImage"));
-        l.destroy_image_view = reinterpret_cast<PFN_vkDestroyImageView>(dev("vkDestroyImageView"));
-        l.destroy_shader_module =
-            reinterpret_cast<PFN_vkDestroyShaderModule>(dev("vkDestroyShaderModule"));
-        l.destroy_semaphore = reinterpret_cast<PFN_vkDestroySemaphore>(dev("vkDestroySemaphore"));
-        l.destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(dev("vkDestroyFence"));
-        l.destroy_command_pool =
-            reinterpret_cast<PFN_vkDestroyCommandPool>(dev("vkDestroyCommandPool"));
-        l.destroy_query_pool = reinterpret_cast<PFN_vkDestroyQueryPool>(dev("vkDestroyQueryPool"));
-        l.destroy_swapchain =
-            reinterpret_cast<PFN_vkDestroySwapchainKHR>(dev("vkDestroySwapchainKHR"));
-        l.destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(dev("vkDestroyDevice"));
-        l.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(dev("vkCreateRenderPass"));
-        l.create_framebuffer = reinterpret_cast<PFN_vkCreateFramebuffer>(dev("vkCreateFramebuffer"));
-        l.destroy_framebuffer =
-            reinterpret_cast<PFN_vkDestroyFramebuffer>(dev("vkDestroyFramebuffer"));
-        l.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(dev("vkCreateSampler"));
-        l.create_pipeline_layout =
-            reinterpret_cast<PFN_vkCreatePipelineLayout>(dev("vkCreatePipelineLayout"));
-        l.create_descriptor_set_layout = reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(
-            dev("vkCreateDescriptorSetLayout"));
-        l.create_descriptor_pool =
-            reinterpret_cast<PFN_vkCreateDescriptorPool>(dev("vkCreateDescriptorPool"));
-        l.allocate_descriptor_sets =
-            reinterpret_cast<PFN_vkAllocateDescriptorSets>(dev("vkAllocateDescriptorSets"));
-        l.get_memory_host_pointer_properties =
-            reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
-                dev("vkGetMemoryHostPointerPropertiesEXT"));
-        l.reset_descriptor_pool =
-            reinterpret_cast<PFN_vkResetDescriptorPool>(dev("vkResetDescriptorPool"));
         l.create_descriptor_update_template =
             reinterpret_cast<PFN_vkCreateDescriptorUpdateTemplate>(
                 dev("vkCreateDescriptorUpdateTemplate"));
@@ -1700,82 +1554,24 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
                 reinterpret_cast<PFN_vkUpdateDescriptorSetWithTemplate>(
                     dev("vkUpdateDescriptorSetWithTemplateKHR"));
         }
-        l.create_graphics_pipelines =
-            reinterpret_cast<PFN_vkCreateGraphicsPipelines>(dev("vkCreateGraphicsPipelines"));
-        l.create_compute_pipelines =
-            reinterpret_cast<PFN_vkCreateComputePipelines>(dev("vkCreateComputePipelines"));
-        l.allocate_command_buffers =
-            reinterpret_cast<PFN_vkAllocateCommandBuffers>(dev("vkAllocateCommandBuffers"));
-        l.begin_command_buffer =
-            reinterpret_cast<PFN_vkBeginCommandBuffer>(dev("vkBeginCommandBuffer"));
-        l.end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(dev("vkEndCommandBuffer"));
-        l.reset_command_pool = reinterpret_cast<PFN_vkResetCommandPool>(dev("vkResetCommandPool"));
-        l.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(dev("vkQueueSubmit"));
-        l.wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(dev("vkWaitForFences"));
-        l.reset_fences = reinterpret_cast<PFN_vkResetFences>(dev("vkResetFences"));
-        l.acquire_next_image =
-            reinterpret_cast<PFN_vkAcquireNextImageKHR>(dev("vkAcquireNextImageKHR"));
-        l.queue_present = reinterpret_cast<PFN_vkQueuePresentKHR>(dev("vkQueuePresentKHR"));
-        l.get_query_pool_results =
-            reinterpret_cast<PFN_vkGetQueryPoolResults>(dev("vkGetQueryPoolResults"));
-        l.cmd_begin_render_pass =
-            reinterpret_cast<PFN_vkCmdBeginRenderPass>(dev("vkCmdBeginRenderPass"));
-        l.cmd_end_render_pass =
-            reinterpret_cast<PFN_vkCmdEndRenderPass>(dev("vkCmdEndRenderPass"));
-        l.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(dev("vkCmdBindPipeline"));
-        l.cmd_bind_descriptor_sets =
-            reinterpret_cast<PFN_vkCmdBindDescriptorSets>(dev("vkCmdBindDescriptorSets"));
-        l.cmd_bind_vertex_buffers =
-            reinterpret_cast<PFN_vkCmdBindVertexBuffers>(dev("vkCmdBindVertexBuffers"));
-        l.cmd_bind_index_buffer =
-            reinterpret_cast<PFN_vkCmdBindIndexBuffer>(dev("vkCmdBindIndexBuffer"));
-        l.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(dev("vkCmdDraw"));
-        l.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(dev("vkCmdDrawIndexed"));
-        l.cmd_dispatch = reinterpret_cast<PFN_vkCmdDispatch>(dev("vkCmdDispatch"));
-        l.update_descriptor_sets =
-            reinterpret_cast<PFN_vkUpdateDescriptorSets>(dev("vkUpdateDescriptorSets"));
-        l.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(dev("vkCmdPushConstants"));
-        l.cmd_set_viewport = reinterpret_cast<PFN_vkCmdSetViewport>(dev("vkCmdSetViewport"));
-        l.cmd_set_scissor = reinterpret_cast<PFN_vkCmdSetScissor>(dev("vkCmdSetScissor"));
-        l.cmd_pipeline_barrier =
-            reinterpret_cast<PFN_vkCmdPipelineBarrier>(dev("vkCmdPipelineBarrier"));
-        l.cmd_copy_buffer = reinterpret_cast<PFN_vkCmdCopyBuffer>(dev("vkCmdCopyBuffer"));
-        l.cmd_copy_buffer_to_image =
-            reinterpret_cast<PFN_vkCmdCopyBufferToImage>(dev("vkCmdCopyBufferToImage"));
-        l.cmd_copy_image_to_buffer =
-            reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(dev("vkCmdCopyImageToBuffer"));
-        l.cmd_copy_image = reinterpret_cast<PFN_vkCmdCopyImage>(dev("vkCmdCopyImage"));
-        l.cmd_blit_image = reinterpret_cast<PFN_vkCmdBlitImage>(dev("vkCmdBlitImage"));
-        l.cmd_set_checkpoint =
-            reinterpret_cast<PFN_vkCmdSetCheckpointNV>(dev("vkCmdSetCheckpointNV"));
-        l.get_queue_checkpoint_data =
-            reinterpret_cast<PFN_vkGetQueueCheckpointDataNV>(dev("vkGetQueueCheckpointDataNV"));
-        l.get_device_fault_info =
-            reinterpret_cast<PFN_vkGetDeviceFaultInfoEXT>(dev("vkGetDeviceFaultInfoEXT"));
         // Said at startup, because the answer decides what a later "no
         // checkpoints" line MEANS: with the entry points resolved it says
         // the GPU never reached Stud's own work, and without them it says
         // only that nothing was ever recorded.
         std::printf("stud-render-host: GPU checkpoints %s\n",
-                    (l.cmd_set_checkpoint != nullptr && l.get_queue_checkpoint_data != nullptr)
+                    (l.vk.vkCmdSetCheckpointNV != nullptr && l.vk.vkGetQueueCheckpointDataNV != nullptr)
                         ? "are available; Stud's own passes are marked, so a device loss can say "
                           "where the GPU stopped"
                         : "are NOT available on this driver; a device loss will not be able to say "
                           "where the GPU stopped");
         std::fflush(stdout);
-        l.cmd_resolve_image = reinterpret_cast<PFN_vkCmdResolveImage>(dev("vkCmdResolveImage"));
-        l.cmd_reset_query_pool =
-            reinterpret_cast<PFN_vkCmdResetQueryPool>(dev("vkCmdResetQueryPool"));
-        l.cmd_write_timestamp =
-            reinterpret_cast<PFN_vkCmdWriteTimestamp>(dev("vkCmdWriteTimestamp"));
-        l.queue_wait_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(dev("vkQueueWaitIdle"));
         std::printf("stud-render-host: device commands resolved (queue=%d image=%d swapchain=%d "
                     "buffer=%d renderpass=%d framebuffer=%d gfxpipe=%d cmdbuf=%d)\n",
-                    l.get_device_queue != nullptr, l.create_image != nullptr,
-                    l.create_swapchain != nullptr, l.create_buffer != nullptr,
-                    l.create_render_pass != nullptr, l.create_framebuffer != nullptr,
-                    l.create_graphics_pipelines != nullptr,
-                    l.allocate_command_buffers != nullptr);
+                    l.vk.vkGetDeviceQueue != nullptr, l.vk.vkCreateImage != nullptr,
+                    l.vk.vkCreateSwapchainKHR != nullptr, l.vk.vkCreateBuffer != nullptr,
+                    l.vk.vkCreateRenderPass != nullptr, l.vk.vkCreateFramebuffer != nullptr,
+                    l.vk.vkCreateGraphicsPipelines != nullptr,
+                    l.vk.vkAllocateCommandBuffers != nullptr);
         std::fflush(stdout);
     }
 
@@ -1853,11 +1649,11 @@ uint64_t write_handle(uint64_t handle, std::vector<uint8_t>& out, uint32_t* out_
 uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_t>& out,
                               uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_device_queue == nullptr) {
+    if (l.vk.vkGetDeviceQueue == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkQueue queue = VK_NULL_HANDLE;
-    l.get_device_queue(l.device, family, index, &queue);
+    l.vk.vkGetDeviceQueue(l.device, family, index, &queue);
     // The pixel probe needs a queue and a pool of its own; the first
     // queue the engine asks for is as good as any, and it is only used
     // when STUD_VK_PROBE_PIXELS is set.
@@ -1867,12 +1663,12 @@ uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_
     }
     if (l.probe_queue == VK_NULL_HANDLE) {
         l.probe_queue = queue;
-        if (l.create_command_pool != nullptr) {
+        if (l.vk.vkCreateCommandPool != nullptr) {
             VkCommandPoolCreateInfo pci{};
             pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
             pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pci.queueFamilyIndex = family;
-            l.create_command_pool(l.device, &pci, nullptr, &l.probe_pool);
+            l.vk.vkCreateCommandPool(l.device, &pci, nullptr, &l.probe_pool);
         }
     }
     return write_handle(to_u64(queue), out, out_len);
@@ -1881,7 +1677,7 @@ uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_
 uint64_t vk_create_command_pool(uint32_t flags, uint32_t family, std::vector<uint8_t>& out,
                                  uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_command_pool == nullptr) {
+    if (l.vk.vkCreateCommandPool == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkCommandPoolCreateInfo ci{};
@@ -1889,35 +1685,35 @@ uint64_t vk_create_command_pool(uint32_t flags, uint32_t family, std::vector<uin
     ci.flags = flags;
     ci.queueFamilyIndex = family;
     VkCommandPool pool = VK_NULL_HANDLE;
-    VkResult r = l.create_command_pool(l.device, &ci, nullptr, &pool);
+    VkResult r = l.vk.vkCreateCommandPool(l.device, &ci, nullptr, &pool);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     return write_handle(to_u64(pool), out, out_len);
 }
 
 uint64_t vk_create_semaphore(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_semaphore == nullptr) {
+    if (l.vk.vkCreateSemaphore == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkSemaphoreCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     ci.flags = flags;
     VkSemaphore sem = VK_NULL_HANDLE;
-    VkResult r = l.create_semaphore(l.device, &ci, nullptr, &sem);
+    VkResult r = l.vk.vkCreateSemaphore(l.device, &ci, nullptr, &sem);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     return write_handle(to_u64(sem), out, out_len);
 }
 
 uint64_t vk_create_fence(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_fence == nullptr) {
+    if (l.vk.vkCreateFence == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkFenceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     ci.flags = flags;
     VkFence fence = VK_NULL_HANDLE;
-    VkResult r = l.create_fence(l.device, &ci, nullptr, &fence);
+    VkResult r = l.vk.vkCreateFence(l.device, &ci, nullptr, &fence);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     return write_handle(to_u64(fence), out, out_len);
 }
@@ -1926,7 +1722,7 @@ uint64_t vk_create_query_pool(uint32_t flags, uint32_t query_type, uint32_t quer
                                uint32_t pipeline_statistics, std::vector<uint8_t>& out,
                                uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_query_pool == nullptr) {
+    if (l.vk.vkCreateQueryPool == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkQueryPoolCreateInfo ci{};
@@ -1936,7 +1732,7 @@ uint64_t vk_create_query_pool(uint32_t flags, uint32_t query_type, uint32_t quer
     ci.queryCount = query_count;
     ci.pipelineStatistics = pipeline_statistics;
     VkQueryPool pool = VK_NULL_HANDLE;
-    VkResult r = l.create_query_pool(l.device, &ci, nullptr, &pool);
+    VkResult r = l.vk.vkCreateQueryPool(l.device, &ci, nullptr, &pool);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     return write_handle(to_u64(pool), out, out_len);
 }
@@ -1944,7 +1740,7 @@ uint64_t vk_create_query_pool(uint32_t flags, uint32_t query_type, uint32_t quer
 uint64_t vk_create_pipeline_cache(uint32_t flags, const std::vector<uint8_t>& in,
                                    std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_pipeline_cache == nullptr) {
+    if (l.vk.vkCreatePipelineCache == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPipelineCacheCreateInfo ci{};
@@ -1953,7 +1749,7 @@ uint64_t vk_create_pipeline_cache(uint32_t flags, const std::vector<uint8_t>& in
     ci.initialDataSize = in.size();
     ci.pInitialData = in.empty() ? nullptr : in.data();
     VkPipelineCache cache = VK_NULL_HANDLE;
-    VkResult r = l.create_pipeline_cache(l.device, &ci, nullptr, &cache);
+    VkResult r = l.vk.vkCreatePipelineCache(l.device, &ci, nullptr, &cache);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     return write_handle(to_u64(cache), out, out_len);
 }
@@ -1961,13 +1757,13 @@ uint64_t vk_create_pipeline_cache(uint32_t flags, const std::vector<uint8_t>& in
 uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vector<uint8_t>& out,
                                      uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_pipeline_cache_data == nullptr) {
+    if (l.vk.vkGetPipelineCacheData == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     // Real two-call idiom: capacity 0 means "how big is it".
     size_t size = 0;
     VkResult r =
-        l.get_pipeline_cache_data(l.device, from_u64<VkPipelineCache>(cache), &size, nullptr);
+        l.vk.vkGetPipelineCacheData(l.device, from_u64<VkPipelineCache>(cache), &size, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -1980,7 +1776,7 @@ uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vect
     }
     size_t want = capacity < size ? capacity : size;
     std::vector<uint8_t> data(want);
-    r = l.get_pipeline_cache_data(l.device, from_u64<VkPipelineCache>(cache), &want,
+    r = l.vk.vkGetPipelineCacheData(l.device, from_u64<VkPipelineCache>(cache), &want,
                                    data.data());
     reported = want;
     out.resize(sizeof(reported) + want);
@@ -1992,8 +1788,8 @@ uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vect
 
 uint64_t vk_destroy_pipeline_cache(uint64_t cache) {
     Loader& l = loader();
-    if (l.destroy_pipeline_cache == nullptr) return 0;
-    l.destroy_pipeline_cache(l.device, from_u64<VkPipelineCache>(cache), nullptr);
+    if (l.vk.vkDestroyPipelineCache == nullptr) return 0;
+    l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(cache), nullptr);
     return 0;
 }
 // Per-object create/query chatter. Off by default: it is useful while
@@ -2007,7 +1803,7 @@ bool vk_object_trace_enabled() {
 uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                           uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_image == nullptr) {
+    if (l.vk.vkCreateImage == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     if (in.size() < sizeof(vk_wire::CreateImageHeader)) {
@@ -2044,7 +1840,7 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     ci.initialLayout = static_cast<VkImageLayout>(h.initial_layout);
 
     VkImage image = VK_NULL_HANDLE;
-    VkResult r = l.create_image(l.device, &ci, nullptr, &image);
+    VkResult r = l.vk.vkCreateImage(l.device, &ci, nullptr, &image);
     // Only a failure, unless someone asked for the running commentary.
     // A real game creates images constantly, measured at 14k of these
     // in one session, next to 18k memory-requirement lines, which was
@@ -2091,11 +1887,11 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
 uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& out,
                                            uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_image_memory_requirements == nullptr) {
+    if (l.vk.vkGetImageMemoryRequirements == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkMemoryRequirements req{};
-    l.get_image_memory_requirements(l.device, from_u64<VkImage>(image), &req);
+    l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &req);
     if (vk_object_trace_enabled()) {
         std::printf("stud-render-host: image memreq: size=%llu align=%llu bits=0x%x\n",
                     static_cast<unsigned long long>(req.size),
@@ -2283,7 +2079,7 @@ std::mutex& queue_mutex() {
 
 uint64_t vk_device_wait_idle() {
     Loader& l = loader();
-    if (l.device_wait_idle == nullptr) {
+    if (l.vk.vkDeviceWaitIdle == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     // NOT under the queue lock, deliberately, and this was a deadlock.
@@ -2302,7 +2098,7 @@ uint64_t vk_device_wait_idle() {
     // What the lock is actually for is two threads issuing queue work at
     // the same instant, and Stud's own submits and presents still take
     // it. A wait for idle issues nothing.
-    return static_cast<uint64_t>(static_cast<int32_t>(l.device_wait_idle(l.device)));
+    return static_cast<uint64_t>(static_cast<int32_t>(l.vk.vkDeviceWaitIdle(l.device)));
 }
 
 // A host-visible allocation the client also has mapped. Both processes map
@@ -2397,7 +2193,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
                              const std::string& shared_path) {
     Loader& l = loader();
-    if (l.allocate_memory == nullptr) {
+    if (l.vk.vkAllocateMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     std::vector<std::vector<uint8_t>> storage;
@@ -2416,10 +2212,10 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     VkImportMemoryHostPointerInfoEXT import{};
     SharedMapping mapping;
     if (!shared_path.empty() && map_shared_memory(shared_path, size, mapping) &&
-        l.get_memory_host_pointer_properties != nullptr) {
+        l.vk.vkGetMemoryHostPointerPropertiesEXT != nullptr) {
         VkMemoryHostPointerPropertiesEXT props{};
         props.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
-        const VkResult pr = l.get_memory_host_pointer_properties(
+        const VkResult pr = l.vk.vkGetMemoryHostPointerPropertiesEXT(
             l.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, mapping.address,
             &props);
         // The driver decides which memory types can back an imported host
@@ -2488,7 +2284,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     }
 
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkResult r = l.allocate_memory(l.device, &ai, nullptr, &memory);
+    VkResult r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
     if (r != VK_SUCCESS && import.pHostPointer != nullptr) {
         // The driver said this memory type can back an imported host
         // pointer and then refused the import anyway, live-caught on
@@ -2511,7 +2307,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         import.pHostPointer = nullptr;
         ai.pNext = chain;
         ai.memoryTypeIndex = type_index;
-        r = l.allocate_memory(l.device, &ai, nullptr, &memory);
+        r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
     }
     if (r != VK_SUCCESS) {
         std::printf("stud-render-host: vkAllocateMemory -> %d (%llu bytes, type %u)\n",
@@ -2553,10 +2349,10 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
 
 uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) {
     Loader& l = loader();
-    if (l.bind_image_memory == nullptr) {
+    if (l.vk.vkBindImageMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    VkResult r = l.bind_image_memory(l.device, from_u64<VkImage>(image),
+    VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image),
                                       from_u64<VkDeviceMemory>(memory), offset);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
@@ -2575,11 +2371,11 @@ std::map<uint64_t, std::pair<void*, size_t>>& shared_writes();
 
 uint64_t vk_free_memory(uint64_t memory) {
     Loader& l = loader();
-    if (l.free_memory == nullptr) return 0;
+    if (l.vk.vkFreeMemory == nullptr) return 0;
     l.live_memory.erase(memory);
     l.mapped.erase(memory);
     l.mapped_size.erase(memory);
-    l.free_memory(l.device, from_u64<VkDeviceMemory>(memory), nullptr);
+    l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(memory), nullptr);
     // The import keeps the pages alive as long as the memory object does,
     // so the mapping is dropped only now.
     vk_free_memory_shared_cleanup(memory);
@@ -2601,12 +2397,12 @@ uint64_t vk_free_memory(uint64_t memory) {
 
 uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t flags) {
     Loader& l = loader();
-    if (l.map_memory == nullptr) {
+    if (l.vk.vkMapMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     void* p = nullptr;
     VkResult r =
-        l.map_memory(l.device, from_u64<VkDeviceMemory>(memory), offset, size, flags, &p);
+        l.vk.vkMapMemory(l.device, from_u64<VkDeviceMemory>(memory), offset, size, flags, &p);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     l.mapped[memory] = p;
     l.mapped_size[memory] = size == VK_WHOLE_SIZE ? 0 : size;
@@ -2702,8 +2498,8 @@ uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
 
 uint64_t vk_unmap_memory(uint64_t memory) {
     Loader& l = loader();
-    if (l.unmap_memory == nullptr) return 0;
-    l.unmap_memory(l.device, from_u64<VkDeviceMemory>(memory));
+    if (l.vk.vkUnmapMemory == nullptr) return 0;
+    l.vk.vkUnmapMemory(l.device, from_u64<VkDeviceMemory>(memory));
     l.mapped.erase(memory);
     l.mapped_size.erase(memory);
     return 0;
@@ -2711,7 +2507,7 @@ uint64_t vk_unmap_memory(uint64_t memory) {
 
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size) {
     Loader& l = loader();
-    if (l.flush_mapped_memory_ranges == nullptr) {
+    if (l.vk.vkFlushMappedMemoryRanges == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     }
     VkMappedMemoryRange range{};
@@ -2719,7 +2515,7 @@ uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_
     range.memory = from_u64<VkDeviceMemory>(memory);
     range.offset = offset;
     range.size = size;
-    VkResult r = l.flush_mapped_memory_ranges(l.device, 1, &range);
+    VkResult r = l.vk.vkFlushMappedMemoryRanges(l.device, 1, &range);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
@@ -3277,7 +3073,7 @@ void destroy_upscale_chain_keeping_offscreen(UpscaleChain& c);
 // one of them. So those are what is waited on, with a bound.
 bool upscale_work_finished(UpscaleChain& c, uint64_t timeout_ns) {
     Loader& l = loader();
-    if (l.wait_for_fences == nullptr) return true;
+    if (l.vk.vkWaitForFences == nullptr) return true;
     std::vector<VkFence> pending;
     for (size_t i = 0; i < c.fence.size(); ++i) {
         if (i < c.in_flight.size() && c.in_flight[i] && c.fence[i] != VK_NULL_HANDLE) {
@@ -3285,7 +3081,7 @@ bool upscale_work_finished(UpscaleChain& c, uint64_t timeout_ns) {
         }
     }
     if (pending.empty()) return true;
-    return l.wait_for_fences(l.device, static_cast<uint32_t>(pending.size()), pending.data(),
+    return l.vk.vkWaitForFences(l.device, static_cast<uint32_t>(pending.size()), pending.data(),
                              VK_TRUE, timeout_ns) == VK_SUCCESS;
 }
 
@@ -3329,8 +3125,8 @@ void sweep_retired_chains() {
             destroy_upscale_chain(done);
             // The swapchain this pass was writing into, held back until
             // now for exactly that reason.
-            if (held != VK_NULL_HANDLE && l.destroy_swapchain != nullptr) {
-                l.destroy_swapchain(l.device, held, nullptr);
+            if (held != VK_NULL_HANDLE && l.vk.vkDestroySwapchainKHR != nullptr) {
+                l.vk.vkDestroySwapchainKHR(l.device, held, nullptr);
             }
         } else {
             ++i;
@@ -3391,8 +3187,8 @@ void flush_retired_chains(const char* why) {
         const VkSwapchainKHR held = c.destroy_with_chain;
         c.destroy_with_chain = VK_NULL_HANDLE;
         destroy_upscale_chain(c, /*force=*/true);
-        if (held != VK_NULL_HANDLE && l.destroy_swapchain != nullptr) {
-            l.destroy_swapchain(l.device, held, nullptr);
+        if (held != VK_NULL_HANDLE && l.vk.vkDestroySwapchainKHR != nullptr) {
+            l.vk.vkDestroySwapchainKHR(l.device, held, nullptr);
         }
     }
 }
@@ -3434,37 +3230,37 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
         for (auto h : handles) destroy(fn, h);
     };
 
-    destroy_all(l.destroy_image_view, c.src_views);
-    destroy_all(l.destroy_image_view, c.dst_views);
-    destroy(l.destroy_descriptor_pool, c.descriptor_pool);
-    destroy(l.destroy_descriptor_pool, c.sharpen_pool);
-    destroy(l.destroy_pipeline, c.pipeline);
-    destroy(l.destroy_pipeline_layout, c.pipeline_layout);
-    destroy(l.destroy_descriptor_set_layout, c.set_layout);
-    destroy(l.destroy_sampler, c.sampler);
-    destroy(l.destroy_shader_module, c.shader);
-    destroy(l.destroy_query_pool, c.timing_pool);
+    destroy_all(l.vk.vkDestroyImageView, c.src_views);
+    destroy_all(l.vk.vkDestroyImageView, c.dst_views);
+    destroy(l.vk.vkDestroyDescriptorPool, c.descriptor_pool);
+    destroy(l.vk.vkDestroyDescriptorPool, c.sharpen_pool);
+    destroy(l.vk.vkDestroyPipeline, c.pipeline);
+    destroy(l.vk.vkDestroyPipelineLayout, c.pipeline_layout);
+    destroy(l.vk.vkDestroyDescriptorSetLayout, c.set_layout);
+    destroy(l.vk.vkDestroySampler, c.sampler);
+    destroy(l.vk.vkDestroyShaderModule, c.shader);
+    destroy(l.vk.vkDestroyQueryPool, c.timing_pool);
     // RAVU's weight table, present only on a RAVU chain.
-    destroy(l.destroy_image_view, c.lut_view);
-    destroy(l.destroy_image, c.lut);
-    destroy(l.free_memory, c.lut_memory);
-    destroy(l.destroy_image_view, c.lut_ar_view);
-    destroy(l.destroy_image, c.lut_ar);
-    destroy(l.free_memory, c.lut_ar_memory);
-    destroy(l.destroy_shader_module, c.sharpen_shader);
-    destroy(l.destroy_pipeline, c.sharpen_pipeline);
-    destroy_all(l.destroy_image_view, c.sharpen_src_views);
-    destroy_all(l.destroy_image_view, c.sharpen_dst_views);
-    destroy_all(l.destroy_image, c.sharpened);
-    destroy_all(l.free_memory, c.sharpened_memory);
-    destroy_all(l.destroy_fence, c.fence);
-    destroy_all(l.destroy_semaphore, c.done);
-    destroy(l.destroy_command_pool, c.pool);
-    destroy_all(l.destroy_image, c.offscreen);
-    destroy_all(l.destroy_image, c.staging);
-    destroy_all(l.free_memory, c.memory);
-    destroy_all(l.free_memory, c.staging_memory);
-    destroy_all(l.destroy_semaphore, c.retired);
+    destroy(l.vk.vkDestroyImageView, c.lut_view);
+    destroy(l.vk.vkDestroyImage, c.lut);
+    destroy(l.vk.vkFreeMemory, c.lut_memory);
+    destroy(l.vk.vkDestroyImageView, c.lut_ar_view);
+    destroy(l.vk.vkDestroyImage, c.lut_ar);
+    destroy(l.vk.vkFreeMemory, c.lut_ar_memory);
+    destroy(l.vk.vkDestroyShaderModule, c.sharpen_shader);
+    destroy(l.vk.vkDestroyPipeline, c.sharpen_pipeline);
+    destroy_all(l.vk.vkDestroyImageView, c.sharpen_src_views);
+    destroy_all(l.vk.vkDestroyImageView, c.sharpen_dst_views);
+    destroy_all(l.vk.vkDestroyImage, c.sharpened);
+    destroy_all(l.vk.vkFreeMemory, c.sharpened_memory);
+    destroy_all(l.vk.vkDestroyFence, c.fence);
+    destroy_all(l.vk.vkDestroySemaphore, c.done);
+    destroy(l.vk.vkDestroyCommandPool, c.pool);
+    destroy_all(l.vk.vkDestroyImage, c.offscreen);
+    destroy_all(l.vk.vkDestroyImage, c.staging);
+    destroy_all(l.vk.vkFreeMemory, c.memory);
+    destroy_all(l.vk.vkFreeMemory, c.staging_memory);
+    destroy_all(l.vk.vkDestroySemaphore, c.retired);
     c = UpscaleChain{};
 }
 
@@ -3506,17 +3302,17 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory);
 bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkImage& image,
                      VkDeviceMemory& memory, VkImageView& view) {
     Loader& l = loader();
-    if (l.create_image == nullptr || l.create_image_view == nullptr ||
-        l.create_buffer == nullptr || l.get_buffer_memory_requirements == nullptr ||
-        l.bind_buffer_memory == nullptr || l.destroy_buffer == nullptr ||
-        l.map_memory == nullptr || l.allocate_memory == nullptr || l.free_memory == nullptr ||
+    if (l.vk.vkCreateImage == nullptr || l.vk.vkCreateImageView == nullptr ||
+        l.vk.vkCreateBuffer == nullptr || l.vk.vkGetBufferMemoryRequirements == nullptr ||
+        l.vk.vkBindBufferMemory == nullptr || l.vk.vkDestroyBuffer == nullptr ||
+        l.vk.vkMapMemory == nullptr || l.vk.vkAllocateMemory == nullptr || l.vk.vkFreeMemory == nullptr ||
         l.get_physical_device_memory_properties == nullptr ||
-        l.create_command_pool == nullptr || l.allocate_command_buffers == nullptr ||
-        l.begin_command_buffer == nullptr || l.end_command_buffer == nullptr ||
-        l.cmd_pipeline_barrier == nullptr || l.cmd_copy_buffer_to_image == nullptr ||
-        l.queue_submit == nullptr || l.create_fence == nullptr ||
-        l.wait_for_fences == nullptr || l.destroy_fence == nullptr ||
-        l.destroy_command_pool == nullptr || l.get_device_queue == nullptr ||
+        l.vk.vkCreateCommandPool == nullptr || l.vk.vkAllocateCommandBuffers == nullptr ||
+        l.vk.vkBeginCommandBuffer == nullptr || l.vk.vkEndCommandBuffer == nullptr ||
+        l.vk.vkCmdPipelineBarrier == nullptr || l.vk.vkCmdCopyBufferToImage == nullptr ||
+        l.vk.vkQueueSubmit == nullptr || l.vk.vkCreateFence == nullptr ||
+        l.vk.vkWaitForFences == nullptr || l.vk.vkDestroyFence == nullptr ||
+        l.vk.vkDestroyCommandPool == nullptr || l.vk.vkGetDeviceQueue == nullptr ||
         !l.have_first_queue_family) {
         return false;
     }
@@ -3552,7 +3348,7 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
     ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    if (l.create_image(l.device, &ici, nullptr, &image) != VK_SUCCESS) return false;
+    if (l.vk.vkCreateImage(l.device, &ici, nullptr, &image) != VK_SUCCESS) return false;
     if (!allocate_offscreen_memory(image, memory)) return false;
 
     VkImageViewCreateInfo vci{};
@@ -3561,7 +3357,7 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = ici.format;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (l.create_image_view(l.device, &vci, nullptr, &view) != VK_SUCCESS) return false;
+    if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &view) != VK_SUCCESS) return false;
 
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory staging_memory = VK_NULL_HANDLE;
@@ -3570,9 +3366,9 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
     bci.size = bytes;
     bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (l.create_buffer(l.device, &bci, nullptr, &staging) != VK_SUCCESS) return false;
+    if (l.vk.vkCreateBuffer(l.device, &bci, nullptr, &staging) != VK_SUCCESS) return false;
     VkMemoryRequirements req{};
-    l.get_buffer_memory_requirements(l.device, staging, &req);
+    l.vk.vkGetBufferMemoryRequirements(l.device, staging, &req);
     VkPhysicalDeviceMemoryProperties props{};
     l.get_physical_device_memory_properties(l.physical_device, &props);
     uint32_t chosen = UINT32_MAX;
@@ -3590,33 +3386,33 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = chosen;
-    if (l.allocate_memory(l.device, &mai, nullptr, &staging_memory) != VK_SUCCESS) return false;
-    if (l.bind_buffer_memory(l.device, staging, staging_memory, 0) != VK_SUCCESS) return false;
+    if (l.vk.vkAllocateMemory(l.device, &mai, nullptr, &staging_memory) != VK_SUCCESS) return false;
+    if (l.vk.vkBindBufferMemory(l.device, staging, staging_memory, 0) != VK_SUCCESS) return false;
     void* mapped = nullptr;
-    if (l.map_memory(l.device, staging_memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) {
+    if (l.vk.vkMapMemory(l.device, staging_memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) {
         return false;
     }
     std::memcpy(mapped, words, bytes);
-    if (l.unmap_memory != nullptr) l.unmap_memory(l.device, staging_memory);
+    if (l.vk.vkUnmapMemory != nullptr) l.vk.vkUnmapMemory(l.device, staging_memory);
 
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     pci.queueFamilyIndex = l.first_queue_family;
-    if (l.create_command_pool(l.device, &pci, nullptr, &pool) != VK_SUCCESS) return false;
+    if (l.vk.vkCreateCommandPool(l.device, &pci, nullptr, &pool) != VK_SUCCESS) return false;
     VkCommandBufferAllocateInfo cbai{};
     cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbai.commandPool = pool;
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cbai.commandBufferCount = 1;
     VkCommandBuffer cb = VK_NULL_HANDLE;
-    bool ok = l.allocate_command_buffers(l.device, &cbai, &cb) == VK_SUCCESS;
+    bool ok = l.vk.vkAllocateCommandBuffers(l.device, &cbai, &cb) == VK_SUCCESS;
     if (ok) {
         VkCommandBufferBeginInfo cbbi{};
         cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        ok = l.begin_command_buffer(cb, &cbbi) == VK_SUCCESS;
+        ok = l.vk.vkBeginCommandBuffer(cb, &cbbi) == VK_SUCCESS;
     }
     if (ok) {
         VkImageMemoryBarrier barrier{};
@@ -3629,7 +3425,7 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = image;
         barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                                &barrier);
 
@@ -3637,41 +3433,41 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
         region.bufferOffset = 0;
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.imageExtent = {kLutWidth, kLutHeight, 1};
-        l.cmd_copy_buffer_to_image(cb, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+        l.vk.vkCmdCopyBufferToImage(cb, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                    &region);
 
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                                &barrier);
-        ok = l.end_command_buffer(cb) == VK_SUCCESS;
+        ok = l.vk.vkEndCommandBuffer(cb) == VK_SUCCESS;
     }
     VkFence fence = VK_NULL_HANDLE;
     if (ok) {
         VkFenceCreateInfo fci{};
         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        ok = l.create_fence(l.device, &fci, nullptr, &fence) == VK_SUCCESS;
+        ok = l.vk.vkCreateFence(l.device, &fci, nullptr, &fence) == VK_SUCCESS;
     }
     if (ok) {
         VkQueue queue = VK_NULL_HANDLE;
-        l.get_device_queue(l.device, l.first_queue_family, 0, &queue);
+        l.vk.vkGetDeviceQueue(l.device, l.first_queue_family, 0, &queue);
         VkSubmitInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
         si.pCommandBuffers = &cb;
         {
             std::lock_guard<std::mutex> queue_lock(queue_mutex());
-            ok = l.queue_submit(queue, 1, &si, fence) == VK_SUCCESS;
+            ok = l.vk.vkQueueSubmit(queue, 1, &si, fence) == VK_SUCCESS;
         }
-        if (ok) ok = l.wait_for_fences(l.device, 1, &fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
+        if (ok) ok = l.vk.vkWaitForFences(l.device, 1, &fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
     }
-    if (fence != VK_NULL_HANDLE) l.destroy_fence(l.device, fence, nullptr);
-    l.destroy_command_pool(l.device, pool, nullptr);
-    l.destroy_buffer(l.device, staging, nullptr);
-    l.free_memory(l.device, staging_memory, nullptr);
+    if (fence != VK_NULL_HANDLE) l.vk.vkDestroyFence(l.device, fence, nullptr);
+    l.vk.vkDestroyCommandPool(l.device, pool, nullptr);
+    l.vk.vkDestroyBuffer(l.device, staging, nullptr);
+    l.vk.vkFreeMemory(l.device, staging_memory, nullptr);
     return ok;
 }
 
@@ -3679,12 +3475,12 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
 // wanted here: the engine renders into it and Stud reads it on the GPU.
 bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
     Loader& l = loader();
-    if (l.get_image_memory_requirements == nullptr || l.allocate_memory == nullptr ||
-        l.bind_image_memory == nullptr || l.get_physical_device_memory_properties == nullptr) {
+    if (l.vk.vkGetImageMemoryRequirements == nullptr || l.vk.vkAllocateMemory == nullptr ||
+        l.vk.vkBindImageMemory == nullptr || l.get_physical_device_memory_properties == nullptr) {
         return false;
     }
     VkMemoryRequirements req{};
-    l.get_image_memory_requirements(l.device, image, &req);
+    l.vk.vkGetImageMemoryRequirements(l.device, image, &req);
     VkPhysicalDeviceMemoryProperties props{};
     l.get_physical_device_memory_properties(l.physical_device, &props);
     uint32_t chosen = UINT32_MAX;
@@ -3704,8 +3500,8 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
     ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = chosen;
-    if (l.allocate_memory(l.device, &ai, nullptr, &memory) != VK_SUCCESS) return false;
-    return l.bind_image_memory(l.device, image, memory, 0) == VK_SUCCESS;
+    if (l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory) != VK_SUCCESS) return false;
+    return l.vk.vkBindImageMemory(l.device, image, memory, 0) == VK_SUCCESS;
 }
 
 // Records one command buffer per image, once. Each is the same work every
@@ -3728,13 +3524,13 @@ bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
 // down both branches.
 bool build_upscale_compute(UpscaleChain& c) {
     Loader& l = loader();
-    if (l.create_shader_module == nullptr || l.create_compute_pipelines == nullptr ||
-        l.create_descriptor_set_layout == nullptr || l.create_pipeline_layout == nullptr ||
-        l.create_descriptor_pool == nullptr || l.allocate_descriptor_sets == nullptr ||
-        l.update_descriptor_sets == nullptr || l.create_sampler == nullptr ||
-        l.create_image_view == nullptr || l.cmd_push_constants == nullptr ||
-        l.cmd_bind_pipeline == nullptr || l.cmd_bind_descriptor_sets == nullptr ||
-        l.cmd_dispatch == nullptr) {
+    if (l.vk.vkCreateShaderModule == nullptr || l.vk.vkCreateComputePipelines == nullptr ||
+        l.vk.vkCreateDescriptorSetLayout == nullptr || l.vk.vkCreatePipelineLayout == nullptr ||
+        l.vk.vkCreateDescriptorPool == nullptr || l.vk.vkAllocateDescriptorSets == nullptr ||
+        l.vk.vkUpdateDescriptorSets == nullptr || l.vk.vkCreateSampler == nullptr ||
+        l.vk.vkCreateImageView == nullptr || l.vk.vkCmdPushConstants == nullptr ||
+        l.vk.vkCmdBindPipeline == nullptr || l.vk.vkCmdBindDescriptorSets == nullptr ||
+        l.vk.vkCmdDispatch == nullptr) {
         return false;
     }
     static const uint32_t kSgsrEdSpv[] =
@@ -3786,7 +3582,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     smci.codeSize = code_size;
     smci.pCode = code;
-    if (l.create_shader_module(l.device, &smci, nullptr, &c.shader) != VK_SUCCESS) return false;
+    if (l.vk.vkCreateShaderModule(l.device, &smci, nullptr, &c.shader) != VK_SUCCESS) return false;
 
     // Linear filtering with clamped edges: the shader takes its own taps,
     // so the sampler only has to not wrap and not invent anything.
@@ -3799,7 +3595,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = 0.0f;
-    if (l.create_sampler(l.device, &sci, nullptr, &c.sampler) != VK_SUCCESS) return false;
+    if (l.vk.vkCreateSampler(l.device, &sci, nullptr, &c.sampler) != VK_SUCCESS) return false;
 
     // Three bindings for RAVU, two for everything else: only RAVU reads
     // anything besides the engine's image.
@@ -3824,7 +3620,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     dslci.bindingCount = c.ravu_ar ? 4 : (c.ravu ? 3 : 2);
     dslci.pBindings = bindings;
-    if (l.create_descriptor_set_layout(l.device, &dslci, nullptr, &c.set_layout) != VK_SUCCESS) {
+    if (l.vk.vkCreateDescriptorSetLayout(l.device, &dslci, nullptr, &c.set_layout) != VK_SUCCESS) {
         return false;
     }
 
@@ -3838,7 +3634,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     plci.pSetLayouts = &c.set_layout;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges = &range;
-    if (l.create_pipeline_layout(l.device, &plci, nullptr, &c.pipeline_layout) != VK_SUCCESS) {
+    if (l.vk.vkCreatePipelineLayout(l.device, &plci, nullptr, &c.pipeline_layout) != VK_SUCCESS) {
         return false;
     }
 
@@ -3849,21 +3645,21 @@ bool build_upscale_compute(UpscaleChain& c) {
     cpci.stage.module = c.shader;
     cpci.stage.pName = "main";
     cpci.layout = c.pipeline_layout;
-    if (l.create_compute_pipelines(l.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &c.pipeline) !=
+    if (l.vk.vkCreateComputePipelines(l.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &c.pipeline) !=
         VK_SUCCESS) {
         return false;
     }
 
     const auto count = static_cast<uint32_t>(c.offscreen.size());
     // Two timestamps per image: before the pass and after it.
-    if (upscale_timing_enabled() && l.create_query_pool != nullptr &&
-        l.cmd_write_timestamp != nullptr && l.cmd_reset_query_pool != nullptr &&
-        l.get_query_pool_results != nullptr) {
+    if (upscale_timing_enabled() && l.vk.vkCreateQueryPool != nullptr &&
+        l.vk.vkCmdWriteTimestamp != nullptr && l.vk.vkCmdResetQueryPool != nullptr &&
+        l.vk.vkGetQueryPoolResults != nullptr) {
         VkQueryPoolCreateInfo qpci{};
         qpci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
         qpci.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qpci.queryCount = count * 2;
-        if (l.create_query_pool(l.device, &qpci, nullptr, &c.timing_pool) != VK_SUCCESS) {
+        if (l.vk.vkCreateQueryPool(l.device, &qpci, nullptr, &c.timing_pool) != VK_SUCCESS) {
             c.timing_pool = VK_NULL_HANDLE;
         }
     }
@@ -3879,7 +3675,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     dpci.maxSets = count;
     dpci.poolSizeCount = 2;
     dpci.pPoolSizes = sizes;
-    if (l.create_descriptor_pool(l.device, &dpci, nullptr, &c.descriptor_pool) != VK_SUCCESS) {
+    if (l.vk.vkCreateDescriptorPool(l.device, &dpci, nullptr, &c.descriptor_pool) != VK_SUCCESS) {
         return false;
     }
 
@@ -3890,7 +3686,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     dsai.descriptorSetCount = count;
     dsai.pSetLayouts = layouts.data();
     c.sets.resize(count, VK_NULL_HANDLE);
-    if (l.allocate_descriptor_sets(l.device, &dsai, c.sets.data()) != VK_SUCCESS) return false;
+    if (l.vk.vkAllocateDescriptorSets(l.device, &dsai, c.sets.data()) != VK_SUCCESS) return false;
 
     c.src_views.resize(count, VK_NULL_HANDLE);
     c.dst_views.resize(count, VK_NULL_HANDLE);
@@ -3915,7 +3711,7 @@ bool build_upscale_compute(UpscaleChain& c) {
                     VK_IMAGE_USAGE_SAMPLED_BIT;
         sii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         sii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (l.create_image(l.device, &sii, nullptr, &c.staging[i]) != VK_SUCCESS) return false;
+        if (l.vk.vkCreateImage(l.device, &sii, nullptr, &c.staging[i]) != VK_SUCCESS) return false;
         if (!allocate_offscreen_memory(c.staging[i], c.staging_memory[i])) return false;
 
         VkImageViewCreateInfo vci{};
@@ -3924,14 +3720,14 @@ bool build_upscale_compute(UpscaleChain& c) {
         vci.format = c.format;
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         vci.image = c.offscreen[i];
-        if (l.create_image_view(l.device, &vci, nullptr, &c.src_views[i]) != VK_SUCCESS) {
+        if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &c.src_views[i]) != VK_SUCCESS) {
             return false;
         }
         // The storage view's format must match the shader's own qualifier
         // (rgba8), which is why this is not the swapchain's format.
         vci.format = VK_FORMAT_R8G8B8A8_UNORM;
         vci.image = c.staging[i];
-        if (l.create_image_view(l.device, &vci, nullptr, &c.dst_views[i]) != VK_SUCCESS) {
+        if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &c.dst_views[i]) != VK_SUCCESS) {
             return false;
         }
 
@@ -3972,10 +3768,10 @@ bool build_upscale_compute(UpscaleChain& c) {
                 writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 writes[3].pImageInfo = &table_ar;
             }
-            l.update_descriptor_sets(l.device, c.ravu_ar ? 4 : 3, writes, 0, nullptr);
+            l.vk.vkUpdateDescriptorSets(l.device, c.ravu_ar ? 4 : 3, writes, 0, nullptr);
             continue;
         }
-        l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
+        l.vk.vkUpdateDescriptorSets(l.device, 2, writes, 0, nullptr);
     }
     c.compute = true;
 
@@ -4002,7 +3798,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     ssci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     ssci.codeSize = sizeof(kSharpenSpv);
     ssci.pCode = kSharpenSpv;
-    if (l.create_shader_module(l.device, &ssci, nullptr, &c.sharpen_shader) != VK_SUCCESS) {
+    if (l.vk.vkCreateShaderModule(l.device, &ssci, nullptr, &c.sharpen_shader) != VK_SUCCESS) {
         return true;  // EASU alone still works
     }
     VkComputePipelineCreateInfo scpci{};
@@ -4012,7 +3808,7 @@ bool build_upscale_compute(UpscaleChain& c) {
     scpci.stage.module = c.sharpen_shader;
     scpci.stage.pName = "main";
     scpci.layout = c.pipeline_layout;  // same bindings and push constants
-    if (l.create_compute_pipelines(l.device, VK_NULL_HANDLE, 1, &scpci, nullptr,
+    if (l.vk.vkCreateComputePipelines(l.device, VK_NULL_HANDLE, 1, &scpci, nullptr,
                                     &c.sharpen_pipeline) != VK_SUCCESS) {
         return true;
     }
@@ -4036,7 +3832,7 @@ bool build_upscale_compute(UpscaleChain& c) {
         sii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         sii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         sii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (l.create_image(l.device, &sii, nullptr, &c.sharpened[i]) != VK_SUCCESS ||
+        if (l.vk.vkCreateImage(l.device, &sii, nullptr, &c.sharpened[i]) != VK_SUCCESS ||
             !allocate_offscreen_memory(c.sharpened[i], c.sharpened_memory[i])) {
             sharpen_ok = false;
             break;
@@ -4047,12 +3843,12 @@ bool build_upscale_compute(UpscaleChain& c) {
         vci.format = VK_FORMAT_R8G8B8A8_UNORM;
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         vci.image = c.staging[i];
-        if (l.create_image_view(l.device, &vci, nullptr, &c.sharpen_src_views[i]) != VK_SUCCESS) {
+        if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &c.sharpen_src_views[i]) != VK_SUCCESS) {
             sharpen_ok = false;
             break;
         }
         vci.image = c.sharpened[i];
-        if (l.create_image_view(l.device, &vci, nullptr, &c.sharpen_dst_views[i]) != VK_SUCCESS) {
+        if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &c.sharpen_dst_views[i]) != VK_SUCCESS) {
             sharpen_ok = false;
             break;
         }
@@ -4081,7 +3877,7 @@ bool build_upscale_compute(UpscaleChain& c) {
         sdpci.poolSizeCount = 2;
         sdpci.pPoolSizes = ssizes;
         VkDescriptorPool sharpen_pool = VK_NULL_HANDLE;
-        if (l.create_descriptor_pool(l.device, &sdpci, nullptr, &sharpen_pool) == VK_SUCCESS) {
+        if (l.vk.vkCreateDescriptorPool(l.device, &sdpci, nullptr, &sharpen_pool) == VK_SUCCESS) {
             // Kept on the chain so it is destroyed with everything else;
             // the first pool handle is replaced by a pair.
             c.sharpen_pool = sharpen_pool;
@@ -4091,7 +3887,7 @@ bool build_upscale_compute(UpscaleChain& c) {
             sdsai.descriptorPool = sharpen_pool;
             sdsai.descriptorSetCount = count;
             sdsai.pSetLayouts = slayouts.data();
-            sharpen_ok = l.allocate_descriptor_sets(l.device, &sdsai, c.sharpen_sets.data()) ==
+            sharpen_ok = l.vk.vkAllocateDescriptorSets(l.device, &sdsai, c.sharpen_sets.data()) ==
                           VK_SUCCESS;
         } else {
             sharpen_ok = false;
@@ -4117,7 +3913,7 @@ bool build_upscale_compute(UpscaleChain& c) {
             writes[1].dstBinding = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[1].pImageInfo = &dst;
-            l.update_descriptor_sets(l.device, 2, writes, 0, nullptr);
+            l.vk.vkUpdateDescriptorSets(l.device, 2, writes, 0, nullptr);
         }
         c.sharpen = true;
     } else {
@@ -4129,23 +3925,23 @@ bool build_upscale_compute(UpscaleChain& c) {
 
 bool record_upscale_blits(UpscaleChain& c) {
     Loader& l = loader();
-    if (l.begin_command_buffer == nullptr || l.end_command_buffer == nullptr ||
-        l.cmd_pipeline_barrier == nullptr || l.cmd_blit_image == nullptr) {
+    if (l.vk.vkBeginCommandBuffer == nullptr || l.vk.vkEndCommandBuffer == nullptr ||
+        l.vk.vkCmdPipelineBarrier == nullptr || l.vk.vkCmdBlitImage == nullptr) {
         return false;
     }
     for (size_t i = 0; i < c.cmd.size(); ++i) {
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        if (l.begin_command_buffer(c.cmd[i], &bi) != VK_SUCCESS) return false;
+        if (l.vk.vkBeginCommandBuffer(c.cmd[i], &bi) != VK_SUCCESS) return false;
         if (c.timing_pool != VK_NULL_HANDLE) {
             // Reset inside the same buffer, so a re-submitted recording
             // does not read the previous frame's values.
-            l.cmd_reset_query_pool(c.cmd[i], c.timing_pool, i * 2, 2);
-            l.cmd_write_timestamp(c.cmd[i], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, c.timing_pool,
+            l.vk.vkCmdResetQueryPool(c.cmd[i], c.timing_pool, i * 2, 2);
+            l.vk.vkCmdWriteTimestamp(c.cmd[i], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, c.timing_pool,
                                   i * 2);
         }
-        if (l.cmd_set_checkpoint != nullptr) {
-            l.cmd_set_checkpoint(c.cmd[i], "stud upscale: pass begin");
+        if (l.vk.vkCmdSetCheckpointNV != nullptr) {
+            l.vk.vkCmdSetCheckpointNV(c.cmd[i], "stud upscale: pass begin");
         }
 
         // Where the two images have to be for the pass that follows: the
@@ -4191,7 +3987,7 @@ bool record_upscale_blits(UpscaleChain& c) {
         to_write.image = c.compute ? c.staging[i] : c.real_images[i];
 
         VkImageMemoryBarrier before[2] = {to_read, to_write};
-        l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, pass_stage,
+        l.vk.vkCmdPipelineBarrier(c.cmd[i], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, pass_stage,
                                0, 0, nullptr, 0, nullptr, 2, before);
 
         if (c.compute) {
@@ -4210,12 +4006,12 @@ bool record_upscale_blits(UpscaleChain& c) {
             // formats when they are the same size, which R8G8B8A8 and
             // B8G8R8A8 are.
             const bool copy_hand_over =
-                l.cmd_copy_image != nullptr && hand_over_can_be_a_copy(c.format);
+                l.vk.vkCmdCopyImage != nullptr && hand_over_can_be_a_copy(c.format);
             c.copies_hand_over = copy_hand_over;
             const int32_t swap_rb =
                 (copy_hand_over && swapchain_wants_bgra(c.format)) ? 1 : 0;
-            l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
-            l.cmd_bind_descriptor_sets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
+            l.vk.vkCmdBindPipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
+            l.vk.vkCmdBindDescriptorSets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
                                        c.pipeline_layout, 0, 1, &c.sets[i], 0, nullptr);
             UpscalePush push{};
             push.src_w = static_cast<int32_t>(c.engine.width);
@@ -4237,23 +4033,23 @@ bool record_upscale_blits(UpscaleChain& c) {
             // Only when nothing reads this back: the sharpening pass's
             // arithmetic is defined on the real channel order.
             push.swap_rb = c.sharpen ? 0 : swap_rb;
-            l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+            l.vk.vkCmdPushConstants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                  sizeof(push), &push);
             // Matching the shaders' own local size, rounded up, so the
             // last group in each direction runs invocations past the
             // edge of the image; every shader here checks that before
             // it stores.
-            if (l.cmd_set_checkpoint != nullptr) {
-                l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU dispatch");
+            if (l.vk.vkCmdSetCheckpointNV != nullptr) {
+                l.vk.vkCmdSetCheckpointNV(c.cmd[i], "stud upscale: EASU dispatch");
             }
             // 8 for every filter: RAVU's compute variant, which wanted
             // 32, measured slower than the plain one and was withdrawn.
             const uint32_t group_w = 8u;
             const uint32_t group_h = 8u;
-            l.cmd_dispatch(c.cmd[i], (c.present.width + group_w - 1) / group_w,
+            l.vk.vkCmdDispatch(c.cmd[i], (c.present.width + group_w - 1) / group_w,
                            (c.present.height + group_h - 1) / group_h, 1);
-            if (l.cmd_set_checkpoint != nullptr) {
-                l.cmd_set_checkpoint(c.cmd[i], "stud upscale: EASU done");
+            if (l.vk.vkCmdSetCheckpointNV != nullptr) {
+                l.vk.vkCmdSetCheckpointNV(c.cmd[i], "stud upscale: EASU done");
             }
 
             // RCAS, at the output resolution, over what EASU just wrote.
@@ -4274,12 +4070,12 @@ bool record_upscale_blits(UpscaleChain& c) {
                 to_sharpen[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 to_sharpen[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
                 to_sharpen[1].image = c.sharpened[i];
-                l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                l.vk.vkCmdPipelineBarrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
                                        nullptr, 2, to_sharpen);
 
-                l.cmd_bind_pipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.sharpen_pipeline);
-                l.cmd_bind_descriptor_sets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
+                l.vk.vkCmdBindPipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.sharpen_pipeline);
+                l.vk.vkCmdBindDescriptorSets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
                                            c.pipeline_layout, 0, 1, &c.sharpen_sets[i], 0,
                                            nullptr);
                 // Same size in and out for this pass, which is what lets
@@ -4291,14 +4087,14 @@ bool record_upscale_blits(UpscaleChain& c) {
                 sharpen_push.dst_h = static_cast<int32_t>(c.present.height);
                 sharpen_push.sharpness = 0.0f;  // pinned in the shader
                 sharpen_push.swap_rb = swap_rb;
-                l.cmd_push_constants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                l.vk.vkCmdPushConstants(c.cmd[i], c.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                                      sizeof(sharpen_push), &sharpen_push);
-                if (l.cmd_set_checkpoint != nullptr) {
-                    l.cmd_set_checkpoint(c.cmd[i], "stud upscale: RCAS sharpen dispatch");
+                if (l.vk.vkCmdSetCheckpointNV != nullptr) {
+                    l.vk.vkCmdSetCheckpointNV(c.cmd[i], "stud upscale: RCAS sharpen dispatch");
                 }
-                l.cmd_dispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
-                if (l.cmd_set_checkpoint != nullptr) {
-                    l.cmd_set_checkpoint(c.cmd[i], "stud upscale: RCAS sharpen done");
+                l.vk.vkCmdDispatch(c.cmd[i], (c.present.width + 7) / 8, (c.present.height + 7) / 8, 1);
+                if (l.vk.vkCmdSetCheckpointNV != nullptr) {
+                    l.vk.vkCmdSetCheckpointNV(c.cmd[i], "stud upscale: RCAS sharpen done");
                 }
             }
 
@@ -4321,7 +4117,7 @@ bool record_upscale_blits(UpscaleChain& c) {
             hand_over[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             hand_over[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             hand_over[1].image = c.real_images[i];
-            l.cmd_pipeline_barrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            l.vk.vkCmdPipelineBarrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2,
                                    hand_over);
 
@@ -4332,7 +4128,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                 whole.dstSubresource = whole.srcSubresource;
                 whole.dstOffset = {0, 0, 0};
                 whole.extent = {c.present.width, c.present.height, 1};
-                l.cmd_copy_image(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                l.vk.vkCmdCopyImage(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                  c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                  &whole);
             } else {
@@ -4346,7 +4142,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                 same.dstSubresource = same.srcSubresource;
                 same.dstOffsets[0] = same.srcOffsets[0];
                 same.dstOffsets[1] = same.srcOffsets[1];
-                l.cmd_blit_image(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                l.vk.vkCmdBlitImage(c.cmd[i], finished, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                  c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &same,
                                  VK_FILTER_NEAREST);
             }
@@ -4360,7 +4156,7 @@ bool record_upscale_blits(UpscaleChain& c) {
         region.dstOffsets[0] = {0, 0, 0};
         region.dstOffsets[1] = {static_cast<int32_t>(c.present.width),
                                 static_cast<int32_t>(c.present.height), 1};
-        l.cmd_blit_image(c.cmd[i], c.offscreen[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        l.vk.vkCmdBlitImage(c.cmd[i], c.offscreen[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                          c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
                          VK_FILTER_LINEAR);
         }
@@ -4392,17 +4188,17 @@ bool record_upscale_blits(UpscaleChain& c) {
         if (i < c.cmd_present_only.size() && c.cmd_present_only[i] != VK_NULL_HANDLE) {
             VkCommandBufferBeginInfo pbi{};
             pbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            if (l.begin_command_buffer(c.cmd_present_only[i], &pbi) == VK_SUCCESS) {
+            if (l.vk.vkBeginCommandBuffer(c.cmd_present_only[i], &pbi) == VK_SUCCESS) {
                 VkImageMemoryBarrier make_presentable = after_dst;
                 make_presentable.srcAccessMask = 0;
                 make_presentable.dstAccessMask = 0;
                 make_presentable.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 make_presentable.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-                l.cmd_pipeline_barrier(c.cmd_present_only[i],
+                l.vk.vkCmdPipelineBarrier(c.cmd_present_only[i],
                                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
                                        nullptr, 1, &make_presentable);
-                l.end_command_buffer(c.cmd_present_only[i]);
+                l.vk.vkEndCommandBuffer(c.cmd_present_only[i]);
             }
         }
 
@@ -4424,14 +4220,14 @@ bool record_upscale_blits(UpscaleChain& c) {
         // minutes, while the same code on Intel ran 41 minutes clean --
         // which is what a wrong barrier looks like: fine until the
         // hardware it lies to actually depends on it.
-        l.cmd_pipeline_barrier(c.cmd[i], pass_stage | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        l.vk.vkCmdPipelineBarrier(c.cmd[i], pass_stage | VK_PIPELINE_STAGE_TRANSFER_BIT,
                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
                                nullptr, 2, after);
         if (c.timing_pool != VK_NULL_HANDLE) {
-            l.cmd_write_timestamp(c.cmd[i], VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, c.timing_pool,
+            l.vk.vkCmdWriteTimestamp(c.cmd[i], VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, c.timing_pool,
                                   i * 2 + 1);
         }
-        if (l.end_command_buffer(c.cmd[i]) != VK_SUCCESS) return false;
+        if (l.vk.vkEndCommandBuffer(c.cmd[i]) != VK_SUCCESS) return false;
     }
     return true;
 }
@@ -4510,7 +4306,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
     // the same thing on both sides and vkAcquireNextImageKHR needs no
     // translation at all.
     uint32_t count = 0;
-    l.get_swapchain_images(l.device, swapchain, &count, nullptr);
+    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, nullptr);
     // HOW MANY IMAGES THE REAL SWAPCHAIN ACTUALLY HAS.
     //
     // Never logged before, and it turns out to be the number that
@@ -4526,7 +4322,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
     // leave the driver alternating two if nothing ever has three
     // outstanding. This says which of those it is.
     pending.real_images.resize(count);
-    l.get_swapchain_images(l.device, swapchain, &count, pending.real_images.data());
+    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, pending.real_images.data());
     pending.real = swapchain;
 
     bool ok = count > 0;
@@ -4548,10 +4344,10 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImage image = VK_NULL_HANDLE;
-        if (l.create_image(l.device, &ii, nullptr, &image) != VK_SUCCESS) { ok = false; break; }
+        if (l.vk.vkCreateImage(l.device, &ii, nullptr, &image) != VK_SUCCESS) { ok = false; break; }
         VkDeviceMemory mem = VK_NULL_HANDLE;
         if (!allocate_offscreen_memory(image, mem)) {
-            if (l.destroy_image != nullptr) l.destroy_image(l.device, image, nullptr);
+            if (l.vk.vkDestroyImage != nullptr) l.vk.vkDestroyImage(l.device, image, nullptr);
             ok = false;
             break;
         }
@@ -4563,7 +4359,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         VkCommandPoolCreateInfo pci{};
         pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pci.queueFamilyIndex = l.first_queue_family;
-        ok = l.create_command_pool(l.device, &pci, nullptr, &pending.pool) == VK_SUCCESS;
+        ok = l.vk.vkCreateCommandPool(l.device, &pci, nullptr, &pending.pool) == VK_SUCCESS;
     }
     if (ok) {
         pending.cmd.resize(count, VK_NULL_HANDLE);
@@ -4572,7 +4368,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         cbai.commandPool = pending.pool;
         cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbai.commandBufferCount = count;
-        ok = l.allocate_command_buffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
+        ok = l.vk.vkAllocateCommandBuffers(l.device, &cbai, pending.cmd.data()) == VK_SUCCESS;
     }
     if (ok) {
         pending.cmd_present_only.resize(count, VK_NULL_HANDLE);
@@ -4581,19 +4377,19 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         cbai.commandPool = pending.pool;
         cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbai.commandBufferCount = count;
-        ok = l.allocate_command_buffers(l.device, &cbai,
+        ok = l.vk.vkAllocateCommandBuffers(l.device, &cbai,
                                         pending.cmd_present_only.data()) == VK_SUCCESS;
     }
     for (uint32_t i = 0; ok && i < count; ++i) {
         VkSemaphoreCreateInfo sci{};
         sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         VkSemaphore sem = VK_NULL_HANDLE;
-        if (l.create_semaphore(l.device, &sci, nullptr, &sem) != VK_SUCCESS) { ok = false; break; }
+        if (l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &sem) != VK_SUCCESS) { ok = false; break; }
         pending.done.push_back(sem);
         VkFenceCreateInfo fci{};
         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence = VK_NULL_HANDLE;
-        if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
+        if (l.vk.vkCreateFence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) { ok = false; break; }
         pending.fence.push_back(fence);
     }
     // The real pass. If it cannot be built, an old driver, a format
@@ -4658,7 +4454,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
 uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                               uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_swapchain == nullptr) {
+    if (l.vk.vkCreateSwapchainKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     if (in.size() < sizeof(vk_wire::CreateSwapchainHeader)) {
@@ -4827,8 +4623,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     // image onto itself would be pure cost.
     const bool want_upscale = out_w > ci.imageExtent.width && out_h > ci.imageExtent.height &&
                                ci.imageExtent.width > 0 && ci.imageExtent.height > 0 &&
-                               l.create_image != nullptr &&
-                               l.allocate_command_buffers != nullptr && l.have_first_queue_family;
+                               l.vk.vkCreateImage != nullptr &&
+                               l.vk.vkAllocateCommandBuffers != nullptr && l.have_first_queue_family;
     if (want_upscale) {
         pending.engine = ci.imageExtent;
         pending.present = {out_w, out_h};
@@ -4876,7 +4672,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         // Nobody queries this surface while it is being built on; see
         // surface_mutex().
         std::unique_lock<std::shared_mutex> surface_lock(surface_mutex());
-        r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+        r = l.vk.vkCreateSwapchainKHR(l.device, &ci, nullptr, &swapchain);
         // A surface that still has a swapchain on it refuses the next
         // one, and whether that reads as SURFACE_LOST or
         // NATIVE_WINDOW_IN_USE is the driver's choice. The two call sites
@@ -4890,7 +4686,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
                         static_cast<int>(r));
             std::fflush(stdout);
             flush_retired_chains("retrying a refused swapchain");
-            r = l.create_swapchain(l.device, &ci, nullptr, &swapchain);
+            r = l.vk.vkCreateSwapchainKHR(l.device, &ci, nullptr, &swapchain);
         }
     }
     {
@@ -4975,7 +4771,7 @@ void forget_destroyed_semaphore(uint64_t semaphore);
 uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vector<uint8_t>& out,
                                   uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_swapchain_images == nullptr) {
+    if (l.vk.vkGetSwapchainImagesKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     // Upscaling: the engine gets the offscreen images. They are the same
@@ -5009,7 +4805,7 @@ uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vec
     // images, so it gets whichever swapchain its handle stands for.
     VkSwapchainKHR sc = live_swapchain(swapchain);
     uint32_t count = 0;
-    VkResult r = l.get_swapchain_images(l.device, sc, &count, nullptr);
+    VkResult r = l.vk.vkGetSwapchainImagesKHR(l.device, sc, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -5018,7 +4814,7 @@ uint64_t vk_get_swapchain_images(uint64_t swapchain, uint32_t capacity, std::vec
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         images.resize(returned);
-        r = l.get_swapchain_images(l.device, sc, &returned, images.data());
+        r = l.vk.vkGetSwapchainImagesKHR(l.device, sc, &returned, images.data());
     }
     const uint32_t reported = capacity > 0 ? returned : count;
     out.resize(sizeof(uint32_t) + sizeof(uint64_t) * returned);
@@ -5076,7 +4872,7 @@ uint64_t vk_get_image_format_properties2(uint64_t physical_device, const std::ve
 uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_t sharing_mode,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_buffer == nullptr) {
+    if (l.vk.vkCreateBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkBufferCreateInfo ci{};
@@ -5098,14 +4894,14 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
     // when VK_EXT_external_memory_host was never enabled on the device,
     // and naming a handle type the device does not have is itself
     // invalid (live-caught, VUID-...-handleTypes-parameter).
-    if (l.get_memory_host_pointer_properties != nullptr &&
+    if (l.vk.vkGetMemoryHostPointerPropertiesEXT != nullptr &&
         imported_host_pointer_alignment() > 0) {
         external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
         external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
         ci.pNext = &external;
     }
     VkBuffer buffer = VK_NULL_HANDLE;
-    VkResult r = l.create_buffer(l.device, &ci, nullptr, &buffer);
+    VkResult r = l.vk.vkCreateBuffer(l.device, &ci, nullptr, &buffer);
     // Deliberately no per-call print here. The engine creates buffers
     // sixteen times a frame, so a line each, with a flush, is a write
     // syscall per creation and a log that grows without bound. Failures
@@ -5124,20 +4920,20 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
 uint64_t vk_get_buffer_memory_requirements(uint64_t buffer, std::vector<uint8_t>& out,
                                             uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_buffer_memory_requirements == nullptr) {
+    if (l.vk.vkGetBufferMemoryRequirements == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkMemoryRequirements req{};
-    l.get_buffer_memory_requirements(l.device, from_u64<VkBuffer>(buffer), &req);
+    l.vk.vkGetBufferMemoryRequirements(l.device, from_u64<VkBuffer>(buffer), &req);
     return write_pod(req, out, out_len);
 }
 
 uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset) {
     Loader& l = loader();
-    if (l.bind_buffer_memory == nullptr) {
+    if (l.vk.vkBindBufferMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    VkResult r = l.bind_buffer_memory(l.device, from_u64<VkBuffer>(buffer),
+    VkResult r = l.vk.vkBindBufferMemory(l.device, from_u64<VkBuffer>(buffer),
                                        from_u64<VkDeviceMemory>(memory), offset);
     if (r == VK_SUCCESS) {
         std::lock_guard<std::mutex> lock(buffer_memory_mutex());
@@ -5149,7 +4945,7 @@ uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset
 uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_image_view == nullptr || in.size() < sizeof(uint32_t) * 12 + sizeof(uint64_t)) {
+    if (l.vk.vkCreateImageView == nullptr || in.size() < sizeof(uint32_t) * 12 + sizeof(uint64_t)) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     uint64_t image = 0;
@@ -5168,7 +4964,7 @@ uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_
     ci.subresourceRange = {q[7], q[8], q[9], q[10], q[11]};
 
     VkImageView view = VK_NULL_HANDLE;
-    VkResult r = l.create_image_view(l.device, &ci, nullptr, &view);
+    VkResult r = l.vk.vkCreateImageView(l.device, &ci, nullptr, &view);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     if (l.swapchain_images.count(image) != 0) l.swapchain_views.insert(to_u64(view));
     return write_handle(to_u64(view), out, out_len);
@@ -5177,7 +4973,7 @@ uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_
 uint64_t vk_create_shader_module(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                   uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_shader_module == nullptr) {
+    if (l.vk.vkCreateShaderModule == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkShaderModuleCreateInfo ci{};
@@ -5203,7 +4999,7 @@ uint64_t vk_create_shader_module(const std::vector<uint8_t>& in, std::vector<uin
     }
 
     VkShaderModule module = VK_NULL_HANDLE;
-    VkResult r = l.create_shader_module(l.device, &ci, nullptr, &module);
+    VkResult r = l.vk.vkCreateShaderModule(l.device, &ci, nullptr, &module);
     if (r != VK_SUCCESS) {
         std::printf("stud-render-host: vkCreateShaderModule -> %d (%zu bytes)\n",
                     static_cast<int>(r), in.size());
@@ -5242,7 +5038,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 std::lock_guard<std::mutex> lock(buffer_memory_mutex());
                 buffer_memory().erase(handle);
             }
-            if (l.destroy_buffer) l.destroy_buffer(l.device, from_u64<VkBuffer>(handle), nullptr);
+            if (l.vk.vkDestroyBuffer) l.vk.vkDestroyBuffer(l.device, from_u64<VkBuffer>(handle), nullptr);
             break;
         }
         case K::Image:
@@ -5260,17 +5056,17 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // entry here would let a NEW image inherit the old one's
             // "never transitioned" state, or lose its own.
             l.untransitioned_images.erase(handle);
-            if (l.destroy_image) l.destroy_image(l.device, from_u64<VkImage>(handle), nullptr);
+            if (l.vk.vkDestroyImage) l.vk.vkDestroyImage(l.device, from_u64<VkImage>(handle), nullptr);
             break;
         case K::ImageView:
             l.swapchain_views.erase(handle);
-            if (l.destroy_image_view) {
-                l.destroy_image_view(l.device, from_u64<VkImageView>(handle), nullptr);
+            if (l.vk.vkDestroyImageView) {
+                l.vk.vkDestroyImageView(l.device, from_u64<VkImageView>(handle), nullptr);
             }
             break;
         case K::ShaderModule:
-            if (l.destroy_shader_module) {
-                l.destroy_shader_module(l.device, from_u64<VkShaderModule>(handle), nullptr);
+            if (l.vk.vkDestroyShaderModule) {
+                l.vk.vkDestroyShaderModule(l.device, from_u64<VkShaderModule>(handle), nullptr);
             }
             break;
         case K::Semaphore:
@@ -5279,8 +5075,8 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // handle nothing may name again -- using one is a crash
             // inside the driver, live-caught.
             forget_destroyed_semaphore(handle);
-            if (l.destroy_semaphore) {
-                l.destroy_semaphore(l.device, from_u64<VkSemaphore>(handle), nullptr);
+            if (l.vk.vkDestroySemaphore) {
+                l.vk.vkDestroySemaphore(l.device, from_u64<VkSemaphore>(handle), nullptr);
             }
             break;
         case K::Fence:
@@ -5288,16 +5084,16 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // crash was a submit carrying one of these, on a fence the
             // engine had already destroyed during its resize.
             forget_destroyed_fence(handle);
-            if (l.destroy_fence) l.destroy_fence(l.device, from_u64<VkFence>(handle), nullptr);
+            if (l.vk.vkDestroyFence) l.vk.vkDestroyFence(l.device, from_u64<VkFence>(handle), nullptr);
             break;
         case K::CommandPool:
-            if (l.destroy_command_pool) {
-                l.destroy_command_pool(l.device, from_u64<VkCommandPool>(handle), nullptr);
+            if (l.vk.vkDestroyCommandPool) {
+                l.vk.vkDestroyCommandPool(l.device, from_u64<VkCommandPool>(handle), nullptr);
             }
             break;
         case K::QueryPool:
-            if (l.destroy_query_pool) {
-                l.destroy_query_pool(l.device, from_u64<VkQueryPool>(handle), nullptr);
+            if (l.vk.vkDestroyQueryPool) {
+                l.vk.vkDestroyQueryPool(l.device, from_u64<VkQueryPool>(handle), nullptr);
             }
             break;
         case K::Swapchain: {
@@ -5359,7 +5155,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // is still writing into it.
                 break;
             }
-            if (l.destroy_swapchain) {
+            if (l.vk.vkDestroySwapchainKHR) {
                 // Timed for the same reason the create is: a rebuild is a
                 // destroy and a create, and 22 seconds of it has to belong
                 // to one of them. If the destroy is the slow half then
@@ -5368,7 +5164,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // than handing it over as oldSwapchain would change
                 // nothing; if the create is, it would.
                 const auto destroy_t0 = std::chrono::steady_clock::now();
-                l.destroy_swapchain(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
+                l.vk.vkDestroySwapchainKHR(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
                 const double destroy_ms = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - destroy_t0).count();
                 if (destroy_ms > 50.0) {
@@ -5391,13 +5187,13 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::Framebuffer:
             l.swapchain_framebuffers.erase(handle);
-            if (l.destroy_framebuffer) {
-                l.destroy_framebuffer(l.device, from_u64<VkFramebuffer>(handle), nullptr);
+            if (l.vk.vkDestroyFramebuffer) {
+                l.vk.vkDestroyFramebuffer(l.device, from_u64<VkFramebuffer>(handle), nullptr);
             }
             break;
         case K::PipelineCache:
-            if (l.destroy_pipeline_cache) {
-                l.destroy_pipeline_cache(l.device, from_u64<VkPipelineCache>(handle), nullptr);
+            if (l.vk.vkDestroyPipelineCache) {
+                l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(handle), nullptr);
             }
             break;
         case K::Device:
@@ -5471,20 +5267,59 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // log line and its next. Device destroy happens a handful
                 // of times a session, so a few clocks and one line cost
                 // nothing and settle it.
+                // What is still alive when the device goes, and whether
+                // the device was already lost.
+                //
+                // Measured, because the teardown costs ~12.03s over and
+                // over (12034, 12038, 12029, 12029ms in one session) and
+                // that constant is a timeout firing, not work being done.
+                // Two facts narrow it. After a device loss the destroy is
+                // instant (27ms), so the wait is for something a live
+                // device still holds. And vkDeviceWaitIdle returns in 1ms
+                // while vkDestroyDevice takes the whole 12s, so the GPU is
+                // already idle and it is NOT outstanding GPU work.
+                //
+                // That leaves what the idle check does not cover: WSI. A
+                // swapchain still alive here has to be torn down inside
+                // vkDestroyDevice, and on X11 that waits on present
+                // completions that may never arrive. The engine is
+                // supposed to have destroyed it first; this line says
+                // whether it did.
+                // g_retired_chains is deliberately not read here: it is
+                // pushed from whichever thread destroyed a swapchain and
+                // reading its size would need its mutex for a number that
+                // is not the question.
+                // CAPTURED here, PRINTED after the teardown, deliberately.
+                //
+                // The first version printed on the spot and the ~12s stall
+                // stopped happening: twelve clean joins against 5 of 7 and
+                // 6 of 9 slow in the two sessions before it. A printf on
+                // this thread ahead of vkDestroyDevice is exactly the shape
+                // that already changed behaviour once here -- 3a71e33 put
+                // one on the swapchain-rebuild path and CAUSED the join
+                // freeze, which is why 431b9b5 took it out.
+                //
+                // So nothing of this runs before the destroy now. If the
+                // stall comes back with the line moved down here, the delay
+                // was masking it, and the stall is something that drains
+                // given a moment rather than a fixed cost.
+                const size_t live_swapchains = g_swapchain_extents.size();
+                const bool was_lost = g_device_lost.load(std::memory_order_relaxed);
+
                 const auto teardown_t0 = std::chrono::steady_clock::now();
                 for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
                 g_upscale_chains.clear();
                 const auto after_chains = std::chrono::steady_clock::now();
                 flush_retired_chains("the engine is done with this device");
                 const auto after_flush = std::chrono::steady_clock::now();
-                if (l.device_wait_idle != nullptr) l.device_wait_idle(l.device);
+                if (l.vk.vkDeviceWaitIdle != nullptr) l.vk.vkDeviceWaitIdle(l.device);
                 const auto after_idle = std::chrono::steady_clock::now();
-                if (g_repair_fence != VK_NULL_HANDLE && l.destroy_fence != nullptr) {
-                    l.destroy_fence(l.device, g_repair_fence, nullptr);
+                if (g_repair_fence != VK_NULL_HANDLE && l.vk.vkDestroyFence != nullptr) {
+                    l.vk.vkDestroyFence(l.device, g_repair_fence, nullptr);
                     g_repair_fence = VK_NULL_HANDLE;
                 }
-                if (l.probe_pool != VK_NULL_HANDLE && l.destroy_command_pool != nullptr) {
-                    l.destroy_command_pool(l.device, l.probe_pool, nullptr);
+                if (l.probe_pool != VK_NULL_HANDLE && l.vk.vkDestroyCommandPool != nullptr) {
+                    l.vk.vkDestroyCommandPool(l.device, l.probe_pool, nullptr);
                     l.probe_pool = VK_NULL_HANDLE;
                 }
                 l.probe_queue = VK_NULL_HANDLE;
@@ -5542,29 +5377,31 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // for that destroy went with it. See Loader, where
                 // live_buffers used to sit.
 
-                if (l.free_memory != nullptr && !l.live_memory.empty()) {
+                if (l.vk.vkFreeMemory != nullptr && !l.live_memory.empty()) {
                     std::printf("stud-render-host: freeing %zu memory allocation(s) the engine "
                                 "left behind, before destroying the device that owns them\n",
                                 l.live_memory.size());
                     std::fflush(stdout);
                     for (uint64_t m : l.live_memory) {
-                        l.free_memory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
+                        l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
                     }
                 }
                 l.live_memory.clear();
 
                 const auto after_frees = std::chrono::steady_clock::now();
-                if (l.destroy_device != nullptr) l.destroy_device(l.device, nullptr);
+                if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
                 const auto after_destroy = std::chrono::steady_clock::now();
                 {
                     auto ms = [](auto a, auto b) {
                         return std::chrono::duration<double, std::milli>(b - a).count();
                     };
                     std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
-                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f\n",
+                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f "
+                                "(at teardown: %zu swapchain(s) still alive, device_lost=%d)\n",
                                 ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
                                 ms(after_chains, after_flush), ms(after_flush, after_idle),
-                                ms(after_idle, after_frees), ms(after_frees, after_destroy));
+                                ms(after_idle, after_frees), ms(after_frees, after_destroy),
+                                live_swapchains, was_lost ? 1 : 0);
                     std::fflush(stdout);
                 }
                 l.device = VK_NULL_HANDLE;
@@ -5600,28 +5437,28 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // Same reasoning as Device.
             break;
         case K::Sampler:
-            if (l.destroy_sampler) {
-                l.destroy_sampler(l.device, from_u64<VkSampler>(handle), nullptr);
+            if (l.vk.vkDestroySampler) {
+                l.vk.vkDestroySampler(l.device, from_u64<VkSampler>(handle), nullptr);
             }
             break;
         case K::RenderPass:
-            if (l.destroy_render_pass) {
-                l.destroy_render_pass(l.device, from_u64<VkRenderPass>(handle), nullptr);
+            if (l.vk.vkDestroyRenderPass) {
+                l.vk.vkDestroyRenderPass(l.device, from_u64<VkRenderPass>(handle), nullptr);
             }
             break;
         case K::Pipeline:
-            if (l.destroy_pipeline) {
-                l.destroy_pipeline(l.device, from_u64<VkPipeline>(handle), nullptr);
+            if (l.vk.vkDestroyPipeline) {
+                l.vk.vkDestroyPipeline(l.device, from_u64<VkPipeline>(handle), nullptr);
             }
             break;
         case K::PipelineLayout:
-            if (l.destroy_pipeline_layout) {
-                l.destroy_pipeline_layout(l.device, from_u64<VkPipelineLayout>(handle), nullptr);
+            if (l.vk.vkDestroyPipelineLayout) {
+                l.vk.vkDestroyPipelineLayout(l.device, from_u64<VkPipelineLayout>(handle), nullptr);
             }
             break;
         case K::DescriptorSetLayout:
-            if (l.destroy_descriptor_set_layout) {
-                l.destroy_descriptor_set_layout(l.device,
+            if (l.vk.vkDestroyDescriptorSetLayout) {
+                l.vk.vkDestroyDescriptorSetLayout(l.device,
                                                  from_u64<VkDescriptorSetLayout>(handle), nullptr);
             }
             break;
@@ -5638,14 +5475,14 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                     it = it->second.pool == handle ? sets.erase(it) : std::next(it);
                 }
             }
-            if (l.destroy_descriptor_pool) {
-                l.destroy_descriptor_pool(l.device, from_u64<VkDescriptorPool>(handle), nullptr);
+            if (l.vk.vkDestroyDescriptorPool) {
+                l.vk.vkDestroyDescriptorPool(l.device, from_u64<VkDescriptorPool>(handle), nullptr);
             }
             break;
         }
         case K::DescriptorUpdateTemplate:
-            if (l.destroy_descriptor_update_template) {
-                l.destroy_descriptor_update_template(
+            if (l.vk.vkDestroyDescriptorUpdateTemplate) {
+                l.vk.vkDestroyDescriptorUpdateTemplate(
                     l.device, from_u64<VkDescriptorUpdateTemplate>(handle), nullptr);
             }
             break;
@@ -5660,7 +5497,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
 uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                 uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_render_pass == nullptr) {
+    if (l.vk.vkCreateRenderPass == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -5810,7 +5647,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
     }
 
     VkRenderPass pass = VK_NULL_HANDLE;
-    VkResult res = l.create_render_pass(l.device, &ci, nullptr, &pass);
+    VkResult res = l.vk.vkCreateRenderPass(l.device, &ci, nullptr, &pass);
     if (vk_object_trace_enabled()) {
         std::printf("stud-render-host: vkCreateRenderPass att=%u sub=%u dep=%u -> %d\n",
                     attachment_count, subpass_count, dep_count, static_cast<int>(res));
@@ -5840,7 +5677,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
 uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                 uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_framebuffer == nullptr) {
+    if (l.vk.vkCreateFramebuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -5858,7 +5695,7 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
     ci.layers = r.u32();
 
     VkFramebuffer fb = VK_NULL_HANDLE;
-    VkResult res = l.create_framebuffer(l.device, &ci, nullptr, &fb);
+    VkResult res = l.vk.vkCreateFramebuffer(l.device, &ci, nullptr, &fb);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     bool targets_screen = false;
     for (uint32_t i = 0; i < n; ++i) {
@@ -5878,7 +5715,7 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
 uint64_t vk_create_sampler(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                             uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_sampler == nullptr) {
+    if (l.vk.vkCreateSampler == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -5902,7 +5739,7 @@ uint64_t vk_create_sampler(const std::vector<uint8_t>& in, std::vector<uint8_t>&
     ci.unnormalizedCoordinates = r.u32();
 
     VkSampler sampler = VK_NULL_HANDLE;
-    VkResult res = l.create_sampler(l.device, &ci, nullptr, &sampler);
+    VkResult res = l.vk.vkCreateSampler(l.device, &ci, nullptr, &sampler);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return write_handle(to_u64(sampler), out, out_len);
 }
@@ -5910,7 +5747,7 @@ uint64_t vk_create_sampler(const std::vector<uint8_t>& in, std::vector<uint8_t>&
 uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
                                           std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_descriptor_set_layout == nullptr) {
+    if (l.vk.vkCreateDescriptorSetLayout == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -5936,7 +5773,7 @@ uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
     ci.pBindings = bindings.empty() ? nullptr : bindings.data();
 
     VkDescriptorSetLayout layout = VK_NULL_HANDLE;
-    VkResult res = l.create_descriptor_set_layout(l.device, &ci, nullptr, &layout);
+    VkResult res = l.vk.vkCreateDescriptorSetLayout(l.device, &ci, nullptr, &layout);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return write_handle(to_u64(layout), out, out_len);
 }
@@ -5944,7 +5781,7 @@ uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
 uint64_t vk_create_pipeline_layout(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                     uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_pipeline_layout == nullptr) {
+    if (l.vk.vkCreatePipelineLayout == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -5967,7 +5804,7 @@ uint64_t vk_create_pipeline_layout(const std::vector<uint8_t>& in, std::vector<u
     ci.pPushConstantRanges = ranges.empty() ? nullptr : ranges.data();
 
     VkPipelineLayout layout = VK_NULL_HANDLE;
-    VkResult res = l.create_pipeline_layout(l.device, &ci, nullptr, &layout);
+    VkResult res = l.vk.vkCreatePipelineLayout(l.device, &ci, nullptr, &layout);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return write_handle(to_u64(layout), out, out_len);
 }
@@ -5975,7 +5812,7 @@ uint64_t vk_create_pipeline_layout(const std::vector<uint8_t>& in, std::vector<u
 uint64_t vk_create_descriptor_pool(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                     uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_descriptor_pool == nullptr) {
+    if (l.vk.vkCreateDescriptorPool == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -5993,7 +5830,7 @@ uint64_t vk_create_descriptor_pool(const std::vector<uint8_t>& in, std::vector<u
     ci.pPoolSizes = sizes.empty() ? nullptr : sizes.data();
 
     VkDescriptorPool pool = VK_NULL_HANDLE;
-    VkResult res = l.create_descriptor_pool(l.device, &ci, nullptr, &pool);
+    VkResult res = l.vk.vkCreateDescriptorPool(l.device, &ci, nullptr, &pool);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return write_handle(to_u64(pool), out, out_len);
 }
@@ -6030,7 +5867,7 @@ VkDescriptorSet resolve_descriptor_set(uint64_t id) {
 uint64_t vk_allocate_descriptor_sets(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                       uint32_t* out_len) {
     Loader& l = loader();
-    if (l.allocate_descriptor_sets == nullptr) {
+    if (l.vk.vkAllocateDescriptorSets == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -6048,7 +5885,7 @@ uint64_t vk_allocate_descriptor_sets(const std::vector<uint8_t>& in, std::vector
     for (auto& id : ids) id = r.u64();
 
     std::vector<VkDescriptorSet> sets(n);
-    VkResult res = l.allocate_descriptor_sets(l.device, &ai, sets.data());
+    VkResult res = l.vk.vkAllocateDescriptorSets(l.device, &ai, sets.data());
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     {
         std::lock_guard<std::mutex> lock(descriptor_set_mutex());
@@ -6063,7 +5900,7 @@ uint64_t vk_allocate_descriptor_sets(const std::vector<uint8_t>& in, std::vector
 
 uint64_t vk_reset_descriptor_pool(uint64_t pool, uint32_t flags) {
     Loader& l = loader();
-    if (l.reset_descriptor_pool == nullptr) {
+    if (l.vk.vkResetDescriptorPool == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     {
@@ -6077,7 +5914,7 @@ uint64_t vk_reset_descriptor_pool(uint64_t pool, uint32_t flags) {
         }
     }
     return static_cast<uint64_t>(static_cast<int32_t>(
-        l.reset_descriptor_pool(l.device, from_u64<VkDescriptorPool>(pool), flags)));
+        l.vk.vkResetDescriptorPool(l.device, from_u64<VkDescriptorPool>(pool), flags)));
 }
 
 uint64_t vk_create_descriptor_update_template(const std::vector<uint8_t>& in,
@@ -6163,7 +6000,7 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
 uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                        uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_graphics_pipelines == nullptr) {
+    if (l.vk.vkCreateGraphicsPipelines == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -6339,7 +6176,7 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     ci.subpass = r.u32();
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VkResult res = l.create_graphics_pipelines(l.device, from_u64<VkPipelineCache>(cache), 1, &ci,
+    VkResult res = l.vk.vkCreateGraphicsPipelines(l.device, from_u64<VkPipelineCache>(cache), 1, &ci,
                                                 nullptr, &pipeline);
     if (res != VK_SUCCESS) {
         std::printf("stud-render-host: vkCreateGraphicsPipelines -> %d\n", static_cast<int>(res));
@@ -6352,7 +6189,7 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
 uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                       uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_compute_pipelines == nullptr) {
+    if (l.vk.vkCreateComputePipelines == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -6371,7 +6208,7 @@ uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector
     ci.layout = from_u64<VkPipelineLayout>(r.u64());
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VkResult res = l.create_compute_pipelines(l.device, from_u64<VkPipelineCache>(cache), 1, &ci,
+    VkResult res = l.vk.vkCreateComputePipelines(l.device, from_u64<VkPipelineCache>(cache), 1, &ci,
                                                nullptr, &pipeline);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return write_handle(to_u64(pipeline), out, out_len);
@@ -6382,7 +6219,7 @@ uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector
 uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t count,
                                       std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.allocate_command_buffers == nullptr) {
+    if (l.vk.vkAllocateCommandBuffers == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkCommandBufferAllocateInfo ai{};
@@ -6391,7 +6228,7 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
     ai.level = static_cast<VkCommandBufferLevel>(level);
     ai.commandBufferCount = count;
     std::vector<VkCommandBuffer> buffers(count);
-    VkResult r = l.allocate_command_buffers(l.device, &ai, buffers.data());
+    VkResult r = l.vk.vkAllocateCommandBuffers(l.device, &ai, buffers.data());
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     out.resize(sizeof(uint64_t) * count);
     for (uint32_t i = 0; i < count; ++i) {
@@ -6404,32 +6241,32 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
 
 uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags) {
     Loader& l = loader();
-    if (l.begin_command_buffer == nullptr) {
+    if (l.vk.vkBeginCommandBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = flags;
     return static_cast<uint64_t>(
-        static_cast<int32_t>(l.begin_command_buffer(from_u64<VkCommandBuffer>(cb), &bi)));
+        static_cast<int32_t>(l.vk.vkBeginCommandBuffer(from_u64<VkCommandBuffer>(cb), &bi)));
 }
 
 uint64_t vk_end_command_buffer(uint64_t cb) {
     Loader& l = loader();
-    if (l.end_command_buffer == nullptr) {
+    if (l.vk.vkEndCommandBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     return static_cast<uint64_t>(
-        static_cast<int32_t>(l.end_command_buffer(from_u64<VkCommandBuffer>(cb))));
+        static_cast<int32_t>(l.vk.vkEndCommandBuffer(from_u64<VkCommandBuffer>(cb))));
 }
 
 uint64_t vk_reset_command_pool(uint64_t pool, uint32_t flags) {
     Loader& l = loader();
-    if (l.reset_command_pool == nullptr) {
+    if (l.vk.vkResetCommandPool == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     return static_cast<uint64_t>(static_cast<int32_t>(
-        l.reset_command_pool(l.device, from_u64<VkCommandPool>(pool), flags)));
+        l.vk.vkResetCommandPool(l.device, from_u64<VkCommandPool>(pool), flags)));
 }
 
 
@@ -6528,7 +6365,7 @@ void note_acquire_failed(uint64_t swapchain, bool failed) {
 // not reach them at all.
 void report_checkpoints_after_loss() {
     Loader& l = loader();
-    if (l.get_queue_checkpoint_data == nullptr) {
+    if (l.vk.vkGetQueueCheckpointDataNV == nullptr) {
         std::printf("stud-render-host: no checkpoint data: the driver does not offer "
                     "VK_NV_device_diagnostic_checkpoints, so where the GPU stopped is unknown\n");
         std::fflush(stdout);
@@ -6544,7 +6381,7 @@ void report_checkpoints_after_loss() {
         return;
     }
     uint32_t n = 0;
-    l.get_queue_checkpoint_data(q, &n, nullptr);
+    l.vk.vkGetQueueCheckpointDataNV(q, &n, nullptr);
     if (n == 0) {
         std::printf("stud-render-host: the queue reported no checkpoints at all, so the GPU "
                     "did not reach any of Stud's own recorded work\n");
@@ -6556,7 +6393,7 @@ void report_checkpoints_after_loss() {
         d.sType = VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV;
         d.pNext = nullptr;
     }
-    l.get_queue_checkpoint_data(q, &n, data.data());
+    l.vk.vkGetQueueCheckpointDataNV(q, &n, data.data());
     std::printf("stud-render-host: the GPU's last checkpoints before the loss (%u):\n", n);
     for (uint32_t i = 0; i < n; ++i) {
         const char* name = data[i].pCheckpointMarker != nullptr
@@ -6583,7 +6420,7 @@ void report_checkpoints_after_loss() {
 // ask the device, which is about to be destroyed.
 void report_device_fault_after_loss() {
     Loader& l = loader();
-    if (l.get_device_fault_info == nullptr || l.device == VK_NULL_HANDLE) {
+    if (l.vk.vkGetDeviceFaultInfoEXT == nullptr || l.device == VK_NULL_HANDLE) {
         std::printf("stud-render-host: no fault report: this driver does not offer "
                     "VK_EXT_device_fault, so what the GPU faulted on is unknown\n");
         std::fflush(stdout);
@@ -6591,7 +6428,7 @@ void report_device_fault_after_loss() {
     }
     VkDeviceFaultCountsEXT counts{};
     counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
-    if (l.get_device_fault_info(l.device, &counts, nullptr) != VK_SUCCESS) {
+    if (l.vk.vkGetDeviceFaultInfoEXT(l.device, &counts, nullptr) != VK_SUCCESS) {
         std::printf("stud-render-host: the driver offers VK_EXT_device_fault but would not say "
                     "how much fault information it has\n");
         std::fflush(stdout);
@@ -6606,7 +6443,7 @@ void report_device_fault_after_loss() {
     info.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
     info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
     info.pVendorInfos = vendor.empty() ? nullptr : vendor.data();
-    if (l.get_device_fault_info(l.device, &counts, &info) != VK_SUCCESS) {
+    if (l.vk.vkGetDeviceFaultInfoEXT(l.device, &counts, &info) != VK_SUCCESS) {
         std::printf("stud-render-host: the driver would not hand over its fault report\n");
         std::fflush(stdout);
         return;
@@ -6670,10 +6507,10 @@ void note_result(VkResult r, const char* where) {
 // frame to measure it, which would be measuring the measurement.
 void report_upscale_timing(UpscaleChain& c, uint32_t index) {
     Loader& l = loader();
-    if (c.timing_pool == VK_NULL_HANDLE || l.get_query_pool_results == nullptr) return;
+    if (c.timing_pool == VK_NULL_HANDLE || l.vk.vkGetQueryPoolResults == nullptr) return;
 
     uint64_t stamps[2] = {0, 0};
-    const VkResult r = l.get_query_pool_results(l.device, c.timing_pool, index * 2, 2,
+    const VkResult r = l.vk.vkGetQueryPoolResults(l.device, c.timing_pool, index * 2, 2,
                                                 sizeof(stamps), stamps, sizeof(uint64_t),
                                                 VK_QUERY_RESULT_64_BIT);
     // NOT_READY on the first frames of an index, which is ordinary.
@@ -6759,22 +6596,22 @@ void report_upscale_timing(UpscaleChain& c, uint32_t index) {
 // allowed.
 void wait_for_repair(VkFence fence) {
     Loader& l = loader();
-    if (fence == VK_NULL_HANDLE || l.wait_for_fences == nullptr) return;
+    if (fence == VK_NULL_HANDLE || l.vk.vkWaitForFences == nullptr) return;
     // 100ms is far longer than an empty batch takes and short enough that
     // a wedged queue does not become a wedged window.
-    const VkResult r = l.wait_for_fences(l.device, 1, &fence, VK_TRUE, 100000000ull);
+    const VkResult r = l.vk.vkWaitForFences(l.device, 1, &fence, VK_TRUE, 100000000ull);
     note_result(r, "vkWaitForFences");
-    if (r == VK_SUCCESS && l.reset_fences != nullptr) l.reset_fences(l.device, 1, &fence);
+    if (r == VK_SUCCESS && l.vk.vkResetFences != nullptr) l.vk.vkResetFences(l.device, 1, &fence);
 }
 
 // One fence, reused, for the repair submissions above.
 VkFence repair_fence() {
     Loader& l = loader();
     VkFence& fence = g_repair_fence;
-    if (fence == VK_NULL_HANDLE && l.create_fence != nullptr && l.device != VK_NULL_HANDLE) {
+    if (fence == VK_NULL_HANDLE && l.vk.vkCreateFence != nullptr && l.device != VK_NULL_HANDLE) {
         VkFenceCreateInfo fci{};
         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        if (l.create_fence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) fence = VK_NULL_HANDLE;
+        if (l.vk.vkCreateFence(l.device, &fci, nullptr, &fence) != VK_SUCCESS) fence = VK_NULL_HANDLE;
     }
     return fence;
 }
@@ -6806,7 +6643,7 @@ void note_semaphore_waited(uint64_t semaphore) {
 void signal_what_the_failed_acquire_left(VkQueue queue, uint64_t semaphore, uint64_t fence) {
     Loader& l = loader();
     if (g_device_lost.load(std::memory_order_relaxed)) return;
-    if (l.queue_submit == nullptr || queue == VK_NULL_HANDLE) return;
+    if (l.vk.vkQueueSubmit == nullptr || queue == VK_NULL_HANDLE) return;
     if (semaphore == 0 && fence == 0) return;
     VkSemaphore sem = from_u64<VkSemaphore>(semaphore);
     VkSubmitInfo si{};
@@ -6821,16 +6658,16 @@ void signal_what_the_failed_acquire_left(VkQueue queue, uint64_t semaphore, uint
     const VkFence own = fence == 0 ? repair_fence() : VK_NULL_HANDLE;
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        l.queue_submit(queue, 1, &si, fence != 0 ? from_u64<VkFence>(fence) : own);
+        l.vk.vkQueueSubmit(queue, 1, &si, fence != 0 ? from_u64<VkFence>(fence) : own);
     }
     if (own != VK_NULL_HANDLE) {
         wait_for_repair(own);
-    } else if (l.queue_wait_idle != nullptr) {
+    } else if (l.vk.vkQueueWaitIdle != nullptr) {
         // The engine's fence went on the batch, so there is nothing of
         // Stud's to wait on; wait for the queue instead, for the same
         // reason.
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        note_result(l.queue_wait_idle(queue), "vkQueueWaitIdle");
+        note_result(l.vk.vkQueueWaitIdle(queue), "vkQueueWaitIdle");
     }
     if (semaphore != 0) {
         std::lock_guard<std::mutex> lock(g_semaphores_stud_signalled_mutex);
@@ -6861,7 +6698,7 @@ void drain_stale_signal(VkQueue queue, uint64_t semaphore) {
                                     std::memory_order_relaxed);
     }
     Loader& l = loader();
-    if (l.queue_submit == nullptr || queue == VK_NULL_HANDLE) return;
+    if (l.vk.vkQueueSubmit == nullptr || queue == VK_NULL_HANDLE) return;
     VkSemaphore sem = from_u64<VkSemaphore>(semaphore);
     VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkSubmitInfo si{};
@@ -6872,7 +6709,7 @@ void drain_stale_signal(VkQueue queue, uint64_t semaphore) {
     const VkFence f = repair_fence();
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        l.queue_submit(queue, 1, &si, f);
+        l.vk.vkQueueSubmit(queue, 1, &si, f);
     }
     // Same reason as the signal above: this batch names a semaphore the
     // engine may destroy as soon as it hears about the resize.
@@ -6991,7 +6828,7 @@ double ms_since_fence_submitted(uint64_t fence) {
 void signal_fences_the_engine_reset(VkQueue queue) {
     Loader& l = loader();
     if (g_device_lost.load(std::memory_order_relaxed)) return;
-    if (l.queue_submit == nullptr || queue == VK_NULL_HANDLE) return;
+    if (l.vk.vkQueueSubmit == nullptr || queue == VK_NULL_HANDLE) return;
     std::vector<uint64_t> orphans;
     {
         std::lock_guard<std::mutex> lock(g_fences_reset_mutex);
@@ -7002,7 +6839,7 @@ void signal_fences_the_engine_reset(VkQueue queue) {
         VkSubmitInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        l.queue_submit(queue, 0, nullptr, from_u64<VkFence>(fence));
+        l.vk.vkQueueSubmit(queue, 0, nullptr, from_u64<VkFence>(fence));
     }
     if (!orphans.empty()) {
         static int said = 0;
@@ -7021,7 +6858,7 @@ void signal_fences_the_engine_reset(VkQueue queue) {
 
 uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8_t>& in) {
     Loader& l = loader();
-    if (l.queue_submit == nullptr) {
+    if (l.vk.vkQueueSubmit == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -7101,7 +6938,7 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         if (fence != 0) note_fence_submit_time(fence);
     }
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
-    VkResult res = l.queue_submit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
+    VkResult res = l.vk.vkQueueSubmit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
                                    from_u64<VkFence>(fence));
     note_result(res, "vkQueueSubmit");
     if (res != VK_SUCCESS) fr::dump("a queue submit failed");
@@ -7155,7 +6992,7 @@ struct FenceWaitGuard {
 
 uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, uint64_t timeout) {
     Loader& l = loader();
-    if (l.wait_for_fences == nullptr) {
+    if (l.vk.vkWaitForFences == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -7184,7 +7021,7 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
         int reports = 0;
         for (;;) {
             const uint64_t slice = left < slice_ns ? left : slice_ns;
-            res = l.wait_for_fences(l.device, n, fences.empty() ? nullptr : fences.data(),
+            res = l.vk.vkWaitForFences(l.device, n, fences.empty() ? nullptr : fences.data(),
                                     wait_all, slice);
             if (res != VK_TIMEOUT) break;
             if (timeout != UINT64_MAX) {
@@ -7260,7 +7097,7 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
         }
     }
     Loader& l = loader();
-    if (l.reset_fences == nullptr) {
+    if (l.vk.vkResetFences == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -7302,7 +7139,7 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
             }
         }
     }
-    VkResult res = l.reset_fences(l.device, n, fences.empty() ? nullptr : fences.data());
+    VkResult res = l.vk.vkResetFences(l.device, n, fences.empty() ? nullptr : fences.data());
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
@@ -7328,7 +7165,7 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
     if (!enabled) return false;
     Loader& l = loader();
     auto saved = g_swapchain_ci.find(engine_handle);
-    if (saved == g_swapchain_ci.end() || l.create_swapchain == nullptr) return false;
+    if (saved == g_swapchain_ci.end() || l.vk.vkCreateSwapchainKHR == nullptr) return false;
 
     const uint32_t out_w = g_upscale_output_w.load(std::memory_order_relaxed);
     const uint32_t out_h = g_upscale_output_h.load(std::memory_order_relaxed);
@@ -7349,7 +7186,7 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
     ci.imageExtent = extent;
     ci.oldSwapchain = old;
     VkSwapchainKHR fresh = VK_NULL_HANDLE;
-    const VkResult r = l.create_swapchain(l.device, &ci, nullptr, &fresh);
+    const VkResult r = l.vk.vkCreateSwapchainKHR(l.device, &ci, nullptr, &fresh);
     if (r != VK_SUCCESS) {
         std::printf("stud-render-host: could not rebuild the swapchain at %ux%u (%d)\n",
                     extent.width, extent.height, static_cast<int>(r));
@@ -7362,8 +7199,8 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
         chain->second.present = extent;
         build_upscale_chain(chain->second, fresh, ci, /*reuse_offscreen=*/true);
     }
-    if (l.destroy_swapchain != nullptr && old != VK_NULL_HANDLE) {
-        l.destroy_swapchain(l.device, old, nullptr);
+    if (l.vk.vkDestroySwapchainKHR != nullptr && old != VK_NULL_HANDLE) {
+        l.vk.vkDestroySwapchainKHR(l.device, old, nullptr);
     }
     g_swapchain_alias[engine_handle] = to_u64(fresh);
     g_swapchain_extents[engine_handle] = extent;
@@ -7456,7 +7293,7 @@ uint64_t engine_visible_result(VkResult r) {
 uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore,
                                 uint64_t fence, std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.acquire_next_image == nullptr) {
+    if (l.vk.vkAcquireNextImageKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     uint32_t index = 0;
@@ -7470,7 +7307,7 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
     // nothing consumed, take it back before the driver signals it again.
     drain_stale_signal(l.probe_queue, semaphore);
     const auto t0 = std::chrono::steady_clock::now();
-    VkResult r = l.acquire_next_image(l.device, live_swapchain(swapchain), timeout,
+    VkResult r = l.vk.vkAcquireNextImageKHR(l.device, live_swapchain(swapchain), timeout,
                                        from_u64<VkSemaphore>(semaphore), from_u64<VkFence>(fence),
                                        &index);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -7485,7 +7322,7 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
         // note the semaphore it passed was NOT signalled by the failed
         // attempt, so this second one signals it exactly once, which is
         // what the engine's own frame is waiting on.
-        r = l.acquire_next_image(l.device, live_swapchain(swapchain), timeout,
+        r = l.vk.vkAcquireNextImageKHR(l.device, live_swapchain(swapchain), timeout,
                                  from_u64<VkSemaphore>(semaphore), from_u64<VkFence>(fence),
                                  &index);
     }
@@ -7535,15 +7372,15 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
 // answers is worth a stall.
 void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     Loader& l = loader();
-    if (l.get_swapchain_images == nullptr || l.create_buffer == nullptr ||
-        l.allocate_memory == nullptr || l.map_memory == nullptr ||
-        l.allocate_command_buffers == nullptr || l.queue_submit == nullptr) {
+    if (l.vk.vkGetSwapchainImagesKHR == nullptr || l.vk.vkCreateBuffer == nullptr ||
+        l.vk.vkAllocateMemory == nullptr || l.vk.vkMapMemory == nullptr ||
+        l.vk.vkAllocateCommandBuffers == nullptr || l.vk.vkQueueSubmit == nullptr) {
         return;
     }
     uint32_t count = 0;
-    l.get_swapchain_images(l.device, swapchain, &count, nullptr);
+    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, nullptr);
     std::vector<VkImage> images(count);
-    l.get_swapchain_images(l.device, swapchain, &count, images.data());
+    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, images.data());
     if (index >= count) return;
 
     const uint32_t w = g_window_width.load(std::memory_order_relaxed);
@@ -7555,10 +7392,10 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     bci.size = size;
     bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (l.create_buffer(l.device, &bci, nullptr, &buffer) != VK_SUCCESS) return;
+    if (l.vk.vkCreateBuffer(l.device, &bci, nullptr, &buffer) != VK_SUCCESS) return;
 
     VkMemoryRequirements req{};
-    l.get_buffer_memory_requirements(l.device, buffer, &req);
+    l.vk.vkGetBufferMemoryRequirements(l.device, buffer, &req);
     VkPhysicalDeviceMemoryProperties mem{};
     l.get_physical_device_memory_properties(l.physical_device, &mem);
     uint32_t type = UINT32_MAX;
@@ -7577,8 +7414,8 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = type;
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    if (l.allocate_memory(l.device, &mai, nullptr, &memory) != VK_SUCCESS) return;
-    l.bind_buffer_memory(l.device, buffer, memory, 0);
+    if (l.vk.vkAllocateMemory(l.device, &mai, nullptr, &memory) != VK_SUCCESS) return;
+    l.vk.vkBindBufferMemory(l.device, buffer, memory, 0);
 
     VkCommandBufferAllocateInfo cbai{};
     cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -7587,14 +7424,14 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     cbai.commandBufferCount = 1;
     VkCommandBuffer cb = VK_NULL_HANDLE;
     if (l.probe_pool == VK_NULL_HANDLE ||
-        l.allocate_command_buffers(l.device, &cbai, &cb) != VK_SUCCESS) {
+        l.vk.vkAllocateCommandBuffers(l.device, &cbai, &cb) != VK_SUCCESS) {
         return;
     }
 
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    l.begin_command_buffer(cb, &bi);
+    l.vk.vkBeginCommandBuffer(cb, &bi);
     VkImageMemoryBarrier to_src{};
     to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -7604,22 +7441,22 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     to_src.image = images[index];
     to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+    l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {w, h, 1};
-    l.cmd_copy_image_to_buffer(cb, images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1,
+    l.vk.vkCmdCopyImageToBuffer(cb, images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1,
                                 &region);
     VkImageMemoryBarrier back = to_src;
     back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     back.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     back.dstAccessMask = 0;
-    l.cmd_pipeline_barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
                             &back);
-    l.end_command_buffer(cb);
+    l.vk.vkEndCommandBuffer(cb);
 
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -7627,12 +7464,12 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     si.pCommandBuffers = &cb;
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
-        l.queue_submit(l.probe_queue, 1, &si, VK_NULL_HANDLE);
-        if (l.queue_wait_idle != nullptr) l.queue_wait_idle(l.probe_queue);
+        l.vk.vkQueueSubmit(l.probe_queue, 1, &si, VK_NULL_HANDLE);
+        if (l.vk.vkQueueWaitIdle != nullptr) l.vk.vkQueueWaitIdle(l.probe_queue);
     }
 
     void* data = nullptr;
-    if (l.map_memory(l.device, memory, 0, size, 0, &data) == VK_SUCCESS && data != nullptr) {
+    if (l.vk.vkMapMemory(l.device, memory, 0, size, 0, &data) == VK_SUCCESS && data != nullptr) {
         const auto* px = static_cast<const uint8_t*>(data);
         size_t nonzero = 0;
         for (VkDeviceSize i = 0; i + 3 < size; i += 4) {
@@ -7641,10 +7478,10 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
         std::printf("stud-render-host: PIXELPROBE image %u: %zu non-black of %llu\n", index,
                     nonzero, static_cast<unsigned long long>(size / 4));
         std::fflush(stdout);
-        l.unmap_memory(l.device, memory);
+        l.vk.vkUnmapMemory(l.device, memory);
     }
-    l.free_memory(l.device, memory, nullptr);
-    l.destroy_buffer(l.device, buffer, nullptr);
+    l.vk.vkFreeMemory(l.device, memory, nullptr);
+    l.vk.vkDestroyBuffer(l.device, buffer, nullptr);
 }
 
 
@@ -7681,7 +7518,7 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
 // does exactly this and nothing else: it waits, and retires.
 void consume_engine_semaphores(uint64_t queue, const std::vector<VkSemaphore>& waits) {
     Loader& l = loader();
-    if (waits.empty() || l.queue_submit == nullptr) return;
+    if (waits.empty() || l.vk.vkQueueSubmit == nullptr) return;
     std::vector<VkPipelineStageFlags> stages(waits.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -7689,7 +7526,7 @@ void consume_engine_semaphores(uint64_t queue, const std::vector<VkSemaphore>& w
     si.pWaitSemaphores = waits.data();
     si.pWaitDstStageMask = stages.data();
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
-    l.queue_submit(from_u64<VkQueue>(queue), 1, &si, VK_NULL_HANDLE);
+    l.vk.vkQueueSubmit(from_u64<VkQueue>(queue), 1, &si, VK_NULL_HANDLE);
 }
 
 // Returns whether the transition was actually submitted, because the
@@ -7705,7 +7542,7 @@ bool make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
                               std::vector<VkSemaphore>& upscaled_waits) {
     Loader& l = loader();
     if (index >= c.cmd_present_only.size() || c.cmd_present_only[index] == VK_NULL_HANDLE ||
-        index >= c.done.size() || index >= c.fence.size() || l.queue_submit == nullptr) {
+        index >= c.done.size() || index >= c.fence.size() || l.vk.vkQueueSubmit == nullptr) {
         return false;
     }
     VkSubmitInfo si{};
@@ -7728,8 +7565,8 @@ bool make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
         // path reset it and then failed to submit. Nothing is pending on
         // it in either case -- the callers check in_flight first -- so the
         // reset is legal and cheap.
-        if (l.reset_fences != nullptr) l.reset_fences(l.device, 1, &c.fence[index]);
-        sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, c.fence[index]);
+        if (l.vk.vkResetFences != nullptr) l.vk.vkResetFences(l.device, 1, &c.fence[index]);
+        sr = l.vk.vkQueueSubmit(from_u64<VkQueue>(queue), 1, &si, c.fence[index]);
     }
     if (sr != VK_SUCCESS) return false;
     upscaled_waits.assign(1, c.done[index]);
@@ -7740,7 +7577,7 @@ bool make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
 
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     Loader& l = loader();
-    if (l.queue_present == nullptr) {
+    if (l.vk.vkQueuePresentKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
@@ -7857,7 +7694,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     std::vector<VkSemaphore> upscaled_waits;
     if (ns > 0 && !indices.empty()) {
         auto chain = g_upscale_chains.find(to_u64(chains[0]));
-        if (chain != g_upscale_chains.end() && l.queue_submit != nullptr) {
+        if (chain != g_upscale_chains.end() && l.vk.vkQueueSubmit != nullptr) {
             UpscaleChain& c = chain->second;
             const uint32_t index = indices[0];
             // A tainted semaphore cannot be signalled again, and cannot be
@@ -7867,28 +7704,28 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             if (c.semaphores_tainted) {
                 c.semaphores_tainted = false;
                 bool idle = true;
-                if (l.wait_for_fences != nullptr && l.device_wait_idle != nullptr) {
+                if (l.vk.vkWaitForFences != nullptr && l.vk.vkDeviceWaitIdle != nullptr) {
                     for (size_t i = 0; i < c.fence.size(); ++i) {
                         if (!c.in_flight[i]) continue;
                         VkResult fr = VK_TIMEOUT;
                         for (int slice = 0; slice < 4 && fr == VK_TIMEOUT; ++slice) {
-                            fr = l.wait_for_fences(l.device, 1, &c.fence[i], VK_TRUE,
+                            fr = l.vk.vkWaitForFences(l.device, 1, &c.fence[i], VK_TRUE,
                                                     250ull * 1000ull * 1000ull);
                         }
                         if (fr != VK_SUCCESS) idle = false;
                     }
                 }
-                if (idle && l.destroy_semaphore != nullptr && l.create_semaphore != nullptr) {
+                if (idle && l.vk.vkDestroySemaphore != nullptr && l.vk.vkCreateSemaphore != nullptr) {
                     VkSemaphoreCreateInfo sci{};
                     sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
                     for (auto& sem : c.done) {
-                        if (sem != VK_NULL_HANDLE) l.destroy_semaphore(l.device, sem, nullptr);
+                        if (sem != VK_NULL_HANDLE) l.vk.vkDestroySemaphore(l.device, sem, nullptr);
                         sem = VK_NULL_HANDLE;
-                        l.create_semaphore(l.device, &sci, nullptr, &sem);
+                        l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &sem);
                     }
-                    if (l.reset_fences != nullptr) {
+                    if (l.vk.vkResetFences != nullptr) {
                         for (size_t i = 0; i < c.fence.size(); ++i) {
-                            if (c.in_flight[i]) l.reset_fences(l.device, 1, &c.fence[i]);
+                            if (c.in_flight[i]) l.vk.vkResetFences(l.device, 1, &c.fence[i]);
                             c.in_flight[i] = false;
                         }
                     }
@@ -7974,18 +7811,18 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 // (nothing was submitted), so presenting on them is
                 // correct.
                 bool image_ready = true;
-                if (c.in_flight[index] && l.wait_for_fences != nullptr) {
+                if (c.in_flight[index] && l.vk.vkWaitForFences != nullptr) {
                     const auto fence_t0 = std::chrono::steady_clock::now();
                     VkResult fr = VK_TIMEOUT;
                     for (int slice = 0; slice < 4 && fr == VK_TIMEOUT; ++slice) {
                         // 250ms a slice: long enough not to spin, short
                         // enough that a stall is a hitch rather than a
                         // freeze.
-                        fr = l.wait_for_fences(l.device, 1, &c.fence[index], VK_TRUE,
+                        fr = l.vk.vkWaitForFences(l.device, 1, &c.fence[index], VK_TRUE,
                                                 250ull * 1000ull * 1000ull);
                     }
                     if (fr == VK_SUCCESS) {
-                        if (l.reset_fences != nullptr) l.reset_fences(l.device, 1, &c.fence[index]);
+                        if (l.vk.vkResetFences != nullptr) l.vk.vkResetFences(l.device, 1, &c.fence[index]);
                     } else {
                         image_ready = false;
                         const double waited = std::chrono::duration<double>(
@@ -8065,7 +7902,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 VkResult sr = VK_SUCCESS;
                 {
                     std::lock_guard<std::mutex> queue_lock(queue_mutex());
-                    sr = l.queue_submit(from_u64<VkQueue>(queue), 1, &si, c.fence[index]);
+                    sr = l.vk.vkQueueSubmit(from_u64<VkQueue>(queue), 1, &si, c.fence[index]);
                 }
                 if (sr == VK_SUCCESS) {
                     c.in_flight[index] = true;
@@ -8144,7 +7981,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
         lock_t = std::chrono::steady_clock::now();
-        res = l.queue_present(from_u64<VkQueue>(queue), &pi);
+        res = l.vk.vkQueuePresentKHR(from_u64<VkQueue>(queue), &pi);
         present_t1 = std::chrono::steady_clock::now();
         fr::record(fr::Event::PresentEnd, static_cast<uint64_t>(static_cast<int32_t>(res)),
                    static_cast<uint64_t>(
@@ -8362,12 +8199,12 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             UpscaleChain& fc = failed->second;
             const uint32_t index = indices[0];
             bool repaired = false;
-            if (index < fc.done.size() && l.create_semaphore != nullptr) {
+            if (index < fc.done.size() && l.vk.vkCreateSemaphore != nullptr) {
                 fc.retired.push_back(fc.done[index]);
                 VkSemaphoreCreateInfo sci{};
                 sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
                 VkSemaphore fresh = VK_NULL_HANDLE;
-                if (l.create_semaphore(l.device, &sci, nullptr, &fresh) == VK_SUCCESS) {
+                if (l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &fresh) == VK_SUCCESS) {
                     fc.done[index] = fresh;
                     repaired = true;
                     static int said = 0;
@@ -8405,12 +8242,12 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
 uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count, uint32_t stride,
                                     uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_query_pool_results == nullptr) {
+    if (l.vk.vkGetQueryPoolResults == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     const size_t size = static_cast<size_t>(stride) * count;
     out.assign(size, 0);
-    VkResult r = l.get_query_pool_results(l.device, from_u64<VkQueryPool>(pool), first, count, size,
+    VkResult r = l.vk.vkGetQueryPoolResults(l.device, from_u64<VkQueryPool>(pool), first, count, size,
                                            out.data(), stride, flags);
     *out_len = static_cast<uint32_t>(out.size());
     return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -8430,7 +8267,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
     using K = vk_wire::CmdKind;
     switch (kind) {
         case K::CopyBuffer: {
-            if (l.cmd_copy_buffer == nullptr) break;
+            if (l.vk.vkCmdCopyBuffer == nullptr) break;
             VkBuffer src = from_u64<VkBuffer>(r.u64());
             VkBuffer dst = from_u64<VkBuffer>(r.u64());
             const uint32_t n = r.u32();
@@ -8440,11 +8277,11 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                 c.dstOffset = r.u64();
                 c.size = r.u64();
             }
-            l.cmd_copy_buffer(cb, src, dst, n, regions.empty() ? nullptr : regions.data());
+            l.vk.vkCmdCopyBuffer(cb, src, dst, n, regions.empty() ? nullptr : regions.data());
             break;
         }
         case K::CopyBufferToImage: {
-            if (l.cmd_copy_buffer_to_image == nullptr) break;
+            if (l.vk.vkCmdCopyBufferToImage == nullptr) break;
             VkBuffer src = from_u64<VkBuffer>(r.u64());
             VkImage dst = from_u64<VkImage>(r.u64());
             const uint32_t layout = r.u32();
@@ -8465,12 +8302,12 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                 c.imageExtent.height = r.u32();
                 c.imageExtent.depth = r.u32();
             }
-            l.cmd_copy_buffer_to_image(cb, src, dst, static_cast<VkImageLayout>(layout), n,
+            l.vk.vkCmdCopyBufferToImage(cb, src, dst, static_cast<VkImageLayout>(layout), n,
                                         regions.empty() ? nullptr : regions.data());
             break;
         }
         case K::CopyImageToBuffer: {
-            if (l.cmd_copy_image_to_buffer == nullptr) break;
+            if (l.vk.vkCmdCopyImageToBuffer == nullptr) break;
             VkImage src = from_u64<VkImage>(r.u64());
             const uint64_t dst_handle = r.u64();
             VkBuffer dst = from_u64<VkBuffer>(dst_handle);
@@ -8520,12 +8357,12 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                     }
                 }
             }
-            l.cmd_copy_image_to_buffer(cb, src, static_cast<VkImageLayout>(layout), dst, n,
+            l.vk.vkCmdCopyImageToBuffer(cb, src, static_cast<VkImageLayout>(layout), dst, n,
                                         regions.empty() ? nullptr : regions.data());
             break;
         }
         case K::CopyImage: {
-            if (l.cmd_copy_image == nullptr) break;
+            if (l.vk.vkCmdCopyImage == nullptr) break;
             VkImage src = from_u64<VkImage>(r.u64());
             const uint32_t sl = r.u32();
             VkImage dst = from_u64<VkImage>(r.u64());
@@ -8551,13 +8388,13 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                 c.extent.height = r.u32();
                 c.extent.depth = r.u32();
             }
-            l.cmd_copy_image(cb, src, static_cast<VkImageLayout>(sl), dst,
+            l.vk.vkCmdCopyImage(cb, src, static_cast<VkImageLayout>(sl), dst,
                               static_cast<VkImageLayout>(dl), n,
                               regions.empty() ? nullptr : regions.data());
             break;
         }
         case K::BlitImage: {
-            if (l.cmd_blit_image == nullptr) break;
+            if (l.vk.vkCmdBlitImage == nullptr) break;
             VkImage src = from_u64<VkImage>(r.u64());
             const uint32_t sl = r.u32();
             VkImage dst = from_u64<VkImage>(r.u64());
@@ -8593,7 +8430,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                 }
                 ++blits;
             }
-            l.cmd_blit_image(cb, src, static_cast<VkImageLayout>(sl), dst,
+            l.vk.vkCmdBlitImage(cb, src, static_cast<VkImageLayout>(sl), dst,
                               static_cast<VkImageLayout>(dl), n,
                               regions.empty() ? nullptr : regions.data(),
                               static_cast<VkFilter>(filter));
@@ -8602,7 +8439,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
         case K::ResolveImage: {
             // Same wire shape as CopyImage: VkImageResolve and VkImageCopy
             // are laid out identically.
-            if (l.cmd_resolve_image == nullptr) break;
+            if (l.vk.vkCmdResolveImage == nullptr) break;
             VkImage src = from_u64<VkImage>(r.u64());
             const uint32_t sl = r.u32();
             VkImage dst = from_u64<VkImage>(r.u64());
@@ -8628,7 +8465,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                 c.extent.height = r.u32();
                 c.extent.depth = r.u32();
             }
-            l.cmd_resolve_image(cb, src, static_cast<VkImageLayout>(sl), dst,
+            l.vk.vkCmdResolveImage(cb, src, static_cast<VkImageLayout>(sl), dst,
                                  static_cast<VkImageLayout>(dl), n,
                                  regions.empty() ? nullptr : regions.data());
             break;
@@ -8708,8 +8545,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     // turning on only for a run that is hunting a hang.
     static const bool mark_engine_commands =
         std::getenv("STUD_VK_ENGINE_CHECKPOINTS") != nullptr;
-    if (mark_engine_commands && l.cmd_set_checkpoint != nullptr && cb != VK_NULL_HANDLE) {
-        l.cmd_set_checkpoint(cb, engine_command_marker(kind));
+    if (mark_engine_commands && l.vk.vkCmdSetCheckpointNV != nullptr && cb != VK_NULL_HANDLE) {
+        l.vk.vkCmdSetCheckpointNV(cb, engine_command_marker(kind));
     }
 
     // STUD_VK_CMD_STATS=1: how many of each command actually get
@@ -8734,7 +8571,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
 
     switch (static_cast<K>(kind)) {
         case K::BeginRenderPass: {
-            if (l.cmd_begin_render_pass == nullptr) break;
+            if (l.vk.vkCmdBeginRenderPass == nullptr) break;
             // STUD_VK_TRACE_PASSES=1: what each render pass actually
             // renders into, and how big. A frame's worth of draws going
             // into a 1x1 or zero-sized area looks exactly like a black
@@ -8813,7 +8650,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             l.pass_draws = 0;
             l.traced_pass = trace_passes && pass_no <= 40 ? pass_no : -1;
             l.in_screen_pass = l.swapchain_framebuffers.count(to_u64(bi.framebuffer)) != 0;
-            l.cmd_begin_render_pass(cb, &bi, static_cast<VkSubpassContents>(contents));
+            l.vk.vkCmdBeginRenderPass(cb, &bi, static_cast<VkSubpassContents>(contents));
             break;
         }
         case K::EndRenderPass:
@@ -8837,18 +8674,18 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 l.screen_draws = 0;
                 l.screen_binds = 0;
             }
-            if (l.cmd_end_render_pass) l.cmd_end_render_pass(cb);
+            if (l.vk.vkCmdEndRenderPass) l.vk.vkCmdEndRenderPass(cb);
             break;
         case K::BindPipeline: {
-            if (l.cmd_bind_pipeline == nullptr) break;
+            if (l.vk.vkCmdBindPipeline == nullptr) break;
             const uint32_t bp = r.u32();
-            l.cmd_bind_pipeline(cb, static_cast<VkPipelineBindPoint>(bp),
+            l.vk.vkCmdBindPipeline(cb, static_cast<VkPipelineBindPoint>(bp),
                                  from_u64<VkPipeline>(r.u64()));
             break;
         }
         case K::BindDescriptorSets: {
             if (l.in_screen_pass) ++l.screen_binds;
-            if (l.cmd_bind_descriptor_sets == nullptr) break;
+            if (l.vk.vkCmdBindDescriptorSets == nullptr) break;
             const uint32_t bp = r.u32();
             VkPipelineLayout layout = from_u64<VkPipelineLayout>(r.u64());
             const uint32_t first = r.u32();
@@ -8858,56 +8695,56 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             const uint32_t nd = r.u32();
             std::vector<uint32_t> offsets(nd);
             for (auto& o : offsets) o = r.u32();
-            l.cmd_bind_descriptor_sets(cb, static_cast<VkPipelineBindPoint>(bp), layout, first, ns,
+            l.vk.vkCmdBindDescriptorSets(cb, static_cast<VkPipelineBindPoint>(bp), layout, first, ns,
                                         sets.empty() ? nullptr : sets.data(), nd,
                                         offsets.empty() ? nullptr : offsets.data());
             break;
         }
         case K::BindVertexBuffers: {
-            if (l.cmd_bind_vertex_buffers == nullptr) break;
+            if (l.vk.vkCmdBindVertexBuffers == nullptr) break;
             const uint32_t first = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkBuffer> buffers(n);
             std::vector<VkDeviceSize> offsets(n);
             for (auto& b : buffers) b = from_u64<VkBuffer>(r.u64());
             for (auto& o : offsets) o = r.u64();
-            l.cmd_bind_vertex_buffers(cb, first, n, buffers.empty() ? nullptr : buffers.data(),
+            l.vk.vkCmdBindVertexBuffers(cb, first, n, buffers.empty() ? nullptr : buffers.data(),
                                        offsets.empty() ? nullptr : offsets.data());
             break;
         }
         case K::BindIndexBuffer: {
-            if (l.cmd_bind_index_buffer == nullptr) break;
+            if (l.vk.vkCmdBindIndexBuffer == nullptr) break;
             VkBuffer buffer = from_u64<VkBuffer>(r.u64());
             const uint64_t offset = r.u64();
-            l.cmd_bind_index_buffer(cb, buffer, offset, static_cast<VkIndexType>(r.u32()));
+            l.vk.vkCmdBindIndexBuffer(cb, buffer, offset, static_cast<VkIndexType>(r.u32()));
             break;
         }
         case K::Draw: {
             ++l.pass_draws;
             if (l.in_screen_pass) ++l.screen_draws;
-            if (l.cmd_draw == nullptr) break;
+            if (l.vk.vkCmdDraw == nullptr) break;
             const uint32_t vc = r.u32(), ic = r.u32(), fv = r.u32(), fi = r.u32();
-            l.cmd_draw(cb, vc, ic, fv, fi);
+            l.vk.vkCmdDraw(cb, vc, ic, fv, fi);
             break;
         }
         case K::DrawIndexed: {
             ++l.pass_draws;
             if (l.in_screen_pass) ++l.screen_draws;
-            if (l.cmd_draw_indexed == nullptr) break;
+            if (l.vk.vkCmdDrawIndexed == nullptr) break;
             const uint32_t xc = r.u32(), ic = r.u32(), fx = r.u32();
             const int32_t vo = static_cast<int32_t>(r.u32());
             const uint32_t fi = r.u32();
-            l.cmd_draw_indexed(cb, xc, ic, fx, vo, fi);
+            l.vk.vkCmdDrawIndexed(cb, xc, ic, fx, vo, fi);
             break;
         }
         case K::Dispatch: {
-            if (l.cmd_dispatch == nullptr) break;
+            if (l.vk.vkCmdDispatch == nullptr) break;
             const uint32_t x = r.u32(), y = r.u32(), z = r.u32();
-            l.cmd_dispatch(cb, x, y, z);
+            l.vk.vkCmdDispatch(cb, x, y, z);
             break;
         }
         case K::SetViewport: {
-            if (l.cmd_set_viewport == nullptr) break;
+            if (l.vk.vkCmdSetViewport == nullptr) break;
             const uint32_t first = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkViewport> vps(n);
@@ -8919,11 +8756,11 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 v.minDepth = r.f32();
                 v.maxDepth = r.f32();
             }
-            l.cmd_set_viewport(cb, first, n, vps.empty() ? nullptr : vps.data());
+            l.vk.vkCmdSetViewport(cb, first, n, vps.empty() ? nullptr : vps.data());
             break;
         }
         case K::SetScissor: {
-            if (l.cmd_set_scissor == nullptr) break;
+            if (l.vk.vkCmdSetScissor == nullptr) break;
             const uint32_t first = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkRect2D> rects(n);
@@ -8933,11 +8770,11 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 rc.extent.width = r.u32();
                 rc.extent.height = r.u32();
             }
-            l.cmd_set_scissor(cb, first, n, rects.empty() ? nullptr : rects.data());
+            l.vk.vkCmdSetScissor(cb, first, n, rects.empty() ? nullptr : rects.data());
             break;
         }
         case K::PipelineBarrier: {
-            if (l.cmd_pipeline_barrier == nullptr) break;
+            if (l.vk.vkCmdPipelineBarrier == nullptr) break;
             // Not const: make_barrier_legal() may widen them below.
             VkPipelineStageFlags src_stage = r.u32(), dst_stage = r.u32();
             const uint32_t dep_flags = r.u32();
@@ -9126,7 +8963,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // and then handing the driver the original count with a
             // shorter array is a read past the end of it.
             make_barrier_legal(&src_stage, &dst_stage, mem, buf, img);
-            l.cmd_pipeline_barrier(cb, src_stage, dst_stage, dep_flags,
+            l.vk.vkCmdPipelineBarrier(cb, src_stage, dst_stage, dep_flags,
                                     static_cast<uint32_t>(mem.size()),
                                     mem.empty() ? nullptr : mem.data(),
                                     static_cast<uint32_t>(buf.size()),
@@ -9144,18 +8981,18 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             record_copy_command(static_cast<K>(kind), l, cb, r);
             break;
         case K::ResetQueryPool: {
-            if (l.cmd_reset_query_pool == nullptr) break;
+            if (l.vk.vkCmdResetQueryPool == nullptr) break;
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
             const uint32_t first = r.u32(), count = r.u32();
-            l.cmd_reset_query_pool(cb, pool, first, count);
+            l.vk.vkCmdResetQueryPool(cb, pool, first, count);
             break;
         }
         case K::WriteTimestamp: {
-            if (l.cmd_write_timestamp == nullptr) break;
+            if (l.vk.vkCmdWriteTimestamp == nullptr) break;
             const uint32_t stage = r.u32();
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
             const uint32_t query = r.u32();
-            l.cmd_write_timestamp(cb, static_cast<VkPipelineStageFlagBits>(stage), pool, query);
+            l.vk.vkCmdWriteTimestamp(cb, static_cast<VkPipelineStageFlagBits>(stage), pool, query);
             break;
         }
         default:
