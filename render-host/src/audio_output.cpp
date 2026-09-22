@@ -397,8 +397,22 @@ void open_device(Device* s) {
         // flattened them first.
         config.noClip = MA_TRUE;
         // The per-stream label, beside the application name set on the
-        // context. A PulseAudio mixer shows both.
-        config.pulse.pStreamNamePlayback = "Stud";
+        // context.
+        //
+        // "Playback", not "Stud", and the difference is the whole point:
+        // a mixer shows the client name and the stream name joined, so
+        // naming the stream after the application too came out as
+        // "Stud . Stud". Plasma's applet drops the stream half when it
+        // matches /playback|audio|stream|alsa|pulse|pipewire/i, which is
+        // why every other application on this machine appears under a
+        // single name: Helium's stream is "Playback", speech-dispatcher's
+        // is "playback". This is that convention, not a guess at one
+        // mixer's behaviour, and a mixer that shows both still reads
+        // correctly.
+        //
+        // It must be set to something: left null, miniaudio names the
+        // stream "miniaudio:0".
+        config.pulse.pStreamNamePlayback = "Playback";
         ma_result err = ma_device_init(&a.context, &config, &s->ma_dev);
         if (err == MA_SUCCESS) {
             err = ma_device_start(&s->ma_dev);
@@ -629,9 +643,14 @@ uint64_t audio_open_input_stream(int sample_rate, int channels) {
     config.periodSizeInFrames = 480;
     config.dataCallback = capture_callback;
     config.pUserData = &c;
-    // Named in the mixer as what it is, so a user looking at why their
-    // microphone light is on sees Stud and not a bare process name.
-    config.pulse.pStreamNameCapture = "Stud voice chat";
+    // Named for what it is rather than for the application again, the
+    // same reasoning as the playback stream above. This one deliberately
+    // does NOT use a word the mixer filters out: a recording stream
+    // reading "Stud . Voice chat" tells a user looking at why their
+    // microphone light is on exactly which part of Stud opened it, and
+    // that is worth a second line where a playback stream's was pure
+    // duplication.
+    config.pulse.pStreamNameCapture = "Voice chat";
     ma_result err = ma_device_init(&a.context, &config, &c.ma_dev);
     if (err != MA_SUCCESS) {
         std::printf("stud-render-host: audio: could not open the microphone (%s)\n",
