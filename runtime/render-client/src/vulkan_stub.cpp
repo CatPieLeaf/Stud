@@ -48,6 +48,11 @@
 
 #include <vulkan/vulkan_core.h>
 
+// Header-only, the same way texture_cache.cpp takes it: the symbols
+// are static to this translation unit rather than linked.
+#define XXH_INLINE_ALL
+#include "xxhash.h"
+
 #include "mapped_write_barrier.h"
 #include "render_client_common.h"
 #include "uffd_scan.h"
@@ -517,6 +522,18 @@ struct PendingDecode {
     // The allocation this decode writes into, so those bytes can be sent
     // once they exist; see send_decoded_scratch().
     VkDeviceMemory scratch_memory = VK_NULL_HANDLE;
+    // A decode that was already done, speculatively, when this copy was
+    // recorded rather than when it was submitted. See early_decode().
+    //
+    // The hash is of the SOURCE bytes as they stood at that moment. A
+    // copy's source only has to be correct when the copy executes, so
+    // the engine is entitled to keep writing after recording it; the
+    // hash is what says whether it did. Equal at submit means the
+    // speculative decode describes the bytes the copy will actually
+    // read, and the work is already done.
+    bool speculated = false;
+    uint64_t spec_hash_high = 0;
+    uint64_t spec_hash_low = 0;
     // Diagnostic only: which image this upload is for, so a burst can be
     // read as "one texture streamed in" or "the same texture re-uploaded".
     uint64_t image = 0;
@@ -4279,6 +4296,147 @@ void send_decoded_scratch(uint64_t memory) {
     if (len > 0) send_mapped_run(memory, m, 0, len);
 }
 
+// Decoding a texture when the copy is RECORDED rather than when it is
+// submitted.
+//
+// Measured, with STUD_TEX_DECODE_TRACE on a real session: "texture
+// decode took 38.3 ms this submit (8.33 MB)", against frame intervals
+// of 39.1, 56.4 and 61.2ms in the flight recorder, whose gap sat
+// between the frame's last barrier and its submit. The decode is
+// already off the engine's own thread -- it runs on the writer thread
+// -- but it is ordered immediately ahead of the submit it feeds, so its
+// whole cost lands on the frame anyway.
+//
+// Moving it earlier is safe only if the bytes it reads are the bytes
+// the copy will read. A copy's source only has to be correct when the
+// copy EXECUTES, so the engine may legitimately keep writing after
+// recording it, and run_pending_decodes defers for exactly that reason.
+// So this does not assume; it records an XXH3-128 of the source and the
+// submit compares. Equal means the speculative decode describes the
+// bytes the copy will read and the work is already done; different
+// means it is thrown away and the ordinary path runs, which is no worse
+// than today.
+//
+// The residual risk is a source rewritten to something else and then
+// restored to its original bytes entirely within this window, which
+// would match the hash while the decode read neither state. Staging
+// buffers are written once and copied; nothing in the engine does that.
+//
+// OFF by default. This is the path that produced corrupted textures
+// once already, and a change here earns its default by being measured,
+// not by being reasoned about.
+bool early_decode_enabled() {
+    static const bool on = std::getenv("STUD_TEX_EARLY_DECODE") != nullptr;
+    return on;
+}
+
+class EarlyDecoder {
+public:
+    static EarlyDecoder& instance() {
+        static EarlyDecoder d;
+        return d;
+    }
+
+    // Queues one decode. Returns immediately; the caller is the engine's
+    // own recording thread and must not wait for pixels.
+    void submit(const PendingDecode& pd, const uint8_t* src) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            jobs_.push_back(Job{pd, src});
+        }
+        wake_.notify_one();
+    }
+
+    // Waits only for the jobs this submit is about to read.
+    //
+    // Draining everything was the first version and it was worse than no
+    // speculation at all: a submit ended up waiting on decodes for
+    // command buffers it does not carry, which is work that had every
+    // right to still be running. Measured at 32ms to decode 0.56MB,
+    // against 38ms for 8.33MB before the change -- almost all of it
+    // waiting.
+    //
+    // Scoped this way, a job for a later submit keeps decoding in the
+    // background, which is the entire point: its cost lands on no frame
+    // at all.
+    void drain_for(const std::vector<VkCommandBuffer>& submitted) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        done_.wait(lock, [&] {
+            for (const Job& j : jobs_) {
+                if (std::find(submitted.begin(), submitted.end(), j.pd.cb) != submitted.end()) {
+                    return false;
+                }
+            }
+            return !(running_ && std::find(submitted.begin(), submitted.end(), running_cb_) !=
+                                     submitted.end());
+        });
+    }
+
+    // The hash this source decoded to, if it was decoded here.
+    bool result_for(const uint8_t* src, uint64_t* high, uint64_t* low) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = results_.find(src);
+        if (it == results_.end()) return false;
+        *high = it->second.first;
+        *low = it->second.second;
+        results_.erase(it);
+        return true;
+    }
+
+private:
+    struct Job {
+        PendingDecode pd;
+        const uint8_t* src;
+    };
+
+    EarlyDecoder() : thread_([this] { loop(); }) { thread_.detach(); }
+
+    void loop() {
+        for (;;) {
+            Job job;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                wake_.wait(lock, [this] { return !jobs_.empty(); });
+                job = jobs_.front();
+                jobs_.erase(jobs_.begin());
+                running_ = true;
+                running_cb_ = job.pd.cb;
+            }
+            const PendingDecode& pd = job.pd;
+            bool ok = true;
+            for (uint32_t layer = 0; layer < pd.layers && ok; ++layer) {
+                ok = stud::texture_decode::decode(
+                    pd.format, job.src + layer * pd.src_layer_bytes, pd.width, pd.height,
+                    pd.dst + layer * pd.dst_layer_bytes, pd.row_pitch);
+            }
+            // Hashed AFTER the decode, so a match at submit means the
+            // bytes did not move between this decode finishing and the
+            // copy being submitted.
+            XXH128_hash_t h{};
+            if (ok) {
+                h = XXH3_128bits(job.src, pd.src_layer_bytes * pd.layers);
+            }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (ok) results_[job.src] = {h.high64, h.low64};
+                running_ = false;
+            }
+            done_.notify_all();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::condition_variable done_;
+    std::vector<Job> jobs_;
+    std::map<const uint8_t*, std::pair<uint64_t, uint64_t>> results_;
+    bool running_ = false;
+    // Which command buffer the in-flight job belongs to, so a submit can
+    // tell whether it has to wait for it.
+    VkCommandBuffer running_cb_ = VK_NULL_HANDLE;
+    std::thread thread_;
+};
+
 void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
     // The lock covers only the bookkeeping. Running the decode itself
     // under it would hold the engine out of vkCreateImage and every
@@ -4298,6 +4456,15 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
     // does not carry, reported work that never happened, which is what
     // made a static Home screen look like it decoded 88GB in 100s.
     uint64_t decoded_bytes = 0;
+    // Speculative decodes reused, and thrown away because the source
+    // moved. Reported together below so the trade is visible rather than
+    // assumed.
+    size_t early_reused = 0;
+    size_t early_stale = 0;
+    // Nothing speculative is read until every queued job has been
+    // attempted; a job still running has recorded no hash, so it would
+    // simply be decoded again here.
+    if (early_decode_enabled()) EarlyDecoder::instance().drain_for(submitted);
     // Which scratch allocations this pass wrote into, so they can be sent
     // once the decode has actually produced the bytes.
     std::vector<uint64_t> scratch_memories;
@@ -4314,7 +4481,43 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
         const uint8_t* bytes =
             mapped_bytes_for(pd.src, pd.src_offset, pd.src_layer_bytes * pd.layers);
         const bool ok = bytes != nullptr && stud::texture_decode::is_emulated(pd.format);
-        if (ok) {
+        // Decoded already, when the copy was recorded. Kept apart from
+        // `ok`, which means "this could be decoded at all" and whose
+        // false branch ZEROES the scratch on purpose so a decoder that
+        // failed shows as an obviously blank texture. Folding the two
+        // together is what turned every reused texture black.
+        bool reused = false;
+        // Already decoded when this copy was recorded?
+        //
+        // Only if the source still hashes to what it did then. The
+        // engine is allowed to have written it since, and if it did the
+        // speculative pixels describe bytes that no longer exist, so
+        // they are dropped and the ordinary path below runs.
+        if (ok && pd.speculated) {
+            uint64_t high = 0;
+            uint64_t low = 0;
+            if (EarlyDecoder::instance().result_for(bytes, &high, &low)) {
+                const XXH128_hash_t now =
+                    XXH3_128bits(bytes, pd.src_layer_bytes * pd.layers);
+                if (now.high64 == high && now.low64 == low) {
+                    // The pixels are already in scratch. Everything below
+                    // -- the bands, the pool, the wait -- is skipped.
+                    early_reused += 1;
+                    decoded_bytes += pd.dst_layer_bytes * pd.layers;
+                    if (pd.scratch_memory != VK_NULL_HANDLE) {
+                        const uint64_t mem = to_u64(pd.scratch_memory);
+                        if (std::find(scratch_memories.begin(), scratch_memories.end(), mem) ==
+                            scratch_memories.end()) {
+                            scratch_memories.push_back(mem);
+                        }
+                    }
+                    reused = true;  // the pixels are already in scratch
+                } else {
+                    early_stale += 1;
+                }
+            }
+        }
+        if (ok && !reused) {
             decoded_bytes += pd.dst_layer_bytes * pd.layers;
             if (pd.scratch_memory != VK_NULL_HANDLE) {
                 const uint64_t mem = to_u64(pd.scratch_memory);
@@ -4417,6 +4620,11 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
     // this wrote an unbuffered line per stalling submit, 447 of them in
     // one real session, through the session-log tee, at exactly the moment
     // the frame was already late. Investigation output, armed by default.
+    if (decode_trace && (early_reused != 0 || early_stale != 0)) {
+        std::fprintf(stderr,
+                     "stud: early decode: %zu reused, %zu thrown away (source moved)\n",
+                     early_reused, early_stale);
+    }
     if (decode_trace && ms >= 2.0) {
         std::fprintf(stderr, "stud: texture decode took %.1f ms this submit (%.2f MB)\n", ms,
                      static_cast<double>(decoded_bytes) / (1024.0 * 1024.0));
@@ -4526,6 +4734,18 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
                     pd.height = e.height;
                     pd.layers = layers;
                     pd.image = to_u64(dst);
+                    // Start it now rather than at submit. The copy will
+                    // not execute until the submit either way, and the
+                    // hash recorded here is what lets that submit trust
+                    // the result. See EarlyDecoder.
+                    if (early_decode_enabled()) {
+                        const uint8_t* early = mapped_bytes_for(
+                            pd.src, pd.src_offset, pd.src_layer_bytes * pd.layers);
+                        if (early != nullptr && stud::texture_decode::is_emulated(pd.format)) {
+                            pd.speculated = true;
+                            EarlyDecoder::instance().submit(pd, early);
+                        }
+                    }
                     pending_decodes().push_back(pd);
 
                     decoded_regions[i].bufferOffset = scratch.offset + offsets[i];

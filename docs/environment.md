@@ -85,7 +85,8 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_TEX_CACHE_FORCE` | off | Use the cache even on a rotational disk, where it is normally skipped. |
 | `STUD_TEX_NO_BC`, `STUD_TEX_NO_BC7` | off | Stop using the BC formats even where the driver has them. |
 | `STUD_TEX_FORCE_DECODE`, `STUD_NO_TEX_DECODE` | off | Force or forbid decoding ETC/PVRTC in software. |
-| `STUD_TEX_DECODE_TRACE` | off | Reports each format decoded. |
+| `STUD_TEX_DECODE_TRACE` | off | Reports each format decoded, and what a submit's decode cost. |
+| `STUD_TEX_EARLY_DECODE` | off | Decode a texture when its copy is **recorded** rather than when it is submitted, so the cost stops landing on the frame. Measured at 38 ms on one submit against frame intervals of 39-61 ms. The submit hashes the source and falls back to decoding normally if the engine wrote to it in between, so a mismatch costs nothing but the wasted work. Off by default until it has been played on. |
 
 ## Memory and the render wire
 
