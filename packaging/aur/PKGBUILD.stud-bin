@@ -26,7 +26,7 @@
 
 pkgname=stud-bin
 _pkgname=stud
-pkgver=1.1.6
+pkgver=1.1.7
 pkgrel=1
 pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')
