@@ -5286,45 +5286,6 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // log line and its next. Device destroy happens a handful
                 // of times a session, so a few clocks and one line cost
                 // nothing and settle it.
-                // What is still alive when the device goes, and whether
-                // the device was already lost.
-                //
-                // Measured, because the teardown costs ~12.03s over and
-                // over (12034, 12038, 12029, 12029ms in one session) and
-                // that constant is a timeout firing, not work being done.
-                // Two facts narrow it. After a device loss the destroy is
-                // instant (27ms), so the wait is for something a live
-                // device still holds. And vkDeviceWaitIdle returns in 1ms
-                // while vkDestroyDevice takes the whole 12s, so the GPU is
-                // already idle and it is NOT outstanding GPU work.
-                //
-                // That leaves what the idle check does not cover: WSI. A
-                // swapchain still alive here has to be torn down inside
-                // vkDestroyDevice, and on X11 that waits on present
-                // completions that may never arrive. The engine is
-                // supposed to have destroyed it first; this line says
-                // whether it did.
-                // g_retired_chains is deliberately not read here: it is
-                // pushed from whichever thread destroyed a swapchain and
-                // reading its size would need its mutex for a number that
-                // is not the question.
-                // CAPTURED here, PRINTED after the teardown, deliberately.
-                //
-                // The first version printed on the spot and the ~12s stall
-                // stopped happening: twelve clean joins against 5 of 7 and
-                // 6 of 9 slow in the two sessions before it. A printf on
-                // this thread ahead of vkDestroyDevice is exactly the shape
-                // that already changed behaviour once here -- 3a71e33 put
-                // one on the swapchain-rebuild path and CAUSED the join
-                // freeze, which is why 431b9b5 took it out.
-                //
-                // So nothing of this runs before the destroy now. If the
-                // stall comes back with the line moved down here, the delay
-                // was masking it, and the stall is something that drains
-                // given a moment rather than a fixed cost.
-                const size_t live_swapchains = g_swapchain_extents.size();
-                const bool was_lost = g_device_lost.load(std::memory_order_relaxed);
-
                 const auto teardown_t0 = std::chrono::steady_clock::now();
                 for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
                 g_upscale_chains.clear();
@@ -5415,12 +5376,10 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                         return std::chrono::duration<double, std::milli>(b - a).count();
                     };
                     std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
-                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f "
-                                "(at teardown: %zu swapchain(s) still alive, device_lost=%d)\n",
+                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f\n",
                                 ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
                                 ms(after_chains, after_flush), ms(after_flush, after_idle),
-                                ms(after_idle, after_frees), ms(after_frees, after_destroy),
-                                live_swapchains, was_lost ? 1 : 0);
+                                ms(after_idle, after_frees), ms(after_frees, after_destroy));
                     std::fflush(stdout);
                 }
                 l.device = VK_NULL_HANDLE;
