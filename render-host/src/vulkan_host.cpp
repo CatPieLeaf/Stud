@@ -673,12 +673,24 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     // VK_EXT_swapchain_maintenance1 cannot be enabled on the device
     // without it, and that one is what lets a present be waited on. See
     // the device-creation path.
-    if (instance_supports_extension(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME)) {
-        bool already = false;
-        for (const std::string& e : extensions) {
-            if (e == VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME) already = true;
+    //
+    // Both names go on together: surface_maintenance1 requires
+    // get_surface_capabilities2, and an extension whose own requirement
+    // is missing makes the whole vkCreateInstance call invalid. The
+    // driver here accepted it anyway, which is exactly how that kind of
+    // mistake survives to fail on someone else's machine; the validation
+    // layer named it immediately (VUID-vkCreateInstance-
+    // ppEnabledExtensionNames-01388).
+    if (instance_supports_extension(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME) &&
+        instance_supports_extension(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME)) {
+        for (const char* name : {VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
+                                 VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME}) {
+            bool already = false;
+            for (const std::string& e : extensions) {
+                if (e == name) already = true;
+            }
+            if (!already) extensions.emplace_back(name);
         }
-        if (!already) extensions.emplace_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
         g_surface_maintenance1_enabled = true;
     }
 
