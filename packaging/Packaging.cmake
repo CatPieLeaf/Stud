@@ -53,10 +53,10 @@ application package yourself.")
 set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
-# portaudio is a real requirement, not an optional extra: the engine's own
-# FMOD initialises an audio device when a game starts and fails outright
-# without one. render-host loads it by name at runtime rather than linking
-# it, so nothing here would notice it missing, hence naming it.
+# Audio names nothing here. render-host compiles miniaudio in and opens
+# whichever of libasound, libpulse or libjack the machine has, by name at
+# runtime, so there is no package to require: a host missing all three
+# runs Stud silently rather than failing to install it.
 # The render host links libxkbcommon directly (it reads the compositor's
 # own keymap, so that a key reports what it types rather than what a US
 # layout would have). Autoreqprov is off below, so nothing would generate
@@ -65,7 +65,7 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # itself, it does not assume a distribution's package name, and naming
 # the package instead is what rpmlint calls explicit-lib-dependency.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, portaudio, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit)")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit)")
 # Weak, both of them: mangohud is a Settings toggle, and wl-clipboard is
 # what the tray's "copy server link" shells out to on Wayland. Neither
 # stops Stud from running.
@@ -134,9 +134,9 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # The same reasoning as the rpm's own list: bubblewrap because Process B
-# is launched inside it and Stud will not start without one, and
-# portaudio because render-host loads it by name at runtime rather than
-# linking it, so no dependency scan would ever find it.
+# is launched inside it and Stud will not start without one. Audio is not
+# named, because miniaudio is compiled in and opens the host's own
+# libasound, libpulse or libjack by name.
 #
 # Qt is named by its Debian binary packages rather than a version, which
 # is only honest if the deb really was built against a Qt no newer than
@@ -163,7 +163,7 @@ libqt6gui6 (>= 6.4) | libqt6gui6t64 (>= 6.4), \
 libqt6widgets6 (>= 6.4) | libqt6widgets6t64 (>= 6.4), \
 libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
 libqt6webenginewidgets6 (>= 6.4), \
-libqt6keychain1, libvulkan1, libportaudio2, libfreetype6, \
+libqt6keychain1, libvulkan1, libfreetype6, \
 libwayland-client0, libxkbcommon0, libxi6")
 # wl-clipboard because the tray's "copy server link" shells out to
 # wl-copy: a Wayland compositor only accepts a clipboard offer with the

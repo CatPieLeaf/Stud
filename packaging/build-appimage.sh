@@ -433,32 +433,13 @@ chmod +x "$appdir/AppRun"
 trap - EXIT
 restore_private
 
-# A PortAudio of Stud's own, for machines that have none.
-#
-# render-host loads the HOST's PortAudio first and only falls back to this
-# one, the system copy is built against the audio stack that machine
-# actually runs (Fedora's has a real PipeWire host API; one built here
-# does not), and using it is what makes Stud appear in the volume mixer as
-# an ordinary application. So this lives outside usr/lib, deliberately, to
-# keep it off LD_LIBRARY_PATH where it could win a race it should lose.
-#
-# It is copied rather than deployed for the same reason libssl is below:
-# nothing links PortAudio, render-host dlopens it, so linuxdeploy cannot
-# see it at all. Its own dependencies, libasound, libjack, libpipewire
-# are excluded above and come from the host, which is the whole point:
-# an ALSA library from another distribution looks for its plugins at that
-# distribution's paths, finds no pipewire or pulse plugin, and falls back
-# to talking to the hardware directly. That is exactly the reported
+# Audio needs nothing bundled. render-host compiles miniaudio in and opens
+# the host's own libasound, libpulse or libjack by name, which is what the
+# PortAudio copy that used to be staged here was working around: a copy
+# built on one distribution looks for ALSA plugins at that distribution's
+# paths, finds no pipewire or pulse plugin on the user's machine, and
+# falls back to talking to the hardware directly. That was the reported
 # "audio does not work and Stud never appears in the volume mixer".
-say "bundling a fallback PortAudio"
-mkdir -p "$appdir/usr/lib/stud/audio"
-for candidate in /usr/lib/x86_64-linux-gnu/libportaudio.so.2 /usr/lib64/libportaudio.so.2; do
-    [ -e "$candidate" ] || continue
-    cp -n "$candidate" "$appdir/usr/lib/stud/audio/libportaudio.so.2"
-    break
-done
-[ -e "$appdir/usr/lib/stud/audio/libportaudio.so.2" ] ||
-    die "no libportaudio.so.2 to fall back on, a machine without PortAudio would be silent"
 
 
 say "packing the image"

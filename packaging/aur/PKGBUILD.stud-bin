@@ -47,7 +47,6 @@ depends=(
   'libx11'
   'libxext'
   'libxi'
-  'portaudio'
   'freetype2'
   'wayland'
   'libxkbcommon'

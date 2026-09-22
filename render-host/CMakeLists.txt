@@ -4,6 +4,7 @@ add_library(stud_render_host_protocol STATIC
 target_include_directories(stud_render_host_protocol PUBLIC include)
 
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
 pkg_check_modules(WaylandEgl REQUIRED IMPORTED_TARGET wayland-egl)
 pkg_check_modules(Egl REQUIRED IMPORTED_TARGET egl)
 pkg_check_modules(GlesV2 REQUIRED IMPORTED_TARGET glesv2)
@@ -140,8 +141,31 @@ else()
 endif()
 
 add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
-target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# What miniaudio is allowed to be. These are set on the target rather than
+# in a source file because they change its declarations as well as its
+# definitions: defining them for miniaudio.c and not for audio_output.cpp
+# would give the two translation units different struct layouts, which
+# links cleanly and then misbehaves.
+#
+# Kept: the four backends this actually targets. Dropped: every backend
+# for another operating system, and the null backend, which accepts any
+# device and plays nothing (audio that pretends to work hides the fact
+# that it did not open). Dropped too: decoding, encoding, the resource
+# manager, the node graph and the high-level engine, none of which Stud
+# uses -- it hands miniaudio interleaved float32 that the game engine has
+# already mixed.
+target_compile_definitions(stud-render-host PRIVATE
+    MA_NO_NULL
+    MA_NO_WASAPI MA_NO_DSOUND MA_NO_WINMM MA_NO_COREAUDIO
+    MA_NO_SNDIO MA_NO_AUDIO4 MA_NO_AAUDIO MA_NO_OPENSL MA_NO_WEBAUDIO
+    MA_NO_CUSTOM
+    MA_NO_DECODING MA_NO_ENCODING MA_NO_WAV MA_NO_FLAC MA_NO_MP3
+    MA_NO_RESOURCE_MANAGER MA_NO_NODE_GRAPH MA_NO_ENGINE MA_NO_GENERATION
+)
 target_link_libraries(stud-render-host PRIVATE
     stud_render
     stud_config
@@ -150,6 +174,11 @@ target_link_libraries(stud-render-host PRIVATE
     PkgConfig::WaylandEgl
     PkgConfig::Egl
     PkgConfig::GlesV2
+    # miniaudio's own requirements: it spawns the realtime audio thread
+    # itself and uses libm. It opens libasound/libpulse/libjack by name at
+    # runtime, so none of those are linked.
+    Threads::Threads
+    m
     ${CMAKE_DL_LIBS}
 )
 if(STUD_ENABLE_DEV_RENDER_TOGGLE)

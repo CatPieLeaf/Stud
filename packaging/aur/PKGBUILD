@@ -31,9 +31,9 @@ license=('AGPL-3.0-or-later')
 # binary on purpose, a distribution's own build carries the AppArmor and
 # SELinux policy that lets it create a user namespace at all.
 #
-# portaudio is loaded by name at runtime rather than linked, so nothing in
-# the ELF would record the dependency; the engine's own FMOD opens an
-# audio device when a game starts and fails outright without one.
+# Audio is not listed: miniaudio is compiled into render-host and opens
+# whichever of libasound, libpulse or libjack the machine has, by name at
+# runtime, so there is no package to depend on.
 depends=(
   'bubblewrap'
   'qt6-base'
@@ -44,7 +44,6 @@ depends=(
   'libx11'
   'libxext'
   'libxi'
-  'portaudio'
   'freetype2'
   'wayland'
   'libxkbcommon'

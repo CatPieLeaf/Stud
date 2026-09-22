@@ -31,7 +31,7 @@ namespace stud::jni_bridge {
 //   MICROPHONE_ACCESS , authorized. A desktop grants microphone access
 //                         to a running program without asking, and
 //                         render-host really does open a capture stream
-//                         through PortAudio. Whether a microphone exists
+//                         on the host. Whether a microphone exists
 //                         is a different question, answered by the device
 //                         itself when the stream opens.
 //   everything else   , not supported, and therefore missing. Stud has
