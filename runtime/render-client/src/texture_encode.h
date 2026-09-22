@@ -43,7 +43,7 @@
 //   BC4   10.5 ms ->   2.4 ms
 //   BC5   13.8 ms ->   4.8 ms
 //   BC1   11.7 ms ->  13.7 ms
-//   BC7   30.6 ms -> 134.4 ms
+//   BC7   30.6 ms ->  79.6 ms
 //
 // Three of the four are cheaper. BC7 is not, and that is deliberate: the
 // extra time buys the partitioned mode. See bc7_params() for the full
@@ -62,7 +62,7 @@ namespace stud::texture_encode {
 // The texture cache keys on the source bytes and the formats, so without
 // this a block encoded by an older, worse encoder would be served from
 // disk forever and the change would never reach anything already played.
-inline constexpr uint32_t kEncoderVersion = 5;
+inline constexpr uint32_t kEncoderVersion = 6;
 
 // Each takes one decoded 4x4 block, tightly packed, and writes one
 // compressed block. `rgba` is 16 texels of 4 bytes; `rg16`/`r16` are 16
