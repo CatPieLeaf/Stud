@@ -94,6 +94,13 @@ uint32_t g_preferred_device_index = 0;
 // the extension that actually exists on this session. Set once from
 // main(), before any client connects.
 bool g_on_x11 = false;
+// Whether VK_EXT_surface_maintenance1 went onto the instance, which is
+// the precondition for asking for its device-level half.
+bool g_surface_maintenance1_enabled = false;
+// And whether that half is live on the current device. Everything that
+// waits on a present fence checks this first: without it there are no
+// fences, and the old behaviour is what happens.
+bool g_swapchain_maintenance1_enabled = false;
 }  // namespace
 
 // Bumped every time the window changes size, so tracing that is capped
@@ -583,6 +590,24 @@ uint64_t vk_enumerate_instance_layer_properties(uint32_t capacity, std::vector<u
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
+// What the loader offers before there is an instance to ask.
+//
+// The device-level counterpart is device_supports_extension(); this one
+// takes no handle because instance extensions are a property of the
+// loader and its layers, not of any object.
+bool instance_supports_extension(const char* name) {
+    Loader& l = loader();
+    if (l.enumerate_instance_extension_properties == nullptr) return false;
+    uint32_t n = 0;
+    l.enumerate_instance_extension_properties(nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> props(n);
+    if (n > 0) l.enumerate_instance_extension_properties(nullptr, &n, props.data());
+    for (const auto& p : props) {
+        if (std::strcmp(p.extensionName, name) == 0) return true;
+    }
+    return false;
+}
+
 uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                              uint32_t* out_len) {
     if (!g_vulkan_enabled) {
@@ -642,6 +667,60 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
         }
     }
 
+    // VK_EXT_surface_maintenance1, the instance half of the pair.
+    //
+    // It carries no code of its own here; it exists because
+    // VK_EXT_swapchain_maintenance1 cannot be enabled on the device
+    // without it, and that one is what lets a present be waited on. See
+    // the device-creation path.
+    if (instance_supports_extension(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME)) {
+        bool already = false;
+        for (const std::string& e : extensions) {
+            if (e == VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME) already = true;
+        }
+        if (!already) extensions.emplace_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+        g_surface_maintenance1_enabled = true;
+    }
+
+    // The Vulkan validation layers, off unless asked for.
+    //
+    // They already ship in every Stud package, bundled beside ANGLE, and
+    // until now the only way to run them was to set the loader's own
+    // environment variables by hand. This makes them reachable without
+    // knowing that.
+    //
+    //   STUD_VK_VALIDATION=1     the standard checks
+    //   STUD_VK_VALIDATION=sync  those, plus synchronization validation
+    //
+    // The sync half is the one worth having here. Stud hand-manages
+    // barriers on the engine's behalf (see make_barrier_legal), and a
+    // missing or too-narrow barrier does not fail cleanly: it reads as a
+    // texture that flickers on one machine and not another, or a hang.
+    // Synchronization validation finds those at the call that caused
+    // them rather than at the symptom.
+    //
+    // Never on by default. The layers cost real time per call, and a
+    // shipped Stud should not pay it.
+    VkValidationFeaturesEXT validation_features{};
+    VkValidationFeatureEnableEXT validation_enables[2];
+    uint32_t validation_enable_count = 0;
+    const char* validation_mode = std::getenv("STUD_VK_VALIDATION");
+    if (validation_mode != nullptr && *validation_mode != '\0') {
+        bool already = false;
+        for (const std::string& n : layers) {
+            if (n == "VK_LAYER_KHRONOS_validation") already = true;
+        }
+        if (!already) layers.emplace_back("VK_LAYER_KHRONOS_validation");
+        if (std::strcmp(validation_mode, "sync") == 0) {
+            validation_enables[validation_enable_count++] =
+                VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+        }
+        std::printf("stud-render-host: Vulkan validation ON (%s). This is a debugging aid and "
+                    "costs performance.\n",
+                    validation_enable_count > 0 ? "with synchronization validation" : "standard");
+        std::fflush(stdout);
+    }
+
     std::vector<const char*> layer_ptrs;
     layer_ptrs.reserve(layers.size());
     for (const std::string& s : layers) layer_ptrs.push_back(s.c_str());
@@ -665,6 +744,15 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     ci.ppEnabledLayerNames = layer_ptrs.empty() ? nullptr : layer_ptrs.data();
     ci.enabledExtensionCount = static_cast<uint32_t>(ext_ptrs.size());
     ci.ppEnabledExtensionNames = ext_ptrs.empty() ? nullptr : ext_ptrs.data();
+    // Synchronization validation is a feature of the layer rather than a
+    // layer of its own, so it is switched on through the chain.
+    if (validation_enable_count > 0) {
+        validation_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+        validation_features.enabledValidationFeatureCount = validation_enable_count;
+        validation_features.pEnabledValidationFeatures = validation_enables;
+        validation_features.pNext = ci.pNext;
+        ci.pNext = &validation_features;
+    }
 
     // ONE REAL VkInstance, however many the engine asks for.
     //
@@ -1400,17 +1488,73 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         }
     }
 
+    // VK_EXT_swapchain_maintenance1: a fence that says when a present is
+    // actually finished.
+    //
+    // Without it there is no such thing. vkDeviceWaitIdle covers GPU
+    // work, and a present is not GPU work -- once an image is handed to
+    // the presentation engine it belongs to the compositor, and Vulkan
+    // offers no way to ask whether it is done with it. So a driver
+    // tearing a swapchain down knows the GPU is idle and still cannot
+    // know the presents have retired, and waits out an internal timeout
+    // instead.
+    //
+    // That is the shape of the stall measured on this machine's RTX
+    // 3050: vkDeviceWaitIdle returns in 1ms, vkDestroySwapchainKHR takes
+    // 22.05s and vkDestroyDevice 12.03s, both suspiciously round, and
+    // both instant after a device loss -- when there is nothing
+    // outstanding left to wait for.
+    //
+    // With the extension each present carries a fence, so the wait
+    // happens here, against the real completion, instead of in the
+    // driver against a number it picked. Enabled only where the driver
+    // offers it; everything below checks the flag rather than assuming.
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchain_maintenance{};
+    bool engine_asked_for_maintenance = false;
+    for (const auto* node = reinterpret_cast<const VkBaseInStructure*>(chain); node != nullptr;
+         node = node->pNext) {
+        if (node->sType ==
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT) {
+            engine_asked_for_maintenance = true;
+            break;
+        }
+    }
+    bool stud_added_maintenance = false;
+    if (g_surface_maintenance1_enabled &&
+        device_supports_extension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) {
+        bool already = false;
+        for (const std::string& e : extensions) {
+            if (e == VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME) already = true;
+        }
+        if (!already) extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+        if (!engine_asked_for_maintenance) {
+            swapchain_maintenance.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+            swapchain_maintenance.swapchainMaintenance1 = VK_TRUE;
+            stud_added_maintenance = true;
+        }
+    }
+
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
 
     VkDeviceCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    ci.pNext = chain;
     // Prepended, so the engine's own chain is left exactly as it sent it.
+    //
+    // Built in a void* of its own because a feature struct's pNext is
+    // writable while VkDeviceCreateInfo's is not, so the head cannot
+    // simply be read back out of ci.
+    void* chain_head = const_cast<void*>(chain);
     if (stud_added_fault) {
-        fault_features.pNext = chain;
-        ci.pNext = &fault_features;
+        fault_features.pNext = chain_head;
+        chain_head = &fault_features;
     }
+    if (stud_added_maintenance) {
+        swapchain_maintenance.pNext = chain_head;
+        chain_head = &swapchain_maintenance;
+    }
+    ci.pNext = chain_head;
     ci.flags = hdr.flags;
     ci.queueCreateInfoCount = static_cast<uint32_t>(queues.size());
     ci.pQueueCreateInfos = queues.empty() ? nullptr : queues.data();
@@ -1434,6 +1578,19 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
                 static_cast<int>(r), queues.size(), ext_ptrs.size(), hdr.chain_node_count);
     std::fflush(stdout);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
+    // Recorded only now: the extension was asked for above, and this is
+    // where it is known to have been granted. The engine may also have
+    // brought its own feature struct, in which case the extension is on
+    // the list either way and the fences below are just as valid.
+    g_swapchain_maintenance1_enabled =
+        stud_added_maintenance || (engine_asked_for_maintenance &&
+                                   device_supports_extension(
+                                       VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME));
+    if (g_swapchain_maintenance1_enabled) {
+        std::printf("stud-render-host: swapchain maintenance1 is on; a present can be waited "
+                    "on rather than timed out\n");
+        std::fflush(stdout);
+    }
 
     // Resolve every device-level command from the device itself, now that
     // one exists. The spec requires this, vkGetDeviceProcAddr reaches
@@ -1654,6 +1811,104 @@ H from_u64(uint64_t v) {
         return static_cast<H>(v);
     }
 }
+
+// One fence per in-flight present, so a swapchain can be torn down when
+// its presents are genuinely finished instead of when the driver's own
+// timeout expires. Only live when swapchain maintenance1 is; see
+// vk_create_device().
+//
+// A ring rather than a fence per present: the fence handed out N
+// presents ago is waited on before it is reused, which is the ordinary
+// frames-in-flight pattern and costs nothing once the ring is longer
+// than the swapchain is deep.
+struct PresentFenceRing {
+    std::vector<VkFence> fences;
+    std::vector<bool> in_flight;
+    size_t next = 0;
+};
+std::map<uint64_t, PresentFenceRing>& present_fence_rings() {
+    static std::map<uint64_t, PresentFenceRing> m;
+    return m;
+}
+
+// The fence to attach to this present, or null when there is nothing to
+// attach and the old behaviour applies.
+VkFence take_present_fence(VkSwapchainKHR swapchain) {
+    if (!g_swapchain_maintenance1_enabled) return VK_NULL_HANDLE;
+    Loader& l = loader();
+    if (l.vk.vkCreateFence == nullptr || l.vk.vkWaitForFences == nullptr ||
+        l.vk.vkResetFences == nullptr || l.device == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+    PresentFenceRing& ring = present_fence_rings()[to_u64(swapchain)];
+    if (ring.fences.empty()) {
+        // Deeper than any swapchain Stud builds, so the wait below is
+        // reached only after the present really has had its turn.
+        constexpr size_t kRingSize = 8;
+        ring.fences.assign(kRingSize, VK_NULL_HANDLE);
+        ring.in_flight.assign(kRingSize, false);
+        for (size_t i = 0; i < kRingSize; ++i) {
+            VkFenceCreateInfo fi{};
+            fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            if (l.vk.vkCreateFence(l.device, &fi, nullptr, &ring.fences[i]) != VK_SUCCESS) {
+                ring.fences[i] = VK_NULL_HANDLE;
+            }
+        }
+    }
+    const size_t slot = ring.next;
+    ring.next = (ring.next + 1) % ring.fences.size();
+    VkFence f = ring.fences[slot];
+    if (f == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+    if (ring.in_flight[slot]) {
+        l.vk.vkWaitForFences(l.device, 1, &f, VK_TRUE, UINT64_MAX);
+        ring.in_flight[slot] = false;
+    }
+    l.vk.vkResetFences(l.device, 1, &f);
+    ring.in_flight[slot] = true;
+    return f;
+}
+
+// Everything still outstanding on this swapchain, waited on and then
+// released. Called immediately before the swapchain is destroyed, which
+// is the whole point: after this the driver has nothing left to wait
+// for.
+void settle_present_fences(VkSwapchainKHR swapchain) {
+    auto it = present_fence_rings().find(to_u64(swapchain));
+    if (it == present_fence_rings().end()) return;
+    Loader& l = loader();
+    PresentFenceRing& ring = it->second;
+    if (l.device != VK_NULL_HANDLE && l.vk.vkWaitForFences != nullptr) {
+        std::vector<VkFence> pending;
+        for (size_t i = 0; i < ring.fences.size(); ++i) {
+            if (ring.in_flight[i] && ring.fences[i] != VK_NULL_HANDLE) {
+                pending.push_back(ring.fences[i]);
+            }
+        }
+        if (!pending.empty()) {
+            const auto t0 = std::chrono::steady_clock::now();
+            // Bounded: a compositor that never retires a present must not
+            // become a hang of Stud's own making. Two seconds is far
+            // longer than any real present and far shorter than the
+            // driver timeout this exists to avoid.
+            l.vk.vkWaitForFences(l.device, static_cast<uint32_t>(pending.size()), pending.data(),
+                                 VK_TRUE, 2ull * 1000ull * 1000ull * 1000ull);
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+            if (ms > 50.0) {
+                std::printf("stud-render-host: waited %.0fms for %zu present(s) to retire before "
+                            "destroying the swapchain\n", ms, pending.size());
+                std::fflush(stdout);
+            }
+        }
+    }
+    if (l.device != VK_NULL_HANDLE && l.vk.vkDestroyFence != nullptr) {
+        for (VkFence f : ring.fences) {
+            if (f != VK_NULL_HANDLE) l.vk.vkDestroyFence(l.device, f, nullptr);
+        }
+    }
+    present_fence_rings().erase(it);
+}
+
 
 // Every simple create returns a 64-bit handle the same way.
 uint64_t write_handle(uint64_t handle, std::vector<uint8_t>& out, uint32_t* out_len) {
@@ -3145,6 +3400,7 @@ void sweep_retired_chains() {
             // The swapchain this pass was writing into, held back until
             // now for exactly that reason.
             if (held != VK_NULL_HANDLE && l.vk.vkDestroySwapchainKHR != nullptr) {
+                settle_present_fences(held);
                 l.vk.vkDestroySwapchainKHR(l.device, held, nullptr);
             }
         } else {
@@ -3207,6 +3463,7 @@ void flush_retired_chains(const char* why) {
         c.destroy_with_chain = VK_NULL_HANDLE;
         destroy_upscale_chain(c, /*force=*/true);
         if (held != VK_NULL_HANDLE && l.vk.vkDestroySwapchainKHR != nullptr) {
+            settle_present_fences(held);
             l.vk.vkDestroySwapchainKHR(l.device, held, nullptr);
         }
     }
@@ -5183,6 +5440,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // than handing it over as oldSwapchain would change
                 // nothing; if the create is, it would.
                 const auto destroy_t0 = std::chrono::steady_clock::now();
+                settle_present_fences(from_u64<VkSwapchainKHR>(live));
                 l.vk.vkDestroySwapchainKHR(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
                 const double destroy_ms = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - destroy_t0).count();
@@ -7178,6 +7436,7 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
         build_upscale_chain(chain->second, fresh, ci, /*reuse_offscreen=*/true);
     }
     if (l.vk.vkDestroySwapchainKHR != nullptr && old != VK_NULL_HANDLE) {
+        settle_present_fences(old);
         l.vk.vkDestroySwapchainKHR(l.device, old, nullptr);
     }
     g_swapchain_alias[engine_handle] = to_u64(fresh);
@@ -7647,6 +7906,28 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     pi.swapchainCount = ns;
     pi.pSwapchains = live.empty() ? nullptr : live.data();
     pi.pImageIndices = indices.empty() ? nullptr : indices.data();
+    // A fence per swapchain, so the teardown below can wait for these
+    // presents instead of the driver waiting out a timeout. All or
+    // nothing: the spec wants one fence for every swapchain in the
+    // present, so if any of them cannot be had the whole thing is left
+    // as it was.
+    VkSwapchainPresentFenceInfoEXT present_fence_info{};
+    std::vector<VkFence> present_fences;
+    if (g_swapchain_maintenance1_enabled && ns > 0) {
+        present_fences.reserve(ns);
+        for (uint32_t i = 0; i < ns; ++i) {
+            VkFence f = take_present_fence(live[i]);
+            if (f == VK_NULL_HANDLE) break;
+            present_fences.push_back(f);
+        }
+        if (present_fences.size() == ns) {
+            present_fence_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
+            present_fence_info.swapchainCount = ns;
+            present_fence_info.pFences = present_fences.data();
+            present_fence_info.pNext = pi.pNext;
+            pi.pNext = &present_fence_info;
+        }
+    }
     // STUD_VK_PROBE_PIXELS=1: before presenting, copy the swapchain image
     // to a host-visible buffer and report whether it holds anything but
     // black. This is the difference between "the engine renders nothing"
