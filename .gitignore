@@ -52,6 +52,13 @@ third_party/*
 # embeds straight out of it, so the build needs the file present, not
 # just the reader.
 !third_party/mpv-prescalers/
+# And bc7enc, which is not a reference but the encoder itself: every
+# emulated colour texture is re-encoded through it, so the build needs
+# the source present, not a note pointing at it. ~100 KB of portable
+# C++, no intrinsics, MIT or public domain. It replaced a hand-written
+# single-subset BC7 that had no partitioned modes and left visible
+# squares on normal maps.
+!third_party/bc7enc/
 # Same reasoning for the one vendored Wayland protocol: pointer-warp-v1 is
 # staging and young enough that a distribution a release behind does not
 # ship it, and a build should not fail over how new the host happens to

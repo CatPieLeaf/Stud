@@ -114,6 +114,9 @@ Every one of those is under a permissive licence and ships with its own
 licence text and copyright notice, installed to
 `/usr/share/licenses/stud/` and kept beside the libraries themselves.
 
+Stud re-encodes every emulated colour texture with bc7enc_rdo, vendored
+at `third_party/bc7enc` and available under MIT or public domain.
+
 Stud also builds three shaders from vendored references. The upscaler is
 RAVU-Zoom from mpv-prescalers, LGPL-3.0-or-later, beside SGSR
 (BSD-3-Clause) and FSR1's RCAS (MIT). LGPLv3 incorporates the GPLv3
