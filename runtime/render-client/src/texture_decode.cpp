@@ -92,7 +92,26 @@ private:
     BlockPool() {
         unsigned hw = std::thread::hardware_concurrency();
         if (hw < 2) hw = 2;
-        const unsigned want = hw > 8 ? 3 : (hw > 4 ? 2 : 1);
+        // Half the machine, because encoding a block is the whole cost of
+        // this path and blocks are independent of each other.
+        //
+        // This used to be three workers no matter how wide the machine
+        // was. Measured on a 20-thread one, encoding a 1024x1024 level:
+        //
+        //    1 thread   82.7 ms
+        //    4 threads  20.4 ms   <- what three workers plus the caller gave
+        //    8 threads  15.1 ms
+        //   12 threads  10.3 ms
+        //   16 threads   9.0 ms
+        //   20 threads   9.2 ms
+        //
+        // It stops improving around sixteen and the last four threads buy
+        // nothing, so taking half leaves the other half for the engine's
+        // own eight texture threads (each of which decodes inline when
+        // this pool is busy, see above) and for the render host.
+        unsigned want = hw / 2;
+        if (want < 1) want = 1;
+        if (want > 12) want = 12;
         for (unsigned i = 0; i < want; ++i) {
             threads_.emplace_back([this] { worker(); });
         }
