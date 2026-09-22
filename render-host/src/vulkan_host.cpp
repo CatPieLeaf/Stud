@@ -1968,13 +1968,22 @@ std::map<uint64_t, uint64_t>& present_ids() {
 // android-glue exists to contain.
 constexpr uint64_t kFramesInFlight = 2;
 
-// Off with STUD_PRESENT_PACING=0, because this changes when frames are
-// handed over and that is the kind of thing worth being able to switch
-// off without a rebuild when comparing.
+// On with STUD_PRESENT_PACING=1, off otherwise.
+//
+// Opt-in, because of what it does to the default present mode. Stud
+// presents with MAILBOX unless told otherwise, and the point of MAILBOX
+// is to let the GPU run past the refresh rate and show whichever frame
+// is newest. Waiting for a frame to be DISPLAYED caps that at the
+// refresh rate by construction: the display is what the wait is on.
+//
+// That is a real trade -- frames above the refresh rate are never seen,
+// and bounding the queue is what cuts input lag -- but it is the kind
+// of trade whoever is playing should make, not one to impose on a
+// setting that exists to be uncapped.
 bool present_pacing_enabled() {
     static const bool on = [] {
         const char* v = std::getenv("STUD_PRESENT_PACING");
-        return v == nullptr || std::strcmp(v, "0") != 0;
+        return v != nullptr && std::strcmp(v, "0") != 0;
     }();
     return on;
 }
