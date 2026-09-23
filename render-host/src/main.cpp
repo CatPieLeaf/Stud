@@ -96,6 +96,10 @@
 // it long before that point in the file.
 std::mutex& wayland_mutex();
 
+// Serialises every dispatch; defined next to wayland_mutex(). Declared here
+// for client_wait_sync(), which takes it per poll instead of for the wait.
+std::mutex& dispatch_mutex();
+
 // Holds the frame back while Stud is not the window being used.
 //
 // Two cases, and both are ordinary: the window is hidden (minimised, on
@@ -2489,6 +2493,44 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
     }
 }
 
+// The engine's GL sync objects, by the id its client carries. Touched only
+// under dispatch_mutex(), including from client_wait_sync().
+std::map<uint64_t, GLsync> g_syncs;
+uint64_t g_next_sync_id = 0;
+
+// glClientWaitSync without holding the dispatch lock for the wait.
+//
+// The engine waits up to 5 s here once a frame. Waiting inside the lock
+// would hold every other connection (audio, input, the window) for as
+// long as the GPU takes, the problem blocks_in_the_driver() exists for.
+// So the real call is made with a zero timeout under the lock, and the
+// lock is let go between polls. GL_SYNC_FLUSH_COMMANDS_BIT only matters
+// on the first poll: after it the fence has been flushed.
+uint64_t client_wait_sync(const RealFns& fns, uint64_t id, GLbitfield flags, uint64_t timeout_ns) {
+    constexpr GLenum kAlreadySignaled = 0x911A;
+    constexpr GLenum kTimeoutExpired = 0x911B;
+    constexpr GLenum kConditionSatisfied = 0x911C;
+    constexpr GLenum kWaitFailed = 0x911D;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(
+                                                                std::min<uint64_t>(timeout_ns,
+                                                                                   INT64_MAX));
+    bool first = true;
+    for (;;) {
+        GLenum r = kWaitFailed;
+        {
+            std::lock_guard<std::mutex> lock(dispatch_mutex());
+            auto it = g_syncs.find(id);
+            if (it == g_syncs.end()) return kWaitFailed;
+            r = fns.glClientWaitSync_(it->second, first ? flags : 0, 0);
+        }
+        if (r == kAlreadySignaled) return first ? kAlreadySignaled : kConditionSatisfied;
+        if (r != kTimeoutExpired) return r;
+        first = false;
+        if (std::chrono::steady_clock::now() >= deadline) return kTimeoutExpired;
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+}
+
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
@@ -3148,44 +3190,66 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlDeleteFramebuffers: fns.glDeleteFramebuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
         case CallId::GlDeleteRenderbuffers: fns.glDeleteRenderbuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
         case CallId::GlDeleteTextures: fns.glDeleteTextures_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
-        // Real GLES3 sync objects. The host's own real GLsync pointer
-        // is the handle the client carries; it never dereferences it.
-        // GLES3 sync objects are DELIBERATELY INERT. Implementing them for
-        // real (this session) hung the GPU: the kernel reported
-        //     nouveau: stud-render-hos: job timeout, channel 10 killed!
-        //     nouveau: gsp: rc ... fault_addr:0 fault_type:0
-        //     nouveau: fifo: errored - disabling channel
-        // i.e. a submitted job that never completes, not a page fault. That
-        // kills the EGL context (eglSwapBuffers -> EGL_CONTEXT_LOST 0x300e),
-        // after which glCheckFramebufferStatus returns 0 and the engine aborts
-        // with "Unsupported framebuffer configuration" / RBXCRASH:
-        // OutOfMemoryGraphics. The window goes black.
+        // GLES3 sync objects, real.
         //
-        // Measured, same build, only this changed:
-        //     sync real  -> 145 draws,  OOM=2, context lost at frame #2
-        //     sync inert -> 11223 draws, OOM=0, app renders and is clickable
+        // They were inert from the first commit: glFenceSync answered 0 and
+        // glClientWaitSync GL_ALREADY_SIGNALED, because forwarding them on
+        // nouveau hung the GPU (`job timeout, channel 10 killed`). The
+        // suspected mechanism was a sync handle that did not survive the
+        // round trip, so a wait was queued on something that never signals.
         //
-        // Why it hangs is not yet established. The likely mechanism is
-        // glWaitSync inserting a GPU-side wait on a sync object whose handle
-        // does not survive the client/host round-trip, so the GPU waits on
-        // something that never signals. A correct implementation must prove
-        // the handle round-trip AND that the engine's fences actually signal
-        // before being switched back on. Reporting "no sync support" is a
-        // valid GLES answer; hanging the GPU is not.
-        case CallId::GlFenceSync:
-            return 0;
+        // Inert was not harmless. The engine's one use of them is its frame
+        // throttle: every frame it waits on the previous frame's fence (5 s
+        // timeout) and then fences again. An already-signalled answer
+        // removed that throttle, so the CPU ran ahead of the GPU unchecked.
+        //
+        // The handle question is answered by never handing the driver
+        // anything but its own GLsync: the client carries a small id from
+        // g_syncs, an unknown id is refused here, and glWaitSync (a
+        // GPU-side wait, and the only call that can stall the GPU on a bad
+        // handle) is issued only for a sync this host created. The wait
+        // itself is GlClientWaitSync below, which polls outside the
+        // dispatch lock.
+        case CallId::GlFenceSync: {
+            GLsync s = fns.glFenceSync_(static_cast<GLenum>(a[0]), static_cast<GLbitfield>(a[1]));
+            if (s == nullptr) return 0;
+            const uint64_t id = ++g_next_sync_id;
+            g_syncs.emplace(id, s);
+            return id;
+        }
         case CallId::GlClientWaitSync:
-            return 0x911A;  // GL_ALREADY_SIGNALED
-        case CallId::GlWaitSync:
+            return client_wait_sync(fns, a[0], static_cast<GLbitfield>(a[1]), a[2]);
+        case CallId::GlWaitSync: {
+            auto it = g_syncs.find(a[0]);
+            if (it == g_syncs.end()) return 0;
+            fns.glWaitSync_(it->second, static_cast<GLbitfield>(a[1]), a[2]);
             return 0;
-        case CallId::GlDeleteSync:
+        }
+        case CallId::GlDeleteSync: {
+            auto it = g_syncs.find(a[0]);
+            if (it == g_syncs.end()) return 0;
+            fns.glDeleteSync_(it->second);
+            g_syncs.erase(it);
             return 0;
-        // Consistent with the inert sync objects above: handles are always 0,
-        // so never dereference one.
-        case CallId::GlIsSync:
+        }
+        case CallId::GlIsSync: {
+            auto it = g_syncs.find(a[0]);
+            return it != g_syncs.end() && fns.glIsSync_(it->second) == GL_TRUE ? 1 : 0;
+        }
+        case CallId::GlGetSynciv: {
+            auto it = g_syncs.find(a[0]);
+            const GLsizei cap = static_cast<GLsizei>(a[2]);
+            if (it == g_syncs.end() || cap <= 0) return 0;
+            std::vector<GLint> values(static_cast<size_t>(cap));
+            GLsizei length = 0;
+            fns.glGetSynciv_(it->second, static_cast<GLenum>(a[1]), cap, &length, values.data());
+            if (length < 0) length = 0;
+            if (length > cap) length = cap;
+            out.resize(static_cast<size_t>(length) * sizeof(GLint));
+            if (length > 0) std::memcpy(out.data(), values.data(), out.size());
+            *out_len = static_cast<uint32_t>(out.size());
             return 0;
-        case CallId::GlGetSynciv:
-            return 0;
+        }
         case CallId::GlCopyImageSubData: {
             if (in.size() < 15 * sizeof(int32_t)) return 0;
             const auto* p = reinterpret_cast<const int32_t*>(in.data());
@@ -4342,6 +4406,8 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         // holding the dispatch lock across that wait would stall every
         // other connection for the length of it.
         case stud::render_host::CallId::PollInputEvents:
+        // Waits for the GPU; client_wait_sync() takes the lock per poll.
+        case stud::render_host::CallId::GlClientWaitSync:
             return true;
         default:
             return false;
