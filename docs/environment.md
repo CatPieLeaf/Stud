@@ -85,6 +85,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_TEX_CACHE_FORCE` | off | Use the cache even on a rotational disk, where it is normally skipped. |
 | `STUD_TEX_BC` | off | Re-encode emulated textures to BC instead of storing them uncompressed. Uncompressed is the default; BC holds mips better against the engine's texture budget but costs CPU on every newly streamed texture. **perf** |
 | `STUD_TEX_ENGINE_BUDGET_MB` | 1024 | The engine's own texture budget, which Stud scales every texture's reported size against so the engine reaches it only as real GPU memory fills. Measured at 1024 from the engine's log; set this if a newer engine uses a different one. |
+| `STUD_VK_REDIRECT_STATS` | off | Reports what the engine binds into each of its memory allocations: whether an allocation that received a size-scaled texture holds anything else. **perf** — a line every 2000 binds. |
 | `STUD_TEX_NO_BC7` | off | With `STUD_TEX_BC`, use BC1/BC3 for colour instead of BC7. |
 | `STUD_TEX_FORCE_DECODE`, `STUD_NO_TEX_DECODE` | off | Force or forbid decoding ETC/PVRTC in software. |
 | `STUD_TEX_DECODE_TRACE` | off | Reports each format decoded, and what a submit's decode cost. |

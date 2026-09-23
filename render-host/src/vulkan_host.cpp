@@ -2221,18 +2221,22 @@ bool vk_object_trace_enabled() {
 // between resolutions while anything new streamed in.
 //
 // So every texture's size is scaled by one factor that maps the engine's
-// budget onto this GPU's memory. The engine still allocates what it is
-// told, and that memory is real too even though nothing uses it, so the
-// real total is textures * (1 + f). Reaching the budget exactly when that
-// total fills device-local memory V gives
+// budget onto this GPU's memory V:
 //
-//     f = budget / (V - budget)
+//     f = budget / V
 //
-// 1/3 on a 4 GiB GPU. Below that the engine's own eviction starts only as
-// real memory fills, in proportion, with no cliff. Where V <= 2 * budget
-// the factor would not be below 1 and sizes are reported as they are.
+// 1/4 on a 4 GiB GPU: the engine reaches its budget exactly when textures
+// fill device-local memory, and its own eviction starts only as they do,
+// in proportion. On a GPU smaller than the budget f is above 1 and the
+// engine evicts sooner, which is what a small GPU needs.
 // STUD_TEX_ENGINE_BUDGET_MB replaces the measured budget, for a build of
 // the engine that uses a different one.
+//
+// The engine still allocates what it is told. Its GPU-only allocations are
+// placeholders (see LazyMemory) that become real memory only when
+// something that needs it is bound there, so a block that only ever holds
+// scaled textures costs nothing. Measured before that existed: 795 MB of
+// such blocks in one session, allocated and never used.
 struct RedirectedImage {
     VkDeviceMemory own = VK_NULL_HANDLE;
     VkDeviceSize own_size = 0;
@@ -2241,6 +2245,108 @@ struct RedirectedImage {
 std::unordered_map<uint64_t, RedirectedImage>& redirected_images() {
     static std::unordered_map<uint64_t, RedirectedImage> m;
     return m;
+}
+
+// An engine allocation of GPU-only memory, held as a placeholder until
+// something that really needs memory is bound into it: a buffer, or an
+// image that is not a scaled texture. Blocks that only ever receive scaled
+// textures are never allocated at all, because those textures live in
+// memory Stud owns. The engine cannot map GPU-only memory, so a bind is the
+// only way it ever reaches it.
+//
+// Placeholder handles carry kLazyTag in their top 16 bits, which no
+// driver's handle has been seen to, and are never passed to the driver.
+struct LazyMemory {
+    VkDeviceSize size = 0;
+    uint32_t type = 0;
+    VkDeviceMemory real = VK_NULL_HANDLE;
+};
+constexpr uint64_t kLazyTag = 0xFFFE000000000000ull;
+
+std::unordered_map<uint64_t, LazyMemory>& lazy_memory() {
+    static std::unordered_map<uint64_t, LazyMemory> m;
+    return m;
+}
+
+// The driver's memory behind a handle the engine holds, allocating a
+// placeholder's the first time it is needed.
+VkDeviceMemory real_memory(uint64_t handle, VkResult* result = nullptr) {
+    auto it = lazy_memory().find(handle);
+    if (it == lazy_memory().end()) return from_u64<VkDeviceMemory>(handle);
+    LazyMemory& m = it->second;
+    if (m.real == VK_NULL_HANDLE) {
+        Loader& l = loader();
+        VkMemoryAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize = m.size;
+        ai.memoryTypeIndex = m.type;
+        const VkResult r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &m.real);
+        if (r != VK_SUCCESS) {
+            m.real = VK_NULL_HANDLE;
+            if (result != nullptr) *result = r;
+        }
+    }
+    return m.real;
+}
+
+// STUD_VK_REDIRECT_STATS=1: what the engine binds into each of its
+// allocations, to tell whether an allocation that received a redirected
+// texture holds nothing else. Off by default.
+struct AllocationUse {
+    uint64_t size = 0;
+    uint32_t redirected = 0;  // redirected textures bound into it
+    uint32_t other = 0;       // anything else: buffers, other images
+    bool dedicated_shape = true;  // every redirected bind at offset 0, filling it
+};
+
+bool redirect_stats_enabled() {
+    static const bool on = std::getenv("STUD_VK_REDIRECT_STATS") != nullptr;
+    return on;
+}
+
+std::unordered_map<uint64_t, AllocationUse>& allocation_use() {
+    static std::unordered_map<uint64_t, AllocationUse> m;
+    return m;
+}
+
+void report_allocation_use() {
+    static uint64_t binds = 0;
+    if (++binds % 2000 != 0) return;
+    uint64_t only_redirected = 0, only_redirected_dedicated = 0, mixed = 0, none = 0;
+    uint64_t wasted = 0;
+    for (const auto& [mem, u] : allocation_use()) {
+        if (u.redirected > 0 && u.other == 0) {
+            ++only_redirected;
+            wasted += u.size;
+            if (u.dedicated_shape && u.redirected == 1) ++only_redirected_dedicated;
+        } else if (u.redirected > 0) {
+            ++mixed;
+        } else {
+            ++none;
+        }
+    }
+    std::printf("stud-render-host: redirect stats: engine allocations holding only redirected "
+                "textures %llu (%llu of them one texture filling it), mixed %llu, no textures "
+                "%llu; only-redirected bytes %.1f MB\n",
+                static_cast<unsigned long long>(only_redirected),
+                static_cast<unsigned long long>(only_redirected_dedicated),
+                static_cast<unsigned long long>(mixed), static_cast<unsigned long long>(none),
+                static_cast<double>(wasted) / (1024.0 * 1024.0));
+    std::fflush(stdout);
+}
+
+void note_bind(uint64_t memory, bool redirected, uint64_t offset, uint64_t reported) {
+    if (!redirect_stats_enabled()) return;
+    auto it = allocation_use().find(memory);
+    if (it == allocation_use().end()) return;
+    AllocationUse& u = it->second;
+    if (redirected) {
+        ++u.redirected;
+        if (offset != 0 || reported != u.size) u.dedicated_shape = false;
+    } else {
+        ++u.other;
+    }
+    report_allocation_use();
 }
 
 VkDeviceSize device_local_heap_size(Loader& l) {
@@ -2273,7 +2379,8 @@ uint32_t device_local_type(Loader& l, uint32_t allowed) {
     return 0;
 }
 
-// The factor above, once per process. 0 means sizes are reported as they are.
+// The factor above, once per process. 0 (no device-local heap found) means
+// sizes are reported as they are.
 double texture_size_scale(Loader& l) {
     static double scale = -1.0;
     if (scale >= 0.0) return scale;
@@ -2284,7 +2391,7 @@ double texture_size_scale(Loader& l) {
     }
     const double budget = budget_mb * 1024.0 * 1024.0;
     const double vram = static_cast<double>(device_local_heap_size(l));
-    scale = vram > 2.0 * budget ? budget / (vram - budget) : 0.0;
+    scale = vram > 0.0 ? budget / vram : 0.0;
     std::printf("stud-render-host: textures report %.3f of their size (engine budget %.0f MB, "
                 "device-local %.0f MB)\n",
                 scale == 0.0 ? 1.0 : scale, budget_mb, vram / (1024.0 * 1024.0));
@@ -2711,6 +2818,27 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     if (l.vk.vkAllocateMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    // GPU-only, plain, and scaling in effect: a placeholder; see LazyMemory.
+    if (node_count == 0 && shared_path.empty() && texture_size_scale(l) > 0.0 &&
+        l.get_physical_device_memory_properties != nullptr) {
+        VkPhysicalDeviceMemoryProperties mem{};
+        l.get_physical_device_memory_properties(l.physical_device, &mem);
+        if (type_index < mem.memoryTypeCount &&
+            (mem.memoryTypes[type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ==
+                0) {
+            static uint64_t next = 0;
+            const uint64_t handle_value = kLazyTag | ++next;
+            lazy_memory()[handle_value] = LazyMemory{size, type_index, VK_NULL_HANDLE};
+            l.live_memory.insert(handle_value);
+            if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
+            out.resize(sizeof(uint64_t) * 2);
+            const uint64_t shared_flag = 0;
+            std::memcpy(out.data(), &handle_value, sizeof(handle_value));
+            std::memcpy(out.data() + sizeof(handle_value), &shared_flag, sizeof(shared_flag));
+            *out_len = static_cast<uint32_t>(out.size());
+            return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+        }
+    }
     std::vector<std::vector<uint8_t>> storage;
     void* chain = rebuild_chain(in.data(), in.size(), node_count, storage);
     VkMemoryAllocateInfo ai{};
@@ -2855,6 +2983,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     out.resize(sizeof(uint64_t) * 2);
     const uint64_t handle_value = to_u64(memory);
     l.live_memory.insert(handle_value);
+    if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
     const uint64_t shared_flag = imported ? 1u : 0u;
     std::memcpy(out.data(), &handle_value, sizeof(handle_value));
     std::memcpy(out.data() + sizeof(handle_value), &shared_flag, sizeof(shared_flag));
@@ -2870,6 +2999,18 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
     // A redirected image goes to memory of its real size that Stud owns,
     // not the engine's, which was sized for the original format.
     auto em = redirected_images().find(image);
+    if (redirect_stats_enabled()) {
+        uint64_t reported = 0;
+        if (em != redirected_images().end()) {
+            VkMemoryRequirements rq{};
+            l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &rq);
+            const VkDeviceSize align = rq.alignment != 0 ? rq.alignment : 1;
+            const auto scaled = static_cast<VkDeviceSize>(
+                std::ceil(static_cast<double>(rq.size) * texture_size_scale(l)));
+            reported = std::max(align, (scaled + align - 1) / align * align);
+        }
+        note_bind(memory, em != redirected_images().end(), offset, reported);
+    }
     if (em != redirected_images().end()) {
         RedirectedImage& e = em->second;
         if (e.own == VK_NULL_HANDLE) {
@@ -2893,8 +3034,10 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
         VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image), e.own, 0);
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
-    VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image),
-                                      from_u64<VkDeviceMemory>(memory), offset);
+    VkResult alloc = VK_SUCCESS;
+    const VkDeviceMemory target = real_memory(memory, &alloc);
+    if (target == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(alloc));
+    VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image), target, offset);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
@@ -2914,8 +3057,16 @@ uint64_t vk_free_memory(uint64_t memory) {
     Loader& l = loader();
     if (l.vk.vkFreeMemory == nullptr) return 0;
     l.live_memory.erase(memory);
+    if (redirect_stats_enabled()) allocation_use().erase(memory);
     l.mapped.erase(memory);
     l.mapped_size.erase(memory);
+    if (auto lz = lazy_memory().find(memory); lz != lazy_memory().end()) {
+        if (lz->second.real != VK_NULL_HANDLE) {
+            l.vk.vkFreeMemory(l.device, lz->second.real, nullptr);
+        }
+        lazy_memory().erase(lz);
+        return 0;
+    }
     l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(memory), nullptr);
     // The import keeps the pages alive as long as the memory object does,
     // so the mapping is dropped only now.
@@ -5501,8 +5652,11 @@ uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset
     if (l.vk.vkBindBufferMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    VkResult r = l.vk.vkBindBufferMemory(l.device, from_u64<VkBuffer>(buffer),
-                                       from_u64<VkDeviceMemory>(memory), offset);
+    VkResult alloc = VK_SUCCESS;
+    const VkDeviceMemory target = real_memory(memory, &alloc);
+    if (target == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(alloc));
+    VkResult r = l.vk.vkBindBufferMemory(l.device, from_u64<VkBuffer>(buffer), target, offset);
+    note_bind(memory, false, offset, 0);
     if (r == VK_SUCCESS) {
         std::lock_guard<std::mutex> lock(buffer_memory_mutex());
         buffer_memory()[buffer] = memory;
@@ -5920,8 +6074,14 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                                 l.live_memory.size());
                     std::fflush(stdout);
                     for (uint64_t m : l.live_memory) {
-                        l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
+                        auto lz = lazy_memory().find(m);
+                        if (lz == lazy_memory().end()) {
+                            l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
+                        } else if (lz->second.real != VK_NULL_HANDLE) {
+                            l.vk.vkFreeMemory(l.device, lz->second.real, nullptr);
+                        }
                     }
+                    lazy_memory().clear();
                 }
                 l.live_memory.clear();
 
