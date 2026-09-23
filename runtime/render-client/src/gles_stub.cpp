@@ -1402,6 +1402,88 @@ void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format
     connection().call(CallId::GlReadPixels, a, nullptr, 0, pixels, bytes, nullptr);
 }
 
+// The suffixed spellings the engine's GL loader falls back to when a core
+// name does not resolve. Each is the same entry point under the name an
+// extension gave it, so each is the core function. With eglGetProcAddress
+// answering null for anything missing, these are what keeps a fallback
+// lookup from reaching that null.
+void glBindBufferBaseEXT(GLenum t, GLuint i, GLuint b) { glBindBufferBase(t, i, b); }
+void glBindBufferRangeEXT(GLenum t, GLuint i, GLuint b, GLintptr o, GLsizeiptr s) {
+    glBindBufferRange(t, i, b, o, s);
+}
+void glBlitFramebufferEXT(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0,
+                          GLint dx1, GLint dy1, GLbitfield m, GLenum f) {
+    glBlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, m, f);
+}
+void glClearBufferfiEXT(GLenum b, GLint d, GLfloat depth, GLint stencil) {
+    glClearBufferfi(b, d, depth, stencil);
+}
+void glClearBufferfvEXT(GLenum b, GLint d, const GLfloat* v) { glClearBufferfv(b, d, v); }
+void glClearBufferivEXT(GLenum b, GLint d, const GLint* v) { glClearBufferiv(b, d, v); }
+GLenum glClientWaitSyncEXT(GLsync s, GLbitfield f, GLuint64 t) { return glClientWaitSync(s, f, t); }
+void glCompressedTexImage3DOES(GLenum t, GLint l, GLenum f, GLsizei w, GLsizei h, GLsizei d,
+                               GLint b, GLsizei n, const void* p) {
+    glCompressedTexImage3D(t, l, f, w, h, d, b, n, p);
+}
+void glCompressedTexSubImage3DOES(GLenum t, GLint l, GLint x, GLint y, GLint z, GLsizei w,
+                                  GLsizei h, GLsizei d, GLenum f, GLsizei n, const void* p) {
+    glCompressedTexSubImage3D(t, l, x, y, z, w, h, d, f, n, p);
+}
+void glCopyImageSubDataEXT(GLuint a, GLenum b, GLint c, GLint d, GLint e, GLint f, GLuint g,
+                           GLenum h, GLint i, GLint j, GLint k, GLint l, GLsizei m, GLsizei n,
+                           GLsizei o) {
+    glCopyImageSubData(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+}
+void glCopyImageSubDataOES(GLuint a, GLenum b, GLint c, GLint d, GLint e, GLint f, GLuint g,
+                           GLenum h, GLint i, GLint j, GLint k, GLint l, GLsizei m, GLsizei n,
+                           GLsizei o) {
+    glCopyImageSubData(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+}
+void glDeleteSyncEXT(GLsync s) { glDeleteSync(s); }
+void glDrawArraysInstancedEXT(GLenum m, GLint f, GLsizei c, GLsizei n) {
+    glDrawArraysInstanced(m, f, c, n);
+}
+void glDrawBuffersEXT(GLsizei n, const GLenum* b) { glDrawBuffers(n, b); }
+void glDrawElementsInstancedEXT(GLenum m, GLsizei c, GLenum t, const void* i, GLsizei n) {
+    glDrawElementsInstanced(m, c, t, i, n);
+}
+GLsync glFenceSyncEXT(GLenum c, GLbitfield f) { return glFenceSync(c, f); }
+void glFramebufferTextureLayerEXT(GLenum t, GLenum a, GLuint x, GLint l, GLint y) {
+    glFramebufferTextureLayer(t, a, x, l, y);
+}
+void glGetActiveUniformBlockivEXT(GLuint p, GLuint i, GLenum n, GLint* v) {
+    glGetActiveUniformBlockiv(p, i, n, v);
+}
+void glGetInteger64vEXT(GLenum p, GLint64* v) { glGetInteger64v(p, v); }
+GLuint glGetUniformBlockIndexEXT(GLuint p, const GLchar* n) { return glGetUniformBlockIndex(p, n); }
+void glInvalidateFramebufferEXT(GLenum t, GLsizei n, const GLenum* a) {
+    glInvalidateFramebuffer(t, n, a);
+}
+// The engine's loader appends a suffix to a name that already has one.
+void glObjectLabelKHRKHR(GLenum i, GLuint n, GLsizei l, const GLchar* s) {
+    glObjectLabelKHR(i, n, l, s);
+}
+void glProgramParameteriOES(GLuint p, GLenum n, GLint v) { glProgramParameteri(p, n, v); }
+void glRenderbufferStorageMultisampleEXT(GLenum t, GLsizei s, GLenum f, GLsizei w, GLsizei h) {
+    glRenderbufferStorageMultisample(t, s, f, w, h);
+}
+void glTexImage3DOES(GLenum t, GLint l, GLint f, GLsizei w, GLsizei h, GLsizei d, GLint b,
+                     GLenum fmt, GLenum type, const void* p) {
+    glTexImage3D(t, l, f, w, h, d, b, fmt, type, p);
+}
+void glTexStorage2DEXT(GLenum t, GLsizei l, GLenum f, GLsizei w, GLsizei h) {
+    glTexStorage2D(t, l, f, w, h);
+}
+void glTexStorage3DEXT(GLenum t, GLsizei l, GLenum f, GLsizei w, GLsizei h, GLsizei d) {
+    glTexStorage3D(t, l, f, w, h, d);
+}
+void glTexSubImage3DOES(GLenum t, GLint l, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,
+                        GLsizei d, GLenum f, GLenum type, const void* p) {
+    glTexSubImage3D(t, l, x, y, z, w, h, d, f, type, p);
+}
+void glUniformBlockBindingEXT(GLuint p, GLuint i, GLuint b) { glUniformBlockBinding(p, i, b); }
+void glWaitSyncEXT(GLsync s, GLbitfield f, GLuint64 t) { glWaitSync(s, f, t); }
+
 }  // extern "C"
 
 

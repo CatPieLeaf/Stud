@@ -243,88 +243,18 @@ EGLBoolean eglTerminate(EGLDisplay dpy) {
     return connection().call(CallId::EglTerminate, a, nullptr, 0, nullptr, 0, nullptr) ? EGL_TRUE : EGL_FALSE;
 }
 
-// Honest limitation: nothing beyond the core EGL1.x/GLES2 API this
-// stub already implements has been confirmed needed (Roblox importing
-// this symbol doesn't by itself prove it queries any specific extension
-// at runtime), returns nullptr for anything not explicitly known,
-// same "grow against real evidence, don't guess ahead" discipline this
-// whole project already follows elsewhere, rather than building a
-// speculative generic-dispatch trampoline pool for an unconfirmed need.
-// Live-root-caused fix (the engineering notes, "what drains the
-// engine's task queue"): this used to unconditionally return nullptr.
-// That is not a harmless stub. Real GL code resolves its entry points
-// once, up front, into its own dispatch table, and libroblox does
-// exactly that. Every slot it filled this way was NULL, and the first
-// call through one (an indirect call through that table, an
-// ordinary GL call immediately followed by glGetError()) jumped to
-// address 0. That fault landed on the very thread the engine had
-// designated as its own internal "main" thread; Stud's own near_null
-// recovery then pthread_exit()s that thread, and since it is the only
-// thing that ever drains the engine's internal task queue, every later
-// engine call queued work for a dead thread and blocked forever.
+// Everything Stud's own libEGL.so/libGLESv2.so export, each forwarding to
+// the host; null, with one line naming it, for anything else.
 //
-// Resolving against everything already loaded in this process is the
-// honest answer: Stud's own libEGL.so/libGLESv2.so really do export the
-// entry points they implement (each forwarding over the render-host
-// IPC), so a function Stud supports resolves to Stud's own real
-// implementation, and one it genuinely does not support still returns
-// null: but now that is a real, specific, reportable gap rather than
-// a blanket "nothing exists".
-}  // extern "C"
-
-namespace {
-
-// Real GL code resolves its entry points once, up front, and then calls
-// them without ever null-checking, so handing back a null for a
-// function Stud doesn't implement is a deferred jump to address zero,
-// not a graceful degradation. Returning a *named no-op* instead keeps
-// the calling thread alive (which matters enormously here: the thread
-// doing this resolution is the one the engine designates as its own
-// internal task-queue "main" thread, and killing it wedges the whole
-// process; see the engineering notes) and turns an unimplemented call into
-// a precise, actionable log line naming the real function.
-//
-// Each slot needs its OWN function pointer so the handler can tell which
-// real GL function was called. A template instantiated over a compile-
-// time index gives exactly that: one real, distinct function per slot,
-// no runtime code generation.
-constexpr int kMaxUnimplemented = 256;
-const char* g_unimplemented_names[kMaxUnimplemented];
-int g_unimplemented_count = 0;
-
-// Returns 0 in %rax, which is a safe value whether the real function's
-// prototype returns void, an integer or a pointer.
-template <int Index>
-uintptr_t unimplemented_gl_thunk() {
-    static bool reported = false;
-    if (!reported) {
-        reported = true;  // once per function, not once per call; these can be hot
-        std::fprintf(stderr, "stud: CALLED unimplemented GL function \"%s\" (returning 0)\n",
-                     g_unimplemented_names[Index]);
-        std::fflush(stderr);
-    }
-    return 0;
-}
-
-using ThunkFn = uintptr_t (*)();
-
-template <int... Is>
-constexpr auto make_thunk_table(std::integer_sequence<int, Is...>) {
-    return std::array<ThunkFn, sizeof...(Is)>{{&unimplemented_gl_thunk<Is>...}};
-}
-
-const auto g_thunks = make_thunk_table(std::make_integer_sequence<int, kMaxUnimplemented>{});
-
-// Stable copy of the name, the caller's string is not guaranteed to
-// outlive this call.
-const char* intern_name(const char* procname) {
-    return ::strdup(procname);
-}
-
-}  // namespace
-
-extern "C" {
-
+// This used to hand back a named do-nothing function for a name Stud did not
+// implement, so that an engine calling through its dispatch table without
+// null-checking did not jump to address zero, which had once killed the
+// thread that drains its task queue and wedged the whole process. That kept
+// it alive at the price of the engine believing it had functions it did not:
+// every call to one vanished. Every GL name the engine references is now
+// exported (core names and the suffixed spellings its loader falls back to),
+// checked against the binary's own strings, so this null is only for a name
+// a newer engine adds, and the line below says which one to implement.
 __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char* procname) {
     if (procname == nullptr) {
         return nullptr;
@@ -333,22 +263,8 @@ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char* procname)
     if (sym != nullptr) {
         return reinterpret_cast<__eglMustCastToProperFunctionPointerType>(sym);
     }
-
-    // Genuinely missing. Hand back a named no-op rather than null.
-    if (g_unimplemented_count < kMaxUnimplemented) {
-        int index = g_unimplemented_count++;
-        g_unimplemented_names[index] = intern_name(procname);
-        std::fprintf(stderr,
-                     "stud: eglGetProcAddress(\"%s\") -> not implemented by Stud, returning a "
-                     "no-op stub\n",
-                     procname);
-        std::fflush(stderr);
-        return reinterpret_cast<__eglMustCastToProperFunctionPointerType>(g_thunks[index]);
-    }
-
-    std::fprintf(stderr,
-                 "stud: eglGetProcAddress(\"%s\") -> NULL (no-op stub table full, %d entries)\n",
-                 procname, kMaxUnimplemented);
+    std::fprintf(stderr, "stud: eglGetProcAddress(\"%s\") -> NULL, not implemented by Stud\n",
+                 procname);
     std::fflush(stderr);
     return nullptr;
 }
