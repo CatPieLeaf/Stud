@@ -23,6 +23,7 @@
 #include <dlfcn.h>
 #include <sys/syscall.h>
 
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -2206,44 +2207,42 @@ bool vk_object_trace_enabled() {
 }
 
 
-// Emulated images: ETC2/EAC/PVRTC the device cannot sample, stored here in
-// a format it can (see the client's texture_decode.h).
+// Textures report a scaled-down size to the engine, and live in memory of
+// their real size that Stud owns.
 //
 // The engine budgets textures by the memory requirements it reads back,
-// against a fixed 64MB it assumes for every device (caps.videoMemory, a
-// constant in the engine). A substitute is up to 8x its original on the
-// device, so an honest-to-this-driver answer tells the engine it is 8x
-// over, and its residency system evicts mips it just loaded: textures flick
-// between resolutions while anything new streams in, and settle only when
-// nothing does.
+// against a fixed budget of its own (1 GiB, measured from its own log:
+// `[FLog::ContentResidency] Starting overbudget (bytes): Usage/Budget:
+// .../1073741824`). That budget does not move with the GPU, and it cannot
+// be set: RenderTextureManagerBudget reaches the engine and changes
+// nothing. With emulated textures stored uncompressed, up to 8x their
+// original size, the true numbers put it over budget constantly, and its
+// residency system evicted mips it had just loaded: textures flicked
+// between resolutions while anything new streamed in.
 //
-// So an emulated image reports the size its own format has on a device
-// that samples it, which is what the engine is written to expect, and is
-// bound here to an allocation of its real size that Stud owns. The
-// engine's allocation for it goes unused: an optimally tiled image is never
-// mapped, so nothing reads it. That holds only while there is room: once
-// Stud's own images would take more than half of device-local memory, new
-// images report their real size, and the engine's eviction does its job
-// against real pressure.
-struct EmulatedImage {
-    uint64_t device_size = 0;  // what the original format needs, from the client
-    bool decided = false;
-    bool redirected = false;
+// So every texture's size is scaled by one factor that maps the engine's
+// budget onto this GPU's memory. The engine still allocates what it is
+// told, and that memory is real too even though nothing uses it, so the
+// real total is textures * (1 + f). Reaching the budget exactly when that
+// total fills device-local memory V gives
+//
+//     f = budget / (V - budget)
+//
+// 1/3 on a 4 GiB GPU. Below that the engine's own eviction starts only as
+// real memory fills, in proportion, with no cliff. Where V <= 2 * budget
+// the factor would not be below 1 and sizes are reported as they are.
+// STUD_TEX_ENGINE_BUDGET_MB replaces the measured budget, for a build of
+// the engine that uses a different one.
+struct RedirectedImage {
     VkDeviceMemory own = VK_NULL_HANDLE;
     VkDeviceSize own_size = 0;
 };
 
-std::unordered_map<uint64_t, EmulatedImage>& emulated_images() {
-    static std::unordered_map<uint64_t, EmulatedImage> m;
+std::unordered_map<uint64_t, RedirectedImage>& redirected_images() {
+    static std::unordered_map<uint64_t, RedirectedImage> m;
     return m;
 }
 
-VkDeviceSize& redirected_bytes() {
-    static VkDeviceSize bytes = 0;
-    return bytes;
-}
-
-// Largest device-local heap, which is where these images live.
 VkDeviceSize device_local_heap_size(Loader& l) {
     static VkDeviceSize size = 0;
     if (size != 0 || l.get_physical_device_memory_properties == nullptr) return size;
@@ -2274,8 +2273,38 @@ uint32_t device_local_type(Loader& l, uint32_t allowed) {
     return 0;
 }
 
-uint64_t vk_create_image(const std::vector<uint8_t>& in, uint64_t device_size,
-                          std::vector<uint8_t>& out, uint32_t* out_len) {
+// The factor above, once per process. 0 means sizes are reported as they are.
+double texture_size_scale(Loader& l) {
+    static double scale = -1.0;
+    if (scale >= 0.0) return scale;
+    double budget_mb = 1024.0;
+    if (const char* env = std::getenv("STUD_TEX_ENGINE_BUDGET_MB")) {
+        const double v = std::atof(env);
+        if (v > 0.0) budget_mb = v;
+    }
+    const double budget = budget_mb * 1024.0 * 1024.0;
+    const double vram = static_cast<double>(device_local_heap_size(l));
+    scale = vram > 2.0 * budget ? budget / (vram - budget) : 0.0;
+    std::printf("stud-render-host: textures report %.3f of their size (engine budget %.0f MB, "
+                "device-local %.0f MB)\n",
+                scale == 0.0 ? 1.0 : scale, budget_mb, vram / (1024.0 * 1024.0));
+    std::fflush(stdout);
+    return scale;
+}
+
+// A texture, in the sense the engine's budget counts: sampled, optimally
+// tiled, single-sampled, and nothing ever renders to or stores into it.
+bool is_budgeted_texture(const VkImageCreateInfo& ci) {
+    constexpr VkImageUsageFlags kNotTexture =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+    return (ci.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0 && (ci.usage & kNotTexture) == 0 &&
+           ci.tiling == VK_IMAGE_TILING_OPTIMAL && ci.samples == VK_SAMPLE_COUNT_1_BIT;
+}
+
+uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                          uint32_t* out_len) {
     Loader& l = loader();
     if (l.vk.vkCreateImage == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -2340,8 +2369,10 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, uint64_t device_size,
     // with the same comment. Ordinary images were the case it missed.
     l.retired_images.erase(to_u64(image));
     // Handles are recycled, so a new image never inherits an old entry.
-    emulated_images().erase(to_u64(image));
-    if (device_size != 0) emulated_images()[to_u64(image)].device_size = device_size;
+    redirected_images().erase(to_u64(image));
+    if (texture_size_scale(l) > 0.0 && is_budgeted_texture(ci)) {
+        redirected_images()[to_u64(image)] = RedirectedImage{};
+    }
     // Brand new, so it is in UNDEFINED until a barrier says otherwise.
     // See Loader::untransitioned_images.
     l.untransitioned_images.insert_or_assign(
@@ -2369,22 +2400,12 @@ uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& 
     }
     VkMemoryRequirements req{};
     l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &req);
-    // An emulated image answers with its original format's size while
-    // there is room; see EmulatedImage. Decided once, so every later query
-    // and the bind agree.
-    auto em = emulated_images().find(image);
-    if (em != emulated_images().end()) {
-        EmulatedImage& e = em->second;
-        if (!e.decided) {
-            e.decided = true;
-            const VkDeviceSize heap = device_local_heap_size(l);
-            e.redirected = e.device_size != 0 && e.device_size < req.size && heap != 0 &&
-                           redirected_bytes() + req.size <= heap / 2;
-        }
-        if (e.redirected) {
-            const VkDeviceSize align = req.alignment != 0 ? req.alignment : 1;
-            req.size = (e.device_size + align - 1) / align * align;
-        }
+    // A texture answers with its scaled size; see RedirectedImage.
+    if (redirected_images().count(image) != 0) {
+        const VkDeviceSize align = req.alignment != 0 ? req.alignment : 1;
+        const auto scaled = static_cast<VkDeviceSize>(
+            std::ceil(static_cast<double>(req.size) * texture_size_scale(l)));
+        req.size = std::max(align, (scaled + align - 1) / align * align);
     }
     if (vk_object_trace_enabled()) {
         std::printf("stud-render-host: image memreq: size=%llu align=%llu bits=0x%x\n",
@@ -2848,9 +2869,9 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
     }
     // A redirected image goes to memory of its real size that Stud owns,
     // not the engine's, which was sized for the original format.
-    auto em = emulated_images().find(image);
-    if (em != emulated_images().end() && em->second.redirected) {
-        EmulatedImage& e = em->second;
+    auto em = redirected_images().find(image);
+    if (em != redirected_images().end()) {
+        RedirectedImage& e = em->second;
         if (e.own == VK_NULL_HANDLE) {
             VkMemoryRequirements req{};
             l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &req);
@@ -2868,7 +2889,6 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
                 return static_cast<uint64_t>(static_cast<int32_t>(ar));
             }
             e.own_size = req.size;
-            redirected_bytes() += req.size;
         }
         VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image), e.own, 0);
         return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -5606,12 +5626,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             l.untransitioned_images.erase(handle);
             if (l.vk.vkDestroyImage) l.vk.vkDestroyImage(l.device, from_u64<VkImage>(handle), nullptr);
             // A redirected image's own memory goes with it.
-            if (auto em = emulated_images().find(handle); em != emulated_images().end()) {
+            if (auto em = redirected_images().find(handle); em != redirected_images().end()) {
                 if (em->second.own != VK_NULL_HANDLE && l.vk.vkFreeMemory != nullptr) {
                     l.vk.vkFreeMemory(l.device, em->second.own, nullptr);
-                    redirected_bytes() -= std::min(redirected_bytes(), em->second.own_size);
                 }
-                emulated_images().erase(em);
+                redirected_images().erase(em);
             }
             break;
         case K::ImageView:

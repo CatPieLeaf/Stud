@@ -1806,22 +1806,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImage(VkDevice device,
     }
     in.insert(in.end(), chain.begin(), chain.end());
 
-    // For an emulated image, the memory its original format needs on a
-    // device that samples it: every level, every layer. The host reports
-    // this to the engine instead of the substitute's size while there is
-    // room; see EmulatedImage in vulkan_host.cpp.
-    uint64_t device_size = 0;
-    if (emulated) {
-        const uint32_t layers = std::max(1u, pCreateInfo->arrayLayers) *
-                                std::max(1u, pCreateInfo->extent.depth);
-        for (uint32_t m = 0; m < std::max(1u, pCreateInfo->mipLevels); ++m) {
-            device_size += stud::texture_decode::encoded_size(
-                               requested_format, std::max(1u, pCreateInfo->extent.width >> m),
-                               std::max(1u, pCreateInfo->extent.height >> m)) *
-                           layers;
-        }
-    }
-    uint64_t a[8] = {to_u64(device), device_size};
+    uint64_t a[8] = {to_u64(device)};
     uint64_t handle = 0;
     uint32_t written = 0;
     uint64_t r = stud::render_client::connection().call(CallId::VkCreateImage, a, in.data(),
@@ -1835,11 +1820,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImage(VkDevice device,
     // `in` IS the create parameters, already serialised for the host and
     // carrying the substituted format rather than the requested one, which
     // is what the object really has. Nothing better describes its shape.
-    //
-    // Not for an emulated image: the host decides its size per image, by
-    // how much room there is at the time, so two of the same shape can be
-    // told different things.
-    if (!emulated) mem_req_cache().remember_shape(handle, std::string(in.begin(), in.end()));
+    mem_req_cache().remember_shape(handle, std::string(in.begin(), in.end()));
     if (emulated) {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         emulated_images()[handle] = EmulatedImage{requested_format, pCreateInfo->extent.width,

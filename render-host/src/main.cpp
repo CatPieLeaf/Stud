@@ -3594,7 +3594,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::VkDestroyPipelineCache:
             return stud::render_host::vk_destroy_pipeline_cache(a[1]);
         case CallId::VkCreateImage:
-            return stud::render_host::vk_create_image(in, a[1], out, out_len);
+            return stud::render_host::vk_create_image(in, out, out_len);
         case CallId::VkGetImageMemoryRequirements:
             return stud::render_host::vk_get_image_memory_requirements(a[1], out, out_len);
         case CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
