@@ -136,8 +136,10 @@ uint64_t vk_create_pipeline_cache(uint32_t flags, const std::vector<uint8_t>& in
 uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vector<uint8_t>& out,
                                      uint32_t* out_len);
 uint64_t vk_destroy_pipeline_cache(uint64_t cache);
-uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                          uint32_t* out_len);
+// `device_size`: nonzero for an emulated image, the memory its original
+// format needs on a device that samples it; see EmulatedImage.
+uint64_t vk_create_image(const std::vector<uint8_t>& in, uint64_t device_size,
+                         std::vector<uint8_t>& out, uint32_t* out_len);
 uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& out,
                                            uint32_t* out_len);
 uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, uint64_t surface,

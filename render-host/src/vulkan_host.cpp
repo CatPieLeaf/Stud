@@ -2206,8 +2206,76 @@ bool vk_object_trace_enabled() {
 }
 
 
-uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                          uint32_t* out_len) {
+// Emulated images: ETC2/EAC/PVRTC the device cannot sample, stored here in
+// a format it can (see the client's texture_decode.h).
+//
+// The engine budgets textures by the memory requirements it reads back,
+// against a fixed 64MB it assumes for every device (caps.videoMemory, a
+// constant in the engine). A substitute is up to 8x its original on the
+// device, so an honest-to-this-driver answer tells the engine it is 8x
+// over, and its residency system evicts mips it just loaded: textures flick
+// between resolutions while anything new streams in, and settle only when
+// nothing does.
+//
+// So an emulated image reports the size its own format has on a device
+// that samples it, which is what the engine is written to expect, and is
+// bound here to an allocation of its real size that Stud owns. The
+// engine's allocation for it goes unused: an optimally tiled image is never
+// mapped, so nothing reads it. That holds only while there is room: once
+// Stud's own images would take more than half of device-local memory, new
+// images report their real size, and the engine's eviction does its job
+// against real pressure.
+struct EmulatedImage {
+    uint64_t device_size = 0;  // what the original format needs, from the client
+    bool decided = false;
+    bool redirected = false;
+    VkDeviceMemory own = VK_NULL_HANDLE;
+    VkDeviceSize own_size = 0;
+};
+
+std::unordered_map<uint64_t, EmulatedImage>& emulated_images() {
+    static std::unordered_map<uint64_t, EmulatedImage> m;
+    return m;
+}
+
+VkDeviceSize& redirected_bytes() {
+    static VkDeviceSize bytes = 0;
+    return bytes;
+}
+
+// Largest device-local heap, which is where these images live.
+VkDeviceSize device_local_heap_size(Loader& l) {
+    static VkDeviceSize size = 0;
+    if (size != 0 || l.get_physical_device_memory_properties == nullptr) return size;
+    VkPhysicalDeviceMemoryProperties mem{};
+    l.get_physical_device_memory_properties(l.physical_device, &mem);
+    for (uint32_t i = 0; i < mem.memoryHeapCount; ++i) {
+        if ((mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) {
+            size = std::max(size, mem.memoryHeaps[i].size);
+        }
+    }
+    return size;
+}
+
+uint32_t device_local_type(Loader& l, uint32_t allowed) {
+    VkPhysicalDeviceMemoryProperties mem{};
+    if (l.get_physical_device_memory_properties != nullptr) {
+        l.get_physical_device_memory_properties(l.physical_device, &mem);
+    }
+    for (uint32_t i = 0; i < mem.memoryTypeCount; ++i) {
+        if ((allowed & (1u << i)) != 0 &&
+            (mem.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+            return i;
+        }
+    }
+    for (uint32_t i = 0; i < 32; ++i) {
+        if ((allowed & (1u << i)) != 0) return i;
+    }
+    return 0;
+}
+
+uint64_t vk_create_image(const std::vector<uint8_t>& in, uint64_t device_size,
+                          std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
     if (l.vk.vkCreateImage == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -2271,6 +2339,9 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     // vkGetSwapchainImagesKHR already does this, for the same reason and
     // with the same comment. Ordinary images were the case it missed.
     l.retired_images.erase(to_u64(image));
+    // Handles are recycled, so a new image never inherits an old entry.
+    emulated_images().erase(to_u64(image));
+    if (device_size != 0) emulated_images()[to_u64(image)].device_size = device_size;
     // Brand new, so it is in UNDEFINED until a barrier says otherwise.
     // See Loader::untransitioned_images.
     l.untransitioned_images.insert_or_assign(
@@ -2298,6 +2369,23 @@ uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& 
     }
     VkMemoryRequirements req{};
     l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &req);
+    // An emulated image answers with its original format's size while
+    // there is room; see EmulatedImage. Decided once, so every later query
+    // and the bind agree.
+    auto em = emulated_images().find(image);
+    if (em != emulated_images().end()) {
+        EmulatedImage& e = em->second;
+        if (!e.decided) {
+            e.decided = true;
+            const VkDeviceSize heap = device_local_heap_size(l);
+            e.redirected = e.device_size != 0 && e.device_size < req.size && heap != 0 &&
+                           redirected_bytes() + req.size <= heap / 2;
+        }
+        if (e.redirected) {
+            const VkDeviceSize align = req.alignment != 0 ? req.alignment : 1;
+            req.size = (e.device_size + align - 1) / align * align;
+        }
+    }
     if (vk_object_trace_enabled()) {
         std::printf("stud-render-host: image memreq: size=%llu align=%llu bits=0x%x\n",
                     static_cast<unsigned long long>(req.size),
@@ -2757,6 +2845,33 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
     Loader& l = loader();
     if (l.vk.vkBindImageMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
+    }
+    // A redirected image goes to memory of its real size that Stud owns,
+    // not the engine's, which was sized for the original format.
+    auto em = emulated_images().find(image);
+    if (em != emulated_images().end() && em->second.redirected) {
+        EmulatedImage& e = em->second;
+        if (e.own == VK_NULL_HANDLE) {
+            VkMemoryRequirements req{};
+            l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &req);
+            VkMemoryDedicatedAllocateInfo dedicated{};
+            dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+            dedicated.image = from_u64<VkImage>(image);
+            VkMemoryAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.pNext = &dedicated;
+            ai.allocationSize = req.size;
+            ai.memoryTypeIndex = device_local_type(l, req.memoryTypeBits);
+            VkResult ar = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &e.own);
+            if (ar != VK_SUCCESS) {
+                e.own = VK_NULL_HANDLE;
+                return static_cast<uint64_t>(static_cast<int32_t>(ar));
+            }
+            e.own_size = req.size;
+            redirected_bytes() += req.size;
+        }
+        VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image), e.own, 0);
+        return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
     VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image),
                                       from_u64<VkDeviceMemory>(memory), offset);
@@ -5490,6 +5605,14 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // "never transitioned" state, or lose its own.
             l.untransitioned_images.erase(handle);
             if (l.vk.vkDestroyImage) l.vk.vkDestroyImage(l.device, from_u64<VkImage>(handle), nullptr);
+            // A redirected image's own memory goes with it.
+            if (auto em = emulated_images().find(handle); em != emulated_images().end()) {
+                if (em->second.own != VK_NULL_HANDLE && l.vk.vkFreeMemory != nullptr) {
+                    l.vk.vkFreeMemory(l.device, em->second.own, nullptr);
+                    redirected_bytes() -= std::min(redirected_bytes(), em->second.own_size);
+                }
+                emulated_images().erase(em);
+            }
             break;
         case K::ImageView:
             l.swapchain_views.erase(handle);
