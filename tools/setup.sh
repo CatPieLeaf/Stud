@@ -654,7 +654,8 @@ fetch_bionic_notices() {
         "https://android.googlesource.com/platform/bionic/+/refs/heads/main/libm/NOTICE|NOTICE-libm.txt" \
         "https://android.googlesource.com/platform/bionic/+/refs/heads/main/libdl/NOTICE|NOTICE-libdl.txt" \
         "https://android.googlesource.com/platform/bionic/+/refs/heads/main/linker/NOTICE|NOTICE-linker.txt" \
-        "https://android.googlesource.com/toolchain/llvm-project/+/refs/heads/main/libcxx/LICENSE.TXT|LICENSE-libc++.txt"
+        "https://android.googlesource.com/toolchain/llvm-project/+/refs/heads/main/libcxx/LICENSE.TXT|LICENSE-libc++.txt" \
+        "https://android.googlesource.com/platform/external/icu/+/refs/heads/main/LICENSE|LICENSE-icu.txt"
     do
         url="${pair%%|*}"; to="${pair##*|}"
         [ -s "$dest/$to" ] && continue
@@ -698,6 +699,8 @@ is fetched from AOSP itself. This file says which one covers which file.
 | `libc++.so` | [LLVM libc++](https://android.googlesource.com/toolchain/llvm-project/) | `LICENSE-libc++.txt` (Apache-2.0 WITH LLVM-exception) |
 | `liblog.so` | [platform/system/logging](https://android.googlesource.com/platform/system/logging/) | `LICENSE-Apache-2.0.txt` |
 | `tzdata` | [IANA time zone database](https://www.iana.org/time-zones) | public domain |
+| `libicu.so`, `libicuuc.so`, `libicui18n.so`, `icu/icudt*.dat` | [ICU](https://android.googlesource.com/platform/external/icu/), from AOSP's i18n APEX | `LICENSE-icu.txt` (Unicode License V3) |
+| `libbase.so` | [platform/system/libbase](https://android.googlesource.com/platform/system/libbase/), from the same APEX | `LICENSE-Apache-2.0.txt` |
 EOF
 
     if [ "$missing" = 0 ]; then
@@ -706,6 +709,60 @@ EOF
         warn "some bionic licences are missing from $dest."
         warn "packages built from this tree would redistribute Android's libc, libm and"
         warn "linker with no notice. Re-run 'tools/setup.sh bionic' with a network."
+    fi
+}
+
+# ICU, from AOSP's i18n APEX, published beside the Runtime APEX.
+#
+# bionic loads libicu.so on its own for the wide-character classes past
+# ASCII (iswalpha, towupper and the rest) and, without it, logs `couldn't
+# open libicu.so` and answers from ASCII-only tables. Four libraries and
+# ICU's data file; the sandbox binds the data where ANDROID_I18N_ROOT
+# points. Optional: bionic runs without it, as it did before, so a failed
+# download warns and moves on.
+I18N_APEX_PATH="mainline/i18n/apex/com.android.i18n-x86_64.apex"
+ICU_FILES=(libicu.so libicuuc.so libicui18n.so libbase.so)
+
+have_icu() {
+    local f
+    for f in "${ICU_FILES[@]}"; do [ -s "$BIONIC_DIR/$f" ] || return 1; done
+    compgen -G "$BIONIC_DIR/icu/icudt*.dat" >/dev/null
+}
+
+setup_icu() {
+    if have_icu; then
+        say "ICU already at $BIONIC_DIR"
+        return 0
+    fi
+    local work="$third_party/.apex-i18n"
+    rm -rf "$work"; mkdir -p "$work"
+    say "fetching the i18n APEX from AOSP ($AOSP_BRANCH, 40 MB)"
+    if ! aosp_blob platform/prebuilts/runtime "$(dirname "$I18N_APEX_PATH")" \
+            "$(basename "$I18N_APEX_PATH")" "$work/i18n.apex" ||
+       ! apex_payload "$work/i18n.apex" "$work/img"; then
+        warn "no ICU: bionic will keep its ASCII-only character classes"
+        rm -rf "$work"
+        return 0
+    fi
+    need debugfs
+    local f data
+    for f in "${ICU_FILES[@]}"; do
+        debugfs -R "dump /lib64/$f $BIONIC_DIR/$f" "$work/img/apex_payload.img" >/dev/null 2>&1 || true
+    done
+    data="$(debugfs -R "ls -p /etc/icu" "$work/img/apex_payload.img" 2>/dev/null |
+            awk -F/ '$6 ~ /^icudt.*\.dat$/ { print $6 }' | head -1)"
+    if [ -n "$data" ]; then
+        mkdir -p "$BIONIC_DIR/icu"
+        debugfs -R "dump /etc/icu/$data $BIONIC_DIR/icu/$data" "$work/img/apex_payload.img" \
+            >/dev/null 2>&1 || true
+    fi
+    rm -rf "$work"
+    if have_icu; then
+        say "ICU in $BIONIC_DIR"
+    else
+        warn "the i18n APEX did not hold everything expected; bionic runs without ICU"
+        for f in "${ICU_FILES[@]}"; do rm -f "$BIONIC_DIR/$f"; done
+        rm -rf "$BIONIC_DIR/icu"
     fi
 }
 
@@ -815,7 +872,7 @@ for step in "${steps[@]}"; do
     case "$step" in
         ndk)    setup_ndk ;;
         angle)  setup_angle ;;
-        bionic) setup_bionic || failed=1 ;;
+        bionic) { setup_bionic && setup_icu; } || failed=1 ;;
         *)      die "unknown step '$step' (expected: ndk, angle, bionic)" ;;
     esac
 done

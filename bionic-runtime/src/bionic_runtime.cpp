@@ -75,6 +75,23 @@ std::vector<std::string> bionic_dir_candidates() {
     return out;
 }
 
+// ICU, from AOSP's i18n APEX, which tools/setup.sh places next to bionic:
+// the libraries sit with the rest (and so land in /system/lib64 like
+// everything else there), the data file in an icu/ subdirectory.
+//
+// bionic loads libicu.so itself, lazily, for the wide-character classes
+// (iswalpha, towupper and the rest) beyond ASCII, and without it logged
+// `couldn't open libicu.so` and answered from its own ASCII-only tables.
+// ICU finds its data under $ANDROID_I18N_ROOT/etc/icu, as on a device.
+// Optional: a bionic set without it still runs, as it always did.
+constexpr const char* kI18nRoot = "/system/usr/share/i18n";
+constexpr const char* kTzdataRoot = "/apex/com.android.tzdata";
+
+std::string icu_data_dir(const std::string& bionic_lib_dir) {
+    const std::string dir = bionic_lib_dir + "/icu";
+    return fs::is_directory(dir) && file_readable(bionic_lib_dir + "/libicu.so") ? dir : std::string();
+}
+
 // What genuinely has to come from a real Android, and nothing more.
 //
 // libandroid.so used to be on this list and is deliberately not any
@@ -282,6 +299,10 @@ void link_android_system_tree(const ProcessBConfig& config,
     place_link(linker64_path, "/system/bin/linker64");
     place_link(linker64_path, "/system/lib64/linker64");
     place_link(bionic_lib_dir + "/tzdata", "/system/usr/share/zoneinfo/tzdata");
+    if (const std::string icu = icu_data_dir(bionic_lib_dir); !icu.empty()) {
+        fs::create_directories(std::string(kI18nRoot) + "/etc", ec);
+        place_link(icu, std::string(kI18nRoot) + "/etc/icu");
+    }
     if (fs::exists("/etc/hosts")) place_link("/etc/hosts", "/system/etc/hosts");
     if (fs::exists(default_property_area_path())) {
         place_link(default_property_area_path(), "/dev/__properties__");
@@ -291,7 +312,8 @@ void link_android_system_tree(const ProcessBConfig& config,
 // Process B's own environment, for the same launch: what bwrap would
 // have set with --setenv, applied to a copy of this process's own.
 std::vector<std::string> process_b_environment(const ProcessBConfig& config,
-                                               const std::string& ca_bundle_path) {
+                                               const std::string& ca_bundle_path,
+                                               const std::string& bionic_lib_dir) {
     std::map<std::string, std::string> env;
     for (char** e = environ; e != nullptr && *e != nullptr; ++e) {
         const char* eq = std::strchr(*e, '=');
@@ -302,6 +324,10 @@ std::vector<std::string> process_b_environment(const ProcessBConfig& config,
     // not optional.
     env["ANDROID_DNS_MODE"] = "local";
     if (!ca_bundle_path.empty()) env["SSL_CERT_FILE"] = ca_bundle_path;
+    if (!icu_data_dir(bionic_lib_dir).empty()) {
+        env["ANDROID_I18N_ROOT"] = kI18nRoot;
+        env["ANDROID_TZDATA_ROOT"] = kTzdataRoot;
+    }
     for (const auto& [name, value] : config.extra_env) env[name] = value;
 
     std::vector<std::string> flat;
@@ -442,6 +468,21 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back("--ro-bind");
     argv_storage.push_back(bionic_lib_dir + "/tzdata");
     argv_storage.push_back("/system/usr/share/zoneinfo/tzdata");
+
+    // ICU's data, where $ANDROID_I18N_ROOT says; see icu_data_dir().
+    // ANDROID_TZDATA_ROOT is the path a device sets. ICU checks that it
+    // is set and falls back to its own zone data when nothing is there.
+    if (const std::string icu = icu_data_dir(bionic_lib_dir); !icu.empty()) {
+        argv_storage.push_back("--ro-bind");
+        argv_storage.push_back(icu);
+        argv_storage.push_back(std::string(kI18nRoot) + "/etc/icu");
+        argv_storage.push_back("--setenv");
+        argv_storage.push_back("ANDROID_I18N_ROOT");
+        argv_storage.push_back(kI18nRoot);
+        argv_storage.push_back("--setenv");
+        argv_storage.push_back("ANDROID_TZDATA_ROOT");
+        argv_storage.push_back(kTzdataRoot);
+    }
 
     // Process B's own build output (libEGL.so/libGLESv2.so render-client
     // stubs, libandroid.so/libmediandk.so android-glue implementations,
@@ -808,7 +849,7 @@ pid_t launch_process_b(const ProcessBConfig& config) {
             argv_storage.push_back(joined);
         }
         return spawn_process_b("/system/lib64/linker64", std::move(argv_storage),
-                               process_b_environment(config, ca_bundle_path),
+                               process_b_environment(config, ca_bundle_path, bionic_lib_dir),
                                config.working_directory, config.stdout_fd);
     }
 
