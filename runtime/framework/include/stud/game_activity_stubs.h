@@ -1080,6 +1080,16 @@ public:
 // that FFmpeg can decode and encode, asked of it through libmediandk at the
 // moment the engine asks. An encoder is hardware when the one that opens is
 // NVENC, AMF or Quick Sync, and software (x264/x265) otherwise.
+// A function of Process B's libmediandk, found by name. Not through
+// RTLD_DEFAULT: the library is loaded as a dependency of libroblox, which
+// Stud opens with local scope, so its symbols are not in the global one and
+// a default lookup finds nothing (live-caught: every codec query answered
+// "none"). Opening it by name hands back the copy already loaded.
+inline void* libmediandk_symbol(const char* name) {
+    static void* handle = ::dlopen("libmediandk.so", RTLD_NOW);
+    return handle != nullptr ? ::dlsym(handle, name) : nullptr;
+}
+
 class MediaCodecInfoUtilsStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/video/MediaCodecInfoUtils")
@@ -1087,7 +1097,7 @@ public:
     getVideoCodecs() {
         using SupportedFn = int (*)(const char*);
         static const auto supported =
-            reinterpret_cast<SupportedFn>(::dlsym(RTLD_DEFAULT, "stud_video_decoder_supported"));
+            reinterpret_cast<SupportedFn>(libmediandk_symbol("stud_video_decoder_supported"));
         // STUD_VIDEO_CODECS narrows the list to the MIME types it names,
         // comma-separated, for seeing what the engine does with fewer.
         const char* only = std::getenv("STUD_VIDEO_CODECS");
@@ -1102,7 +1112,7 @@ public:
         // Encoders: bit 0 supported, bit 1 hardware.
         using EncoderFn = int (*)(const char*);
         static const auto encoder =
-            reinterpret_cast<EncoderFn>(::dlsym(RTLD_DEFAULT, "stud_video_encoder_support"));
+            reinterpret_cast<EncoderFn>(libmediandk_symbol("stud_video_encoder_support"));
         std::vector<std::pair<std::string, bool>> encoders;
         for (const char* mime : {"video/hevc", "video/avc"}) {
             const int support = encoder != nullptr ? encoder(mime) : 0;
@@ -1152,7 +1162,7 @@ public:
                                                             FakeJni::JInt /*fps*/) {
         using EncoderFn = int (*)(const char*);
         static const auto encoder =
-            reinterpret_cast<EncoderFn>(::dlsym(RTLD_DEFAULT, "stud_video_encoder_support"));
+            reinterpret_cast<EncoderFn>(libmediandk_symbol("stud_video_encoder_support"));
         const bool hardware = encoder != nullptr && (encoder("video/hevc") & 2) != 0;
         std::printf("stud: MediaCodecInfoUtils.hevcHardwareEncodingSupported() -> %s\n",
                     hardware ? "yes" : "no");
