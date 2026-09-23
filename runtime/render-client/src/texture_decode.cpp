@@ -39,9 +39,13 @@ namespace {
 // frame.
 class BlockPool {
 public:
+    // Never destroyed. The workers sleep on this pool's condition variable
+    // for the life of the process, so a static destructor at exit destroyed
+    // it under them, which is undefined and was caught hanging a process
+    // in exit() with every worker parked.
     static BlockPool& instance() {
-        static BlockPool pool;
-        return pool;
+        static BlockPool* pool = new BlockPool;
+        return *pool;
     }
 
     unsigned workers() const { return static_cast<unsigned>(threads_.size()); }
@@ -314,10 +318,14 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // write, which is pure loss for Home's thumbnails, each unique and
     // below that size.
     //
-    // The floor was set when the cache stood in for a BC re-encode, which
-    // cost milliseconds per level. It now stands in for a plain decode,
-    // which is much cheaper, and whether a file read still beats that at
-    // this size has not been measured.
+    // What a hit saves, in CPU, measured on real dumped ETC2 levels: a
+    // 1024x1024 decode is 3.1-3.2 ms across the pool, a hit read back from
+    // disk 1.4-1.5 ms and from the page cache 0.26-0.30 ms, and a miss adds
+    // 0.56-0.58 ms (hash and write), about 18%, repaid the first time the
+    // level is seen again in a later session. 256x256: 0.22 ms against
+    // 0.06-0.09 cold. In wall time a cold hit is slower than decoding (1.9
+    // against 0.66 ms at 1024x1024), because the read waits and the decode
+    // runs on several threads: the cache saves CPU, not latency.
     constexpr uint64_t kMinCacheableOutput = 64u * 1024u;
     const bool cacheable = stud::texture_cache::enabled() && output_bytes >= kMinCacheableOutput;
     if (cacheable) {

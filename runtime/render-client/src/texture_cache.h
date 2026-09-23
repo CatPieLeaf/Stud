@@ -6,10 +6,9 @@
 //
 // Decoding an ETC2/EAC level is deterministic, the same source bytes
 // always produce the same output, and Roblox's content is immutable, so
-// the result can be kept and a hit turns a decode into a file read. This
-// was written when the decode was followed by a BC re-encode costing tens
-// of milliseconds a level; that re-encode is gone, and a plain decode is
-// far cheaper, so how much a hit now saves has not been measured.
+// the result can be kept and a hit turns a decode into a file read, which
+// costs well under half the CPU; see the floor in texture_decode.cpp for
+// the measurements.
 //
 // It lives in the cache directory, where a cache cleaner is entitled to
 // delete it: losing it costs the time to decode again and nothing else.
