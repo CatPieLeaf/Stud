@@ -155,6 +155,56 @@ uint32_t gl_pixel_size(GLenum format, GLenum type) {
             return components;
     }
 }
+
+// The engine's pixel-store state, as last set through glPixelStorei.
+//
+// The host applies the same state (glPixelStorei is forwarded), so its GL
+// reads rows with the engine's padding and skips from the bytes sent here.
+// Those bytes used to be counted as width * height * texel size, which is
+// short whenever a row is padded, a row length is set, or anything is
+// skipped: the host then read past the end of what arrived.
+struct PixelStore {
+    GLint alignment = 4;
+    GLint row_length = 0;
+    GLint image_height = 0;
+    GLint skip_pixels = 0;
+    GLint skip_rows = 0;
+    GLint skip_images = 0;
+};
+PixelStore g_unpack;
+PixelStore g_pack;
+
+void note_pixel_store(GLenum pname, GLint v) {
+    switch (pname) {
+        case 0x0CF5: g_unpack.alignment = v; break;     // GL_UNPACK_ALIGNMENT
+        case 0x0CF2: g_unpack.row_length = v; break;    // GL_UNPACK_ROW_LENGTH
+        case 0x806E: g_unpack.image_height = v; break;  // GL_UNPACK_IMAGE_HEIGHT
+        case 0x0CF4: g_unpack.skip_pixels = v; break;   // GL_UNPACK_SKIP_PIXELS
+        case 0x0CF3: g_unpack.skip_rows = v; break;     // GL_UNPACK_SKIP_ROWS
+        case 0x806D: g_unpack.skip_images = v; break;   // GL_UNPACK_SKIP_IMAGES
+        case 0x0D05: g_pack.alignment = v; break;       // GL_PACK_ALIGNMENT
+        case 0x0D02: g_pack.row_length = v; break;      // GL_PACK_ROW_LENGTH
+        case 0x0D04: g_pack.skip_pixels = v; break;     // GL_PACK_SKIP_PIXELS
+        case 0x0D03: g_pack.skip_rows = v; break;       // GL_PACK_SKIP_ROWS
+        default: break;
+    }
+}
+
+// Bytes GL touches from the start of the client's pointer for a
+// width x height x depth block, by the GLES 3 unpack/pack rules.
+size_t pixel_span(const PixelStore& ps, GLsizei width, GLsizei height, GLsizei depth,
+                  GLenum format, GLenum type) {
+    if (width <= 0 || height <= 0 || depth <= 0) return 0;
+    const size_t texel = gl_pixel_size(format, type);
+    const size_t row_texels = static_cast<size_t>(ps.row_length > 0 ? ps.row_length : width);
+    const size_t align = static_cast<size_t>(ps.alignment > 0 ? ps.alignment : 1);
+    const size_t row_stride = (row_texels * texel + align - 1) / align * align;
+    const size_t image_rows = static_cast<size_t>(ps.image_height > 0 ? ps.image_height : height);
+    const size_t image_stride = row_stride * image_rows;
+    return (static_cast<size_t>(ps.skip_images) + static_cast<size_t>(depth) - 1) * image_stride +
+           (static_cast<size_t>(ps.skip_rows) + static_cast<size_t>(height) - 1) * row_stride +
+           (static_cast<size_t>(ps.skip_pixels) + static_cast<size_t>(width)) * texel;
+}
 }  // namespace
 
 extern "C" {
@@ -281,7 +331,10 @@ void stud_refresh_gl_error_cache() {
 
 
 void glLinkProgram(GLuint p) { call0(CallId::GlLinkProgram, p); }
-void glPixelStorei(GLenum p, GLint v) { call0(CallId::GlPixelStorei, p, static_cast<uint64_t>(v)); }
+void glPixelStorei(GLenum p, GLint v) {
+    note_pixel_store(p, v);
+    call0(CallId::GlPixelStorei, p, static_cast<uint64_t>(v));
+}
 void glPolygonOffset(GLfloat f, GLfloat u) { call0(CallId::GlPolygonOffset, pack_float(f), pack_float(u)); }
 void glReleaseShaderCompiler() { call0(CallId::GlReleaseShaderCompiler); }
 void glRenderbufferStorage(GLenum t, GLenum i, GLsizei w, GLsizei h) { call0(CallId::GlRenderbufferStorage, t, i, static_cast<uint64_t>(w), static_cast<uint64_t>(h)); }
@@ -642,8 +695,7 @@ void glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, G
                       static_cast<uint64_t>(depth)};
     uint64_t pbo = pbo_tag(pixels);
     size_t pixel_bytes = (pbo == 0 && pixels != nullptr)
-                             ? static_cast<size_t>(width) * static_cast<size_t>(height) *
-                                   static_cast<size_t>(depth) * gl_pixel_size(format, type)
+                             ? pixel_span(g_unpack, width, height, depth, format, type)
                              : 0u;
     std::vector<unsigned char> payload(2 * sizeof(uint64_t) + pixel_bytes);
     auto* extra = reinterpret_cast<uint64_t*>(payload.data());
@@ -1100,8 +1152,7 @@ void glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei widt
                      static_cast<uint64_t>(border)};
     uint64_t pbo = pbo_tag(pixels);
     size_t pixel_bytes = (pbo == 0 && pixels != nullptr)
-                             ? static_cast<size_t>(width) * static_cast<size_t>(height) *
-                                   static_cast<size_t>(depth) * gl_pixel_size(format, type)
+                             ? pixel_span(g_unpack, width, height, depth, format, type)
                              : 0u;
     std::vector<unsigned char> payload(2 * sizeof(uint64_t) + pixel_bytes);
     auto* extra = reinterpret_cast<uint64_t*>(payload.data());
@@ -1292,10 +1343,9 @@ void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei widt
                       format,
                       type};
     uint64_t pbo = pbo_tag(pixels);
-    uint32_t bytes = (pbo == 0 && pixels != nullptr) ? static_cast<uint32_t>(width) *
-                                                            static_cast<uint32_t>(height) *
-                                                            gl_pixel_size(format, type)
-                                                     : 0;
+    uint32_t bytes = (pbo == 0 && pixels != nullptr)
+                         ? static_cast<uint32_t>(pixel_span(g_unpack, width, height, 1, format, type))
+                         : 0;
     connection().call_void(CallId::GlTexImage2D, a, pbo == 0 ? pixels : nullptr, bytes, pbo);
 }
 void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width,
@@ -1309,9 +1359,9 @@ void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, G
                       format,
                       type};
     uint64_t pbo = pbo_tag(pixels);
-    uint32_t bytes = pbo == 0 ? static_cast<uint32_t>(width) * static_cast<uint32_t>(height) *
-                                    gl_pixel_size(format, type)
-                              : 0;
+    uint32_t bytes = (pbo == 0 && pixels != nullptr)
+                         ? static_cast<uint32_t>(pixel_span(g_unpack, width, height, 1, format, type))
+                         : 0;
     connection().call_void(CallId::GlTexSubImage2D, a, pbo == 0 ? pixels : nullptr, bytes, pbo);
 }
 void glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width,
@@ -1347,8 +1397,8 @@ void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format
                       static_cast<uint64_t>(height), format, type};
     // Same real per-format sizing as the upload path, a 4-bytes-per-texel
     // assumption here would overrun the caller's own destination buffer.
-    uint32_t bytes = static_cast<uint32_t>(width) * static_cast<uint32_t>(height) *
-                     gl_pixel_size(format, type);
+    uint32_t bytes = static_cast<uint32_t>(pixel_span(g_pack, width, height, 1, format, type));
+    a[6] = bytes;  // the host's buffer has to hold the padded rows too
     connection().call(CallId::GlReadPixels, a, nullptr, 0, pixels, bytes, nullptr);
 }
 

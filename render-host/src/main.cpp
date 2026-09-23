@@ -4144,7 +4144,11 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlReadPixels: {
             GLenum format = static_cast<GLenum>(a[4]);
             GLenum type = static_cast<GLenum>(a[5]);
+            // a[6] is the client's span under the engine's pack state
+            // (row padding and skips), which GL writes with; the tight
+            // size alone overran this buffer on a padded read.
             uint32_t bytes = static_cast<uint32_t>(a[2]) * static_cast<uint32_t>(a[3]) * gl_pixel_size(format, type);
+            if (a[6] > bytes) bytes = static_cast<uint32_t>(a[6]);
             out.resize(bytes);
             fns.glReadPixels_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]),
                                static_cast<GLsizei>(a[3]), format, type, out.data());
