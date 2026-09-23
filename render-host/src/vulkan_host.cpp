@@ -2895,6 +2895,17 @@ uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
     if (mapped_size != 0 && offset + size > mapped_size) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     }
+    // Non-coherent memory holds the device's writes behind the CPU's cache
+    // until invalidated. Whole allocation, which needs no alignment to the
+    // device's atom size and costs nothing on coherent memory.
+    if (l.vk.vkInvalidateMappedMemoryRanges != nullptr) {
+        VkMappedMemoryRange range{};
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = from_u64<VkDeviceMemory>(memory);
+        range.offset = 0;
+        range.size = VK_WHOLE_SIZE;
+        l.vk.vkInvalidateMappedMemoryRanges(l.device, 1, &range);
+    }
     out.resize(static_cast<size_t>(size));
     std::memcpy(out.data(), static_cast<const uint8_t*>(it->second) + offset,
                 static_cast<size_t>(size));

@@ -1520,17 +1520,19 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDevice(VkPhysicalDevice physicalDevi
     *pDevice = reinterpret_cast<VkDevice>(static_cast<uintptr_t>(handle));
     g_decode_device = *pDevice;
     g_decode_physical_device = physicalDevice;
-    // Store emulated textures as BC rather than uncompressed, if this
-    // device has BC at all. Every desktop GPU does; the check is here
-    // because "every" is an assumption and this is the one place that can
-    // ask. See texture_encode.h for why it matters: an uncompressed
-    // substitute is 8x the size the engine budgets for, and the streaming
-    // system spends the session evicting mips it cannot fit.
+    // Emulated textures are stored uncompressed unless STUD_TEX_BC=1 asks
+    // for them to be re-encoded to BC.
     //
-    // STUD_TEX_NO_BC=1 goes back to storing them uncompressed, which is
-    // the A/B for both the memory question and this encoder's own quality.
+    // BC was the default, for the reason texture_encode.h gives: an
+    // uncompressed substitute is 4-8x the size the engine budgets for, and
+    // measured on 2026-09-23 textures flicker between mips without it. It
+    // also costs about a quarter of the engine process's CPU during play,
+    // because every newly streamed texture is encoded. The project's
+    // direction is to make the uncompressed path hold its textures and
+    // retire the re-encode, so uncompressed is the default and BC is the
+    // opt-in comparison.
     {
-        static const bool no_bc = std::getenv("STUD_TEX_NO_BC") != nullptr;
+        static const bool no_bc = std::getenv("STUD_TEX_BC") == nullptr;
         const VkFormat needed[] = {
             VK_FORMAT_BC1_RGB_UNORM_BLOCK,  VK_FORMAT_BC1_RGB_SRGB_BLOCK,
             VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
@@ -2080,33 +2082,54 @@ VKAPI_ATTR void VKAPI_CALL stud_vkUnmapMemory(VkDevice device, VkDeviceMemory me
                                             nullptr);
 }
 
-// A mapping in this client is upload-only: the staging buffer holds what
-// the engine wrote, and nothing ever copies back what the device wrote into
-// the real allocation. That is fine for a mapping used to upload, which is
-// every one the engine has been observed to make, and silently wrong for one
-// used to read results back: the engine would see its own last write, or
-// zeroes, instead of the device's data.
+// Copies what the device holds for each range into the engine's own mapping.
 //
-// Unimplemented is not the same as unnoticed. The entry point exists so the
-// day the engine asks for it, the log says so, rather than the frame quietly
-// containing the wrong thing.
+// This used to accept the call and do nothing, on the reasoning that every
+// mapping is upload-only. That held for everything observed, and would
+// have been silently wrong the first time the engine read a result back:
+// it would have seen its own last write, or zeroes. The readback is the
+// same VkReadMappedMemory the copy-to-buffer path already uses, and the
+// bytes are written through the engine's mapping so the write barrier
+// treats them like any other write.
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkInvalidateMappedMemoryRanges(
     VkDevice device, uint32_t memoryRangeCount, const VkMappedMemoryRange* pMemoryRanges) {
-    static std::atomic<bool> warned{false};
-    if (!warned.exchange(true)) {
-        std::fprintf(stderr,
-                     "stud: vulkan-client: vkInvalidateMappedMemoryRanges(%u range(s)) is not "
-                     "implemented: this client never copies device writes back into a mapping, "
-                     "so whatever is read through it is stale. Reported once.\n",
-                     memoryRangeCount);
-        std::fflush(stderr);
+    if (pMemoryRanges == nullptr) return VK_SUCCESS;
+    constexpr uint64_t kChunk = 16ull << 20;
+    std::vector<uint8_t> bytes;
+    for (uint32_t i = 0; i < memoryRangeCount; ++i) {
+        const VkMappedMemoryRange& r = pMemoryRanges[i];
+        const uint64_t key = to_u64(r.memory);
+        uint8_t* dst = nullptr;
+        uint64_t start = 0;
+        uint64_t length = 0;
+        {
+            std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+            auto it = mapped_ranges().find(key);
+            if (it == mapped_ranges().end()) continue;
+            MappedRange& range = it->second;
+            if (r.offset < range.offset) continue;
+            const uint64_t local = r.offset - range.offset;
+            if (local >= range.length()) continue;
+            const uint64_t avail = range.length() - local;
+            length = r.size == VK_WHOLE_SIZE ? avail : std::min<uint64_t>(r.size, avail);
+            dst = range.bytes() + local;
+            start = r.offset;
+        }
+        for (uint64_t done = 0; done < length;) {
+            const uint64_t want = std::min<uint64_t>(kChunk, length - done);
+            bytes.assign(static_cast<size_t>(want), 0);
+            uint64_t a[8] = {to_u64(device), key, start + done, want};
+            uint32_t written = 0;
+            const uint64_t res = stud::render_client::connection().call(
+                CallId::VkReadMappedMemory, a, nullptr, 0, bytes.data(),
+                static_cast<uint32_t>(bytes.size()), &written);
+            const VkResult vr = static_cast<VkResult>(static_cast<int32_t>(res));
+            if (vr != VK_SUCCESS) return vr;
+            if (written == 0) break;
+            std::memcpy(dst + done, bytes.data(), std::min<size_t>(written, static_cast<size_t>(want)));
+            done += written;
+        }
     }
-    // Deliberately not forwarded: the host's own allocation is not what the
-    // engine reads, the staging buffer is, so invalidating the real one
-    // changes nothing here. Returning success is honest about the call
-    // having been accepted; the warning above is honest about the rest.
-    (void)device;
-    (void)pMemoryRanges;
     return VK_SUCCESS;
 }
 
