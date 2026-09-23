@@ -19,7 +19,6 @@
 #define XXH_INLINE_ALL
 #include "xxhash.h"
 
-#include "texture_encode.h"
 
 namespace stud::texture_cache {
 namespace {
@@ -27,7 +26,7 @@ namespace {
 // Entries are spread over 256 directories by the first byte of the key,
 // so no single directory ends up with tens of thousands of files,
 // which is what makes a cache slower than the work it saves.
-// Scoped by the encoder version.
+// Scoped by the format version (kFormatVersion).
 //
 // The key already mixes that version in, so an entry from an older
 // encoder can never be hit -- but it still sat in the directory eating
@@ -41,14 +40,14 @@ namespace {
 // which is the right question to ask of entries that can all still be hit.
 std::string cache_root() {
     static const std::string root = stud::paths::cache_dir() + "/textures/v" +
-                                    std::to_string(stud::texture_encode::kEncoderVersion);
+                                    std::to_string(kFormatVersion);
     return root;
 }
 
 // Everything under textures/ that is not this generation.
 void drop_old_generations() {
     const std::string parent = stud::paths::cache_dir() + "/textures";
-    const std::string keep = "v" + std::to_string(stud::texture_encode::kEncoderVersion);
+    const std::string keep = "v" + std::to_string(kFormatVersion);
     DIR* dir_handle = ::opendir(parent.c_str());
     if (dir_handle == nullptr) return;
     uint64_t freed = 0;
@@ -87,7 +86,7 @@ void drop_old_generations() {
     }
     ::closedir(dir_handle);
     if (freed > 0) {
-        std::printf("stud: dropped %llu MB of texture cache from older encoders\n",
+        std::printf("stud: dropped %llu MB of texture cache from older builds\n",
                     static_cast<unsigned long long>(freed / (1024 * 1024)));
         std::fflush(stdout);
     }
@@ -116,9 +115,7 @@ std::string path_for(uint64_t key_high, uint64_t key_low) {
 // encoded once already.
 //
 // The budget has to hold the mip chains of the places actually visited,
-// and a BC7 1024x1024 level alone is 1 MB. Disk is the cheap resource
-// here; re-encoding is the expensive one, at tens of milliseconds a level
-// on a thread the engine is waiting for. textureCacheMB in config.json
+// and an uncompressed 1024x1024 level alone is 4 MB. textureCacheMB in config.json
 // still overrides this, and 0 disables the cache entirely.
 std::atomic<uint64_t> g_max_bytes{4096ull * 1024ull * 1024ull};
 
@@ -176,11 +173,10 @@ void prune_once() {
 
 // Whether the cache directory lives on a spinning disk.
 //
-// The cache trades a BC7 encode for a file read, and that trade is only
-// obviously good when the read is fast. On an SSD it is; on a spinning
-// disk a random 1MB read costs a seek, the writes compete with the
-// engine's own asset writes, and the margin against re-encoding is thin
-// enough not to be worth the disk space by default. So it is off there
+// The cache trades a decode for a file read, and that trade is only
+// worth anything when the read is fast. On a spinning disk a random read
+// costs a seek and the writes compete with the engine's own asset writes,
+// so it is off there by default. So it is off there
 // unless the config file says otherwise.
 //
 // The kernel answers this directly: a block device reports whether it
@@ -222,7 +218,7 @@ bool ensure_ready() {
         drop_old_generations();
         static const bool forced = std::getenv("STUD_TEX_CACHE_FORCE") != nullptr;
         if (!forced && on_rotational_disk()) {
-            std::printf("stud: texture cache off, %s is on a spinning disk, where re-encoding "
+            std::printf("stud: texture cache off, %s is on a spinning disk, where decoding "
                         "is about as cheap as reading it back (textureCacheMB in config.json, or "
                         "STUD_TEX_CACHE_FORCE=1, overrides)\n",
                         cache_root().c_str());
@@ -258,12 +254,12 @@ void key_for(const void* src, uint64_t src_bytes, uint32_t format, uint32_t targ
     // 1024x1024 ETC2 level, the 512 KB that actually gets hashed:
     // FNV-1a 0.067 ms at 7.84 GB/s, XXH3 0.025 ms at 21.28 GB/s. Small
     // in isolation, but this runs on every cache HIT, where there is no
-    // encode to hide behind and it is most of what a hit costs.
+    // decode to hide behind and it is most of what a hit costs.
     //
     // The metadata goes in as the seed rather than through the same
     // stream, so two textures with identical bytes but a different
     // format, size or encoder version cannot land on one key.
-    const uint32_t meta[5] = {stud::texture_encode::kEncoderVersion, format, target_format,
+    const uint32_t meta[5] = {kFormatVersion, format, target_format,
                               width, height};
     XXH64_hash_t seed = XXH3_64bits(meta, sizeof(meta));
     seed ^= XXH3_64bits(&src_bytes, sizeof(src_bytes));

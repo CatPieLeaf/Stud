@@ -34,25 +34,6 @@
 
 namespace stud::texture_decode {
 
-// Store an emulated texture in the BC format of the same size rather than
-// uncompressed, when the device has BC (every desktop GPU does). Off
-// until the client has actually asked the driver, so a device with
-// neither ETC2 nor BC still gets the uncompressed path.
-//
-// This is what makes the engine's own texture budget mean what it means
-// on a real device: see texture_encode.h for the measurement that
-// forced it, an RGBA8 substitute is 8x an ETC2 block, against a
-// compiled-in 64MB budget, and the streaming system spends the whole
-// session evicting and reloading mips it cannot fit.
-void set_bc_available(bool available);
-bool bc_available();
-
-// Use BC7 for the colour formats rather than BC1/BC3. Exact parity for
-// ETC2 RGBA8 and twice the size for ETC2 RGB8, bought because BC1 holds
-// only four colours per block, the textbook worst case for a normal
-// map, and what made them look like blocky noise.
-void set_bc7_available(bool available);
-
 // True for the compressed formats Stud decodes itself. Everything else,
 // including BC/DXT, which desktop GPUs support natively, is left alone.
 bool is_emulated(VkFormat format);
@@ -91,10 +72,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
             uint64_t src_row_pitch = 0);
 
 // Where row `y` of a decoded level starts, in bytes from the start of
-// that level. Not simply y * row_bytes: a transcoded level is stored as
-// 4x4 blocks, so a row lands at the start of its block row. `y` must be a
-// multiple of 4 when transcoding, which is what splitting a level into
-// bands of whole block rows guarantees.
+// that level.
 uint64_t decoded_row_offset(VkFormat format, uint32_t width, uint32_t y);
 
 // Distance in bytes between vertically adjacent rows of blocks when a copy

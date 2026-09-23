@@ -1520,45 +1520,17 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDevice(VkPhysicalDevice physicalDevi
     *pDevice = reinterpret_cast<VkDevice>(static_cast<uintptr_t>(handle));
     g_decode_device = *pDevice;
     g_decode_physical_device = physicalDevice;
-    // Emulated textures are stored uncompressed unless STUD_TEX_BC=1 asks
-    // for them to be re-encoded to BC.
-    //
-    // BC was the default, for the reason texture_encode.h gives: an
-    // uncompressed substitute is 4-8x the size the engine budgets for, and
-    // measured on 2026-09-23 textures flicker between mips without it. It
-    // also costs about a quarter of the engine process's CPU during play,
-    // because every newly streamed texture is encoded. The project's
-    // direction is to make the uncompressed path hold its textures and
-    // retire the re-encode, so uncompressed is the default and BC is the
-    // opt-in comparison.
+    // Emulated textures are decoded to an uncompressed format of the same
+    // precision. What keeps the engine's texture budget meaningful with
+    // them that size is the host's scaled memory requirements; see
+    // RedirectedImage in vulkan_host.cpp.
     {
-        static const bool no_bc = std::getenv("STUD_TEX_BC") == nullptr;
-        const VkFormat needed[] = {
-            VK_FORMAT_BC1_RGB_UNORM_BLOCK,  VK_FORMAT_BC1_RGB_SRGB_BLOCK,
-            VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
-            VK_FORMAT_BC3_UNORM_BLOCK,      VK_FORMAT_BC3_SRGB_BLOCK,
-            VK_FORMAT_BC4_UNORM_BLOCK,      VK_FORMAT_BC5_UNORM_BLOCK,
-        };
-        bool all = !no_bc;
-        for (VkFormat f : needed) {
-            if (!all) break;
-            all = driver_supports_format(physicalDevice, f);
+        static bool announced = false;
+        if (!announced) {
+            announced = true;
+            std::printf("stud: vulkan-client: emulated textures stored as uncompressed\n");
+            std::fflush(stdout);
         }
-        stud::texture_decode::set_bc_available(all);
-        // BC7 for the colour formats, where the device has it. Parity for
-        // ETC2 RGBA8, twice the size for ETC2 RGB8, and worth it: BC1
-        // holds four colours per block, which is what turned normal maps
-        // into blocky noise. STUD_TEX_NO_BC7=1 goes back to BC1/BC3.
-        static const bool no_bc7 = std::getenv("STUD_TEX_NO_BC7") != nullptr;
-        const bool bc7 = all && !no_bc7 &&
-                         driver_supports_format(physicalDevice, VK_FORMAT_BC7_UNORM_BLOCK) &&
-                         driver_supports_format(physicalDevice, VK_FORMAT_BC7_SRGB_BLOCK);
-        stud::texture_decode::set_bc7_available(bc7);
-        std::printf("stud: vulkan-client: emulated textures stored as %s\n",
-                    !all ? "uncompressed"
-                         : (bc7 ? "BC7 for colour, BC4/BC5 for the EAC formats"
-                                : "BC1/BC3 for colour, BC4/BC5 for the EAC formats"));
-        std::fflush(stdout);
     }
     return VK_SUCCESS;
 }
@@ -4566,10 +4538,7 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
                     DecodeBand b;
                     b.format = pd.format;
                     b.src = src_layer + static_cast<uint64_t>(y / 4) * row_pitch;
-                    // Where this band's rows really start. A transcoded
-                    // level is stored as blocks, so this is not y times a
-                    // row of texels, getting that wrong wrote each band
-                    // past the end of the one before it.
+                    // Where this band's rows start in the decoded level.
                     b.dst = dst_layer + stud::texture_decode::decoded_row_offset(pd.format,
                                                                                  pd.width, y);
                     b.row_pitch = row_pitch;

@@ -83,10 +83,8 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_TEXTURE_CACHE_MB` | from settings | Transcoded-texture cache size. `0` disables it. |
 | `STUD_TEX_NO_CACHE` | off | Disable the cache regardless of the setting. |
 | `STUD_TEX_CACHE_FORCE` | off | Use the cache even on a rotational disk, where it is normally skipped. |
-| `STUD_TEX_BC` | off | Re-encode emulated textures to BC instead of storing them uncompressed. Uncompressed is the default; BC holds mips better against the engine's texture budget but costs CPU on every newly streamed texture. **perf** |
 | `STUD_TEX_ENGINE_BUDGET_MB` | 1024 | The engine's own texture budget, which Stud scales every texture's reported size against so the engine reaches it only as real GPU memory fills. Measured at 1024 from the engine's log; set this if a newer engine uses a different one. |
 | `STUD_VK_REDIRECT_STATS` | off | Reports what the engine binds into each of its memory allocations: whether an allocation that received a size-scaled texture holds anything else. **perf** — a line every 2000 binds. |
-| `STUD_TEX_NO_BC7` | off | With `STUD_TEX_BC`, use BC1/BC3 for colour instead of BC7. |
 | `STUD_TEX_FORCE_DECODE`, `STUD_NO_TEX_DECODE` | off | Force or forbid decoding ETC/PVRTC in software. |
 | `STUD_TEX_DECODE_TRACE` | off | Reports each format decoded, and what a submit's decode cost. |
 | `STUD_TEX_EARLY_DECODE` | off | Decode a texture when its copy is **recorded** rather than when it is submitted, so the cost stops landing on the frame. Measured at 38 ms on one submit against frame intervals of 39-61 ms. The submit hashes the source and falls back to decoding normally if the engine wrote to it in between, so a mismatch costs nothing but the wasted work. Off by default until it has been played on. |

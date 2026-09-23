@@ -20,15 +20,14 @@ extern "C" {
 #include <PVRTDecompress.h>
 
 #include "texture_cache.h"
-#include "texture_encode.h"
 
 namespace stud::texture_decode {
 namespace {
 
 // A few worker threads for the block loop.
 //
-// Decoding a compressed block and re-encoding it to BC is per-block work
-// with no dependency between blocks, and there are a lot of them: a
+// Decoding a compressed block is per-block work with no dependency
+// between blocks, and there are a lot of them: a
 // 1024x1024 texture is 65,536. Done one after another on the calling
 // thread that is hundreds of milliseconds, which is exactly the stall
 // the engine reports as a 500ms frame when a new place loads and every
@@ -173,71 +172,29 @@ struct Layout {
     uint32_t block_bytes = 8;
     uint32_t texel_bytes = 4;
     enum Codec { kEtcRgb, kEtcRgbA1, kEacRgba, kEacR11, kEacRg11, kPvrtc4, kPvrtc2 } codec = kEtcRgb;
-    // The BC format of the same size, and its block size. Undefined for
-    // the PVRTC modes, whose 2bpp variant has no BC equivalent and which
-    // no GPU on this machine reports anyway.
-    VkFormat bc = VK_FORMAT_UNDEFINED;
-    uint32_t bc_block_bytes = 0;
-    // The higher-quality target for the colour formats: BC7 holds one
-    // subset of RGBA endpoints at 7 bits with 4-bit indices, against
-    // BC1's 5:6:5 and 2 bits. Exact parity for ETC2 RGBA8 (both 16 bytes
-    // a block) and twice the size for ETC2 RGB8, which is the price of
-    // normal maps that are not blocky.
-    VkFormat bc7 = VK_FORMAT_UNDEFINED;
 };
-
-bool& bc7_enabled() {
-    static bool on = true;
-    return on;
-}
-
-bool& bc_enabled() {
-    static bool on = false;
-    return on;
-}
-
-// True when this format is stored as BC rather than uncompressed.
-bool transcoding(const Layout& l) { return bc_enabled() && l.bc != VK_FORMAT_UNDEFINED; }
-
-// Which compressed format this one actually becomes, and its block size.
-struct Target {
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    uint32_t block_bytes = 0;
-};
-
-Target target_for(const Layout& l) {
-    if (!transcoding(l)) return {};
-    if (bc7_enabled() && l.bc7 != VK_FORMAT_UNDEFINED) return {l.bc7, 16};
-    return {l.bc, l.bc_block_bytes};
-}
 
 bool layout_for(VkFormat f, Layout& out) {
     switch (f) {
         // ETC1 has no Vulkan format of its own: it is a strict subset of
         // ETC2 RGB, and a decoder for the latter decodes the former.
         case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
-            out = {VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 8, 4, Layout::kEtcRgb,
-                   VK_FORMAT_BC1_RGB_UNORM_BLOCK, 8, VK_FORMAT_BC7_UNORM_BLOCK};
+            out = {VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 8, 4, Layout::kEtcRgb};
             return true;
         case VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK:
-            out = {VK_FORMAT_R8G8B8A8_SRGB, 4, 4, 8, 4, Layout::kEtcRgb,
-                   VK_FORMAT_BC1_RGB_SRGB_BLOCK, 8, VK_FORMAT_BC7_SRGB_BLOCK};
+            out = {VK_FORMAT_R8G8B8A8_SRGB, 4, 4, 8, 4, Layout::kEtcRgb};
             return true;
         case VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:
-            out = {VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 8, 4, Layout::kEtcRgbA1,
-                   VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, VK_FORMAT_BC7_UNORM_BLOCK};
+            out = {VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 8, 4, Layout::kEtcRgbA1};
             return true;
         case VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK:
-            out = {VK_FORMAT_R8G8B8A8_SRGB, 4, 4, 8, 4, Layout::kEtcRgbA1,
-                   VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, VK_FORMAT_BC7_SRGB_BLOCK};
+            out = {VK_FORMAT_R8G8B8A8_SRGB, 4, 4, 8, 4, Layout::kEtcRgbA1};
             return true;
         case VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:
-            out = {VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 16, 4, Layout::kEacRgba,
-                   VK_FORMAT_BC3_UNORM_BLOCK, 16, VK_FORMAT_BC7_UNORM_BLOCK};
+            out = {VK_FORMAT_R8G8B8A8_UNORM, 4, 4, 16, 4, Layout::kEacRgba};
             return true;
         case VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK:
-            out = {VK_FORMAT_R8G8B8A8_SRGB, 4, 4, 16, 4, Layout::kEacRgba,
-                   VK_FORMAT_BC3_SRGB_BLOCK, 16, VK_FORMAT_BC7_SRGB_BLOCK};
+            out = {VK_FORMAT_R8G8B8A8_SRGB, 4, 4, 16, 4, Layout::kEacRgba};
             return true;
         // EAC carries 11 bits per channel, so it decodes to 16-bit rather
         // than 8, rounding it to a byte would throw away precision the
@@ -245,12 +202,10 @@ bool layout_for(VkFormat f, Layout& out) {
         // this decoder produces unsigned data, and claiming support for a
         // format whose sign it would silently lose is worse than saying no.
         case VK_FORMAT_EAC_R11_UNORM_BLOCK:
-            out = {VK_FORMAT_R16_UNORM, 4, 4, 8, 2, Layout::kEacR11,
-                   VK_FORMAT_BC4_UNORM_BLOCK, 8};
+            out = {VK_FORMAT_R16_UNORM, 4, 4, 8, 2, Layout::kEacR11};
             return true;
         case VK_FORMAT_EAC_R11G11_UNORM_BLOCK:
-            out = {VK_FORMAT_R16G16_UNORM, 4, 4, 16, 4, Layout::kEacRg11,
-                   VK_FORMAT_BC5_UNORM_BLOCK, 16};
+            out = {VK_FORMAT_R16G16_UNORM, 4, 4, 16, 4, Layout::kEacRg11};
             return true;
         // PVRTC. The 4bpp modes cover 4x4 texels per 8-byte block and the
         // 2bpp modes 8x4, but neither decodes block-at-a-time: a PVRTC
@@ -288,26 +243,15 @@ bool is_pvrtc(VkFormat format) {
     return l.codec == Layout::kPvrtc4 || l.codec == Layout::kPvrtc2;
 }
 
-void set_bc_available(bool available) { bc_enabled() = available; }
-bool bc_available() { return bc_enabled(); }
-void set_bc7_available(bool available) { bc7_enabled() = available; }
-
 VkFormat substitute(VkFormat format) {
     Layout l;
     if (!layout_for(format, l)) return format;
-    const Target t = target_for(l);
-    return t.format != VK_FORMAT_UNDEFINED ? t.format : l.substitute;
+    return l.substitute;
 }
 
 uint64_t decoded_size(VkFormat format, uint32_t width, uint32_t height) {
     Layout l;
     if (!layout_for(format, l)) return 0;
-    if (transcoding(l)) {
-        // Blocks, not texels: what comes out is compressed too, and a
-        // level narrower than one block still occupies a whole one.
-        return static_cast<uint64_t>(blocks(width, 4)) * blocks(height, 4) *
-               target_for(l).block_bytes;
-    }
     return static_cast<uint64_t>(width) * height * l.texel_bytes;
 }
 
@@ -321,9 +265,6 @@ uint64_t encoded_size(VkFormat format, uint32_t width, uint32_t height) {
 uint64_t decoded_row_offset(VkFormat format, uint32_t width, uint32_t y) {
     Layout l;
     if (!layout_for(format, l)) return 0;
-    if (transcoding(l)) {
-        return static_cast<uint64_t>(y / 4) * blocks(width, 4) * target_for(l).block_bytes;
-    }
     return static_cast<uint64_t>(y) * width * l.texel_bytes;
 }
 
@@ -357,56 +298,31 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     const uint32_t bw = blocks(width, l.block_w);
     const uint32_t bh = blocks(height, l.block_h);
     const uint32_t row_bytes = width * l.texel_bytes;
-    const bool transcode = transcoding(l);
-    const Target target = target_for(l);
-    const bool use_bc7 = target.format == VK_FORMAT_BC7_UNORM_BLOCK ||
-                         target.format == VK_FORMAT_BC7_SRGB_BLOCK;
-
-    // Has this exact transcode been done before?
+    // Has this exact decode been done before?
     //
-    // The work below is deterministic: the same source bytes and target
-    // format always produce the same output, and Roblox's content never
-    // changes. So the result is kept between runs, which is what turns
-    // the launch spike. Every texture in the place, encoded from
-    // scratch, every time, into a file read.
+    // The work below is deterministic: the same source bytes always
+    // produce the same output, and Roblox's content never changes. So the
+    // result is kept between runs.
     const uint64_t source_bytes =
         static_cast<uint64_t>(bh) * (src_row_pitch != 0 ? src_row_pitch
                                                         : static_cast<uint64_t>(bw) * l.block_bytes);
-    const uint64_t output_bytes =
-        transcode ? static_cast<uint64_t>(bw) * bh * target.block_bytes
-                  : static_cast<uint64_t>(height) * row_bytes;
+    const uint64_t output_bytes = static_cast<uint64_t>(height) * row_bytes;
     uint64_t key_high = 0;
     uint64_t key_low = 0;
-    // Only levels where the encode genuinely dominates.
+    // Only levels of 64KB and up, a 256x256 level: every decode that
+    // consults the cache pays a hash of the source, and every miss a file
+    // write, which is pure loss for Home's thumbnails, each unique and
+    // below that size.
     //
-    // The cache is not free: every decode that consults it pays a hash of
-    // the source bytes, and every miss pays a file write. For an image
-    // that will never be asked for again that is pure loss, and Home is
-    // full of them, because each thumbnail is unique. Measured directly:
-    // with the cache off, scrolling Home holds a higher frame rate.
-    //
-    // The floor used to be 512KB, which in BC7 is a 1024x1024 level and
-    // nothing else. Every smaller level of every real texture therefore
-    // re-encoded on every single encounter, for the life of the install:
-    // of the twelve levels in one captured session, ten were below it.
-    // What that looks like is a place re-doing work it did a minute ago
-    // and never settling.
-    //
-    // 64KB is a 256x256 level. The reasoning behind the old floor was
-    // that such a level "encodes in about a millisecond", which is no
-    // longer true: a 256x256 level is 4096 blocks and costs a few
-    // milliseconds now, against roughly 50 microseconds to read it back.
-    // Caching it wins by a wide margin.
-    //
-    // It is still a floor rather than nothing, because Home's thumbnails
-    // are each unique -- hashing and writing an entry that will never be
-    // asked for again is pure loss, and scrolling Home measured faster
-    // with the cache off. Below 256x256 is where those live.
+    // The floor was set when the cache stood in for a BC re-encode, which
+    // cost milliseconds per level. It now stands in for a plain decode,
+    // which is much cheaper, and whether a file read still beats that at
+    // this size has not been measured.
     constexpr uint64_t kMinCacheableOutput = 64u * 1024u;
     const bool cacheable = stud::texture_cache::enabled() && output_bytes >= kMinCacheableOutput;
     if (cacheable) {
         stud::texture_cache::key_for(in, source_bytes, static_cast<uint32_t>(format),
-                                     static_cast<uint32_t>(transcode ? target.format : 0), width,
+                                     0, width,
                                      height, &key_high, &key_low);
         if (stud::texture_cache::load(key_high, key_low, dst, output_bytes)) return true;
     }
@@ -463,43 +379,6 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
             // produced. Zero is visibly wrong rather than random, which is
             // the honest answer for data this decoder cannot read.
             if (!ok) std::memset(scratch, 0, sizeof(scratch));
-
-            if (transcode) {
-                // Straight from the decoded block into the BC block of the
-                // same size. Partial edge blocks need no special case: BC
-                // is 4x4 too, so the whole block is written and the texels
-                // past the level's edge are simply never sampled.
-                uint8_t* dst_block =
-                    out + (static_cast<uint64_t>(by) * bw + bx) * target.block_bytes;
-                if (use_bc7) {
-                    // One encoder for every colour format: BC7 carries
-                    // alpha, so the punch-through and full-alpha cases
-                    // need no separate path.
-                    stud::texture_encode::bc7_block(scratch, dst_block);
-                    continue;
-                }
-                switch (l.codec) {
-                    case Layout::kEtcRgb:
-                        stud::texture_encode::bc1_block(scratch, dst_block);
-                        break;
-                    case Layout::kEtcRgbA1:
-                        stud::texture_encode::bc1_block_punchthrough(scratch, dst_block);
-                        break;
-                    case Layout::kEacRgba:
-                        stud::texture_encode::bc3_block(scratch, dst_block);
-                        break;
-                    case Layout::kEacR11:
-                        stud::texture_encode::bc4_block_from_r16(
-                            reinterpret_cast<const uint16_t*>(scratch), dst_block);
-                        break;
-                    case Layout::kEacRg11:
-                        stud::texture_encode::bc5_block_from_rg16(
-                            reinterpret_cast<const uint16_t*>(scratch), dst_block);
-                        break;
-                    default: failed.store(true); continue;
-                }
-                continue;
-            }
 
             for (uint32_t y = 0; y < h; ++y) {
                 std::memcpy(out + static_cast<uint64_t>(y0 + y) * row_bytes +

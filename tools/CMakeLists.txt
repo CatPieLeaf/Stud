@@ -41,9 +41,6 @@ if (VulkanLoader_FOUND AND EXISTS "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp")
         tex_decode_compare.cpp
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src/texture_decode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src/texture_cache.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src/texture_encode.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc/bc7enc.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc/rgbcx.cpp"
         "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp"
         "${STUD_TEXDEC_DIR}/detex/bits.c"
         "${STUD_TEXDEC_DIR}/detex/clamp.c"
@@ -51,9 +48,7 @@ if (VulkanLoader_FOUND AND EXISTS "${STUD_TEXDEC_DIR}/PVRTDecompress.cpp")
         "${STUD_TEXDEC_DIR}/detex/decompress-etc.c"
         "${STUD_TEXDEC_DIR}/detex/decompress-eac.c"
     )
-    target_compile_definitions(stud_tex_decode_compare PRIVATE RGBCX_USE_SMALLER_TABLES=1)
     target_include_directories(stud_tex_decode_compare PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/bc7enc"
         "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/xxhash"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/render-client/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include"

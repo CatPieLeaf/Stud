@@ -52,13 +52,6 @@ third_party/*
 # embeds straight out of it, so the build needs the file present, not
 # just the reader.
 !third_party/mpv-prescalers/
-# And bc7enc_rdo, which is not a reference but the encoders themselves:
-# every emulated texture is re-encoded through rgbcx (BC1/BC3/BC4/BC5) or
-# bc7enc (BC7), so the build needs the source present. ~360 KB of
-# portable C++, no intrinsics, MIT or public domain. It replaced Stud's
-# own block encoders, which were slower on three of the four formats and
-# had no partitioned BC7 mode at all.
-!third_party/bc7enc/
 # And volk, the Vulkan meta-loader, which resolves the render host's
 # device table. It replaced ninety hand-written
 # vkGetDeviceProcAddr("vkName") lookups: a misspelling there resolved to

@@ -114,10 +114,9 @@ Every one of those is under a permissive licence and ships with its own
 licence text and copyright notice, installed to
 `/usr/share/licenses/stud/` and kept beside the libraries themselves.
 
-Four more are compiled into Stud's own binaries, so their notices are
+Three more are compiled into Stud's own binaries, so their notices are
 installed to `/usr/share/licenses/stud/` too:
 
- - bc7enc_rdo, the texture block encoders (MIT or public domain)
  - volk, the Vulkan entry-point loader (MIT)
  - xxHash, the texture cache key (BSD-2-Clause)
  - miniaudio, the audio device (Unlicense or MIT-0)

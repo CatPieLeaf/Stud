@@ -2,22 +2,24 @@
 
 #include <cstdint>
 
-// Transcoded texture blocks, kept between runs.
+// Decoded texture levels, kept between runs.
 //
-// Decoding an ETC2/EAC block and re-encoding it to BC7 is the single most
-// expensive thing Stud does per texture: a 1024x1024 level is 65,536
-// blocks, and a place loading its content delivers a flood of them at
-// once. That is the CPU spike on launch and on teleporting somewhere new.
-//
-// The work is perfectly deterministic, the same source bytes and the
-// same target format always produce the same output, and Roblox's
-// content is immutable, so the result is worth keeping. A hit turns tens
-// of milliseconds of encoding into a file read.
+// Decoding an ETC2/EAC level is deterministic, the same source bytes
+// always produce the same output, and Roblox's content is immutable, so
+// the result can be kept and a hit turns a decode into a file read. This
+// was written when the decode was followed by a BC re-encode costing tens
+// of milliseconds a level; that re-encode is gone, and a plain decode is
+// far cheaper, so how much a hit now saves has not been measured.
 //
 // It lives in the cache directory, where a cache cleaner is entitled to
-// delete it: losing it costs the time to encode again and nothing else.
+// delete it: losing it costs the time to decode again and nothing else.
 // STUD_TEX_NO_CACHE=1 turns it off.
 namespace stud::texture_cache {
+
+// Bump whenever what a stored entry holds changes, so an entry written by
+// an older build is never served. 13: entries are always the uncompressed
+// decode; 12 and earlier held BC blocks from the removed re-encode.
+inline constexpr uint32_t kFormatVersion = 13;
 
 // Looks for a previously stored result. `key` identifies the source
 // bytes and the target format together; see key_for(). Fills `dst` and
