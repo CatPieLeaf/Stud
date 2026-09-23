@@ -756,6 +756,38 @@ enum class CallId : uint32_t {
     // The output device's underrun count since it opened, for
     // AAudioStream_getXRunCount. Returned as the call's result.
     AudioGetUnderruns,
+
+    // Video decoding for the engine's AMediaCodec; see video_decoder.h.
+    // Supported: in = MIME, NUL-terminated; result 1/0.
+    // Create:    in = MIME; result = decoder handle, 0 for none.
+    // Configure: a[0] decoder, a[1] width, a[2] height; in = csd bytes.
+    // Queue:     a[0] decoder, a[1] pts (us), a[2] end of stream; in = data.
+    // Dequeue:   a[0] decoder; out = VideoFrameHeader + NV12.
+    VideoDecoderSupported,
+    VideoDecoderCreate,
+    VideoDecoderConfigure,
+    VideoDecoderQueue,
+    VideoDecoderDequeue,
+    VideoDecoderFlush,
+    VideoDecoderDestroy,
+};
+
+// What VideoDecoderDequeue returns ahead of a frame's NV12 bytes: the Y
+// plane, `stride` bytes a row for `slice_height` rows, then interleaved UV
+// at the same stride for half as many. The visible rectangle is the crop,
+// inclusive, as Android's crop-left/top/right/bottom keys describe it.
+struct VideoFrameHeader {
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride;
+    uint32_t slice_height;
+    uint32_t crop_left;
+    uint32_t crop_top;
+    uint32_t crop_right;
+    uint32_t crop_bottom;
+    int64_t pts_us;
+    uint32_t data_size;
+    uint32_t reserved;
 };
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -1032,9 +1064,16 @@ inline const char* call_id_name(CallId id) {
         "GlObjectLabel",
         "GlGetBufferParameteriv",
         "AudioGetUnderruns",
+        "VideoDecoderSupported",
+        "VideoDecoderCreate",
+        "VideoDecoderConfigure",
+        "VideoDecoderQueue",
+        "VideoDecoderDequeue",
+        "VideoDecoderFlush",
+        "VideoDecoderDestroy",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::AudioGetUnderruns) + 1,
+                      static_cast<size_t>(CallId::VideoDecoderDestroy) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

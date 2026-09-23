@@ -39,6 +39,7 @@
 
 #include "stud/render.h"
 #include "stud/audio_output.h"
+#include "stud/video_decoder.h"
 #include "stud/gamepad.h"
 #include "stud/render_host_protocol.h"
 #include "stud/discord_rpc.h"
@@ -3527,6 +3528,36 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return stud::render_host::audio_write_frames(a[0], in.data(), in.size());
         case CallId::AudioGetUnderruns:
             return stud::render_host::audio_underruns();
+
+        // Video decoding; see video_decoder.h. Each takes the decoder's own
+        // lock, not the dispatch lock (see blocks_in_the_driver).
+        case CallId::VideoDecoderSupported:
+        case CallId::VideoDecoderCreate: {
+            const std::string mime(reinterpret_cast<const char*>(in.data()),
+                                   strnlen(reinterpret_cast<const char*>(in.data()), in.size()));
+            return hdr.call_id == CallId::VideoDecoderSupported
+                       ? (stud::render_host::video_decoder_supported(mime.c_str()) ? 1 : 0)
+                       : stud::render_host::video_decoder_create(mime.c_str());
+        }
+        case CallId::VideoDecoderConfigure:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_decoder_configure(
+                    a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), in.data(),
+                    static_cast<uint32_t>(in.size()))));
+        case CallId::VideoDecoderQueue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_decoder_queue(a[0], in.data(),
+                                                       static_cast<uint32_t>(in.size()),
+                                                       static_cast<int64_t>(a[1]), a[2] != 0)));
+        case CallId::VideoDecoderDequeue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_decoder_dequeue(a[0], out, out_len)));
+        case CallId::VideoDecoderFlush:
+            stud::render_host::video_decoder_flush(a[0]);
+            return 0;
+        case CallId::VideoDecoderDestroy:
+            stud::render_host::video_decoder_destroy(a[0]);
+            return 0;
         case CallId::AudioCloseStream:
             stud::render_host::audio_close_stream(a[0]);
             return 1;
@@ -4657,6 +4688,15 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::PollInputEvents:
         // Waits for the GPU; client_wait_sync() takes the lock per poll.
         case stud::render_host::CallId::GlClientWaitSync:
+        // Video decoding touches no GL state and can take milliseconds a
+        // frame; each decoder has its own lock.
+        case stud::render_host::CallId::VideoDecoderSupported:
+        case stud::render_host::CallId::VideoDecoderCreate:
+        case stud::render_host::CallId::VideoDecoderConfigure:
+        case stud::render_host::CallId::VideoDecoderQueue:
+        case stud::render_host::CallId::VideoDecoderDequeue:
+        case stud::render_host::CallId::VideoDecoderFlush:
+        case stud::render_host::CallId::VideoDecoderDestroy:
             return true;
         default:
             return false;

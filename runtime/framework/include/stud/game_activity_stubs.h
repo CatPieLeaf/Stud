@@ -4,6 +4,11 @@
 
 #include <fake-jni/fake-jni.h>
 
+#include <dlfcn.h>
+
+#include <string>
+#include <vector>
+
 #include "stud/android_framework_stubs.h"
 #include "stud/device_params.h"
 #include "stud/linker.h"
@@ -1069,55 +1074,58 @@ public:
 // them (`E/rbx.jni: cant find method MediaCodecInfoUtils.getVideoCodecs` /
 // `...hevcHardwareEncodingSupported`).
 //
-// Both real implementations enumerate `MediaCodecList`, which is Android's
-// hardware video codec database. Stud has no MediaCodec implementation at
-// all, so the honest answers are "no codecs" and "not supported", exactly
-// what a real device with no hardware HEVC encoder reports. This is a real
-// capability answer, not a placeholder: Stud genuinely offers no hardware
-// video encode path, and claiming otherwise would make the engine attempt
-// one that cannot work.
+// Both real implementations enumerate `MediaCodecList`, Android's codec
+// database. Stud's decoders are the render host's FFmpeg (see
+// media_codec_forward.cpp in the render client), so the list is whatever
+// that FFmpeg can decode, asked of it through libmediandk at the moment the
+// engine asks. There are no encoders, so HEVC encoding is not supported.
 class MediaCodecInfoUtilsStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/video/MediaCodecInfoUtils")
     static std::shared_ptr<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>
     getVideoCodecs() {
-        // STUD_VIDEO_CODECS names the decoders to advertise, so the
-        // question "what does the engine do once it believes video can be
-        // decoded" can be answered by relaunching rather than guessing.
-        // It is deliberately NOT on by default: Stud's AMediaCodec is a
-        // stub, so claiming a decoder here makes the engine attempt a
-        // playback that cannot work.
-        const char* advertise = std::getenv("STUD_VIDEO_CODECS");
-        // Whether the engine asks at all is worth knowing on its own: a
-        // full session at Home never calls this, so an empty list is not
-        // what produced "Failed to load video" there.
-        std::printf("stud: MediaCodecInfoUtils.getVideoCodecs() asked, answering %s\n",
-                    (advertise != nullptr && *advertise != '\0') ? advertise : "no codecs");
-        std::fflush(stdout);
-        if (advertise == nullptr || *advertise == '\0') {
-            return std::make_shared<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>(0);
+        using SupportedFn = int (*)(const char*);
+        static const auto supported =
+            reinterpret_cast<SupportedFn>(::dlsym(RTLD_DEFAULT, "stud_video_decoder_supported"));
+        // STUD_VIDEO_CODECS narrows the list to the MIME types it names,
+        // comma-separated, for seeing what the engine does with fewer.
+        const char* only = std::getenv("STUD_VIDEO_CODECS");
+        std::vector<std::string> mimes;
+        for (const char* mime : {"video/avc", "video/hevc", "video/x-vnd.on2.vp8",
+                                 "video/x-vnd.on2.vp9", "video/av01"}) {
+            if (only != nullptr && *only != '\0' && std::string(only).find(mime) == std::string::npos) {
+                continue;
+            }
+            if (supported != nullptr && supported(mime) != 0) mimes.emplace_back(mime);
         }
-        auto codecs =
-            std::make_shared<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>(1);
-        auto entry = std::make_shared<VideoCodecCapabilityStub>();
-        entry->codec = std::make_shared<FakeJni::JString>(advertise);
-        entry->name = std::make_shared<FakeJni::JString>("stud.decoder");
-        entry->isEncoder = false;
-        entry->isHardware = false;
-        // A conservative envelope, so nothing is claimed that an ordinary
-        // desktop decoder could not do.
-        entry->maxWidth = 1920;
-        entry->minWidth = 16;
-        entry->maxHeight = 1080;
-        entry->minHeight = 16;
-        entry->maxFps = 60;
-        entry->minFps = 1;
-        entry->maxBitrate = 20000000;
-        entry->minBitrate = 1;
-        entry->maxInstances = 4;
-        entry->profiles = std::make_shared<FakeJni::JArray<std::shared_ptr<FakeJni::JString>>>(0);
-        entry->levels = std::make_shared<FakeJni::JArray<std::shared_ptr<FakeJni::JString>>>(0);
-        (*codecs)[0] = entry;
+        std::string names;
+        for (const auto& m : mimes) names += (names.empty() ? "" : ", ") + m;
+        std::printf("stud: MediaCodecInfoUtils.getVideoCodecs() -> %s\n",
+                    names.empty() ? "none" : names.c_str());
+        std::fflush(stdout);
+        auto codecs = std::make_shared<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>(
+            static_cast<FakeJni::JInt>(mimes.size()));
+        for (size_t i = 0; i < mimes.size(); ++i) {
+            auto entry = std::make_shared<VideoCodecCapabilityStub>();
+            entry->codec = std::make_shared<FakeJni::JString>(mimes[i]);
+            entry->name = std::make_shared<FakeJni::JString>("stud.ffmpeg." + mimes[i].substr(6));
+            entry->isEncoder = false;
+            // Software, on the desktop's CPU: true of FFmpeg's decoders.
+            entry->isHardware = false;
+            entry->maxWidth = 3840;
+            entry->minWidth = 16;
+            entry->maxHeight = 2160;
+            entry->minHeight = 16;
+            entry->maxFps = 60;
+            entry->minFps = 1;
+            entry->maxBitrate = 100000000;
+            entry->minBitrate = 1;
+            entry->maxInstances = 4;
+            entry->profiles =
+                std::make_shared<FakeJni::JArray<std::shared_ptr<FakeJni::JString>>>(0);
+            entry->levels = std::make_shared<FakeJni::JArray<std::shared_ptr<FakeJni::JString>>>(0);
+            (*codecs)[static_cast<FakeJni::JInt>(i)] = entry;
+        }
         return codecs;
     }
     static FakeJni::JBoolean hevcHardwareEncodingSupported(FakeJni::JInt /*width*/,

@@ -269,7 +269,7 @@ add_library(stud_android_glue STATIC
     src/x11_backend.cpp
     src/text_overlay.cpp
     src/clipboard.cpp
-    src/media_codec.cpp
+    src/media_format.cpp
     src/android_glue.cpp
     "${XdgShellSource}"
     "${XdgShellHeader}"

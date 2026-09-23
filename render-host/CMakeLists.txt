@@ -167,7 +167,7 @@ endif()
 
 add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp)
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_decoder.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # What miniaudio is allowed to be. These are set on the target rather than
@@ -191,6 +191,21 @@ target_compile_definitions(stud-render-host PRIVATE
     MA_NO_DECODING MA_NO_ENCODING MA_NO_WAV MA_NO_FLAC MA_NO_MP3
     MA_NO_RESOURCE_MANAGER MA_NO_NODE_GRAPH MA_NO_ENGINE MA_NO_GENERATION
 )
+# Video decoding for the engine's AMediaCodec (src/video_decoder.cpp). Only
+# FFmpeg's headers are used: the library itself is loaded at runtime by the
+# major version these headers describe, so a system without it, or with a
+# different ABI, still runs Stud and simply offers no video decoders, and
+# the codecs available are whatever the distribution ships. Without the
+# headers the build goes ahead with no decoders.
+pkg_check_modules(FfmpegHeaders IMPORTED_TARGET libavcodec libavutil)
+if(FfmpegHeaders_FOUND)
+    target_include_directories(stud-render-host PRIVATE ${FfmpegHeaders_INCLUDE_DIRS})
+    target_compile_definitions(stud-render-host PRIVATE STUD_HAVE_FFMPEG=1)
+else()
+    message(STATUS "libavcodec/libavutil headers not found: render-host builds with no video "
+                   "decoders (install ffmpeg-devel or libavcodec-dev for them)")
+endif()
+
 target_link_libraries(stud-render-host PRIVATE
     stud_render
     stud_config

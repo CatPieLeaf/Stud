@@ -9,11 +9,9 @@
 // signatures as documented/stable in the actual NDK, same "reconstructed
 // from documented behavior, not copied" approach as ndk_types.h.
 //
-// AMediaCodec itself is a deliberate stub (see media_codec.cpp); real
-// hardware/software video decode is out of scope for the prototype (see
-// the engineering notes, "AMediaCodec (video): stub for prototype, real shim
-// later"). AMediaFormat is a real, working implementation; it's just a
-// key/value property bag, no actual codec capability needed.
+// AMediaCodec is Process B's forwarding client, decoding on the render
+// host's FFmpeg (runtime/render-client/src/media_codec_forward.cpp).
+// AMediaFormat is a key/value property bag (media_format.cpp).
 
 extern "C" {
 
@@ -24,7 +22,7 @@ using media_status_t = int;
 constexpr media_status_t AMEDIA_OK = 0;
 constexpr media_status_t AMEDIA_ERROR_UNSUPPORTED = -10004;
 
-// --- NdkMediaCodec.h (stub; see media_codec.cpp) ----------------------
+// --- NdkMediaCodec.h (see media_codec_forward.cpp) --------------------
 
 AMediaCodec* AMediaCodec_createDecoderByType(const char* mime_type);
 AMediaCodec* AMediaCodec_createEncoderByType(const char* mime_type);
@@ -39,9 +37,8 @@ uint8_t* AMediaCodec_getInputBuffer(AMediaCodec* codec, size_t idx, size_t* out_
 uint8_t* AMediaCodec_getOutputBuffer(AMediaCodec* codec, size_t idx, size_t* out_size);
 media_status_t AMediaCodec_queueInputBuffer(AMediaCodec* codec, size_t idx, off_t offset, size_t size,
                                              uint64_t time, uint32_t flags);
-// AMediaCodecBufferInfo's real layout isn't needed, the stub never
-// writes through this pointer, and pointer-passing ABI doesn't depend on
-// the pointee type.
+// `info` is an AMediaCodecBufferInfo; media_codec_forward.cpp defines its
+// layout where it writes one.
 ssize_t AMediaCodec_dequeueOutputBuffer(AMediaCodec* codec, void* info, int64_t timeoutUs);
 media_status_t AMediaCodec_releaseOutputBuffer(AMediaCodec* codec, size_t idx, bool render);
 AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
@@ -54,10 +51,8 @@ AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec);
 // imports these as OBJECT (data) symbols; some statically-linked
 // component reads the key *names* through these exported pointers rather
 // than hardcoding string literals, same pattern as __sF (see
-// libc_shim.cpp). AMediaCodec being a stub doesn't make these values
-// unimportant: whatever component calls AMediaFormat_setString/getString
-// needs the same key string AMediaFormat's internal property-bag map
-// would key on.
+// libc_shim.cpp): whatever calls AMediaFormat_setString/getString needs the
+// same key string the property bag keys on.
 
 extern const char* AMEDIAFORMAT_KEY_MIME;
 extern const char* AMEDIAFORMAT_KEY_WIDTH;

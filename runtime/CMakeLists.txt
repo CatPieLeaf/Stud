@@ -42,7 +42,6 @@ add_library(stud_runtime_libandroid SHARED
     "${ANDROID_GLUE_SRC}/src/asset_manager.cpp"
     "${ANDROID_GLUE_SRC}/src/configuration.cpp"
     "${ANDROID_GLUE_SRC}/src/looper.cpp"
-    "${ANDROID_GLUE_SRC}/src/media_codec.cpp"
     "${ANDROID_GLUE_SRC}/src/apk_extract.cpp"
     "${ANDROID_GLUE_SRC}/src/apk_manifest.cpp"
     render-client/src/native_window_forward.cpp
@@ -80,9 +79,14 @@ set_target_properties(stud_runtime_libandroid PROPERTIES
     # surface): trimmed to media_codec.cpp only, its own real, unique
     # purpose, confirmed (via grep) to call none of the removed functions.
 add_library(stud_runtime_libmediandk SHARED
-    "${ANDROID_GLUE_SRC}/src/media_codec.cpp"
+    "${ANDROID_GLUE_SRC}/src/media_format.cpp"
+    render-client/src/media_codec_forward.cpp
+    render-client/src/render_client_common.cpp
 )
-target_include_directories(stud_runtime_libmediandk PUBLIC "${ANDROID_GLUE_SRC}/include")
+target_include_directories(stud_runtime_libmediandk PUBLIC "${ANDROID_GLUE_SRC}/include"
+    PRIVATE render-client/src)
+target_link_libraries(stud_runtime_libmediandk PRIVATE stud_runtime_render_host_protocol)
+target_compile_definitions(stud_runtime_libmediandk PRIVATE STUD_CLIENT_OWNER="libmediandk")
 set_target_properties(stud_runtime_libmediandk PROPERTIES
     OUTPUT_NAME "mediandk"
     SUFFIX ".so"
