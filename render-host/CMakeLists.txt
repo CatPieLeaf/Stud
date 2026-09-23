@@ -167,7 +167,7 @@ endif()
 
 add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_decoder.cpp)
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_codec.cpp)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # What miniaudio is allowed to be. These are set on the target rather than
@@ -191,7 +191,7 @@ target_compile_definitions(stud-render-host PRIVATE
     MA_NO_DECODING MA_NO_ENCODING MA_NO_WAV MA_NO_FLAC MA_NO_MP3
     MA_NO_RESOURCE_MANAGER MA_NO_NODE_GRAPH MA_NO_ENGINE MA_NO_GENERATION
 )
-# Video decoding for the engine's AMediaCodec (src/video_decoder.cpp). Only
+# Video decoding for the engine's AMediaCodec (src/video_codec.cpp). Only
 # FFmpeg's headers are used: the library itself is loaded at runtime by the
 # major version these headers describe, so a system without it, or with a
 # different ABI, still runs Stud and simply offers no video decoders, and

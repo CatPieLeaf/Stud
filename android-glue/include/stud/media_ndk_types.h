@@ -71,6 +71,7 @@ AMediaFormat* AMediaFormat_new();
 media_status_t AMediaFormat_delete(AMediaFormat* format);
 const char* AMediaFormat_toString(AMediaFormat* format);
 bool AMediaFormat_getInt32(AMediaFormat* format, const char* name, int32_t* out);
+bool AMediaFormat_getFloat(AMediaFormat* format, const char* name, float* out);
 void AMediaFormat_setInt32(AMediaFormat* format, const char* name, int32_t value);
 void AMediaFormat_setFloat(AMediaFormat* format, const char* name, float value);
 void AMediaFormat_setString(AMediaFormat* format, const char* name, const char* value);

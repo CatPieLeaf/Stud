@@ -1077,8 +1077,9 @@ public:
 // Both real implementations enumerate `MediaCodecList`, Android's codec
 // database. Stud's decoders are the render host's FFmpeg (see
 // media_codec_forward.cpp in the render client), so the list is whatever
-// that FFmpeg can decode, asked of it through libmediandk at the moment the
-// engine asks. There are no encoders, so HEVC encoding is not supported.
+// that FFmpeg can decode and encode, asked of it through libmediandk at the
+// moment the engine asks. An encoder is hardware when the one that opens is
+// NVENC, AMF or Quick Sync, and software (x264/x265) otherwise.
 class MediaCodecInfoUtilsStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/video/MediaCodecInfoUtils")
@@ -1098,20 +1099,35 @@ public:
             }
             if (supported != nullptr && supported(mime) != 0) mimes.emplace_back(mime);
         }
+        // Encoders: bit 0 supported, bit 1 hardware.
+        using EncoderFn = int (*)(const char*);
+        static const auto encoder =
+            reinterpret_cast<EncoderFn>(::dlsym(RTLD_DEFAULT, "stud_video_encoder_support"));
+        std::vector<std::pair<std::string, bool>> encoders;
+        for (const char* mime : {"video/hevc", "video/avc"}) {
+            const int support = encoder != nullptr ? encoder(mime) : 0;
+            if ((support & 1) != 0) encoders.emplace_back(mime, (support & 2) != 0);
+        }
         std::string names;
         for (const auto& m : mimes) names += (names.empty() ? "" : ", ") + m;
+        for (const auto& [m, hw] : encoders) {
+            names += (names.empty() ? "" : ", ") + m + (hw ? " encoder (hardware)" : " encoder");
+        }
         std::printf("stud: MediaCodecInfoUtils.getVideoCodecs() -> %s\n",
                     names.empty() ? "none" : names.c_str());
         std::fflush(stdout);
         auto codecs = std::make_shared<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>(
-            static_cast<FakeJni::JInt>(mimes.size()));
-        for (size_t i = 0; i < mimes.size(); ++i) {
+            static_cast<FakeJni::JInt>(mimes.size() + encoders.size()));
+        for (size_t i = 0; i < mimes.size() + encoders.size(); ++i) {
+            const bool is_encoder = i >= mimes.size();
+            const std::string mime = is_encoder ? encoders[i - mimes.size()].first : mimes[i];
             auto entry = std::make_shared<VideoCodecCapabilityStub>();
-            entry->codec = std::make_shared<FakeJni::JString>(mimes[i]);
-            entry->name = std::make_shared<FakeJni::JString>("stud.ffmpeg." + mimes[i].substr(6));
-            entry->isEncoder = false;
-            // Software, on the desktop's CPU: true of FFmpeg's decoders.
-            entry->isHardware = false;
+            entry->codec = std::make_shared<FakeJni::JString>(mime);
+            entry->name = std::make_shared<FakeJni::JString>(
+                std::string(is_encoder ? "stud.ffmpeg.encoder." : "stud.ffmpeg.") + mime.substr(6));
+            entry->isEncoder = is_encoder;
+            // FFmpeg's decoders run on the CPU; an encoder is whatever opened.
+            entry->isHardware = is_encoder && encoders[i - mimes.size()].second;
             entry->maxWidth = 3840;
             entry->minWidth = 16;
             entry->maxHeight = 2160;
@@ -1128,10 +1144,20 @@ public:
         }
         return codecs;
     }
+    // Hardware only, as the name says: a software HEVC encode of a game at
+    // its own frame rate is a load the engine is asking not to take on.
+    // The size and rate are within what NVENC, AMF and Quick Sync all do.
     static FakeJni::JBoolean hevcHardwareEncodingSupported(FakeJni::JInt /*width*/,
                                                             FakeJni::JInt /*height*/,
                                                             FakeJni::JInt /*fps*/) {
-        return false;
+        using EncoderFn = int (*)(const char*);
+        static const auto encoder =
+            reinterpret_cast<EncoderFn>(::dlsym(RTLD_DEFAULT, "stud_video_encoder_support"));
+        const bool hardware = encoder != nullptr && (encoder("video/hevc") & 2) != 0;
+        std::printf("stud: MediaCodecInfoUtils.hevcHardwareEncodingSupported() -> %s\n",
+                    hardware ? "yes" : "no");
+        std::fflush(stdout);
+        return hardware;
     }
 };
 

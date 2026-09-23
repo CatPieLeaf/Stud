@@ -757,7 +757,7 @@ enum class CallId : uint32_t {
     // AAudioStream_getXRunCount. Returned as the call's result.
     AudioGetUnderruns,
 
-    // Video decoding for the engine's AMediaCodec; see video_decoder.h.
+    // Video decoding for the engine's AMediaCodec; see video_codec.h.
     // Supported: in = MIME, NUL-terminated; result 1/0.
     // Create:    in = MIME; result = decoder handle, 0 for none.
     // Configure: a[0] decoder, a[1] width, a[2] height; in = csd bytes.
@@ -770,6 +770,30 @@ enum class CallId : uint32_t {
     VideoDecoderDequeue,
     VideoDecoderFlush,
     VideoDecoderDestroy,
+
+    // Video encoding; see video_codec.h.
+    // Supported: in = MIME; result bit 0 supported, bit 1 hardware.
+    // Create:    in = MIME; result = encoder handle, 0 for none.
+    // Configure: a[0] encoder, a[1] width, a[2] height, a[3] bit rate,
+    //            a[4] frame rate x1000, a[5] key interval (ms), a[6] colour format.
+    // Queue:     a[0] encoder, a[1] pts (us), a[2] end of stream; in = raw frame.
+    // Dequeue:   a[0] encoder; out = EncodedPacketHeader + bytes.
+    // Config:    a[0] encoder; out = the codec configuration bytes.
+    VideoEncoderSupported,
+    VideoEncoderCreate,
+    VideoEncoderConfigure,
+    VideoEncoderQueue,
+    VideoEncoderDequeue,
+    VideoEncoderConfig,
+    VideoEncoderDestroy,
+};
+
+// What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
+// Android's buffer flags: 1 key frame, 2 codec configuration.
+struct EncodedPacketHeader {
+    int64_t pts_us;
+    uint32_t flags;
+    uint32_t size;
 };
 
 // What VideoDecoderDequeue returns ahead of a frame's NV12 bytes: the Y
@@ -1071,9 +1095,16 @@ inline const char* call_id_name(CallId id) {
         "VideoDecoderDequeue",
         "VideoDecoderFlush",
         "VideoDecoderDestroy",
+        "VideoEncoderSupported",
+        "VideoEncoderCreate",
+        "VideoEncoderConfigure",
+        "VideoEncoderQueue",
+        "VideoEncoderDequeue",
+        "VideoEncoderConfig",
+        "VideoEncoderDestroy",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VideoDecoderDestroy) + 1,
+                      static_cast<size_t>(CallId::VideoEncoderDestroy) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

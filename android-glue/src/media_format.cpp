@@ -75,6 +75,13 @@ bool AMediaFormat_getInt32(AMediaFormat* format, const char* name, int32_t* out)
     return true;
 }
 
+bool AMediaFormat_getFloat(AMediaFormat* format, const char* name, float* out) {
+    auto it = format->values.find(name);
+    if (it == format->values.end() || !std::holds_alternative<float>(it->second)) return false;
+    *out = std::get<float>(it->second);
+    return true;
+}
+
 void AMediaFormat_setInt32(AMediaFormat* format, const char* name, int32_t value) {
     format->values[name] = value;
 }

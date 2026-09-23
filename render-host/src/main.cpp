@@ -39,7 +39,7 @@
 
 #include "stud/render.h"
 #include "stud/audio_output.h"
-#include "stud/video_decoder.h"
+#include "stud/video_codec.h"
 #include "stud/gamepad.h"
 #include "stud/render_host_protocol.h"
 #include "stud/discord_rpc.h"
@@ -3529,7 +3529,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::AudioGetUnderruns:
             return stud::render_host::audio_underruns();
 
-        // Video decoding; see video_decoder.h. Each takes the decoder's own
+        // Video decoding; see video_codec.h. Each takes the decoder's own
         // lock, not the dispatch lock (see blocks_in_the_driver).
         case CallId::VideoDecoderSupported:
         case CallId::VideoDecoderCreate: {
@@ -3557,6 +3557,37 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 0;
         case CallId::VideoDecoderDestroy:
             stud::render_host::video_decoder_destroy(a[0]);
+            return 0;
+        case CallId::VideoEncoderSupported:
+        case CallId::VideoEncoderCreate: {
+            const std::string mime(reinterpret_cast<const char*>(in.data()),
+                                   strnlen(reinterpret_cast<const char*>(in.data()), in.size()));
+            if (hdr.call_id == CallId::VideoEncoderCreate) {
+                return stud::render_host::video_encoder_create(mime.c_str());
+            }
+            const auto support = stud::render_host::video_encoder_supported(mime.c_str());
+            return (support.supported ? 1u : 0u) | (support.hardware ? 2u : 0u);
+        }
+        case CallId::VideoEncoderConfigure:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_encoder_configure(
+                    a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                    static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]),
+                    static_cast<uint32_t>(a[5]), static_cast<uint32_t>(a[6]))));
+        case CallId::VideoEncoderQueue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_encoder_queue(a[0], in.data(),
+                                                       static_cast<uint32_t>(in.size()),
+                                                       static_cast<int64_t>(a[1]), a[2] != 0)));
+        case CallId::VideoEncoderDequeue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_encoder_dequeue(a[0], out, out_len)));
+        case CallId::VideoEncoderConfig:
+            out = stud::render_host::video_encoder_config(a[0]);
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        case CallId::VideoEncoderDestroy:
+            stud::render_host::video_encoder_destroy(a[0]);
             return 0;
         case CallId::AudioCloseStream:
             stud::render_host::audio_close_stream(a[0]);
@@ -4697,6 +4728,13 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::VideoDecoderDequeue:
         case stud::render_host::CallId::VideoDecoderFlush:
         case stud::render_host::CallId::VideoDecoderDestroy:
+        case stud::render_host::CallId::VideoEncoderSupported:
+        case stud::render_host::CallId::VideoEncoderCreate:
+        case stud::render_host::CallId::VideoEncoderConfigure:
+        case stud::render_host::CallId::VideoEncoderQueue:
+        case stud::render_host::CallId::VideoEncoderDequeue:
+        case stud::render_host::CallId::VideoEncoderConfig:
+        case stud::render_host::CallId::VideoEncoderDestroy:
             return true;
         default:
             return false;
