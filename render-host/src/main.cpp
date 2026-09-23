@@ -2618,29 +2618,50 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::EglBindApi:
             return fns.eglBindAPI_(static_cast<EGLenum>(a[0])) == EGL_TRUE;
         case CallId::EglChooseConfig: {
-            const EGLint config_attribs[] = {EGL_SURFACE_TYPE,
-                                              EGL_WINDOW_BIT,
-                                              EGL_RENDERABLE_TYPE,
-                                              EGL_OPENGL_ES2_BIT,
-                                              EGL_RED_SIZE,
-                                              8,
-                                              EGL_GREEN_SIZE,
-                                              8,
-                                              EGL_BLUE_SIZE,
-                                              8,
-                                              EGL_ALPHA_SIZE,
-                                              8,
-                                              EGL_NONE};
-            EGLConfig config;
-            EGLint num_configs = 0;
-            if (fns.eglChooseConfig_(g_displays.at(a[0]), config_attribs, &config, 1, &num_configs) !=
-                    EGL_TRUE ||
-                num_configs == 0) {
-                std::fprintf(stderr, "stud-render-host: eglChooseConfig failed, error=0x%x\n",
-                              fns.eglGetError_());
-                return kNullHandle;
+            // The engine's own attribute list first. It used to be dropped
+            // for a fixed RGBA8, ES2-only config with no depth or stencil,
+            // and a config without EGL_OPENGL_ES3_BIT cannot back a GLES
+            // 3.1 or 3.2 context. An engine attribute ANGLE rejects falls
+            // back to the fixed list, now with the ES3 bit, and then to
+            // the old one.
+            constexpr EGLint kEs3Bit = 0x40;  // EGL_OPENGL_ES3_BIT
+            std::vector<EGLint> engine_attribs(in.size() / sizeof(EGLint) / 2 * 2);
+            if (!engine_attribs.empty()) {
+                std::memcpy(engine_attribs.data(), in.data(),
+                            engine_attribs.size() * sizeof(EGLint));
             }
-            return store(g_configs, config);
+            engine_attribs.push_back(EGL_NONE);
+            const EGLint fixed_es3[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                                        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT | kEs3Bit,
+                                        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+                                        EGL_ALPHA_SIZE, 8, EGL_NONE};
+            const EGLint fixed_es2[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                                        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                                        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+                                        EGL_ALPHA_SIZE, 8, EGL_NONE};
+            const EGLint* tries[] = {engine_attribs.size() > 1 ? engine_attribs.data() : nullptr,
+                                     fixed_es3, fixed_es2};
+            const char* names[] = {"engine's", "fixed ES3", "fixed ES2"};
+            for (int i = 0; i < 3; ++i) {
+                if (tries[i] == nullptr) continue;
+                EGLConfig config;
+                EGLint num_configs = 0;
+                if (fns.eglChooseConfig_(g_displays.at(a[0]), tries[i], &config, 1,
+                                         &num_configs) == EGL_TRUE &&
+                    num_configs > 0) {
+                    static bool announced = false;
+                    if (!announced) {
+                        announced = true;
+                        std::printf("stud-render-host: eglChooseConfig: %s attributes\n",
+                                    names[i]);
+                        std::fflush(stdout);
+                    }
+                    return store(g_configs, config);
+                }
+            }
+            std::fprintf(stderr, "stud-render-host: eglChooseConfig failed, error=0x%x\n",
+                         fns.eglGetError_());
+            return kNullHandle;
         }
         case CallId::EglCreateWindowSurface: {
             // Testable hypothesis (the engineering notes, "no kde window
@@ -2659,9 +2680,25 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 std::lock_guard<std::mutex> wl_lock(wayland_mutex());
                 wl_display_roundtrip(window.display);
             }
+            // The engine's surface attributes (colorspace and the like),
+            // which used to be dropped.
+            std::vector<EGLint> surface_attribs(in.size() / sizeof(EGLint) / 2 * 2);
+            if (!surface_attribs.empty()) {
+                std::memcpy(surface_attribs.data(), in.data(),
+                            surface_attribs.size() * sizeof(EGLint));
+            }
+            surface_attribs.push_back(EGL_NONE);
             EGLSurface s = fns.eglCreateWindowSurface_(
                 g_displays.at(a[0]), g_configs.at(a[1]),
-                window.egl_native_window(), nullptr);
+                window.egl_native_window(), surface_attribs.data());
+            if (s == EGL_NO_SURFACE && surface_attribs.size() > 1) {
+                std::fprintf(stderr,
+                             "stud-render-host: eglCreateWindowSurface refused the engine's "
+                             "attributes (0x%x), retrying without them\n",
+                             fns.eglGetError_());
+                s = fns.eglCreateWindowSurface_(g_displays.at(a[0]), g_configs.at(a[1]),
+                                                window.egl_native_window(), nullptr);
+            }
             if (s == EGL_NO_SURFACE) {
                 std::fprintf(stderr,
                               "stud-render-host: eglCreateWindowSurface failed, error=0x%x\n",
@@ -2688,16 +2725,41 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return h;
         }
         case CallId::EglCreatePbufferSurface: {
-            const EGLint attribs[] = {EGL_WIDTH, static_cast<EGLint>(a[1]), EGL_HEIGHT,
-                                       static_cast<EGLint>(a[2]), EGL_NONE};
+            // The client sends {display, config, width, height}. This read
+            // the config handle as the width and the width as the height.
+            const EGLint attribs[] = {EGL_WIDTH, static_cast<EGLint>(a[2]), EGL_HEIGHT,
+                                       static_cast<EGLint>(a[3]), EGL_NONE};
             EGLSurface s = fns.eglCreatePbufferSurface_(g_displays.at(a[0]), g_configs.at(a[1]),
                                                           attribs);
             return s == EGL_NO_SURFACE ? kNullHandle : store(g_surfaces, s);
         }
         case CallId::EglCreateContext: {
-            const EGLint context_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-            EGLContext ctx = fns.eglCreateContext_(g_displays.at(a[0]), g_configs.at(a[1]),
-                                                     EGL_NO_CONTEXT, context_attribs);
+            // The engine's own attributes and share context. Both used to
+            // be replaced by a fixed client version 2 and no sharing, so a
+            // second context meant to share textures with the first shared
+            // nothing, and the engine was never given the GLES version it
+            // asked for. A client that sends no attributes gets the old
+            // default.
+            std::vector<EGLint> context_attribs;
+            const size_t pairs = in.size() / (2 * sizeof(EGLint));
+            context_attribs.resize(pairs * 2);
+            if (pairs > 0) std::memcpy(context_attribs.data(), in.data(), pairs * 2 * sizeof(EGLint));
+            if (context_attribs.empty()) {
+                context_attribs = {EGL_CONTEXT_CLIENT_VERSION, 2};
+            }
+            context_attribs.push_back(EGL_NONE);
+            EGLContext share = EGL_NO_CONTEXT;
+            if (a[2] != kNullHandle) {
+                auto it = g_contexts.find(a[2]);
+                if (it == g_contexts.end()) return kNullHandle;
+                share = it->second;
+            }
+            EGLContext ctx = fns.eglCreateContext_(g_displays.at(a[0]), g_configs.at(a[1]), share,
+                                                     context_attribs.data());
+            if (ctx == EGL_NO_CONTEXT) {
+                std::fprintf(stderr, "stud-render-host: eglCreateContext failed, error=0x%x\n",
+                             fns.eglGetError_());
+            }
             return ctx == EGL_NO_CONTEXT ? kNullHandle : store(g_contexts, ctx);
         }
         case CallId::EglMakeCurrent: {

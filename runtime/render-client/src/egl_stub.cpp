@@ -19,7 +19,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <mutex>
+#include <string>
 #include <utility>
+#include <vector>
 
 using stud::render_host::CallId;
 using stud::render_client::connection;
@@ -34,6 +38,18 @@ namespace {
 template <typename T>
 T from_handle(uint64_t h) { return reinterpret_cast<T>(static_cast<uintptr_t>(h)); }
 uint64_t to_handle(const void* p) { return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p)); }
+
+// An EGL attribute list, as the wire carries it: the pairs, without the
+// EGL_NONE that ends them.
+std::vector<EGLint> attrib_pairs(const EGLint* attribs) {
+    std::vector<EGLint> list;
+    if (attribs == nullptr) return list;
+    for (const EGLint* p = attribs; *p != EGL_NONE; p += 2) {
+        list.push_back(p[0]);
+        list.push_back(p[1]);
+    }
+    return list;
+}
 
 }  // namespace
 
@@ -62,14 +78,22 @@ EGLBoolean eglBindAPI(EGLenum api) {
     return connection().call(CallId::EglBindApi, a, nullptr, 0, nullptr, 0, nullptr) ? EGL_TRUE : EGL_FALSE;
 }
 
-EGLBoolean eglChooseConfig(EGLDisplay dpy, const EGLint*, EGLConfig* configs, EGLint config_size,
-                            EGLint* num_config) {
+// The engine's own attributes go to the host. They used to be dropped, and
+// the host chose a fixed RGBA8 config with only EGL_OPENGL_ES2_BIT and no
+// depth or stencil, whatever the engine asked for. A config without
+// EGL_OPENGL_ES3_BIT cannot back a GLES 3.1 or 3.2 context, so the engine
+// was held at 3.0.
+EGLBoolean eglChooseConfig(EGLDisplay dpy, const EGLint* attrib_list, EGLConfig* configs,
+                            EGLint config_size, EGLint* num_config) {
     if (config_size < 1) {
         if (num_config != nullptr) *num_config = 0;
         return EGL_TRUE;
     }
+    const std::vector<EGLint> list = attrib_pairs(attrib_list);
     uint64_t a[8] = {to_handle(dpy)};
-    uint64_t h = connection().call(CallId::EglChooseConfig, a, nullptr, 0, nullptr, 0, nullptr);
+    uint64_t h = connection().call(CallId::EglChooseConfig, a, list.data(),
+                                   static_cast<uint32_t>(list.size() * sizeof(EGLint)), nullptr,
+                                   0, nullptr);
     if (h == 0) {
         if (num_config != nullptr) *num_config = 0;
         return EGL_FALSE;
@@ -80,9 +104,12 @@ EGLBoolean eglChooseConfig(EGLDisplay dpy, const EGLint*, EGLConfig* configs, EG
 }
 
 EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, EGLNativeWindowType,
-                                   const EGLint*) {
+                                   const EGLint* attrib_list) {
+    const std::vector<EGLint> list = attrib_pairs(attrib_list);
     uint64_t a[8] = {to_handle(dpy), to_handle(config)};
-    uint64_t h = connection().call(CallId::EglCreateWindowSurface, a, nullptr, 0, nullptr, 0, nullptr);
+    uint64_t h = connection().call(CallId::EglCreateWindowSurface, a, list.data(),
+                                   static_cast<uint32_t>(list.size() * sizeof(EGLint)), nullptr,
+                                   0, nullptr);
     return h == 0 ? EGL_NO_SURFACE : from_handle<EGLSurface>(h);
 }
 
@@ -100,9 +127,17 @@ EGLSurface eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig config, const EGLin
     return h == 0 ? EGL_NO_SURFACE : from_handle<EGLSurface>(h);
 }
 
-EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext, const EGLint*) {
-    uint64_t a[8] = {to_handle(dpy), to_handle(config)};
-    uint64_t h = connection().call(CallId::EglCreateContext, a, nullptr, 0, nullptr, 0, nullptr);
+// The share context and the attribute list both go to the host. Both were
+// dropped: every context was created unshared at client version 2, so a
+// second context the engine made to share objects with its first shared
+// nothing, and the engine saw an older GLES than the driver has.
+EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share,
+                            const EGLint* attribs) {
+    const std::vector<EGLint> list = attrib_pairs(attribs);
+    uint64_t a[8] = {to_handle(dpy), to_handle(config), to_handle(share)};
+    uint64_t h = connection().call(CallId::EglCreateContext, a, list.data(),
+                                   static_cast<uint32_t>(list.size() * sizeof(EGLint)), nullptr,
+                                   0, nullptr);
     return h == 0 ? EGL_NO_CONTEXT : from_handle<EGLContext>(h);
 }
 
@@ -139,13 +174,26 @@ EGLint eglGetError() {
     return static_cast<EGLint>(connection().call(CallId::EglGetError, a, nullptr, 0, nullptr, 0, nullptr));
 }
 
+// The whole string, kept for the life of the process as EGL requires. This
+// was a 256-byte buffer, and EGL_EXTENSIONS is longer than that, so the
+// engine was handed a list cut off partway through a name.
 const char* eglQueryString(EGLDisplay dpy, EGLint name) {
-    static thread_local char buf[256];
+    static std::mutex m;
+    static std::map<std::pair<uint64_t, EGLint>, std::string> strings;
     uint64_t a[8] = {to_handle(dpy), static_cast<uint64_t>(name)};
+    std::vector<char> buf(64 * 1024);
     uint32_t written = 0;
-    connection().call(CallId::EglQueryString, a, nullptr, 0, buf, sizeof(buf) - 1, &written);
-    buf[written < sizeof(buf) ? written : sizeof(buf) - 1] = '\0';
-    return buf;
+    connection().call(CallId::EglQueryString, a, nullptr, 0, buf.data(),
+                      static_cast<uint32_t>(buf.size()), &written);
+    if (written > buf.size()) written = static_cast<uint32_t>(buf.size());
+    std::lock_guard<std::mutex> lock(m);
+    // Assigned only when it changes: the engine may still hold the pointer
+    // an earlier query returned.
+    std::string& s = strings[{to_handle(dpy), name}];
+    if (s.size() != written || s.compare(0, written, buf.data(), written) != 0) {
+        s.assign(buf.data(), written);
+    }
+    return s.c_str();
 }
 
 EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx) {
