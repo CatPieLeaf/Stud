@@ -29,6 +29,9 @@ uint64_t audio_open_stream(int sample_rate, int channels, int bytes_per_frame);
 // Writes interleaved PCM. Blocks until the device has taken it, which is
 // what paces the caller. Returns bytes accepted, or 0 on failure.
 uint64_t audio_write_frames(uint64_t stream, const void* data, size_t bytes);
+// Output underruns since the device opened: periods the device asked for
+// and had to pad with silence.
+uint64_t audio_underruns();
 
 void audio_close_stream(uint64_t stream);
 

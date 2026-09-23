@@ -21,6 +21,7 @@
 
 #include "render_client_common.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -85,7 +86,12 @@ struct Builder {
 struct Stream {
     uint64_t host_handle = 0;
     int32_t format = AAUDIO_FORMAT_PCM_I16;
-    int32_t buffer_size = kFramesPerBurst * 2;
+    // Set by the engine's thread, read by the feeder's.
+    std::atomic<int32_t> buffer_size{kFramesPerBurst * 2};
+    // Underruns the host has counted since this stream started, refreshed
+    // by the feeder so the engine's own query never waits on the socket.
+    std::atomic<int32_t> xruns{0};
+    uint64_t underrun_base = 0;
     int32_t buffer_capacity = kFramesPerBurst * 4;
     AAudioStreamCallback data_callback = nullptr;
     void* data_callback_user = nullptr;
@@ -115,6 +121,13 @@ void feed(Stream* s) {
     const auto burst_duration =
         std::chrono::microseconds(1000000LL * kFramesPerBurst / kSampleRate);
     auto next_deadline = std::chrono::steady_clock::now();
+    auto host_underruns = [] {
+        uint64_t none[8] = {};
+        return audio_connection().call(CallId::AudioGetUnderruns, none, nullptr, 0, nullptr, 0,
+                                       nullptr);
+    };
+    s->underrun_base = host_underruns();
+    uint64_t bursts_since_query = 0;
 
     while (s->running.load(std::memory_order_relaxed)) {
         if (s->state.load(std::memory_order_relaxed) != AAUDIO_STREAM_STATE_STARTED) {
@@ -181,6 +194,14 @@ void feed(Stream* s) {
                 clipped = 0;
             }
         }
+        // About four times a second: the host's underrun count, for
+        // AAudioStream_getXRunCount.
+        if (++bursts_since_query >= static_cast<uint64_t>(kSampleRate / kFramesPerBurst / 4)) {
+            bursts_since_query = 0;
+            const uint64_t total = host_underruns();
+            s->xruns.store(static_cast<int32_t>(total - std::min(total, s->underrun_base)),
+                           std::memory_order_relaxed);
+        }
         uint64_t args[8] = {s->host_handle};
         const uint64_t fill = audio_connection().call(
             CallId::AudioWriteFrames, args, reinterpret_cast<const uint8_t*>(float_scratch.data()),
@@ -207,8 +228,17 @@ void feed(Stream* s) {
         // cover that, and 80ms is still well under what anyone notices in
         // a game. 40ms did not: it left 1162 underruns in 45 seconds even
         // after audio stopped sharing the render connection.
-        constexpr uint64_t kTargetFill =
+        //
+        // A larger buffer asked for through setBufferSizeInFrames raises
+        // the target: that is how AAudio's own latency tuning trades
+        // latency for fewer underruns, and it used to be stored and
+        // ignored. Never lower than the measured floor above.
+        constexpr uint64_t kMinTargetFill =
             static_cast<uint64_t>(kFramesPerBurst) * kChannels * 2 * 8;
+        const uint64_t requested_fill =
+            static_cast<uint64_t>(std::max(0, s->buffer_size.load(std::memory_order_relaxed))) *
+            static_cast<uint64_t>(s->channels) * sizeof(float);
+        const uint64_t kTargetFill = std::max(kMinTargetFill, requested_fill);
         auto correction = std::chrono::microseconds(0);
         if (fill > 0) {
             const int64_t error = static_cast<int64_t>(fill) - static_cast<int64_t>(kTargetFill);
@@ -329,7 +359,10 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
     s->format = b->format == AAUDIO_FORMAT_PCM_FLOAT ? AAUDIO_FORMAT_PCM_FLOAT
                                                       : AAUDIO_FORMAT_PCM_I16;
     s->buffer_capacity = b->buffer_capacity;
-    s->buffer_size = b->buffer_capacity;
+    // Starts small, as AAudio's does, and grows only when the engine asks
+    // through setBufferSizeInFrames; the size now sets the latency, so
+    // starting at the capacity would add latency nothing asked for.
+    s->buffer_size.store(std::min(b->buffer_capacity, kFramesPerBurst * 2));
     s->data_callback = b->data_callback;
     s->data_callback_user = b->data_callback_user;
     *stream_out = s;
@@ -426,22 +459,28 @@ int32_t AAudioStream_getBufferCapacityInFrames(void* stream) {
 }
 int32_t AAudioStream_getBufferSizeInFrames(void* stream) {
     const auto* s = static_cast<Stream*>(stream);
-    return s != nullptr ? s->buffer_size : kFramesPerBurst * 2;
+    return s != nullptr ? s->buffer_size.load(std::memory_order_relaxed) : kFramesPerBurst * 2;
 }
 int32_t AAudioStream_setBufferSizeInFrames(void* stream, int32_t frames) {
+    // AAudio clamps to the capacity and returns what it actually set.
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
-    if (frames > 0) s->buffer_size = frames;
-    return s->buffer_size;
+    if (frames > 0) s->buffer_size.store(std::min(frames, s->buffer_capacity));
+    return s->buffer_size.load(std::memory_order_relaxed);
 }
 int32_t AAudioStream_getState(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     return s != nullptr ? s->state.load(std::memory_order_relaxed) : AAUDIO_STREAM_STATE_OPEN;
 }
-// Real underrun counter. Stud does not currently detect underruns (the
-// host write blocks, so the feeder cannot outrun the device), and a
-// fabricated count would misinform the engine's own latency tuning.
-int32_t AAudioStream_getXRunCount(void*) { return 0; }
+// Underruns since the stream started, as the host's device counted them:
+// periods it had to pad with silence. This used to be a constant 0, from
+// when the host's write blocked and could not underrun; it has been a
+// ring for a long time and does, and FMOD's latency tuning reads this to
+// decide whether to ask for a bigger buffer.
+int32_t AAudioStream_getXRunCount(void* stream) {
+    const auto* s = static_cast<Stream*>(stream);
+    return s != nullptr ? s->xruns.load(std::memory_order_relaxed) : 0;
+}
 
 // Real state-change wait. Stud's own state transitions are immediate,
 // there is no device handshake to wait on, since the host side owns the

@@ -752,6 +752,10 @@ enum class CallId : uint32_t {
     GlPopGroupMarker,
     GlObjectLabel,
     GlGetBufferParameteriv,
+
+    // The output device's underrun count since it opened, for
+    // AAudioStream_getXRunCount. Returned as the call's result.
+    AudioGetUnderruns,
 };
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -1027,9 +1031,10 @@ inline const char* call_id_name(CallId id) {
         "GlPopGroupMarker",
         "GlObjectLabel",
         "GlGetBufferParameteriv",
+        "AudioGetUnderruns",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlGetBufferParameteriv) + 1,
+                      static_cast<size_t>(CallId::AudioGetUnderruns) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

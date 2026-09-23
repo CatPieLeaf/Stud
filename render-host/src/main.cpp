@@ -3525,6 +3525,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                                         static_cast<int>(a[2]));
         case CallId::AudioWriteFrames:
             return stud::render_host::audio_write_frames(a[0], in.data(), in.size());
+        case CallId::AudioGetUnderruns:
+            return stud::render_host::audio_underruns();
         case CallId::AudioCloseStream:
             stud::render_host::audio_close_stream(a[0]);
             return 1;

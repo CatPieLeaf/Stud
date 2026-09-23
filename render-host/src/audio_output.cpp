@@ -515,6 +515,8 @@ uint64_t audio_open_stream(int sample_rate, int channels, int bytes_per_frame) {
     return id;
 }
 
+uint64_t audio_underruns() { return device().underruns.load(std::memory_order_relaxed); }
+
 uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes) {
     if (data == nullptr || bytes == 0) return 0;
     Device& d = device();
