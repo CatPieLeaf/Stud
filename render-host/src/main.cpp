@@ -2649,8 +2649,14 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return d == EGL_NO_DISPLAY ? kNullHandle : store(g_displays, d);
         }
         case CallId::EglInitialize: {
-            EGLint major = 0, minor = 0;
-            return fns.eglInitialize_(g_displays.at(a[0]), &major, &minor) == EGL_TRUE;
+            // Reply: [major][minor], the real ANGLE's own version.
+            EGLint version[2] = {0, 0};
+            const bool ok =
+                fns.eglInitialize_(g_displays.at(a[0]), &version[0], &version[1]) == EGL_TRUE;
+            out.resize(sizeof(version));
+            std::memcpy(out.data(), version, sizeof(version));
+            *out_len = sizeof(version);
+            return ok;
         }
         case CallId::EglBindApi:
             return fns.eglBindAPI_(static_cast<EGLenum>(a[0])) == EGL_TRUE;

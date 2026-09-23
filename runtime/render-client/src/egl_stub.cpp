@@ -62,14 +62,17 @@ EGLDisplay eglGetDisplay(EGLNativeDisplayType) {
 }
 
 EGLBoolean eglInitialize(EGLDisplay dpy, EGLint* major, EGLint* minor) {
+    // The host's own EGL version. This used to be a fixed 1.5, which was
+    // true of the ANGLE build it was written against and of nothing else.
     uint64_t a[8] = {to_handle(dpy)};
-    EGLBoolean ok = connection().call(CallId::EglInitialize, a, nullptr, 0, nullptr, 0, nullptr) ? EGL_TRUE : EGL_FALSE;
-    // Real ANGLE version. Roblox's own code only ever logs this, never
-    // branches on the exact value (confirmed nothing in the real GLES2/
-    // EGL1.x core API path depends on minor-version-specific behavior);
-    // 1.5 matches the real backing ANGLE build.
-    if (major != nullptr) *major = 1;
-    if (minor != nullptr) *minor = 5;
+    EGLint version[2] = {0, 0};
+    uint32_t written = 0;
+    const EGLBoolean ok = connection().call(CallId::EglInitialize, a, nullptr, 0, version,
+                                            sizeof(version), &written)
+                              ? EGL_TRUE
+                              : EGL_FALSE;
+    if (major != nullptr) *major = written >= sizeof(version) ? version[0] : 0;
+    if (minor != nullptr) *minor = written >= sizeof(version) ? version[1] : 0;
     return ok;
 }
 
