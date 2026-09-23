@@ -701,6 +701,15 @@ void set_measured_display_density(float density) { g_measured_density = density;
 
 float engine_layout_density() { return g_display_density; }
 
+}  // namespace stud::jni_bridge
+
+// For libandroid's AConfiguration, which lives in another library and
+// reaches this by name: the same density DisplayMetrics reports, so a
+// configuration's dp sizes agree with the engine's own layout.
+extern "C" float stud_engine_layout_density() { return stud::jni_bridge::engine_layout_density(); }
+
+namespace stud::jni_bridge {
+
 DisplayFacts real_display_facts() {
     DisplayFacts f;
     f.width_px = g_display_width;
