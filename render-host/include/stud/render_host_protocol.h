@@ -732,6 +732,26 @@ enum class CallId : uint32_t {
     // teardown never ran and the account stayed in the server until it
     // timed out.
     PollWindowCloseRequested,
+
+    // GLES3 entry points the engine resolves by name and used to receive a
+    // do-nothing function for; see the host's handlers for the wire shapes.
+    GlTexImage3D,
+    GlCompressedTexImage3D,
+    GlCompressedTexSubImage3D,
+    GlFramebufferTextureLayer,
+    GlGetInteger64v,
+    GlQueryCounter,
+    GlGetQueryiv,
+    GlGetQueryObjectiv,
+    GlProgramBinary,
+    GlGetProgramBinary,
+    GlClearBufferiv,
+    GlClearBufferuiv,
+    GlClearBufferfi,
+    GlPushGroupMarker,
+    GlPopGroupMarker,
+    GlObjectLabel,
+    GlGetBufferParameteriv,
 };
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
@@ -990,9 +1010,26 @@ inline const char* call_id_name(CallId id) {
         "VkWriteSharedMappedMemory",
         "VkReadMappedMemory",
         "PollWindowCloseRequested",
+        "GlTexImage3D",
+        "GlCompressedTexImage3D",
+        "GlCompressedTexSubImage3D",
+        "GlFramebufferTextureLayer",
+        "GlGetInteger64v",
+        "GlQueryCounter",
+        "GlGetQueryiv",
+        "GlGetQueryObjectiv",
+        "GlProgramBinary",
+        "GlGetProgramBinary",
+        "GlClearBufferiv",
+        "GlClearBufferuiv",
+        "GlClearBufferfi",
+        "GlPushGroupMarker",
+        "GlPopGroupMarker",
+        "GlObjectLabel",
+        "GlGetBufferParameteriv",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::PollWindowCloseRequested) + 1,
+                      static_cast<size_t>(CallId::GlGetBufferParameteriv) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

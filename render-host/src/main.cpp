@@ -441,6 +441,26 @@ using PFN_glWaitSync = void (*)(GLsync, GLbitfield, GLuint64);
 using PFN_glDeleteSync = void (*)(GLsync);
 using PFN_glIsSync = GLboolean (*)(GLsync);
 using PFN_glGetSynciv = void (*)(GLsync, GLenum, GLsizei, GLsizei*, GLint*);
+using PFN_glTexImage3D = void (*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum,
+                                  GLenum, const void*);
+using PFN_glCompressedTexImage3D = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint,
+                                            GLsizei, const void*);
+using PFN_glCompressedTexSubImage3D = void (*)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei,
+                                               GLsizei, GLenum, GLsizei, const void*);
+using PFN_glFramebufferTextureLayer = void (*)(GLenum, GLenum, GLuint, GLint, GLint);
+using PFN_glGetInteger64v = void (*)(GLenum, GLint64*);
+using PFN_glQueryCounterEXT = void (*)(GLuint, GLenum);
+using PFN_glGetQueryiv = void (*)(GLenum, GLenum, GLint*);
+using PFN_glGetQueryObjectivEXT = void (*)(GLuint, GLenum, GLint*);
+using PFN_glProgramBinary = void (*)(GLuint, GLenum, const void*, GLsizei);
+using PFN_glGetProgramBinary = void (*)(GLuint, GLsizei, GLsizei*, GLenum*, void*);
+using PFN_glClearBufferiv = void (*)(GLenum, GLint, const GLint*);
+using PFN_glClearBufferuiv = void (*)(GLenum, GLint, const GLuint*);
+using PFN_glClearBufferfi = void (*)(GLenum, GLint, GLfloat, GLint);
+using PFN_glPushGroupMarkerEXT = void (*)(GLsizei, const GLchar*);
+using PFN_glPopGroupMarkerEXT = void (*)();
+using PFN_glObjectLabelKHR = void (*)(GLenum, GLuint, GLsizei, const GLchar*);
+using PFN_glGetBufferParameteriv = void (*)(GLenum, GLenum, GLint*);
 using PFN_glCopyImageSubData = void (*)(GLuint, GLenum, GLint, GLint, GLint, GLint, GLuint, GLenum,
                                         GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei);
 using PFN_glBindVertexArray = void (*)(GLuint);
@@ -615,6 +635,23 @@ struct RealFns {
     FN(glDeleteSync);
     FN(glIsSync);
     FN(glGetSynciv);
+    FN(glTexImage3D);
+    FN(glCompressedTexImage3D);
+    FN(glCompressedTexSubImage3D);
+    FN(glFramebufferTextureLayer);
+    FN(glGetInteger64v);
+    FN(glQueryCounterEXT);
+    FN(glGetQueryiv);
+    FN(glGetQueryObjectivEXT);
+    FN(glProgramBinary);
+    FN(glGetProgramBinary);
+    FN(glClearBufferiv);
+    FN(glClearBufferuiv);
+    FN(glClearBufferfi);
+    FN(glPushGroupMarkerEXT);
+    FN(glPopGroupMarkerEXT);
+    FN(glObjectLabelKHR);
+    FN(glGetBufferParameteriv);
     FN(glCopyImageSubData);
     FN(glBindVertexArray);
     FN(glDeleteVertexArrays);
@@ -3312,6 +3349,156 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             *out_len = static_cast<uint32_t>(out.size());
             return 0;
         }
+        // ---- GLES3 entry points the engine resolves by name ----
+        //
+        // Each of these used to reach a do-nothing function: the client's
+        // eglGetProcAddress handed one back for anything not forwarded,
+        // so the engine believed it had them and every call vanished.
+        case CallId::GlTexImage3D: {
+            // Ten arguments: `format` and `type` ride ahead of the pixels.
+            if (fns.glTexImage3D_ == nullptr || in.size() < 2 * sizeof(uint64_t)) return 0;
+            const auto* extra = reinterpret_cast<const uint64_t*>(in.data());
+            const void* pixels =
+                hdr.pixel_buffer_offset_plus_one != 0
+                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
+                    : (in.size() > 2 * sizeof(uint64_t)
+                           ? static_cast<const void*>(in.data() + 2 * sizeof(uint64_t))
+                           : nullptr);
+            fns.glTexImage3D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                              static_cast<GLint>(a[2]), static_cast<GLsizei>(a[3]),
+                              static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
+                              static_cast<GLint>(a[6]), static_cast<GLenum>(extra[0]),
+                              static_cast<GLenum>(extra[1]), pixels);
+            return 0;
+        }
+        case CallId::GlCompressedTexImage3D: {
+            if (fns.glCompressedTexImage3D_ == nullptr) return 0;
+            const void* data =
+                hdr.pixel_buffer_offset_plus_one != 0
+                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
+                    : (in.empty() ? nullptr : static_cast<const void*>(in.data()));
+            fns.glCompressedTexImage3D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                        static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
+                                        static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
+                                        static_cast<GLint>(a[6]), static_cast<GLsizei>(a[7]), data);
+            return 0;
+        }
+        case CallId::GlCompressedTexSubImage3D: {
+            // Eleven arguments: `format` and `imageSize` ride ahead of the data.
+            if (fns.glCompressedTexSubImage3D_ == nullptr || in.size() < 2 * sizeof(uint64_t)) {
+                return 0;
+            }
+            const auto* extra = reinterpret_cast<const uint64_t*>(in.data());
+            const void* data =
+                hdr.pixel_buffer_offset_plus_one != 0
+                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
+                    : (in.size() > 2 * sizeof(uint64_t)
+                           ? static_cast<const void*>(in.data() + 2 * sizeof(uint64_t))
+                           : nullptr);
+            fns.glCompressedTexSubImage3D_(
+                static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]),
+                static_cast<GLint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLsizei>(a[5]),
+                static_cast<GLsizei>(a[6]), static_cast<GLsizei>(a[7]),
+                static_cast<GLenum>(extra[0]), static_cast<GLsizei>(extra[1]), data);
+            return 0;
+        }
+        case CallId::GlFramebufferTextureLayer:
+            if (fns.glFramebufferTextureLayer_ == nullptr) return 0;
+            fns.glFramebufferTextureLayer_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
+                                           static_cast<GLuint>(a[2]), static_cast<GLint>(a[3]),
+                                           static_cast<GLint>(a[4]));
+            return 0;
+        case CallId::GlGetInteger64v: {
+            if (fns.glGetInteger64v_ == nullptr) return 0;
+            GLint64 values[16] = {};
+            fns.glGetInteger64v_(static_cast<GLenum>(a[0]), values);
+            out.resize(sizeof(values));
+            std::memcpy(out.data(), values, sizeof(values));
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlQueryCounter:
+            if (fns.glQueryCounterEXT_ == nullptr) return 0;
+            fns.glQueryCounterEXT_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]));
+            return 0;
+        case CallId::GlGetQueryiv:
+        case CallId::GlGetQueryObjectiv:
+        case CallId::GlGetBufferParameteriv: {
+            GLint value = 0;
+            if (hdr.call_id == CallId::GlGetQueryiv) {
+                if (fns.glGetQueryiv_ == nullptr) return 0;
+                fns.glGetQueryiv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), &value);
+            } else if (hdr.call_id == CallId::GlGetQueryObjectiv) {
+                if (fns.glGetQueryObjectivEXT_ == nullptr) return 0;
+                fns.glGetQueryObjectivEXT_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
+                                           &value);
+            } else {
+                if (fns.glGetBufferParameteriv_ == nullptr) return 0;
+                fns.glGetBufferParameteriv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
+                                            &value);
+            }
+            out.resize(sizeof(value));
+            std::memcpy(out.data(), &value, sizeof(value));
+            *out_len = sizeof(value);
+            return 1;
+        }
+        case CallId::GlProgramBinary:
+            if (fns.glProgramBinary_ == nullptr) return 0;
+            fns.glProgramBinary_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
+                                 in.empty() ? nullptr : in.data(), static_cast<GLsizei>(in.size()));
+            return 0;
+        case CallId::GlGetProgramBinary: {
+            // Reply: [u32 format][u32 length][length bytes].
+            if (fns.glGetProgramBinary_ == nullptr) return 0;
+            const GLsizei cap = static_cast<GLsizei>(a[1]);
+            if (cap < 0) return 0;
+            out.resize(2 * sizeof(uint32_t) + static_cast<size_t>(cap));
+            GLsizei length = 0;
+            GLenum format = 0;
+            fns.glGetProgramBinary_(static_cast<GLuint>(a[0]), cap, &length, &format,
+                                    out.data() + 2 * sizeof(uint32_t));
+            if (length < 0) length = 0;
+            if (length > cap) length = cap;
+            const uint32_t f = format;
+            const uint32_t n = static_cast<uint32_t>(length);
+            std::memcpy(out.data(), &f, sizeof(f));
+            std::memcpy(out.data() + sizeof(uint32_t), &n, sizeof(n));
+            out.resize(2 * sizeof(uint32_t) + n);
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        }
+        case CallId::GlClearBufferiv:
+            if (fns.glClearBufferiv_ == nullptr || in.size() < 4 * sizeof(GLint)) return 0;
+            fns.glClearBufferiv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                 reinterpret_cast<const GLint*>(in.data()));
+            return 0;
+        case CallId::GlClearBufferuiv:
+            if (fns.glClearBufferuiv_ == nullptr || in.size() < 4 * sizeof(GLuint)) return 0;
+            fns.glClearBufferuiv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                  reinterpret_cast<const GLuint*>(in.data()));
+            return 0;
+        case CallId::GlClearBufferfi:
+            if (fns.glClearBufferfi_ == nullptr) return 0;
+            fns.glClearBufferfi_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
+                                 unpack_float(a[2]), static_cast<GLint>(a[3]));
+            return 0;
+        case CallId::GlPushGroupMarker: {
+            if (fns.glPushGroupMarkerEXT_ == nullptr) return 0;
+            const std::string marker(reinterpret_cast<const char*>(in.data()), in.size());
+            fns.glPushGroupMarkerEXT_(0, marker.c_str());
+            return 0;
+        }
+        case CallId::GlPopGroupMarker:
+            if (fns.glPopGroupMarkerEXT_ == nullptr) return 0;
+            fns.glPopGroupMarkerEXT_();
+            return 0;
+        case CallId::GlObjectLabel: {
+            if (fns.glObjectLabelKHR_ == nullptr) return 0;
+            const std::string label(reinterpret_cast<const char*>(in.data()), in.size());
+            fns.glObjectLabelKHR_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]),
+                                  static_cast<GLsizei>(label.size()), label.c_str());
+            return 0;
+        }
         case CallId::GlCopyImageSubData: {
             if (in.size() < 15 * sizeof(int32_t)) return 0;
             const auto* p = reinterpret_cast<const int32_t*>(in.data());
@@ -3750,18 +3937,6 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // not read).
             GLint values[16] = {};
             fns.glGetIntegerv_(static_cast<GLenum>(a[0]), values);
-            // Report ZERO program-binary formats. Stud's GL forwarding
-            // implements glGetProgramBinary but NOT glProgramBinary (a no-op
-            // stub), so with binaries "supported" the engine saves a real
-            // binary, later believes it reloaded a program that was never
-            // actually loaded, and draws with it, which hangs the GPU
-            // (nouveau: "job timeout, channel killed") and loses the EGL
-            // context, blacking out the window. Advertising no binary formats
-            // is a truthful answer for this transport and makes the engine
-            // compile its shaders normally.
-            if (static_cast<GLenum>(a[0]) == 0x87FE /*GL_NUM_PROGRAM_BINARY_FORMATS*/) {
-                values[0] = 0;
-            }
             out.resize(sizeof(values));
             std::memcpy(out.data(), values, sizeof(values));
             *out_len = static_cast<uint32_t>(out.size());
@@ -5053,6 +5228,18 @@ int main(int argc, char** argv) {
     RESOLVE_OPTIONAL(glGenQueries); RESOLVE_OPTIONAL(glDeleteQueries);
     RESOLVE_OPTIONAL(glBeginQuery); RESOLVE_OPTIONAL(glEndQuery);
     RESOLVE_OPTIONAL(glGetQueryObjectuiv); RESOLVE_OPTIONAL(glGetQueryObjectui64v);
+    // GLES3 core and the extensions the engine looks up by name. Optional,
+    // and every handler checks: a driver without one answers as GL does
+    // for a call it cannot make, instead of the process exiting.
+    RESOLVE_OPTIONAL(glTexImage3D); RESOLVE_OPTIONAL(glCompressedTexImage3D);
+    RESOLVE_OPTIONAL(glCompressedTexSubImage3D); RESOLVE_OPTIONAL(glFramebufferTextureLayer);
+    RESOLVE_OPTIONAL(glGetInteger64v); RESOLVE_OPTIONAL(glQueryCounterEXT);
+    RESOLVE_OPTIONAL(glGetQueryiv); RESOLVE_OPTIONAL(glGetQueryObjectivEXT);
+    RESOLVE_OPTIONAL(glProgramBinary); RESOLVE_OPTIONAL(glGetProgramBinary);
+    RESOLVE_OPTIONAL(glClearBufferiv); RESOLVE_OPTIONAL(glClearBufferuiv);
+    RESOLVE_OPTIONAL(glClearBufferfi); RESOLVE_OPTIONAL(glPushGroupMarkerEXT);
+    RESOLVE_OPTIONAL(glPopGroupMarkerEXT); RESOLVE_OPTIONAL(glObjectLabelKHR);
+    RESOLVE_OPTIONAL(glGetBufferParameteriv);
     RESOLVE(glBufferData); RESOLVE_OPTIONAL(glBufferStorage); RESOLVE(glBufferSubData); RESOLVE(glTexImage2D); RESOLVE(glTexSubImage2D);
     RESOLVE(glMapBufferRange); RESOLVE(glUnmapBuffer);
     RESOLVE(glGetVertexAttribiv); RESOLVE(glGetVertexAttribPointerv);

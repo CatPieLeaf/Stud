@@ -1085,6 +1085,202 @@ void* glMapBufferRangeEXT(GLenum target, GLintptr offset, GLsizeiptr length, GLb
     return glMapBufferRange(target, offset, length, access);
 }
 GLboolean glUnmapBufferOES(GLenum target) { return glUnmapBuffer(target); }
+// GLES3 entry points the engine resolves by name. Every one of these used
+// to reach a do-nothing function: eglGetProcAddress handed one back for
+// anything not forwarded, so the engine believed it had them and each call
+// vanished. The host's handlers document the wire shapes.
+void glTexImage3D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height,
+                  GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels) {
+    uint64_t a[8] = {target,
+                     static_cast<uint64_t>(level),
+                     static_cast<uint64_t>(internalformat),
+                     static_cast<uint64_t>(width),
+                     static_cast<uint64_t>(height),
+                     static_cast<uint64_t>(depth),
+                     static_cast<uint64_t>(border)};
+    uint64_t pbo = pbo_tag(pixels);
+    size_t pixel_bytes = (pbo == 0 && pixels != nullptr)
+                             ? static_cast<size_t>(width) * static_cast<size_t>(height) *
+                                   static_cast<size_t>(depth) * gl_pixel_size(format, type)
+                             : 0u;
+    std::vector<unsigned char> payload(2 * sizeof(uint64_t) + pixel_bytes);
+    auto* extra = reinterpret_cast<uint64_t*>(payload.data());
+    extra[0] = format;
+    extra[1] = type;
+    if (pixel_bytes > 0) std::memcpy(payload.data() + 2 * sizeof(uint64_t), pixels, pixel_bytes);
+    connection().call_void(CallId::GlTexImage3D, a, payload.data(),
+                           static_cast<uint32_t>(payload.size()), pbo);
+}
+void glCompressedTexImage3D(GLenum target, GLint level, GLenum internalformat, GLsizei width,
+                            GLsizei height, GLsizei depth, GLint border, GLsizei imageSize,
+                            const void* data) {
+    uint64_t a[8] = {target,
+                     static_cast<uint64_t>(level),
+                     internalformat,
+                     static_cast<uint64_t>(width),
+                     static_cast<uint64_t>(height),
+                     static_cast<uint64_t>(depth),
+                     static_cast<uint64_t>(border),
+                     static_cast<uint64_t>(imageSize)};
+    uint64_t pbo = pbo_tag(data);
+    connection().call_void(CallId::GlCompressedTexImage3D, a, pbo == 0 ? data : nullptr,
+                           pbo == 0 && data != nullptr ? static_cast<uint32_t>(imageSize) : 0, pbo);
+}
+void glCompressedTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                               GLint zoffset, GLsizei width, GLsizei height, GLsizei depth,
+                               GLenum format, GLsizei imageSize, const void* data) {
+    uint64_t a[8] = {target,
+                     static_cast<uint64_t>(level),
+                     static_cast<uint64_t>(xoffset),
+                     static_cast<uint64_t>(yoffset),
+                     static_cast<uint64_t>(zoffset),
+                     static_cast<uint64_t>(width),
+                     static_cast<uint64_t>(height),
+                     static_cast<uint64_t>(depth)};
+    uint64_t pbo = pbo_tag(data);
+    const size_t data_bytes = (pbo == 0 && data != nullptr) ? static_cast<size_t>(imageSize) : 0u;
+    std::vector<unsigned char> payload(2 * sizeof(uint64_t) + data_bytes);
+    auto* extra = reinterpret_cast<uint64_t*>(payload.data());
+    extra[0] = format;
+    extra[1] = static_cast<uint64_t>(imageSize);
+    if (data_bytes > 0) std::memcpy(payload.data() + 2 * sizeof(uint64_t), data, data_bytes);
+    connection().call_void(CallId::GlCompressedTexSubImage3D, a, payload.data(),
+                           static_cast<uint32_t>(payload.size()), pbo);
+}
+void glFramebufferTextureLayer(GLenum target, GLenum attachment, GLuint texture, GLint level,
+                               GLint layer) {
+    call0(CallId::GlFramebufferTextureLayer, target, attachment, texture,
+          static_cast<uint64_t>(level), static_cast<uint64_t>(layer));
+}
+void glGetInteger64v(GLenum pname, GLint64* params) {
+    if (params == nullptr) return;
+    uint64_t a[8] = {pname};
+    GLint64 values[16] = {};
+    uint32_t written = 0;
+    connection().call(CallId::GlGetInteger64v, a, nullptr, 0, values, sizeof(values), &written);
+    // Exactly the pname's own count, as glGetIntegerv does, and for the
+    // same reason: a caller passing one value on the stack gets one.
+    int count = gl_integerv_count(pname);
+    const uint32_t have = written / static_cast<uint32_t>(sizeof(GLint64));
+    if (have > 0 && static_cast<uint32_t>(count) > have) count = static_cast<int>(have);
+    std::memcpy(params, values, static_cast<size_t>(count) * sizeof(GLint64));
+}
+void glQueryCounter(GLuint id, GLenum target) { call0(CallId::GlQueryCounter, id, target); }
+void glQueryCounterEXT(GLuint id, GLenum target) { glQueryCounter(id, target); }
+namespace {
+GLint get_one_int(CallId id, uint64_t a0, uint64_t a1) {
+    uint64_t a[8] = {a0, a1};
+    GLint value = 0;
+    uint32_t written = 0;
+    connection().call(id, a, nullptr, 0, &value, sizeof(value), &written);
+    return written >= sizeof(value) ? value : 0;
+}
+}  // namespace
+void glGetQueryiv(GLenum target, GLenum pname, GLint* params) {
+    if (params != nullptr) *params = get_one_int(CallId::GlGetQueryiv, target, pname);
+}
+void glGetQueryivEXT(GLenum target, GLenum pname, GLint* params) {
+    glGetQueryiv(target, pname, params);
+}
+void glGetQueryObjectiv(GLuint id, GLenum pname, GLint* params) {
+    if (params != nullptr) *params = get_one_int(CallId::GlGetQueryObjectiv, id, pname);
+}
+void glGetQueryObjectivEXT(GLuint id, GLenum pname, GLint* params) {
+    glGetQueryObjectiv(id, pname, params);
+}
+void glGetBufferParameteriv(GLenum target, GLenum pname, GLint* params) {
+    if (params != nullptr) *params = get_one_int(CallId::GlGetBufferParameteriv, target, pname);
+}
+void glProgramBinary(GLuint program, GLenum binaryFormat, const void* binary, GLsizei length) {
+    uint64_t a[8] = {program, binaryFormat};
+    connection().call(CallId::GlProgramBinary, a, binary,
+                      binary != nullptr && length > 0 ? static_cast<uint32_t>(length) : 0, nullptr,
+                      0, nullptr);
+}
+void glProgramBinaryOES(GLuint program, GLenum binaryFormat, const void* binary, GLint length) {
+    glProgramBinary(program, binaryFormat, binary, length);
+}
+void glGetProgramBinary(GLuint program, GLsizei bufSize, GLsizei* length, GLenum* binaryFormat,
+                        void* binary) {
+    if (length != nullptr) *length = 0;
+    if (bufSize <= 0) return;
+    uint64_t a[8] = {program, static_cast<uint64_t>(bufSize)};
+    std::vector<unsigned char> reply(2 * sizeof(uint32_t) + static_cast<size_t>(bufSize));
+    uint32_t written = 0;
+    connection().call(CallId::GlGetProgramBinary, a, nullptr, 0, reply.data(),
+                      static_cast<uint32_t>(reply.size()), &written);
+    if (written < 2 * sizeof(uint32_t)) return;
+    uint32_t format = 0;
+    uint32_t n = 0;
+    std::memcpy(&format, reply.data(), sizeof(format));
+    std::memcpy(&n, reply.data() + sizeof(uint32_t), sizeof(n));
+    if (n > written - 2 * sizeof(uint32_t)) n = written - 2 * sizeof(uint32_t);
+    if (n > static_cast<uint32_t>(bufSize)) n = static_cast<uint32_t>(bufSize);
+    if (binary != nullptr && n > 0) std::memcpy(binary, reply.data() + 2 * sizeof(uint32_t), n);
+    if (binaryFormat != nullptr) *binaryFormat = format;
+    if (length != nullptr) *length = static_cast<GLsizei>(n);
+}
+void glGetProgramBinaryOES(GLuint program, GLsizei bufSize, GLsizei* length, GLenum* binaryFormat,
+                           void* binary) {
+    glGetProgramBinary(program, bufSize, length, binaryFormat, binary);
+}
+void glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint* value) {
+    // Four values, the widest real case, as glClearBufferfv sends.
+    uint64_t a[8] = {buffer, static_cast<uint64_t>(drawbuffer)};
+    GLint local[4] = {0, 0, 0, 0};
+    if (value != nullptr) {
+        const int n = buffer == GL_STENCIL ? 1 : 4;
+        for (int i = 0; i < n; ++i) local[i] = value[i];
+    }
+    connection().call_void(CallId::GlClearBufferiv, a, local, sizeof(local));
+}
+void glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLuint* value) {
+    uint64_t a[8] = {buffer, static_cast<uint64_t>(drawbuffer)};
+    GLuint local[4] = {0, 0, 0, 0};
+    if (value != nullptr) {
+        for (int i = 0; i < 4; ++i) local[i] = value[i];
+    }
+    connection().call_void(CallId::GlClearBufferuiv, a, local, sizeof(local));
+}
+void glClearBufferfi(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil) {
+    call0(CallId::GlClearBufferfi, buffer, static_cast<uint64_t>(drawbuffer), pack_float(depth),
+          static_cast<uint64_t>(stencil));
+}
+void glPushGroupMarkerEXT(GLsizei length, const GLchar* marker) {
+    // length 0 means the marker is NUL-terminated (EXT_debug_marker).
+    if (marker == nullptr) marker = "";
+    const size_t n = length > 0 ? static_cast<size_t>(length) : std::strlen(marker);
+    uint64_t a[8] = {};
+    connection().call_void(CallId::GlPushGroupMarker, a, marker, static_cast<uint32_t>(n));
+}
+void glPushGroupMarker(GLsizei length, const GLchar* marker) { glPushGroupMarkerEXT(length, marker); }
+void glPopGroupMarkerEXT() { call0(CallId::GlPopGroupMarker); }
+void glPopGroupMarker() { glPopGroupMarkerEXT(); }
+void glObjectLabelKHR(GLenum identifier, GLuint name, GLsizei length, const GLchar* label) {
+    // A negative length means NUL-terminated (KHR_debug); a null label
+    // removes the label, which an empty one does as well.
+    if (label == nullptr) label = "";
+    const size_t n = length >= 0 ? static_cast<size_t>(length) : std::strlen(label);
+    uint64_t a[8] = {identifier, name};
+    connection().call_void(CallId::GlObjectLabel, a, label, static_cast<uint32_t>(n));
+}
+void glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar* label) {
+    glObjectLabelKHR(identifier, name, length, label);
+}
+// Whole-buffer mapping, the older GLES2 extension form. The buffer's size
+// comes from the host, and the map is the range map over all of it, so a
+// write-only map (the only access OES_mapbuffer has) behaves exactly as
+// the range path already does.
+void* glMapBufferOES(GLenum target, GLenum access) {
+    constexpr GLenum kWriteOnly = 0x88B9;  // GL_WRITE_ONLY_OES
+    constexpr GLenum kBufferSize = 0x8764;  // GL_BUFFER_SIZE
+    if (access != kWriteOnly) return nullptr;
+    GLint size = 0;
+    glGetBufferParameteriv(target, kBufferSize, &size);
+    if (size <= 0) return nullptr;
+    return glMapBufferRange(target, 0, size, GL_MAP_WRITE_BIT);
+}
+void* glMapBuffer(GLenum target, GLenum access) { return glMapBufferOES(target, access); }
 void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height,
                    GLint border, GLenum format, GLenum type, const void* pixels) {
     uint64_t a[8] = {target,
