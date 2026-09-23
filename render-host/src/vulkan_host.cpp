@@ -2221,7 +2221,8 @@ bool vk_object_trace_enabled() {
 // between resolutions while anything new streamed in.
 //
 // So every texture's size is scaled by one factor that maps the engine's
-// budget onto this GPU's memory V:
+// budget onto the device-local memory V the driver will give this process
+// (its budget, not the heap's size; see device_local_heap_size):
 //
 //     f = budget / V
 //
@@ -2268,9 +2269,16 @@ std::unordered_map<uint64_t, LazyMemory>& lazy_memory() {
     return m;
 }
 
+VkResult allocate_somewhere(Loader& l, VkDeviceSize size, uint32_t allowed, const void* pnext,
+                            VkDeviceMemory* out);
+
 // The driver's memory behind a handle the engine holds, allocating a
-// placeholder's the first time it is needed.
-VkDeviceMemory real_memory(uint64_t handle, VkResult* result = nullptr) {
+// placeholder's the first time it is needed. `allowed` is the memory types
+// the resource being bound accepts: the engine's own type first, and if
+// the driver refuses that, another the resource can live in. A placeholder
+// moves an allocation from the engine's vkAllocateMemory, where it checks
+// for failure, to its bind, where it does not, so it must not fail there.
+VkDeviceMemory real_memory(uint64_t handle, VkResult* result = nullptr, uint32_t allowed = 0) {
     auto it = lazy_memory().find(handle);
     if (it == lazy_memory().end()) return from_u64<VkDeviceMemory>(handle);
     LazyMemory& m = it->second;
@@ -2280,7 +2288,10 @@ VkDeviceMemory real_memory(uint64_t handle, VkResult* result = nullptr) {
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         ai.allocationSize = m.size;
         ai.memoryTypeIndex = m.type;
-        const VkResult r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &m.real);
+        VkResult r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &m.real);
+        if (r != VK_SUCCESS && allowed != 0) {
+            r = allocate_somewhere(l, m.size, allowed, nullptr, &m.real);
+        }
         if (r != VK_SUCCESS) {
             m.real = VK_NULL_HANDLE;
             if (result != nullptr) *result = r;
@@ -2349,15 +2360,39 @@ void note_bind(uint64_t memory, bool redirected, uint64_t offset, uint64_t repor
     report_allocation_use();
 }
 
+// What the driver will give this process of its largest device-local heap:
+// VK_EXT_memory_budget's heapBudget, which already leaves out what the
+// desktop and every other program hold. That is the memory textures can
+// really have. The heap's size is not: the driver refused an allocation
+// with 3.7 of 4 GiB in use (vkBindImageMemory returned
+// VK_ERROR_OUT_OF_DEVICE_MEMORY), and scaling against the full size is what
+// took it there. Falls back to the size where the budget is not reported.
 VkDeviceSize device_local_heap_size(Loader& l) {
     static VkDeviceSize size = 0;
     if (size != 0 || l.get_physical_device_memory_properties == nullptr) return size;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    VkPhysicalDeviceMemoryProperties2 props2{};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    props2.pNext = &budget;
+    auto get2 = l.get_instance_proc_addr != nullptr
+                    ? reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
+                          l.get_instance_proc_addr(l.instance,
+                                                   "vkGetPhysicalDeviceMemoryProperties2"))
+                    : nullptr;
+    const bool have_budget = get2 != nullptr && device_supports_extension("VK_EXT_memory_budget");
     VkPhysicalDeviceMemoryProperties mem{};
-    l.get_physical_device_memory_properties(l.physical_device, &mem);
+    if (have_budget) {
+        get2(l.physical_device, &props2);
+        mem = props2.memoryProperties;
+    } else {
+        l.get_physical_device_memory_properties(l.physical_device, &mem);
+    }
     for (uint32_t i = 0; i < mem.memoryHeapCount; ++i) {
-        if ((mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) {
-            size = std::max(size, mem.memoryHeaps[i].size);
-        }
+        if ((mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
+        const VkDeviceSize available =
+            have_budget && budget.heapBudget[i] != 0 ? budget.heapBudget[i] : mem.memoryHeaps[i].size;
+        size = std::max(size, available);
     }
     return size;
 }
@@ -2379,6 +2414,50 @@ uint32_t device_local_type(Loader& l, uint32_t allowed) {
     return 0;
 }
 
+// Memory for something that must not end up unbound: device-local first,
+// then any other type it may live in (system memory, which the GPU reads
+// over the bus). An image or buffer left without memory because the driver
+// refused an allocation is what faulted the GPU (Xid 31, the copy engine
+// writing to address 0); slower memory is a cost, an unbound resource is a
+// lost device.
+VkResult allocate_somewhere(Loader& l, VkDeviceSize size, uint32_t allowed,
+                            const void* pnext, VkDeviceMemory* out) {
+    VkPhysicalDeviceMemoryProperties mem{};
+    if (l.get_physical_device_memory_properties != nullptr) {
+        l.get_physical_device_memory_properties(l.physical_device, &mem);
+    }
+    std::vector<uint32_t> order;
+    const uint32_t first = device_local_type(l, allowed);
+    order.push_back(first);
+    for (uint32_t t = 0; t < mem.memoryTypeCount; ++t) {
+        if (t != first && (allowed & (1u << t)) != 0) order.push_back(t);
+    }
+    VkResult r = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    for (uint32_t t : order) {
+        VkMemoryAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.pNext = pnext;
+        ai.allocationSize = size;
+        ai.memoryTypeIndex = t;
+        r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, out);
+        if (r == VK_SUCCESS) {
+            if (t != first) {
+                static bool announced = false;
+                if (!announced) {
+                    announced = true;
+                    std::printf("stud-render-host: device-local memory refused an allocation "
+                                "(%llu bytes); placed in memory type %u instead\n",
+                                static_cast<unsigned long long>(size), t);
+                    std::fflush(stdout);
+                }
+            }
+            return r;
+        }
+    }
+    *out = VK_NULL_HANDLE;
+    return r;
+}
+
 // The factor above, once per process. 0 (no device-local heap found) means
 // sizes are reported as they are.
 double texture_size_scale(Loader& l) {
@@ -2393,7 +2472,7 @@ double texture_size_scale(Loader& l) {
     const double vram = static_cast<double>(device_local_heap_size(l));
     scale = vram > 0.0 ? budget / vram : 0.0;
     std::printf("stud-render-host: textures report %.3f of their size (engine budget %.0f MB, "
-                "device-local %.0f MB)\n",
+                "device-local budget %.0f MB)\n",
                 scale == 0.0 ? 1.0 : scale, budget_mb, vram / (1024.0 * 1024.0));
     std::fflush(stdout);
     return scale;
@@ -3019,12 +3098,8 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
             VkMemoryDedicatedAllocateInfo dedicated{};
             dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
             dedicated.image = from_u64<VkImage>(image);
-            VkMemoryAllocateInfo ai{};
-            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            ai.pNext = &dedicated;
-            ai.allocationSize = req.size;
-            ai.memoryTypeIndex = device_local_type(l, req.memoryTypeBits);
-            VkResult ar = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &e.own);
+            VkResult ar =
+                allocate_somewhere(l, req.size, req.memoryTypeBits, &dedicated, &e.own);
             if (ar != VK_SUCCESS) {
                 e.own = VK_NULL_HANDLE;
                 return static_cast<uint64_t>(static_cast<int32_t>(ar));
@@ -3035,7 +3110,9 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
     VkResult alloc = VK_SUCCESS;
-    const VkDeviceMemory target = real_memory(memory, &alloc);
+    VkMemoryRequirements image_req{};
+    l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &image_req);
+    const VkDeviceMemory target = real_memory(memory, &alloc, image_req.memoryTypeBits);
     if (target == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(alloc));
     VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image), target, offset);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -5653,7 +5730,11 @@ uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkResult alloc = VK_SUCCESS;
-    const VkDeviceMemory target = real_memory(memory, &alloc);
+    VkMemoryRequirements buffer_req{};
+    if (l.vk.vkGetBufferMemoryRequirements != nullptr) {
+        l.vk.vkGetBufferMemoryRequirements(l.device, from_u64<VkBuffer>(buffer), &buffer_req);
+    }
+    const VkDeviceMemory target = real_memory(memory, &alloc, buffer_req.memoryTypeBits);
     if (target == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(alloc));
     VkResult r = l.vk.vkBindBufferMemory(l.device, from_u64<VkBuffer>(buffer), target, offset);
     note_bind(memory, false, offset, 0);
