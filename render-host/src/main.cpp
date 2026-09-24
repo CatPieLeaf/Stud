@@ -164,7 +164,7 @@ void throttle_while_hidden() {
 // Defined far below, next to the frame caps themselves. Declared here
 // because the command-batch loop has to run it for each sub-call, and
 // that loop sits well above the definition.
-void throttle_before_dispatch(stud::render_host::CallId id);
+void throttle_before_dispatch(stud::render_host::CallId id, const std::vector<uint8_t>& in);
 
 namespace {
 
@@ -5184,9 +5184,49 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // and stutters if its writes are made to wait; the point of the setting
 // is to stop drawing a window nobody is looking at, not to slow the
 // process down.
-void throttle_before_dispatch(stud::render_host::CallId id) {
+//
+// A present can also arrive inside a GlCommandBatch: it is sent reply-free,
+// and reply-free calls travel packed into batches. The batch's own id is
+// all the dispatch loop sees, so the present inside one was never paced
+// and the background cap did nothing at all. A batch is looked through,
+// in the same record format GlCommandBatch's handler reads, for a present
+// among its calls.
+bool batch_carries_present(const std::vector<uint8_t>& in) {
+    const uint8_t* p = in.data();
+    const uint8_t* end = in.data() + in.size();
+    while (end - p >= 4) {
+        const uint8_t argc = *p++;
+        const uint8_t bits = *p++;
+        uint16_t id16 = 0;
+        std::memcpy(&id16, p, sizeof(id16));
+        p += sizeof(id16);
+        const auto id = static_cast<stud::render_host::CallId>(id16);
+        if (id == stud::render_host::CallId::VkQueuePresentKHR ||
+            id == stud::render_host::CallId::EglSwapBuffers) {
+            return true;
+        }
+        if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) return false;
+        p += static_cast<size_t>(argc) * sizeof(uint64_t);
+        if ((bits & 1u) != 0) {
+            if (end - p < 4) return false;
+            uint32_t len = 0;
+            std::memcpy(&len, p, sizeof(len));
+            p += sizeof(len);
+            if (end - p < static_cast<ptrdiff_t>(len)) return false;
+            p += len;
+        }
+        if ((bits & 2u) != 0) {
+            if (end - p < 8) return false;
+            p += sizeof(uint64_t);
+        }
+    }
+    return false;
+}
+
+void throttle_before_dispatch(stud::render_host::CallId id, const std::vector<uint8_t>& in) {
     if (id == stud::render_host::CallId::VkQueuePresentKHR ||
-        id == stud::render_host::CallId::EglSwapBuffers) {
+        id == stud::render_host::CallId::EglSwapBuffers ||
+        (id == stud::render_host::CallId::GlCommandBatch && batch_carries_present(in))) {
         throttle_while_hidden();
     }
 }
@@ -5389,7 +5429,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         out_scratch.clear();
         uint32_t out_len = 0;
         uint64_t result = 0;
-        throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id));
+        throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id), in_scratch);
         if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
             result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
         } else {
@@ -6061,7 +6101,8 @@ int main(int argc, char** argv) {
             // Same exemption as the connection threads: a blocking
             // driver wait must not hold the dispatch lock, or the two
             // wait on each other.
-            throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id));
+            throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id),
+                                     g_in_scratch);
             if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             } else {
