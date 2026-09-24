@@ -22,6 +22,12 @@ extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libavutil/mem.h>
 #include <libswscale/swscale.h>
+
+// avcodec_get_supported_config is FFmpeg 7.1's. Before it, which formats an
+// encoder takes is the codec's own pix_fmts list, the one 7.1 deprecates.
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+#define STUD_AV_SUPPORTED_CONFIG 1
+#endif
 }
 #endif
 
@@ -60,7 +66,9 @@ struct Av {
     decltype(&avcodec_find_encoder_by_name) find_encoder_by_name = nullptr;
     decltype(&avcodec_send_frame) send_frame = nullptr;
     decltype(&avcodec_receive_packet) receive_packet = nullptr;
+#ifdef STUD_AV_SUPPORTED_CONFIG
     decltype(&avcodec_get_supported_config) supported_config = nullptr;
+#endif
     decltype(&av_packet_unref) packet_unref = nullptr;
     decltype(&av_frame_get_buffer) frame_get_buffer = nullptr;
     // Hardware frames, for the encoders that only take frames already on
@@ -116,7 +124,9 @@ const Av& av() {
         STUD_AV(find_encoder_by_name, codec, avcodec_find_encoder_by_name);
         STUD_AV(send_frame, codec, avcodec_send_frame);
         STUD_AV(receive_packet, codec, avcodec_receive_packet);
+#ifdef STUD_AV_SUPPORTED_CONFIG
         STUD_AV(supported_config, codec, avcodec_get_supported_config);
+#endif
         STUD_AV(packet_unref, codec, av_packet_unref);
         STUD_AV(frame_get_buffer, util, av_frame_get_buffer);
         STUD_AV(hwdevice_create, util, av_hwdevice_ctx_create);
@@ -467,13 +477,20 @@ std::vector<Candidate> all_candidates_for(const char* mime) {
 // The pixel format this encoder will be fed: NV12 where it takes it, since
 // that is what the engine most often sends, and 8-bit planar otherwise.
 AVPixelFormat encoder_pixel_format(const AVCodec* codec, AVCodecContext* ctx) {
-    const void* configs = nullptr;
     int count = 0;
+#ifdef STUD_AV_SUPPORTED_CONFIG
+    const void* configs = nullptr;
     if (av().supported_config(ctx, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0, &configs, &count) < 0 ||
         configs == nullptr) {
         return AV_PIX_FMT_YUV420P;
     }
     const auto* formats = static_cast<const AVPixelFormat*>(configs);
+#else
+    (void)ctx;
+    const AVPixelFormat* formats = codec->pix_fmts;
+    if (formats == nullptr) return AV_PIX_FMT_YUV420P;
+    while (formats[count] != AV_PIX_FMT_NONE) ++count;
+#endif
     for (int i = 0; i < count; ++i) {
         if (formats[i] == AV_PIX_FMT_NV12) return AV_PIX_FMT_NV12;
     }
