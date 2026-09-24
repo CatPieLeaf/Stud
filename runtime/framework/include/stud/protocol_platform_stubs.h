@@ -117,37 +117,53 @@ public:
 };
 
 // com.roblox.protocols.devicedisplayplatforminterface.generated.
-// DeviceDisplayCapability: real Java enum (BRIGHTNESS, WAKELOCK), used
-// as a real JNI *object* parameter type (Djinni enums are real Java enum
-// instances at the JNI boundary, not raw ints), registered here purely
-// so `hasCapability`'s own real parameter-type signature matches for
-// GetMethodID resolution. No enum constants modeled yet (nothing on
-// Stud's side constructs one to pass in either direction currently),
-// grow against real evidence if that changes.
+// DeviceDisplayCapability: the Java enum { BRIGHTNESS, WAKELOCK }. Djinni
+// moves an enum across JNI by index, through values() and ordinal(), so
+// those two are what make one constructible and readable at all.
 class DeviceDisplayCapabilityStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/devicedisplayplatforminterface/generated/DeviceDisplayCapability")
+    static constexpr FakeJni::JInt kBrightness = 0;
+    static constexpr FakeJni::JInt kWakelock = 1;
+    FakeJni::JInt value = 0;
+    FakeJni::JInt ordinal() { return value; }
+    static std::shared_ptr<FakeJni::JArray<std::shared_ptr<DeviceDisplayCapabilityStub>>> values() {
+        auto all = std::make_shared<FakeJni::JArray<std::shared_ptr<DeviceDisplayCapabilityStub>>>(2);
+        for (FakeJni::JInt i = 0; i < 2; ++i) {
+            auto entry = std::make_shared<DeviceDisplayCapabilityStub>();
+            entry->value = i;
+            (*all)[i] = entry;
+        }
+        return all;
+    }
 };
 
 // com.roblox.protocols.devicedisplayplatforminterface.generated.
-// IPlatformDeviceDisplayHandler. Real, confirmed against the app's own code 6-method
-// surface. Honest defaults throughout, matching the real base class's
-// own fallback bodies exactly (0.0f brightness, false for both
-// availability queries, no-op setters).
+// IPlatformDeviceDisplayHandler, as the app's DeviceDisplayHandler does it
+// minus what a desktop window cannot: WAKELOCK is setKeepAwake(), which on
+// Android adds FLAG_KEEP_SCREEN_ON to the window and here holds the
+// compositor's idle inhibitor (see GameActivityStub::setWindowFlags).
+// Brightness is the display's, not the window's, on a desktop, so it is
+// not offered: hasCapability(BRIGHTNESS) is false and getBrightness()
+// answers -1, the app's own BRIGHTNESS_UNAVAILABLE.
 class DeviceDisplayPlatformStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/devicedisplayplatforminterface/generated/"
         "IPlatformDeviceDisplayHandler")
-    FakeJni::JFloat getBrightness() { return 0.0f; }
-    FakeJni::JBoolean hasCapability(std::shared_ptr<DeviceDisplayCapabilityStub> /*capability*/) {
-        return false;
+    // Set during bring-up.
+    static inline std::function<void(bool)> on_keep_awake;
+    FakeJni::JFloat getBrightness() { return -1.0f; }
+    FakeJni::JBoolean hasCapability(std::shared_ptr<DeviceDisplayCapabilityStub> capability) {
+        return capability && capability->value == DeviceDisplayCapabilityStub::kWakelock;
     }
-    FakeJni::JBoolean isAvailable() { return false; }
+    FakeJni::JBoolean isAvailable() { return true; }
     void setBrightness(FakeJni::JFloat /*value*/) {}
     void setBrightnessToDefault() {}
-    void setKeepAwake(FakeJni::JBoolean /*keepAwake*/) {}
+    void setKeepAwake(FakeJni::JBoolean keepAwake) {
+        if (on_keep_awake) on_keep_awake(keepAwake != 0);
+    }
 };
 
 // com.roblox.protocols.localstorageplatforminterface.generated.

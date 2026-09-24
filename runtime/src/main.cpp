@@ -740,6 +740,10 @@ int main(int argc, char** argv) {
         stud::render_client::connection().call_void(stud::render_host::CallId::SetKeepScreenOn,
                                                     args);
     };
+    // The DeviceDisplay protocol's setKeepAwake is the same flag.
+    stud::jni_bridge::DeviceDisplayPlatformStub::on_keep_awake = [](bool on) {
+        stud::jni_bridge::GameActivityStub::on_keep_screen_on(on);
+    };
     const bool smooth_zoom_setting = find_named_arg(argc, argv, "--smooth-zoom") != "off";
     stud::jni_bridge::set_smooth_zoom_enabled(smooth_zoom_setting);
     std::printf("stud: smooth zoom %s\n", smooth_zoom_setting ? "on" : "off (per-notch, as Sober)");

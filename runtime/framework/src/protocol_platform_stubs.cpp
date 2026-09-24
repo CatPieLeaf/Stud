@@ -122,6 +122,8 @@ BEGIN_NATIVE_DESCRIPTOR(PinShortcutPlatformStub)
 END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(DeviceDisplayCapabilityStub)
+{ FakeJni::Function<&DeviceDisplayCapabilityStub::ordinal>{}, "ordinal" },
+{ FakeJni::Function<&DeviceDisplayCapabilityStub::values>{}, "values" },
 END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(DeviceDisplayPlatformStub)
