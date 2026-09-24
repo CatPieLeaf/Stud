@@ -53,6 +53,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_V2_RESIZE_NOTIFY` | off | Tells the V2 bridge about a resize. Known to wedge the engine; kept for measurement. |
 | `STUD_CLIENT_SETTINGS_GROUP` | the real group | Which ClientSettings group to fetch. |
 | `STUD_VIDEO_CODECS` | the real list | Narrows the video decoders advertised to the engine to the MIME types named, comma-separated. By default it is every one the system's FFmpeg can decode. |
+| `STUD_VIDEO_ENCODER` | the first that opens | Use only this FFmpeg encoder for the engine's video encoding (`hevc_nvenc`, `hevc_amf`, `hevc_qsv`, `hevc_vaapi`, `hevc_vulkan`, `libx265`, or the `h264_`/`libx264` equivalents). By default they are tried in that order. `stud_video_encode_check` exercises one without launching Stud. |
 | `STUD_USER_AGENT`, `STUD_ANDROID_USER_AGENT` | built from the APK | Override the User-Agent. |
 | `STUD_FORCE_THEME`, `STUD_DARK_MODE` | the desktop's | Force light or dark. |
 | `STUD_TEST_METRICS_DENSITY` | the real density | Test only. |

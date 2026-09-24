@@ -197,12 +197,18 @@ target_compile_definitions(stud-render-host PRIVATE
 # different ABI, still runs Stud and simply offers no video decoders, and
 # the codecs available are whatever the distribution ships. Without the
 # headers the build goes ahead with no decoders.
-pkg_check_modules(FfmpegHeaders IMPORTED_TARGET libavcodec libavutil)
+pkg_check_modules(FfmpegHeaders IMPORTED_TARGET libavcodec libavutil libswscale)
 if(FfmpegHeaders_FOUND)
     target_include_directories(stud-render-host PRIVATE ${FfmpegHeaders_INCLUDE_DIRS})
     target_compile_definitions(stud-render-host PRIVATE STUD_HAVE_FFMPEG=1)
+    # The engine's encoder path on its own, against whatever FFmpeg and GPU
+    # this machine has; see the tool's own comment.
+    add_executable(stud_video_encode_check src/video_encode_check.cpp src/video_codec.cpp)
+    target_include_directories(stud_video_encode_check PRIVATE ${FfmpegHeaders_INCLUDE_DIRS})
+    target_compile_definitions(stud_video_encode_check PRIVATE STUD_HAVE_FFMPEG=1)
+    target_link_libraries(stud_video_encode_check PRIVATE stud_render_host_protocol ${CMAKE_DL_LIBS})
 else()
-    message(STATUS "libavcodec/libavutil headers not found: render-host builds with no video "
+    message(STATUS "libavcodec/libavutil/libswscale headers not found: render-host builds with no video "
                    "decoders (install ffmpeg-devel or libavcodec-dev for them)")
 endif()
 

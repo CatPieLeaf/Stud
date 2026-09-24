@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -18,6 +19,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/frame.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/mem.h>
 #include <libswscale/swscale.h>
 }
@@ -61,6 +63,16 @@ struct Av {
     decltype(&avcodec_get_supported_config) supported_config = nullptr;
     decltype(&av_packet_unref) packet_unref = nullptr;
     decltype(&av_frame_get_buffer) frame_get_buffer = nullptr;
+    // Hardware frames, for the encoders that only take frames already on
+    // the GPU (VA-API, Vulkan): the engine's frame is uploaded into one.
+    bool hw_ok = false;
+    decltype(&av_hwdevice_ctx_create) hwdevice_create = nullptr;
+    decltype(&av_hwframe_ctx_alloc) hwframe_ctx_alloc = nullptr;
+    decltype(&av_hwframe_ctx_init) hwframe_ctx_init = nullptr;
+    decltype(&av_hwframe_get_buffer) hwframe_get_buffer = nullptr;
+    decltype(&av_hwframe_transfer_data) hwframe_transfer = nullptr;
+    decltype(&av_buffer_ref) buffer_ref = nullptr;
+    decltype(&av_buffer_unref) buffer_unref = nullptr;
     // Pixel-format conversion, from libswscale: formats other than 8-bit
     // 4:2:0 on the way out of a decoder, and whatever an encoder wants on
     // the way in. Without it those are refused, as they were before.
@@ -107,6 +119,15 @@ const Av& av() {
         STUD_AV(supported_config, codec, avcodec_get_supported_config);
         STUD_AV(packet_unref, codec, av_packet_unref);
         STUD_AV(frame_get_buffer, util, av_frame_get_buffer);
+        STUD_AV(hwdevice_create, util, av_hwdevice_ctx_create);
+        STUD_AV(hwframe_ctx_alloc, util, av_hwframe_ctx_alloc);
+        STUD_AV(hwframe_ctx_init, util, av_hwframe_ctx_init);
+        STUD_AV(hwframe_get_buffer, util, av_hwframe_get_buffer);
+        STUD_AV(hwframe_transfer, util, av_hwframe_transfer_data);
+        STUD_AV(buffer_ref, util, av_buffer_ref);
+        STUD_AV(buffer_unref, util, av_buffer_unref);
+        a.hw_ok = a.hwdevice_create && a.hwframe_ctx_alloc && a.hwframe_ctx_init &&
+                  a.hwframe_get_buffer && a.hwframe_transfer && a.buffer_ref && a.buffer_unref;
         const std::string sws_name =
             "libswscale.so." + std::to_string(LIBSWSCALE_VERSION_MAJOR);
         if (void* sws = ::dlopen(sws_name.c_str(), RTLD_NOW | RTLD_LOCAL)) {
@@ -389,17 +410,56 @@ namespace {
 struct Candidate {
     const char* name;
     bool hardware;
+    // AV_HWDEVICE_TYPE_NONE for an encoder that takes frames from system
+    // memory. Otherwise the kind of device whose frames it wants: the
+    // engine's frame is uploaded into one of that device's frames first.
+    AVHWDeviceType device = AV_HWDEVICE_TYPE_NONE;
+    AVPixelFormat device_format = AV_PIX_FMT_NONE;
+    // Which of the device kind's devices, as FFmpeg names them; empty for
+    // its default. Filled in by the probe, which may have to look past the
+    // default to find one that encodes.
+    std::string device_name;
 };
 
-// In the order tried. The hardware encoders here all take frames from
-// system memory, which is what the engine hands over.
+// In the order tried, the first that opens wins. NVENC, AMF and Quick
+// Sync take system-memory frames directly. VA-API and Vulkan take only
+// frames on their own device, so each frame is uploaded (one copy, the
+// same one the others make inside their own driver); they are what an
+// Intel or AMD machine without AMF or Quick Sync has, and before them
+// such a machine fell straight through to the software encoder.
+std::vector<Candidate> all_candidates_for(const char* mime);
+
+// STUD_VIDEO_ENCODER=<name> (hevc_vaapi, h264_vulkan, libx264, ...) keeps
+// only that encoder, for testing a path the machine would not otherwise
+// reach, or for skipping one that opens but misbehaves.
 std::vector<Candidate> candidates_for(const char* mime) {
+    std::vector<Candidate> all = all_candidates_for(mime);
+    const char* only = std::getenv("STUD_VIDEO_ENCODER");
+    if (only == nullptr || *only == '\0') return all;
+    std::vector<Candidate> kept;
+    for (const Candidate& c : all) {
+        if (std::strcmp(c.name, only) == 0) kept.push_back(c);
+    }
+    return kept;
+}
+
+std::vector<Candidate> all_candidates_for(const char* mime) {
     const std::string m = mime != nullptr ? mime : "";
     if (m == "video/hevc") {
-        return {{"hevc_nvenc", true}, {"hevc_amf", true}, {"hevc_qsv", true}, {"libx265", false}};
+        return {{"hevc_nvenc", true},
+                {"hevc_amf", true},
+                {"hevc_qsv", true},
+                {"hevc_vaapi", true, AV_HWDEVICE_TYPE_VAAPI, AV_PIX_FMT_VAAPI},
+                {"hevc_vulkan", true, AV_HWDEVICE_TYPE_VULKAN, AV_PIX_FMT_VULKAN},
+                {"libx265", false}};
     }
     if (m == "video/avc") {
-        return {{"h264_nvenc", true}, {"h264_amf", true}, {"h264_qsv", true}, {"libx264", false}};
+        return {{"h264_nvenc", true},
+                {"h264_amf", true},
+                {"h264_qsv", true},
+                {"h264_vaapi", true, AV_HWDEVICE_TYPE_VAAPI, AV_PIX_FMT_VAAPI},
+                {"h264_vulkan", true, AV_HWDEVICE_TYPE_VULKAN, AV_PIX_FMT_VULKAN},
+                {"libx264", false}};
     }
     return {};
 }
@@ -423,9 +483,38 @@ AVPixelFormat encoder_pixel_format(const AVCodec* codec, AVCodecContext* ctx) {
     return count > 0 ? formats[0] : AV_PIX_FMT_YUV420P;
 }
 
+// A pool of `c.device` frames of this size, NV12 underneath, for an
+// encoder that takes only device frames. Null where the device cannot be
+// opened (no such GPU, no driver), which rules the encoder out.
+AVBufferRef* device_frames_for(const Candidate& c, uint32_t width, uint32_t height) {
+    if (c.device == AV_HWDEVICE_TYPE_NONE || !av().hw_ok) return nullptr;
+    AVBufferRef* device = nullptr;
+    if (av().hwdevice_create(&device, c.device,
+                             c.device_name.empty() ? nullptr : c.device_name.c_str(), nullptr,
+                             0) < 0) {
+        return nullptr;
+    }
+    AVBufferRef* frames = av().hwframe_ctx_alloc(device);
+    av().buffer_unref(&device);  // the frames context holds its own reference
+    if (frames == nullptr) return nullptr;
+    auto* fc = reinterpret_cast<AVHWFramesContext*>(frames->data);
+    fc->format = c.device_format;
+    fc->sw_format = AV_PIX_FMT_NV12;
+    fc->width = static_cast<int>(width);
+    fc->height = static_cast<int>(height);
+    fc->initial_pool_size = 16;
+    if (av().hwframe_ctx_init(frames) < 0) {
+        av().buffer_unref(&frames);
+        return nullptr;
+    }
+    return frames;
+}
+
+// `device_frames`, when given, is where this encoder's frames live; the
+// context takes its own reference.
 AVCodecContext* open_encoder(const AVCodec* codec, uint32_t width, uint32_t height,
                              uint32_t bit_rate, uint32_t frame_rate_milli,
-                             uint32_t key_interval_ms) {
+                             uint32_t key_interval_ms, AVBufferRef* device_frames = nullptr) {
     AVCodecContext* ctx = av().alloc_context(codec);
     if (ctx == nullptr) return nullptr;
     const uint32_t fps_milli = frame_rate_milli != 0 ? frame_rate_milli : 30000;
@@ -443,7 +532,17 @@ AVCodecContext* open_encoder(const AVCodec* codec, uint32_t width, uint32_t heig
     // default, and the configuration is out of band, for csd-0.
     ctx->max_b_frames = 0;
     ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    ctx->pix_fmt = encoder_pixel_format(codec, ctx);
+    if (device_frames != nullptr) {
+        ctx->pix_fmt =
+            reinterpret_cast<const AVHWFramesContext*>(device_frames->data)->format;
+        ctx->hw_frames_ctx = av().buffer_ref(device_frames);
+        if (ctx->hw_frames_ctx == nullptr) {
+            av().free_context(&ctx);
+            return nullptr;
+        }
+    } else {
+        ctx->pix_fmt = encoder_pixel_format(codec, ctx);
+    }
     if (av().open(ctx, codec, nullptr) < 0) {
         av().free_context(&ctx);
         return nullptr;
@@ -454,6 +553,7 @@ AVCodecContext* open_encoder(const AVCodec* codec, uint32_t width, uint32_t heig
 struct EncoderSupport {
     VideoEncoderSupport support;
     const AVCodec* codec = nullptr;
+    Candidate candidate{};
 };
 
 // Whether one of this MIME type's encoders opens here, found once: a
@@ -469,14 +569,39 @@ EncoderSupport probe_encoder(const char* mime) {
     // libswscale is what moves the engine's frame into the encoder's own,
     // so without it there is no encoding at all.
     if (av().ok && av().sws_ok && av().find_encoder_by_name != nullptr) {
-        for (const Candidate& c : candidates_for(mime)) {
-            const AVCodec* codec = av().find_encoder_by_name(c.name);
+        for (const Candidate& listed : candidates_for(mime)) {
+            const AVCodec* codec = av().find_encoder_by_name(listed.name);
             if (codec == nullptr) continue;
-            AVCodecContext* ctx = open_encoder(codec, 256, 256, 1000000, 30000, 1000);
-            if (ctx == nullptr) continue;
-            av().free_context(&ctx);
+            // Which devices to try. Vulkan's default is simply the first
+            // GPU, and on a hybrid laptop that is the integrated one, which
+            // may have no video-encode queue while the other GPU does; the
+            // rest are tried by index. VA-API's default is the render node
+            // the system picks, and there is nothing to enumerate.
+            std::vector<std::string> devices = {""};
+            if (listed.device == AV_HWDEVICE_TYPE_VULKAN) {
+                devices = {"", "1", "2", "3"};
+            }
+            bool opened = false;
+            Candidate c = listed;
+            for (const std::string& device : devices) {
+                c.device_name = device;
+                AVBufferRef* frames = nullptr;
+                if (c.device != AV_HWDEVICE_TYPE_NONE) {
+                    frames = device_frames_for(c, 256, 256);
+                    if (frames == nullptr) continue;
+                }
+                AVCodecContext* ctx =
+                    open_encoder(codec, 256, 256, 1000000, 30000, 1000, frames);
+                if (frames != nullptr) av().buffer_unref(&frames);
+                if (ctx == nullptr) continue;
+                av().free_context(&ctx);
+                opened = true;
+                break;
+            }
+            if (!opened) continue;
             found.support = {true, c.hardware};
             found.codec = codec;
+            found.candidate = c;
             std::printf("stud-render-host: video: %s encoder is %s (%s)\n", key.c_str(), c.name,
                         c.hardware ? "hardware" : "software");
             std::fflush(stdout);
@@ -489,7 +614,12 @@ EncoderSupport probe_encoder(const char* mime) {
 
 struct Encoder {
     const AVCodec* codec = nullptr;
+    Candidate candidate{};
     AVCodecContext* ctx = nullptr;
+    // For an encoder that takes device frames: the pool, and the frame
+    // each upload lands in. `frame` is then the NV12 staging frame.
+    AVBufferRef* device_frames = nullptr;
+    AVFrame* device_frame = nullptr;
     AVFrame* frame = nullptr;
     AVPacket* packet = nullptr;
     SwsContext* sws = nullptr;
@@ -545,6 +675,7 @@ uint64_t video_encoder_create(const char* mime) {
     if (!s.support.supported) return 0;
     auto e = std::make_shared<Encoder>();
     e->codec = s.codec;
+    e->candidate = s.candidate;
     e->frame = av().frame_alloc();
     e->packet = av().packet_alloc();
     if (e->frame == nullptr || e->packet == nullptr) return 0;
@@ -575,9 +706,17 @@ int32_t video_encoder_configure(uint64_t handle, uint32_t width, uint32_t height
         std::fflush(stdout);
         return kErrorUnsupported;
     }
-    e->ctx = open_encoder(e->codec, width, height, bit_rate, frame_rate_milli, key_interval_ms);
+    if (e->candidate.device != AV_HWDEVICE_TYPE_NONE) {
+        e->device_frames = device_frames_for(e->candidate, width, height);
+        e->device_frame = av().frame_alloc();
+        if (e->device_frames == nullptr || e->device_frame == nullptr) return kErrorUnknown;
+    }
+    e->ctx = open_encoder(e->codec, width, height, bit_rate, frame_rate_milli, key_interval_ms,
+                          e->device_frames);
     if (e->ctx == nullptr) return kErrorUnknown;
-    e->frame->format = e->ctx->pix_fmt;
+    // The frame the engine's bytes are converted into: the encoder's own
+    // format, or NV12 on its way up to a device frame.
+    e->frame->format = e->device_frames != nullptr ? AV_PIX_FMT_NV12 : e->ctx->pix_fmt;
     e->frame->width = e->ctx->width;
     e->frame->height = e->ctx->height;
     if (av().frame_get_buffer(e->frame, 0) < 0) return kErrorUnknown;
@@ -610,16 +749,29 @@ int32_t video_encoder_queue(uint64_t handle, const uint8_t* data, uint32_t size,
         }
         // Into the encoder's own frame, converting where it wants another
         // layout (libswscale copies when the two are the same).
-        e->sws = av().sws_get(e->sws, w, h, e->input, w, h, e->ctx->pix_fmt, SWS_BILINEAR,
+        e->sws = av().sws_get(e->sws, w, h, e->input, w, h,
+                              static_cast<AVPixelFormat>(e->frame->format), SWS_BILINEAR,
                               nullptr, nullptr, nullptr);
         if (e->sws == nullptr) return kErrorUnsupported;
         av().sws_scale_fn(e->sws, src, src_stride, 0, h, e->frame->data, e->frame->linesize);
         e->frame->pts = pts_us;
-        int r = av().send_frame(e->ctx, e->frame);
+        AVFrame* sent = e->frame;
+        if (e->device_frames != nullptr) {
+            // Up to the device, into a frame from the encoder's own pool.
+            av().frame_unref(e->device_frame);
+            if (av().hwframe_get_buffer(e->device_frames, e->device_frame, 0) < 0 ||
+                av().hwframe_transfer(e->device_frame, e->frame, 0) < 0) {
+                return kErrorUnknown;
+            }
+            e->device_frame->pts = pts_us;
+            sent = e->device_frame;
+        }
+        int r = av().send_frame(e->ctx, sent);
         while (r == AVERROR(EAGAIN)) {
             drain_encoder(*e);
-            r = av().send_frame(e->ctx, e->frame);
+            r = av().send_frame(e->ctx, sent);
         }
+        if (e->device_frames != nullptr) av().frame_unref(e->device_frame);
         if (r < 0) return kErrorUnknown;
         drain_encoder(*e);
     }
@@ -674,8 +826,10 @@ void video_encoder_destroy(uint64_t handle) {
     std::lock_guard<std::mutex> lock(e->mutex);
     if (e->sws != nullptr) av().sws_free(e->sws);
     av().frame_free(&e->frame);
+    if (e->device_frame != nullptr) av().frame_free(&e->device_frame);
     av().packet_free(&e->packet);
     if (e->ctx != nullptr) av().free_context(&e->ctx);
+    if (e->device_frames != nullptr) av().buffer_unref(&e->device_frames);
 }
 
 #else  // no FFmpeg headers at build time: no decoders, and says so.
