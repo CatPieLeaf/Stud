@@ -2,7 +2,7 @@
 
 #include <cstdlib>
 
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -82,7 +82,7 @@ ClientSettingsBridgeResult run_client_settings_bridge(FakeJni::Jvm& jvm,
             // ArrayList (no fabricated ApplicationExitInfo content,
             // just an honest empty container) matches that.
             jobject empty_list_ref =
-                env.createLocalReference(std::make_shared<EmptyArrayListStub>());
+                env.createLocalReference(std::make_shared<EmptyArrayListJava>());
             result.post_init_trapped_abort =
                 !call_trapping_abort(post_fn, jni_env, nullptr, empty_list_ref);
             clear_pending_jni_exception(jni_env, "nativePostClientSettingsLoadedInitialization3");

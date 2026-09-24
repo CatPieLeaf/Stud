@@ -1,7 +1,7 @@
 #pragma once
 
 #include "stud/bionic_jvm.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/linker.h"
 
 #include <functional>
@@ -56,17 +56,17 @@ struct GameActivityLifecycleResult {
     // (the engineering notes, "two windows" entry): any other caller that
     // needs to hand Roblox a Surface (e.g. the V2 app-bridge's
     // ResumeGameWithPlatformParams/StartGameWithParam) must reuse THIS
-    // SAME object, not construct a fresh SurfaceStub; android-glue's
+    // SAME object, not construct a fresh SurfaceJava; android-glue's
     // ANativeWindow dedup cache (added for the exact same reason) is
     // keyed by jobject identity, so a different object means a second,
     // real, independently-mapped Wayland window.
-    std::shared_ptr<SurfaceStub> surface;
+    std::shared_ptr<SurfaceJava> surface;
 
     // The real GameActivity instance every lifecycle call above was made
     // on. The input bridge needs it to deliver real MotionEvent/KeyEvent
     // objects through AGDK's own onTouchEventNative/onKeyDownNative, the
     // only input path that carries a real InputDevice source and tool type.
-    std::shared_ptr<MainGameActivityStub> activity;
+    std::shared_ptr<MainGameActivityJava> activity;
 
     bool on_start_called = false;
     bool on_start_trapped_abort = false;
@@ -102,8 +102,8 @@ bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResu
 // onWindowFocusChangedNative(true) -> onSurfaceCreatedNative ->
 // onSurfaceChangedNative(surface_width, surface_height, RGBA_8888).
 //
-// Requires: `jvm` must already have register_game_activity_stubs()
-// (game_activity_stubs.h) called on it and jvm.attachLibrary("") already
+// Requires: `jvm` must already have register_app_java_classes()
+// (app_java_classes.h) called on it and jvm.attachLibrary("") already
 // called (both one-time FakeJni::Jvm setup, unrelated to any specific
 // call here), and ALooper_prepare(0) already called on the calling thread
 // (android-glue's ALooper; real device precondition GameActivity's own
@@ -113,8 +113,8 @@ bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResu
 // (unrelated to AAssetManager's own asset base, set separately via
 // android_glue::set_asset_base_directory()).
 //
-// `on_bootstrap_the_app`, if given, is set on the MainGameActivityStub
-// instance (game_activity_stubs.h) BEFORE calling
+// `on_bootstrap_the_app`, if given, is set on the MainGameActivityJava
+// instance (app_java_classes.h) BEFORE calling
 // GameActivity_initializeNativeCode(); real Android's bootstrapTheApp()
 // is a native-to-Java callback the engine invokes when it's ready for
 // setInitParamsForEngine (see bootstrap.h's run_init_params_bootstrap()

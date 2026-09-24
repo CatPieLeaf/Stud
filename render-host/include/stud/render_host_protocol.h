@@ -1155,7 +1155,7 @@ struct ResponseHeader {
 };
 
 // Thin, shared (portable POSIX, works identically compiled bionic or
-// glibc) client used both by Process B's real forwarding stubs and this
+// glibc) client used both by Process B's real forwarding clients and this
 // module's own test client, owns exactly one blocking, synchronous
 // request/response round-trip.
 //

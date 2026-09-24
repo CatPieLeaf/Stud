@@ -12,7 +12,7 @@
 // path can't be trusted to surface it). Drives its JNI bootstrap and
 // GameActivity lifecycle (jni-bridge/, ported to bionic this session),
 // and renders through real bionic libEGL.so/libGLESv2.so (this
-// session's own render-client stubs, forwarding to stud-render-host:
+// session's own render-client libraries, forwarding to stud-render-host:
 // a separate, real glibc process hosting ANGLE, see render-host/src/
 // main.cpp's own doc comment for why).
 //
@@ -56,9 +56,9 @@
 #include "stud/album_bridge.h"
 #include "fmod_audio_output.h"
 #include "stud/flag_overrides.h"
-#include "stud/android_framework_stubs.h"
-#include "stud/protocol_platform_stubs.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/android_framework.h"
+#include "stud/protocol_platforms.h"
+#include "stud/app_java_classes.h"
 #include "stud/content_sharing_bridge.h"
 #include "stud/game_instance.h"
 #include "stud/server_address.h"
@@ -185,12 +185,12 @@ void handle_shutdown_signal(int) {
 // Real render context: reuses the SAME ANativeWindow GameActivity's own
 // onSurfaceCreatedNative already created (android-glue's per-jobject
 // window_cache; under the new architecture, ANativeWindow_fromSurface's
-// own forwarding stub always answers with Process C's one real window,
+// own forwarding client always answers with Process C's one real window,
 // so this and Roblox's own later real calls converge on the exact same
 // object without any extra wiring). Direct, ordinary linked calls
 // against real libEGL.so/libGLESv2.so; no resolver needed, these ARE
-// the real, exported bionic symbols now (this session's render-client
-// stubs), the same ones Roblox's own compiled code calls.
+// the real, exported bionic symbols now (the render-client
+// libraries), the same ones Roblox's own compiled code calls.
 struct RealRenderContext {
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
@@ -735,14 +735,14 @@ int main(int argc, char** argv) {
     stud::runtime::install_fmod_audio_output();
     // FLAG_KEEP_SCREEN_ON, to the window that can honour it. Before the
     // engine loads too: it may set the flag while it starts.
-    stud::jni_bridge::GameActivityStub::on_keep_screen_on = [](bool on) {
+    stud::jni_bridge::GameActivityJava::on_keep_screen_on = [](bool on) {
         uint64_t args[8] = {on ? 1u : 0u};
         stud::render_client::connection().call_void(stud::render_host::CallId::SetKeepScreenOn,
                                                     args);
     };
     // The DeviceDisplay protocol's setKeepAwake is the same flag.
-    stud::jni_bridge::DeviceDisplayPlatformStub::on_keep_awake = [](bool on) {
-        stud::jni_bridge::GameActivityStub::on_keep_screen_on(on);
+    stud::jni_bridge::DeviceDisplayPlatformJava::on_keep_awake = [](bool on) {
+        stud::jni_bridge::GameActivityJava::on_keep_screen_on(on);
     };
     const bool smooth_zoom_setting = find_named_arg(argc, argv, "--smooth-zoom") != "off";
     stud::jni_bridge::set_smooth_zoom_enabled(smooth_zoom_setting);
@@ -1001,8 +1001,8 @@ int main(int argc, char** argv) {
     // -> GetObjectClass -> getClassLoader() -> loadClass/findClass)
     // fires from inside libroblox.so's own real DT_INIT_ARRAY static
     // constructors, i.e. DURING dlopen() itself, before dlopen() even
-    // returns, so registering FakeJni stub classes (including
-    // ClassLoaderStub/ClassMetaStub, see android_framework_stubs.h) only
+    // returns, so registering FakeJni classes (including
+    // ClassLoaderJava/ClassMetaJava, see android_framework.h) only
     // after dlopen() returns is structurally too late for this specific
     // idiom, even though it was already correctly timed for
     // JNI_OnLoad()-triggered lookups (a separate, later, explicit call
@@ -1010,7 +1010,7 @@ int main(int argc, char** argv) {
     // order too: a real device's framework classes are already loaded
     // and available in the process before an app's own native libraries
     // are dlopen()'d, never the other way around. Moving the Jvm
-    // itself, the canonical-VM registration, and every stub-class
+    // itself, the canonical-VM registration, and every Java-class
     // registration ahead of dlopen() fixes the ordering for both real
     // bootstrap moments at once, not just JNI_OnLoad's.
     stud::jni_bridge::BionicAwareJvm jvm;
@@ -1022,9 +1022,9 @@ int main(int argc, char** argv) {
     jvm.registerClass<stud::jni_bridge::PlatformParamsWithLuaFlags>();
     jvm.registerClass<stud::jni_bridge::DeviceParams>();
     jvm.registerClass<stud::jni_bridge::InitParams>();
-    stud::jni_bridge::register_android_framework_stubs(jvm);
-    stud::jni_bridge::register_game_activity_stubs(jvm);
-    stud::jni_bridge::register_protocol_platform_stubs(jvm);
+    stud::jni_bridge::register_android_framework(jvm);
+    stud::jni_bridge::register_app_java_classes(jvm);
+    stud::jni_bridge::register_protocol_platforms(jvm);
 
     // Caught in testing: ordering bug: libroblox reads
     // `NativeGLJavaInterface.getDeviceStaticParams()` during its OWN
@@ -1037,7 +1037,7 @@ int main(int argc, char** argv) {
     // These builders are pure value construction; they need neither the
     // loaded library nor a live JNI call, so running them this early is
     // safe.
-    stud::jni_bridge::NativeGLJavaInterfaceStub::setDeviceStaticParams(
+    stud::jni_bridge::NativeGLJavaInterfaceJava::setDeviceStaticParams(
         stud::jni_bridge::build_desktop_device_static_params(
             stud::jni_bridge::build_desktop_device_params("34", "Stud", real_app_version, "1920x1080",
                                                            1920, 1080, 16384)));
@@ -1368,7 +1368,7 @@ int main(int argc, char** argv) {
     }
 
     {
-        stud::jni_bridge::LocalStoragePlatformStub::set_storage_hooks(
+        stud::jni_bridge::LocalStoragePlatformJava::set_storage_hooks(
             [](const std::string& document) {
                 std::string payload = std::string(kLocalStorageSecretName) + "\n" + document;
                 uint64_t args[8] = {};
@@ -1387,7 +1387,7 @@ int main(int argc, char** argv) {
                 if (ok == 0 || written == 0) return std::string();
                 return std::string(buffer.data(), std::min<size_t>(written, buffer.size()));
             });
-        stud::jni_bridge::LocalStoragePlatformStub::load();
+        stud::jni_bridge::LocalStoragePlatformJava::load();
 
         // One-time move off the plaintext file an earlier build wrote.
         // That file held a real .ROBLOSECURITY in the clear; reading it
@@ -1411,8 +1411,8 @@ int main(int argc, char** argv) {
                     text.assign(std::istreambuf_iterator<char>(in),
                                 std::istreambuf_iterator<char>());
                 }
-                stud::jni_bridge::LocalStoragePlatformStub::load_from(text);
-                stud::jni_bridge::LocalStoragePlatformStub::save_now();
+                stud::jni_bridge::LocalStoragePlatformJava::load_from(text);
+                stud::jni_bridge::LocalStoragePlatformJava::save_now();
                 std::filesystem::remove(legacy, ec);
                 std::printf("stud: moved the local-storage document out of the plaintext file "
                             "and into safe storage (%zu bytes)\n",
@@ -1432,7 +1432,7 @@ int main(int argc, char** argv) {
         // real identity. The Lua app asks *this* protocol who is signed
         // in (IPlatformLocalStorageHandler.getCurrentUser); returning 0
         // is what made it route to the logged-out `Landing` screen.
-        stud::jni_bridge::LocalStoragePlatformStub::set_real_current_user(
+        stud::jni_bridge::LocalStoragePlatformJava::set_real_current_user(
             static_cast<long long>(launch_payload->authenticated_user_id));
         if (!launch_payload->session_cookie.empty()) {
             // Seeded under the real cookie name the engine itself
@@ -1440,7 +1440,7 @@ int main(int argc, char** argv) {
             // other key the app actually asks for shows up in the
             // LocalStorage.* "MISS" logs, by name, so the real key set
             // can be learned from evidence rather than guessed at.
-            stud::jni_bridge::LocalStoragePlatformStub::seed_secure_value(
+            stud::jni_bridge::LocalStoragePlatformJava::seed_secure_value(
                 static_cast<long long>(launch_payload->authenticated_user_id), ".ROBLOSECURITY",
                 launch_payload->session_cookie);
         }
@@ -1528,9 +1528,9 @@ int main(int argc, char** argv) {
     stud::jni_bridge::publish_system_theme_updated(jvm, lib);
 
     try {
-        auto protocol_result = stud::jni_bridge::run_protocol_platform_stubs_bootstrap(jvm, lib);
+        auto protocol_result = stud::jni_bridge::run_protocol_platforms_bootstrap(jvm, lib);
         std::printf(
-            "stud: run_protocol_platform_stubs_bootstrap() complete: "
+            "stud: run_protocol_platforms_bootstrap() complete: "
             "app_age_signals=%d/%d bug_reporter=%d/%d pin_shortcut=%d/%d "
             "device_display=%d/%d local_storage=%d/%d design_foundations=%d/%d "
             "(called/trapped_abort)\n",
@@ -1547,7 +1547,7 @@ int main(int argc, char** argv) {
             protocol_result.design_foundations_set_platform_impl_called,
             protocol_result.design_foundations_set_platform_impl_trapped_abort);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud: run_protocol_platform_stubs_bootstrap() failed: %s\n",
+        std::fprintf(stderr, "stud: run_protocol_platforms_bootstrap() failed: %s\n",
                      e.what());
     }
 
@@ -1733,6 +1733,41 @@ int main(int argc, char** argv) {
                 stud::jni_bridge::report_webview_user_agent(jvm, lib, agent);
             });
     }
+    // Native purchases: answered "not completed", off the calling thread,
+    // as the app answers them when it has no billing (see
+    // set_purchase_unavailable_reporter). V2 carries a checkout session id,
+    // empty here as it is in the app's own failure report.
+    stud::jni_bridge::set_purchase_unavailable_reporter(
+        [&jvm, &lib](long long user_id, const std::string& product_id) {
+            // The app reports nothing when it has no user to report for.
+            if (user_id == 0) return;
+            using V2Fn = void (*)(JNIEnv*, jclass, jboolean, jlong, jstring, jstring);
+            using V1Fn = void (*)(JNIEnv*, jclass, jboolean, jlong, jstring);
+            static const auto v2 = reinterpret_cast<V2Fn>(lib.find_symbol(
+                "Java_com_roblox_engine_jni_NativeGLInterface_nativeInGamePurchaseFinishedV2"));
+            static const auto v1 = reinterpret_cast<V1Fn>(lib.find_symbol(
+                "Java_com_roblox_engine_jni_NativeGLInterface_nativeInGamePurchaseFinished"));
+            if (v2 == nullptr && v1 == nullptr) return;
+            std::thread([&jvm, user_id, product_id] {
+                static_cast<stud::jni_bridge::BionicAwareJvm&>(jvm)
+                    .ensure_env_for_current_thread();
+                FakeJni::LocalFrame frame(jvm);
+                auto& env = frame.getJniEnv();
+                auto* jni_env = static_cast<JNIEnv*>(&env);
+                if (v2 != nullptr) {
+                    stud::jni_bridge::call_trapping_abort(
+                        v2, jni_env, static_cast<jclass>(nullptr), static_cast<jboolean>(0),
+                        static_cast<jlong>(user_id), env.NewStringUTF(product_id.c_str()),
+                        env.NewStringUTF(""));
+                } else {
+                    stud::jni_bridge::call_trapping_abort(
+                        v1, jni_env, static_cast<jclass>(nullptr), static_cast<jboolean>(0),
+                        static_cast<jlong>(user_id), env.NewStringUTF(product_id.c_str()));
+                }
+                stud::jni_bridge::clear_pending_jni_exception(jni_env,
+                                                              "nativeInGamePurchaseFinished");
+            }).detach();
+        });
     //
     // Corrected order and activity names (this project's own real
     // logcat, `~/Stud/roblox_logcat2.txt`'s `InitHelper` tag output,
@@ -1915,7 +1950,7 @@ int main(int argc, char** argv) {
     auto v2_device_params = stud::jni_bridge::build_desktop_device_params(
         "34", "Stud", real_app_version, "1920x1080", 1920, 1080, 16384);
     // setDeviceStaticParams is NOT called here any more; it has to run
-    // before dlopen(), see the call site up by register_game_activity_stubs().
+    // before dlopen(), see the call site up by register_app_java_classes().
     try {
         bool base_url_ok = stud::jni_bridge::run_base_url_protocol_init(jvm, lib);
         std::printf("stud: run_base_url_protocol_init() complete: ok=%d\n", base_url_ok);
@@ -2015,7 +2050,7 @@ int main(int argc, char** argv) {
         // Everything downstream keys off lifecycle.surface, and there is
         // exactly one real window either way; android-glue's
         // ANativeWindow_fromSurface ignores the jobject and returns it.
-        lifecycle.surface = std::make_shared<stud::jni_bridge::SurfaceStub>();
+        lifecycle.surface = std::make_shared<stud::jni_bridge::SurfaceJava>();
         try {
             auto init_result = stud::jni_bridge::run_init_params_bootstrap(jvm, lib, init_params);
             std::printf("stud: run_init_params_bootstrap() complete (no GameActivity): "
@@ -2257,7 +2292,7 @@ int main(int argc, char** argv) {
                                                         v2_device_params, lifecycle.surface);
     };
 
-    stud::jni_bridge::MessageBusRawCallbackStub::on_message =
+    stud::jni_bridge::MessageBusRawCallbackJava::on_message =
         [&start_game_for_launch_request](const std::string& json) {
         // Parsed with the same field name the real handler reads
         // (the app's own launch-request parser: jSONObject.optLong("placeId")). Logged by id only,
@@ -2292,7 +2327,7 @@ int main(int argc, char** argv) {
                 std::printf("stud: experience-launch request keys: %s\n", keys.c_str());
                 std::fflush(stdout);
             }
-            stud::jni_bridge::NativeHelperStub::LaunchRequest request;
+            stud::jni_bridge::NativeHelperJava::LaunchRequest request;
             request.place_id = number("placeId");
             request.referred_by_player_id = number("referredByPlayerId");
             request.join_attempt_id = text("joinAttemptId");
@@ -2321,7 +2356,7 @@ int main(int argc, char** argv) {
                             request.launch_data.empty() ? "no" : "yes",
                             request.game_instance_id.empty() ? "no" : "yes");
                 std::fflush(stdout);
-                stud::jni_bridge::NativeHelperStub::set_last_launch_request(std::move(request));
+                stud::jni_bridge::NativeHelperJava::set_last_launch_request(std::move(request));
                 // Stud does NOT start the game itself here. The engine's
                 // own listener (`listenForExperienceLaunchRequest_`) is
                 // subscribed to this same topic and launches the
@@ -2337,7 +2372,7 @@ int main(int argc, char** argv) {
                 // `stepDataModelJob: No DM yet` forever.
                 //
                 // The request is still parsed and stored above, because
-                // NativeHelperStub hands its fields back to the engine
+                // NativeHelperJava hands its fields back to the engine
                 // when asked. STUD_ACK_EXPERIENCE_START=1 restores the
                 // explicit call for comparison against Sober, which does
                 // make it (its engine evidently does not self-launch).
@@ -2407,7 +2442,7 @@ int main(int argc, char** argv) {
         // though it has the call to do so. See
         // forget_current_user_values().
         if (cookie_name == ".ROBLOSECURITY") {
-            stud::jni_bridge::LocalStoragePlatformStub::forget_current_user_values();
+            stud::jni_bridge::LocalStoragePlatformJava::forget_current_user_values();
         }
     });
     stud::jni_bridge::subscribe_to_experience_launch(jvm, lib);
@@ -2597,7 +2632,7 @@ int main(int argc, char** argv) {
         stud::jni_bridge::AlbumFolders folders;
         folders.pictures = find_named_arg(argc, argv, "--pictures-dir");
         folders.videos = find_named_arg(argc, argv, "--videos-dir");
-        stud::jni_bridge::NativeHelperStub::on_capture_ready =
+        stud::jni_bridge::NativeHelperJava::on_capture_ready =
             [&jvm, &lib, folders](const std::string& path) {
                 stud::jni_bridge::save_capture_to_album(jvm, lib, folders, path);
             };
@@ -2605,8 +2640,8 @@ int main(int argc, char** argv) {
 
     // Achievement requests, answered the way the real Java answers them
     // with no backend: success(handle, false), off the calling thread, as
-    // its coroutine does. See JNIAchievementStub.
-    stud::jni_bridge::JNIAchievementStub::on_answer_not_achieved = [&jvm, &lib](jlong handle) {
+    // its coroutine does. See JNIAchievementJava.
+    stud::jni_bridge::JNIAchievementJava::on_answer_not_achieved = [&jvm, &lib](jlong handle) {
         using SuccessFn = jboolean (*)(JNIEnv*, jobject, jlong, jboolean);
         static const auto success = reinterpret_cast<SuccessFn>(
             lib.find_symbol("Java_com_roblox_universalapp_achievement_JNIAchievement_success"));
@@ -2616,7 +2651,7 @@ int main(int argc, char** argv) {
             FakeJni::LocalFrame frame(jvm);
             auto& env = frame.getJniEnv();
             auto* jni_env = static_cast<JNIEnv*>(&env);
-            auto self = std::make_shared<stud::jni_bridge::JNIAchievementStub>();
+            auto self = std::make_shared<stud::jni_bridge::JNIAchievementJava>();
             stud::jni_bridge::call_trapping_abort(success, jni_env, env.createLocalReference(self),
                                                   handle, static_cast<jboolean>(0));
             stud::jni_bridge::clear_pending_jni_exception(jni_env, "JNIAchievement.success");
@@ -2632,10 +2667,10 @@ int main(int argc, char** argv) {
     // launch. The engine's own experience flag is what tells them apart.
     // It is still set at this point and cleared by onExperienceStop.
     const bool close_on_leave = find_named_arg(argc, argv, "--close-on-leave") == "on";
-    stud::jni_bridge::NativeHelperStub::on_returned_to_app = [assert_foreground, close_on_leave]() {
+    stud::jni_bridge::NativeHelperJava::on_returned_to_app = [assert_foreground, close_on_leave]() {
         assert_foreground();
         if (!close_on_leave) return;
-        if (!stud::jni_bridge::NativeHelperStub::experience_is_loaded()) return;
+        if (!stud::jni_bridge::NativeHelperJava::experience_is_loaded()) return;
         std::printf("stud: left the experience and closeOnLeave is set, shutting down\n");
         std::fflush(stdout);
         // Close the window here, not after teardown.
@@ -2667,7 +2702,7 @@ int main(int argc, char** argv) {
     // closing the window, the window goes first, because the engine
     // carries on rendering its shell through the seconds LeaveGame and
     // DestroyApp take.
-    stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit = []() {
+    stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit = []() {
         std::printf("stud: the app asked to exit, shutting down\n");
         std::fflush(stdout);
         uint64_t end_args[8] = {};
@@ -2676,16 +2711,16 @@ int main(int argc, char** argv) {
         g_should_keep_running.store(false, std::memory_order_relaxed);
     };
 
-    stud::jni_bridge::GameActivityStub::on_finish = [] {
-        if (stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit) {
-            stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit();
+    stud::jni_bridge::GameActivityJava::on_finish = [] {
+        if (stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit) {
+            stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit();
         }
     };
 
     // Links the engine wants another application to handle; Roblox
     // Studio above all. render-host decides what is a Roblox page (its
     // own panel) and what belongs to the desktop.
-    stud::jni_bridge::JNIAppRestarterStub::on_open_external_url = [](const std::string& url) {
+    stud::jni_bridge::JNIAppRestarterJava::on_open_external_url = [](const std::string& url) {
         std::string payload = url + "\n\n\n";  // url, empty title, empty app token
         uint64_t args[8] = {};
         stud::render_client::connection().call(
@@ -2700,7 +2735,7 @@ int main(int argc, char** argv) {
     // account's login does not survive a restart.
     //
     // Names and counts only; these are real credentials.
-    stud::jni_bridge::NativeHelperStub::on_account_changed = [&jvm, &lib](const char* what) {
+    stud::jni_bridge::NativeHelperJava::on_account_changed = [&jvm, &lib](const char* what) {
         const auto cookies = stud::jni_bridge::engine_cookies_for_url(jvm, lib,
                                                                        "https://www.roblox.com");
         std::printf("stud: account %s: engine jar now holds %zu cookie(s) (names: %s)\n", what,
@@ -2740,7 +2775,7 @@ int main(int argc, char** argv) {
         // here, interleaved with real native-window-event polling and
         // rendering, matching real Android's own single-main-thread
         // Looper contract.
-        stud::jni_bridge::LooperStub::getMainLooper()->drain_pending(jvm);
+        stud::jni_bridge::LooperJava::getMainLooper()->drain_pending(jvm);
         // A/B for the idle-pacing problem (STUD_KEEP_FOREGROUND=1): Stud tells
         // the engine's task scheduler it is in the foreground exactly once, at
         // bring-up, long before the app is actually up. If anything flips it
@@ -2752,9 +2787,9 @@ int main(int argc, char** argv) {
         // is the engine's own answer (gameActivity_onGameLoaded), and
         // leaving the experience clears it back to Stud's own identity.
         if (discord_presence_enabled) {
-            const bool in_experience = stud::jni_bridge::NativeHelperStub::experience_is_loaded();
+            const bool in_experience = stud::jni_bridge::NativeHelperJava::experience_is_loaded();
             const long long place = in_experience
-                                        ? stud::jni_bridge::NativeHelperStub::last_place_id()
+                                        ? stud::jni_bridge::NativeHelperJava::last_place_id()
                                         : 0;
             // The server too, not just the experience: a link with no
             // instance id joins whichever server the backend picks,
@@ -2792,7 +2827,7 @@ int main(int argc, char** argv) {
         // join callback. Rechecked while an experience is loaded so a
         // server hop within one session is reported too.
         if (notify_server_region) {
-            const bool in_experience = stud::jni_bridge::NativeHelperStub::experience_is_loaded();
+            const bool in_experience = stud::jni_bridge::NativeHelperJava::experience_is_loaded();
             if (!in_experience) {
                 // Left the experience: arm it again for the next join.
                 reported_server_region = false;

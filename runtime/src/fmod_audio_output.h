@@ -1,7 +1,7 @@
 #pragma once
 
 // FMOD's Java AudioTrack fallback (org.fmod.AudioDevice), played through
-// the render host's audio output. See AudioDeviceStub.
+// the render host's audio output. See AudioDeviceJava.
 namespace stud::runtime {
 
 void install_fmod_audio_output();

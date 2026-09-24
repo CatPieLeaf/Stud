@@ -1,7 +1,7 @@
 #include "stud/system_theme_bridge.h"
 
 #include "stud/bionic_jvm.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <atomic>
@@ -213,8 +213,8 @@ bool run_system_theme_bootstrap(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
     const std::string topic = message_id(env, lib, ids.protocol, ids.set_theme_message);
     if (topic.empty()) return false;
 
-    auto bus = std::make_shared<MessageBusStub>();
-    auto callback = std::make_shared<MessageBusRawCallbackStub>();
+    auto bus = std::make_shared<MessageBusJava>();
+    auto callback = std::make_shared<MessageBusRawCallbackJava>();
     const std::string param_key = ids.param_key;
     callback->handler = [param_key, on_theme](const std::string& payload) {
         const int value = theme_value_field(payload, param_key);
@@ -237,7 +237,7 @@ bool run_system_theme_bootstrap(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
     std::printf("stud: system theme: subscribed to %s: %s\n", topic.c_str(), ok ? "ok" : "trapped");
     std::fflush(stdout);
     // The bus keeps calling this, so it has to outlive the frame.
-    static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept;
+    static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept;
     kept.push_back(callback);
     return ok;
 }
@@ -260,7 +260,7 @@ void publish_system_theme_updated(FakeJni::Jvm& jvm, const stud::linker::LoadedL
     // The real publisher sends an empty object: the message says only
     // "ask again", and the app reads the value back through
     // SystemThemeProtocol.getSystemTheme().
-    auto bus = std::make_shared<MessageBusStub>();
+    auto bus = std::make_shared<MessageBusJava>();
     const bool ok = call_trapping_abort(publish, jni_env, env.createLocalReference(bus),
                                         env.NewStringUTF(topic.c_str()), env.NewStringUTF("{}"));
     clear_pending_jni_exception(jni_env, "MessageBus.publishRaw");
@@ -272,9 +272,9 @@ void publish_system_theme_updated(FakeJni::Jvm& jvm, const stud::linker::LoadedL
 
 namespace stud::jni_bridge {
 
-// Defined here rather than in the header so the stub does not have to know
+// Defined here rather than in the header so the class does not have to know
 // where the desktop's setting comes from.
-FakeJni::JInt SystemThemeProtocolStub::getSystemTheme() {
+FakeJni::JInt SystemThemeProtocolJava::getSystemTheme() {
     const int value = system_theme_value();
     // Whether the app asks at all is the whole question when its own
     // appearance setting and the desktop's disagree, so say so.

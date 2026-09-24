@@ -2,7 +2,7 @@
 
 #include <fake-jni/fake-jni.h>
 
-#include "stud/android_framework_stubs.h"
+#include "stud/android_framework.h"
 #include "stud/linker.h"
 
 #include <nlohmann/json.hpp>
@@ -17,7 +17,7 @@
 #include <string>
 #include <system_error>
 
-// Real Djinni protocol-interface platform stubs (see the engineering notes'
+// Real Djinni protocol-interface platform classes (see the engineering notes'
 // "scope out the Djinni protocol bindings work" entry for the full,
 // evidence-based scoping this implements against). Every Roblox
 // "platforminterface" protocol is a real, confirmed `<X>Core`/
@@ -27,11 +27,11 @@
 // is a real, exported, static native function real DEX code is supposed
 // to call once to register that object. Stud never runs DEX, so this
 // registration call has never happened for ANY of these protocols in
-// this project's entire history, not a missing stub class exactly,
+// this project's entire history, not a missing class exactly,
 // but a missing registration *call*, exactly like the already-fixed
 // `NativeGLJavaInterface.setAppBridgeNotificationListener` gap
-// (game_activity_stubs.h) was. This file's job is to make that same
-// real call ourselves, for real protocols, with a real stub object.
+// (app_java_classes.h) was. This file's job is to make that same
+// real call ourselves, for real protocols, with a real platform object.
 //
 // `systemdialog` is deliberately NOT implemented here: real, confirmed
 // against the library's exported symbols against the actual libroblox.so, it has NO exported
@@ -39,7 +39,7 @@
 // `IPlatformSystemDialogHandler` itself has its own real `CppProxy`,
 // suggesting a different (constructor-injection or similar)
 // registration mechanism this session didn't trace. Honest open
-// item, don't add a stub for it without first finding the real
+// item, don't add a class for it without first finding the real
 // injection point, or it'll sit registered but never actually reached.
 namespace stud::jni_bridge {
 
@@ -50,7 +50,7 @@ namespace stud::jni_bridge {
 // (`return false;` in the real `IPlatformAppAgeSignals`).
 // Stud has no real app-age-signal source, so "not available" is the
 // honest answer, not a fabricated one.
-class AppAgeSignalsPlatformStub : public FakeJni::JObject {
+class AppAgeSignalsPlatformJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/appagesignalsplatforminterface/generated/IPlatformAppAgeSignals")
@@ -61,7 +61,7 @@ public:
 // com.roblox.protocols.bugreporterplatforminterface.generated.
 // IPlatformBugReporter. Real, confirmed against the app's own code: a single no-arg boolean
 // query. Honest `false` (matches the real base class's own default).
-class BugReporterPlatformStub : public FakeJni::JObject {
+class BugReporterPlatformJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/bugreporterplatforminterface/generated/IPlatformBugReporter")
@@ -72,7 +72,7 @@ public:
 // IPlatformPinShortcut. Real, confirmed against the app's own code: `isAvailable()` (honest
 // false) and `pinExperience(long,String,String)` (honest no-op; Stud
 // has no real home-screen shortcut integration).
-class PinShortcutPlatformStub : public FakeJni::JObject {
+class PinShortcutPlatformJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/pinshortcutplatforminterface/generated/IPlatformPinShortcut")
@@ -120,7 +120,7 @@ public:
 // DeviceDisplayCapability: the Java enum { BRIGHTNESS, WAKELOCK }. Djinni
 // moves an enum across JNI by index, through values() and ordinal(), so
 // those two are what make one constructible and readable at all.
-class DeviceDisplayCapabilityStub : public FakeJni::JObject {
+class DeviceDisplayCapabilityJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/devicedisplayplatforminterface/generated/DeviceDisplayCapability")
@@ -128,10 +128,10 @@ public:
     static constexpr FakeJni::JInt kWakelock = 1;
     FakeJni::JInt value = 0;
     FakeJni::JInt ordinal() { return value; }
-    static std::shared_ptr<FakeJni::JArray<std::shared_ptr<DeviceDisplayCapabilityStub>>> values() {
-        auto all = std::make_shared<FakeJni::JArray<std::shared_ptr<DeviceDisplayCapabilityStub>>>(2);
+    static std::shared_ptr<FakeJni::JArray<std::shared_ptr<DeviceDisplayCapabilityJava>>> values() {
+        auto all = std::make_shared<FakeJni::JArray<std::shared_ptr<DeviceDisplayCapabilityJava>>>(2);
         for (FakeJni::JInt i = 0; i < 2; ++i) {
-            auto entry = std::make_shared<DeviceDisplayCapabilityStub>();
+            auto entry = std::make_shared<DeviceDisplayCapabilityJava>();
             entry->value = i;
             (*all)[i] = entry;
         }
@@ -143,11 +143,11 @@ public:
 // IPlatformDeviceDisplayHandler, as the app's DeviceDisplayHandler does it
 // minus what a desktop window cannot: WAKELOCK is setKeepAwake(), which on
 // Android adds FLAG_KEEP_SCREEN_ON to the window and here holds the
-// compositor's idle inhibitor (see GameActivityStub::setWindowFlags).
+// compositor's idle inhibitor (see GameActivityJava::setWindowFlags).
 // Brightness is the display's, not the window's, on a desktop, so it is
 // not offered: hasCapability(BRIGHTNESS) is false and getBrightness()
 // answers -1, the app's own BRIGHTNESS_UNAVAILABLE.
-class DeviceDisplayPlatformStub : public FakeJni::JObject {
+class DeviceDisplayPlatformJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/devicedisplayplatforminterface/generated/"
@@ -155,8 +155,8 @@ public:
     // Set during bring-up.
     static inline std::function<void(bool)> on_keep_awake;
     FakeJni::JFloat getBrightness() { return -1.0f; }
-    FakeJni::JBoolean hasCapability(std::shared_ptr<DeviceDisplayCapabilityStub> capability) {
-        return capability && capability->value == DeviceDisplayCapabilityStub::kWakelock;
+    FakeJni::JBoolean hasCapability(std::shared_ptr<DeviceDisplayCapabilityJava> capability) {
+        return capability && capability->value == DeviceDisplayCapabilityJava::kWakelock;
     }
     FakeJni::JBoolean isAvailable() { return true; }
     void setBrightness(FakeJni::JFloat /*value*/) {}
@@ -174,8 +174,8 @@ public:
 // `HashSet<Long>`, previously an honest-but-signature-mismatched
 // `nullptr` (a generic `JObject` return computes a `Ljava/lang/Object;`
 // signature, not the real `Ljava/util/HashSet;` one jnivm's method
-// resolution matches against). Fixed now that `android_framework_
-// stubs.h` has a real, functional `JavaUtilHashSetStub` registered
+// resolution matches against). Fixed now that `android_framework.h`
+// has a real, functional `JavaUtilHashSetJava` registered
 // under the correct name, returns a real, empty (not fabricated-
 // nonempty) HashSet, with the real, correctly-matching signature.
 // Gap found in testing (the engineering notes): every Djinni protocol's
@@ -193,7 +193,7 @@ public:
 // generates them to wrap a native object for Java; Stud never needs to
 // instantiate one (nothing here hands a C++ object back to Java), so
 // they only need to exist and carry the real class name.
-class AppAgeSignalsCppProxyStub : public FakeJni::JObject {
+class AppAgeSignalsCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/appagesignalsplatforminterface/generated/IPlatformAppAgeSignals$CppProxy")
 
@@ -202,8 +202,8 @@ public:
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
-    AppAgeSignalsCppProxyStub() = default;
-    explicit AppAgeSignalsCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    AppAgeSignalsCppProxyJava() = default;
+    explicit AppAgeSignalsCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     // Real field Djinni's glue looks up by name during registration
@@ -221,18 +221,18 @@ public:
 // class up and threw `djinni::jni_exception` when it was absent,
 // live-caught as `RBXCRASH: UnhandledException (djinni::jni_exception)`
 // during boot, which left the Lua app never routing anywhere.
-class SystemDialogCppProxyStub : public FakeJni::JObject {
+class SystemDialogCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/systemdialogplatforminterface/generated/IPlatformSystemDialogHandler$CppProxy")
 
-    SystemDialogCppProxyStub() = default;
-    explicit SystemDialogCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    SystemDialogCppProxyJava() = default;
+    explicit SystemDialogCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class BugReporterCppProxyStub : public FakeJni::JObject {
+class BugReporterCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/bugreporterplatforminterface/generated/IPlatformBugReporter$CppProxy")
 
@@ -241,8 +241,8 @@ public:
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
-    BugReporterCppProxyStub() = default;
-    explicit BugReporterCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    BugReporterCppProxyJava() = default;
+    explicit BugReporterCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     // Real field Djinni's glue looks up by name during registration
@@ -252,7 +252,7 @@ public:
     FakeJni::JLong nativeRef = 0;
 };
 
-class DesignFoundationsCppProxyStub : public FakeJni::JObject {
+class DesignFoundationsCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/designfoundationsplatforminterface/generated/IPlatformDesignFoundations$CppProxy")
 
@@ -261,8 +261,8 @@ public:
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
-    DesignFoundationsCppProxyStub() = default;
-    explicit DesignFoundationsCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    DesignFoundationsCppProxyJava() = default;
+    explicit DesignFoundationsCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     // Real field Djinni's glue looks up by name during registration
@@ -272,7 +272,7 @@ public:
     FakeJni::JLong nativeRef = 0;
 };
 
-class DeviceDisplayCppProxyStub : public FakeJni::JObject {
+class DeviceDisplayCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/devicedisplayplatforminterface/generated/IPlatformDeviceDisplayHandler$CppProxy")
 
@@ -281,8 +281,8 @@ public:
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
-    DeviceDisplayCppProxyStub() = default;
-    explicit DeviceDisplayCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    DeviceDisplayCppProxyJava() = default;
+    explicit DeviceDisplayCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     // Real field Djinni's glue looks up by name during registration
@@ -292,7 +292,7 @@ public:
     FakeJni::JLong nativeRef = 0;
 };
 
-class LocalStorageCppProxyStub : public FakeJni::JObject {
+class LocalStorageCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/localstorageplatforminterface/generated/IPlatformLocalStorageHandler$CppProxy")
 
@@ -301,8 +301,8 @@ public:
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
-    LocalStorageCppProxyStub() = default;
-    explicit LocalStorageCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    LocalStorageCppProxyJava() = default;
+    explicit LocalStorageCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     // Real field Djinni's glue looks up by name during registration
@@ -312,7 +312,7 @@ public:
     FakeJni::JLong nativeRef = 0;
 };
 
-class PinShortcutCppProxyStub : public FakeJni::JObject {
+class PinShortcutCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/pinshortcutplatforminterface/generated/IPlatformPinShortcut$CppProxy")
 
@@ -321,8 +321,8 @@ public:
     // which is exactly what was making every setPlatformImpl() fail.
     // Real shapes from the real class: `private CppProxy(long)`
     // and `public static native void nativeDestroy(long)`.
-    PinShortcutCppProxyStub() = default;
-    explicit PinShortcutCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    PinShortcutCppProxyJava() = default;
+    explicit PinShortcutCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     // Real field Djinni's glue looks up by name during registration
@@ -337,78 +337,78 @@ public:
 // live-confirmed, the Core one was the next
 // "djinni (djinni_support.cpp:313): FindClass returned null" after the
 // platform-side proxies were added. Same real shape.
-class AppAgeSignalsCoreCppProxyStub : public FakeJni::JObject {
+class AppAgeSignalsCoreCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/appagesignalsplatforminterface/generated/IAppAgeSignalsCore$CppProxy")
 
-    AppAgeSignalsCoreCppProxyStub() = default;
-    explicit AppAgeSignalsCoreCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    AppAgeSignalsCoreCppProxyJava() = default;
+    explicit AppAgeSignalsCoreCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class BugReporterCoreCppProxyStub : public FakeJni::JObject {
+class BugReporterCoreCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/bugreporterplatforminterface/generated/IBugReporterCore$CppProxy")
 
-    BugReporterCoreCppProxyStub() = default;
-    explicit BugReporterCoreCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    BugReporterCoreCppProxyJava() = default;
+    explicit BugReporterCoreCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class PinShortcutCoreCppProxyStub : public FakeJni::JObject {
+class PinShortcutCoreCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/pinshortcutplatforminterface/generated/IPinShortcutHandlerCore$CppProxy")
 
-    PinShortcutCoreCppProxyStub() = default;
-    explicit PinShortcutCoreCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    PinShortcutCoreCppProxyJava() = default;
+    explicit PinShortcutCoreCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class DeviceDisplayCoreCppProxyStub : public FakeJni::JObject {
+class DeviceDisplayCoreCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/devicedisplayplatforminterface/generated/IDeviceDisplayHandlerCore$CppProxy")
 
-    DeviceDisplayCoreCppProxyStub() = default;
-    explicit DeviceDisplayCoreCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    DeviceDisplayCoreCppProxyJava() = default;
+    explicit DeviceDisplayCoreCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class LocalStorageCoreCppProxyStub : public FakeJni::JObject {
+class LocalStorageCoreCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/localstorageplatforminterface/generated/ILocalStorageHandlerCore$CppProxy")
 
-    LocalStorageCoreCppProxyStub() = default;
-    explicit LocalStorageCoreCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    LocalStorageCoreCppProxyJava() = default;
+    explicit LocalStorageCoreCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class DesignFoundationsCoreCppProxyStub : public FakeJni::JObject {
+class DesignFoundationsCoreCppProxyJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/designfoundationsplatforminterface/generated/IDesignFoundationsCoreListener$CppProxy")
 
-    DesignFoundationsCoreCppProxyStub() = default;
-    explicit DesignFoundationsCoreCppProxyStub(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
+    DesignFoundationsCoreCppProxyJava() = default;
+    explicit DesignFoundationsCoreCppProxyJava(FakeJni::JLong native_ref) : nativeRef(native_ref) {}
     static void nativeDestroy(FakeJni::JLong /*native_ref*/) {}
 
     FakeJni::JLong nativeRef = 0;
 };
 
-class LocalStoragePlatformStub : public FakeJni::JObject {
+class LocalStoragePlatformJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/localstorageplatforminterface/generated/"
         "IPlatformLocalStorageHandler")
-    // Working implementation, not honest-default stubs any more.
+    // Working implementation, not honest defaults any more.
     //
     // Why this matters (live-traced, the engineering notes): the real Lua app
     // asks the platform who is logged in via this protocol. Returning 0
@@ -454,11 +454,11 @@ public:
     // accounts", so a second sign-in would appear to replace the first
     // rather than sit alongside it. The store is already keyed by user
     // id and persisted that way, so the real answer is simply its keys.
-    std::shared_ptr<JavaUtilHashSetStub> getUsers() {
-        auto users = std::make_shared<JavaUtilHashSetStub>();
+    std::shared_ptr<JavaUtilHashSetJava> getUsers() {
+        auto users = std::make_shared<JavaUtilHashSetJava>();
         for (const auto& [user, values] : store()) {
             if (user == 0 || values.empty()) continue;
-            users->add(std::make_shared<JavaLangLongStub>(static_cast<FakeJni::JLong>(user)));
+            users->add(std::make_shared<JavaLangLongJava>(static_cast<FakeJni::JLong>(user)));
         }
         std::printf("stud: LocalStorage.getUsers() -> %d account(s)\n",
                     static_cast<int>(users->size()));
@@ -679,7 +679,7 @@ public:
 // theming data). Registered purely for `onTokensUpdated`'s own real
 // parameter-type signature to match; Stud has no real design-token
 // consumer yet, so no fields modeled (grow against real evidence).
-class DesignTokensStub : public FakeJni::JObject {
+class DesignTokensJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/designfoundationsplatforminterface/generated/DesignTokens")
@@ -688,20 +688,20 @@ public:
 // com.roblox.protocols.designfoundationsplatforminterface.generated.
 // IPlatformDesignFoundations: real, confirmed against the app's own code 2-method surface,
 // both honest no-ops (matches the real base class's own default body).
-class DesignFoundationsPlatformStub : public FakeJni::JObject {
+class DesignFoundationsPlatformJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME(
         "com/roblox/protocols/designfoundationsplatforminterface/generated/"
         "IPlatformDesignFoundations")
     void onTokensCleared() {}
-    void onTokensUpdated(std::shared_ptr<DesignTokensStub> /*tokens*/) {}
+    void onTokensUpdated(std::shared_ptr<DesignTokensJava> /*tokens*/) {}
 };
 
-// Registers every protocol-platform stub class above onto `jvm`, same
-// timing requirement as register_android_framework_stubs()/
-// register_game_activity_stubs() (before dlopen(), see
+// Registers every protocol-platform class above onto `jvm`, same
+// timing requirement as register_android_framework()/
+// register_app_java_classes() (before dlopen(), see
 // process-b/src/main.cpp's own doc comment on why).
-void register_protocol_platform_stubs(FakeJni::Jvm& jvm);
+void register_protocol_platforms(FakeJni::Jvm& jvm);
 
 struct ProtocolPlatformBootstrapResult {
     bool app_age_signals_set_platform_impl_called = false;
@@ -718,12 +718,12 @@ struct ProtocolPlatformBootstrapResult {
     bool design_foundations_set_platform_impl_trapped_abort = false;
 };
 
-// Calls each real `<X>Core.setPlatformImpl(stub)` directly, the real
+// Calls each real `<X>Core.setPlatformImpl(platform)` directly, the real
 // registration DEX code would normally do, once, at real app startup.
 // Symbols missing from this specific libroblox.so build are skipped
 // individually, not a hard failure, matching every other bridge in this
 // directory's own degrade-gracefully convention.
-ProtocolPlatformBootstrapResult run_protocol_platform_stubs_bootstrap(
+ProtocolPlatformBootstrapResult run_protocol_platforms_bootstrap(
     FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib);
 
 }  // namespace stud::jni_bridge

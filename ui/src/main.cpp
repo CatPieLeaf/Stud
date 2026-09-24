@@ -279,7 +279,7 @@ std::string render_host_socket_path() {
 // (this project's own hard-won debugging discipline, see BOOT_PROGRESS.md's
 // "no arbitrary timing windows" lesson): polls for the real socket FILE
 // stud-render-host's own bind()/listen() creates, so Process B's first
-// connection attempt (its render-client stubs lazily connect on first
+// connection attempt (its render-client libraries lazily connect on first
 // real EGL/GLES call) doesn't race a render-host that hasn't started
 // listening yet. Returns false (caller decides what to do) if it never
 // appears within a generous, real bound, render-host's own real
@@ -613,7 +613,7 @@ void fetch_client_settings(stud::ipc::LaunchPayload& payload) {
 // `{"id":..., "name":..., "displayName":...}` on success. Investigated
 // this session as the likely real fix for a native crash traced
 // to UserController::didLogin() dereferencing a null
-// singleton: Stud's own NativeUserJavaInterface stub previously always
+// singleton: Stud's own NativeUserJavaInterface previously always
 // reported a placeholder userId of 0 regardless of whatever real
 // cookie was supplied, which real native code is very plausibly
 // reading as "not logged in" and never constructing UserController as
@@ -1223,8 +1223,8 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // whether libroblox.so ever even attempts
     // dlopen("libvulkan.so.1") at all. Cheap when it never fires
     // (which is the expectation until Phase 6 native-Vulkan work
-    // forces it), just an env-gated stderr print in the stub, see
-    // process-b/render-client/src/vulkan_stub.cpp.
+    // forces it), just an env-gated stderr print in the client, see
+    // process-b/render-client/src/vulkan_client.cpp.
     // Deliberately NOT setting STUD_VULKAN_CALL_TRACE here any more. It
     // was added when the open question was whether libroblox.so ever even
     // dlopen()s libvulkan.so.1, and the comment above said it was "cheap
@@ -1942,7 +1942,7 @@ int main(int argc, char** argv) {
     // engine, not through a separate QtWebEngine window that scrapes a
     // session cookie out of the web site. The engine persists that
     // session through Stud's own local-storage platform protocol
-    // (runtime: LocalStoragePlatformStub, backed by a real 0600 file
+    // (runtime: LocalStoragePlatformJava, backed by a real 0600 file
     // under the user's data directory), so a login made once survives
     // restarts exactly as it does on a real device.
     //

@@ -12,7 +12,7 @@
 // everything else is a runtime name lookup below.
 //
 // First cut, deliberately trace-only (Phase 3's dynamic-capture half,
-// combined with Phase 4's first-cut client stub per this project's own
+// combined with Phase 4's first-cut client per this project's own
 // plan): render-host's Vulkan proxy protocol doesn't exist yet beyond
 // the one legacy vkCreateAndroidSurfaceKHR CallId
 // (VkCreateWaylandSurfaceForAndroidSurface) carried over from the old
@@ -665,8 +665,8 @@ struct FrameTiming {
     // serialising the arguments and appending to the batch, not just the
     // append. With ten thousand commands a frame, this is the number that
     // says whether a slow frame is Stud's doing or the engine's.
-    double f_stub = 0;
-    double stub_ms = 0;
+    double f_client = 0;
+    double client_ms = 0;
     uint64_t f_cmds = 0;
     uint64_t f_bytes = 0;
     // Texture-decode work across the reporting window, so a burst that
@@ -3683,17 +3683,17 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
             if (slow_frames && this_frame_ms > 16.7) {
                 std::fprintf(stderr,
                              "stud: SLOW FRAME %.1fms, acquire %.2f submit %.2f present %.2f "
-                             "record %.2f stub %.2f blocking %.2f decode %.2f, "
+                             "record %.2f client %.2f blocking %.2f decode %.2f, "
                              "unaccounted %.2f, %llu "
                              "cmds, %llu KB\n",
                              this_frame_ms, t.f_acquire, t.f_submit, t.f_present, t.f_record,
-                             t.f_stub, t.f_blocking, t.f_decode,
-                             this_frame_ms - t.f_acquire - t.f_submit - t.f_present - t.f_stub -
+                             t.f_client, t.f_blocking, t.f_decode,
+                             this_frame_ms - t.f_acquire - t.f_submit - t.f_present - t.f_client -
                                  t.f_blocking - t.f_decode,
                              static_cast<unsigned long long>(t.f_cmds),
                              static_cast<unsigned long long>(t.f_bytes / 1024));
             }
-            t.f_acquire = t.f_submit = t.f_present = t.f_record = t.f_stub = 0;
+            t.f_acquire = t.f_submit = t.f_present = t.f_record = t.f_client = 0;
             t.f_blocking = t.f_decode = 0;
             t.f_cmds = t.f_bytes = 0;
         }
@@ -3760,18 +3760,18 @@ static std::vector<uint8_t>& wire_scratch() {
 void record_bytes(VkCommandBuffer cb, vk_wire::CmdKind kind, const void* in, size_t len);
 
 // Times a whole command entry point, argument serialisation included.
-struct StubScope {
+struct ClientCallScope {
     std::chrono::steady_clock::time_point t0;
-    StubScope() {
+    ClientCallScope() {
         if (frame_timing_enabled()) t0 = std::chrono::steady_clock::now();
     }
-    ~StubScope() {
+    ~ClientCallScope() {
         if (!frame_timing_enabled()) return;
         const double ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
                 .count();
-        frame_timing().f_stub += ms;
-        frame_timing().stub_ms += ms;
+        frame_timing().f_client += ms;
+        frame_timing().client_ms += ms;
     }
 };
 
@@ -3840,7 +3840,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBeginRenderPass(VkCommandBuffer cb,
                                                       const VkRenderPassBeginInfo* bi,
                                                       VkSubpassContents contents) {
     if (bi == nullptr) return;
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u64(to_u64(bi->renderPass));
@@ -3865,7 +3865,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdEndRenderPass(VkCommandBuffer cb) {
 
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindPipeline(VkCommandBuffer cb, VkPipelineBindPoint bp,
                                                    VkPipeline pipeline) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(bp);
@@ -3877,7 +3877,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindDescriptorSets(
     VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipelineLayout layout, uint32_t firstSet,
     uint32_t setCount, const VkDescriptorSet* pSets, uint32_t dynCount,
     const uint32_t* pDynOffsets) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(bp);
@@ -3894,7 +3894,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindVertexBuffers(VkCommandBuffer cb, uint3
                                                         uint32_t bindingCount,
                                                         const VkBuffer* pBuffers,
                                                         const VkDeviceSize* pOffsets) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(firstBinding);
@@ -3906,7 +3906,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindVertexBuffers(VkCommandBuffer cb, uint3
 
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffer buffer,
                                                       VkDeviceSize offset, VkIndexType type) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u64(to_u64(buffer));
@@ -3918,7 +3918,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffe
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCount,
                                            uint32_t instanceCount, uint32_t firstVertex,
                                            uint32_t firstInstance) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(vertexCount);
@@ -3931,7 +3931,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdDraw(VkCommandBuffer cb, uint32_t vertexCou
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdDrawIndexed(VkCommandBuffer cb, uint32_t indexCount,
                                                   uint32_t instanceCount, uint32_t firstIndex,
                                                   int32_t vertexOffset, uint32_t firstInstance) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(indexCount);
@@ -3944,7 +3944,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdDrawIndexed(VkCommandBuffer cb, uint32_t in
 
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdDispatch(VkCommandBuffer cb, uint32_t x, uint32_t y,
                                                uint32_t z) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(x);
@@ -3955,7 +3955,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdDispatch(VkCommandBuffer cb, uint32_t x, ui
 
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdSetViewport(VkCommandBuffer cb, uint32_t first,
                                                   uint32_t count, const VkViewport* pViewports) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(first);
@@ -3973,7 +3973,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdSetViewport(VkCommandBuffer cb, uint32_t fi
 
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdSetScissor(VkCommandBuffer cb, uint32_t first,
                                                  uint32_t count, const VkRect2D* pScissors) {
-    StubScope stub_scope;
+    ClientCallScope call_scope;
     vk_wire::FixedWriter<256> w;
 
     w.u32(first);

@@ -1,7 +1,7 @@
 #include "stud/haptics_bridge.h"
 
 #include "stud/bionic_jvm.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <atomic>
@@ -169,7 +169,7 @@ void publish_response(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
     FakeJni::LocalFrame frame(jvm);
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
-    auto bus = std::make_shared<MessageBusStub>();
+    auto bus = std::make_shared<MessageBusJava>();
     call_trapping_abort(publish, jni_env, env.createLocalReference(bus),
                         env.NewStringUTF(kProtocol), env.NewStringUTF(method.c_str()),
                         env.NewStringUTF(json.c_str()), static_cast<jint>(0),
@@ -226,8 +226,8 @@ bool run_haptics_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             std::fprintf(stderr, "stud: haptics: no message id for %s\n", method);
             return;
         }
-        auto bus = std::make_shared<MessageBusStub>();
-        auto callback = std::make_shared<MessageBusRawCallbackStub>();
+        auto bus = std::make_shared<MessageBusJava>();
+        auto callback = std::make_shared<MessageBusRawCallbackJava>();
         callback->handler = std::move(on_payload);
         jobject connection = nullptr;
         const bool ok = call_trapping_abort_with_result(
@@ -237,7 +237,7 @@ bool run_haptics_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         clear_pending_jni_exception(jni_env, "MessageBus.doSubscribeRaw");
         std::printf("stud: haptics: subscribed to %s: %s\n", method, ok ? "ok" : "trapped");
         // The callbacks outlive this frame, the bus keeps calling them.
-        static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept;
+        static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept;
         kept.push_back(callback);
     };
 

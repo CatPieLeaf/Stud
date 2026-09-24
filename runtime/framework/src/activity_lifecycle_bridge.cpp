@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 namespace stud::jni_bridge {
@@ -154,13 +154,13 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
     FakeJni::LocalFrame frame(jvm);
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
-    // Real `AssetManagerStub` instance rather than a placeholder string:
+    // Real `AssetManagerJava` instance rather than a placeholder string:
     // the real call is `LocalStorageManager.a(context)` ->
     // `initStorageManagerNativeV3(context.getAssets(), filesDir,
     // cacheDir)`, so the first argument really is an
     // `android.content.res.AssetManager`.
     //
-    // `this` is a real LocalStorageManagerStub, not null. This is an
+    // `this` is a real LocalStorageManagerJava, not null. This is an
     // INSTANCE native method on a Kotlin `object` ( `private final
     // native void initStorageManagerNativeV3(...)`), and the same class
     // carries a real `@Keep public final long getAllocatableBytes()`
@@ -175,8 +175,8 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
     // matches the real declaration; do not re-test it as a fix for that
     // warning.
     jobject storage_manager =
-        env.createLocalReference(std::make_shared<LocalStorageManagerStub>());
-    jobject dummy_asset_manager = env.createLocalReference(std::make_shared<AssetManagerStub>());
+        env.createLocalReference(std::make_shared<LocalStorageManagerJava>());
+    jobject dummy_asset_manager = env.createLocalReference(std::make_shared<AssetManagerJava>());
     jobject files_dir_jstr = env.NewStringUTF(files_dir.c_str());
     jobject cache_dir_jstr = env.NewStringUTF(cache_dir.c_str());
     using StorageInitFn = void (*)(JNIEnv*, jobject, jobject, jobject, jobject);
@@ -197,12 +197,12 @@ bool run_context_init_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrar
     FakeJni::LocalFrame frame(jvm);
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
-    // Real ActivityStub instance (not an identity-agnostic dummy); its
+    // Real ActivityJava instance (not an identity-agnostic dummy); its
     // real Context methods (getFilesDir/getCacheDir/getResources/
     // getPackageName/getSharedPreferences) are all already implemented,
     // so this works whether or not the real native init() call reaches
     // for any of them internally.
-    jobject context = env.createLocalReference(std::make_shared<ActivityStub>());
+    jobject context = env.createLocalReference(std::make_shared<ActivityJava>());
     using ContextInitFn = void (*)(JNIEnv*, jclass, jobject);
     auto* fn = reinterpret_cast<ContextInitFn>(addr);
     bool ok = call_trapping_abort(fn, jni_env, nullptr, context);
@@ -318,9 +318,9 @@ bool run_set_is_first_install(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
 }
 
 // The engine paces frames to what it believes the display can do. It
-// asks Android for that (the app's own app-shell helper calls
-// nativePassSupportedRefreshRates(supported rates) then
-// nativePassCurrentDisplayRefreshRate(current rate)), and with
+// asks Android for that (the app's own app-shell helper passes the
+// display's supported rates to nativePassSupportedRefreshRates, then its
+// current rate to nativePassCurrentDisplayRefreshRate), and with
 // nothing answering it logs
 // `getPrimaryDisplayRefreshRate FAILED: Could not retrieve screen info`
 // and settles for a default, which is why a 144Hz panel was being

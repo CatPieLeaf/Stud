@@ -268,8 +268,7 @@ void open_device(const std::string& path, std::vector<Event>& out) {
     unsigned long keys[(KEY_MAX / (8 * sizeof(unsigned long))) + 1]{};
     ::ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys);
     const bool has_hat = device.axes.count(ABS_HAT0X) != 0 || device.axes.count(ABS_HAT0Y) != 0;
-    // Exactly the key list the real caller queries (its own
-    // `H[]`). No L2/R2 and no MODE, because a real device never reports
+    // Exactly the key list the real caller queries. No L2/R2 and no MODE, because a real device never reports
     // those here either.
     const std::pair<int, bool> supported_keys[] = {
         {kBtnA, bit_set(keys, BTN_SOUTH)},
@@ -320,7 +319,7 @@ void open_device(const std::string& path, std::vector<Event>& out) {
 // the engine's own entry point takes.
 //
 // `nativeGamepadAxisEvent(deviceId, axis, f0, f1, f2)` is a VECTOR call,
-// not one scalar per axis. The real caller
+// not one scalar per axis. The app's own caller
 // sends a stick's BOTH components on BOTH of its axis ids, with the
 // vertical component NEGATED, and sends a trigger or hat value in the
 // THIRD float with the first two zero. Stud used to send

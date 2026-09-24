@@ -88,7 +88,7 @@ std::shared_ptr<DeviceParams> build_desktop_device_params(
 // because it's a genuinely different real Java class name/JNI type,
 // native code doing `GetObjectClass`/`FindClass` on a `DeviceStaticParams`
 // instance needs the real class name to match.
-class DeviceStaticParamsStub : public FakeJni::JObject {
+class DeviceStaticParamsJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/model/DeviceStaticParams")
 
@@ -102,12 +102,12 @@ public:
     std::shared_ptr<FakeJni::JString> socModel;
 };
 
-// Builds a DeviceStaticParamsStub from an already-built DeviceParams,
+// Builds a DeviceStaticParamsJava from an already-built DeviceParams,
 // same real, honest desktop values (see build_desktop_device_params
 // above), just the smaller field subset this real class needs. Keeps
 // the two objects consistent with each other rather than re-deriving
 // separately.
-std::shared_ptr<DeviceStaticParamsStub> build_desktop_device_static_params(
+std::shared_ptr<DeviceStaticParamsJava> build_desktop_device_static_params(
     const std::shared_ptr<DeviceParams>& device_params);
 
 }  // namespace stud::jni_bridge

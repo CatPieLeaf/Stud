@@ -34,7 +34,7 @@ namespace {
 // holds are just the render-host protocol's own small integer IDs,
 // smuggled through EGL's own opaque pointer-sized handle types (real
 // EGL never dereferences these itself, only ever passes them back to
-// EGL/GLES calls, exactly this stub's own real usage).
+// EGL/GLES calls, exactly this library's own real usage).
 template <typename T>
 T from_handle(uint64_t h) { return reinterpret_cast<T>(static_cast<uintptr_t>(h)); }
 uint64_t to_handle(const void* p) { return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p)); }
@@ -159,9 +159,9 @@ EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface, EGLContex
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     // One real glGetError for the frame that just ended. Every check the
     // engine made during it was answered from the cache this refreshes;
-    // see glGetError() in gles_stub.cpp.
+    // see glGetError() in gles_client.cpp.
     //
-    // Resolved by name rather than linked: the GL and EGL stubs are
+    // Resolved by name rather than linked: the GL and EGL libraries are
     // separate shared libraries, and a machine where the GL one is not
     // loaded simply has no errors to refresh.
     using RefreshFn = void (*)();

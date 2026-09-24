@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/platform_params.h"
 
 // com.roblox.engine.jni.autovalue.StartAppParams, reimplemented as a real
@@ -31,9 +31,9 @@ public:
     FakeJni::JInt membershipType_ = 0;
     std::shared_ptr<PlatformParams> platformParams_;
     std::shared_ptr<FakeJni::JString> selectedTheme_;
-    std::shared_ptr<SurfaceStub> surface_;
+    std::shared_ptr<SurfaceJava> surface_;
     std::shared_ptr<FakeJni::JString> username_;
-    std::shared_ptr<ActivityStub> vrContext_;
+    std::shared_ptr<ActivityJava> vrContext_;
 
     std::shared_ptr<FakeJni::JString> appStarterPlace() { return appStarterPlace_; }
     std::shared_ptr<FakeJni::JString> appStarterScript() { return appStarterScript_; }
@@ -42,20 +42,20 @@ public:
     FakeJni::JInt membershipType() { return membershipType_; }
     std::shared_ptr<PlatformParams> platformParams() { return platformParams_; }
     std::shared_ptr<FakeJni::JString> selectedTheme() { return selectedTheme_; }
-    std::shared_ptr<SurfaceStub> surface() { return surface_; }
+    std::shared_ptr<SurfaceJava> surface() { return surface_; }
     std::shared_ptr<FakeJni::JString> username() { return username_; }
-    std::shared_ptr<ActivityStub> vrContext() { return vrContext_; }
+    std::shared_ptr<ActivityJava> vrContext() { return vrContext_; }
 };
 
 // Builds a real, honest StartAppParams: empty strings/zeros for anything
 // Stud has no real source for yet (matches every other "honest
 // placeholder, not fabricated content" builder in this project), the
 // same platform_params object the caller already built, and a real
-// ActivityStub. `surface` MUST be the same real Surface GameActivity's
+// ActivityJava. `surface` MUST be the same real Surface GameActivity's
 // own lifecycle already created (see GameActivityLifecycleResult::
 // surface's doc comment): reused here, not freshly constructed, to
 // avoid a second, real, independently-mapped window.
 std::shared_ptr<StartAppParams> build_desktop_start_app_params(
-    std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<SurfaceStub> surface);
+    std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<SurfaceJava> surface);
 
 }  // namespace stud::jni_bridge

@@ -99,9 +99,9 @@ bool run_app_lifecycle_native_adapter_set_active(FakeJni::Jvm& jvm,
 // `JNIAAssetManagerSetup.a(context)` -> `initNative(context.getAssets())`
 // a real native entry point (confirmed against the library's exported symbols) that hands
 // libroblox.so a real Java `AssetManager` object, separate from and
-// earlier than anything Stud's own `AAssetManager_open()` stub
+// earlier than anything Stud's own `AAssetManager_open()`
 // (android-glue/src/asset_manager.cpp) intercepts. Stud never called
-// this either. `AAssetManager_fromJava()`'s own Stud-side stub already
+// this either. `AAssetManager_fromJava()`'s own Stud-side implementation already
 // ignores its jobject argument entirely (returns a fixed sentinel
 // regardless), so any non-null jobject is sufficient here; this call
 // exists to let libroblox.so's own internal code register *an* asset
@@ -138,7 +138,7 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
 // doesn't matter but real methods like getFilesDir/getResources must
 // actually work if this native code calls them" reasoning as the asset
 // manager/storage manager bridges above, unlike those two (which pass
-// an identity-agnostic dummy jobject), this uses a real `ActivityStub`
+// an identity-agnostic dummy jobject), this uses a real `ActivityJava`
 // instance so any real Context method the native implementation might
 // call succeeds instead of hitting the same "class is null" bug class
 // already fixed twice this session.

@@ -553,7 +553,7 @@ endif()
 # confirmed via a temporary diagnostic to genuinely register successfully
 # during GameActivity_register()) could never be looked up afterward with
 # ordinary JNI reflection, even though a compile-time FakeJni::Function<>-
-# declared method (e.g. GameActivityStub::finish) looked up the exact
+# declared method (e.g. GameActivityJava::finish) looked up the exact
 # same way worked fine.
 #
 # Root cause: GetMethodID<isStatic, ReturnNull, AllowNative, trace>'s
@@ -1124,7 +1124,7 @@ endif()
 # task queue again (see the engineering notes, "what drains the engine's task
 # queue"). The bare message names neither the type that arrived nor the
 # one expected, which is exactly what is needed to find the bug; both
-# real instances (ByteBufferStub, ClassMetaStub; Stud stub classes
+# real instances (ByteBufferJava, ClassMetaJava; Stud's Java classes
 # colliding with a jnivm built-in over the same real Java class name)
 # were identified immediately once this printed the two typeids.
 set(jnitypes_h "${jnitypes_h_path}")

@@ -50,13 +50,13 @@ namespace stud::jni_bridge {
 //    see activity_thread.h's own doc comment for the real driver
 //    (runtime/src/main.cpp's own real render/input loop) that pumps it
 //    on the real main thread instead, via drain_pending().
-class LooperStub : public FakeJni::JObject {
+class LooperJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/Looper")
 
-    LooperStub() = default;
-    explicit LooperStub(std::string debug_name) : debug_name_(std::move(debug_name)) {}
-    ~LooperStub() { stop(); }
+    LooperJava() = default;
+    explicit LooperJava(std::string debug_name) : debug_name_(std::move(debug_name)) {}
+    ~LooperJava() { stop(); }
 
     // Idempotent: safe to call more than once. Spawns a real, dedicated
     // pump thread, correct for a real HandlerThread's own Looper, NOT
@@ -76,11 +76,11 @@ public:
     // not a separate worker standing in for it.
     void drain_pending(FakeJni::Jvm& jvm);
 
-    static std::shared_ptr<LooperStub> get_or_create_main_looper(FakeJni::Jvm& jvm);
+    static std::shared_ptr<LooperJava> get_or_create_main_looper(FakeJni::Jvm& jvm);
 
     // Java-visible statics real callers were found to use.
-    static std::shared_ptr<LooperStub> getMainLooper();
-    static std::shared_ptr<LooperStub> myLooper();
+    static std::shared_ptr<LooperJava> getMainLooper();
+    static std::shared_ptr<LooperJava> myLooper();
     // Real Looper.prepare()/loop() block the *calling* thread forever,
     // tying the Looper's identity to it. No real caller of this pair
     // was found in the app's own code (only Handler/
@@ -113,19 +113,19 @@ private:
 // silent no-op would look like cancellation succeeded when it didn't.
 // Add real tracking if/when a live caller is found to actually depend
 // on cancellation, rather than guessing at it now.
-class HandlerStub : public FakeJni::JObject {
+class HandlerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/Handler")
 
-    HandlerStub();
-    explicit HandlerStub(std::shared_ptr<LooperStub> looper);
+    HandlerJava();
+    explicit HandlerJava(std::shared_ptr<LooperJava> looper);
 
     FakeJni::JBoolean post(std::shared_ptr<FakeJni::JObject> runnable);
     FakeJni::JBoolean postDelayed(std::shared_ptr<FakeJni::JObject> runnable, FakeJni::JLong delay_millis);
-    std::shared_ptr<LooperStub> getLooper() { return looper_; }
+    std::shared_ptr<LooperJava> getLooper() { return looper_; }
 
 private:
-    std::shared_ptr<LooperStub> looper_;
+    std::shared_ptr<LooperJava> looper_;
 };
 
 // android.os.HandlerThread, a named thread with its own real,
@@ -133,20 +133,20 @@ private:
 // quitSafely() surface (quit and quitSafely are not distinguished here
 // no real caller found that depends on quitSafely draining pending
 // work before stopping; both just stop the pump).
-class HandlerThreadStub : public FakeJni::JObject {
+class HandlerThreadJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/HandlerThread")
 
-    HandlerThreadStub();
-    explicit HandlerThreadStub(std::shared_ptr<FakeJni::JString> name);
+    HandlerThreadJava();
+    explicit HandlerThreadJava(std::shared_ptr<FakeJni::JString> name);
 
     void start();
-    std::shared_ptr<LooperStub> getLooper() { return looper_; }
+    std::shared_ptr<LooperJava> getLooper() { return looper_; }
     void quit() { looper_->quit(); }
     void quitSafely() { looper_->quit(); }
 
 private:
-    std::shared_ptr<LooperStub> looper_;
+    std::shared_ptr<LooperJava> looper_;
 };
 
 // java.lang.ClassLoader; real loadClass(String)/findClass(String),
@@ -158,7 +158,7 @@ private:
 // (`FindClass(NativeObjectManager) -> GetObjectClass ->
 // getClassLoader() -> loadClass(...)`) have something real to call
 // into instead of nothing.
-class ClassLoaderStub : public FakeJni::JObject {
+class ClassLoaderJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/ClassLoader")
 
@@ -172,17 +172,17 @@ public:
 // through the identical vm->classes[name] registry InternalFindClass
 // uses, see jnivm's src/jnivm/internal/findclass.cpp), not a
 // separate, competing type. Registering this is what gives a real
-// method table (loadClass/findClass on ClassLoaderStub above included)
+// method table (loadClass/findClass on ClassLoaderJava above included)
 // to a class name Stud previously never explicitly registered at all;
-// every other stub class in this codebase IS explicitly pre-registered
+// every other Java class in this codebase IS explicitly pre-registered
 // this same way and has never shown this bug, so this is a real,
 // plausible, cheaply-testable fix, checked.
-// NOTE: there is deliberately no `ClassMetaStub` here any more, for the
-// exact same reason `ByteBufferStub` is gone from game_activity_stubs.h
+// NOTE: there is deliberately no `ClassMetaJava` here any more, for the
+// exact same reason `ByteBufferJava` is gone from app_java_classes.h
 // (see that file's own note): jnivm already has its own real
 // `jnivm::Class` and registers it under `java/lang/Class` itself, and
 // that is the concrete type `GetObjectClass()` actually returns. A
-// second, unrelated C++ stub type claiming the same real Java class
+// second, unrelated C++ type claiming the same real Java class
 // name can never satisfy `UnpackJObject<T>`'s `dynamic_cast`, so every
 // call through it threw `Invalid Reference, Unexpected Type`, which
 // libroblox turns into `RBXCRASH: UnhandledException` and a trap,
@@ -193,17 +193,17 @@ public:
 //
 // Worth being precise about what was lost: nothing. `getClassLoader()`
 // never once returned successfully in this project's history, before
-// this stub existed the method simply wasn't registered (the
+// this class existed the method simply wasn't registered (the
 // long-documented "class is null" diagnostic), and after it existed
 // every call threw. `register_java_lang_class_methods()` below attaches
 // the real method to jnivm's own canonical `java/lang/Class` instead,
 // which is the only object native code will ever actually call it on.
-std::shared_ptr<ClassLoaderStub> shared_class_loader();
+std::shared_ptr<ClassLoaderJava> shared_class_loader();
 
 // Hooks the real `getClassLoader()` onto jnivm's own canonical
 // `java/lang/Class` class object at runtime (jnivm's own `Class::Hook`
-// mechanism), rather than declaring a competing stub type for that same
-// real class name. Called from register_android_framework_stubs().
+// mechanism), rather than declaring a competing type for that same
+// real class name. Called from register_android_framework().
 void register_java_lang_class_methods(FakeJni::Jvm& jvm);
 
 // Live-tested, negative result, deliberately NOT registering a
@@ -239,7 +239,7 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm);
 // way. FINGERPRINT is a real, correctly-shaped (not fabricated-looking)
 // synthetic value, honestly a Stud build, not impersonating a real
 // device's actual fingerprint.
-class BuildStub : public FakeJni::JObject {
+class BuildJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/Build")
     static inline std::shared_ptr<FakeJni::JString> MANUFACTURER =
@@ -279,7 +279,7 @@ public:
 // level mapping for the "34" os_version string this project's own
 // build_desktop_device_params() call sites already pass, kept
 // consistent with that, not a separately-guessed value.
-class BuildVersionStub : public FakeJni::JObject {
+class BuildVersionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/Build$VERSION")
     static inline FakeJni::JInt SDK_INT = 34;
@@ -296,10 +296,10 @@ public:
 // android.os.Debug; real, standard static-method-only class.
 // isDebuggerConnected() is real, honest `false` (matches this file's
 // own established convention for every other "is a debugger attached"
-// query in this codebase, e.g. NativeUserJavaInterfaceStub's own
+// query in this codebase, e.g. NativeUserJavaInterfaceJava's own
 // isDebuggerConnected(), same real answer, different real real class
 // callers might ask instead).
-class DebugStub : public FakeJni::JObject {
+class DebugJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/Debug")
     static FakeJni::JBoolean isDebuggerConnected() { return false; }
@@ -333,18 +333,18 @@ public:
 // the engine's `getViewportDisplaySize` reads `x`/`y` field IDs off a
 // Point returned by DeviceUtils below (its own error strings name that
 // exact failure mode).
-class PointStub : public FakeJni::JObject {
+class PointJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/graphics/Point")
 
-    PointStub() = default;
-    PointStub(FakeJni::JInt x_value, FakeJni::JInt y_value) : x(x_value), y(y_value) {}
+    PointJava() = default;
+    PointJava(FakeJni::JInt x_value, FakeJni::JInt y_value) : x(x_value), y(y_value) {}
 
     FakeJni::JInt x = 0;
     FakeJni::JInt y = 0;
 };
 
-class ContextStub;  // defined in game_activity_stubs.h; see below
+class ContextJava;  // defined in app_java_classes.h; see below
 
 // com.roblox.platform.util.DeviceUtils; real class name confirmed
 // straight out of libroblox.so's own strings, alongside the engine's
@@ -354,7 +354,7 @@ class ContextStub;  // defined in game_activity_stubs.h; see below
 // which fires live in every Stud run. The engine asks for the real
 // screen size in millimetres here while setting up its viewport, and
 // this class was never registered, so the call failed outright.
-class DeviceUtilsStub : public FakeJni::JObject {
+class DeviceUtilsJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/platform/util/DeviceUtils")
 
@@ -364,17 +364,17 @@ public:
     // while the engine looks up
     // `(Landroid/content/Context;)Landroid/graphics/Point;`, a real,
     // live-caught GetMethodID MISS that persisted long after the class
-    // itself was registered. ContextStub carries the right class name.
-    // Forward-declared rather than included: ContextStub lives in
-    // game_activity_stubs.h, which includes THIS header, so the include
+    // itself was registered. ContextJava carries the right class name.
+    // Forward-declared rather than included: ContextJava lives in
+    // app_java_classes.h, which includes THIS header, so the include
     // cannot go the other way. shared_ptr of an incomplete type is fine
     // in a declaration; the descriptor and definition in
-    // android_framework_stubs.cpp include the full header.
-    static std::shared_ptr<PointStub> getScreenPhysicalSizeInMillimeters(
-        std::shared_ptr<ContextStub> context);
+    // android_framework.cpp include the full header.
+    static std::shared_ptr<PointJava> getScreenPhysicalSizeInMillimeters(
+        std::shared_ptr<ContextJava> context);
 };
 
-class JavaLangSystemStub : public FakeJni::JObject {
+class JavaLangSystemJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/System")
 
@@ -386,7 +386,7 @@ public:
     static FakeJni::JLong nanoTime();
 };
 
-class JavaLangErrorStub : public FakeJni::JObject {
+class JavaLangErrorJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/Error")
 };
@@ -394,54 +394,54 @@ public:
 // Same class of gap, registered alongside for the same reason; these
 // are the other standard throwable types Djinni-style glue commonly
 // resolves. Harmless if never looked up.
-class JavaLangExceptionStub : public FakeJni::JObject {
+class JavaLangExceptionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/Exception")
 };
 
-class JavaLangRuntimeExceptionStub : public FakeJni::JObject {
+class JavaLangRuntimeExceptionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/RuntimeException")
 };
 
-class JavaLangLongStub : public FakeJni::JObject {
+class JavaLangLongJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/Long")
-    JavaLangLongStub() = default;
-    explicit JavaLangLongStub(FakeJni::JLong value) : value_(value) {}
+    JavaLangLongJava() = default;
+    explicit JavaLangLongJava(FakeJni::JLong value) : value_(value) {}
     FakeJni::JLong longValue() { return value_; }
 
 private:
     FakeJni::JLong value_ = 0;
 };
 
-class JavaLangIntegerStub : public FakeJni::JObject {
+class JavaLangIntegerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/Integer")
-    JavaLangIntegerStub() = default;
-    explicit JavaLangIntegerStub(FakeJni::JInt value) : value_(value) {}
+    JavaLangIntegerJava() = default;
+    explicit JavaLangIntegerJava(FakeJni::JInt value) : value_(value) {}
     FakeJni::JInt intValue() { return value_; }
 
 private:
     FakeJni::JInt value_ = 0;
 };
 
-class JavaLangBooleanStub : public FakeJni::JObject {
+class JavaLangBooleanJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/Boolean")
-    JavaLangBooleanStub() = default;
-    explicit JavaLangBooleanStub(FakeJni::JBoolean value) : value_(value) {}
+    JavaLangBooleanJava() = default;
+    explicit JavaLangBooleanJava(FakeJni::JBoolean value) : value_(value) {}
     FakeJni::JBoolean booleanValue() { return value_; }
 
 private:
     FakeJni::JBoolean value_ = false;
 };
 
-class JavaLangDoubleStub : public FakeJni::JObject {
+class JavaLangDoubleJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/lang/Double")
-    JavaLangDoubleStub() = default;
-    explicit JavaLangDoubleStub(FakeJni::JDouble value) : value_(value) {}
+    JavaLangDoubleJava() = default;
+    explicit JavaLangDoubleJava(FakeJni::JDouble value) : value_(value) {}
     FakeJni::JDouble doubleValue() { return value_; }
 
 private:
@@ -449,15 +449,15 @@ private:
 };
 
 // java.util.Iterator: real, minimal, backed by a genuine snapshot of
-// whatever real collection produced it (HashSetStub::iterator() below).
+// whatever real collection produced it (JavaUtilHashSetJava::iterator() below).
 // hasNext()/next() are the only two real methods any of this codebase's
 // own real callers need, remove() deliberately unimplemented (no real
 // caller found removing via an iterator).
-class JavaUtilIteratorStub : public FakeJni::JObject {
+class JavaUtilIteratorJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/Iterator")
-    JavaUtilIteratorStub() = default;
-    explicit JavaUtilIteratorStub(std::vector<std::shared_ptr<FakeJni::JObject>> items)
+    JavaUtilIteratorJava() = default;
+    explicit JavaUtilIteratorJava(std::vector<std::shared_ptr<FakeJni::JObject>> items)
         : items_(std::move(items)) {}
     FakeJni::JBoolean hasNext() { return index_ < items_.size(); }
     std::shared_ptr<FakeJni::JObject> next() {
@@ -478,10 +478,10 @@ private:
 // every currently-known real caller in this codebase actually stores,
 // and only degrades for genuinely distinct-but-equal object instances,
 // which no real call site here constructs.
-class JavaUtilHashSetStub : public FakeJni::JObject {
+class JavaUtilHashSetJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/HashSet")
-    JavaUtilHashSetStub() = default;
+    JavaUtilHashSetJava() = default;
     FakeJni::JBoolean add(std::shared_ptr<FakeJni::JObject> item) {
         if (!item) return false;
         items_.push_back(std::move(item));
@@ -496,8 +496,8 @@ public:
     }
     FakeJni::JInt size() { return static_cast<FakeJni::JInt>(items_.size()); }
     FakeJni::JBoolean isEmpty() { return items_.empty(); }
-    std::shared_ptr<JavaUtilIteratorStub> iterator() {
-        return std::make_shared<JavaUtilIteratorStub>(items_);
+    std::shared_ptr<JavaUtilIteratorJava> iterator() {
+        return std::make_shared<JavaUtilIteratorJava>(items_);
     }
 
 private:
@@ -505,15 +505,15 @@ private:
 };
 
 // java.util.HashMap, same real, functional-not-just-named approach as
-// HashSetStub above, same identity-based-membership honest
+// JavaUtilHashSetJava above, same identity-based-membership honest
 // simplification. put()/get()/containsKey()/size()/isEmpty() cover
 // every real usage shape found in this codebase's own real Djinni
 // signatures so far (e.g. `TelemetryBridge.telemetryData(HashMap<
 // String,TelemetryFieldValue>, ...)`).
-class JavaUtilHashMapStub : public FakeJni::JObject {
+class JavaUtilHashMapJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/HashMap")
-    JavaUtilHashMapStub() = default;
+    JavaUtilHashMapJava() = default;
     std::shared_ptr<FakeJni::JObject> put(std::shared_ptr<FakeJni::JObject> key,
                                            std::shared_ptr<FakeJni::JObject> value) {
         if (!key) return nullptr;
@@ -580,14 +580,14 @@ private:
 // persistence (matching a real device's `SharedPreferences.xml` file
 // backing) is a natural, low-risk follow-up once live evidence shows
 // this path is actually exercised.
-class SharedPreferencesEditorStub;
+class SharedPreferencesEditorJava;
 
-class SharedPreferencesStub : public FakeJni::JObject {
+class SharedPreferencesJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/SharedPreferences")
-    explicit SharedPreferencesStub(std::string name) : name_(std::move(name)) {}
+    explicit SharedPreferencesJava(std::string name) : name_(std::move(name)) {}
 
-    static std::shared_ptr<SharedPreferencesStub> get_or_create(const std::string& name);
+    static std::shared_ptr<SharedPreferencesJava> get_or_create(const std::string& name);
 
     FakeJni::JBoolean contains(std::shared_ptr<FakeJni::JString> key) {
         if (!key) return false;
@@ -603,7 +603,7 @@ public:
         }
         return defValue;
     }
-    std::shared_ptr<SharedPreferencesEditorStub> edit();
+    std::shared_ptr<SharedPreferencesEditorJava> edit();
 
     void put(const std::string& key, std::string value) { values_[key] = std::move(value); }
     void remove(const std::string& key) { values_.erase(key); }
@@ -613,30 +613,30 @@ private:
     std::unordered_map<std::string, std::string> values_;
 };
 
-class SharedPreferencesEditorStub : public FakeJni::JObject {
+class SharedPreferencesEditorJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/SharedPreferences$Editor")
-    explicit SharedPreferencesEditorStub(std::shared_ptr<SharedPreferencesStub> prefs)
+    explicit SharedPreferencesEditorJava(std::shared_ptr<SharedPreferencesJava> prefs)
         : prefs_(std::move(prefs)) {}
 
-    std::shared_ptr<SharedPreferencesEditorStub> putString(std::shared_ptr<FakeJni::JString> key,
+    std::shared_ptr<SharedPreferencesEditorJava> putString(std::shared_ptr<FakeJni::JString> key,
                                                              std::shared_ptr<FakeJni::JString> value) {
         if (prefs_ && key) {
             prefs_->put(key->asStdString(), value ? value->asStdString() : "");
         }
-        return std::static_pointer_cast<SharedPreferencesEditorStub>(shared_from_this());
+        return std::static_pointer_cast<SharedPreferencesEditorJava>(shared_from_this());
     }
-    std::shared_ptr<SharedPreferencesEditorStub> remove(std::shared_ptr<FakeJni::JString> key) {
+    std::shared_ptr<SharedPreferencesEditorJava> remove(std::shared_ptr<FakeJni::JString> key) {
         if (prefs_ && key) {
             prefs_->remove(key->asStdString());
         }
-        return std::static_pointer_cast<SharedPreferencesEditorStub>(shared_from_this());
+        return std::static_pointer_cast<SharedPreferencesEditorJava>(shared_from_this());
     }
     void apply() {}
     FakeJni::JBoolean commit() { return true; }
 
 private:
-    std::shared_ptr<SharedPreferencesStub> prefs_;
+    std::shared_ptr<SharedPreferencesJava> prefs_;
 };
 
 // Minimal placeholder for android.content.res.Resources, same
@@ -645,16 +645,16 @@ private:
 // `()Landroid/content/res/Resources;` both literally embedded), but no
 // further Resources-specific method-name strings were found in the same
 // scan, grown further only against real evidence, checked ahead
-// of it (same discipline as SurfaceStub/WebRtcBuildInfoStub elsewhere
+// of it (same discipline as SurfaceJava/WebRtcBuildInfoJava elsewhere
 // in this codebase).
 // android.util.DisplayMetrics. Real, public field surface. AGDK's own
 // setup calls `resources.getDisplayMetrics()` right after
-// GameActivity_initializeNativeCode returns, and ResourcesStub had no
+// GameActivity_initializeNativeCode returns, and ResourcesJava had no
 // such method, so the call resolved to null and the engine never got
 // real screen metrics (live-confirmed:
 // "GetMethodID MISS class=android/content/res/Resources
 //  method=getDisplayMetrics sig=()Landroid/util/DisplayMetrics;").
-class DisplayMetricsStub : public FakeJni::JObject {
+class DisplayMetricsJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/util/DisplayMetrics")
 
@@ -691,7 +691,7 @@ public:
 // Single-pointer only: Stud's real source is one Wayland seat pointer, so
 // there is honestly never more than one. No history is recorded either
 // (`getHistorySize()` is 0), which is a real, valid MotionEvent state.
-class MotionEventStub : public FakeJni::JObject {
+class MotionEventJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/view/MotionEvent")
 
@@ -749,7 +749,7 @@ public:
 // android.view.KeyEvent, same story on the key side: AGDK hands the real
 // object to `onKeyDownNative`/`onKeyUpNative` and the engine reads it back.
 // Every one of these was a live `GetMethodID MISS`.
-class KeyEventStub : public FakeJni::JObject {
+class KeyEventJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/view/KeyEvent")
 
@@ -837,13 +837,13 @@ std::string real_hardware_name();
 int real_total_memory_mb();
 std::string real_device_name();
 
-class ResourcesStub : public FakeJni::JObject {
+class ResourcesJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/res/Resources")
 
-    std::shared_ptr<DisplayMetricsStub> getDisplayMetrics();
+    std::shared_ptr<DisplayMetricsJava> getDisplayMetrics();
 };
 
-void register_android_framework_stubs(FakeJni::Jvm& jvm);
+void register_android_framework(FakeJni::Jvm& jvm);
 
 }  // namespace stud::jni_bridge

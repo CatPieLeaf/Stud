@@ -1,5 +1,5 @@
 #include "stud/start_game_params.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 
 namespace stud::jni_bridge {
 
@@ -61,7 +61,7 @@ int join_request_type_for(const DeepLinkJoinInfo& join) {
 
 std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<DeviceParams> device_params,
-    std::shared_ptr<SurfaceStub> surface, const DeepLinkJoinInfo& deep_link) {
+    std::shared_ptr<SurfaceJava> surface, const DeepLinkJoinInfo& deep_link) {
     auto params = std::make_shared<StartGameParams>();
     params->accessCode_ = std::make_shared<FakeJni::JString>(deep_link.access_code);
     params->callId_ = std::make_shared<FakeJni::JString>(deep_link.call_id);
@@ -110,7 +110,7 @@ std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     // set_native_user_identity() holds it.
     params->userId_ = deep_link.user_id;
     params->username_ = std::make_shared<FakeJni::JString>(native_username());
-    params->vrContext_ = std::make_shared<ActivityStub>();
+    params->vrContext_ = std::make_shared<ActivityJava>();
     return params;
 }
 

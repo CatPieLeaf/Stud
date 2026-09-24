@@ -1,4 +1,4 @@
-#include "stud/android_framework_stubs.h"
+#include "stud/android_framework.h"
 
 #include <unistd.h>
 #include <strings.h>
@@ -8,11 +8,11 @@
 #include <cctype>
 
 #include "stud/bionic_jvm.h"
-// For ContextStub: DeviceUtilsStub::getScreenPhysicalSizeInMillimeters takes a
+// For ContextJava: DeviceUtilsJava::getScreenPhysicalSizeInMillimeters takes a
 // real android.content.Context, and FakeJni computes the JNI signature from
 // the C++ type, so the complete type is needed here (the header can only
-// forward-declare it, game_activity_stubs.h includes that header).
-#include "stud/game_activity_stubs.h"
+// forward-declare it, app_java_classes.h includes that header).
+#include "stud/app_java_classes.h"
 
 #include <jnivm/class.h>
 #include <jnivm/env.h>
@@ -28,33 +28,33 @@
 
 namespace stud::jni_bridge {
 
-BEGIN_NATIVE_DESCRIPTOR(LooperStub)
-{ FakeJni::Function<&LooperStub::getMainLooper>{}, "getMainLooper" },
-{ FakeJni::Function<&LooperStub::myLooper>{}, "myLooper" },
-{ FakeJni::Function<&LooperStub::prepare>{}, "prepare" },
-{ FakeJni::Function<&LooperStub::loop>{}, "loop" },
+BEGIN_NATIVE_DESCRIPTOR(LooperJava)
+{ FakeJni::Function<&LooperJava::getMainLooper>{}, "getMainLooper" },
+{ FakeJni::Function<&LooperJava::myLooper>{}, "myLooper" },
+{ FakeJni::Function<&LooperJava::prepare>{}, "prepare" },
+{ FakeJni::Function<&LooperJava::loop>{}, "loop" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(HandlerStub)
-{ FakeJni::Constructor<HandlerStub>{} },
-{ FakeJni::Constructor<HandlerStub, std::shared_ptr<LooperStub>>{} },
-{ FakeJni::Function<&HandlerStub::post>{}, "post" },
-{ FakeJni::Function<&HandlerStub::postDelayed>{}, "postDelayed" },
-{ FakeJni::Function<&HandlerStub::getLooper>{}, "getLooper" },
+BEGIN_NATIVE_DESCRIPTOR(HandlerJava)
+{ FakeJni::Constructor<HandlerJava>{} },
+{ FakeJni::Constructor<HandlerJava, std::shared_ptr<LooperJava>>{} },
+{ FakeJni::Function<&HandlerJava::post>{}, "post" },
+{ FakeJni::Function<&HandlerJava::postDelayed>{}, "postDelayed" },
+{ FakeJni::Function<&HandlerJava::getLooper>{}, "getLooper" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(HandlerThreadStub)
-{ FakeJni::Constructor<HandlerThreadStub>{} },
-{ FakeJni::Constructor<HandlerThreadStub, std::shared_ptr<FakeJni::JString>>{} },
-{ FakeJni::Function<&HandlerThreadStub::start>{}, "start" },
-{ FakeJni::Function<&HandlerThreadStub::getLooper>{}, "getLooper" },
-{ FakeJni::Function<&HandlerThreadStub::quit>{}, "quit" },
-{ FakeJni::Function<&HandlerThreadStub::quitSafely>{}, "quitSafely" },
+BEGIN_NATIVE_DESCRIPTOR(HandlerThreadJava)
+{ FakeJni::Constructor<HandlerThreadJava>{} },
+{ FakeJni::Constructor<HandlerThreadJava, std::shared_ptr<FakeJni::JString>>{} },
+{ FakeJni::Function<&HandlerThreadJava::start>{}, "start" },
+{ FakeJni::Function<&HandlerThreadJava::getLooper>{}, "getLooper" },
+{ FakeJni::Function<&HandlerThreadJava::quit>{}, "quit" },
+{ FakeJni::Function<&HandlerThreadJava::quitSafely>{}, "quitSafely" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(ClassLoaderStub)
-{ FakeJni::Function<&ClassLoaderStub::loadClass>{}, "loadClass" },
-{ FakeJni::Function<&ClassLoaderStub::findClass>{}, "findClass" },
+BEGIN_NATIVE_DESCRIPTOR(ClassLoaderJava)
+{ FakeJni::Function<&ClassLoaderJava::loadClass>{}, "loadClass" },
+{ FakeJni::Function<&ClassLoaderJava::findClass>{}, "findClass" },
 END_NATIVE_DESCRIPTOR
 
 namespace {
@@ -67,59 +67,59 @@ constexpr int kStaticPublicMethod = FakeJni::JMethodID::PUBLIC | FakeJni::JMetho
 // launch as `GetFieldID MISS class=android/os/Build static field=BOARD` (and
 // BOOTLOADER, BRAND, DEVICE, FINGERPRINT, HARDWARE, MANUFACTURER, MODEL,
 // PRODUCT, TAGS, USER), each followed by jnivm's own `GetField field is null`.
-BEGIN_NATIVE_DESCRIPTOR(BuildStub)
-{ FakeJni::Field<&BuildStub::MANUFACTURER>{}, "MANUFACTURER", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::BRAND>{}, "BRAND", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::MODEL>{}, "MODEL", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::DEVICE>{}, "DEVICE", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::PRODUCT>{}, "PRODUCT", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::HARDWARE>{}, "HARDWARE", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::BOARD>{}, "BOARD", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::FINGERPRINT>{}, "FINGERPRINT", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::ID>{}, "ID", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::TAGS>{}, "TAGS", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::TYPE>{}, "TYPE", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::BOOTLOADER>{}, "BOOTLOADER", kStaticPublicField },
-{ FakeJni::Field<&BuildStub::USER>{}, "USER", kStaticPublicField },
+BEGIN_NATIVE_DESCRIPTOR(BuildJava)
+{ FakeJni::Field<&BuildJava::MANUFACTURER>{}, "MANUFACTURER", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::BRAND>{}, "BRAND", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::MODEL>{}, "MODEL", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::DEVICE>{}, "DEVICE", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::PRODUCT>{}, "PRODUCT", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::HARDWARE>{}, "HARDWARE", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::BOARD>{}, "BOARD", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::FINGERPRINT>{}, "FINGERPRINT", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::ID>{}, "ID", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::TAGS>{}, "TAGS", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::TYPE>{}, "TYPE", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::BOOTLOADER>{}, "BOOTLOADER", kStaticPublicField },
+{ FakeJni::Field<&BuildJava::USER>{}, "USER", kStaticPublicField },
 END_NATIVE_DESCRIPTOR
 
 // android.os.Build$VERSION's fields are `public static final` too, the
-// same fix as BuildStub above, which was applied there and missed here.
+// same fix as BuildJava above, which was applied there and missed here.
 // Live-caught during a game launch as `GetFieldID MISS
 // class=android/os/Build$VERSION static field=SDK_INT sig=I`, repeatedly.
-BEGIN_NATIVE_DESCRIPTOR(BuildVersionStub)
-{ FakeJni::Field<&BuildVersionStub::SDK_INT>{}, "SDK_INT", kStaticPublicField },
-{ FakeJni::Field<&BuildVersionStub::RELEASE>{}, "RELEASE", kStaticPublicField },
-{ FakeJni::Field<&BuildVersionStub::SECURITY_PATCH>{}, "SECURITY_PATCH", kStaticPublicField },
-{ FakeJni::Field<&BuildVersionStub::INCREMENTAL>{}, "INCREMENTAL", kStaticPublicField },
-{ FakeJni::Field<&BuildVersionStub::CODENAME>{}, "CODENAME", kStaticPublicField },
+BEGIN_NATIVE_DESCRIPTOR(BuildVersionJava)
+{ FakeJni::Field<&BuildVersionJava::SDK_INT>{}, "SDK_INT", kStaticPublicField },
+{ FakeJni::Field<&BuildVersionJava::RELEASE>{}, "RELEASE", kStaticPublicField },
+{ FakeJni::Field<&BuildVersionJava::SECURITY_PATCH>{}, "SECURITY_PATCH", kStaticPublicField },
+{ FakeJni::Field<&BuildVersionJava::INCREMENTAL>{}, "INCREMENTAL", kStaticPublicField },
+{ FakeJni::Field<&BuildVersionJava::CODENAME>{}, "CODENAME", kStaticPublicField },
 END_NATIVE_DESCRIPTOR
 
 // Also `public static`, same live-caught miss during a game launch.
-BEGIN_NATIVE_DESCRIPTOR(DebugStub)
-{ FakeJni::Function<&DebugStub::isDebuggerConnected>{}, "isDebuggerConnected", kStaticPublicMethod },
+BEGIN_NATIVE_DESCRIPTOR(DebugJava)
+{ FakeJni::Function<&DebugJava::isDebuggerConnected>{}, "isDebuggerConnected", kStaticPublicMethod },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(PointStub)
-{ FakeJni::Constructor<PointStub>{} },
-{ FakeJni::Constructor<PointStub, FakeJni::JInt, FakeJni::JInt>{} },
-{ FakeJni::Field<&PointStub::x>{}, "x" },
-{ FakeJni::Field<&PointStub::y>{}, "y" },
+BEGIN_NATIVE_DESCRIPTOR(PointJava)
+{ FakeJni::Constructor<PointJava>{} },
+{ FakeJni::Constructor<PointJava, FakeJni::JInt, FakeJni::JInt>{} },
+{ FakeJni::Field<&PointJava::x>{}, "x" },
+{ FakeJni::Field<&PointJava::y>{}, "y" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(DeviceUtilsStub)
-{ FakeJni::Function<&DeviceUtilsStub::getScreenPhysicalSizeInMillimeters>{},
+BEGIN_NATIVE_DESCRIPTOR(DeviceUtilsJava)
+{ FakeJni::Function<&DeviceUtilsJava::getScreenPhysicalSizeInMillimeters>{},
   "getScreenPhysicalSizeInMillimeters", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
 END_NATIVE_DESCRIPTOR
 
-std::shared_ptr<PointStub> DeviceUtilsStub::getScreenPhysicalSizeInMillimeters(
-    std::shared_ptr<ContextStub> /*context*/) {
-    auto metrics = ResourcesStub().getDisplayMetrics();
+std::shared_ptr<PointJava> DeviceUtilsJava::getScreenPhysicalSizeInMillimeters(
+    std::shared_ptr<ContextJava> /*context*/) {
+    auto metrics = ResourcesJava().getDisplayMetrics();
     auto to_mm = [](FakeJni::JInt pixels, FakeJni::JFloat dpi) -> FakeJni::JInt {
         if (dpi <= 0.0f) return 0;
         return static_cast<FakeJni::JInt>((static_cast<float>(pixels) / dpi) * 25.4f);
     };
-    auto point = std::make_shared<PointStub>(to_mm(metrics->widthPixels, metrics->xdpi),
+    auto point = std::make_shared<PointJava>(to_mm(metrics->widthPixels, metrics->xdpi),
                                               to_mm(metrics->heightPixels, metrics->ydpi));
     // The panel does not change size. Said once, rather than once per
     // call, the engine asks on every renderer rebuild.
@@ -133,94 +133,94 @@ std::shared_ptr<PointStub> DeviceUtilsStub::getScreenPhysicalSizeInMillimeters(
     return point;
 }
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangSystemStub)
-{ FakeJni::Function<&JavaLangSystemStub::identityHashCode>{}, "identityHashCode", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
-{ FakeJni::Function<&JavaLangSystemStub::currentTimeMillis>{}, "currentTimeMillis", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
-{ FakeJni::Function<&JavaLangSystemStub::nanoTime>{}, "nanoTime", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
+BEGIN_NATIVE_DESCRIPTOR(JavaLangSystemJava)
+{ FakeJni::Function<&JavaLangSystemJava::identityHashCode>{}, "identityHashCode", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
+{ FakeJni::Function<&JavaLangSystemJava::currentTimeMillis>{}, "currentTimeMillis", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
+{ FakeJni::Function<&JavaLangSystemJava::nanoTime>{}, "nanoTime", FakeJni::JMethodID::PUBLIC | FakeJni::JMethodID::STATIC },
 END_NATIVE_DESCRIPTOR
 
-FakeJni::JInt JavaLangSystemStub::identityHashCode(std::shared_ptr<FakeJni::JObject> obj) {
+FakeJni::JInt JavaLangSystemJava::identityHashCode(std::shared_ptr<FakeJni::JObject> obj) {
     auto value = reinterpret_cast<std::uintptr_t>(obj.get());
     return static_cast<FakeJni::JInt>((value >> 4) & 0x7fffffff);
 }
 
-FakeJni::JLong JavaLangSystemStub::currentTimeMillis() {
+FakeJni::JLong JavaLangSystemJava::currentTimeMillis() {
     return static_cast<FakeJni::JLong>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
 }
 
-FakeJni::JLong JavaLangSystemStub::nanoTime() {
+FakeJni::JLong JavaLangSystemJava::nanoTime() {
     return static_cast<FakeJni::JLong>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
 }
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangErrorStub)
+BEGIN_NATIVE_DESCRIPTOR(JavaLangErrorJava)
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangExceptionStub)
+BEGIN_NATIVE_DESCRIPTOR(JavaLangExceptionJava)
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangRuntimeExceptionStub)
+BEGIN_NATIVE_DESCRIPTOR(JavaLangRuntimeExceptionJava)
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangLongStub)
-{ FakeJni::Constructor<JavaLangLongStub>{} },
-{ FakeJni::Constructor<JavaLangLongStub, FakeJni::JLong>{} },
-{ FakeJni::Function<&JavaLangLongStub::longValue>{}, "longValue" },
+BEGIN_NATIVE_DESCRIPTOR(JavaLangLongJava)
+{ FakeJni::Constructor<JavaLangLongJava>{} },
+{ FakeJni::Constructor<JavaLangLongJava, FakeJni::JLong>{} },
+{ FakeJni::Function<&JavaLangLongJava::longValue>{}, "longValue" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangIntegerStub)
-{ FakeJni::Constructor<JavaLangIntegerStub>{} },
-{ FakeJni::Constructor<JavaLangIntegerStub, FakeJni::JInt>{} },
-{ FakeJni::Function<&JavaLangIntegerStub::intValue>{}, "intValue" },
+BEGIN_NATIVE_DESCRIPTOR(JavaLangIntegerJava)
+{ FakeJni::Constructor<JavaLangIntegerJava>{} },
+{ FakeJni::Constructor<JavaLangIntegerJava, FakeJni::JInt>{} },
+{ FakeJni::Function<&JavaLangIntegerJava::intValue>{}, "intValue" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangBooleanStub)
-{ FakeJni::Constructor<JavaLangBooleanStub>{} },
-{ FakeJni::Constructor<JavaLangBooleanStub, FakeJni::JBoolean>{} },
-{ FakeJni::Function<&JavaLangBooleanStub::booleanValue>{}, "booleanValue" },
+BEGIN_NATIVE_DESCRIPTOR(JavaLangBooleanJava)
+{ FakeJni::Constructor<JavaLangBooleanJava>{} },
+{ FakeJni::Constructor<JavaLangBooleanJava, FakeJni::JBoolean>{} },
+{ FakeJni::Function<&JavaLangBooleanJava::booleanValue>{}, "booleanValue" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaLangDoubleStub)
-{ FakeJni::Constructor<JavaLangDoubleStub>{} },
-{ FakeJni::Constructor<JavaLangDoubleStub, FakeJni::JDouble>{} },
-{ FakeJni::Function<&JavaLangDoubleStub::doubleValue>{}, "doubleValue" },
+BEGIN_NATIVE_DESCRIPTOR(JavaLangDoubleJava)
+{ FakeJni::Constructor<JavaLangDoubleJava>{} },
+{ FakeJni::Constructor<JavaLangDoubleJava, FakeJni::JDouble>{} },
+{ FakeJni::Function<&JavaLangDoubleJava::doubleValue>{}, "doubleValue" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaUtilIteratorStub)
-{ FakeJni::Function<&JavaUtilIteratorStub::hasNext>{}, "hasNext" },
-{ FakeJni::Function<&JavaUtilIteratorStub::next>{}, "next" },
+BEGIN_NATIVE_DESCRIPTOR(JavaUtilIteratorJava)
+{ FakeJni::Function<&JavaUtilIteratorJava::hasNext>{}, "hasNext" },
+{ FakeJni::Function<&JavaUtilIteratorJava::next>{}, "next" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaUtilHashSetStub)
-{ FakeJni::Constructor<JavaUtilHashSetStub>{} },
-{ FakeJni::Function<&JavaUtilHashSetStub::add>{}, "add" },
-{ FakeJni::Function<&JavaUtilHashSetStub::contains>{}, "contains" },
-{ FakeJni::Function<&JavaUtilHashSetStub::size>{}, "size" },
-{ FakeJni::Function<&JavaUtilHashSetStub::isEmpty>{}, "isEmpty" },
-{ FakeJni::Function<&JavaUtilHashSetStub::iterator>{}, "iterator" },
+BEGIN_NATIVE_DESCRIPTOR(JavaUtilHashSetJava)
+{ FakeJni::Constructor<JavaUtilHashSetJava>{} },
+{ FakeJni::Function<&JavaUtilHashSetJava::add>{}, "add" },
+{ FakeJni::Function<&JavaUtilHashSetJava::contains>{}, "contains" },
+{ FakeJni::Function<&JavaUtilHashSetJava::size>{}, "size" },
+{ FakeJni::Function<&JavaUtilHashSetJava::isEmpty>{}, "isEmpty" },
+{ FakeJni::Function<&JavaUtilHashSetJava::iterator>{}, "iterator" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(JavaUtilHashMapStub)
-{ FakeJni::Constructor<JavaUtilHashMapStub>{} },
-{ FakeJni::Function<&JavaUtilHashMapStub::put>{}, "put" },
-{ FakeJni::Function<&JavaUtilHashMapStub::get>{}, "get" },
-{ FakeJni::Function<&JavaUtilHashMapStub::containsKey>{}, "containsKey" },
-{ FakeJni::Function<&JavaUtilHashMapStub::size>{}, "size" },
-{ FakeJni::Function<&JavaUtilHashMapStub::isEmpty>{}, "isEmpty" },
+BEGIN_NATIVE_DESCRIPTOR(JavaUtilHashMapJava)
+{ FakeJni::Constructor<JavaUtilHashMapJava>{} },
+{ FakeJni::Function<&JavaUtilHashMapJava::put>{}, "put" },
+{ FakeJni::Function<&JavaUtilHashMapJava::get>{}, "get" },
+{ FakeJni::Function<&JavaUtilHashMapJava::containsKey>{}, "containsKey" },
+{ FakeJni::Function<&JavaUtilHashMapJava::size>{}, "size" },
+{ FakeJni::Function<&JavaUtilHashMapJava::isEmpty>{}, "isEmpty" },
 END_NATIVE_DESCRIPTOR
 
-void LooperStub::start(FakeJni::Jvm& jvm) {
+void LooperJava::start(FakeJni::Jvm& jvm) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (thread_.joinable() || quit_) return;
     thread_ = std::thread([this, &jvm] { pump(jvm); });
 }
 
-void LooperStub::post(std::shared_ptr<FakeJni::JObject> runnable) {
+void LooperJava::post(std::shared_ptr<FakeJni::JObject> runnable) {
     if (!runnable) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -229,7 +229,7 @@ void LooperStub::post(std::shared_ptr<FakeJni::JObject> runnable) {
     cv_.notify_one();
 }
 
-void LooperStub::quit() {
+void LooperJava::quit() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         quit_ = true;
@@ -237,12 +237,12 @@ void LooperStub::quit() {
     cv_.notify_all();
 }
 
-void LooperStub::stop() {
+void LooperJava::stop() {
     quit();
     if (thread_.joinable()) thread_.join();
 }
 
-void LooperStub::dispatch_one(FakeJni::Jvm& jvm, std::shared_ptr<FakeJni::JObject> runnable) {
+void LooperJava::dispatch_one(FakeJni::Jvm& jvm, std::shared_ptr<FakeJni::JObject> runnable) {
     FakeJni::LocalFrame frame(jvm);
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
@@ -264,7 +264,7 @@ void LooperStub::dispatch_one(FakeJni::Jvm& jvm, std::shared_ptr<FakeJni::JObjec
     jni_env->CallVoidMethod(obj, run_id);
 }
 
-void LooperStub::pump(FakeJni::Jvm& jvm) {
+void LooperJava::pump(FakeJni::Jvm& jvm) {
     static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
     for (;;) {
         std::shared_ptr<FakeJni::JObject> runnable;
@@ -279,7 +279,7 @@ void LooperStub::pump(FakeJni::Jvm& jvm) {
     }
 }
 
-void LooperStub::drain_pending(FakeJni::Jvm& jvm) {
+void LooperJava::drain_pending(FakeJni::Jvm& jvm) {
     for (;;) {
         std::shared_ptr<FakeJni::JObject> runnable;
         {
@@ -292,9 +292,9 @@ void LooperStub::drain_pending(FakeJni::Jvm& jvm) {
     }
 }
 
-std::shared_ptr<LooperStub> LooperStub::get_or_create_main_looper(FakeJni::Jvm& jvm) {
+std::shared_ptr<LooperJava> LooperJava::get_or_create_main_looper(FakeJni::Jvm& jvm) {
     static std::mutex init_mutex;
-    static std::shared_ptr<LooperStub> instance;
+    static std::shared_ptr<LooperJava> instance;
     std::lock_guard<std::mutex> lock(init_mutex);
     if (!instance) {
         // Real Android semantics: the main Looper runs ON the real
@@ -302,17 +302,17 @@ std::shared_ptr<LooperStub> LooperStub::get_or_create_main_looper(FakeJni::Jvm& 
         // class's own header doc comment), deliberately does NOT
         // call start() here. The real main thread drains it directly
         // via drain_pending() (see activity_thread.h).
-        instance = std::make_shared<LooperStub>("main");
+        instance = std::make_shared<LooperJava>("main");
     }
     return instance;
 }
 
-std::shared_ptr<LooperStub> LooperStub::getMainLooper() {
+std::shared_ptr<LooperJava> LooperJava::getMainLooper() {
     auto& env = FakeJni::JniEnvContext().getJniEnv();
     return get_or_create_main_looper(env.getVM());
 }
 
-std::shared_ptr<LooperStub> LooperStub::myLooper() {
+std::shared_ptr<LooperJava> LooperJava::myLooper() {
     // Real semantics: null unless the calling thread has its own
     // prepared Looper. No real caller of this codebase's own bring-up
     // was found relying on that distinction (see class-level comment on
@@ -322,25 +322,25 @@ std::shared_ptr<LooperStub> LooperStub::myLooper() {
     return getMainLooper();
 }
 
-HandlerStub::HandlerStub() {
+HandlerJava::HandlerJava() {
     auto& env = FakeJni::JniEnvContext().getJniEnv();
-    looper_ = LooperStub::get_or_create_main_looper(env.getVM());
+    looper_ = LooperJava::get_or_create_main_looper(env.getVM());
 }
 
-HandlerStub::HandlerStub(std::shared_ptr<LooperStub> looper) : looper_(std::move(looper)) {
+HandlerJava::HandlerJava(std::shared_ptr<LooperJava> looper) : looper_(std::move(looper)) {
     if (!looper_) {
         auto& env = FakeJni::JniEnvContext().getJniEnv();
-        looper_ = LooperStub::get_or_create_main_looper(env.getVM());
+        looper_ = LooperJava::get_or_create_main_looper(env.getVM());
     }
 }
 
-FakeJni::JBoolean HandlerStub::post(std::shared_ptr<FakeJni::JObject> runnable) {
+FakeJni::JBoolean HandlerJava::post(std::shared_ptr<FakeJni::JObject> runnable) {
     if (!runnable || !looper_) return false;
     looper_->post(std::move(runnable));
     return true;
 }
 
-FakeJni::JBoolean HandlerStub::postDelayed(std::shared_ptr<FakeJni::JObject> runnable,
+FakeJni::JBoolean HandlerJava::postDelayed(std::shared_ptr<FakeJni::JObject> runnable,
                                             FakeJni::JLong delay_millis) {
     if (!runnable || !looper_) return false;
     auto looper = looper_;
@@ -353,21 +353,21 @@ FakeJni::JBoolean HandlerStub::postDelayed(std::shared_ptr<FakeJni::JObject> run
     return true;
 }
 
-HandlerThreadStub::HandlerThreadStub() : looper_(std::make_shared<LooperStub>("HandlerThread")) {}
+HandlerThreadJava::HandlerThreadJava() : looper_(std::make_shared<LooperJava>("HandlerThread")) {}
 
-HandlerThreadStub::HandlerThreadStub(std::shared_ptr<FakeJni::JString> name)
-    : looper_(std::make_shared<LooperStub>(name ? static_cast<std::string>(*name) : "HandlerThread")) {}
+HandlerThreadJava::HandlerThreadJava(std::shared_ptr<FakeJni::JString> name)
+    : looper_(std::make_shared<LooperJava>(name ? static_cast<std::string>(*name) : "HandlerThread")) {}
 
-void HandlerThreadStub::start() {
+void HandlerThreadJava::start() {
     auto& env = FakeJni::JniEnvContext().getJniEnv();
     looper_->start(env.getVM());
 }
 
-std::shared_ptr<FakeJni::JClass> ClassLoaderStub::loadClass(std::shared_ptr<FakeJni::JString> name) {
+std::shared_ptr<FakeJni::JClass> ClassLoaderJava::loadClass(std::shared_ptr<FakeJni::JString> name) {
     return findClass(std::move(name));
 }
 
-std::shared_ptr<FakeJni::JClass> ClassLoaderStub::findClass(std::shared_ptr<FakeJni::JString> name) {
+std::shared_ptr<FakeJni::JClass> ClassLoaderJava::findClass(std::shared_ptr<FakeJni::JString> name) {
     if (!name) return nullptr;
     std::string dotted = *name;
     for (auto& c : dotted) {
@@ -379,13 +379,13 @@ std::shared_ptr<FakeJni::JClass> ClassLoaderStub::findClass(std::shared_ptr<Fake
     return std::dynamic_pointer_cast<FakeJni::JClass>(env.resolveReference(raw));
 }
 
-std::shared_ptr<ClassLoaderStub> shared_class_loader() {
-    static auto singleton = std::make_shared<ClassLoaderStub>();
+std::shared_ptr<ClassLoaderJava> shared_class_loader() {
+    static auto singleton = std::make_shared<ClassLoaderJava>();
     return singleton;
 }
 
 // Real java.lang.String methods the engine actually calls, attached to
-// jnivm's own canonical String class rather than a competing stub of the
+// jnivm's own canonical String class rather than a competing class of the
 // same name (that collision is exactly what killed the engine's own
 // designated thread twice before; see ByteBuffer/ClassMeta).
 //
@@ -440,7 +440,7 @@ void register_java_lang_string_methods(FakeJni::Jvm& jvm) {
 void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
     // jnivm's own canonical java/lang/Class object, the real type
     // GetObjectClass() returns. Attach the real getClassLoader() here
-    // instead of declaring a competing stub class for the same name.
+    // instead of declaring a competing class for the same name.
     auto* vm = jnivm::VM::FromJavaVM(&jvm);
     if (vm == nullptr) return;
     auto* env = vm->GetEnv().get();
@@ -457,18 +457,18 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
     // the engine down its reflective loadClass path, which then resolves
     // classes Stud did not have, the app stopped short of Home and the idle
     // frame rate collapsed. Those classes are registered now
-    // (PlatformSystemDialogHandlerStub, FacialAgeEstimationProtocolStub), so
+    // (PlatformSystemDialogHandlerJava, FacialAgeEstimationProtocolJava), so
     // the path has somewhere to land. If this ever regresses again, the symptom
     // to look for is the app stalling at RootSwitchNavigator instead of Home.
     java_lang_class->HookInstanceFunction(
         env, "getClassLoader",
-        [](jnivm::ENV*, jnivm::Object*) -> std::shared_ptr<ClassLoaderStub> {
+        [](jnivm::ENV*, jnivm::Object*) -> std::shared_ptr<ClassLoaderJava> {
             return shared_class_loader();
         });
 
     // java.lang.ref.WeakReference.get(), jnivm has its own real
     // `jnivm::Weak` registered under this exact class name (so a
-    // competing stub would collide, per the ByteBuffer/Class lesson),
+    // competing class would collide, per the ByteBuffer/Class lesson),
     // but it exposes no methods. Djinni's proxy cache calls get() on
     // one during platform registration, and the missing method showed
     // up as "djinni (djinni_support.cpp:339): GetMethodID returned
@@ -505,80 +505,80 @@ void register_java_lang_class_methods(FakeJni::Jvm& jvm) {
     }
 }
 
-BEGIN_NATIVE_DESCRIPTOR(SharedPreferencesStub)
-{ FakeJni::Function<&SharedPreferencesStub::contains>{}, "contains" },
-{ FakeJni::Function<&SharedPreferencesStub::getString>{}, "getString" },
-{ FakeJni::Function<&SharedPreferencesStub::edit>{}, "edit" },
+BEGIN_NATIVE_DESCRIPTOR(SharedPreferencesJava)
+{ FakeJni::Function<&SharedPreferencesJava::contains>{}, "contains" },
+{ FakeJni::Function<&SharedPreferencesJava::getString>{}, "getString" },
+{ FakeJni::Function<&SharedPreferencesJava::edit>{}, "edit" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(SharedPreferencesEditorStub)
-{ FakeJni::Function<&SharedPreferencesEditorStub::putString>{}, "putString" },
-{ FakeJni::Function<&SharedPreferencesEditorStub::remove>{}, "remove" },
-{ FakeJni::Function<&SharedPreferencesEditorStub::apply>{}, "apply" },
-{ FakeJni::Function<&SharedPreferencesEditorStub::commit>{}, "commit" },
+BEGIN_NATIVE_DESCRIPTOR(SharedPreferencesEditorJava)
+{ FakeJni::Function<&SharedPreferencesEditorJava::putString>{}, "putString" },
+{ FakeJni::Function<&SharedPreferencesEditorJava::remove>{}, "remove" },
+{ FakeJni::Function<&SharedPreferencesEditorJava::apply>{}, "apply" },
+{ FakeJni::Function<&SharedPreferencesEditorJava::commit>{}, "commit" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(DisplayMetricsStub)
-{ FakeJni::Field<&DisplayMetricsStub::widthPixels>{}, "widthPixels" },
-{ FakeJni::Field<&DisplayMetricsStub::heightPixels>{}, "heightPixels" },
-{ FakeJni::Field<&DisplayMetricsStub::density>{}, "density" },
-{ FakeJni::Field<&DisplayMetricsStub::densityDpi>{}, "densityDpi" },
-{ FakeJni::Field<&DisplayMetricsStub::scaledDensity>{}, "scaledDensity" },
-{ FakeJni::Field<&DisplayMetricsStub::xdpi>{}, "xdpi" },
-{ FakeJni::Field<&DisplayMetricsStub::ydpi>{}, "ydpi" },
+BEGIN_NATIVE_DESCRIPTOR(DisplayMetricsJava)
+{ FakeJni::Field<&DisplayMetricsJava::widthPixels>{}, "widthPixels" },
+{ FakeJni::Field<&DisplayMetricsJava::heightPixels>{}, "heightPixels" },
+{ FakeJni::Field<&DisplayMetricsJava::density>{}, "density" },
+{ FakeJni::Field<&DisplayMetricsJava::densityDpi>{}, "densityDpi" },
+{ FakeJni::Field<&DisplayMetricsJava::scaledDensity>{}, "scaledDensity" },
+{ FakeJni::Field<&DisplayMetricsJava::xdpi>{}, "xdpi" },
+{ FakeJni::Field<&DisplayMetricsJava::ydpi>{}, "ydpi" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(MotionEventStub)
-{ FakeJni::Constructor<MotionEventStub>{} },
-{ FakeJni::Function<&MotionEventStub::getAction>{}, "getAction" },
-{ FakeJni::Function<&MotionEventStub::getSource>{}, "getSource" },
-{ FakeJni::Function<&MotionEventStub::getDeviceId>{}, "getDeviceId" },
-{ FakeJni::Function<&MotionEventStub::getToolType>{}, "getToolType" },
-{ FakeJni::Function<&MotionEventStub::getButtonState>{}, "getButtonState" },
-{ FakeJni::Function<&MotionEventStub::getActionButton>{}, "getActionButton" },
-{ FakeJni::Function<&MotionEventStub::getMetaState>{}, "getMetaState" },
-{ FakeJni::Function<&MotionEventStub::getFlags>{}, "getFlags" },
-{ FakeJni::Function<&MotionEventStub::getEdgeFlags>{}, "getEdgeFlags" },
-{ FakeJni::Function<&MotionEventStub::getPointerCount>{}, "getPointerCount" },
-{ FakeJni::Function<&MotionEventStub::getPointerId>{}, "getPointerId" },
-{ FakeJni::Function<&MotionEventStub::getHistorySize>{}, "getHistorySize" },
-{ FakeJni::Function<&MotionEventStub::getClassification>{}, "getClassification" },
-{ FakeJni::Function<&MotionEventStub::getEventTime>{}, "getEventTime" },
-{ FakeJni::Function<&MotionEventStub::getDownTime>{}, "getDownTime" },
-{ FakeJni::Function<&MotionEventStub::getHistoricalEventTime>{}, "getHistoricalEventTime" },
-{ FakeJni::Function<&MotionEventStub::getXPrecision>{}, "getXPrecision" },
-{ FakeJni::Function<&MotionEventStub::getYPrecision>{}, "getYPrecision" },
-{ FakeJni::Function<&MotionEventStub::getX>{}, "getX" },
-{ FakeJni::Function<&MotionEventStub::getY>{}, "getY" },
-{ FakeJni::Function<&MotionEventStub::getAxisValue>{}, "getAxisValue" },
-{ FakeJni::Function<&MotionEventStub::getHistoricalAxisValue>{}, "getHistoricalAxisValue" },
+BEGIN_NATIVE_DESCRIPTOR(MotionEventJava)
+{ FakeJni::Constructor<MotionEventJava>{} },
+{ FakeJni::Function<&MotionEventJava::getAction>{}, "getAction" },
+{ FakeJni::Function<&MotionEventJava::getSource>{}, "getSource" },
+{ FakeJni::Function<&MotionEventJava::getDeviceId>{}, "getDeviceId" },
+{ FakeJni::Function<&MotionEventJava::getToolType>{}, "getToolType" },
+{ FakeJni::Function<&MotionEventJava::getButtonState>{}, "getButtonState" },
+{ FakeJni::Function<&MotionEventJava::getActionButton>{}, "getActionButton" },
+{ FakeJni::Function<&MotionEventJava::getMetaState>{}, "getMetaState" },
+{ FakeJni::Function<&MotionEventJava::getFlags>{}, "getFlags" },
+{ FakeJni::Function<&MotionEventJava::getEdgeFlags>{}, "getEdgeFlags" },
+{ FakeJni::Function<&MotionEventJava::getPointerCount>{}, "getPointerCount" },
+{ FakeJni::Function<&MotionEventJava::getPointerId>{}, "getPointerId" },
+{ FakeJni::Function<&MotionEventJava::getHistorySize>{}, "getHistorySize" },
+{ FakeJni::Function<&MotionEventJava::getClassification>{}, "getClassification" },
+{ FakeJni::Function<&MotionEventJava::getEventTime>{}, "getEventTime" },
+{ FakeJni::Function<&MotionEventJava::getDownTime>{}, "getDownTime" },
+{ FakeJni::Function<&MotionEventJava::getHistoricalEventTime>{}, "getHistoricalEventTime" },
+{ FakeJni::Function<&MotionEventJava::getXPrecision>{}, "getXPrecision" },
+{ FakeJni::Function<&MotionEventJava::getYPrecision>{}, "getYPrecision" },
+{ FakeJni::Function<&MotionEventJava::getX>{}, "getX" },
+{ FakeJni::Function<&MotionEventJava::getY>{}, "getY" },
+{ FakeJni::Function<&MotionEventJava::getAxisValue>{}, "getAxisValue" },
+{ FakeJni::Function<&MotionEventJava::getHistoricalAxisValue>{}, "getHistoricalAxisValue" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(KeyEventStub)
-{ FakeJni::Constructor<KeyEventStub>{} },
-{ FakeJni::Function<&KeyEventStub::getAction>{}, "getAction" },
-{ FakeJni::Function<&KeyEventStub::getKeyCode>{}, "getKeyCode" },
-{ FakeJni::Function<&KeyEventStub::getScanCode>{}, "getScanCode" },
-{ FakeJni::Function<&KeyEventStub::getMetaState>{}, "getMetaState" },
-{ FakeJni::Function<&KeyEventStub::getRepeatCount>{}, "getRepeatCount" },
-{ FakeJni::Function<&KeyEventStub::getSource>{}, "getSource" },
+BEGIN_NATIVE_DESCRIPTOR(KeyEventJava)
+{ FakeJni::Constructor<KeyEventJava>{} },
+{ FakeJni::Function<&KeyEventJava::getAction>{}, "getAction" },
+{ FakeJni::Function<&KeyEventJava::getKeyCode>{}, "getKeyCode" },
+{ FakeJni::Function<&KeyEventJava::getScanCode>{}, "getScanCode" },
+{ FakeJni::Function<&KeyEventJava::getMetaState>{}, "getMetaState" },
+{ FakeJni::Function<&KeyEventJava::getRepeatCount>{}, "getRepeatCount" },
+{ FakeJni::Function<&KeyEventJava::getSource>{}, "getSource" },
 // The engine asks a KeyEvent what character it produces (live-caught
 // GetMethodID MISS for `getUnicodeChar ()I`). Both real overloads exist on
 // the class; only the no-argument one was ever registered nowhere, so the
 // lookup failed and the key produced no character.
-{ FakeJni::Function<static_cast<FakeJni::JInt (KeyEventStub::*)()>(&KeyEventStub::getUnicodeChar)>{},
+{ FakeJni::Function<static_cast<FakeJni::JInt (KeyEventJava::*)()>(&KeyEventJava::getUnicodeChar)>{},
   "getUnicodeChar" },
-{ FakeJni::Function<static_cast<FakeJni::JInt (KeyEventStub::*)(FakeJni::JInt)>(
-      &KeyEventStub::getUnicodeChar)>{},
+{ FakeJni::Function<static_cast<FakeJni::JInt (KeyEventJava::*)(FakeJni::JInt)>(
+      &KeyEventJava::getUnicodeChar)>{},
   "getUnicodeChar" },
-{ FakeJni::Function<&KeyEventStub::getDeviceId>{}, "getDeviceId" },
-{ FakeJni::Function<&KeyEventStub::getFlags>{}, "getFlags" },
-{ FakeJni::Function<&KeyEventStub::getEventTime>{}, "getEventTime" },
-{ FakeJni::Function<&KeyEventStub::getDownTime>{}, "getDownTime" },
+{ FakeJni::Function<&KeyEventJava::getDeviceId>{}, "getDeviceId" },
+{ FakeJni::Function<&KeyEventJava::getFlags>{}, "getFlags" },
+{ FakeJni::Function<&KeyEventJava::getEventTime>{}, "getEventTime" },
+{ FakeJni::Function<&KeyEventJava::getDownTime>{}, "getDownTime" },
 END_NATIVE_DESCRIPTOR
 
-BEGIN_NATIVE_DESCRIPTOR(ResourcesStub)
-{ FakeJni::Function<&ResourcesStub::getDisplayMetrics>{}, "getDisplayMetrics" },
+BEGIN_NATIVE_DESCRIPTOR(ResourcesJava)
+{ FakeJni::Function<&ResourcesJava::getDisplayMetrics>{}, "getDisplayMetrics" },
 END_NATIVE_DESCRIPTOR
 
 namespace {
@@ -659,7 +659,7 @@ int real_total_memory_mb() {
     return cached;
 }
 
-// MANUFACTURER + " " + MODEL, matching the model is not
+// MANUFACTURER + " " + MODEL, matching the app's device-info helper: the model is not
 // repeated when it already starts with the manufacturer, and the first
 // letter is upper-cased. Both come from android.os.Build, which Stud
 // fills in from the real machine, the User-Agent used to send the
@@ -667,8 +667,8 @@ int real_total_memory_mb() {
 std::string real_device_name() {
     // Prefer the real hardware; fall back to the Build values.
     const std::string hardware = real_hardware_name();
-    std::string manufacturer = BuildStub::MANUFACTURER->asStdString();
-    std::string model = BuildStub::MODEL->asStdString();
+    std::string manufacturer = BuildJava::MANUFACTURER->asStdString();
+    std::string model = BuildJava::MODEL->asStdString();
     if (!hardware.empty()) {
         manufacturer.clear();
         model = hardware;
@@ -756,8 +756,8 @@ void set_real_display_metrics(int width_px, int height_px, float density) {
     std::fflush(stdout);
 }
 
-std::shared_ptr<DisplayMetricsStub> ResourcesStub::getDisplayMetrics() {
-    auto metrics = std::make_shared<DisplayMetricsStub>();
+std::shared_ptr<DisplayMetricsJava> ResourcesJava::getDisplayMetrics() {
+    auto metrics = std::make_shared<DisplayMetricsJava>();
     metrics->widthPixels = g_display_width;
     metrics->heightPixels = g_display_height;
     metrics->density = g_display_density;
@@ -782,49 +782,49 @@ std::shared_ptr<DisplayMetricsStub> ResourcesStub::getDisplayMetrics() {
     return metrics;
 }
 
-std::shared_ptr<SharedPreferencesStub> SharedPreferencesStub::get_or_create(const std::string& name) {
-    static std::unordered_map<std::string, std::shared_ptr<SharedPreferencesStub>> instances;
+std::shared_ptr<SharedPreferencesJava> SharedPreferencesJava::get_or_create(const std::string& name) {
+    static std::unordered_map<std::string, std::shared_ptr<SharedPreferencesJava>> instances;
     auto it = instances.find(name);
     if (it != instances.end()) return it->second;
-    auto created = std::make_shared<SharedPreferencesStub>(name);
+    auto created = std::make_shared<SharedPreferencesJava>(name);
     instances.emplace(name, created);
     return created;
 }
 
-std::shared_ptr<SharedPreferencesEditorStub> SharedPreferencesStub::edit() {
-    return std::make_shared<SharedPreferencesEditorStub>(
-        std::static_pointer_cast<SharedPreferencesStub>(shared_from_this()));
+std::shared_ptr<SharedPreferencesEditorJava> SharedPreferencesJava::edit() {
+    return std::make_shared<SharedPreferencesEditorJava>(
+        std::static_pointer_cast<SharedPreferencesJava>(shared_from_this()));
 }
 
-void register_android_framework_stubs(FakeJni::Jvm& jvm) {
-    jvm.registerClass<LooperStub>();
-    jvm.registerClass<HandlerStub>();
-    jvm.registerClass<HandlerThreadStub>();
-    jvm.registerClass<ClassLoaderStub>();
+void register_android_framework(FakeJni::Jvm& jvm) {
+    jvm.registerClass<LooperJava>();
+    jvm.registerClass<HandlerJava>();
+    jvm.registerClass<HandlerThreadJava>();
+    jvm.registerClass<ClassLoaderJava>();
     register_java_lang_class_methods(jvm);
     register_java_lang_string_methods(jvm);
-    jvm.registerClass<BuildStub>();
-    jvm.registerClass<BuildVersionStub>();
-    jvm.registerClass<DebugStub>();
-    jvm.registerClass<PointStub>();
-    jvm.registerClass<DeviceUtilsStub>();
-    jvm.registerClass<DisplayMetricsStub>();
-    jvm.registerClass<MotionEventStub>();
-    jvm.registerClass<KeyEventStub>();
-    jvm.registerClass<JavaLangSystemStub>();
-    jvm.registerClass<JavaLangErrorStub>();
-    jvm.registerClass<JavaLangExceptionStub>();
-    jvm.registerClass<JavaLangRuntimeExceptionStub>();
-    jvm.registerClass<JavaLangLongStub>();
-    jvm.registerClass<JavaLangIntegerStub>();
-    jvm.registerClass<JavaLangBooleanStub>();
-    jvm.registerClass<JavaLangDoubleStub>();
-    jvm.registerClass<JavaUtilIteratorStub>();
-    jvm.registerClass<JavaUtilHashSetStub>();
-    jvm.registerClass<JavaUtilHashMapStub>();
-    jvm.registerClass<SharedPreferencesStub>();
-    jvm.registerClass<SharedPreferencesEditorStub>();
-    jvm.registerClass<ResourcesStub>();
+    jvm.registerClass<BuildJava>();
+    jvm.registerClass<BuildVersionJava>();
+    jvm.registerClass<DebugJava>();
+    jvm.registerClass<PointJava>();
+    jvm.registerClass<DeviceUtilsJava>();
+    jvm.registerClass<DisplayMetricsJava>();
+    jvm.registerClass<MotionEventJava>();
+    jvm.registerClass<KeyEventJava>();
+    jvm.registerClass<JavaLangSystemJava>();
+    jvm.registerClass<JavaLangErrorJava>();
+    jvm.registerClass<JavaLangExceptionJava>();
+    jvm.registerClass<JavaLangRuntimeExceptionJava>();
+    jvm.registerClass<JavaLangLongJava>();
+    jvm.registerClass<JavaLangIntegerJava>();
+    jvm.registerClass<JavaLangBooleanJava>();
+    jvm.registerClass<JavaLangDoubleJava>();
+    jvm.registerClass<JavaUtilIteratorJava>();
+    jvm.registerClass<JavaUtilHashSetJava>();
+    jvm.registerClass<JavaUtilHashMapJava>();
+    jvm.registerClass<SharedPreferencesJava>();
+    jvm.registerClass<SharedPreferencesEditorJava>();
+    jvm.registerClass<ResourcesJava>();
 }
 
 }  // namespace stud::jni_bridge

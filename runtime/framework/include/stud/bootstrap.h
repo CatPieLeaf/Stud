@@ -36,7 +36,7 @@
 //      "bootstrapTheApp"/"[FLog::NativeDM] bootstrapTheApp_:" strings in
 //      libroblox.so) the engine invokes when IT is ready, not something
 //      Java calls proactively. See run_init_params_bootstrap() and
-//      game_activity_stubs.h's MainGameActivityStub::bootstrapTheApp().
+//      app_java_classes.h's MainGameActivityJava::bootstrapTheApp().
 //
 // run_bootstrap() below is kept as a combined convenience wrapper (used by
 // tests/tools that don't need the split) with the SAME corrected order;
@@ -100,8 +100,8 @@ struct InitParamsBootstrapResult {
 };
 
 // nativeAppBridgeSetInitParams only. Call from inside
-// MainGameActivityStub::bootstrapTheApp()'s real callback (see
-// game_activity_stubs.h), not eagerly, matches setInitParamsForEngine's real trigger.
+// MainGameActivityJava::bootstrapTheApp()'s real callback (see
+// app_java_classes.h), not eagerly, matches setInitParamsForEngine's real trigger.
 InitParamsBootstrapResult run_init_params_bootstrap(FakeJni::Jvm& jvm,
                                                      const stud::linker::LoadedLibrary& lib,
                                                      std::shared_ptr<InitParams> init_params);

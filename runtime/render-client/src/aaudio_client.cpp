@@ -1,6 +1,6 @@
 // Real libaaudio.so, bionic-compiled, placed where the real bionic linker
 // resolves the engine's own dlopen("libaaudio.so"), exactly the same
-// shape as this project's libEGL/libGLESv2 stubs, and for the same
+// shape as this project's libEGL/libGLESv2 clients, and for the same
 // reason: Process B cannot talk to the host's audio server, so the real
 // device work happens in Process C and this forwards to it.
 //
@@ -157,7 +157,7 @@ void feed(Stream* s) {
             }
         }
         // STUD_AUDIO_STATS=1: is the signal actually clipping, and was it
-        // already clipping before this stub touched it? "Distorted only
+        // already clipping before this library touched it? "Distorted only
         // when loud" is clipping by definition, and it matters a great
         // deal whether the engine handed over samples beyond full scale
         // (its own mix is too hot for the format it was told to produce)

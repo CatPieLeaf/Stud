@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "stud/android_framework_stubs.h"
+#include "stud/android_framework.h"
 #include "stud/device_params.h"
 #include "stud/linker.h"
 #include "stud/system_locale.h"
@@ -23,7 +23,7 @@
 #include <string>
 #include <unordered_map>
 
-// Minimal FakeJni stub classes AGDK's GameActivity_register() (real,
+// Minimal FakeJni classes AGDK's GameActivity_register() (real,
 // confirmed; see the engineering notes) FindClass's/GetMethodID's/
 // GetFieldID's during GameActivity_initializeNativeCode(), plus the small
 // number of other classes Roblox's own code has been found (via real
@@ -45,7 +45,7 @@ namespace stud::jni_bridge {
 // class, not the android.graphics.Insets framework class this was first
 // (wrongly) assumed to be. GetMethodID's full-signature-string match means
 // the exact package matters, not just the simple name.
-class InsetsStub : public FakeJni::JObject {
+class InsetsJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("androidx/core/graphics/Insets")
     FakeJni::JInt left = 0;
@@ -58,7 +58,7 @@ public:
 // getScript/getCountry/getVariant regardless of runtime locale count
 // (method-ID caching happens unconditionally at init, not lazily), per the
 // real GameActivity.cpp source fetched from AOSP.
-class LocaleStub : public FakeJni::JObject {
+class LocaleJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/Locale")
     // The real system locale, not a literal. A real device answers this
@@ -96,14 +96,14 @@ public:
 // found that branch reached with an empty string, structurally
 // consistent with Roblox's own extended initializeNativeCode reading a
 // locale-derived string and finding it empty because of exactly this
-// stub. Reporting one real locale, the system's own (LocaleStub reads
+// stub. Reporting one real locale, the system's own (LocaleJava reads
 // it from the desktop's locale environment), so real code that
 // legitimately expects >=1 system locale gets one.
-class LocaleListStub : public FakeJni::JObject {
+class LocaleListJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/LocaleList")
     jint size() { return 1; }
-    std::shared_ptr<LocaleStub> get(jint /*index*/) { return std::make_shared<LocaleStub>(); }
+    std::shared_ptr<LocaleJava> get(jint /*index*/) { return std::make_shared<LocaleJava>(); }
 };
 
 // androidx.core.view.WindowInsetsCompat$Type; real GameActivity_register
@@ -111,7 +111,7 @@ public:
 // constants: caption bar, display cutout, IME, etc). Values are the real,
 // stable AndroidX WindowInsetsCompat.Type bit-flag constants (public,
 // documented API).
-class WindowInsetsCompatTypeStub : public FakeJni::JObject {
+class WindowInsetsCompatTypeJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("androidx/core/view/WindowInsetsCompat$Type")
     static jint captionBar() { return 1 << 4; }
@@ -136,7 +136,7 @@ public:
 // Configuration keeps equal to getLocales().get(0). The AGDK GameActivity
 // in Roblox 2.740 looks it up in GameActivity_register and aborts when it
 // is missing ("Unable to find field locale"), so the engine never boots.
-class ConfigurationStub : public FakeJni::JObject {
+class ConfigurationJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/res/Configuration")
     FakeJni::JFloat fontScale = 1.0f;
@@ -163,9 +163,9 @@ public:
     FakeJni::JInt compatSmallestScreenWidthDp = 1080;
     FakeJni::JInt assetsSeq = 0;
     FakeJni::JInt seq = 0;
-    std::shared_ptr<LocaleStub> locale = std::make_shared<LocaleStub>();
+    std::shared_ptr<LocaleJava> locale = std::make_shared<LocaleJava>();
 
-    std::shared_ptr<LocaleListStub> getLocales() { return std::make_shared<LocaleListStub>(); }
+    std::shared_ptr<LocaleListJava> getLocales() { return std::make_shared<LocaleListJava>(); }
 };
 
 // Real AGDK GameActivity_initializeNativeCode calls FindClass on its own
@@ -183,9 +183,9 @@ public:
 // Stud's own AAssetManager_fromJava() (android-glue/src/asset_manager.cpp)
 // deliberately ignores both its arguments and routes real asset access
 // through set_asset_base_directory()'s path-based logic instead, so this
-// exists purely to give GameActivityStub::getAssets() below a real,
+// exists purely to give GameActivityJava::getAssets() below a real,
 // non-null, correctly-typed jobject to hand back, same "type-shaped
-// call convention only" reasoning as SurfaceStub above.
+// call convention only" reasoning as SurfaceJava above.
 // The real app version, set once from the configured APK's own manifest
 // (main.cpp, before dlopen) and read wherever the engine asks. Falls
 // back to an empty string if the manifest could not be read, an honest
@@ -201,24 +201,30 @@ const std::string& real_app_version();
 // web view really sends. Set once at bring-up, by the process holding
 // the library handle.
 void set_webview_user_agent_reporter(std::function<void()> reporter);
+
+// Answers a native purchase prompt the way the app does when it has no
+// billing to offer: nativeInGamePurchaseFinished(false, userId,
+// productId). Without an answer the engine's purchase flow waits for ever.
+void set_purchase_unavailable_reporter(
+    std::function<void(long long user_id, const std::string& product_id)> reporter);
 void set_real_app_version(const std::string& version);
 
-class AssetManagerStub : public FakeJni::JObject {
+class AssetManagerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/res/AssetManager")
 };
 
-// java.io.File; real, minimal (absolute-path-only) stub. Real
+// java.io.File; real, minimal (absolute-path-only) implementation. Real
 // signature match for Context.getFilesDir()/getCacheDir()'s own real
 // return type; getAbsolutePath()/getPath()/toString() cover every real
 // caller found using File objects elsewhere in this project (the app's own code's own
 // FlagCacheUtils, etc, all just build child paths off the
 // absolute path string).
-class JavaIoFileStub : public FakeJni::JObject {
+class JavaIoFileJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/io/File")
-    JavaIoFileStub() = default;
-    explicit JavaIoFileStub(std::string path) : path_(std::move(path)) {}
+    JavaIoFileJava() = default;
+    explicit JavaIoFileJava(std::string path) : path_(std::move(path)) {}
     std::shared_ptr<FakeJni::JString> getAbsolutePath() {
         return std::make_shared<FakeJni::JString>(path_);
     }
@@ -229,50 +235,50 @@ private:
     std::string path_;
 };
 
-class ContextStub : public FakeJni::JObject {
+class ContextJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/Context")
     std::shared_ptr<FakeJni::JString> getPackageName() {
         return std::make_shared<FakeJni::JString>("com.roblox.client");
     }
-    std::shared_ptr<JavaIoFileStub> getFilesDir();
-    std::shared_ptr<JavaIoFileStub> getCacheDir();
-    // Confirmed (see SharedPreferencesStub's own doc
-    // comment in android_framework_stubs.h): real signature
+    std::shared_ptr<JavaIoFileJava> getFilesDir();
+    std::shared_ptr<JavaIoFileJava> getCacheDir();
+    // Confirmed (see SharedPreferencesJava's own doc
+    // comment in android_framework.h): real signature
     // `(Ljava/lang/String;I)Landroid/content/SharedPreferences;`.
     // `mode` is ignored. Stud's own backing store has no real
     // multi-process/world-readable distinction to honor.
-    std::shared_ptr<SharedPreferencesStub> getSharedPreferences(std::shared_ptr<FakeJni::JString> name,
+    std::shared_ptr<SharedPreferencesJava> getSharedPreferences(std::shared_ptr<FakeJni::JString> name,
                                                                   FakeJni::JInt /*mode*/) {
-        return SharedPreferencesStub::get_or_create(name ? name->asStdString() : "");
+        return SharedPreferencesJava::get_or_create(name ? name->asStdString() : "");
     }
-    std::shared_ptr<ResourcesStub> getResources() { return std::make_shared<ResourcesStub>(); }
+    std::shared_ptr<ResourcesJava> getResources() { return std::make_shared<ResourcesJava>(); }
 };
 
-class ActivityStub : public ContextStub {
+class ActivityJava : public ContextJava {
 public:
-    DEFINE_CLASS_NAME("android/app/Activity", ContextStub)
+    DEFINE_CLASS_NAME("android/app/Activity", ContextJava)
     FakeJni::JBoolean runOnUiThread(std::shared_ptr<FakeJni::JObject> runnable);
-    std::shared_ptr<ActivityStub> getApplicationContext() {
-        return std::static_pointer_cast<ActivityStub>(shared_from_this());
+    std::shared_ptr<ActivityJava> getApplicationContext() {
+        return std::static_pointer_cast<ActivityJava>(shared_from_this());
     }
 };
 
 // Real Android's own hierarchy is
 // `GameActivity extends ... extends Activity extends ... extends Context`,
 // and the three classes above are declared here, ahead of it, purely so
-// GameActivityStub can actually express that. It used to inherit
+// GameActivityJava can actually express that. It used to inherit
 // FakeJni::JObject directly, which meant every Context method had to be
 // duplicated onto it by hand (getResources() was, after a real
 // live-caught miss) and, worse, any method whose real signature
 // declares an `android.content.Context` parameter could never be called
 // with the real activity: FakeJni resolves the argument by
-// dynamic_cast, and MainGameActivityStub was not a ContextStub, so the
+// dynamic_cast, and MainGameActivityJava was not a ContextJava, so the
 // call threw `Invalid Reference, Unexpected Type` instead
 // (live-caught on DeviceUtils.getScreenPhysicalSizeInMillimeters).
-class GameActivityStub : public ActivityStub {
+class GameActivityJava : public ActivityJava {
 public:
-    DEFINE_CLASS_NAME("com/google/androidgamesdk/GameActivity", ActivityStub)
+    DEFINE_CLASS_NAME("com/google/androidgamesdk/GameActivity", ActivityJava)
 
     // Activity.finish(): the game's only activity is going away, which on
     // Android is the app closing. The same path as the app's own Exit
@@ -294,12 +300,12 @@ public:
         if (on_keep_screen_on) on_keep_screen_on(on);
     }
     void setWindowFormat(jint /*format*/) {}
-    std::shared_ptr<InsetsStub> getWindowInsets(jint /*type*/) {
-        return std::make_shared<InsetsStub>();
+    std::shared_ptr<InsetsJava> getWindowInsets(jint /*type*/) {
+        return std::make_shared<InsetsJava>();
     }
-    std::shared_ptr<InsetsStub> getWaterfallInsets() { return std::make_shared<InsetsStub>(); }
+    std::shared_ptr<InsetsJava> getWaterfallInsets() { return std::make_shared<InsetsJava>(); }
     // Real param type is android.view.inputmethod.EditorInfo, accepted
-    // generically as a plain JObject rather than a fully-fielded stub
+    // generically as a plain JObject rather than a fully-fielded class
     // class, since nothing here reads its fields.
     void setImeEditorInfo(std::shared_ptr<FakeJni::JObject> /*info*/) {}
     void setImeEditorInfoFields(jint /*a*/, jint /*b*/, jint /*c*/) {}
@@ -312,7 +318,7 @@ public:
     // method missing from the descriptor (GetMethodID returned a null
     // jmethodID, and AGDK's native code called it unconditionally with no
     // null check).
-    std::shared_ptr<AssetManagerStub> getAssets() { return std::make_shared<AssetManagerStub>(); }
+    std::shared_ptr<AssetManagerJava> getAssets() { return std::make_shared<AssetManagerJava>(); }
 };
 
 // com.roblox.client.startup.MainGameActivity, the real, concrete
@@ -320,7 +326,7 @@ public:
 // android.app.lib_name="roblox" entry point (real class
 // name, confirmed via strings in libroblox.so:
 // Java_com_roblox_client_startup_MainGameActivity_native*). Needed as its
-// own class, not just GameActivityStub, so bootstrapTheApp(), a real,
+// own class, not just GameActivityJava, so bootstrapTheApp(), a real,
 // confirmed (strings: "bootstrapTheApp", "[FLog::NativeDM]
 // bootstrapTheApp_:") native-to-Java callback, is reachable on whatever
 // jobject Stud hands the engine as `thiz` when calling
@@ -341,17 +347,17 @@ public:
 // enables.
 // Forward-declared here, fully defined further down this file (real,
 // confirmed against the app's own code `com/roblox/client/startup/NativeHelper`; see that
-// class's own doc comment), MainGameActivityStub only needs the
+// class's own doc comment), MainGameActivityJava only needs the
 // incomplete type for its own `nativeHelper` field declaration below;
 // the constructor that actually allocates one is defined out-of-line
-// in game_activity_stubs.cpp, after NativeHelperStub's real definition.
-class NativeHelperStub;
+// in app_java_classes.cpp, after NativeHelperJava's real definition.
+class NativeHelperJava;
 
-class MainGameActivityStub : public GameActivityStub {
+class MainGameActivityJava : public GameActivityJava {
 public:
-    DEFINE_CLASS_NAME("com/roblox/client/startup/MainGameActivity", GameActivityStub)
+    DEFINE_CLASS_NAME("com/roblox/client/startup/MainGameActivity", GameActivityJava)
 
-    MainGameActivityStub();
+    MainGameActivityJava();
 
     // Real methods the engine looks up on this activity, both live-caught as
     // `GetMethodID MISS` in an ordinary run.
@@ -391,7 +397,7 @@ public:
     // other real field-based lookup this project has found and fixed)
     // gets back a real, live, always-non-null instance instead of a
     // silent null, allocated once in the constructor below.
-    std::shared_ptr<NativeHelperStub> nativeHelper;
+    std::shared_ptr<NativeHelperJava> nativeHelper;
 
     // Confirmed getter (`getNativeHelper()` on the real
     // MainGameActivity's getter returns `this.nativeHelper`,
@@ -407,7 +413,7 @@ public:
     // `gameActivity_*` method lookup on that null object fails the same
     // way (`GetObjectClass(null)` -> jnivm's own "Invalid" sentinel ->
     // null class), exactly the observed, still-open symptom.
-    std::shared_ptr<NativeHelperStub> getNativeHelper() { return nativeHelper; }
+    std::shared_ptr<NativeHelperJava> getNativeHelper() { return nativeHelper; }
 };
 
 // Minimal placeholder for android.view.Surface, AGDK's
@@ -419,7 +425,7 @@ public:
 // JNI does not runtime-check an object's dynamic type against a method's
 // declared parameter type at CallVoidMethod() time, confirmed true for
 // jnivm too, matching real JNI semantics.
-class SurfaceStub : public FakeJni::JObject {
+class SurfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/view/Surface")
 };
@@ -431,11 +437,11 @@ public:
 // always false, see init_params.h's own desktop-spoof comment), so real
 // code is expected to branch away before ever dereferencing most of
 // this object's methods, same "grow against real evidence"
-// discipline as every other stub in this file, not preemptively
+// discipline as every other class in this file, not preemptively
 // fleshed out. Two exceptions grown proactively this session, both
 // real, extremely common Activity/Context call patterns rather than
 // guesses: `runOnUiThread(Runnable)`, wired to the real
-// `android_framework_stubs.h` Looper/Handler machinery (the Runnable
+// `android_framework.h` Looper/Handler machinery (the Runnable
 // really runs, on the real main-looper pump thread, not a no-op), and
 // `getPackageName()` (real, honest `"com.roblox.client"`; this
 // genuinely is that real app, just hosted outside Android).
@@ -443,7 +449,7 @@ public:
 
 // Real paths Stud already computes and hands to libroblox.so directly
 // via nativeSetFilesDirectory/nativeSetCacheDirectory (native_settings.
-// cpp), set once at boot (process-b/src/main.cpp) so ActivityStub's
+// cpp), set once at boot (process-b/src/main.cpp) so ActivityJava's
 // own getFilesDir()/getCacheDir() can hand back the SAME real paths
 // through the real Context API real AGDK/native code also commonly
 // uses, instead of leaving it unregistered.
@@ -459,21 +465,21 @@ void set_activity_context_directories(std::string files_dir, std::string cache_d
 // concrete object is passed at a given call site, so a real method
 // declared `void foo(Context c)` has descriptor `(Landroid/content/
 // Context;)V` even when actually called with an Activity or
-// Application instance. This means a distinct `ContextStub` base class
+// Application instance. This means a distinct `ContextJava` base class
 // (real Android hierarchy: both Activity and Application really are
 // Context subclasses) is needed for exact signature matching whenever
 // native code resolves a method by its base `Context`-declared type:
 // a real, previously-missing distinction, not cosmetic refactoring.
 // Holds every Context method already proven needed by real evidence.
-// ContextStub/ActivityStub are defined further up, ahead of
-// GameActivityStub, which inherits them (see the comment there).
+// ContextJava/ActivityJava are defined further up, ahead of
+// GameActivityJava, which inherits them (see the comment there).
 
 // Confirmed (`com.roblox.client.JNIBaseUrlSetter`):
 // a real `@Keep public static void setBaseUrl(String)` that native code
 // calls to push the real base URL back into the Java layer. Was
 // completely unregistered, so every call produced a "class is null"
 // diagnostic and was silently dropped.
-class JNIBaseUrlSetterStub : public FakeJni::JObject {
+class JNIBaseUrlSetterJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/JNIBaseUrlSetter")
 
@@ -503,7 +509,7 @@ public:
 // point is the exact shape that has silently broken calls here before.
 // No methods, the real ones live in libroblox.so and are called through
 // their exported symbols, not through this descriptor.
-class JNIExperienceProtocolStub : public FakeJni::JObject {
+class JNIExperienceProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/experience/JNIExperienceProtocol")
 };
@@ -516,16 +522,16 @@ public:
 // to learn the protocol's wire names, with a null jclass every one of
 // those returns nothing and the protocol cannot be registered at all.
 // No methods: the real ones are called through their exported symbols.
-class JNILinkingProtocolStub : public FakeJni::JObject {
+class JNILinkingProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/linking/JNILinkingProtocol")
 };
 
-class JNIAppRestarterStub : public FakeJni::JObject {
+class JNIAppRestarterJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/JNIAppRestarter")
 
-    static void restartApp(std::shared_ptr<ContextStub> context,
+    static void restartApp(std::shared_ptr<ContextJava> context,
                             std::shared_ptr<FakeJni::JString> url);
 
     // Set once during bring-up. Only render-host can reach the desktop
@@ -544,15 +550,15 @@ public:
 // (real Android: Application is the process-wide singleton Context,
 // Activity is per-screen), needed purely so a real caller resolving
 // `ActivityThread.getApplication()` by its real declared return type
-// gets a class whose name actually matches (see ActivityThreadStub
-// below). Inherits every real Context method from ContextStub, backed
+// gets a class whose name actually matches (see ActivityThreadJava
+// below). Inherits every real Context method from ContextJava, backed
 // by the same real global state (set_activity_context_directories()),
 // since Stud has only one real process-wide files/cache directory pair
 // regardless of which Context-shaped object hands it out.
-class ApplicationStub : public ContextStub {
+class ApplicationJava : public ContextJava {
 public:
-    DEFINE_CLASS_NAME("android/app/Application", ContextStub)
-    static std::shared_ptr<ApplicationStub> singleton();
+    DEFINE_CLASS_NAME("android/app/Application", ContextJava)
+    static std::shared_ptr<ApplicationJava> singleton();
 };
 
 // Confirmed: libroblox.so embeds the literal real class
@@ -570,13 +576,13 @@ public:
 // silent "class is null" way this whole session's sweep keeps finding,
 // specifically because `ActivityThread` was never registered at all,
 // checked, this is the exact real mechanism real Android uses.
-class ActivityThreadStub : public FakeJni::JObject {
+class ActivityThreadJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/app/ActivityThread")
-    std::shared_ptr<ApplicationStub> getApplication() { return ApplicationStub::singleton(); }
+    std::shared_ptr<ApplicationJava> getApplication() { return ApplicationJava::singleton(); }
 
-    static std::shared_ptr<ActivityThreadStub> currentActivityThread() {
-        static auto singleton = std::make_shared<ActivityThreadStub>();
+    static std::shared_ptr<ActivityThreadJava> currentActivityThread() {
+        static auto singleton = std::make_shared<ActivityThreadJava>();
         return singleton;
     }
 };
@@ -590,7 +596,7 @@ public:
 // classes and has its own dedicated error-logging category for when
 // they fail. Neither class carries `@Keep` (real evidence class
 // itself, from the earlier embedded-string sweep, not the `@Keep`
-// heuristic; see SessionReporterJavaInterfaceStub's own doc comment
+// heuristic; see SessionReporterJavaInterfaceJava's own doc comment
 // for why embedded-string evidence is treated as equally reliable).
 // `FMOD.init(Context)` is the real, one-time entry point a real device
 // calls at real audio-subsystem bring-up, storing a static Context
@@ -601,22 +607,22 @@ public:
 // `MediaCodec` (org.fmod.MediaCodec) deliberately NOT included.
 // Real, but deep in-experience compressed-audio-file decode plumbing
 // (MediaExtractor + java.lang.reflect.Proxy), not boot-relevant.
-class FMODStub : public FakeJni::JObject {
+class FMODJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/fmod/FMOD")
 
-    static void init(std::shared_ptr<ContextStub> context) {
+    static void init(std::shared_ptr<ContextJava> context) {
         context_singleton() = context;
         std::printf("stud: FMOD.init() called (real FMOD Java audio bridge, honest no-op backing)\n");
     }
     static FakeJni::JBoolean checkInit() { return context_singleton() != nullptr; }
     static void close() { context_singleton() = nullptr; }
-    static std::shared_ptr<AssetManagerStub> getAssetManager() {
+    static std::shared_ptr<AssetManagerJava> getAssetManager() {
         if (!context_singleton()) return nullptr;
-        return std::make_shared<AssetManagerStub>();
+        return std::make_shared<AssetManagerJava>();
     }
     // Real values, matching the audio device Stud actually provides
-    // (render-client/src/aaudio_stub.cpp: 48 kHz, 480-frame bursts).
+    // (render-client/src/aaudio_client.cpp: 48 kHz, 480-frame bursts).
     // These used to report 0, which is what a real device reports when it
     // has no audio at all, and FMOD configures its output from them, so
     // zero told it there was nothing to configure.
@@ -626,9 +632,9 @@ public:
     static FakeJni::JBoolean lowLatencyFlag() { return false; }
     static FakeJni::JBoolean proAudioFlag() { return false; }
     // The app's own code: `Build.VERSION.SDK_INT >= 27`; Stud's own
-    // BuildVersionStub.SDK_INT is 34, so `true` is the internally
+    // BuildVersionJava.SDK_INT is 34, so `true` is the internally
     // consistent, honest answer (same reasoning as
-    // SystemThemeProtocolStub::isSystemThemeAvailable()).
+    // SystemThemeProtocolJava::isSystemThemeAvailable()).
     static FakeJni::JBoolean supportsAAudio() { return true; }
     // The app's own logic, evaluated against the answers above. Stud's
     // output is a normal 10ms-burst stream, not a low-latency fast path,
@@ -637,8 +643,8 @@ public:
     static FakeJni::JBoolean supportsLowLatency() { return false; }
 
 private:
-    static std::shared_ptr<ContextStub>& context_singleton() {
-        static std::shared_ptr<ContextStub> instance;
+    static std::shared_ptr<ContextJava>& context_singleton() {
+        static std::shared_ptr<ContextJava> instance;
         return instance;
     }
 };
@@ -653,7 +659,7 @@ private:
 // host's audio output, and are set during bring-up
 // (runtime/src/fmod_audio_output.cpp). Without them init() fails, which
 // is what a real AudioTrack does when it cannot be created.
-class AudioDeviceStub : public FakeJni::JObject {
+class AudioDeviceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/fmod/AudioDevice")
     struct Output {
@@ -705,7 +711,7 @@ private:
 // `size()` first (matching Roblox's own generally defensive style)
 // should ever reach it, grown against real evidence if that
 // assumption turns out wrong.
-class EmptyArrayListStub : public FakeJni::JObject {
+class EmptyArrayListJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/ArrayList")
     FakeJni::JInt size() { return 0; }
@@ -715,10 +721,10 @@ public:
 // java.util.List, the interface, distinct from the ArrayList above and NOT
 // one of the types jnivm provides itself (checked against its own
 // `blacklisted[]` array, which is what makes the ByteBuffer/Class collision
-// class dangerous; List is absent from it, so a Stud stub is safe here).
+// class dangerous; List is absent from it, so a Stud class is safe here).
 // Live-caught as a plain `FindClass(java/util/List) -> raw jclass=0x0` in every
 // run, which means the engine could not even resolve the type.
-class JavaUtilListStub : public FakeJni::JObject {
+class JavaUtilListJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("java/util/List")
     FakeJni::JInt size() { return 0; }
@@ -745,12 +751,12 @@ public:
 // claimed: Stud has no system-level mute, and the engine stops reading the
 // capture stream when it mutes anyway. The enum's own order is
 // SPEAKER_PHONE, WIRED_HEADSET, EARPIECE, BLUETOOTH, NONE.
-class AppRtcDeviceWrapperStub : public FakeJni::JObject {
+class AppRtcDeviceWrapperJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/audio/AppRtcDeviceWrapper")
     FakeJni::JLong nativeReference = 0;
-    AppRtcDeviceWrapperStub() = default;
-    explicit AppRtcDeviceWrapperStub(FakeJni::JLong reference) : nativeReference(reference) {}
+    AppRtcDeviceWrapperJava() = default;
+    explicit AppRtcDeviceWrapperJava(FakeJni::JLong reference) : nativeReference(reference) {}
 
     FakeJni::JInt getSelectedAudioDeviceAsInt();
     std::shared_ptr<FakeJni::JString> getSelectedAudioDeviceName();
@@ -767,10 +773,10 @@ public:
 // along. Registered empty until now, which left the engine constructing
 // it and finding nothing: the real surface is small and is below, so the
 // refusal is explicit rather than a silently dropped call.
-class FmodMediaCodecStub : public FakeJni::JObject {
+class FmodMediaCodecJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/fmod/MediaCodec")
-    FmodMediaCodecStub() = default;
+    FmodMediaCodecJava() = default;
     FakeJni::JBoolean init(FakeJni::JLong handle);
     FakeJni::JInt getChannelCount();
     FakeJni::JInt getSampleRate();
@@ -781,7 +787,7 @@ public:
 
 // Classes the engine only ever asks for once its reflective
 // ClassLoader.loadClass() path works; see register_java_lang_class_methods()
-// in android_framework_stubs.cpp. Registered empty first, deliberately: that
+// in android_framework.cpp. Registered empty first, deliberately: that
 // turns a silent null into precise `GetMethodID MISS ... method=...` lines
 // naming what is actually wanted, which is the evidence needed to implement
 // them honestly.
@@ -801,18 +807,18 @@ public:
 // in `open()`'s real signature, so the method cannot resolve without
 // classes carrying their exact names. Nothing reads their fields, so
 // they stay empty rather than inventing a layout, same approach as
-// DeviceDisplayCapabilityStub in protocol_platform_stubs.h.
-class SystemDialogRequestStub : public FakeJni::JObject {
+// DeviceDisplayCapabilityJava in protocol_platforms.h.
+class SystemDialogRequestJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/systemdialogplatforminterface/generated/SystemDialogRequest")
 };
 
-class ISystemDialogCallbackStub : public FakeJni::JObject {
+class ISystemDialogCallbackJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/systemdialogplatforminterface/generated/ISystemDialogCallback")
 };
 
-class IPlatformSystemDialogHandlerStub : public FakeJni::JObject {
+class IPlatformSystemDialogHandlerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/systemdialogplatforminterface/generated/IPlatformSystemDialogHandler")
 
@@ -825,19 +831,19 @@ public:
     // return, 0, logged, rather than a fabricated handle the engine
     // would later try to dismiss. Unreachable while isAvailable() is
     // false, which is the point.
-    FakeJni::JLong open(std::shared_ptr<SystemDialogRequestStub> request,
-                        std::shared_ptr<ISystemDialogCallbackStub> callback);
+    FakeJni::JLong open(std::shared_ptr<SystemDialogRequestJava> request,
+                        std::shared_ptr<ISystemDialogCallbackJava> callback);
     void dismiss(FakeJni::JLong id);
     void dismissAll();
 };
 
-class PlatformSystemDialogHandlerStub : public IPlatformSystemDialogHandlerStub {
+class PlatformSystemDialogHandlerJava : public IPlatformSystemDialogHandlerJava {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/systemdialog/PlatformSystemDialogHandler",
-                      IPlatformSystemDialogHandlerStub)
+                      IPlatformSystemDialogHandlerJava)
 
-    static std::shared_ptr<PlatformSystemDialogHandlerStub> instance();
-    static inline std::shared_ptr<PlatformSystemDialogHandlerStub> INSTANCE;
+    static std::shared_ptr<PlatformSystemDialogHandlerJava> instance();
+    static inline std::shared_ptr<PlatformSystemDialogHandlerJava> INSTANCE;
 
     // The app's own code checks whether it currently holds an Activity to show a
     // dialog on. Stud hosts no real Android dialog UI at all, so `false`
@@ -847,12 +853,12 @@ public:
     FakeJni::JBoolean isAvailable() { return false; }
 };
 
-class FacialAgeEstimationProtocolStub : public FakeJni::JObject {
+class FacialAgeEstimationProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/facialageestimation/FacialAgeEstimationProtocol")
 
-    static std::shared_ptr<FacialAgeEstimationProtocolStub> instance();
-    static inline std::shared_ptr<FacialAgeEstimationProtocolStub> INSTANCE;
+    static std::shared_ptr<FacialAgeEstimationProtocolJava> instance();
+    static inline std::shared_ptr<FacialAgeEstimationProtocolJava> INSTANCE;
 
     // Real implementation loads Persona's face-scan SDK reflectively and
     // reports whether that succeeded (its own imports name
@@ -895,11 +901,11 @@ public:
 // project, since no real interactive text-input session has happened
 // yet, but a real, correctly-scoped gap per the real source, not a
 // guess).
-class GameTextInputStateStub : public FakeJni::JObject {
+class GameTextInputStateJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/google/androidgamesdk/gametextinput/State")
-    GameTextInputStateStub() = default;
-    GameTextInputStateStub(std::shared_ptr<FakeJni::JString> text, FakeJni::JInt selection_start,
+    GameTextInputStateJava() = default;
+    GameTextInputStateJava(std::shared_ptr<FakeJni::JString> text, FakeJni::JInt selection_start,
                             FakeJni::JInt selection_end, FakeJni::JInt composing_region_start,
                             FakeJni::JInt composing_region_end)
         : text(text ? std::move(text) : std::make_shared<FakeJni::JString>("")),
@@ -919,13 +925,13 @@ public:
 // ), also a real, confirmed embedded class name in
 // libroblox.so: a plain, real, public-field data holder (real device
 // native code constructs+populates one directly via `NewObject`, same
-// shape as GameTextInputStateStub above), not a native->Java callback
+// shape as GameTextInputStateJava above), not a native->Java callback
 // surface. Real constructor: `ChannelRecord(String, long)`.
-class ChannelRecordStub : public FakeJni::JObject {
+class ChannelRecordJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/model/ChannelRecord")
-    ChannelRecordStub() = default;
-    ChannelRecordStub(std::shared_ptr<FakeJni::JString> name, jlong id)
+    ChannelRecordJava() = default;
+    ChannelRecordJava(std::shared_ptr<FakeJni::JString> name, jlong id)
         : name(name ? std::move(name) : std::make_shared<FakeJni::JString>("")), id(id) {}
 
     std::shared_ptr<FakeJni::JString> name = std::make_shared<FakeJni::JString>("");
@@ -938,7 +944,7 @@ public:
 // mirroring real Android's own `ApplicationExitInfo` API (real device
 // native code constructs+populates one via `NewObject`, matching one of
 // its 3 real overloaded constructors). Already-established
-// context (see EmptyArrayListStub's own doc comment): the one
+// context (see EmptyArrayListJava's own doc comment): the one
 // currently-known real call site
 // (`nativePostClientSettingsLoadedInitialization3(List<
 // ApplicationExitInfoCpp>)`) is correctly satisfied by an empty real
@@ -946,17 +952,17 @@ public:
 // added for completeness/signature-matching in case another real call
 // site constructs individual instances, not because the known call
 // site needs it.
-class ApplicationExitInfoCppStub : public FakeJni::JObject {
+class ApplicationExitInfoCppJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/model/ApplicationExitInfoCpp")
-    ApplicationExitInfoCppStub() = default;
-    ApplicationExitInfoCppStub(FakeJni::JInt pid, jlong timestamp,
+    ApplicationExitInfoCppJava() = default;
+    ApplicationExitInfoCppJava(FakeJni::JInt pid, jlong timestamp,
                                 std::shared_ptr<FakeJni::JString> exitReason)
         : mPid(pid), mTimestamp(timestamp), mExitReason(std::move(exitReason)) {}
-    ApplicationExitInfoCppStub(FakeJni::JInt pid, FakeJni::JInt signal, jlong timestamp,
+    ApplicationExitInfoCppJava(FakeJni::JInt pid, FakeJni::JInt signal, jlong timestamp,
                                 std::shared_ptr<FakeJni::JString> exitReason)
         : mPid(pid), mSignal(signal), mTimestamp(timestamp), mExitReason(std::move(exitReason)) {}
-    ApplicationExitInfoCppStub(FakeJni::JInt pid, FakeJni::JInt signal, jlong timestamp,
+    ApplicationExitInfoCppJava(FakeJni::JInt pid, FakeJni::JInt signal, jlong timestamp,
                                 std::shared_ptr<FakeJni::JString> exitReason,
                                 std::shared_ptr<FakeJni::JString> exitSubreason,
                                 std::shared_ptr<FakeJni::JString> description, jlong pss, jlong rss,
@@ -995,7 +1001,7 @@ public:
 // to actually complete the async round-trip with, and doing so isn't
 // needed for real, boot-relevant behavior (achievements are strictly
 // an in-experience, post-join feature).
-class JNIAchievementStub : public FakeJni::JObject {
+class JNIAchievementJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/achievement/JNIAchievement")
     // Both calls are asynchronous: `true` only says the request was
@@ -1041,10 +1047,10 @@ public:
 // much larger feature), matching this file's own "satisfy the real
 // call shape now, grow the real behavior against real evidence later"
 // convention used throughout.
-class InputConnectionStub : public FakeJni::JObject {
+class InputConnectionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/google/androidgamesdk/gametextinput/InputConnection")
-    void setState(std::shared_ptr<GameTextInputStateStub> /*state*/) {}
+    void setState(std::shared_ptr<GameTextInputStateJava> /*state*/) {}
     void setSoftKeyboardActive(FakeJni::JBoolean /*active*/, FakeJni::JInt /*flags*/) {}
     void restartInput() {}
 };
@@ -1056,7 +1062,7 @@ public:
 // class must exist for `showKeyboard`'s own JNI signature to resolve at
 // all, without it the engine's real call is silently dropped, which is
 // exactly what kept keyboard input dead.
-class NativeTextBoxInfoStub : public FakeJni::JObject {
+class NativeTextBoxInfoJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/model/NativeTextBoxInfo")
     FakeJni::JInt font = 0;
@@ -1075,7 +1081,7 @@ public:
     FakeJni::JInt yAlignment = 0;
     FakeJni::JBoolean editable = false;
 
-    NativeTextBoxInfoStub() = default;
+    NativeTextBoxInfoJava() = default;
     // Real 15-argument constructor, in the real parameter order, read from
     // THIS APK's own copy of the class rather than an older one; that
     // older copy is of the 2.733 build, whose constructor takes
@@ -1085,7 +1091,7 @@ public:
     // NativeGLJavaInterface.showKeyboard(handle, ..., NativeTextBoxInfo) never
     // fired and Stud never learned which TextBox had focus, which is why
     // typing did nothing.
-    NativeTextBoxInfoStub(FakeJni::JFloat x_, FakeJni::JFloat y_, FakeJni::JFloat width_,
+    NativeTextBoxInfoJava(FakeJni::JFloat x_, FakeJni::JFloat y_, FakeJni::JFloat width_,
                           FakeJni::JFloat height_, FakeJni::JFloat fontSize_,
                           FakeJni::JBoolean multiline_, FakeJni::JInt xAlignment_,
                           FakeJni::JInt yAlignment_, FakeJni::JInt textColor_, FakeJni::JInt font_,
@@ -1112,7 +1118,7 @@ public:
 // com.roblox.engine.jni.video.VideoCodecCapability. Real, confirmed against the app's own code
 // POJO describing one hardware video codec. Registered so
 // MediaCodecInfoUtils.getVideoCodecs()'s real array return type resolves.
-class VideoCodecCapabilityStub : public FakeJni::JObject {
+class VideoCodecCapabilityJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/video/VideoCodecCapability")
     std::shared_ptr<FakeJni::JString> codec;
@@ -1154,10 +1160,10 @@ inline void* libmediandk_symbol(const char* name) {
     return handle != nullptr ? ::dlsym(handle, name) : nullptr;
 }
 
-class MediaCodecInfoUtilsStub : public FakeJni::JObject {
+class MediaCodecInfoUtilsJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/video/MediaCodecInfoUtils")
-    static std::shared_ptr<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>
+    static std::shared_ptr<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityJava>>>
     getVideoCodecs() {
         using SupportedFn = int (*)(const char*);
         static const auto supported =
@@ -1190,12 +1196,12 @@ public:
         std::printf("stud: MediaCodecInfoUtils.getVideoCodecs() -> %s\n",
                     names.empty() ? "none" : names.c_str());
         std::fflush(stdout);
-        auto codecs = std::make_shared<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityStub>>>(
+        auto codecs = std::make_shared<FakeJni::JArray<std::shared_ptr<VideoCodecCapabilityJava>>>(
             static_cast<FakeJni::JInt>(mimes.size() + encoders.size()));
         for (size_t i = 0; i < mimes.size() + encoders.size(); ++i) {
             const bool is_encoder = i >= mimes.size();
             const std::string mime = is_encoder ? encoders[i - mimes.size()].first : mimes[i];
-            auto entry = std::make_shared<VideoCodecCapabilityStub>();
+            auto entry = std::make_shared<VideoCodecCapabilityJava>();
             entry->codec = std::make_shared<FakeJni::JString>(mime);
             entry->name = std::make_shared<FakeJni::JString>(
                 std::string(is_encoder ? "stud.ffmpeg.encoder." : "stud.ffmpeg.") + mime.substr(6));
@@ -1250,7 +1256,7 @@ public:
 // if the start time was never recorded. Stud can answer this exactly.
 // It knows when its own process started, so this is a real value, not a
 // placeholder.
-class LoggingProtocolStub : public FakeJni::JObject {
+class LoggingProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/logging/LoggingProtocol")
     static FakeJni::JLong getProcessTimestamp();
@@ -1262,18 +1268,18 @@ public:
 // native pointer, plus native methods the engine registers itself. Native
 // code constructs these to hand back a subscription/connection handle, so
 // an unregistered class means the construction silently fails.
-class MessageBusConnectionStub : public FakeJni::JObject {
+class MessageBusConnectionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/messagebus/Connection")
     FakeJni::JLong nativePtr = 0;
-    MessageBusConnectionStub() = default;
-    explicit MessageBusConnectionStub(FakeJni::JLong ptr) : nativePtr(ptr) {}
+    MessageBusConnectionJava() = default;
+    explicit MessageBusConnectionJava(FakeJni::JLong ptr) : nativePtr(ptr) {}
 };
 
 // The real MessageBus the Lua app publishes on. Stud needs an instance to
 // pass as `this` to the exported doSubscribeRaw, and native code needs the
 // class to exist to hand back a Connection.
-class MessageBusStub : public FakeJni::JObject {
+class MessageBusJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/messagebus/MessageBus")
 };
@@ -1282,7 +1288,7 @@ public:
 // interface (`void run(String)`, confirmed against the app's own code against the configured
 // APK). The engine calls this back with the raw JSON of every message
 // published on a subscribed topic.
-class MessageBusRawCallbackStub : public FakeJni::JObject {
+class MessageBusRawCallbackJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/messagebus/RawCallback")
 
@@ -1305,7 +1311,7 @@ public:
 // Stud calls those getters directly rather than constructing this, but
 // an unregistered class name is never cosmetic in this codebase (see
 // the engineering notes' own "class is null is NOT cosmetic" lesson).
-class WebViewProtocolStub : public FakeJni::JObject {
+class WebViewProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/protocols/webview/WebViewProtocol")
 };
@@ -1315,7 +1321,7 @@ public:
 // the real shape comes from MessageBus's own inner class that implements
 // it (`public String run(String)`), so a request handler returns the JSON
 // of its response rather than publishing one.
-class MessageBusRequestHandlerRawStub : public FakeJni::JObject {
+class MessageBusRequestHandlerRawJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/messagebus/RequestHandlerRaw")
 
@@ -1325,15 +1331,15 @@ public:
     std::function<std::string(const std::string&)> handler;
 };
 
-class MemStorageConnectionStub : public FakeJni::JObject {
+class MemStorageConnectionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/memstorage/Connection")
     FakeJni::JLong nativePtr = 0;
-    MemStorageConnectionStub() = default;
-    explicit MemStorageConnectionStub(FakeJni::JLong ptr) : nativePtr(ptr) {}
+    MemStorageConnectionJava() = default;
+    explicit MemStorageConnectionJava(FakeJni::JLong ptr) : nativePtr(ptr) {}
 };
 
-class NativeGLJavaInterfaceStub : public FakeJni::JObject {
+class NativeGLJavaInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/NativeGLJavaInterface")
     static void onAppBridgeNotification(std::shared_ptr<FakeJni::JString> type,
@@ -1353,10 +1359,10 @@ public:
     // real object, matching the exact class of bug already fixed twice
     // this session (`getResources()`/`getNativeHelper()`). Populated
     // once, at bring-up, in `main.cpp`.
-    static std::shared_ptr<DeviceStaticParamsStub> getDeviceStaticParams() {
+    static std::shared_ptr<DeviceStaticParamsJava> getDeviceStaticParams() {
         return s_device_static_params;
     }
-    static void setDeviceStaticParams(std::shared_ptr<DeviceStaticParamsStub> params) {
+    static void setDeviceStaticParams(std::shared_ptr<DeviceStaticParamsJava> params) {
         s_device_static_params = std::move(params);
     }
 
@@ -1374,7 +1380,7 @@ public:
     // replays real physical keystrokes through `nativePassText`.
     static void showKeyboard(FakeJni::JLong text_box, FakeJni::JBoolean show_native_input,
                               std::shared_ptr<FakeJni::JByteArray> initial_text,
-                              std::shared_ptr<NativeTextBoxInfoStub> info);
+                              std::shared_ptr<NativeTextBoxInfoJava> info);
     static void hideKeyboard();
 
     // The rest of the real NativeGLJavaInterface surface libroblox looks up
@@ -1457,7 +1463,7 @@ public:
     static void set_active_text_box_style(const TextBoxStyle& style);
 
 private:
-    static std::shared_ptr<DeviceStaticParamsStub> s_device_static_params;
+    static std::shared_ptr<DeviceStaticParamsJava> s_device_static_params;
 };
 
 // com.snapchat.djinni.NativeObjectManager. Real, confirmed against the app's own code class
@@ -1470,7 +1476,7 @@ private:
 // `FindClass()` (fake-jni.cpp) calls jnivm's `InternalFindClass()` with
 // `returnZero=true`, unlike raw jnivm's own default, this does NOT
 // auto-vivify an unregistered class, it returns a genuine null. This
-// class was never registered as a `FakeJni::JObject` stub anywhere in
+// class was never registered as a `FakeJni::JObject` anywhere in
 // this codebase, so every real `FindClass("com/snapchat/djinni/
 // NativeObjectManager")` call (part of Djinni's own generic classloader-
 // bootstrap idiom, confirmed in the engine much earlier this session) came
@@ -1484,7 +1490,7 @@ private:
 // succeed via the normal registered-class lookup path instead of the
 // no-auto-vivify branch, which is all Djinni's own bootstrap idiom
 // actually needs to proceed correctly.
-class NativeObjectManagerStub : public FakeJni::JObject {
+class NativeObjectManagerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/snapchat/djinni/NativeObjectManager")
     // Real signature: static void register(Object obj, long nativePtr).
@@ -1515,7 +1521,7 @@ public:
 // failing to "house" Roblox as a real Android app the way real Android
 // does; these are real user/device/locale/analytics accessor
 // methods Roblox's native engine calls INTO Java for (the reverse
-// direction from GameActivityStub et al above, which Java calls INTO
+// direction from GameActivityJava et al above, which Java calls INTO
 // native for), and until now none of their declaring classes existed
 // in this FakeJni environment at all.
 //
@@ -1533,10 +1539,10 @@ public:
 // false where no real value is knowable locally), not an attempt to
 // impersonate a real Roblox account's actual data.
 // Records the account facts from the Lua app's login report; see
-// NativeHelperStub::gameActivity_onDidLogInReceived.
+// NativeHelperJava::gameActivity_onDidLogInReceived.
 void record_account_info(const std::string& json);
 
-class NativeUserJavaInterfaceStub : public FakeJni::JObject {
+class NativeUserJavaInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/user/NativeUserJavaInterface")
 
@@ -1603,7 +1609,7 @@ public:
 
 // Writable files-dir path threaded in from main() (process-b's
 // own already-computed cache_subdir("files")), called once, before
-// register_game_activity_stubs()'s classes can be queried.
+// register_app_java_classes()'s classes can be queried.
 void set_native_user_interface_files_dir(std::string path);
 
 // com.roblox.engine.jni.util.NetworkUtils. getPublicIPv4Addresseses()
@@ -1611,7 +1617,7 @@ void set_native_user_interface_files_dir(std::string path);
 // interfaces, each followed by " : " (the app's own code, checked):
 // "192.168.0.10 : 10.8.0.2 : ". Process B shares the host's network, so
 // its interfaces are the machine's own.
-class NetworkUtilsStub : public FakeJni::JObject {
+class NetworkUtilsJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/util/NetworkUtils")
     static std::shared_ptr<FakeJni::JString> getPublicIPv4Addresseses();
@@ -1631,7 +1637,7 @@ public:
 // produce, not a fabricated/spoofed successful attestation. Never
 // change this to fake a successful response; that would mean
 // defeating a real integrity check rather than honest interoperability.
-class NativeQuoteInterfaceStub : public FakeJni::JObject {
+class NativeQuoteInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/NativeQuoteInterface")
     static std::shared_ptr<FakeJni::JByteArray> requestResponse(
@@ -1661,7 +1667,7 @@ public:
 // native side resolves it with GetMethodID and calls it on the `this`
 // handed to initStorageManagerNativeV3. Registering it static made that
 // lookup miss.
-class LocalStorageManagerStub : public FakeJni::JObject {
+class LocalStorageManagerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/LocalStorageManager")
     jlong getAllocatableBytes();
@@ -1673,7 +1679,7 @@ public:
 // has no equivalent of. Honest `false` (idle timer not disabled),
 // matches every other "capability Stud doesn't have" honest default in
 // this file, checked at real behavior.
-class ExperienceSessionStub : public FakeJni::JObject {
+class ExperienceSessionJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/game/ExperienceSession")
     static FakeJni::JBoolean shouldDisableExperienceIdleTimer() { return false; }
@@ -1685,9 +1691,9 @@ public:
 // `true` on a real device, honest `false` here instead, since Stud
 // has no real app-rating prompt UI/store integration to actually show
 // one (same "don't claim a capability Stud doesn't have" reasoning as
-// NativeQuoteInterfaceStub). `showAppRatingPrompt()` is a real no-op
+// NativeQuoteInterfaceJava). `showAppRatingPrompt()` is a real no-op
 // here for the same reason.
-class AppRatingPromptHandlerStub : public FakeJni::JObject {
+class AppRatingPromptHandlerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/appratingprompt/AppRatingPromptHandler")
     static FakeJni::JBoolean isAppRatingPromptAvailable() { return false; }
@@ -1702,8 +1708,8 @@ public:
 // detection + purchase invocation). Stud has no real store/IAP backend
 // to forward to, honest empty/false/no-op answers throughout, same
 // "don't claim a capability Stud doesn't have" reasoning as
-// NativeQuoteInterfaceStub/AppRatingPromptHandlerStub above.
-class IAPPurchaseManagerStub : public FakeJni::JObject {
+// NativeQuoteInterfaceJava/AppRatingPromptHandlerJava above.
+class IAPPurchaseManagerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/purchase/IAPPurchaseManager")
     static std::shared_ptr<FakeJni::JString> getPlatformPaymentMethod() {
@@ -1728,7 +1734,7 @@ public:
 // engine assertion-failure hook. The app's own defined fallback for
 // "no activity set" (Stud's actual situation, no real dialog UI) is to
 // log the assertion and return 0, matched exactly here, checked.
-class AssertDialogUtilStub : public FakeJni::JObject {
+class AssertDialogUtilJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/util/AssertDialogUtil")
     static FakeJni::JInt showAssertionPopup(std::shared_ptr<FakeJni::JString> str) {
@@ -1741,15 +1747,15 @@ public:
 // Confirmed (`com.roblox.universalapp.systemtheme.
 // SystemThemeProtocol`): both real @Keep, static.
 // `isSystemThemeAvailable()`'s own code is `Build.VERSION.SDK_INT >=
-// 29`. Stud's own BuildVersionStub.SDK_INT is 34 (see
-// android_framework_stubs.h), so `true` here is the internally
+// 29`. Stud's own BuildVersionJava.SDK_INT is 34 (see
+// android_framework.h), so `true` here is the internally
 // consistent, honest answer, checked. `getSystemTheme()`'s real
 // int return values (confirmed: ERROR=0, SYSTEM_LIGHT=3,
 // SYSTEM_DARK=4). Stud never sets a real `contextRef`, so the
 // correct value is the real class's own defined "no context" fallback,
 // ERROR(0), exactly matching what a real device would return in this
 // same situation, not a fabricated theme.
-class SystemThemeProtocolStub : public FakeJni::JObject {
+class SystemThemeProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/systemtheme/SystemThemeProtocol")
     // The desktop's own light/dark setting, in the real enum's terms
@@ -1776,26 +1782,26 @@ public:
 // which happened to work, since a static native ignores its jclass,
 // but left a real `FindClass -> raw jclass=0x0` in every run and would
 // break the moment anything did use it.
-class JNISystemThemeProtocolStub : public FakeJni::JObject {
+class JNISystemThemeProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/systemtheme/JNISystemThemeProtocol")
 };
 
-// Signature-matching-only stub (same pattern already established
-// in this file for DeviceDisplayCapabilityStub/DesignTokensStub): real
+// Signature-matching-only class (same pattern already established
+// in this file for DeviceDisplayCapabilityJava/DesignTokensJava): real
 // class name `java/nio/ByteBuffer`, needed only so
-// NativeHelperStub::gameActivity_onFlagsLoaded's real parameter type
+// NativeHelperJava::gameActivity_onFlagsLoaded's real parameter type
 // resolves to a correct JNI method signature; nothing here ever reads
 // or writes an actual buffer's contents.
-// NOTE: there is deliberately no `ByteBufferStub` here any more. jnivm
+// NOTE: there is deliberately no `ByteBufferJava` here any more. jnivm
 // already ships its own real `jnivm::ByteBuffer` and registers it under
 // exactly this class name itself (`vm.cpp`'s own
 // `env->GetClass<ByteBuffer>("java/nio/ByteBuffer")`), and that is the
 // concrete type a real `NewDirectByteBuffer()` call actually produces.
-// Stud used to declare a second, separate stub class for the same real
+// Stud used to declare a second, separate class for the same real
 // Java class name, which could never match: `UnpackJObject<T>`'s own
 // `dynamic_cast` from the real `jnivm::ByteBuffer` to Stud's unrelated
-// stub type always failed and threw `Invalid Reference, Unexpected
+// type always failed and threw `Invalid Reference, Unexpected
 // Type`. That throw was fatal in practice, libroblox checks for a
 // pending JNI exception, logs `RBXCRASH: JNI: Crashing due to unhandled
 // Java exception` and traps, which killed the very thread the engine
@@ -1816,7 +1822,7 @@ public:
 // calls back into a Java object it was hardly ever told about
 // explicitly, just handed a field/return value" pattern this whole
 // project's own framework-completeness sweep keeps finding (see
-// NetworkUtilsStub, NativeGLJavaInterfaceStub, etc.).
+// NetworkUtilsJava, NativeGLJavaInterfaceJava, etc.).
 //
 // All 23 real @Keep methods below (confirmed against the app's own code method signatures,
 // checked) are honest no-ops beyond a log line, their real Java
@@ -1824,13 +1830,13 @@ public:
 // notifications, purchase prompts, keyboard/IME, screenshot saving,
 // app-store update flow) Stud has no equivalent of and doesn't need for
 // "the engine can call this without hitting a null class/method ID"
-// (this file's own standing goal, see NetworkUtilsStub's doc comment).
+// (this file's own standing goal, see NetworkUtilsJava's doc comment).
 // A 24th real @Keep method, `onCodeParsedFromSMS`, is deliberately
 // NOT included here. Its real dispatch mechanism is a Java EventBus
 // (a main-thread subscriber, greenrobot-style `post()`),
 // never a direct native JNI call, so it isn't part of this class's real
 // JNI-reachable surface at all.
-class NativeHelperStub : public FakeJni::JObject {
+class NativeHelperJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/startup/NativeHelper")
 
@@ -2087,14 +2093,14 @@ public:
     }
     void gameActivity_showKeyboard(jlong /*textBox*/, FakeJni::JBoolean /*showNativeInput*/,
                                     std::shared_ptr<FakeJni::JByteArray> /*byteArrayFromTextBox*/,
-                                    std::shared_ptr<NativeTextBoxInfoStub> /*textBoxInfo*/) {
+                                    std::shared_ptr<NativeTextBoxInfoJava> /*textBoxInfo*/) {
         std::printf("stud: NativeHelper.gameActivity_showKeyboard()\n");
     }
 };
 
 // Real authenticated user identity, threaded in from main() (via
 // LaunchPayload::authenticated_user_id/username/display_name); see
-// NativeUserJavaInterfaceStub::getUserId()'s own doc comment.
+// NativeUserJavaInterfaceJava::getUserId()'s own doc comment.
 // `user_id == 0` (the default) means "no real identity available",
 // matching every other honest-placeholder default in this file.
 void set_native_user_identity(long long user_id, std::string username, std::string display_name);
@@ -2113,7 +2119,7 @@ std::string native_user_interface_files_dir();
 // Confirmed-embedded class-name string in libroblox.so itself
 // (an embedded-string scan of the real binary, not a @Keep guess;
 // see this file's own doc history for how this sweep technique found
-// NativeHelperStub etc.): `com.roblox.engine.jni.reporter.
+// NativeHelperJava etc.): `com.roblox.engine.jni.reporter.
 // SessionReporterJavaInterface` is a real class real native code does
 // at minimum `FindClass()` on, plausibly to read real session-identity
 // getters during boot/session-report bring-up. Confirmed against the app's own code
@@ -2121,10 +2127,10 @@ std::string native_user_interface_files_dir();
 // `getLastLoggedInUserId`/`sendSessionReport`/
 // `setEventTrackingGoogleAnalytics`), honest answers reusing the same
 // real identity/files-dir state already threaded through
-// NativeUserJavaInterfaceStub, not fabricated values. `sendSessionReport`/
+// NativeUserJavaInterfaceJava, not fabricated values. `sendSessionReport`/
 // `setEventTrackingGoogleAnalytics` are honest no-ops (log only); Stud
 // has no real analytics backend to forward to.
-class SessionReporterJavaInterfaceStub : public FakeJni::JObject {
+class SessionReporterJavaInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/reporter/SessionReporterJavaInterface")
     static std::shared_ptr<FakeJni::JString> getAppVersion() {
@@ -2152,7 +2158,7 @@ public:
     }
 };
 
-class NativeLocaleJavaInterfaceStub : public FakeJni::JObject {
+class NativeLocaleJavaInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/locale/NativeLocaleJavaInterface")
 
@@ -2195,9 +2201,9 @@ public:
 // this bug class; see patch_libjnivm.cmake's GetFieldID null-class
 // guard for the previously-fixed sibling case). Real JNI always supplies
 // a genuine, non-null jclass for a static native method; registering
-// this stub and passing its real jclass (env.FindClass()) instead of
+// this class and passing its real jclass (env.FindClass()) instead of
 // nullptr matches that.
-class NativeGLInterfaceStub : public FakeJni::JObject {
+class NativeGLInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/NativeGLInterface")
 };
@@ -2209,32 +2215,32 @@ public:
 // Check failed: c \n org/webrtc/voiceengine/BuildInfo"). No known
 // fields/methods yet, grown against real evidence if a future crash
 // shows one is actually called.
-class WebRtcBuildInfoStub : public FakeJni::JObject {
+class WebRtcBuildInfoJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/webrtc/voiceengine/BuildInfo")
 };
 
 // org.webrtc.voiceengine.WebRtcAudioManager, same WebRTC helpers_android.cc
-// FindClass sequence as WebRtcBuildInfoStub above, next class in line.
-class WebRtcAudioManagerStub : public FakeJni::JObject {
+// FindClass sequence as WebRtcBuildInfoJava above, next class in line.
+class WebRtcAudioManagerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/webrtc/voiceengine/WebRtcAudioManager")
 };
 
 // org.webrtc.voiceengine.WebRtcAudioRecord / WebRtcAudioTrack, same
-// FindClass sequence as the two stubs above; real, standard upstream
+// FindClass sequence as the two classes above; real, standard upstream
 // WebRTC helpers_android.cc looks up exactly these four classes
 // (BuildInfo, WebRtcAudioManager, WebRtcAudioRecord, WebRtcAudioTrack)
 // in this file's own JNI init path, confirmed one at a time this
 // session via the real crash message naming each class in turn, adding
 // the last two together since the pattern is now a known, established
 // sequence rather than a guess.
-class WebRtcAudioRecordStub : public FakeJni::JObject {
+class WebRtcAudioRecordJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/webrtc/voiceengine/WebRtcAudioRecord")
 };
 
-class WebRtcAudioTrackStub : public FakeJni::JObject {
+class WebRtcAudioTrackJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/webrtc/voiceengine/WebRtcAudioTrack")
 };
@@ -2252,7 +2258,7 @@ public:
 // path built). This looks like Roblox caching jmethodIDs up front for
 // later use, not processing a live event, so real getter BEHAVIOR isn't
 // needed yet, only that these two specific methods RESOLVE (an empty
-// class, unlike the WebRTC stubs above, is not enough here, jnivm's
+// class, unlike the WebRTC classes above, is not enough here, jnivm's
 // GetMethodID needs an actual matching method declared, or it returns
 // null too and the same crash recurs one level later). getDeviceId()
 // returns 0 (real Android's own convention for "no specific input
@@ -2260,9 +2266,9 @@ public:
 // a similar sentinel); getHistoricalAxisValue() returns 0.0f (no
 // historical samples buffered). Grow further only against real evidence
 // (another crash), matching this file's own established discipline.
-// MotionEventStub / KeyEventStub used to live here as near-empty
+// MotionEventJava / KeyEventJava used to live here as near-empty
 // placeholders (getDeviceId + getHistoricalAxisValue only). They now have
-// real, fully-populated implementations in android_framework_stubs.h,
+// real, fully-populated implementations in android_framework.h,
 // AGDK's own GameActivity hands these objects to onTouchEventNative/
 // onKeyDownNative and the engine reads a dozen more methods off each.
 
@@ -2281,12 +2287,12 @@ public:
 // honest fallback is `false` (same as the real code's own
 // "not found, not NativeBoolean" default-false branch), not fabricating
 // a lookup result.
-class NativeFlagsInitResultStub : public FakeJni::JObject {
+class NativeFlagsInitResultJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/client/flags/NativeFlagsInitResult")
 
-    NativeFlagsInitResultStub() = default;
-    explicit NativeFlagsInitResultStub(FakeJni::JInt native_flag_provider_id)
+    NativeFlagsInitResultJava() = default;
+    explicit NativeFlagsInitResultJava(FakeJni::JInt native_flag_provider_id)
         : native_flag_provider_id_(native_flag_provider_id) {}
 
     void addBoolean(std::shared_ptr<FakeJni::JString> key, FakeJni::JBoolean value,
@@ -2314,12 +2320,12 @@ private:
 // real WebView's cookie jar to also know about, same real "native
 // exports a registration entry point, real DEX would normally call it
 // once, Stud calls it itself instead" shape as the Djinni
-// setPlatformImpl protocols (protocol_platform_stubs.h) and
+// setPlatformImpl protocols (protocol_platforms.h) and
 // `NativeGLJavaInterface.setAppBridgeNotificationListener`. Stud has no
 // real WebView to actually sync cookies into yet, honest no-op body,
 // just logs, matching this file's own "satisfy the real call shape now,
 // grow the real behavior against real evidence later" convention.
-class CookieOnSetHandlerStub : public FakeJni::JObject {
+class CookieOnSetHandlerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/cookie/CookieProtocol$OnSetCookieHandlerImpl")
     void onSetCookie(std::shared_ptr<FakeJni::JArray<FakeJni::JString>> cookies,
@@ -2352,7 +2358,7 @@ public:
 // itself (same "identity doesn't matter, only non-null-ness does"
 // pattern as run_asset_manager_setup_bridge's own dummy AssetManager
 // object).
-class JniCookieProtocolStub : public FakeJni::JObject {
+class JniCookieProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/cookie/JNICookieProtocol")
 };
@@ -2366,7 +2372,7 @@ public:
 //
 // The value is a real credential, so it is never logged, name and byte count
 // only, exactly as the existing cookie read-back diagnostic does.
-class CookieProtocolStub : public FakeJni::JObject {
+class CookieProtocolJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/cookie/CookieProtocol")
     static void setCookie(std::shared_ptr<FakeJni::JString> name,
@@ -2386,10 +2392,10 @@ struct CookieProtocolBootstrapResult {
 CookieProtocolBootstrapResult run_cookie_protocol_bootstrap(FakeJni::Jvm& jvm,
                                                               const stud::linker::LoadedLibrary& lib);
 
-// Registers every stub class above onto `jvm`, call once, before
+// Registers every class above onto `jvm`, call once, before
 // load_library()'s after_constructors hook runs (GameActivity_register()
 // needs these classes to already exist when it FindClass's them during
 // DT_INIT_ARRAY execution).
-void register_game_activity_stubs(FakeJni::Jvm& jvm);
+void register_app_java_classes(FakeJni::Jvm& jvm);
 
 }  // namespace stud::jni_bridge

@@ -42,9 +42,9 @@ const std::unordered_map<std::string_view, void*>& implemented() {
         {"ANativeWindow_acquire", reinterpret_cast<void*>(&ANativeWindow_acquire)},
         {"ANativeWindow_release", reinterpret_cast<void*>(&ANativeWindow_release)},
 
-        // AMediaCodec is a deliberate stub (real video decode is out of
-        // scope for the prototype); AMediaFormat is a real implementation.
-        // See media_codec.cpp.
+        // AMediaFormat lives here (media_format.cpp); AMediaCodec is
+        // Process B's libmediandk, forwarding to the render host's FFmpeg
+        // (render-client/src/media_codec_forward.cpp).
         {"AMediaCodec_createDecoderByType", reinterpret_cast<void*>(&AMediaCodec_createDecoderByType)},
         {"AMediaCodec_createEncoderByType", reinterpret_cast<void*>(&AMediaCodec_createEncoderByType)},
         {"AMediaCodec_delete", reinterpret_cast<void*>(&AMediaCodec_delete)},

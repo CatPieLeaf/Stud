@@ -1,5 +1,5 @@
 // Real libGLESv2.so, bionic-compiled, placed at /system/lib64/
-// libGLESv2.so; see egl_stub.cpp's own doc comment for the full real
+// libGLESv2.so; see egl_client.cpp's own doc comment for the full real
 // mechanism (identical: real symbol names/signatures, forwarding over
 // the real Unix-socket protocol proven end-to-end this session).
 
@@ -524,7 +524,7 @@ void glGenBuffers(GLsizei n, GLuint* out) {
 
 // Real VAO entry points. libroblox resolves these through
 // eglGetProcAddress() into its own dispatch table up front; before
-// egl_stub.cpp's eglGetProcAddress() was implemented they came back
+// egl_client.cpp's eglGetProcAddress() was implemented they came back
 // NULL and the first glGenVertexArrays(1, &vao) call jumped to address
 // zero, killing the engine's designated internal "main" thread (see
 // the engineering notes). Same forwarding shape as the glGen*/glBind*/

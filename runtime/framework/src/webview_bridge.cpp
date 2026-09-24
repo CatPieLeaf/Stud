@@ -1,7 +1,7 @@
 #include "stud/webview_bridge.h"
 
 #include "stud/bionic_jvm.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -179,20 +179,20 @@ bool run_webview_protocol_bootstrap(
     // Answer "can this platform show a web view". Without this the Lua
     // app has no reason to send an open request at all.
     {
-        auto handler = std::make_shared<MessageBusRequestHandlerRawStub>();
+        auto handler = std::make_shared<MessageBusRequestHandlerRawJava>();
         const std::string available_key = ids.available_key;
         handler->handler = [available_key](const std::string&) {
             return "{\"" + available_key + "\":true}";
         };
-        auto bus = std::make_shared<MessageBusStub>();
+        auto bus = std::make_shared<MessageBusJava>();
         const bool ok = call_trapping_abort(
             set_request_handler, jni_env, env.createLocalReference(bus),
             env.NewStringUTF(ids.protocol.c_str()),
             env.NewStringUTF(ids.is_available_id.c_str()), env.createLocalReference(handler));
         clear_pending_jni_exception(jni_env, "MessageBus.setRequestHandlerRaw");
         std::printf("stud: webview: availability handler registered: %s\n", ok ? "ok" : "trapped");
-        // The stub has to outlive this frame, the bus keeps calling it.
-        static std::shared_ptr<MessageBusRequestHandlerRawStub> kept_handler;
+        // The callback object has to outlive this frame, the bus keeps calling it.
+        static std::shared_ptr<MessageBusRequestHandlerRawJava> kept_handler;
         kept_handler = handler;
     }
 
@@ -203,8 +203,8 @@ bool run_webview_protocol_bootstrap(
             std::fprintf(stderr, "stud: webview: no message id for %s\n", method.c_str());
             return;
         }
-        auto bus = std::make_shared<MessageBusStub>();
-        auto callback = std::make_shared<MessageBusRawCallbackStub>();
+        auto bus = std::make_shared<MessageBusJava>();
+        auto callback = std::make_shared<MessageBusRawCallbackJava>();
         callback->handler = std::move(on_payload);
         jobject connection = nullptr;
         const bool ok = call_trapping_abort_with_result(
@@ -215,7 +215,7 @@ bool run_webview_protocol_bootstrap(
         std::printf("stud: webview: subscribed to %s: %s\n", topic.c_str(),
                     ok ? "ok" : "trapped");
         // Same lifetime point as the request handler above.
-        static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept;
+        static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept;
         kept.push_back(callback);
     };
 
@@ -266,7 +266,7 @@ void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
     const std::string topic = message_id(env, lib, ids.protocol, ids.handle_window_close_id);
     if (topic.empty()) return;
 
-    auto bus = std::make_shared<MessageBusStub>();
+    auto bus = std::make_shared<MessageBusJava>();
     const bool ok = call_trapping_abort(publish, jni_env, env.createLocalReference(bus),
                                         env.NewStringUTF(topic.c_str()),
                                         env.NewStringUTF("{}"));

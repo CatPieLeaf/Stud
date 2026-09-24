@@ -3,7 +3,7 @@
 // The language the user actually runs their desktop in.
 //
 // Stud used to answer every locale question with English: the Roblox
-// locale interface returned a literal "en_us", the Java Locale stub
+// locale interface returned a literal "en_us", the Java Locale class
 // returned "en"/"US", and AConfiguration defaulted to "en". So the app
 // came up in English on a machine running in any other language, with
 // nothing the user could do about it.

@@ -1,6 +1,6 @@
 #include "stud/permissions_bridge.h"
 
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -99,12 +99,12 @@ bool run_permissions_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
 
     // The handlers outlive this frame: the bus keeps calling them for the
     // life of the process.
-    static std::vector<std::shared_ptr<MessageBusRequestHandlerRawStub>> kept;
+    static std::vector<std::shared_ptr<MessageBusRequestHandlerRawJava>> kept;
 
     auto answer = [&](const char* method, std::string (*reply)(const std::string&)) {
-        auto handler = std::make_shared<MessageBusRequestHandlerRawStub>();
+        auto handler = std::make_shared<MessageBusRequestHandlerRawJava>();
         handler->handler = [reply](const std::string& payload) { return reply(payload); };
-        auto bus = std::make_shared<MessageBusStub>();
+        auto bus = std::make_shared<MessageBusJava>();
         const bool ok = call_trapping_abort(set_request_handler, jni_env,
                                             env.createLocalReference(bus),
                                             env.NewStringUTF(kProtocol),

@@ -22,7 +22,7 @@ namespace stud::jni_bridge {
 // SupportsPermissions, ShouldShowPermissionUpsell and
 // ShouldShowRequestPermissionRationale. Unlike every other protocol Stud
 // implements, this one has NO exported id getters, the app registers
-// them with plain string literals, so the literals here come from that
+// them with plain string literals, so the literals here come from the
 // app's own code and are the only source there is. They are checked at
 // startup the only way they can be: a handler that never fires says so.
 //

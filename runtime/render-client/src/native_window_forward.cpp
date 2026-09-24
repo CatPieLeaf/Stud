@@ -6,7 +6,7 @@
 // Process C owns the real ANativeWindow implementation entirely (see
 // android-glue/src/native_window.cpp, deliberately excluded from this
 // bionic build for the same glibc-only-Wayland reason ANGLE itself is)
-// forwards over the same proven IPC mechanism as the GL/EGL stubs.
+// forwards over the same proven IPC mechanism as the GL/EGL clients.
 
 #include "render_client_common.h"
 

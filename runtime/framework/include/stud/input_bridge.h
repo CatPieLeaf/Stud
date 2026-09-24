@@ -27,7 +27,7 @@
 
 #include <fake-jni/fake-jni.h>
 
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/linker.h"
 
 namespace stud::jni_bridge {
@@ -48,7 +48,7 @@ namespace stud::jni_bridge {
 void set_smooth_zoom_enabled(bool enabled);
 
 bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
-                        std::shared_ptr<MainGameActivityStub> activity = nullptr,
+                        std::shared_ptr<MainGameActivityJava> activity = nullptr,
                         long activity_handle = 0);
 
 // Stops the poll thread started above (best effort, used at shutdown).

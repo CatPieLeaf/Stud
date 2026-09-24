@@ -16,8 +16,8 @@
 
 #include "render_client_common.h"
 #include "stud/android_glue.h"
-#include "stud/android_framework_stubs.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/android_framework.h"
+#include "stud/app_java_classes.h"
 #include "stud/key_map.h"
 #include "stud/text_editor.h"
 #include "stud/bionic_jvm.h"
@@ -438,7 +438,7 @@ void set_pointer_locked(bool locked) {
 // a drag Stud inferred.
 void apply_pointer_lock() {
     if (!mouse_lock_enabled()) return;
-    const bool typing = NativeGLJavaInterfaceStub::active_text_box() != 0;
+    const bool typing = NativeGLJavaInterfaceJava::active_text_box() != 0;
     const bool dragging = g_lock_from_drag && !typing;
     const bool asked = g_lock_from_engine || dragging;
     if (!asked) g_lock_suppressed = false;
@@ -491,7 +491,7 @@ void send_touch(const InputFns& fns, JNIEnv* jni_env,
 // so they must be invoked as ordinary JNI methods on the activity object,
 // exactly like drive_game_activity_lifecycle() already does.
 struct AgdkInput {
-    std::shared_ptr<MainGameActivityStub> activity;
+    std::shared_ptr<MainGameActivityJava> activity;
     jlong handle = 0;
     bool resolved = false;
     jmethodID on_key_down = nullptr;
@@ -694,7 +694,7 @@ void send_agdk_text(FakeJni::Env& env, jobject activity_ref, const std::string& 
     // effect on the invisible-while-typing symptom, so it is not kept as
     // a guess.
     const auto len = static_cast<FakeJni::JInt>(text.size());
-    auto state = std::make_shared<stud::jni_bridge::GameTextInputStateStub>(
+    auto state = std::make_shared<stud::jni_bridge::GameTextInputStateJava>(
         std::make_shared<FakeJni::JString>(text), len, len, static_cast<FakeJni::JInt>(-1),
         static_cast<FakeJni::JInt>(-1));
     jobject state_ref = env.createLocalReference(state);
@@ -705,7 +705,7 @@ void send_agdk_key(FakeJni::Env& env, jobject activity_ref, bool down, jint scan
                    jint unicode_char) {
     jmethodID m = down ? g_agdk.on_key_down : g_agdk.on_key_up;
     if (m == nullptr) return;
-    auto ev = std::make_shared<stud::jni_bridge::KeyEventStub>();
+    auto ev = std::make_shared<stud::jni_bridge::KeyEventJava>();
     ev->action = down ? kKeyActionDown : kKeyActionUp;
     ev->scan_code = scan;
     ev->key_code = key_code;
@@ -772,7 +772,7 @@ bool smooth_zoom_enabled() {
 // rather than casting the object keeps this honest about what it is,
 // an ordinary read of a Java object Stud registered.
 bool read_text_box_info(JNIEnv* env, jobject info,
-                        NativeGLJavaInterfaceStub::TextBoxStyle& out) {
+                        NativeGLJavaInterfaceJava::TextBoxStyle& out) {
     jclass cls = env->GetObjectClass(info);
     if (cls == nullptr) return false;
     auto get_float = [&](const char* name, float& dst) {
@@ -851,8 +851,8 @@ std::atomic<bool> g_text_drag{false};
 // Is this point inside the focused box, in the engine's own
 // density-independent units (what every pointer coordinate here is in)?
 bool point_in_focused_box(float x, float y) {
-    if (NativeGLJavaInterfaceStub::active_text_box() == 0) return false;
-    const auto style = NativeGLJavaInterfaceStub::active_text_box_style();
+    if (NativeGLJavaInterfaceJava::active_text_box() == 0) return false;
+    const auto style = NativeGLJavaInterfaceJava::active_text_box_style();
     if (style.width <= 0.0f || style.height <= 0.0f) return false;
     return x >= style.x && x <= style.x + style.width && y >= style.y &&
            y <= style.y + style.height;
@@ -877,7 +877,7 @@ void push_text_overlay(bool visible, const std::string& text, int caret, int sel
                        int sel_end) {
     static const bool disabled = std::getenv("STUD_NO_TEXT_OVERLAY") != nullptr;
     if (disabled) return;
-    auto style = NativeGLJavaInterfaceStub::active_text_box_style();
+    auto style = NativeGLJavaInterfaceJava::active_text_box_style();
     // The engine works in density-independent units, the same space
     // nativePassMouseMove takes, which is why to_density_independent()
     // exists for the opposite direction, while the overlay is drawn in
@@ -1071,7 +1071,7 @@ void dispatch_gamepad_event(const stud::android_glue::HostInputEvent& ev, const 
                 static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE);
             const jint type = static_cast<jint>(ev.y);
             // Direction -1 for every axis, and additionally +1 for the
-            // two hat axes, exactly what the real caller registers
+            // two hat axes, exactly what the app's own caller registers,
             // not both directions for
             // everything.
             if (input_trace_enabled()) {
@@ -1099,8 +1099,8 @@ void dispatch_gamepad_event(const stud::android_glue::HostInputEvent& ev, const 
             if (fns.gamepad_button == nullptr) return;
             // 1 is pressed, 0 is released, NOT Android's ACTION_DOWN/UP
             // constants, which are the other way round. The real caller
-            // converts explicitly (the app's own key listener:
-            // pressed when the action is ACTION_DOWN), so sending the
+            // converts explicitly in the app's own key listener
+            // (`getAction() == ACTION_DOWN ? 1 : 0`), so sending the
             // raw action inverts every edge: a press arrives as a release
             // and the release that follows arrives as a press, leaving the
             // button latched down forever. Live symptom: one tap and the
@@ -1272,7 +1272,7 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
             // must go back as the TextBox's whole updated contents via
             // nativePassText, a real device does exactly this from its
             // IME, never as key events.
-            long text_box = NativeGLJavaInterfaceStub::active_text_box();
+            long text_box = NativeGLJavaInterfaceJava::active_text_box();
 
             // What a version-specific read of the engine's own
             // focused-text-box fields found, while that probe existed: on
@@ -1323,10 +1323,10 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
 
             if (down && text_box != 0 && fns.pass_text != nullptr) {
                 auto& ed = editor();
-                if (ed.text() != NativeGLJavaInterfaceStub::active_text_box_text()) {
+                if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
                     // The engine replaced the contents (a fresh focus, or
                     // Lua setting the text), adopt it.
-                    ed.set_text(NativeGLJavaInterfaceStub::active_text_box_text());
+                    ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
                 }
                 const bool ctrl = (g_meta_state & 0x1000) != 0;
                 bool changed = false;
@@ -1397,7 +1397,7 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
                             std::fflush(stdout);
                         }
                     }
-                    NativeGLJavaInterfaceStub::set_active_text_box_text(text);
+                    NativeGLJavaInterfaceJava::set_active_text_box_text(text);
                     deliver_text(fns, text, text_box, /*done=*/false);
                     push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
                                       ed.selection_end());
@@ -1598,7 +1598,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                     std::fflush(stdout);
                 }
             }
-            if (g_text_drag.load() && NativeGLJavaInterfaceStub::active_text_box() != 0) {
+            if (g_text_drag.load() && NativeGLJavaInterfaceJava::active_text_box() != 0) {
                 auto& ed = editor();
                 ed.set_caret(text_offset_at(last_x), /*select=*/true);
                 push_text_overlay(true, ed.text(), ed.caret(), ed.selection_begin(),
@@ -1881,7 +1881,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // is something Stud tells the engine about itself rather
                 // than anything on this path.
                 if ((bit & kCameraButtons) != 0 &&
-                    stud::jni_bridge::NativeHelperStub::experience_is_loaded()) {
+                    stud::jni_bridge::NativeHelperJava::experience_is_loaded()) {
                     // From the live button state, not from this one edge:
                     // releasing the right button while the middle is still
                     // held is still a drag.
@@ -2002,8 +2002,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 if (bit == 1) {
                     if (down && point_in_focused_box(last_x, last_y)) {
                         auto& ed = editor();
-                        if (ed.text() != NativeGLJavaInterfaceStub::active_text_box_text()) {
-                            ed.set_text(NativeGLJavaInterfaceStub::active_text_box_text());
+                        if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
+                            ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
                         }
                         ed.set_caret(text_offset_at(last_x), /*select=*/false);
                         g_text_drag.store(true);
@@ -2318,7 +2318,7 @@ void set_smooth_zoom_enabled(bool enabled) {
 }
 
 bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
-                        std::shared_ptr<MainGameActivityStub> activity, long activity_handle) {
+                        std::shared_ptr<MainGameActivityJava> activity, long activity_handle) {
     if (g_running.exchange(true)) {
         return true;
     }
@@ -2467,7 +2467,7 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             std::vector<android_glue::HostInputEvent> released;
             {
                 static jlong previous_text_box = 0;
-                const jlong text_box = NativeGLJavaInterfaceStub::active_text_box();
+                const jlong text_box = NativeGLJavaInterfaceJava::active_text_box();
                 if (text_box != 0 && previous_text_box == 0) {
                     // Unconditional: whether this fires, and how many keys
                     // it found held, is the first thing to check when a
@@ -2683,10 +2683,10 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             {
                 static long last_box = 0;
                 static std::string last_text;
-                static NativeGLJavaInterfaceStub::TextBoxStyle last_style;
-                const long box = NativeGLJavaInterfaceStub::active_text_box();
+                static NativeGLJavaInterfaceJava::TextBoxStyle last_style;
+                const long box = NativeGLJavaInterfaceJava::active_text_box();
                 std::string text =
-                    box != 0 ? NativeGLJavaInterfaceStub::active_text_box_text() : std::string();
+                    box != 0 ? NativeGLJavaInterfaceJava::active_text_box_text() : std::string();
                 if (box != 0 && fns.get_text_box_info != nullptr) {
                     FakeJni::LocalFrame info_frame(jvm);
                     auto* info_env = static_cast<JNIEnv*>(&info_frame.getJniEnv());
@@ -2694,14 +2694,14 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     if (call_trapping_abort_with_result(fns.get_text_box_info, info, info_env,
                                                         nullptr) &&
                         info != nullptr) {
-                        NativeGLJavaInterfaceStub::TextBoxStyle live;
+                        NativeGLJavaInterfaceJava::TextBoxStyle live;
                         if (read_text_box_info(info_env, info, live)) {
-                            NativeGLJavaInterfaceStub::set_active_text_box_style(live);
+                            NativeGLJavaInterfaceJava::set_active_text_box_style(live);
                         }
                     }
                     clear_pending_jni_exception(info_env, "nativeGetTextBoxInfo");
                 }
-                const auto style = NativeGLJavaInterfaceStub::active_text_box_style();
+                const auto style = NativeGLJavaInterfaceJava::active_text_box_style();
                 const bool moved = style.x != last_style.x || style.y != last_style.y ||
                                    style.width != last_style.width ||
                                    style.height != last_style.height ||

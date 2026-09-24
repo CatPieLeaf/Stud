@@ -26,8 +26,7 @@ struct Event {
         // the engine's own entry point takes. It is a VECTOR, not a
         // scalar: a stick reports both of its components on both of its
         // axis ids, and a trigger or hat reports its one value in the
-        // THIRD float. See the real caller in the app's own
-        // `onGenericMotion`.
+        // THIRD float, as the app's own `onGenericMotion` sends it.
         kAxis = 4,
         // What this pad actually has, answered before it is announced,
         // the real device does the same thing (`E(deviceId, type)` runs

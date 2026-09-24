@@ -17,12 +17,12 @@ BEGIN_NATIVE_DESCRIPTOR(StartAppParams)
 END_NATIVE_DESCRIPTOR
 
 std::shared_ptr<StartAppParams> build_desktop_start_app_params(
-    std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<SurfaceStub> surface) {
+    std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<SurfaceJava> surface) {
     auto params = std::make_shared<StartAppParams>();
     params->appStarterPlace_ = std::make_shared<FakeJni::JString>("");
     params->appStarterScript_ = std::make_shared<FakeJni::JString>("");
     // Real authenticated user id/username, when available (see
-    // NativeUserJavaInterfaceStub::getUserId()'s own doc comment for
+    // NativeUserJavaInterfaceJava::getUserId()'s own doc comment for
     // why this matters: UserController::didLogin()'s own real compiled
     // body reads these fields directly off this exact object).
     params->appUserId_ = native_user_id();
@@ -37,14 +37,14 @@ std::shared_ptr<StartAppParams> build_desktop_start_app_params(
         std::make_shared<FakeJni::JString>(system_dark_mode() ? "Dark" : "Light");
     // User-reported bug, fixed (the engineering notes, "two windows,
     // one invisible" entry): this used to construct a brand-new
-    // SurfaceStub of its own; Roblox's own ANativeWindow_fromSurface()
+    // SurfaceJava of its own; Roblox's own ANativeWindow_fromSurface()
     // call on THAT jobject creates a genuinely separate, second real
     // Wayland window. Reuse the SAME real surface GameActivity's own
     // lifecycle already created, matching every other real V2 call
     // site's own fix for this exact class of bug.
     params->surface_ = std::move(surface);
     params->username_ = std::make_shared<FakeJni::JString>(native_username());
-    params->vrContext_ = std::make_shared<ActivityStub>();
+    params->vrContext_ = std::make_shared<ActivityJava>();
     return params;
 }
 

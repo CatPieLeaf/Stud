@@ -6,7 +6,7 @@
 #include <string>
 
 #include "stud/device_params.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/platform_params.h"
 
 // com.roblox.engine.jni.autovalue.InitParams, reimplemented as a real
@@ -77,7 +77,7 @@ public:
     // StartGameParams's own vrContext field elsewhere in this project.
     std::shared_ptr<FakeJni::JString> buildVariant_ =
         std::make_shared<FakeJni::JString>("googleProdRelease");
-    std::shared_ptr<ActivityStub> vrContext_ = std::make_shared<ActivityStub>();
+    std::shared_ptr<ActivityJava> vrContext_ = std::make_shared<ActivityJava>();
 
     std::shared_ptr<PlatformParams> platformParams() { return platformParams_; }
     std::shared_ptr<DeviceParams> deviceParams() { return deviceParams_; }
@@ -87,7 +87,7 @@ public:
     FakeJni::JBoolean isPotato() { return isPotato_; }
     FakeJni::JBoolean isVrDevice() { return isVrDevice_; }
     std::shared_ptr<FakeJni::JString> buildVariant() { return buildVariant_; }
-    std::shared_ptr<ActivityStub> vrContext() { return vrContext_; }
+    std::shared_ptr<ActivityJava> vrContext() { return vrContext_; }
 };
 
 // Builds the InitParams Stud hands to nativeAppBridgeSetInitParams.

@@ -3073,12 +3073,12 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return fns.eglTerminate_(g_displays.at(a[0])) == EGL_TRUE;
         case CallId::EglGetProcAddress: {
             // Real pointer, meaningful only to Process C itself.
-            // Process B's own eglGetProcAddress stub does NOT hand this
+            // Process B's own eglGetProcAddress does NOT hand this
             // raw value back to Roblox (a foreign-process function
             // pointer would be nonsense to call directly); it maps the
             // queried name to one of its own local generic forwarding
             // trampolines instead. This response exists only so Process
-            // B's stub can confirm "yes, this name is real" (nonzero)
+            // B's client can confirm "yes, this name is real" (nonzero)
             // vs "not found" (zero).
             void* p = fns.eglGetProcAddress_(in.empty() ? "" : reinterpret_cast<const char*>(in.data()));
             return p != nullptr ? 1 : 0;
@@ -4650,7 +4650,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 }
 
 // Services one client connection to completion, on its own thread. Used
-// for Process B's connections beyond the first, each of its stub
+// for Process B's connections beyond the first, each of its client
 // libraries (libGLESv2, libaaudio, ...) links its own copy of the client
 // and opens its own socket.
 
@@ -5454,7 +5454,7 @@ int main(int argc, char** argv) {
         int conn_fd = ::accept(listen_fd, nullptr, nullptr);
         if (conn_fd < 0) { std::perror("stud-render-host: accept"); continue; }
         std::printf("stud-render-host: client connected\n");
-        // Process B connects more than once: each of its stub libraries
+        // Process B connects more than once: each of its client libraries
         // (libGLESv2, libaaudio, ...) links its own copy of the client and
         // opens its own socket. This loop services one connection inline,
         // so any further one used to sit in the accept backlog forever,

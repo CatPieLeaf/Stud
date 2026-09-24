@@ -388,7 +388,7 @@ int32_t effective_scale_120() {
 // given Surface, but wrong the moment the SAME real Surface jobject is
 // handed in again (confirmed: GameActivity's real lifecycle drive,
 // jni-bridge/src/game_engine_boot.cpp, correctly reuses one
-// SurfaceStub jobject across both onSurfaceCreatedNative and
+// SurfaceJava jobject across both onSurfaceCreatedNative and
 // onSurfaceChangedNative, exactly matching real AGDK/native_app_glue
 // convention, both real entry points independently call
 // ANativeWindow_fromSurface() internally per the real AGDK contract,

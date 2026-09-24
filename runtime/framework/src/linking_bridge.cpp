@@ -1,7 +1,7 @@
 #include "stud/linking_bridge.h"
 
 #include "stud/bionic_jvm.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -144,9 +144,9 @@ bool run_linking_protocol_bootstrap(FakeJni::Jvm& jvm, const stud::linker::Loade
 
     auto register_handler = [&](const std::string& method,
                                 std::function<std::string(const std::string&)> fn) {
-        auto handler = std::make_shared<MessageBusRequestHandlerRawStub>();
+        auto handler = std::make_shared<MessageBusRequestHandlerRawJava>();
         handler->handler = std::move(fn);
-        auto bus = std::make_shared<MessageBusStub>();
+        auto bus = std::make_shared<MessageBusJava>();
         const bool ok = call_trapping_abort(
             set_request_handler, jni_env, env.createLocalReference(bus),
             env.NewStringUTF(ids.protocol.c_str()), env.NewStringUTF(method.c_str()),
@@ -156,7 +156,7 @@ bool run_linking_protocol_bootstrap(FakeJni::Jvm& jvm, const stud::linker::Loade
                     method.c_str(), ok ? "ok" : "trapped");
         std::fflush(stdout);
         // The bus keeps calling these, so they must outlive this frame.
-        static std::vector<std::shared_ptr<MessageBusRequestHandlerRawStub>> kept;
+        static std::vector<std::shared_ptr<MessageBusRequestHandlerRawJava>> kept;
         kept.push_back(handler);
         return ok;
     };
@@ -258,7 +258,7 @@ void publish_url(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
     if (topic.empty()) return;
 
     const std::string payload = "{\"" + ids.url_key + "\":\"" + json_escaped(url) + "\"}";
-    auto bus = std::make_shared<MessageBusStub>();
+    auto bus = std::make_shared<MessageBusJava>();
     const bool ok = call_trapping_abort(publish, jni_env, env.createLocalReference(bus),
                                         env.NewStringUTF(topic.c_str()),
                                         env.NewStringUTF(payload.c_str()));
@@ -310,7 +310,7 @@ bool run_linking_url_detection_bootstrap(
 
     const std::string registered_key = ids.is_registered_key;
     const std::string matched_url_key = ids.matched_url_key;
-    auto callback = std::make_shared<MessageBusRawCallbackStub>();
+    auto callback = std::make_shared<MessageBusRawCallbackJava>();
     callback->handler = [registered_key, matched_url_key,
                          on_answer](const std::string& payload) {
         // The engine answers with the URL it matched, so no request has
@@ -338,7 +338,7 @@ bool run_linking_url_detection_bootstrap(
         std::fflush(stdout);
         if (on_answer) on_answer(url, registered);
     };
-    auto bus = std::make_shared<MessageBusStub>();
+    auto bus = std::make_shared<MessageBusJava>();
     jobject connection = nullptr;
     const bool ok = call_trapping_abort_with_result(
         do_subscribe, connection, jni_env, env.createLocalReference(bus),
@@ -348,7 +348,7 @@ bool run_linking_url_detection_bootstrap(
     std::printf("stud: linking: subscribed to %s: %s\n", topic.c_str(), ok ? "ok" : "trapped");
     std::fflush(stdout);
     // The bus keeps calling it, so it outlives this frame.
-    static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept;
+    static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept;
     kept.push_back(callback);
     return ok;
 }

@@ -1,7 +1,7 @@
 #include "stud/game_engine_boot.h"
 
 #include "stud/engine_thread.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <android/looper.h>
@@ -65,14 +65,14 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     jstring internal_data_dir_jstr = env.NewStringUTF(internal_data_dir.c_str());
     jstring obb_dir_jstr = env.NewStringUTF(obb_dir.c_str());
     jstring external_data_dir_jstr = env.NewStringUTF(external_data_dir.c_str());
-    // Real MainGameActivity subclass, not bare GameActivityStub (see
-    // game_activity_stubs.h's doc comment), the engine's own real
+    // Real MainGameActivity subclass, not bare GameActivityJava (see
+    // app_java_classes.h's doc comment), the engine's own real
     // bootstrapTheApp() callback needs a real, dispatchable method on
     // whatever jobject it receives as `thiz` here.
-    auto main_game_activity = std::make_shared<MainGameActivityStub>();
+    auto main_game_activity = std::make_shared<MainGameActivityJava>();
     main_game_activity->on_bootstrap_the_app = std::move(on_bootstrap_the_app);
     jobject game_activity_instance = env.createLocalReference(main_game_activity);
-    jobject configuration_instance = env.createLocalReference(std::make_shared<ConfigurationStub>());
+    jobject configuration_instance = env.createLocalReference(std::make_shared<ConfigurationJava>());
 
     const ALooper* looper_on_this_thread = ALooper_forThread();
     if (looper_on_this_thread == nullptr) {
@@ -202,13 +202,13 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
             e.CallVoidMethod(activity, m, game_activity_ptr);
         });
     out.activity = main_game_activity;
-    out.surface = std::make_shared<SurfaceStub>();
-    auto surface_stub = out.surface;
+    out.surface = std::make_shared<SurfaceJava>();
+    auto surface_object = out.surface;
     call_lifecycle_method_bounded(
         "onSurfaceCreatedNative", "(JLandroid/view/Surface;)V", &out.on_surface_created_called,
         &out.on_surface_created_trapped_abort,
-        [game_activity_ptr, surface_stub](FakeJni::Env& e, jmethodID m, jobject activity) {
-            jobject surface_ref = e.createLocalReference(surface_stub);
+        [game_activity_ptr, surface_object](FakeJni::Env& e, jmethodID m, jobject activity) {
+            jobject surface_ref = e.createLocalReference(surface_object);
             e.CallVoidMethod(activity, m, game_activity_ptr, surface_ref);
         });
     // Real Android always follows onSurfaceCreated with
@@ -219,10 +219,10 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     call_lifecycle_method_bounded(
         "onSurfaceChangedNative", "(JLandroid/view/Surface;III)V", &out.on_surface_changed_called,
         &out.on_surface_changed_trapped_abort,
-        [game_activity_ptr, surface_stub, surface_width, surface_height](FakeJni::Env& e,
+        [game_activity_ptr, surface_object, surface_width, surface_height](FakeJni::Env& e,
                                                                           jmethodID m,
                                                                           jobject activity) {
-            jobject surface_ref = e.createLocalReference(surface_stub);
+            jobject surface_ref = e.createLocalReference(surface_object);
             e.CallVoidMethod(activity, m, game_activity_ptr, surface_ref,
                               static_cast<jint>(surface_width), static_cast<jint>(surface_height),
                               static_cast<jint>(1));

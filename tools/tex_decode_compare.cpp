@@ -12,7 +12,7 @@
 // its own because it is a strict subset of ETC2_RGB, and whose legacy
 // block modes random blocks exercise. So the decoder was never the bug,
 // and the corruption was in the plumbing around it (stale handle
-// bookkeeping and unaligned buffer offsets; see vulkan_stub.cpp).
+// bookkeeping and unaligned buffer offsets; see vulkan_client.cpp).
 //
 // EAC R11/RG11 differ from hardware in the low bit of ~9% of 16-bit
 // values: a rounding difference in the 11-to-16-bit expansion, far below

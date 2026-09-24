@@ -485,7 +485,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     }
 
     // Process B's own build output (libEGL.so/libGLESv2.so render-client
-    // stubs, libandroid.so/libmediandk.so android-glue implementations,
+    // libraries, libandroid.so/libmediandk.so android-glue implementations,
     // and the empty libOpenSLES.so/libOpenMAXAL.so/libnativewindow.so
     // dead-link stand-ins; see process-b/CMakeLists.txt's own doc
     // comments) lives in a lib64/ directory sibling to executable_path,

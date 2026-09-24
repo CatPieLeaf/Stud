@@ -21,9 +21,9 @@
 //     the same trial and error already paid for once.
 //
 //   - What changes: after bring-up, runtime/src/main.cpp's own real
-//     render/input loop calls `LooperStub::getMainLooper()->
-//     drain_pending(jvm)` once per iteration (see android_framework_
-//     stubs.h), making the real process main thread the SAME thread
+//     render/input loop calls `LooperJava::getMainLooper()->
+//     drain_pending(jvm)` once per iteration (see
+//     android_framework.h), making the real process main thread the SAME thread
 //     that services any real `Handler.post()`/`runOnUiThread()` call
 //     Roblox's own native code makes, exactly matching real Android's
 //     actual main-thread identity contract, instead of leaving posted
@@ -36,7 +36,7 @@
 // No separate ActivityThread *class* exists here on purpose: real
 // Android's own ActivityThread is mostly bookkeeping (the current
 // Activity stack, the Application instance, ...) Stud doesn't need a
-// parallel model of, since GameActivityStub/MainGameActivityStub
+// parallel model of, since GameActivityJava/MainGameActivityJava
 // already hold the real, equivalent state directly. This header exists
 // to name and document the real design decision, not to wrap it in
 // unnecessary structure.

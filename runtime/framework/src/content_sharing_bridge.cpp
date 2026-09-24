@@ -1,7 +1,7 @@
 #include "stud/content_sharing_bridge.h"
 
 #include "stud/bionic_jvm.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -97,9 +97,9 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
     auto subscribe = [&](const std::string& topic,
                          std::function<void(const std::string&)> handler) {
         if (topic.empty()) return;
-        auto cb = std::make_shared<MessageBusRawCallbackStub>();
+        auto cb = std::make_shared<MessageBusRawCallbackJava>();
         cb->handler = std::move(handler);
-        auto b = std::make_shared<MessageBusStub>();
+        auto b = std::make_shared<MessageBusJava>();
         jobject conn = nullptr;
         const bool ok = call_trapping_abort_with_result(
             do_subscribe, conn, jni_env, env.createLocalReference(b),
@@ -109,7 +109,7 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
         std::printf("stud: clipboard: subscribed to %s: %s\n", topic.c_str(),
                     ok ? "ok" : "trapped");
         std::fflush(stdout);
-        static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept_share;
+        static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept_share;
         kept_share.push_back(cb);
     };
     for (const char* getter : {"getShareTextId", "getShareUrlId"}) {
@@ -136,7 +136,7 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
         });
     }
 
-    auto callback = std::make_shared<MessageBusRawCallbackStub>();
+    auto callback = std::make_shared<MessageBusRawCallbackJava>();
     callback->handler = [on_text](const std::string& payload) {
         const std::string text = json_string_field(payload, kTextKey);
         if (text.empty()) {
@@ -149,7 +149,7 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
         std::fflush(stdout);
         if (on_text) on_text(text);
     };
-    auto bus = std::make_shared<MessageBusStub>();
+    auto bus = std::make_shared<MessageBusJava>();
     jobject connection = nullptr;
     const bool ok = call_trapping_abort_with_result(
         do_subscribe, connection, jni_env, env.createLocalReference(bus),
@@ -160,7 +160,7 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
                 ok ? "ok" : "trapped");
     std::fflush(stdout);
     // The bus keeps calling it, so it outlives this frame.
-    static std::vector<std::shared_ptr<MessageBusRawCallbackStub>> kept;
+    static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept;
     kept.push_back(callback);
     return ok;
 }

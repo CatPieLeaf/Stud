@@ -81,7 +81,7 @@ struct LaunchPayload {
     // same pattern as client_settings_body above. Investigated this
     // session as the likely real fix for a native crash traced
     // to UserController::didLogin() dereferencing a null singleton:
-    // Stud's own NativeUserJavaInterface stub previously always
+    // Stud's own NativeUserJavaInterface previously always
     // returned a placeholder userId of 0/empty username regardless of
     // whatever real cookie was supplied, which real native code is very
     // plausibly reading as "not logged in" and never constructing

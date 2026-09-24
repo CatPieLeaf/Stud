@@ -2,7 +2,7 @@
 
 #include "stud/bionic_jvm.h"
 #include "stud/engine_thread.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/start_app_params.h"
 #include "stud/start_game_params.h"
 #include "stud/trap_recovery.h"
@@ -132,7 +132,7 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
 // outcome it gets back separately.
 bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                const std::shared_ptr<PlatformParams>& platform_params,
-                               const std::shared_ptr<SurfaceStub>& surface,
+                               const std::shared_ptr<SurfaceJava>& surface,
                                const std::shared_ptr<std::atomic<bool>>& called_app,
                                const std::shared_ptr<std::atomic<bool>>& called_game,
                                bool update_game_surface) {
@@ -190,7 +190,7 @@ bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
         update_game_addr != nullptr) {
         called_game->store(true, std::memory_order_relaxed);
         auto* update_game_fn = reinterpret_cast<V2ResumeGameFn>(update_game_addr);
-        auto activity = std::make_shared<ActivityStub>();
+        auto activity = std::make_shared<ActivityJava>();
         jobject surface_ref = env.createLocalReference(surface);
         jobject platform_params_ref = env.createLocalReference(platform_params);
         jobject activity_ref = env.createLocalReference(std::move(activity));
@@ -228,7 +228,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         // getAssetManager() returned null for the engine's own audio
         // system, which is the Java state native FMOD reads before it will
         // initialise its output.
-        FMODStub::init(std::make_shared<ContextStub>());
+        FMODJava::init(std::make_shared<ContextJava>());
 
         if (void* addr = lib.find_symbol(
                 "Java_com_roblox_engine_jni_NativeGLInterface_nativeGameGlobalInit");
@@ -329,7 +329,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
                                              std::shared_ptr<PlatformParams> platform_params,
                                              std::shared_ptr<DeviceParams> device_params,
                                              std::shared_ptr<InitParams> init_params,
-                                             std::shared_ptr<SurfaceStub> surface,
+                                             std::shared_ptr<SurfaceJava> surface,
                                              const DeepLinkJoinInfo& deep_link,
                                              bool skip_early_init) {
     EngineV2BridgeResult result;
@@ -673,7 +673,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
                 auto& inner_env = inner_frame.getJniEnv();
                 auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
                 jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-                auto activity = std::make_shared<ActivityStub>();
+                auto activity = std::make_shared<ActivityJava>();
                 jobject surface_ref = inner_env.createLocalReference(surface);
                 jobject platform_params_ref = inner_env.createLocalReference(platform_params);
                 jobject activity_ref = inner_env.createLocalReference(std::move(activity));
@@ -696,7 +696,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
 
 void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                        std::shared_ptr<PlatformParams> platform_params,
-                                       std::shared_ptr<SurfaceStub> surface) {
+                                       std::shared_ptr<SurfaceJava> surface) {
     void* addr = lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams");
     if (addr == nullptr) {
@@ -739,8 +739,8 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
         auto& env = frame.getJniEnv();
         auto* jni_env = static_cast<JNIEnv*>(&env);
 
-        // Real jclass, not nullptr; see NativeGLInterfaceStub's own doc
-        // comment (game_activity_stubs.h): a real, reproducible SIGSEGV
+        // Real jclass, not nullptr; see NativeGLInterfaceJava's own doc
+        // comment (app_java_classes.h): a real, reproducible SIGSEGV
         // a null jclass dereferenced a few
         // instructions into this exact function.
         jclass native_gl_interface_class = env.FindClass("com/roblox/engine/jni/NativeGLInterface");
@@ -849,7 +849,7 @@ EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::lin
 
 bool notify_surface_resized(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                             const std::shared_ptr<PlatformParams>& platform_params,
-                            const std::shared_ptr<SurfaceStub>& surface) {
+                            const std::shared_ptr<SurfaceJava>& surface) {
     if (platform_params == nullptr || surface == nullptr) return false;
     auto called_app = std::make_shared<std::atomic<bool>>(false);
     auto called_game = std::make_shared<std::atomic<bool>>(false);
@@ -869,9 +869,9 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
                                     const std::string& payload,
                                     const std::shared_ptr<PlatformParams>& platform_params,
                                     const std::shared_ptr<DeviceParams>& device_params,
-                                    const std::shared_ptr<SurfaceStub>& surface) {
+                                    const std::shared_ptr<SurfaceJava>& surface) {
     // key=value per line, produced by Process A from its own parsed link.
-    NativeHelperStub::LaunchRequest request{};
+    NativeHelperJava::LaunchRequest request{};
     size_t at = 0;
     while (at < payload.size()) {
         size_t end = payload.find('\n', at);
@@ -915,7 +915,7 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
     // drift.
     std::fprintf(stderr, "stud: joining placeId=%lld from a second launch\n", request.place_id);
     std::fflush(stderr);
-    NativeHelperStub::set_last_launch_request(std::move(request));
+    NativeHelperJava::set_last_launch_request(std::move(request));
     acknowledge_experience_start(jvm, lib, platform_params, device_params, surface);
     return true;
 }
@@ -923,7 +923,7 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
 void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                   const std::shared_ptr<PlatformParams>& platform_params,
                                   const std::shared_ptr<DeviceParams>& device_params,
-                                  const std::shared_ptr<SurfaceStub>& surface) {
+                                  const std::shared_ptr<SurfaceJava>& surface) {
     void* addr = lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartGameWithParam");
     if (addr == nullptr || platform_params == nullptr || surface == nullptr) return;
@@ -962,7 +962,7 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
                 // without a real id is worse than none.
                 // The whole request the Lua app published, not just the
                 // place id, the real client passes all of it.
-                const auto request = NativeHelperStub::last_launch_request();
+                const auto request = NativeHelperJava::last_launch_request();
                 DeepLinkJoinInfo join{};
                 join.place_id = request.place_id;
                 join.join_attempt_id = request.join_attempt_id;
@@ -1108,12 +1108,12 @@ bool subscribe_to_experience_launch(FakeJni::Jvm& jvm, const stud::linker::Loade
     // Owned here, deliberately, because process lifetime IS the correct
     // lifetime for them: nothing ever unsubscribes.
     struct ExperienceLaunchSubscription {
-        std::shared_ptr<MessageBusStub> bus;
-        std::shared_ptr<MessageBusRawCallbackStub> callback;
+        std::shared_ptr<MessageBusJava> bus;
+        std::shared_ptr<MessageBusRawCallbackJava> callback;
     };
     static ExperienceLaunchSubscription subscription;
-    subscription.bus = std::make_shared<MessageBusStub>();
-    subscription.callback = std::make_shared<MessageBusRawCallbackStub>();
+    subscription.bus = std::make_shared<MessageBusJava>();
+    subscription.callback = std::make_shared<MessageBusRawCallbackJava>();
     jobject bus_ref = env.createLocalReference(subscription.bus);
     jobject callback_ref = env.createLocalReference(subscription.callback);
 

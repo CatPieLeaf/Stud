@@ -6,7 +6,7 @@
 #include <string>
 
 #include "stud/device_params.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/platform_params.h"
 
 // com.roblox.engine.jni.autovalue.StartGameParams, reimplemented as a real
@@ -42,10 +42,10 @@ public:
     std::shared_ptr<FakeJni::JString> referralPage_;
     FakeJni::JLong referredByPlayerId_ = 0;
     std::shared_ptr<FakeJni::JString> reservedServerAccessCode_;
-    std::shared_ptr<SurfaceStub> surface_;
+    std::shared_ptr<SurfaceJava> surface_;
     FakeJni::JLong userId_ = 0;
     std::shared_ptr<FakeJni::JString> username_;
-    std::shared_ptr<ActivityStub> vrContext_;
+    std::shared_ptr<ActivityJava> vrContext_;
 
     std::shared_ptr<FakeJni::JString> accessCode() { return accessCode_; }
     std::shared_ptr<FakeJni::JString> callId() { return callId_; }
@@ -67,10 +67,10 @@ public:
     std::shared_ptr<FakeJni::JString> referralPage() { return referralPage_; }
     FakeJni::JLong referredByPlayerId() { return referredByPlayerId_; }
     std::shared_ptr<FakeJni::JString> reservedServerAccessCode() { return reservedServerAccessCode_; }
-    std::shared_ptr<SurfaceStub> surface() { return surface_; }
+    std::shared_ptr<SurfaceJava> surface() { return surface_; }
     FakeJni::JLong userId() { return userId_; }
     std::shared_ptr<FakeJni::JString> username() { return username_; }
-    std::shared_ptr<ActivityStub> vrContext() { return vrContext_; }
+    std::shared_ptr<ActivityJava> vrContext() { return vrContext_; }
 };
 
 // Real fields parsed out of a real roblox-player:// deep link's own
@@ -141,6 +141,6 @@ int join_request_type_for(const DeepLinkJoinInfo& join);
 // not a fresh one: avoids a second, real, independently-mapped window.
 std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<DeviceParams> device_params,
-    std::shared_ptr<SurfaceStub> surface, const DeepLinkJoinInfo& deep_link = {});
+    std::shared_ptr<SurfaceJava> surface, const DeepLinkJoinInfo& deep_link = {});
 
 }  // namespace stud::jni_bridge

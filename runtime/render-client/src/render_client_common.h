@@ -2,12 +2,12 @@
 
 #include "stud/render_host_protocol.h"
 
-// Shared connection singleton for both libEGL.so/libGLESv2.so stub
+// Shared connection singleton for both libEGL.so/libGLESv2.so client
 // bodies, lazily connects to stud-render-host (Process C) on first
 // real EGL/GLES call Roblox makes, once, for the process's whole life.
 // One real glGetError per frame, called by the swap path. See
-// glGetError() in gles_stub.cpp for why it is not polled per call. Lives
-// in the GL stub, which is a separate shared library from the EGL one,
+// glGetError() in gles_client.cpp for why it is not polled per call. Lives
+// in the GL client, which is a separate shared library from the EGL one,
 // so it is resolved the same way the engine resolves everything else
 // here, by name at runtime, rather than linked.
 extern "C" void stud_refresh_gl_error_cache();

@@ -18,7 +18,7 @@
 # demands libc.so, libdl.so, liblog.so and ld-android.so from the
 # distribution, which no package can satisfy.
 %global __requires_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/stud-runtime-bionic$
-# ...and neither ANGLE's libEGL/libGLESv2/libvulkan nor Android's stubs of the
+# ...and neither ANGLE's libEGL/libGLESv2/libvulkan nor Stud's own Android libraries of the
 # same names may be advertised as system provides: they are Stud's private
 # copies, loaded by path.
 %global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*

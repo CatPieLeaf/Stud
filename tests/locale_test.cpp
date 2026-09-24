@@ -1,7 +1,7 @@
 // Which language Stud tells Roblox the user runs in.
 //
 // Every locale answer used to be a hardcoded English literal, "en_us"
-// from the Roblox locale interface, "en"/"US" from the Java Locale stub,
+// from the Roblox locale interface, "en"/"US" from the Java Locale class,
 // "en" from AConfiguration, so the app came up in English whatever the
 // desktop was set to. The mapping below is transcribed from the real
 // app's own supported-locale table, and these checks pin both halves of

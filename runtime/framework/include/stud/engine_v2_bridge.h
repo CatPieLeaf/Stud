@@ -5,7 +5,7 @@
 #include <memory>
 
 #include "stud/device_params.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 #include "stud/init_params.h"
 #include "stud/linker.h"
 #include "stud/platform_params.h"
@@ -328,7 +328,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
                                              std::shared_ptr<PlatformParams> platform_params,
                                              std::shared_ptr<DeviceParams> device_params,
                                              std::shared_ptr<InitParams> init_params,
-                                             std::shared_ptr<SurfaceStub> surface,
+                                             std::shared_ptr<SurfaceJava> surface,
                                              const DeepLinkJoinInfo& deep_link = {},
                                              bool skip_early_init = false);
 
@@ -363,7 +363,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
 // game picked from the real Home screen sat on the loading screen forever with
 // its DataModel never created.
 //
-// Called from NativeHelperStub::gameActivity_onExperienceStart's hook, which
+// Called from NativeHelperJava::gameActivity_onExperienceStart's hook, which
 // runs on the engine's own callback thread, so this dispatches the real work
 // to its own bounded background thread and returns immediately.
 // Join a place handed over by a second stud-ui, because a game link was
@@ -380,16 +380,16 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
                                     const std::string& payload,
                                     const std::shared_ptr<PlatformParams>& platform_params,
                                     const std::shared_ptr<DeviceParams>& device_params,
-                                    const std::shared_ptr<SurfaceStub>& surface);
+                                    const std::shared_ptr<SurfaceJava>& surface);
 
 void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                   const std::shared_ptr<PlatformParams>& platform_params,
                                   const std::shared_ptr<DeviceParams>& device_params,
-                                  const std::shared_ptr<SurfaceStub>& surface);
+                                  const std::shared_ptr<SurfaceJava>& surface);
 
 bool notify_surface_resized(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                             const std::shared_ptr<PlatformParams>& platform_params,
-                            const std::shared_ptr<SurfaceStub>& surface);
+                            const std::shared_ptr<SurfaceJava>& surface);
 
 EngineV2BridgeResult run_engine_v2_early_init(FakeJni::Jvm& jvm,
                                                 const stud::linker::LoadedLibrary& lib,
@@ -419,7 +419,7 @@ EngineV2BridgeResult run_engine_v2_early_init(FakeJni::Jvm& jvm,
 // windows" entry).
 void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                        std::shared_ptr<PlatformParams> platform_params,
-                                       std::shared_ptr<SurfaceStub> surface);
+                                       std::shared_ptr<SurfaceJava> surface);
 
 struct EngineV2TeardownResult {
     bool leave_game_called = false;

@@ -60,20 +60,20 @@ std::shared_ptr<DeviceParams> build_desktop_device_params(const std::string& os_
     return params;
 }
 
-BEGIN_NATIVE_DESCRIPTOR(DeviceStaticParamsStub)
-{ FakeJni::Field<&DeviceStaticParamsStub::appBuildVariant>{}, "appBuildVariant" },
-{ FakeJni::Field<&DeviceStaticParamsStub::appVersion>{}, "appVersion" },
-{ FakeJni::Field<&DeviceStaticParamsStub::cpu64Bit>{}, "cpu64Bit" },
-{ FakeJni::Field<&DeviceStaticParamsStub::deviceName>{}, "deviceName" },
-{ FakeJni::Field<&DeviceStaticParamsStub::deviceSku>{}, "deviceSku" },
-{ FakeJni::Field<&DeviceStaticParamsStub::manufacturer>{}, "manufacturer" },
-{ FakeJni::Field<&DeviceStaticParamsStub::osVersion>{}, "osVersion" },
-{ FakeJni::Field<&DeviceStaticParamsStub::socModel>{}, "socModel" },
+BEGIN_NATIVE_DESCRIPTOR(DeviceStaticParamsJava)
+{ FakeJni::Field<&DeviceStaticParamsJava::appBuildVariant>{}, "appBuildVariant" },
+{ FakeJni::Field<&DeviceStaticParamsJava::appVersion>{}, "appVersion" },
+{ FakeJni::Field<&DeviceStaticParamsJava::cpu64Bit>{}, "cpu64Bit" },
+{ FakeJni::Field<&DeviceStaticParamsJava::deviceName>{}, "deviceName" },
+{ FakeJni::Field<&DeviceStaticParamsJava::deviceSku>{}, "deviceSku" },
+{ FakeJni::Field<&DeviceStaticParamsJava::manufacturer>{}, "manufacturer" },
+{ FakeJni::Field<&DeviceStaticParamsJava::osVersion>{}, "osVersion" },
+{ FakeJni::Field<&DeviceStaticParamsJava::socModel>{}, "socModel" },
 END_NATIVE_DESCRIPTOR
 
-std::shared_ptr<DeviceStaticParamsStub> build_desktop_device_static_params(
+std::shared_ptr<DeviceStaticParamsJava> build_desktop_device_static_params(
     const std::shared_ptr<DeviceParams>& device_params) {
-    auto params = std::make_shared<DeviceStaticParamsStub>();
+    auto params = std::make_shared<DeviceStaticParamsJava>();
     params->appBuildVariant = device_params->appBuildVariant;
     params->appVersion = device_params->appVersion;
     params->cpu64Bit = device_params->cpu64Bit;

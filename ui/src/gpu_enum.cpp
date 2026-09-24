@@ -109,7 +109,7 @@ namespace {
 
 // A format is usable for a texture if it can be sampled from an optimal-
 // tiled image, the same question the render client asks before deciding
-// to transcode into it (see runtime/render-client/src/vulkan_stub.cpp),
+// to transcode into it (see runtime/render-client/src/vulkan_client.cpp),
 // so the two cannot disagree about what this machine can do.
 bool sampleable(VkPhysicalDevice device, VkFormat format) {
     VkFormatProperties props{};

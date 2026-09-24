@@ -1,7 +1,7 @@
 #include "fmod_audio_output.h"
 
 #include "render_client_common.h"
-#include "stud/game_activity_stubs.h"
+#include "stud/app_java_classes.h"
 
 #include <cstdio>
 #include <mutex>
@@ -15,7 +15,7 @@ using stud::render_host::CallId;
 
 // The host plays everything through one float32 device and accepts
 // streams only in its own rate and channel count; libaaudio asks for the
-// same (runtime/render-client/src/aaudio_stub.cpp).
+// same (runtime/render-client/src/aaudio_client.cpp).
 constexpr int kDeviceRate = 48000;
 constexpr int kDeviceChannels = 2;
 
@@ -111,7 +111,7 @@ Output& output() {
 }  // namespace
 
 void install_fmod_audio_output() {
-    auto& hooks = stud::jni_bridge::AudioDeviceStub::output;
+    auto& hooks = stud::jni_bridge::AudioDeviceJava::output;
     hooks.open = [](int channels, int rate) { return output().open(channels, rate); };
     hooks.write = [](const int16_t* samples, size_t count) { output().write(samples, count); };
     hooks.close = [] { output().close(); };

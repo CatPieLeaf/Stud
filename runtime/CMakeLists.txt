@@ -95,10 +95,10 @@ set_target_properties(stud_runtime_libmediandk PROPERTIES
 
 # Real libaaudio.so, the engine's own audio output path. Not an empty
 # stub like the ones below: it forwards PCM to Process C, which owns the
-# host audio server connection (see render-client/src/aaudio_stub.cpp for
+# host audio server connection (see render-client/src/aaudio_client.cpp for
 # why audio is load-bearing rather than optional).
 add_library(stud_runtime_libaaudio SHARED
-    render-client/src/aaudio_stub.cpp
+    render-client/src/aaudio_client.cpp
     render-client/src/render_client_common.cpp
 )
 target_include_directories(stud_runtime_libaaudio PRIVATE render-client/src)
@@ -181,10 +181,10 @@ add_library(stud_runtime_framework STATIC
     "${FRAMEWORK_SRC}/src/server_address.cpp"
     "${FRAMEWORK_SRC}/src/game_instance.cpp"
     "${FRAMEWORK_SRC}/src/content_sharing_bridge.cpp"
-    "${FRAMEWORK_SRC}/src/game_activity_stubs.cpp"
+    "${FRAMEWORK_SRC}/src/app_java_classes.cpp"
     "${FRAMEWORK_SRC}/src/text_editor.cpp"
-    "${FRAMEWORK_SRC}/src/android_framework_stubs.cpp"
-    "${FRAMEWORK_SRC}/src/protocol_platform_stubs.cpp"
+    "${FRAMEWORK_SRC}/src/android_framework.cpp"
+    "${FRAMEWORK_SRC}/src/protocol_platforms.cpp"
     "${FRAMEWORK_SRC}/src/game_engine_boot.cpp"
     "${FRAMEWORK_SRC}/src/canonical_vm_registry.cpp"
 )
@@ -198,7 +198,7 @@ target_include_directories(stud_runtime_framework PUBLIC
 target_link_libraries(stud_runtime_framework PUBLIC fake-jni nlohmann_json::nlohmann_json)
 
 add_library(stud_runtime_libEGL SHARED
-    render-client/src/egl_stub.cpp
+    render-client/src/egl_client.cpp
     render-client/src/render_client_common.cpp
 )
 target_include_directories(stud_runtime_libEGL PRIVATE render-client/src)
@@ -210,7 +210,7 @@ set_target_properties(stud_runtime_libEGL PROPERTIES
 )
 
 add_library(stud_runtime_libGLESv2 SHARED
-    render-client/src/gles_stub.cpp
+    render-client/src/gles_client.cpp
     render-client/src/render_client_common.cpp
 )
 target_include_directories(stud_runtime_libGLESv2 PRIVATE render-client/src)
@@ -286,7 +286,7 @@ set(DetexSources
 )
 
 add_library(stud_runtime_libvulkan SHARED
-    render-client/src/vulkan_stub.cpp
+    render-client/src/vulkan_client.cpp
     render-client/src/texture_decode.cpp
     render-client/src/texture_cache.cpp
     render-client/src/uffd_scan.cpp

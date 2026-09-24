@@ -1,6 +1,6 @@
 #include "stud/stud_paths.h"
 #include "stud/app_bridge.h"
-#include "stud/game_activity_stubs.h"  // real_app_version()
+#include "stud/app_java_classes.h"  // real_app_version()
 
 #include "stud/trap_recovery.h"
 
@@ -77,7 +77,7 @@ std::string real_persistent_android_id() {
 // SDK_INT >= 29` (the app's own User-Agent builder's flag for it),
 // genuinely present in the real logic regardless of whether
 // the device is actually a phone, not a Stud-specific guess. Stud's own
-// BuildVersionStub.SDK_INT is 34, so this real condition is true here
+// BuildVersionJava.SDK_INT is 34, so this real condition is true here
 // too.
 //
 // Two sub-fields (distributorType, storeType; real Java constants
@@ -226,7 +226,7 @@ std::string build_user_agent(bool android_app_token) {
     const int dip_w = static_cast<int>(static_cast<float>(screen_w) / density);
     const int dip_h = static_cast<int>(static_cast<float>(screen_h) / density);
 
-    // total system memory in MB, from ActivityManager.
+    // Total system memory in MB, from ActivityManager.
     const int memory_mb = real_total_memory_mb();
 
     // MANUFACTURER + " " + MODEL. Deliberately NOT this
@@ -239,7 +239,7 @@ std::string build_user_agent(bool android_app_token) {
 
     // The one source of truth for it, rather than a second copy that can
     // drift from what every other caller is told.
-    const std::string android_release = BuildVersionStub::RELEASE->asStdString();
+    const std::string android_release = BuildVersionJava::RELEASE->asStdString();
     // Read from the APK the user configured. It is deliberately NOT
     // defaulted to some build this project once saw: claiming a version
     // Stud is not running is worse than saying nothing, and an empty one

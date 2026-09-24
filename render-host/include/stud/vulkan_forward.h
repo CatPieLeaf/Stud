@@ -1,11 +1,11 @@
 // Wire format for the Vulkan commands forwarded from Process B's
-// libvulkan.so.1 stub to Process C, where the real driver lives.
+// libvulkan.so.1 client to Process C, where the real driver lives.
 //
 // Why forward at all, rather than loading a real Vulkan driver in
 // Process B: the vendor GPU driver must never run inside a process
 // sharing bionic or foreign TLS; see the engineering notes'
 // non-negotiable constraints. Process C is ordinary glibc, so the real driver is
-// at home there, and Process B only ever sees Stud's own stub.
+// at home there, and Process B only ever sees Stud's own client.
 //
 // Vulkan suits this transport far better than GLES did. Nearly every
 // hot call is a vkCmd* that records into a command buffer and returns
