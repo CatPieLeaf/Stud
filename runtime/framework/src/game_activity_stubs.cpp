@@ -103,6 +103,7 @@ BEGIN_NATIVE_DESCRIPTOR(ConfigurationStub)
 { FakeJni::Field<&ConfigurationStub::compatSmallestScreenWidthDp>{}, "compatSmallestScreenWidthDp" },
 { FakeJni::Field<&ConfigurationStub::assetsSeq>{}, "assetsSeq" },
 { FakeJni::Field<&ConfigurationStub::seq>{}, "seq" },
+{ FakeJni::Field<&ConfigurationStub::locale>{}, "locale" },
 END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(AssetManagerStub)

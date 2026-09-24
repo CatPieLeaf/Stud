@@ -96,9 +96,8 @@ public:
 // found that branch reached with an empty string, structurally
 // consistent with Roblox's own extended initializeNativeCode reading a
 // locale-derived string and finding it empty because of exactly this
-// stub. Reporting one real locale (matching LocaleStub's own
-// already-correct "en"/"US" values, previously unreachable since
-// get(int) was never called on an empty list) so real code that
+// stub. Reporting one real locale, the system's own (LocaleStub reads
+// it from the desktop's locale environment), so real code that
 // legitimately expects >=1 system locale gets one.
 class LocaleListStub : public FakeJni::JObject {
 public:
@@ -129,10 +128,14 @@ public:
 // android.content.res.Configuration. Real AOSP field list (fetched from
 // aosp-mirror/platform_frameworks_base's actual source, checked).
 // AGDK's native code reads these directly (GetFieldID, confirmed
-// empirically, first failed on "colorMode"). `locale` (java.util.Locale)
-// and `windowConfiguration` (android.app.WindowConfiguration) deliberately
-// omitted, complex nested object types, added only if a later error
-// demands them.
+// empirically, first failed on "colorMode"). `windowConfiguration`
+// (android.app.WindowConfiguration) is still omitted, added only if a later
+// error demands it.
+//
+// `locale` is the deprecated primary-locale field, which a real
+// Configuration keeps equal to getLocales().get(0). The AGDK GameActivity
+// in Roblox 2.740 looks it up in GameActivity_register and aborts when it
+// is missing ("Unable to find field locale"), so the engine never boots.
 class ConfigurationStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/content/res/Configuration")
@@ -160,6 +163,7 @@ public:
     FakeJni::JInt compatSmallestScreenWidthDp = 1080;
     FakeJni::JInt assetsSeq = 0;
     FakeJni::JInt seq = 0;
+    std::shared_ptr<LocaleStub> locale = std::make_shared<LocaleStub>();
 
     std::shared_ptr<LocaleListStub> getLocales() { return std::make_shared<LocaleListStub>(); }
 };
