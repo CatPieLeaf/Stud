@@ -55,6 +55,12 @@ struct LaunchUri {
     // (`gameInstanceId` in the website's own links). Empty means "any
     // server for this place", which is what a plain place link asks for.
     std::string game_instance_id;
+    // A private server: its share-link code, or its access code. Both are
+    // credentials to that server, never logged.
+    std::string link_code;
+    std::string access_code;
+    // A follow link names the user to join rather than a place.
+    long long user_id = 0;
 };
 
 // Returns std::nullopt if `uri` doesn't start with a recognized scheme

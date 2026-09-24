@@ -53,6 +53,9 @@ nlohmann::json to_json(const LaunchPayload& payload) {
         {"deepLinkReferredByPlayerId", payload.deep_link_referred_by_player_id},
         {"deepLinkJoinAttemptOrigin", payload.deep_link_join_attempt_origin},
         {"deepLinkGameInstanceId", payload.deep_link_game_instance_id},
+        {"deepLinkLinkCode", payload.deep_link_link_code},
+        {"deepLinkAccessCode", payload.deep_link_access_code},
+        {"deepLinkUserId", payload.deep_link_user_id},
     };
 }
 
@@ -108,6 +111,15 @@ LaunchPayload from_json(const nlohmann::json& doc) {
     }
     if (doc.contains("deepLinkJoinAttemptOrigin") && doc.at("deepLinkJoinAttemptOrigin").is_string()) {
         payload.deep_link_join_attempt_origin = doc.at("deepLinkJoinAttemptOrigin").get<std::string>();
+    }
+    if (doc.contains("deepLinkLinkCode") && doc.at("deepLinkLinkCode").is_string()) {
+        payload.deep_link_link_code = doc.at("deepLinkLinkCode").get<std::string>();
+    }
+    if (doc.contains("deepLinkAccessCode") && doc.at("deepLinkAccessCode").is_string()) {
+        payload.deep_link_access_code = doc.at("deepLinkAccessCode").get<std::string>();
+    }
+    if (doc.contains("deepLinkUserId") && doc.at("deepLinkUserId").is_number()) {
+        payload.deep_link_user_id = doc.at("deepLinkUserId").get<long long>();
     }
     return payload;
 }

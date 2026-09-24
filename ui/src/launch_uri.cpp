@@ -117,6 +117,11 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
             result.referred_by_player_id = std::strtoll(referrer.c_str(), nullptr, 10);
         }
         result.game_instance_id = take("gameInstanceId");
+        result.link_code = take("linkCode");
+        if (result.link_code.empty()) result.link_code = take("privateServerLinkCode");
+        result.access_code = take("accessCode");
+        const std::string follow = take("userId");
+        if (!follow.empty()) result.user_id = std::strtoll(follow.c_str(), nullptr, 10);
         result.join_attempt_id = take("joinAttemptId");
         result.join_attempt_origin = take("joinAttemptOrigin");
         result.browser_tracker_id = take("browserTrackerId");
@@ -127,7 +132,7 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
         // "+"-separated format says so in a launchmode field; this one
         // says it in its path (`experiences/start`), and the distinction
         // has no other consumer, so it is recorded the same way.
-        if (result.place_id != 0) result.launch_mode = "play";
+        if (result.place_id != 0 || result.user_id != 0) result.launch_mode = "play";
         return result;
     }
 
@@ -170,6 +175,21 @@ std::optional<LaunchUri> parse_launch_uri(const std::string& uri) {
         }
         if (query.hasQueryItem("joinAttemptOrigin")) {
             result.join_attempt_origin = query.queryItemValue("joinAttemptOrigin").toStdString();
+        }
+        // PlaceLauncher's own names: RequestPrivateGame carries linkCode
+        // or accessCode, RequestFollowUser carries userId, and
+        // RequestGameJob names the server as gameId.
+        if (query.hasQueryItem("linkCode")) {
+            result.link_code = query.queryItemValue("linkCode").toStdString();
+        }
+        if (query.hasQueryItem("accessCode")) {
+            result.access_code = query.queryItemValue("accessCode").toStdString();
+        }
+        if (query.hasQueryItem("userId")) {
+            result.user_id = query.queryItemValue("userId").toLongLong();
+        }
+        if (query.hasQueryItem("gameId") && result.game_instance_id.empty()) {
+            result.game_instance_id = query.queryItemValue("gameId").toStdString();
         }
     }
 

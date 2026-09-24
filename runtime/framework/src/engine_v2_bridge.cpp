@@ -894,10 +894,17 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
             request.launch_data = value;
         } else if (key == "gameInstanceId") {
             request.game_instance_id = value;
+        } else if (key == "linkCode") {
+            request.link_code = value;
+        } else if (key == "accessCode") {
+            request.access_code = value;
+        } else if (key == "userId") {
+            request.user_id = std::strtoll(value.c_str(), nullptr, 10);
         }
     }
-    if (request.place_id == 0) {
-        std::fprintf(stderr, "stud: the handed-over link named no place id, ignoring it\n");
+    if (request.place_id == 0 && request.user_id == 0) {
+        std::fprintf(stderr, "stud: the handed-over link named no place and no user, ignoring "
+                             "it\n");
         std::fflush(stderr);
         return false;
     }
@@ -974,7 +981,7 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
                 join.game_id_to_exclude = request.game_id_to_exclude;
                 join.user_id = request.user_id;
                 join.conversation_id = request.conversation_id;
-                if (join.place_id == 0) {
+                if (join.place_id == 0 && join.user_id == 0) {
                     std::fprintf(stderr,
                                  "stud: experience start NOT acknowledged: the engine has not "
                                  "named a place id yet (acknowledging with 0 is rejected as "

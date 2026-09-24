@@ -48,6 +48,9 @@ struct LaunchPayload {
     long long deep_link_referred_by_player_id = 0;
     std::string deep_link_join_attempt_origin;
     std::string deep_link_game_instance_id;
+    std::string deep_link_link_code;
+    std::string deep_link_access_code;
+    long long deep_link_user_id = 0;
     // Real ClientSettings content (see jni-bridge/include/stud/
     // client_settings_bridge.h's own doc comment): a real device's Java
     // side fetches this over HTTP itself and hands the already-fetched

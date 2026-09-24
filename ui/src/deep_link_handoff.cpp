@@ -9,7 +9,7 @@
 namespace stud::ui {
 
 bool hand_deep_link_to_running_stud(const LaunchUri& link) {
-    if (link.place_id == 0) return false;
+    if (link.place_id == 0 && link.user_id == 0) return false;
     // One key=value per line: small, obvious on the wire, and trivially
     // extended without a version field. Values never contain a newline.
     // They come out of a URI's own query string.
@@ -26,6 +26,9 @@ bool hand_deep_link_to_running_stud(const LaunchUri& link) {
     if (!link.game_instance_id.empty()) {
         payload += "gameInstanceId=" + link.game_instance_id + "\n";
     }
+    if (!link.link_code.empty()) payload += "linkCode=" + link.link_code + "\n";
+    if (!link.access_code.empty()) payload += "accessCode=" + link.access_code + "\n";
+    if (link.user_id != 0) payload += "userId=" + std::to_string(link.user_id) + "\n";
     // The token that lets the running Stud come forward.
     //
     // A compositor will not let an application raise itself, so the

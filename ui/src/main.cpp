@@ -1022,6 +1022,9 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         payload.deep_link_referred_by_player_id = launch_uri->referred_by_player_id;
         payload.deep_link_join_attempt_origin = launch_uri->join_attempt_origin;
         payload.deep_link_game_instance_id = launch_uri->game_instance_id;
+        payload.deep_link_link_code = launch_uri->link_code;
+        payload.deep_link_access_code = launch_uri->access_code;
+        payload.deep_link_user_id = launch_uri->user_id;
     }
     fetch_client_settings(payload);
     fetch_authenticated_user(payload);

@@ -125,6 +125,25 @@ int main() {
               parsed_legacy_still->game_info == "TICKET" && parsed_legacy_still->place_id == 0,
           "the launcher protocol's own format still parses");
 
+    // A private server's share link, and a follow link, which names a
+    // user and no place.
+    auto parsed_private = stud::ui::parse_launch_uri(
+        "roblox://experiences/start?placeId=606849621&linkCode=12345678901234567890");
+    check(parsed_private.has_value() && parsed_private->place_id == 606849621LL &&
+              parsed_private->link_code == "12345678901234567890",
+          "a private server's linkCode is read");
+    auto parsed_follow = stud::ui::parse_launch_uri("roblox://experiences/start?userId=261");
+    check(parsed_follow.has_value() && parsed_follow->user_id == 261 &&
+              parsed_follow->place_id == 0 && parsed_follow->launch_mode == "play",
+          "a follow link is a request to play, with the user to join");
+    auto parsed_launcher_private = stud::ui::parse_launch_uri(
+        "roblox-player://1+launchmode:play+placelauncherurl:https%3A%2F%2Fwww.roblox.com%2FGame%2F"
+        "PlaceLauncher.ashx%3Frequest%3DRequestPrivateGame%26placeId%3D606849621%26accessCode%3D"
+        "abc-123");
+    check(parsed_launcher_private.has_value() && parsed_launcher_private->place_id == 606849621LL &&
+              parsed_launcher_private->access_code == "abc-123",
+          "PlaceLauncher's RequestPrivateGame accessCode is read");
+
     std::printf("all launch-uri checks passed\n");
     return 0;
 }

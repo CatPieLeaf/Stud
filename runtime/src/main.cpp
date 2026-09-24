@@ -2122,6 +2122,9 @@ int main(int argc, char** argv) {
             deep_link.referred_by_player_id = launch_payload->deep_link_referred_by_player_id;
             deep_link.join_attempt_origin = launch_payload->deep_link_join_attempt_origin;
             deep_link.game_instance_id = launch_payload->deep_link_game_instance_id;
+            deep_link.link_code = launch_payload->deep_link_link_code;
+            deep_link.access_code = launch_payload->deep_link_access_code;
+            deep_link.user_id = launch_payload->deep_link_user_id;
             deep_link.launch_data = launch_payload->game_info;
         }
         try {
