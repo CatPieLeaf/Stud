@@ -419,10 +419,20 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
     // laptop with both drivers that is NVIDIA's whichever GPU was chosen.
     // The chosen GPU's own driver is named instead, from the vendor files
     // glvnd itself reads, so the choice is whatever this system installed.
+    // Those are where __EGL_VENDOR_LIBRARY_DIRS says when it is set, and
+    // otherwise where glvnd was built to look: /etc and /usr/share on a
+    // distribution, the GL extension directory in the Flatpak runtime,
+    // which has neither of the other two.
     {
         const bool want_nvidia = chosen->vendor_id == kVendorNvidia;
-        for (const QString& dir : {QStringLiteral("/etc/glvnd/egl_vendor.d"),
-                                   QStringLiteral("/usr/share/glvnd/egl_vendor.d")}) {
+        QStringList vendor_dirs = env.value(QStringLiteral("__EGL_VENDOR_LIBRARY_DIRS"))
+                                      .split(QLatin1Char(':'), Qt::SkipEmptyParts);
+        if (vendor_dirs.isEmpty()) {
+            vendor_dirs = {QStringLiteral("/etc/glvnd/egl_vendor.d"),
+                           QStringLiteral("/usr/share/glvnd/egl_vendor.d"),
+                           QStringLiteral("/usr/lib/x86_64-linux-gnu/GL/glvnd/egl_vendor.d")};
+        }
+        for (const QString& dir : vendor_dirs) {
             QDir vendors(dir);
             const QStringList files =
                 vendors.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
