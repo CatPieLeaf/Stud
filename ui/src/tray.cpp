@@ -356,7 +356,7 @@ void Tray::showAbout() {
                                                "A Linux desktop wrapper that runs the real, "
                                                "unmodified Roblox Android app.<br><br>"
                                                "<a href=\"https://github.com/CatPieLeaf/Stud\">"
-                                               "github.com/CatPieLeaf/Stud</a>"),
+                                               "CatPieLeaf/Stud</a>"),
                                 QMessageBox::Ok);
         about->setAttribute(Qt::WA_DeleteOnClose);
         about->setTextFormat(Qt::RichText);
