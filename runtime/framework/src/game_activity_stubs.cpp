@@ -667,13 +667,16 @@ void NativeGLJavaInterfaceStub::onAppShellReloadNeeded() {
     log_engine_call("onAppShellReloadNeeded()");
 }
 void NativeGLJavaInterfaceStub::onDataModelNotificationCallback(
-    std::shared_ptr<FakeJni::JString> type, std::shared_ptr<FakeJni::JString>) {
+    std::shared_ptr<FakeJni::JString> type, std::shared_ptr<FakeJni::JString> data) {
     // Type only, the payload can carry account data.
     const std::string kind = type ? type->asStdString() : std::string();
     std::printf("stud: NativeGLJavaInterface.onDataModelNotificationCallback: type=%s\n",
                 kind.c_str());
     std::fflush(stdout);
     if (kind == "NATIVE_EXIT" && on_native_exit) on_native_exit();
+    // The account report the app's SessionManager keeps; see
+    // record_account_info().
+    if (kind == "DID_LOG_IN" && data) record_account_info(data->asStdString());
 }
 void NativeGLJavaInterfaceStub::onLuaTextBoxChangedCallback(std::shared_ptr<FakeJni::JString> value) {
     // Length only, never the content: a real TextBox can be a password field.
@@ -708,8 +711,16 @@ void NativeGLJavaInterfaceStub::openNativeOverlay(std::shared_ptr<FakeJni::JStri
                 a ? a->asStdString().c_str() : "");
     std::fflush(stdout);
 }
-void NativeGLJavaInterfaceStub::saveImageToAlbum(std::shared_ptr<FakeJni::JString>) {
-    log_engine_call("saveImageToAlbum() (no photo album on this platform)");
+// The app's own implementation is the same routine gameActivity_onScreenshotReady
+// runs: copy the file into the gallery, then report through
+// nativeImageSavedToAlbumFinished. See album_bridge.h.
+void NativeGLJavaInterfaceStub::saveImageToAlbum(std::shared_ptr<FakeJni::JString> path) {
+    const std::string file = path ? path->asStdString() : std::string();
+    std::printf("stud: NativeGLJavaInterface.saveImageToAlbum: %s\n", file.c_str());
+    std::fflush(stdout);
+    if (!file.empty() && NativeHelperStub::on_capture_ready) {
+        NativeHelperStub::on_capture_ready(file);
+    }
 }
 namespace {
 // Set once at bring-up, by the process that can reach the engine's own
@@ -1187,6 +1198,68 @@ std::shared_ptr<FakeJni::JString> NetworkUtilsStub::getPublicIPv4Addresseses() {
     }
     ::freeifaddrs(list);
     return std::make_shared<FakeJni::JString>(out);
+}
+
+}  // namespace stud::jni_bridge
+
+namespace stud::jni_bridge {
+
+namespace {
+struct AccountInfo {
+    bool under_13 = false;
+    int membership_type = 0;
+    bool has_subscription = false;
+};
+std::mutex& account_mutex() {
+    static std::mutex m;
+    return m;
+}
+AccountInfo& account_info() {
+    static AccountInfo a;
+    return a;
+}
+}  // namespace
+
+void record_account_info(const std::string& json) {
+    const auto doc = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+    if (!doc.is_object()) {
+        std::printf("stud: account report: not JSON (%zu bytes)\n", json.size());
+        std::fflush(stdout);
+        return;
+    }
+    AccountInfo info;
+    if (doc.contains("isUnder13") && doc["isUnder13"].is_boolean()) {
+        info.under_13 = doc["isUnder13"].get<bool>();
+    }
+    if (doc.contains("membershipType") && doc["membershipType"].is_number_integer()) {
+        info.membership_type = doc["membershipType"].get<int>();
+    }
+    if (doc.contains("hasRobloxSubscription") && doc["hasRobloxSubscription"].is_boolean()) {
+        info.has_subscription = doc["hasRobloxSubscription"].get<bool>();
+    }
+    {
+        std::lock_guard<std::mutex> lock(account_mutex());
+        account_info() = info;
+    }
+    std::printf("stud: account report: under13=%s membershipType=%d subscription=%s\n",
+                info.under_13 ? "yes" : "no", info.membership_type,
+                info.has_subscription ? "yes" : "no");
+    std::fflush(stdout);
+}
+
+FakeJni::JBoolean NativeUserJavaInterfaceStub::getIsUnder13() {
+    std::lock_guard<std::mutex> lock(account_mutex());
+    return account_info().under_13;
+}
+
+FakeJni::JInt NativeUserJavaInterfaceStub::getMembershipType() {
+    std::lock_guard<std::mutex> lock(account_mutex());
+    return account_info().membership_type;
+}
+
+FakeJni::JBoolean NativeUserJavaInterfaceStub::getHasRobloxSubscription() {
+    std::lock_guard<std::mutex> lock(account_mutex());
+    return account_info().has_subscription;
 }
 
 }  // namespace stud::jni_bridge

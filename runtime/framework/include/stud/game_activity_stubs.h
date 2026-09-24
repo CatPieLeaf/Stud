@@ -1532,6 +1532,10 @@ public:
 // deliberately conservative, real-looking placeholders (empty/zero/
 // false where no real value is knowable locally), not an attempt to
 // impersonate a real Roblox account's actual data.
+// Records the account facts from the Lua app's login report; see
+// NativeHelperStub::gameActivity_onDidLogInReceived.
+void record_account_info(const std::string& json);
+
 class NativeUserJavaInterfaceStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/user/NativeUserJavaInterface")
@@ -1547,7 +1551,12 @@ public:
     // back to the same honest placeholders as before when no real
     // identity was fetched (no cookie, or the fetch failed).
     static FakeJni::JLong getUserId();
-    static FakeJni::JBoolean getIsUnder13() { return false; }
+    // The account facts the Lua app reports at login (see
+    // record_account_info()); before that report, not under 13 and no
+    // membership, which is what an account that has not said otherwise is
+    // treated as here. The report arrives within the first second of a
+    // session, as the app finishes signing in.
+    static FakeJni::JBoolean getIsUnder13();
     static std::shared_ptr<FakeJni::JString> getUsername();
     static std::shared_ptr<FakeJni::JString> getDisplayName();
     static std::shared_ptr<FakeJni::JString> getAlternateName() {
@@ -1562,8 +1571,8 @@ public:
     }
     // Real Roblox membership-type enum's real default value (0 ==
     // None/free account): a public, documented value, checked.
-    static FakeJni::JInt getMembershipType() { return 0; }
-    static FakeJni::JBoolean getHasRobloxSubscription() { return false; }
+    static FakeJni::JInt getMembershipType();
+    static FakeJni::JBoolean getHasRobloxSubscription();
     // The account's app theme, as Roblox's own enum spells it ("Light",
     // "Dark"): the theme the app last set through SystemThemeProtocol,
     // else the desktop's. See system_theme_bridge.h.
@@ -1838,10 +1847,13 @@ public:
         // again once a game had been played.
         experience_loaded_storage().store(false);
     }
+    // The Lua app's account report: userId, isUnder13, username,
+    // displayName, membershipType, hasRobloxSubscription, countryCode.
+    // The app's SessionManager keeps these and NativeUserJavaInterface
+    // answers from them; record_account_info() does the same. The JSON
+    // itself is not logged.
     void gameActivity_onDidLogInReceived(std::shared_ptr<FakeJni::JString> data) {
-        std::printf("stud: NativeHelper.gameActivity_onDidLogInReceived: data=%s\n",
-                    data ? data->asStdString().c_str() : "");
-        std::fflush(stdout);
+        record_account_info(data ? data->asStdString() : std::string());
         if (on_account_changed) on_account_changed("login");
     }
     void gameActivity_onDidLogOutReceived() {
