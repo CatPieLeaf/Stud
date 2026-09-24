@@ -57,7 +57,7 @@ namespace {
 //
 constexpr int kRenderPathVulkan = 0;
 constexpr int kRenderPathAngleVulkan = 1;
-constexpr int kRenderPathAngleDesktopGL = 2;
+constexpr int kRenderPathDesktopGL = 2;
 constexpr int kRenderPathSoftware = 3;
 }  // namespace
 
@@ -463,8 +463,8 @@ void SettingsWindow::loadFromDisk() {
         try {
             if (auto backend =
                     stud::render::load_dev_render_backend_config(stud::config::default_config_path())) {
-                if (backend->mode == stud::render::DevRenderBackendMode::kAngleDesktopGL) {
-                    path_index = kRenderPathAngleDesktopGL;
+                if (backend->mode == stud::render::DevRenderBackendMode::kDesktopGL) {
+                    path_index = kRenderPathDesktopGL;
                 } else if (backend->mode == stud::render::DevRenderBackendMode::kAngleSwiftShader) {
                     path_index = kRenderPathSoftware;
                 }
@@ -582,7 +582,7 @@ void SettingsWindow::showIdleStatus() {
 }
 
 void SettingsWindow::onRenderPathChanged(int index) {
-    const bool can_overlay = index == kRenderPathVulkan || index == kRenderPathAngleDesktopGL;
+    const bool can_overlay = index == kRenderPathVulkan || index == kRenderPathDesktopGL;
     mangohudCheck_->setEnabled(can_overlay);
     if (can_overlay) {
         mangohudCheck_->setToolTip(
@@ -860,8 +860,8 @@ void SettingsWindow::onSaveClicked() {
         // The mode is all this setting is: where ANGLE lives is looked up
         // at startup and never written down. See dev_backend_config.h.
         stud::render::DevRenderBackendConfig backend;
-        if (render_path == kRenderPathAngleDesktopGL) {
-            backend.mode = stud::render::DevRenderBackendMode::kAngleDesktopGL;
+        if (render_path == kRenderPathDesktopGL) {
+            backend.mode = stud::render::DevRenderBackendMode::kDesktopGL;
         } else if (render_path == kRenderPathSoftware) {
             backend.mode = stud::render::DevRenderBackendMode::kAngleSwiftShader;
         }

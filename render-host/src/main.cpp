@@ -1007,6 +1007,11 @@ bool g_prefer_vulkan = true;
 // Which backend ANGLE should translate GLES to. Empty means ANGLE's own
 // default, which is Vulkan on this platform.
 std::string g_angle_backend;
+// DesktopGL mode: the engine's GLES goes to the system's own driver, with
+// no ANGLE in between. ANGLE's desktop-GL backend on Linux reaches only the
+// driver's GLES over EGL, and offered the engine GLES 3.0 of the driver's
+// 3.2; the engine then streams its textures at a fraction of their size.
+bool g_system_gles = false;
 bool g_hidpi_enabled = true;
 // Stud's own upscaler, and how far below the screen the engine renders
 // for it, DLSS's quality presets. The output is never a setting: it is
@@ -3039,6 +3044,17 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                 d == EGL_NO_DISPLAY ? "refused, falling back" : "granted");
                     std::fflush(stdout);
                 }
+            }
+            // The system's EGL is told which window system the display is
+            // on. glvnd guesses from the pointer otherwise, and a guess is
+            // how a Wayland session ends up on an X11 display.
+            if (d == EGL_NO_DISPLAY && g_system_gles && fns.eglGetPlatformDisplayEXT_ != nullptr) {
+                constexpr EGLenum kPlatformX11 = 0x31D5;
+                constexpr EGLenum kPlatformWayland = 0x31D8;
+                d = fns.eglGetPlatformDisplayEXT_(
+                    window.on_x11() ? kPlatformX11 : kPlatformWayland,
+                    window.on_x11() ? window.x11_display : static_cast<void*>(window.display),
+                    nullptr);
             }
             if (d == EGL_NO_DISPLAY) {
                 d = fns.eglGetDisplay_(
@@ -5693,8 +5709,8 @@ int main(int argc, char** argv) {
     }
     if (dev_backend && !g_prefer_vulkan) {
         switch (dev_backend->mode) {
-            case stud::render::DevRenderBackendMode::kAngleDesktopGL:
-                g_angle_backend = "gl";
+            case stud::render::DevRenderBackendMode::kDesktopGL:
+                g_system_gles = true;
                 break;
             case stud::render::DevRenderBackendMode::kAngleSwiftShader:
                 g_angle_backend = "swiftshader";
@@ -5723,12 +5739,21 @@ int main(int argc, char** argv) {
     // STUD_ANGLE_BACKEND still overrides, so a backend can be tried
     // without going through the Settings window.
     if (const char* env = std::getenv("STUD_ANGLE_BACKEND"); env != nullptr) g_angle_backend = env;
-    std::printf("stud-render-host: ANGLE backend: %s\n",
-                g_angle_backend.empty() ? "vulkan (default)" : g_angle_backend.c_str());
-    std::printf("stud-render-host: ANGLE build: %s / %s\n", egl_path.c_str(), gles_path.c_str());
+    if (g_system_gles && !g_prefer_vulkan) {
+        std::printf("stud-render-host: GL: the system's own EGL and GLES, no ANGLE\n");
+    } else {
+        std::printf("stud-render-host: ANGLE backend: %s\n",
+                    g_angle_backend.empty() ? "vulkan (default)" : g_angle_backend.c_str());
+        std::printf("stud-render-host: ANGLE build: %s / %s\n", egl_path.c_str(),
+                    gles_path.c_str());
+    }
 
     try {
-        stud::render::set_angle_library_paths(egl_path, gles_path);
+        if (g_system_gles && !g_prefer_vulkan) {
+            stud::render::use_system_gl_libraries();
+        } else {
+            stud::render::set_angle_library_paths(egl_path, gles_path);
+        }
     } catch (const stud::render::LoadError& e) {
         std::fprintf(stderr, "stud-render-host: failed to load render backend: %s\n", e.what());
         return 1;

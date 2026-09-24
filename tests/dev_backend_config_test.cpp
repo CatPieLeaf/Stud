@@ -72,15 +72,27 @@ int main(int argc, char** argv) {
     auto bare_angle = stud::render::load_dev_render_backend_config(bare_angle_path);
     check(bare_angle.has_value(), "angle mode with no paths loads");
 
-    // The two other real ANGLE backends.
-    std::string gl_path = dir + "/angle_gl.json";
+    // DesktopGL, the system's own driver, and the name it was saved under
+    // while it ran on ANGLE.
+    std::string gl_path = dir + "/desktop_gl.json";
     {
         std::ofstream out(gl_path);
-        out << R"({"devRenderBackend": {"mode": "angle-gl"}})";
+        out << R"({"devRenderBackend": {"mode": "desktop-gl"}})";
     }
     auto gl_cfg = stud::render::load_dev_render_backend_config(gl_path);
-    check(gl_cfg.has_value() && gl_cfg->mode == stud::render::DevRenderBackendMode::kAngleDesktopGL,
-          "angle-gl selects the desktop GL backend");
+    check(gl_cfg.has_value() && gl_cfg->mode == stud::render::DevRenderBackendMode::kDesktopGL,
+          "desktop-gl selects DesktopGL");
+    std::string old_gl_path = dir + "/angle_gl.json";
+    {
+        std::ofstream out(old_gl_path);
+        out << R"({"devRenderBackend": {"mode": "angle-gl"}})";
+    }
+    auto old_gl_cfg = stud::render::load_dev_render_backend_config(old_gl_path);
+    check(old_gl_cfg.has_value() &&
+              old_gl_cfg->mode == stud::render::DevRenderBackendMode::kDesktopGL,
+          "a config saved as angle-gl still selects DesktopGL");
+
+    // The other real ANGLE backend.
 
     std::string sw_path = dir + "/angle_sw.json";
     {

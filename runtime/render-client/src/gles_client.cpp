@@ -413,6 +413,29 @@ const GLubyte* glGetString(GLenum name) {
     if (written >= sizeof(buf) - 1) written = sizeof(buf) - 1;
     buf[written] = '\0';
     if (full) return reinterpret_cast<const GLubyte*>(buf);
+    // GL_EXT_buffer_storage is taken out of the list. It lets the engine
+    // map a buffer persistently and write into it with no further call,
+    // expecting the GPU to see those writes. The mapping lives in this
+    // process and the buffer in the render host's driver, so nothing
+    // carries the writes across: with the system's own GLES, which
+    // advertises it, every frame came out black. The engine falls back to
+    // ordinary buffer updates, which do cross.
+    if (name == GL_EXTENSIONS) {
+        static constexpr char kUnsupported[] = "GL_EXT_buffer_storage";
+        std::string list(buf, written), kept;
+        for (size_t pos = 0; pos < list.size();) {
+            size_t end = list.find(' ', pos);
+            if (end == std::string::npos) end = list.size();
+            const std::string ext = list.substr(pos, end - pos);
+            if (!ext.empty() && ext != kUnsupported) {
+                if (!kept.empty()) kept += ' ';
+                kept += ext;
+            }
+            pos = end + 1;
+        }
+        std::memcpy(buf, kept.c_str(), kept.size() + 1);
+        written = static_cast<uint32_t>(kept.size());
+    }
 
     // Capped at the length it has always had.
     //

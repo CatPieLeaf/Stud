@@ -49,8 +49,11 @@ std::optional<DevRenderBackendConfig> load_dev_render_backend_config(const std::
 
     DevRenderBackendConfig result;
     const std::string mode = node.at("mode").get<std::string>();
-    if (mode == "angle" || mode == "angle-gl" || mode == "angle-swiftshader") {
-        result.mode = mode == "angle-gl"            ? DevRenderBackendMode::kAngleDesktopGL
+    // "angle-gl" is what DesktopGL mode was saved as while it ran on ANGLE.
+    if (mode == "angle" || mode == "desktop-gl" || mode == "angle-gl" ||
+        mode == "angle-swiftshader") {
+        result.mode = mode == "desktop-gl" || mode == "angle-gl"
+                          ? DevRenderBackendMode::kDesktopGL
                       : mode == "angle-swiftshader" ? DevRenderBackendMode::kAngleSwiftShader
                                                      : DevRenderBackendMode::kAngleVulkan;
         // The paths are optional: they only say which ANGLE build to load,
@@ -67,7 +70,7 @@ std::optional<DevRenderBackendConfig> load_dev_render_backend_config(const std::
     } else {
         throw std::runtime_error("stud: config '" + path +
                                   "' has an unrecognized \"devRenderBackend\".mode \"" + mode +
-                                  "\" (expected \"angle\", \"angle-gl\" or \"angle-swiftshader\")");
+                                  "\" (expected \"angle\", \"desktop-gl\" or \"angle-swiftshader\")");
     }
 
     return result;
@@ -114,7 +117,7 @@ void save_dev_render_backend_config(const std::string& path, const DevRenderBack
         }
     }
 
-    const char* mode_name = config.mode == DevRenderBackendMode::kAngleDesktopGL ? "angle-gl"
+    const char* mode_name = config.mode == DevRenderBackendMode::kDesktopGL ? "desktop-gl"
                             : config.mode == DevRenderBackendMode::kAngleSwiftShader
                                 ? "angle-swiftshader"
                                 : "angle";

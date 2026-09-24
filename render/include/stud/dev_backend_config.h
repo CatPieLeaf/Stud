@@ -32,11 +32,12 @@ enum class DevRenderBackendMode {
     // ANGLE translating to Vulkan. The default, and the fastest of these
     // wherever a working Vulkan driver exists.
     kAngleVulkan,
-    // ANGLE translating to the host's desktop OpenGL. This is the entry
-    // that exists for hardware too old for Vulkan: nothing else here can
-    // run at all on such a machine. Measured working; see the frame
-    // dump result recorded in the engineering notes.
-    kAngleDesktopGL,
+    // The system's own OpenGL ES driver, with no ANGLE in between. This is
+    // the entry that exists for hardware too old for Vulkan: nothing else
+    // here can run at all on such a machine. It used to be ANGLE's GL
+    // backend, which on Linux reaches the driver's GLES over EGL and gave
+    // the engine GLES 3.0 of the driver's 3.2.
+    kDesktopGL,
     // ANGLE on SwiftShader, its own bundled CPU Vulkan implementation.
     // No GPU or driver involved at all, so it is the last resort when
     // neither of the above initialises. Slow by construction, not by

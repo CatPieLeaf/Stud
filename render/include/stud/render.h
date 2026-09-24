@@ -35,6 +35,11 @@ public:
 // handle) and throws LoadError if either fails to open.
 void set_angle_library_paths(const std::string& egl_path, const std::string& gles_path);
 
+// The alternative to set_angle_library_paths(): the system's own EGL and
+// GLES (glvnd), for the path that renders on the driver directly. Throws
+// LoadError if either is missing.
+void use_system_gl_libraries();
+
 // Resolves `name` against the opened ANGLE libraries if it looks like an
 // EGL/GLES symbol (egl*/gl* prefix); returns nullptr for anything else or
 // if the libraries haven't been opened yet. Suitable to pass directly as

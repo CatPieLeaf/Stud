@@ -411,9 +411,38 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
     for (const auto& gpu : gpus) {
         if (gpu.device_index == settings.gpu.device_index) chosen = &gpu;
     }
-    if (chosen == nullptr || !chosen->discrete) return;
+    if (chosen == nullptr) return;
 
     constexpr uint32_t kVendorNvidia = 0x10de;
+    // DesktopGL mode opens the system's EGL, and glvnd's EGL asks its
+    // vendor libraries in order, the first that answers winning: on a
+    // laptop with both drivers that is NVIDIA's whichever GPU was chosen.
+    // The chosen GPU's own driver is named instead, from the vendor files
+    // glvnd itself reads, so the choice is whatever this system installed.
+    {
+        const bool want_nvidia = chosen->vendor_id == kVendorNvidia;
+        for (const QString& dir : {QStringLiteral("/etc/glvnd/egl_vendor.d"),
+                                   QStringLiteral("/usr/share/glvnd/egl_vendor.d")}) {
+            QDir vendors(dir);
+            const QStringList files =
+                vendors.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+            QString match;
+            for (const QString& name : files) {
+                QFile f(vendors.filePath(name));
+                if (!f.open(QIODevice::ReadOnly)) continue;
+                const bool is_nvidia = f.readAll().contains("nvidia");
+                if (is_nvidia == want_nvidia) {
+                    match = vendors.filePath(name);
+                    break;
+                }
+            }
+            if (!match.isEmpty()) {
+                env.insert(QStringLiteral("__EGL_VENDOR_LIBRARY_FILENAMES"), match);
+                break;
+            }
+        }
+    }
+    if (!chosen->discrete) return;
     if (chosen->vendor_id == kVendorNvidia) {
         env.insert(QStringLiteral("__NV_PRIME_RENDER_OFFLOAD"), QStringLiteral("1"));
         env.insert(QStringLiteral("__GLX_VENDOR_LIBRARY_NAME"), QStringLiteral("nvidia"));
