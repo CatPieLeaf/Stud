@@ -277,6 +277,12 @@ int32_t native_window_wait_for_display_scale_120();
 // upscaled.
 void native_window_display_pixel_size(int32_t* width, int32_t* height);
 
+// The GL path's window surface at the display's own pixels rather than at
+// the size the engine renders. Set before the surface exists, by a render
+// host that scales the engine's frame into it itself; the engine is still
+// told the smaller size (ANativeWindow_getWidth/getHeight).
+void native_window_set_egl_at_display_size(bool on);
+
 // Between the X server's device pixels and the engine's buffer pixels.
 // The two differ by the display scale whenever the engine is rendering
 // below the window's own resolution, which is what HiDPI-off and the

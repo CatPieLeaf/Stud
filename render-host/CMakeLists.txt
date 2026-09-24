@@ -168,6 +168,17 @@ endif()
 add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_codec.cpp)
+# SGSR's own GLES fragment shader, for the upscaler on the GL path. GLES
+# compiles its shaders at run time, so the vendored source is embedded as
+# text, byte for byte; the few adjustments it needs are made where it is
+# compiled (gl_upscaler_fragment_source) and say why there.
+set(SgsrGlesSrc "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/snapdragon-gsr/sgsr/v1/include/glsl/sgsr1_shader_mobile_edge_direction.frag")
+file(READ "${SgsrGlesSrc}" StudSgsrGlesText)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_gles_frag.h"
+     "static const char kSgsrGlesFragment[] = R\"STUDSGSR(${StudSgsrGlesText})STUDSGSR\";\n")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SgsrGlesSrc}")
+
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # What miniaudio is allowed to be. These are set on the target rather than

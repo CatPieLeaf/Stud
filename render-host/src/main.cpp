@@ -470,6 +470,8 @@ using PFN_glGenFramebuffers = void (*)(GLsizei, GLuint*);
 using PFN_glGenRenderbuffers = void (*)(GLsizei, GLuint*);
 using PFN_glGenTextures = void (*)(GLsizei, GLuint*);
 using PFN_glIsEnabled = GLboolean (*)(GLenum);
+using PFN_glGetBooleanv = void (*)(GLenum, GLboolean*);
+using PFN_glUniform4f = void (*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 using PFN_glGetIntegerv = void (*)(GLenum, GLint*);
 using PFN_glTexParameterfv = void (*)(GLenum, GLenum, const GLfloat*);
 using PFN_glGetProgramiv = void (*)(GLuint, GLenum, GLint*);
@@ -660,6 +662,8 @@ struct RealFns {
     FN(glGenRenderbuffers);
     FN(glGenTextures);
     FN(glGetIntegerv);
+    FN(glGetBooleanv);
+    FN(glUniform4f);
     FN(glIsEnabled);
     FN(glTexParameterfv);
     FN(glGetProgramiv);
@@ -2572,6 +2576,396 @@ uint64_t client_wait_sync(const RealFns& fns, uint64_t id, GLbitfield flags, uin
     }
 }
 
+// ---- Stud's upscaler on the GL path ----
+//
+// The Vulkan path owns the swapchain and upscales between the engine's
+// image and the window's (vulkan_host.cpp). GL has no such seam: the
+// engine draws into the window surface's own back buffer, framebuffer 0,
+// and eglSwapBuffers shows it. So the seam is made. While the window
+// surface is current, framebuffer 0 means a framebuffer Stud owns, at the
+// size the engine renders (the window's logical size), with the depth,
+// stencil and sample count of the engine's own EGL config. The real
+// window surface is at the display's pixels (android-glue sizes it so),
+// and at eglSwapBuffers the engine's frame is scaled into it.
+//
+// The scaler is SGSR's own GLES fragment shader, vendored by Qualcomm for
+// exactly this: one pass, scaling and sharpening. RAVU, the Vulkan path's
+// default, is a compute shader and is not ported. Where the shader cannot
+// be built, or nothing needs scaling, a linear blit does the copy.
+//
+// The engine never sees any of it: binding 0 binds Stud's framebuffer,
+// asking which framebuffer is bound answers 0, and the surface reports
+// the size the engine renders at.
+bool g_gl_scale_in_stud = false;
+EGLDisplay g_window_egl_display = EGL_NO_DISPLAY;
+EGLConfig g_window_egl_config = nullptr;
+EGLSurface g_window_egl_surface = EGL_NO_SURFACE;
+
+#include "sgsr_gles_frag.h"
+
+struct GlScaleTarget {
+    GLuint fbo = 0;          // what the engine draws into as framebuffer 0
+    GLuint color_tex = 0;    // what the scaler reads
+    GLuint msaa_color = 0;   // with a multisampled config: fbo's colour...
+    GLuint resolve_fbo = 0;  // ...resolved into color_tex through this
+    GLuint depth_stencil = 0;
+    GLsizei width = 0;
+    GLsizei height = 0;
+    GLuint program = 0;
+    GLuint vao = 0;
+    GLint viewport_info = -1;
+    GLint source = -1;
+    bool program_tried = false;
+};
+
+std::mutex g_gl_scale_mutex;
+std::unordered_map<EGLContext, GlScaleTarget> g_gl_scale_targets;
+// The target of the context current on this thread, while that context
+// draws to the window surface. Null otherwise: a pbuffer, no surface, or
+// the path switched off.
+thread_local GlScaleTarget* t_gl_scale = nullptr;
+
+// The engine's render size: what ANativeWindow reports, which is the
+// window's logical size while Stud scales.
+void gl_engine_size(GLsizei* w, GLsizei* h) {
+    *w = std::max(1, ANativeWindow_getWidth(nullptr));
+    *h = std::max(1, ANativeWindow_getHeight(nullptr));
+}
+
+// SGSR's shader as vendored, with what it needs to build on GLES 3.0 and
+// to match the Vulkan path's settings. Each change is a line of the
+// reference, replaced whole:
+//   - its fragment input carries a layout location, which GLSL ES 3.00
+//     does not allow on a fragment input (3.10 does); it is matched by
+//     name instead;
+//   - textureGather is GLSL ES 3.10, and a context the engine asked for
+//     as 3.0 cannot compile it, so the gather is four texelFetch calls
+//     returning the same texels in the same order;
+//   - three of its constructors carry a precision qualifier
+//     (`highp vec2(...)`), which GLSL ES does not allow on a constructor
+//     and ANGLE's compiler rejects; the operands are highp already;
+//   - the edge-direction variant is switched on and the sharpness pinned
+//     where the Vulkan path pins it (sgsr.comp).
+std::string gl_upscaler_fragment_source() {
+    std::string s = kSgsrGlesFragment;
+    auto replace = [&s](const std::string& from, const std::string& to) {
+        for (size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) {
+            s.replace(at, from.size(), to);
+        }
+    };
+    replace("// #define UseEdgeDirection", "#define UseEdgeDirection");
+    replace("#define EdgeSharpness 2.0", "#define EdgeSharpness 3.0");
+    replace("layout(location=0) in highp vec4 in_TEXCOORD0;", "in highp vec4 in_TEXCOORD0;");
+    replace("textureGather(ps0,", "studGather(ps0,");
+    replace("highp vec2(", "vec2(");
+    const std::string gather =
+        "\n// textureGather's footprint and order, from texelFetch (GLSL ES 3.00).\n"
+        "vec4 studGather(mediump sampler2D s, highp vec2 uv, int comp)\n"
+        "{\n"
+        "\thighp ivec2 size = textureSize(s, 0);\n"
+        "\thighp ivec2 b = ivec2(floor(uv * vec2(size) - 0.5));\n"
+        "\thighp ivec2 lo = clamp(b, ivec2(0), size - 1);\n"
+        "\thighp ivec2 hi = clamp(b + 1, ivec2(0), size - 1);\n"
+        "\treturn vec4(texelFetch(s, ivec2(lo.x, hi.y), 0)[comp],\n"
+        "\t            texelFetch(s, ivec2(hi.x, hi.y), 0)[comp],\n"
+        "\t            texelFetch(s, ivec2(hi.x, lo.y), 0)[comp],\n"
+        "\t            texelFetch(s, ivec2(lo.x, lo.y), 0)[comp]);\n"
+        "}\n";
+    const std::string anchor = "uniform mediump sampler2D ps0;\n#endif\n";
+    const size_t at = s.find(anchor);
+    if (at != std::string::npos) s.insert(at + anchor.size(), gather);
+    return s;
+}
+
+GLuint gl_compile(const RealFns& fns, GLenum type, const std::string& src) {
+    GLuint sh = fns.glCreateShader_(type);
+    const GLchar* text = src.c_str();
+    fns.glShaderSource_(sh, 1, &text, nullptr);
+    fns.glCompileShader_(sh);
+    GLint ok = 0;
+    fns.glGetShaderiv_(sh, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[1024] = {};
+        fns.glGetShaderInfoLog_(sh, sizeof(log), nullptr, log);
+        std::printf("stud-render-host: GL upscaler shader did not compile: %s\n", log);
+        std::fflush(stdout);
+        fns.glDeleteShader_(sh);
+        return 0;
+    }
+    return sh;
+}
+
+void gl_build_program(const RealFns& fns, GlScaleTarget& t) {
+    t.program_tried = true;
+    // One triangle covering the window, its texture coordinate running
+    // 0..1 across the visible part; both framebuffers are bottom-up, so
+    // nothing flips.
+    static const char* kVertex =
+        "#version 300 es\n"
+        "out highp vec4 in_TEXCOORD0;\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    in_TEXCOORD0 = vec4(p, 0.0, 0.0);\n"
+        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n";
+    GLuint vs = gl_compile(fns, GL_VERTEX_SHADER, kVertex);
+    GLuint fs = gl_compile(fns, GL_FRAGMENT_SHADER, gl_upscaler_fragment_source());
+    if (vs == 0 || fs == 0) {
+        if (vs != 0) fns.glDeleteShader_(vs);
+        if (fs != 0) fns.glDeleteShader_(fs);
+        return;
+    }
+    GLuint prog = fns.glCreateProgram_();
+    fns.glAttachShader_(prog, vs);
+    fns.glAttachShader_(prog, fs);
+    fns.glLinkProgram_(prog);
+    fns.glDeleteShader_(vs);
+    fns.glDeleteShader_(fs);
+    GLint ok = 0;
+    fns.glGetProgramiv_(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[1024] = {};
+        fns.glGetProgramInfoLog_(prog, sizeof(log), nullptr, log);
+        std::printf("stud-render-host: GL upscaler did not link: %s\n", log);
+        std::fflush(stdout);
+        fns.glDeleteProgram_(prog);
+        return;
+    }
+    t.program = prog;
+    t.viewport_info = fns.glGetUniformLocation_(prog, "ViewportInfo[0]");
+    t.source = fns.glGetUniformLocation_(prog, "ps0");
+    fns.glGenVertexArrays_(1, &t.vao);
+}
+
+EGLint gl_window_config_attrib(const RealFns& fns, EGLint attrib) {
+    EGLint v = 0;
+    if (g_window_egl_config != nullptr) {
+        fns.eglGetConfigAttrib_(g_window_egl_display, g_window_egl_config, attrib, &v);
+    }
+    return v;
+}
+
+// (Re)allocates the target at the engine's current size. The framebuffer
+// keeps its name, so a binding the engine already holds stays valid.
+void gl_size_target(const RealFns& fns, GlScaleTarget& t) {
+    GLsizei w = 0, h = 0;
+    gl_engine_size(&w, &h);
+    if (t.fbo != 0 && w == t.width && h == t.height) return;
+
+    GLint prev_draw = 0, prev_read = 0, prev_tex = 0, prev_rb = 0;
+    fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    fns.glGetIntegerv_(GL_TEXTURE_BINDING_2D, &prev_tex);
+    fns.glGetIntegerv_(GL_RENDERBUFFER_BINDING, &prev_rb);
+
+    if (t.fbo == 0) fns.glGenFramebuffers_(1, &t.fbo);
+    if (t.color_tex != 0) fns.glDeleteTextures_(1, &t.color_tex);
+    if (t.msaa_color != 0) fns.glDeleteRenderbuffers_(1, &t.msaa_color);
+    if (t.depth_stencil != 0) fns.glDeleteRenderbuffers_(1, &t.depth_stencil);
+    t.color_tex = t.msaa_color = t.depth_stencil = 0;
+
+    const EGLint samples = gl_window_config_attrib(fns, EGL_SAMPLES);
+    const bool depth_stencil = gl_window_config_attrib(fns, EGL_DEPTH_SIZE) > 0 ||
+                               gl_window_config_attrib(fns, EGL_STENCIL_SIZE) > 0;
+
+    fns.glGenTextures_(1, &t.color_tex);
+    fns.glBindTexture_(GL_TEXTURE_2D, t.color_tex);
+    fns.glTexStorage2D_(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    fns.glBindFramebuffer_(GL_FRAMEBUFFER, t.fbo);
+    if (samples > 1) {
+        fns.glGenRenderbuffers_(1, &t.msaa_color);
+        fns.glBindRenderbuffer_(GL_RENDERBUFFER, t.msaa_color);
+        fns.glRenderbufferStorageMultisample_(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
+        fns.glFramebufferRenderbuffer_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
+                                       t.msaa_color);
+        if (t.resolve_fbo == 0) fns.glGenFramebuffers_(1, &t.resolve_fbo);
+    } else {
+        fns.glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                    t.color_tex, 0);
+    }
+    if (depth_stencil) {
+        fns.glGenRenderbuffers_(1, &t.depth_stencil);
+        fns.glBindRenderbuffer_(GL_RENDERBUFFER, t.depth_stencil);
+        if (samples > 1) {
+            fns.glRenderbufferStorageMultisample_(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8,
+                                                  w, h);
+        } else {
+            fns.glRenderbufferStorage_(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+        }
+        fns.glFramebufferRenderbuffer_(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                       GL_RENDERBUFFER, t.depth_stencil);
+    }
+    const GLenum status = fns.glCheckFramebufferStatus_(GL_FRAMEBUFFER);
+    if (t.resolve_fbo != 0 && samples > 1) {
+        fns.glBindFramebuffer_(GL_FRAMEBUFFER, t.resolve_fbo);
+        fns.glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                    t.color_tex, 0);
+    }
+    t.width = w;
+    t.height = h;
+    std::printf("stud-render-host: GL frame at %dx%d for Stud to scale (samples %d, depth/stencil "
+                "%s)%s\n",
+                w, h, samples, depth_stencil ? "yes" : "no",
+                status == GL_FRAMEBUFFER_COMPLETE ? "" : ", NOT COMPLETE");
+    std::fflush(stdout);
+
+    // A fresh framebuffer is black until the engine draws; the binding the
+    // engine thinks is 0 was ours already, so it is ours again.
+    fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER,
+                           static_cast<GLuint>(prev_draw) == 0 ? t.fbo : prev_draw);
+    fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER,
+                           static_cast<GLuint>(prev_read) == 0 ? t.fbo : prev_read);
+    fns.glBindTexture_(GL_TEXTURE_2D, static_cast<GLuint>(prev_tex));
+    fns.glBindRenderbuffer_(GL_RENDERBUFFER, static_cast<GLuint>(prev_rb));
+}
+
+// After every eglMakeCurrent: whether this thread now draws to the window,
+// and if so, framebuffer 0 becomes Stud's.
+void gl_scale_on_make_current(const RealFns& fns, EGLSurface draw, EGLContext ctx) {
+    GlScaleTarget* previous = t_gl_scale;
+    t_gl_scale = nullptr;
+    if (!g_gl_scale_in_stud || ctx == EGL_NO_CONTEXT) return;
+    if (draw == EGL_NO_SURFACE || draw != g_window_egl_surface) {
+        // The same context, now on another surface: its real framebuffer 0
+        // is that surface, so a binding left on Stud's is put back.
+        std::lock_guard<std::mutex> lock(g_gl_scale_mutex);
+        auto it = g_gl_scale_targets.find(ctx);
+        if (it != g_gl_scale_targets.end() && it->second.fbo != 0) {
+            GLint d = 0, r = 0;
+            fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &d);
+            fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &r);
+            if (static_cast<GLuint>(d) == it->second.fbo) fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
+            if (static_cast<GLuint>(r) == it->second.fbo) fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, 0);
+        }
+        (void)previous;
+        return;
+    }
+    GlScaleTarget* t = nullptr;
+    bool fresh = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gl_scale_mutex);
+        auto [it, inserted] = g_gl_scale_targets.try_emplace(ctx);
+        t = &it->second;
+        fresh = inserted;
+    }
+    gl_size_target(fns, *t);
+    GLint d = 0, r = 0;
+    fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &d);
+    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &r);
+    if (d == 0) fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, t->fbo);
+    if (r == 0) fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, t->fbo);
+    if (fresh) {
+        // A context's first time on a surface sets its viewport and scissor
+        // to the surface, which is the display's size here, not the
+        // engine's.
+        fns.glViewport_(0, 0, t->width, t->height);
+        fns.glScissor_(0, 0, t->width, t->height);
+    }
+    t_gl_scale = t;
+}
+
+// Whether `target`'s binding is Stud's framebuffer standing in for 0.
+bool gl_bound_to_scale_target(const RealFns& fns, GLenum target) {
+    if (t_gl_scale == nullptr || t_gl_scale->fbo == 0) return false;
+    GLint b = 0;
+    fns.glGetIntegerv_(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING
+                                                     : GL_DRAW_FRAMEBUFFER_BINDING,
+                       &b);
+    return static_cast<GLuint>(b) == t_gl_scale->fbo;
+}
+
+// The engine's frame, scaled into the window's back buffer. Every piece of
+// state it touches is put back, so the engine's next frame starts where
+// its last one left off.
+void gl_scale_present(const RealFns& fns, GlScaleTarget& t) {
+    EGLint out_w = 0, out_h = 0;
+    fns.eglQuerySurface_(g_window_egl_display, g_window_egl_surface, EGL_WIDTH, &out_w);
+    fns.eglQuerySurface_(g_window_egl_display, g_window_egl_surface, EGL_HEIGHT, &out_h);
+    if (out_w <= 0 || out_h <= 0 || t.fbo == 0) return;
+
+    GLint draw_fb = 0, read_fb = 0, program = 0, vao = 0, active = 0, tex = 0;
+    GLint viewport[4] = {};
+    GLboolean mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fb);
+    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
+    fns.glGetIntegerv_(GL_CURRENT_PROGRAM, &program);
+    fns.glGetIntegerv_(GL_VERTEX_ARRAY_BINDING, &vao);
+    fns.glGetIntegerv_(GL_ACTIVE_TEXTURE, &active);
+    fns.glGetIntegerv_(GL_VIEWPORT, viewport);
+    fns.glGetBooleanv_(GL_COLOR_WRITEMASK, mask);
+    static constexpr GLenum kCaps[] = {GL_SCISSOR_TEST,     GL_BLEND,
+                                       GL_DEPTH_TEST,       GL_STENCIL_TEST,
+                                       GL_CULL_FACE,        GL_RASTERIZER_DISCARD,
+                                       GL_POLYGON_OFFSET_FILL, GL_SAMPLE_ALPHA_TO_COVERAGE,
+                                       GL_SAMPLE_COVERAGE};
+    GLboolean caps[std::size(kCaps)] = {};
+    for (size_t i = 0; i < std::size(kCaps); ++i) {
+        caps[i] = fns.glIsEnabled_(kCaps[i]);
+        if (caps[i]) fns.glDisable_(kCaps[i]);
+    }
+    fns.glColorMask_(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+    // A multisampled frame is resolved first; the scaler reads one sample.
+    if (t.msaa_color != 0 && t.resolve_fbo != 0) {
+        fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, t.fbo);
+        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, t.resolve_fbo);
+        fns.glBlitFramebuffer_(0, 0, t.width, t.height, 0, 0, t.width, t.height,
+                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    static bool announced = false;
+    const bool scaling = out_w > t.width || out_h > t.height;
+    if (scaling && !t.program_tried) gl_build_program(fns, t);
+    if (scaling && t.program != 0) {
+        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
+        fns.glViewport_(0, 0, out_w, out_h);
+        fns.glUseProgram_(t.program);
+        fns.glUniform4f_(t.viewport_info, 1.0f / static_cast<float>(t.width),
+                         1.0f / static_cast<float>(t.height), static_cast<float>(t.width),
+                         static_cast<float>(t.height));
+        fns.glUniform1i_(t.source, 0);
+        fns.glActiveTexture_(GL_TEXTURE0);
+        fns.glGetIntegerv_(GL_TEXTURE_BINDING_2D, &tex);
+        fns.glBindTexture_(GL_TEXTURE_2D, t.color_tex);
+        fns.glBindVertexArray_(t.vao);
+        fns.glDrawArrays_(GL_TRIANGLES, 0, 3);
+        fns.glBindTexture_(GL_TEXTURE_2D, static_cast<GLuint>(tex));
+        if (!announced) {
+            announced = true;
+            std::printf("stud-render-host: GL upscale %dx%d -> %dx%d (SGSR, edge direction)\n",
+                        t.width, t.height, out_w, out_h);
+            std::fflush(stdout);
+        }
+    } else {
+        fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, t.msaa_color != 0 ? t.resolve_fbo : t.fbo);
+        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
+        fns.glBlitFramebuffer_(0, 0, t.width, t.height, 0, 0, out_w, out_h,
+                               GL_COLOR_BUFFER_BIT, scaling ? GL_LINEAR : GL_NEAREST);
+        if (!announced) {
+            announced = true;
+            std::printf("stud-render-host: GL frame %dx%d -> %dx%d by blit%s\n", t.width,
+                        t.height, out_w, out_h, scaling ? " (the upscaler shader is unavailable)" : "");
+            std::fflush(stdout);
+        }
+    }
+
+    fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(draw_fb));
+    fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, static_cast<GLuint>(read_fb));
+    fns.glUseProgram_(static_cast<GLuint>(program));
+    fns.glBindVertexArray_(static_cast<GLuint>(vao));
+    fns.glActiveTexture_(static_cast<GLenum>(active));
+    fns.glViewport_(viewport[0], viewport[1], viewport[2], viewport[3]);
+    fns.glColorMask_(mask[0], mask[1], mask[2], mask[3]);
+    for (size_t i = 0; i < std::size(kCaps); ++i) {
+        if (caps[i]) fns.glEnable_(kCaps[i]);
+    }
+}
+
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
@@ -2769,6 +3163,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             }
             uint64_t h = store(g_surfaces, s);
             g_window_surface_handle = h;
+            g_window_egl_display = g_displays.at(a[0]);
+            g_window_egl_config = g_configs.at(a[1]);
+            g_window_egl_surface = s;
             return h;
         }
         case CallId::EglCreatePbufferSurface: {
@@ -2814,6 +3211,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             EGLContext c = a[2] == kNullHandle ? EGL_NO_CONTEXT : g_contexts.at(a[2]);
             EGLBoolean ok = fns.eglMakeCurrent_(g_displays.at(a[0]), s, s, c);
             if (ok == EGL_TRUE && c != EGL_NO_CONTEXT) enable_requestable_extensions(fns);
+            if (ok == EGL_TRUE) gl_scale_on_make_current(fns, s, c);
             if (ok != EGL_TRUE) {
                 std::printf("stud-render-host: eglMakeCurrent failed dpy=%llu surf=%llu ctx=%llu "
                             "egl_error=0x%x\n",
@@ -2963,7 +3361,13 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             static const bool time_swap = std::getenv("STUD_TIME_SWAP") != nullptr;
             const auto t_swap_start = time_swap ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};
+            const bool scaled_swap =
+                t_gl_scale != nullptr && g_surfaces.at(a[1]) == g_window_egl_surface;
+            if (scaled_swap) gl_scale_present(fns, *t_gl_scale);
             uint64_t r = fns.eglSwapBuffers_(g_displays.at(a[0]), g_surfaces.at(a[1])) == EGL_TRUE;
+            // A resized window: the engine's next frame is drawn at the
+            // new size, so its framebuffer follows now.
+            if (scaled_swap) gl_size_target(fns, *t_gl_scale);
             const auto t_after_swap = time_swap ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};
             if (r == 0) {
@@ -3026,8 +3430,18 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             }
             return 1;
         }
-        case CallId::EglDestroyContext:
+        case CallId::EglDestroyContext: {
+            // Stud's framebuffer goes with the context that owns it.
+            {
+                std::lock_guard<std::mutex> lock(g_gl_scale_mutex);
+                auto it = g_gl_scale_targets.find(g_contexts.at(a[1]));
+                if (it != g_gl_scale_targets.end()) {
+                    if (t_gl_scale == &it->second) t_gl_scale = nullptr;
+                    g_gl_scale_targets.erase(it);
+                }
+            }
             return fns.eglDestroyContext_(g_displays.at(a[0]), g_contexts.at(a[1])) == EGL_TRUE;
+        }
         case CallId::EglDestroySurface: {
             // Honour the destroy. The engine legitimately destroys and
             // recreates its window surface (a resize, a RenderView rebuild);
@@ -3037,6 +3451,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // one handle only ever names one live surface.
             auto it = g_surfaces.find(a[1]);
             if (it == g_surfaces.end()) return EGL_TRUE;
+            if (it->second == g_window_egl_surface) g_window_egl_surface = EGL_NO_SURFACE;
             EGLBoolean ok = fns.eglDestroySurface_(g_displays.at(a[0]), it->second);
             g_surfaces.erase(it);
             if (a[1] == g_window_surface_handle) g_window_surface_handle = kNullHandle;
@@ -3062,6 +3477,15 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             EGLint value = 0;
             EGLBoolean ok = fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]),
                                                    static_cast<EGLint>(a[2]), &value);
+            // The window is the size the engine renders at, as far as the
+            // engine can tell; see gl_scale_present.
+            if (ok == EGL_TRUE && g_gl_scale_in_stud &&
+                g_surfaces.at(a[1]) == g_window_egl_surface &&
+                (a[2] == EGL_WIDTH || a[2] == EGL_HEIGHT)) {
+                GLsizei w = 0, h = 0;
+                gl_engine_size(&w, &h);
+                value = a[2] == EGL_WIDTH ? w : h;
+            }
             out.resize(sizeof(EGLint));
             std::memcpy(out.data(), &value, sizeof(EGLint));
             *out_len = sizeof(EGLint);
@@ -3088,7 +3512,12 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
         case CallId::GlActiveTexture: fns.glActiveTexture_(static_cast<GLenum>(a[0])); return 0;
         case CallId::GlAttachShader: fns.glAttachShader_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1])); return 0;
         case CallId::GlBindBuffer: fns.glBindBuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
-        case CallId::GlBindFramebuffer: fns.glBindFramebuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
+        case CallId::GlBindFramebuffer: {
+            GLuint fb = static_cast<GLuint>(a[1]);
+            if (fb == 0 && t_gl_scale != nullptr) fb = t_gl_scale->fbo;
+            fns.glBindFramebuffer_(static_cast<GLenum>(a[0]), fb);
+            return 0;
+        }
         case CallId::GlBindRenderbuffer: fns.glBindRenderbuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
         case CallId::GlBindTexture:
             if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D) g_bound_texture_2d = static_cast<GLuint>(a[1]);
@@ -3919,10 +4348,19 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             fns.glClearBufferfv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
                                  reinterpret_cast<const GLfloat*>(in.data()));
             return 0;
-        case CallId::GlDrawBuffers:
-            fns.glDrawBuffers_(static_cast<GLsizei>(a[0]),
-                               reinterpret_cast<const GLenum*>(in.data()));
+        case CallId::GlDrawBuffers: {
+            // GL_BACK names framebuffer 0's only buffer; on Stud's stand-in
+            // that is its colour attachment.
+            std::vector<GLenum> bufs(static_cast<size_t>(a[0]));
+            std::memcpy(bufs.data(), in.data(), std::min(in.size(), bufs.size() * sizeof(GLenum)));
+            if (gl_bound_to_scale_target(fns, GL_DRAW_FRAMEBUFFER)) {
+                for (GLenum& b : bufs) {
+                    if (b == GL_BACK) b = GL_COLOR_ATTACHMENT0;
+                }
+            }
+            fns.glDrawBuffers_(static_cast<GLsizei>(a[0]), bufs.data());
             return 0;
+        }
         case CallId::GlRenderbufferStorageMultisample:
             fns.glRenderbufferStorageMultisample_(
                 static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
@@ -3957,10 +4395,22 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 static_cast<GLbitfield>(tail[0]), static_cast<GLenum>(tail[1]));
             return 0;
         }
-        case CallId::GlInvalidateFramebuffer:
+        case CallId::GlInvalidateFramebuffer: {
+            // Framebuffer 0's attachments are named GL_COLOR/DEPTH/STENCIL;
+            // a framebuffer object's are the attachment points.
+            std::vector<GLenum> att(static_cast<size_t>(a[1]));
+            std::memcpy(att.data(), in.data(), std::min(in.size(), att.size() * sizeof(GLenum)));
+            if (gl_bound_to_scale_target(fns, static_cast<GLenum>(a[0]))) {
+                for (GLenum& e : att) {
+                    if (e == GL_COLOR) e = GL_COLOR_ATTACHMENT0;
+                    else if (e == GL_DEPTH) e = GL_DEPTH_ATTACHMENT;
+                    else if (e == GL_STENCIL) e = GL_STENCIL_ATTACHMENT;
+                }
+            }
             fns.glInvalidateFramebuffer_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
-                                          reinterpret_cast<const GLenum*>(in.data()));
+                                          att.data());
             return 0;
+        }
         case CallId::GlBindVertexArray: fns.glBindVertexArray_(static_cast<GLuint>(a[0])); return 0;
         case CallId::GlDeleteVertexArrays: fns.glDeleteVertexArrays_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
         case CallId::GlGenVertexArrays: {
@@ -4005,6 +4455,20 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // not read).
             GLint values[16] = {};
             fns.glGetIntegerv_(static_cast<GLenum>(a[0]), values);
+            // Stud's stand-in for framebuffer 0 answers as 0.
+            if (t_gl_scale != nullptr) {
+                const GLenum pname = static_cast<GLenum>(a[0]);
+                if ((pname == GL_DRAW_FRAMEBUFFER_BINDING || pname == GL_READ_FRAMEBUFFER_BINDING) &&
+                    static_cast<GLuint>(values[0]) == t_gl_scale->fbo) {
+                    values[0] = 0;
+                } else if ((pname == GL_DRAW_BUFFER0 || pname == GL_READ_BUFFER) &&
+                           values[0] == GL_COLOR_ATTACHMENT0 &&
+                           gl_bound_to_scale_target(fns, pname == GL_READ_BUFFER
+                                                             ? GL_READ_FRAMEBUFFER
+                                                             : GL_DRAW_FRAMEBUFFER)) {
+                    values[0] = GL_BACK;
+                }
+            }
             out.resize(sizeof(values));
             std::memcpy(out.data(), values, sizeof(values));
             *out_len = static_cast<uint32_t>(out.size());
@@ -5272,6 +5736,14 @@ int main(int argc, char** argv) {
 
     const bool on_x11 =
         stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11;
+    // The GL path scales in Stud whenever the Vulkan path would: with the
+    // upscaler on, and always on X11, where nothing else scales a buffer
+    // smaller than the window (see sync_vk_window_size). On Wayland the
+    // window surface is then at the display's pixels, set before it exists.
+    g_gl_scale_in_stud = !g_prefer_vulkan && (g_upscaling_enabled || on_x11);
+    if (g_gl_scale_in_stud && !on_x11) {
+        stud::android_glue::native_window_set_egl_at_display_size(true);
+    }
     wl_display* display = nullptr;
     wl_surface* surface = nullptr;
     void* x11_display = nullptr;
@@ -5365,7 +5837,7 @@ int main(int argc, char** argv) {
     RESOLVE(glProgramParameteri); RESOLVE(glGetUniformBlockIndex);
     RESOLVE(glUniformBlockBinding); RESOLVE(glGetActiveUniformBlockiv);
     RESOLVE(glGenBuffers); RESOLVE(glGenFramebuffers); RESOLVE(glGenRenderbuffers); RESOLVE(glGenTextures);
-    RESOLVE(glGetIntegerv); RESOLVE(glIsEnabled); RESOLVE(glTexParameterfv); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glGetShaderSource);
+    RESOLVE(glGetIntegerv); RESOLVE(glGetBooleanv); RESOLVE(glUniform4f); RESOLVE(glIsEnabled); RESOLVE(glTexParameterfv); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glGetShaderSource);
     RESOLVE_OPTIONAL(glGenQueries); RESOLVE_OPTIONAL(glDeleteQueries);
     RESOLVE_OPTIONAL(glBeginQuery); RESOLVE_OPTIONAL(glEndQuery);
     RESOLVE_OPTIONAL(glGetQueryObjectuiv); RESOLVE_OPTIONAL(glGetQueryObjectui64v);

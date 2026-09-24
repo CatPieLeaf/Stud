@@ -318,6 +318,17 @@ std::atomic<int32_t> g_requested_render_scale_120{0};
 // The game window's own surface, for anything that needs to stack a
 // surface of its own above it (the text overlay).
 std::atomic<wl_surface*> g_primary_surface{nullptr};
+// See native_window_set_egl_at_display_size().
+std::atomic<bool> g_egl_at_display_size{false};
+int32_t display_scale_120();
+// The wl_egl_window's own size: the engine's buffer, or the display's
+// pixels when the render host scales into the window itself.
+int32_t egl_px_from_logical(int32_t logical) {
+    const int32_t scale = g_egl_at_display_size.load() ? display_scale_120()
+                                                       : g_render_scale_120.load();
+    return static_cast<int32_t>((static_cast<int64_t>(logical) * scale + kScaleUnit - 1) /
+                                kScaleUnit);
+}
 int32_t buffer_px_from_logical(int32_t logical) {
     const int64_t scaled =
         (static_cast<int64_t>(logical) * g_render_scale_120.load() + kScaleUnit - 1) / kScaleUnit;
@@ -1797,12 +1808,21 @@ void apply_window_geometry(ANativeWindow* window, const char* reason) {
     int32_t buf_h = buffer_px_from_logical(logical_h);
     if (buf_w < kMinBufferPx) buf_w = kMinBufferPx;
     if (buf_h < kMinBufferPx) buf_h = kMinBufferPx;
+    // The EGL window can differ from the buffer (see
+    // native_window_set_egl_at_display_size) and move without it, when
+    // only the display's scale changes.
+    const int32_t egl_w = std::max(egl_px_from_logical(logical_w), kMinBufferPx);
+    const int32_t egl_h = std::max(egl_px_from_logical(logical_h), kMinBufferPx);
+    static std::atomic<int32_t> last_egl_w{0}, last_egl_h{0};
     if (buf_w == g_window_width.load() && buf_h == g_window_height.load() &&
+        egl_w == last_egl_w.load() && egl_h == last_egl_h.load() &&
         window->egl_window != nullptr) {
         return;
     }
     if (window->egl_window != nullptr) {
-        wl_egl_window_resize(window->egl_window, buf_w, buf_h, 0, 0);
+        wl_egl_window_resize(window->egl_window, egl_w, egl_h, 0, 0);
+        last_egl_w.store(egl_w);
+        last_egl_h.store(egl_h);
     }
     if (window->viewport != nullptr) {
         // Without this the compositor would take the buffer's own pixel
@@ -2688,6 +2708,8 @@ float native_window_device_px_from_pointer(float pointer_px) {
                               static_cast<double>(render));
 }
 
+void native_window_set_egl_at_display_size(bool on) { g_egl_at_display_size.store(on); }
+
 void native_window_display_pixel_size(int32_t* width, int32_t* height) {
     // X11 knows this exactly, so it is not recomputed.
     //
@@ -2878,6 +2900,11 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
         if (integer_scale > 1) {
             wl_surface_set_buffer_scale(window->surface, integer_scale);
         }
+    }
+    if (g_egl_at_display_size.load() && window->logical_width.load() > 0 &&
+        window->logical_height.load() > 0) {
+        width = egl_px_from_logical(window->logical_width.load());
+        height = egl_px_from_logical(window->logical_height.load());
     }
     window->egl_window = wl_egl_window_create(window->surface, width, height);
     return window->egl_window;
