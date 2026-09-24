@@ -3472,10 +3472,12 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 //
 // STUD_PRESENT_MODE=engine|immediate|fifo-relaxed picks another, for
 // measuring only. `engine` forwards whatever the engine asked for, which
-// is the control for measuring whether any of this helps. MAILBOX is not
-// offered at all, and anything unrecognised is FIFO.
+// is the control for measuring whether any of this helps.
 //
-// FIFO always, paired with the present pacing below.
+// FIFO, paired with the present pacing below, wherever the driver can
+// pace (VK_KHR_present_wait). Where it cannot, MAILBOX: FIFO without
+// pacing is the queue that fills to the swapchain's depth, and each
+// frame in it is latency the player feels.
 //
 // The two belong together. FIFO shows every frame that is rendered, in
 // order, one per refresh; pacing holds the queue at two frames instead
@@ -3515,8 +3517,10 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
         wanted = {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR};
     } else if (choice == "fifo-relaxed") {
         wanted = {VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR};
-    } else {
+    } else if (g_present_wait_enabled && present_pacing_enabled()) {
         wanted = {VK_PRESENT_MODE_FIFO_KHR};
+    } else {
+        wanted = {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
     }
     for (VkPresentModeKHR m : wanted) {
         if (!advertised(m) || m == requested) continue;
