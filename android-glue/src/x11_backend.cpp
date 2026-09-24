@@ -449,6 +449,10 @@ bool available() {
     return answer;
 }
 
+namespace {
+void load_server_keymap();
+}  // namespace
+
 bool create_window(int32_t width, int32_t height) {
     if (!available()) return false;
     if (g_window != 0) return true;
@@ -489,6 +493,8 @@ bool create_window(int32_t width, int32_t height) {
     // Without this the window manager's close button kills the
     // connection outright instead of telling Stud, and the engine never
     // gets to shut down.
+    load_server_keymap();
+
     g_wm_delete = x.InternAtom(g_display, "WM_DELETE_WINDOW", False);
     x.SetWMProtocols(g_display, g_window, &g_wm_delete, 1);
 
@@ -1033,7 +1039,52 @@ void on_button(unsigned int button, bool pressed, int x_pos, int y_pos) {
     push(ev);
 }
 
-void on_key(unsigned int keycode, bool pressed) {
+// The keyboard layout the X server was configured with, as the names
+// setxkbmap and every desktop's layout settings write to the root window:
+// rules, model, layout, variant and options, NUL-separated. Compiled into
+// the same keymap the Wayland path gets from its compositor. Without it
+// the keys went out with no layout at all and the engine's own US table
+// answered for them, so "/" or "'" on a non-US keyboard typed something
+// else.
+void load_server_keymap() {
+    if (stud::android_glue::native_window_set_x11_keymap_from_server(g_display)) return;
+    Xlib& x = xlib();
+    std::string fields[5];
+    const Atom names_atom = x.InternAtom(g_display, "_XKB_RULES_NAMES", True);
+    if (names_atom != None) {
+        Atom type = None;
+        int format = 0;
+        unsigned long count = 0;
+        unsigned long remaining = 0;
+        unsigned char* data = nullptr;
+        // Asked twice: once for its size, once for all of it.
+        if (x.GetWindowProperty(g_display, DefaultRootWindow(g_display), names_atom, 0, 0, False,
+                                AnyPropertyType, &type, &format, &count, &remaining,
+                                &data) == Success) {
+            if (data != nullptr) x.Free(data);
+            data = nullptr;
+            const long length = static_cast<long>((remaining + 3) / 4);
+            if (x.GetWindowProperty(g_display, DefaultRootWindow(g_display), names_atom, 0,
+                                    length, False, AnyPropertyType, &type, &format, &count,
+                                    &remaining, &data) == Success &&
+                data != nullptr && format == 8) {
+                size_t field = 0;
+                for (unsigned long i = 0; i < count && field < std::size(fields); ++i) {
+                    if (data[i] == '\0') {
+                        ++field;
+                    } else {
+                        fields[field].push_back(static_cast<char>(data[i]));
+                    }
+                }
+            }
+            if (data != nullptr) x.Free(data);
+        }
+    }
+    stud::android_glue::native_window_set_x11_keymap(fields[0], fields[1], fields[2], fields[3],
+                                                     fields[4]);
+}
+
+void on_key(unsigned int keycode, unsigned int state, bool pressed) {
     if (keycode < 8) return;  // no evdev code below this exists
     // Already down and pressed again is an auto-repeat, not a new press.
     // Only true once the server stops sending a release between them,
@@ -1052,6 +1103,7 @@ void on_key(unsigned int keycode, bool pressed) {
     // KeyEvent.getRepeatCount() reports: a repeat is the key still being
     // down, not a fresh press.
     ev.b = repeat ? 1.0f : 0.0f;
+    stud::android_glue::native_window_resolve_x11_key(keycode - 8, pressed, state, &ev);
     push(ev);
 }
 
@@ -1129,10 +1181,14 @@ void pump() {
                 on_button(event.xbutton.button, false, event.xbutton.x, event.xbutton.y);
                 break;
             case KeyPress:
-                on_key(event.xkey.keycode, true);
+                on_key(event.xkey.keycode, event.xkey.state, true);
                 break;
             case KeyRelease:
-                on_key(event.xkey.keycode, false);
+                on_key(event.xkey.keycode, event.xkey.state, false);
+                break;
+            case MappingNotify:
+                // The layout was changed while Stud runs.
+                if (event.xmapping.request == MappingKeyboard) load_server_keymap();
                 break;
             case SelectionRequest:
                 answer_selection_request(event.xselectionrequest);

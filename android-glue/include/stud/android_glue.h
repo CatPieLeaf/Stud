@@ -283,6 +283,26 @@ void native_window_display_pixel_size(int32_t* width, int32_t* height);
 // told the smaller size (ANativeWindow_getWidth/getHeight).
 void native_window_set_egl_at_display_size(bool on);
 
+// The X11 backend's keyboard. Wayland hands its client the compositor's
+// keymap; X11 has the layout the server was configured with, named by
+// rules/model/layout/variant/options, which this compiles into the same
+// keymap the Wayland path uses. Empty strings mean the system default.
+void native_window_set_x11_keymap(const std::string& rules, const std::string& model,
+                                  const std::string& layout, const std::string& variant,
+                                  const std::string& options);
+// The keymap the X server itself holds for its core keyboard, which is
+// what it really types with, on any X server and any desktop. A layout
+// can be loaded into the server without the rule names above being
+// updated, so those are only the fallback. Takes the Xlib Display. False
+// when it cannot be read, and the names are the answer.
+bool native_window_set_x11_keymap_from_server(void* xlib_display);
+struct HostInputEvent;
+// Fills in what an X11 key event types, from that keymap and the event's
+// own state (its modifiers and its layout group). Leaves the event as it
+// is when there is no keymap.
+void native_window_resolve_x11_key(uint32_t evdev_code, bool pressed, uint32_t x_state,
+                                   HostInputEvent* ev);
+
 // Between the X server's device pixels and the engine's buffer pixels.
 // The two differ by the display scale whenever the engine is rendering
 // below the window's own resolution, which is what HiDPI-off and the

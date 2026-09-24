@@ -934,6 +934,29 @@ void resolve_key_from_keymap(uint32_t evdev_code, bool pressed,
         ev->composed_utf8[composed.text.size()] = '\0';
     }
 }
+// Installs a compiled keymap as the one keys resolve against. Replaces
+// the old pair only once the new one is fully built.
+bool install_keymap(xkb_keymap* keymap, const char* source) {
+    auto& x = xkb();
+    xkb_state* state = xkb_state_new(keymap);
+    if (state == nullptr) {
+        xkb_keymap_unref(keymap);
+        return false;
+    }
+    if (x.state != nullptr) xkb_state_unref(x.state);
+    if (x.keymap != nullptr) xkb_keymap_unref(x.keymap);
+    x.keymap = keymap;
+    x.state = state;
+    stud::android_glue::collect_reachable_ascii(keymap, x.ascii_reachable);
+    setup_compose(&x);
+    std::printf("stud: keyboard layout from %s: %s\n", source,
+                xkb_keymap_layout_get_name(keymap, 0) != nullptr
+                    ? xkb_keymap_layout_get_name(keymap, 0)
+                    : "(unnamed)");
+    std::fflush(stdout);
+    return true;
+}
+
 void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*) {
     g_last_input_serial.store(serial);
     push_window_focus(true);
@@ -2709,6 +2732,95 @@ float native_window_device_px_from_pointer(float pointer_px) {
 }
 
 void native_window_set_egl_at_display_size(bool on) { g_egl_at_display_size.store(on); }
+
+void native_window_set_x11_keymap(const std::string& rules, const std::string& model,
+                                  const std::string& layout, const std::string& variant,
+                                  const std::string& options) {
+    auto& x = xkb();
+    if (x.context == nullptr) x.context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (x.context == nullptr) return;
+    auto or_null = [](const std::string& v) { return v.empty() ? nullptr : v.c_str(); };
+    const xkb_rule_names names{or_null(rules), or_null(model), or_null(layout),
+                               or_null(variant), or_null(options)};
+    xkb_keymap* keymap =
+        xkb_keymap_new_from_names(x.context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    if (keymap == nullptr) {
+        std::printf("stud: the X server's keyboard layout (%s/%s) did not compile\n",
+                    layout.c_str(), variant.c_str());
+        std::fflush(stdout);
+        return;
+    }
+    install_keymap(keymap, "the X server");
+}
+
+bool native_window_set_x11_keymap_from_server(void* xlib_display) {
+    if (xlib_display == nullptr) return false;
+    // Loaded rather than linked: both ship with every X11 desktop, and a
+    // Wayland-only system simply never gets here.
+    static void* x11_xcb = ::dlopen("libX11-xcb.so.1", RTLD_NOW | RTLD_LOCAL);
+    static void* xkb_x11 = ::dlopen("libxkbcommon-x11.so.0", RTLD_NOW | RTLD_LOCAL);
+    if (x11_xcb == nullptr || xkb_x11 == nullptr) return false;
+    using GetXcbFn = void* (*)(void*);
+    using SetupFn = int (*)(void*, uint16_t, uint16_t, int, uint16_t*, uint16_t*, uint8_t*,
+                            uint8_t*);
+    using DeviceIdFn = int32_t (*)(void*);
+    using KeymapFn = xkb_keymap* (*)(xkb_context*, void*, int32_t, int);
+    auto get_xcb = reinterpret_cast<GetXcbFn>(::dlsym(x11_xcb, "XGetXCBConnection"));
+    auto setup = reinterpret_cast<SetupFn>(::dlsym(xkb_x11, "xkb_x11_setup_xkb_extension"));
+    auto device_id =
+        reinterpret_cast<DeviceIdFn>(::dlsym(xkb_x11, "xkb_x11_get_core_keyboard_device_id"));
+    auto keymap_from_device =
+        reinterpret_cast<KeymapFn>(::dlsym(xkb_x11, "xkb_x11_keymap_new_from_device"));
+    if (get_xcb == nullptr || setup == nullptr || device_id == nullptr ||
+        keymap_from_device == nullptr) {
+        return false;
+    }
+    void* connection = get_xcb(xlib_display);
+    if (connection == nullptr) return false;
+    // The XKB extension version libxkbcommon-x11 itself requires
+    // (XKB_X11_MIN_MAJOR_XKB_VERSION / _MINOR_).
+    constexpr uint16_t kXkbMajor = 1;
+    constexpr uint16_t kXkbMinor = 0;
+    if (!setup(connection, kXkbMajor, kXkbMinor, 0, nullptr, nullptr, nullptr, nullptr)) {
+        return false;
+    }
+    const int32_t device = device_id(connection);
+    if (device < 0) return false;
+    auto& x = xkb();
+    if (x.context == nullptr) x.context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (x.context == nullptr) return false;
+    xkb_keymap* keymap = keymap_from_device(x.context, connection, device, 0);
+    if (keymap == nullptr) return false;
+    return install_keymap(keymap, "the X server's keyboard");
+}
+
+void native_window_resolve_x11_key(uint32_t evdev_code, bool pressed, uint32_t x_state,
+                                   HostInputEvent* ev) {
+    auto& x = xkb();
+    if (x.state == nullptr || x.keymap == nullptr || ev == nullptr) return;
+    // The event carries the core modifiers held when it happened (Shift,
+    // Lock, Control, Mod1..Mod5 in its low eight bits) and, in bits 13
+    // and 14, which of the configured layouts is active. Those are the
+    // same eight real modifiers an XKB keymap defines, in the same order.
+    static constexpr const char* kRealMods[] = {"Shift", "Lock",  "Control", "Mod1",
+                                                "Mod2",  "Mod3",  "Mod4",    "Mod5"};
+    xkb_mod_mask_t depressed = 0;
+    xkb_mod_mask_t locked = 0;
+    for (uint32_t bit = 0; bit < std::size(kRealMods); ++bit) {
+        if ((x_state & (1u << bit)) == 0) continue;
+        const xkb_mod_index_t index = xkb_keymap_mod_get_index(x.keymap, kRealMods[bit]);
+        if (index == XKB_MOD_INVALID) continue;
+        // Caps Lock is a lock; everything else is held.
+        if (bit == 1) {
+            locked |= 1u << index;
+        } else {
+            depressed |= 1u << index;
+        }
+    }
+    const xkb_layout_index_t group = (x_state >> 13) & 3u;
+    xkb_state_update_mask(x.state, depressed, 0, locked, 0, 0, group);
+    resolve_key_from_keymap(evdev_code, pressed, ev);
+}
 
 void native_window_display_pixel_size(int32_t* width, int32_t* height) {
     // X11 knows this exactly, so it is not recomputed.
