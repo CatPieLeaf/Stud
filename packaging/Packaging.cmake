@@ -70,6 +70,24 @@ set(CPACK_RPM_PACKAGE_REQUIRES
 # what the tray's "copy server link" shells out to on Wayland. Neither
 # stops Stud from running.
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard, libdecor")
+# FFmpeg, for the engine's video playback and screen recording. The render
+# host loads it at runtime by the major version of the headers it was built
+# against (render-host/src/video_codec.cpp), so the dependency is exactly
+# that major, by SONAME for rpm and by package name for deb. Weak: without
+# it Stud runs and the engine is offered no video codecs.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(StudPackagedFfmpeg QUIET libavcodec libavutil libswscale)
+endif()
+if(StudPackagedFfmpeg_FOUND)
+    string(REGEX MATCH "^[0-9]+" _stud_avcodec_major "${StudPackagedFfmpeg_libavcodec_VERSION}")
+    string(REGEX MATCH "^[0-9]+" _stud_avutil_major "${StudPackagedFfmpeg_libavutil_VERSION}")
+    string(REGEX MATCH "^[0-9]+" _stud_swscale_major "${StudPackagedFfmpeg_libswscale_VERSION}")
+    string(APPEND CPACK_RPM_PACKAGE_SUGGESTS
+        ", libavcodec.so.${_stud_avcodec_major}()(64bit)"
+        ", libavutil.so.${_stud_avutil_major}()(64bit)"
+        ", libswscale.so.${_stud_swscale_major}()(64bit)")
+endif()
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 # The bundled libraries are private to Stud: nothing else may resolve
 # against them, and rpm must not advertise them as provided.
@@ -173,6 +191,12 @@ libwayland-client0, libxkbcommon0, libxi6")
 # required, without it that one menu entry says what is missing, and
 # everything else works.
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0")
+# The same FFmpeg major the render host was built for; see the rpm half.
+if(StudPackagedFfmpeg_FOUND)
+    string(APPEND CPACK_DEBIAN_PACKAGE_RECOMMENDS
+        ", libavcodec${_stud_avcodec_major}, libavutil${_stud_avutil_major}"
+        ", libswscale${_stud_swscale_major}")
+endif()
 # The bundled libraries are private to Stud. Without this, dpkg-shlibdeps
 # reads ANGLE and the bionic set and either invents dependencies that do
 # not exist or fails outright. They are not built against the host's

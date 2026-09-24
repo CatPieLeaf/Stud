@@ -22,6 +22,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         wayland-devel wayland-protocols-devel libxkbcommon-devel \
         mesa-libEGL-devel mesa-libGLES-devel vulkan-loader-devel \
         freetype-devel openssl-devel \
+        'pkgconfig(libavcodec)' 'pkgconfig(libavutil)' 'pkgconfig(libswscale)' \
     && dnf clean all
 
 COPY . /src
@@ -41,6 +42,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         qt6-qtbase-gui qt6-qtwebengine qtkeychain-qt6 \
         vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libGLES \
         pulseaudio-libs alsa-lib freetype \
+        libavcodec-free libavutil-free libswscale-free \
         dbus-libs libnotify \
         wl-clipboard \
         plasma-breeze-qt6 \

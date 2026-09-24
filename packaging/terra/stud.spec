@@ -50,6 +50,11 @@ Requires:       bubblewrap
 # Audio requires no package: miniaudio is compiled into render-host and
 # opens whichever of libasound, libpulse or libjack the host has, by name.
 Requires:       hicolor-icon-theme
+# FFmpeg is loaded at runtime, not linked, so rpm finds no dependency on it.
+# It is what the engine's video playback and screen recording use; without
+# it Stud runs and simply offers the engine no video codecs. Either
+# Fedora's own build or RPM Fusion's full one.
+Recommends:     (libavcodec-free or ffmpeg-libs)
 # Everything else Stud links is found by rpm itself from the ELFs: Qt, Wayland,
 # libxkbcommon, freetype, OpenSSL, libX11 and libXext through ANGLE.
 

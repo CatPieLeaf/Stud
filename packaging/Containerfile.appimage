@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libwayland-dev libwayland-egl-backend-dev wayland-protocols \
         libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
         libxkbcommon-dev \
+        libavcodec-dev libavutil-dev libswscale-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # linuxdeploy needs these to inspect and bundle; the AppImage tools are

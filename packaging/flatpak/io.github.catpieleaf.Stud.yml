@@ -47,6 +47,23 @@ finish-args:
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
   # No filesystem access: the APK is picked through the file chooser portal.
+  # Screenshots and screen recordings are the exception: they are saved
+  # into the user's own Pictures and Videos folders.
+  - --filesystem=xdg-pictures
+  - --filesystem=xdg-videos
+
+# FFmpeg for the engine's video playback and screen recording. The runtime's
+# own FFmpeg is cut down; the render host loads libavcodec at runtime, by the
+# major version it was built against in CI (Fedora), so this extension's
+# FFmpeg has to carry that same major. `version` must match the freedesktop
+# base under the KDE runtime above: check both when either is bumped.
+add-extensions:
+  org.freedesktop.Platform.ffmpeg-full:
+    directory: lib/ffmpeg
+    version: '25.08'
+    add-ld-path: .
+    autodownload: true
+    autodelete: false
 
 modules:
   # Stud launches its engine process inside bwrap. The runtime has none.
@@ -97,6 +114,8 @@ modules:
   - name: stud-prebuilt
     buildsystem: simple
     build-commands:
+      # Where the ffmpeg-full extension is mounted; see add-extensions.
+      - mkdir -p /app/lib/ffmpeg
       - mkdir -p /app/lib/stud /app/libexec/stud
       - cp -a usr/lib/stud/. /app/lib/stud/
       - cp -a usr/libexec/stud/lib64 /app/libexec/stud/lib64
