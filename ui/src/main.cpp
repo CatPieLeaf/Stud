@@ -1117,9 +1117,36 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         }
     }
 
+    // Where screenshots and screen recordings land: the user's own
+    // Pictures and Videos folders, as their desktop names them
+    // (user-dirs.dirs, which is what QStandardPaths reads). Created here,
+    // by the process with the real HOME, and bound in writable, because
+    // Process B is the one that copies the engine's capture out; see
+    // album_bridge.h.
+    std::string pictures_dir;
+    std::string videos_dir;
+    {
+        const auto resolve = [](QStandardPaths::StandardLocation where, const char* fallback) {
+            QString dir = QStandardPaths::writableLocation(where);
+            if (dir.isEmpty()) dir = QDir::homePath() + QStringLiteral("/") + fallback;
+            return dir.toStdString();
+        };
+        pictures_dir = resolve(QStandardPaths::PicturesLocation, "Pictures");
+        videos_dir = resolve(QStandardPaths::MoviesLocation, "Videos");
+        for (const std::string& dir : {pictures_dir, videos_dir}) {
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            if (!ec) extra_binds.push_back({dir, /*writable=*/true});
+        }
+    }
+
     stud::bionic_runtime::ProcessBConfig config;
     config.executable_path = process_b_binary.toStdString();
     config.args = {so_path, "--apk", apk_path, "--ipc-connect", socket_path};
+    config.args.push_back("--pictures-dir");
+    config.args.push_back(pictures_dir);
+    config.args.push_back("--videos-dir");
+    config.args.push_back(videos_dir);
 
     // Previously-missing wiring: process-b/src/main.cpp already
     // reads a "--flag-overrides <path>" arg and threads it all the way

@@ -15,6 +15,8 @@
 #include "stud/system_locale.h"
 
 #include <atomic>
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -620,25 +622,52 @@ private:
     }
 };
 
-// Confirmed (`org.fmod.AudioDevice`): FMOD's real
-// Java-side `AudioTrack`-backed output fallback path; real instance
-// methods (native constructs one via `NewObject`, then calls back on
-// that instance), not static. `init()` honestly returns `false` (Stud
-// has no real `AudioTrack`/host audio output wired up at this layer
-// yet), matches the real method's own defined failure-path behavior
-// (a real device returns `false` here too when `AudioTrack`
-// construction fails), not a fabricated success. `close()`/`write()`
-// are honest no-ops for the same reason.
+// org.fmod.AudioDevice: FMOD's Java output, an AudioTrack of 16-bit PCM
+// (`org.fmod.AudioDevice`). FMOD constructs one and falls back to it
+// when its native output (AAudio, which Stud implements) will not start.
+// Instance methods, called back on the object FMOD made.
+//
+// The real class hands the bytes to AudioTrack, whose write() blocks until
+// the device has room; the hooks below do the same through the render
+// host's audio output, and are set during bring-up
+// (runtime/src/fmod_audio_output.cpp). Without them init() fails, which
+// is what a real AudioTrack does when it cannot be created.
 class AudioDeviceStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/fmod/AudioDevice")
-    FakeJni::JBoolean init(FakeJni::JInt /*channels*/, FakeJni::JInt /*sampleRate*/,
-                            FakeJni::JInt /*numBuffers*/, FakeJni::JInt /*bufferLength*/) {
-        std::printf("stud: AudioDevice.init() (no-op, no real AudioTrack output)\n");
-        return false;
+    struct Output {
+        // channels, sample rate; true once the host is ready for writes.
+        std::function<bool(int, int)> open;
+        // Interleaved 16-bit samples, in the channels and rate opened with.
+        std::function<void(const int16_t*, size_t)> write;
+        std::function<void()> close;
+    };
+    static inline Output output;
+
+    FakeJni::JBoolean init(FakeJni::JInt channels, FakeJni::JInt sampleRate,
+                            FakeJni::JInt numBuffers, FakeJni::JInt bufferLength) {
+        const bool ok = output.open && output.open(channels, sampleRate);
+        std::printf("stud: AudioDevice.init(%d ch, %d Hz, %d x %d): %s\n",
+                    static_cast<int>(channels), static_cast<int>(sampleRate),
+                    static_cast<int>(numBuffers), static_cast<int>(bufferLength),
+                    ok ? "playing through the host" : "no host audio output");
+        std::fflush(stdout);
+        open_ = ok;
+        return ok;
     }
-    void close() {}
-    void write(std::shared_ptr<FakeJni::JByteArray> /*data*/, FakeJni::JInt /*length*/) {}
+    void close() {
+        if (open_ && output.close) output.close();
+        open_ = false;
+    }
+    void write(std::shared_ptr<FakeJni::JByteArray> data, FakeJni::JInt length) {
+        if (!open_ || !data || !output.write || length <= 0) return;
+        const size_t bytes = std::min<size_t>(static_cast<size_t>(length),
+                                              static_cast<size_t>(data->getSize()));
+        output.write(reinterpret_cast<const int16_t*>(data->getArray()), bytes / 2);
+    }
+
+private:
+    bool open_ = false;
 };
 
 // A real, empty java.util.ArrayList, for callers that take a
@@ -1993,9 +2022,17 @@ public:
                     "inExperience=%d\n",
                     static_cast<int>(orientation), static_cast<int>(inExperience));
     }
+    // A screenshot or a screen recording, finished and in the engine's own
+    // storage. Android's Java copies it into the gallery and then reports
+    // back with nativeImageSavedToAlbumFinished; the engine waits for that
+    // report. See album_bridge.h. Set during bring-up.
+    static inline std::function<void(const std::string&)> on_capture_ready;
     void gameActivity_onScreenshotReady(std::shared_ptr<FakeJni::JString> path) {
+        const std::string file = path ? path->asStdString() : std::string();
         std::printf("stud: NativeHelper.gameActivity_onScreenshotReady: path=%s\n",
-                    path ? path->asStdString().c_str() : "");
+                    file.c_str());
+        std::fflush(stdout);
+        if (on_capture_ready && !file.empty()) on_capture_ready(file);
     }
     void gameActivity_setAppUpgradeStatus(FakeJni::JInt result, FakeJni::JInt upgradeStatusCode,
                                            std::shared_ptr<FakeJni::JString> /*apkUrl*/,

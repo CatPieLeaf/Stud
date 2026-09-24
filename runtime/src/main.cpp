@@ -53,6 +53,8 @@
 #include "stud/webview_user_agent.h"
 #include "stud/webview_cookies.h"
 #include "stud/linking_bridge.h"
+#include "stud/album_bridge.h"
+#include "fmod_audio_output.h"
 #include "stud/flag_overrides.h"
 #include "stud/android_framework_stubs.h"
 #include "stud/protocol_platform_stubs.h"
@@ -728,6 +730,9 @@ int main(int argc, char** argv) {
     // still chose Vulkan on its own, so picking OpenGL changed nothing
     // it actually did. See renderer_flags_for_mode() below.
     const std::string graphics_mode = find_named_arg(argc, argv, "--graphics-mode");
+    // FMOD's Java AudioTrack fallback, through the host's audio output.
+    // Before the engine loads: FMOD picks its output while it starts.
+    stud::runtime::install_fmod_audio_output();
     const bool smooth_zoom_setting = find_named_arg(argc, argv, "--smooth-zoom") != "off";
     stud::jni_bridge::set_smooth_zoom_enabled(smooth_zoom_setting);
     std::printf("stud: smooth zoom %s\n", smooth_zoom_setting ? "on" : "off (per-notch, as Sober)");
@@ -2563,6 +2568,19 @@ int main(int argc, char** argv) {
         stud::jni_bridge::run_set_task_scheduler_foreground(jvm, lib);
     };
     assert_foreground();
+
+    // Screenshots and screen recordings go to the user's own Pictures and
+    // Videos folders, which stud-ui resolves (XDG user dirs) and binds
+    // into this sandbox; see album_bridge.h.
+    {
+        stud::jni_bridge::AlbumFolders folders;
+        folders.pictures = find_named_arg(argc, argv, "--pictures-dir");
+        folders.videos = find_named_arg(argc, argv, "--videos-dir");
+        stud::jni_bridge::NativeHelperStub::on_capture_ready =
+            [&jvm, &lib, folders](const std::string& path) {
+                stud::jni_bridge::save_capture_to_album(jvm, lib, folders, path);
+            };
+    }
 
     // Roblox's own in-game leave button. The engine reports the return to
     // its app shell, and with the setting on that is Stud's cue to end the

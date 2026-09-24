@@ -176,6 +176,7 @@ add_library(stud_runtime_framework STATIC
     "${FRAMEWORK_SRC}/src/permissions_bridge.cpp"
     "${FRAMEWORK_SRC}/src/system_theme_bridge.cpp"
     "${FRAMEWORK_SRC}/src/linking_bridge.cpp"
+    "${FRAMEWORK_SRC}/src/album_bridge.cpp"
     "${FRAMEWORK_SRC}/src/webview_cookies.cpp"
     "${FRAMEWORK_SRC}/src/server_address.cpp"
     "${FRAMEWORK_SRC}/src/game_instance.cpp"
@@ -326,6 +327,7 @@ target_include_directories(stud_runtime_ipc PUBLIC "${STUD_IPC_SRC}/include")
 target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 
 add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp
+                                    src/fmod_audio_output.cpp
                                     src/pthread_create_interpose.cpp
                                     src/android_log_interpose.cpp src/pthread_tls_interpose.cpp
                                     # The SIGILL shim, compiled in rather than linked: the
