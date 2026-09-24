@@ -1469,16 +1469,24 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // suspect turned off and another with it on -- which is no use at all
     // for a fault that appears at random, minutes apart.
     //
-    // Recording a marker is a write, not a barrier or a stall, so this is
-    // left on rather than hidden behind a switch: a diagnostic that is off
-    // when the rare thing happens has no value.
-    if (device_supports_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME)) {
+    // A debugging aid, so only under STUD_DEBUG: what ships creates the
+    // device the engine asked for, with nothing diagnostic added to it.
+    if (stud::logging::debug_enabled() &&
+        device_supports_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME)) {
         bool already = false;
         for (const std::string& e : extensions) {
             if (e == VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME) already = true;
         }
         if (!already) extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
     }
+    // Whether each of the two is actually enabled on this device, which
+    // is what decides whether its commands may be called at all. The
+    // engine may have asked for either itself.
+    bool checkpoints_enabled = false;
+    for (const std::string& e : extensions) {
+        if (e == VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME) checkpoints_enabled = true;
+    }
+    bool fault_enabled = false;
 
     // Device fault reporting, for the same reason and the other half of
     // the answer.
@@ -1509,8 +1517,13 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         for (const std::string& e : extensions) {
             if (e == VK_EXT_DEVICE_FAULT_EXTENSION_NAME) already = true;
         }
-        if (!already) extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
-        if (!engine_asked_for_fault) {
+        // The extension whenever the engine asks for the feature, since its
+        // own chain needs it; Stud's own request only under STUD_DEBUG.
+        if (!already && (engine_asked_for_fault || stud::logging::debug_enabled())) {
+            extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        }
+        fault_enabled = already || engine_asked_for_fault || stud::logging::debug_enabled();
+        if (!engine_asked_for_fault && stud::logging::debug_enabled()) {
             fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
             fault_features.deviceFault = VK_TRUE;
             stud_added_fault = true;
@@ -1786,6 +1799,14 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         // loader this process already dlopen'd, handed over by
         // volkInitializeCustom() at instance creation.
         volkLoadDeviceTable(&l.vk, l.device);
+        // A driver may resolve an extension's commands whether or not the
+        // extension was enabled, and calling one that was not is invalid.
+        // Everything below decides by whether the pointer is set.
+        if (!checkpoints_enabled) {
+            l.vk.vkCmdSetCheckpointNV = nullptr;
+            l.vk.vkGetQueueCheckpointDataNV = nullptr;
+        }
+        if (!fault_enabled) l.vk.vkGetDeviceFaultInfoEXT = nullptr;
         // A table that came back empty is worth saying out loud. It means
         // volk had no vkGetDeviceProcAddr to call, and the alternative to
         // this line is the first call through the table faulting at
@@ -1827,6 +1848,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         // checkpoints" line MEANS: with the entry points resolved it says
         // the GPU never reached Stud's own work, and without them it says
         // only that nothing was ever recorded.
+        if (stud::logging::debug_enabled())
         std::printf("stud-render-host: GPU checkpoints %s\n",
                     (l.vk.vkCmdSetCheckpointNV != nullptr && l.vk.vkGetQueueCheckpointDataNV != nullptr)
                         ? "are available; Stud's own passes are marked, so a device loss can say "
@@ -5572,7 +5594,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         const double swap_ms =
             std::chrono::duration<double, std::milli>(chain_t0 - create_t0).count();
         const double chain_ms = std::chrono::duration<double, std::milli>(now - chain_t0).count();
-        if (swap_ms + chain_ms > 20.0) {
+        if (stud::logging::debug_enabled() && swap_ms + chain_ms > 20.0) {
             std::printf("stud-render-host: a swapchain rebuild cost %.0fms (driver %.0f, "
                         "upscale pass %.0f)\n", swap_ms + chain_ms, swap_ms, chain_ms);
             std::fflush(stdout);
@@ -8964,7 +8986,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // says the idea is wrong. Printed rarely, so it costs nothing.
     {
         static uint64_t presents_seen = 0;
-        if ((++presents_seen % 1800) == 0) {
+        if (stud::logging::debug_enabled() && (++presents_seen % 1800) == 0) {
             size_t shared = 0;
             size_t buffers = 0;
             {
@@ -9105,7 +9127,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // A failure, or a heartbeat rare enough to be worth reading (~a minute
     // at 60fps). The first few frames also say the pipeline started, which
     // is worth a line only while tracing.
-    if (res != VK_SUCCESS || (presents % 3600) == 0 ||
+    if (res != VK_SUCCESS || (stud::logging::debug_enabled() && (presents % 3600) == 0) ||
         (presents < 5 && vk_object_trace_enabled())) {
         std::printf("stud-render-host: vkQueuePresentKHR #%d -> %d (%u swapchain(s))\n", presents,
                     static_cast<int>(res), ns);

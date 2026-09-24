@@ -30,6 +30,7 @@
 // then, and every GL call queued behind it. Live-caught, twice.
 
 #include "stud/audio_output.h"
+#include "stud/session_log.h"
 
 #include <atomic>
 #include <dlfcn.h>
@@ -552,7 +553,7 @@ uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes)
     const size_t fill = (write + bytes) - d.ring_read.load(std::memory_order_acquire);
     static uint64_t reported = 0;
     const uint64_t under = d.underruns.load(std::memory_order_relaxed);
-    if (under != reported && (under - reported) >= 50) {
+    if (stud::logging::debug_enabled() && under != reported && (under - reported) >= 50) {
         reported = under;
         std::printf("stud-render-host: audio: %llu underrun(s) so far\n",
                     static_cast<unsigned long long>(under));

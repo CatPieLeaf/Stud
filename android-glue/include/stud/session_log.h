@@ -45,6 +45,17 @@
 // never overwrite each other.
 namespace stud::logging {
 
+// STUD_DEBUG=1: diagnostics a normal session does not need -- periodic
+// censuses, heartbeats, GPU markers. Off in what ships; tools and
+// run-debug.sh turn it on for a session that is being investigated.
+inline bool debug_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("STUD_DEBUG");
+        return v != nullptr && *v != '\0' && !(v[0] == '0' && v[1] == '\0');
+    }();
+    return on;
+}
+
 namespace detail {
 
 // The real stdout, saved before the tee replaced fd 1. Children must be

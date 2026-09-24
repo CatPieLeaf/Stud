@@ -166,9 +166,16 @@ void prune_once() {
         if (total <= cap) break;
         if (::unlink(entry.path.c_str()) == 0) total -= entry.bytes;
     }
-    std::printf("stud: texture cache pruned to %llu MB\n",
-                static_cast<unsigned long long>(total / (1024 * 1024)));
-    std::fflush(stdout);
+    // Routine, and dozens of times a session: said only under STUD_DEBUG.
+    static const bool debug = [] {
+        const char* v = std::getenv("STUD_DEBUG");
+        return v != nullptr && *v != '\0' && !(v[0] == '0' && v[1] == '\0');
+    }();
+    if (debug) {
+        std::printf("stud: texture cache pruned to %llu MB\n",
+                    static_cast<unsigned long long>(total / (1024 * 1024)));
+        std::fflush(stdout);
+    }
 }
 
 // Whether the cache directory lives on a spinning disk.
