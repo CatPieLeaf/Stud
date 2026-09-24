@@ -76,6 +76,7 @@ private slots:
     void onBrowseApkClicked();
     void onRenderPathChanged(int index);
     void onMangohudToggled(bool checked);
+    void updateUpscalerControls();
     void onBackgroundFpsChanged(int value);
 
 protected:
@@ -103,6 +104,9 @@ private:
     QCheckBox* upscalingCheck_;
     // TEMPORARY, comes out with the comparison. See StudSettings::upscaler_choice.
     QComboBox* upscalerCombo_;
+    // The upscaler the user chose, which the Vulkan path uses. The box
+    // shows SGSR on the GL paths without changing this.
+    QString upscalerWanted_;
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also
     // called on a palette change, hence keeping it around.

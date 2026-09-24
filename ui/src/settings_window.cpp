@@ -183,26 +183,18 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     upscalerCombo_ = new QComboBox(this);
     upscalerCombo_->addItem("RAVU-Zoom AR", QStringLiteral("ravu-ar"));
     upscalerCombo_->addItem("SGSR1 ED", QStringLiteral("sgsr-ed"));
-    upscalerCombo_->setToolTip(
-        "Which filter rebuilds the frame at full resolution.\n"
-        "\n"
-        "RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
-        "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
-        "\n"
-        "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
-        "The one to pick on a laptop or an integrated GPU.");
     upscalerRow->addWidget(upscalerCombo_);
+    // Only a choice the user makes is remembered; updateUpscalerControls()
+    // blocks this while it shows the GL paths' fixed answer.
+    connect(upscalerCombo_, &QComboBox::currentIndexChanged, this, [this]() {
+        upscalerWanted_ = upscalerCombo_->currentData().toString();
+    });
     upscalerRow->addStretch();
     graphics->addLayout(upscalerRow);
 
     // The output resolution only means anything while the upscaler is the
     // thing producing the frame.
-    auto sync_upscale_controls = [this]() {
-        const bool available = !hidpiCheck_->isChecked();
-        upscalingCheck_->setEnabled(available);
-        const bool upscaling = available && upscalingCheck_->isChecked();
-        upscalerCombo_->setEnabled(upscaling);
-    };
+    auto sync_upscale_controls = [this]() { updateUpscalerControls(); };
     connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
         sync_upscale_controls();
     });
@@ -425,10 +417,8 @@ void SettingsWindow::loadFromDisk() {
         // TEMPORARY, with the rest of the filter comparison. An
         // unrecognised name leaves the box on its first entry rather
         // than adding one nothing can render.
-        const int index = upscalerCombo_->findData(
-            QString::fromStdString(settings.upscaler_choice));
-        upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
-        upscalerCombo_->setEnabled(!settings.hidpi && settings.upscaling);
+        upscalerWanted_ = QString::fromStdString(settings.upscaler_choice);
+        updateUpscalerControls();
     }
     smoothZoomCheck_->setChecked(settings.smooth_zoom);
     // Unlimited is stored as 0 and lives at the far end of the slider.
@@ -597,6 +587,38 @@ void SettingsWindow::onRenderPathChanged(int index) {
     // the user actually asked for, switching away and back keeps it.
     const QSignalBlocker block(mangohudCheck_);
     mangohudCheck_->setChecked(can_overlay && mangohudWanted_);
+    updateUpscalerControls();
+}
+
+// The upscaler box follows the render path. RAVU is a Vulkan compute
+// shader; the GL paths scale with SGSR's own GLES shader whatever is
+// chosen, so there the box shows that and is greyed out. The user's own
+// choice is kept aside and comes back on Vulkan, and it is what is saved.
+void SettingsWindow::updateUpscalerControls() {
+    const bool available = !hidpiCheck_->isChecked();
+    upscalingCheck_->setEnabled(available);
+    const bool upscaling = available && upscalingCheck_->isChecked();
+    const bool vulkan = renderPathCombo_->currentIndex() == kRenderPathVulkan;
+    const QSignalBlocker block(upscalerCombo_);
+    if (vulkan) {
+        const int index = upscalerCombo_->findData(upscalerWanted_);
+        upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
+        upscalerCombo_->setEnabled(upscaling);
+        upscalerCombo_->setToolTip(
+            "Which filter rebuilds the frame at full resolution.\n"
+            "\n"
+            "RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
+            "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
+            "\n"
+            "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
+            "The one to pick on a laptop or an integrated GPU.");
+    } else {
+        upscalerCombo_->setCurrentIndex(upscalerCombo_->findData(QStringLiteral("sgsr-ed")));
+        upscalerCombo_->setEnabled(false);
+        upscalerCombo_->setToolTip(
+            "This render path always upscales with SGSR1 ED.\n"
+            "RAVU-Zoom AR is a Vulkan compute shader and runs on the Vulkan path only.");
+    }
 }
 
 void SettingsWindow::onMangohudToggled(bool checked) { mangohudWanted_ = checked; }
@@ -719,7 +741,7 @@ void SettingsWindow::onSaveClicked() {
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
     // TEMPORARY, with the rest of the filter comparison.
-    settings.upscaler_choice = upscalerCombo_->currentData().toString().toStdString();
+    settings.upscaler_choice = upscalerWanted_.toStdString();
     settings.smooth_zoom = smoothZoomCheck_->isChecked();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
                                   ? stud::config::kBackgroundFpsNoLimit
