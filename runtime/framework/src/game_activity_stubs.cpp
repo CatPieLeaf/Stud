@@ -1,4 +1,9 @@
 #include "stud/game_activity_stubs.h"
+#include "stud/system_theme_bridge.h"
+
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 
 #include <functional>
 
@@ -1153,6 +1158,35 @@ void register_game_activity_stubs(FakeJni::Jvm& jvm) {
     PlatformSystemDialogHandlerStub::instance();
     FacialAgeEstimationProtocolStub::instance();
     jvm.registerClass<NativeFlagsInitResultStub>();
+}
+
+}  // namespace stud::jni_bridge
+
+namespace stud::jni_bridge {
+
+std::shared_ptr<FakeJni::JString> NativeUserJavaInterfaceStub::getTheme() {
+    return std::make_shared<FakeJni::JString>(current_theme_name() == "dark" ? "Dark" : "Light");
+}
+
+}  // namespace stud::jni_bridge
+
+namespace stud::jni_bridge {
+
+std::shared_ptr<FakeJni::JString> NetworkUtilsStub::getPublicIPv4Addresseses() {
+    std::string out;
+    ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0) return std::make_shared<FakeJni::JString>("");
+    for (const ifaddrs* a = list; a != nullptr; a = a->ifa_next) {
+        if (a->ifa_addr == nullptr || a->ifa_addr->sa_family != AF_INET) continue;
+        const auto* in = reinterpret_cast<const sockaddr_in*>(a->ifa_addr);
+        if ((ntohl(in->sin_addr.s_addr) >> 24) == 127) continue;  // loopback
+        char text[INET_ADDRSTRLEN] = {};
+        if (::inet_ntop(AF_INET, &in->sin_addr, text, sizeof(text)) == nullptr) continue;
+        out += text;
+        out += " : ";
+    }
+    ::freeifaddrs(list);
+    return std::make_shared<FakeJni::JString>(out);
 }
 
 }  // namespace stud::jni_bridge

@@ -192,6 +192,23 @@ add_custom_command(
     DEPENDS "${PointerWarpXml}"
 )
 
+# Idle inhibit: what Android's FLAG_KEEP_SCREEN_ON means on a desktop. The
+# engine sets that flag while a game is on screen, so the screen does not
+# blank or lock during play that uses a controller or no input at all.
+set(IdleInhibitXml "${WaylandProtocolsDataDir}/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml")
+set(IdleInhibitHeader "${XdgShellGeneratedDir}/idle-inhibit-unstable-v1-client-protocol.h")
+set(IdleInhibitSource "${XdgShellGeneratedDir}/idle-inhibit-unstable-v1-protocol.c")
+add_custom_command(
+    OUTPUT "${IdleInhibitHeader}"
+    COMMAND "${WaylandScanner}" client-header "${IdleInhibitXml}" "${IdleInhibitHeader}"
+    DEPENDS "${IdleInhibitXml}"
+)
+add_custom_command(
+    OUTPUT "${IdleInhibitSource}"
+    COMMAND "${WaylandScanner}" private-code "${IdleInhibitXml}" "${IdleInhibitSource}"
+    DEPENDS "${IdleInhibitXml}"
+)
+
 set(RelativePointerXml "${WaylandProtocolsDataDir}/unstable/relative-pointer/relative-pointer-unstable-v1.xml")
 set(RelativePointerHeader "${XdgShellGeneratedDir}/relative-pointer-unstable-v1-client-protocol.h")
 set(RelativePointerSource "${XdgShellGeneratedDir}/relative-pointer-unstable-v1-protocol.c")
@@ -287,6 +304,8 @@ add_library(stud_android_glue STATIC
     "${PointerConstraintsHeader}"
     "${PointerWarpSource}"
     "${PointerWarpHeader}"
+    "${IdleInhibitSource}"
+    "${IdleInhibitHeader}"
     "${RelativePointerSource}"
     "${RelativePointerHeader}"
     "${PointerGesturesSource}"

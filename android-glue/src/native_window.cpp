@@ -13,6 +13,7 @@
 #include <xdg-output-unstable-v1-client-protocol.h>
 #include <pointer-constraints-unstable-v1-client-protocol.h>
 #include <pointer-warp-v1-client-protocol.h>
+#include <idle-inhibit-unstable-v1-client-protocol.h>
 #include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
@@ -248,6 +249,8 @@ struct WaylandConnectionState {
     // older than KWin 6.4 / Mutter 49 / wlroots 0.19, in which case
     // nothing warps and every caller still behaves.
     wp_pointer_warp_v1* pointer_warp = nullptr;
+    zwp_idle_inhibit_manager_v1* idle_inhibit_manager = nullptr;
+    zwp_idle_inhibitor_v1* idle_inhibitor = nullptr;
     // The pointer kept inside the window for a camera drag. Unlike a
     // lock, it keeps its real position and keeps producing ordinary
     // motion. It just cannot leave, so the engine's cursor is driven
@@ -1270,6 +1273,9 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
         state->seat =
             static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, bind_version));
         wl_seat_add_listener(state->seat, &kSeatListener, state);
+    } else if (std::string_view(interface) == zwp_idle_inhibit_manager_v1_interface.name) {
+        state->idle_inhibit_manager = static_cast<zwp_idle_inhibit_manager_v1*>(
+            wl_registry_bind(registry, name, &zwp_idle_inhibit_manager_v1_interface, 1));
     } else if (std::string_view(interface) == wp_pointer_warp_v1_interface.name) {
         state->pointer_warp = static_cast<wp_pointer_warp_v1*>(
             wl_registry_bind(registry, name, &wp_pointer_warp_v1_interface, 1));
@@ -2566,6 +2572,39 @@ void native_window_set_pointer_confined(ANativeWindow* window, bool confined) {
         }
         g_pointer_confined.store(false);
     }
+    if (state.display != nullptr) wl_display_flush(state.display);
+}
+
+void native_window_set_keep_screen_on(ANativeWindow* window, bool on) {
+    if (display_backend() == DisplayBackend::X11) {
+        // X11 has no per-window equivalent; the screensaver extension is
+        // global and belongs to the session. Said once, not done.
+        static bool said = false;
+        if (on && !said) {
+            said = true;
+            std::printf("stud: android-glue: keep-screen-on is not available on X11\n");
+            std::fflush(stdout);
+        }
+        return;
+    }
+    auto& state = wayland_state();
+    if (on == (state.idle_inhibitor != nullptr)) return;
+    if (on) {
+        if (state.idle_inhibit_manager == nullptr || window == nullptr ||
+            window->surface == nullptr) {
+            return;
+        }
+        // Held while the surface is visible, which is exactly the
+        // compositor's rule for this protocol and Android's for the flag.
+        state.idle_inhibitor =
+            zwp_idle_inhibit_manager_v1_create_inhibitor(state.idle_inhibit_manager,
+                                                         window->surface);
+    } else {
+        zwp_idle_inhibitor_v1_destroy(state.idle_inhibitor);
+        state.idle_inhibitor = nullptr;
+    }
+    std::printf("stud: android-glue: keep screen on: %s\n", on ? "yes" : "no");
+    std::fflush(stdout);
     if (state.display != nullptr) wl_display_flush(state.display);
 }
 

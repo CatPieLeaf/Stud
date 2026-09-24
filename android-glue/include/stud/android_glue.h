@@ -339,6 +339,11 @@ bool native_window_can_warp_pointer();
 // camera turning when the pointer can go no further.
 void native_window_set_pointer_confined(ANativeWindow* window, bool confined);
 
+// Android's FLAG_KEEP_SCREEN_ON: while set, the desktop does not blank
+// or lock the screen for idleness (Wayland idle-inhibit, held while the
+// window is visible).
+void native_window_set_keep_screen_on(ANativeWindow* window, bool on);
+
 // Applies the surface's logical-size/scale state. The EGL path does this
 // while creating its wl_egl_window; Vulkan attaches buffers directly and
 // must ask for it explicitly.

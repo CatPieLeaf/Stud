@@ -790,6 +790,9 @@ enum class CallId : uint32_t {
     // never on one that carries other calls: ancillary data cannot ride a
     // stream that other threads write into.
     SharedMemoryFdChannel,
+    // a[0] non-zero: keep the screen from blanking while the window is
+    // visible (Android's FLAG_KEEP_SCREEN_ON). Reply-free.
+    SetKeepScreenOn,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1107,9 +1110,10 @@ inline const char* call_id_name(CallId id) {
         "VideoEncoderConfig",
         "VideoEncoderDestroy",
         "SharedMemoryFdChannel",
+        "SetKeepScreenOn",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::SharedMemoryFdChannel) + 1,
+                      static_cast<size_t>(CallId::SetKeepScreenOn) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
