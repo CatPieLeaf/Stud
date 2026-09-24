@@ -1440,6 +1440,8 @@ public:
     // input bridge (runtime/src/input_bridge.cpp).
     static long active_text_box();
     static std::string active_text_box_text();
+    // What Stud has just sent the focused box. The engine's echo of it is
+    // recognised as one; see onLuaTextBoxChangedCallback.
     static void set_active_text_box_text(std::string text);
 
     // How the focused TextBox wants its text drawn, straight out of the
@@ -2045,9 +2047,9 @@ public:
     // session has to be persisted or the account is gone next launch.
     // The argument is which of the three happened, for the log only.
     static inline std::function<void(const char*)> on_account_changed;
-    void gameActivity_onLuaTextBoxChanged(std::shared_ptr<FakeJni::JString> /*value*/) {
-        std::printf("stud: NativeHelper.gameActivity_onLuaTextBoxChanged()\n");
-    }
+    // The same report as NativeGLJavaInterface's, through the activity;
+    // both arrive with the same text, and the second finds nothing to do.
+    void gameActivity_onLuaTextBoxChanged(std::shared_ptr<FakeJni::JString> value);
     void gameActivity_onLuaTextBoxPropertyChanged() {
         // Once per property change on a focused TextBox, so typing a
         // sentence prints a line per keystroke, 126 of them in one

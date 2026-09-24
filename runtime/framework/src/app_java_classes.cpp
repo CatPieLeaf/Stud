@@ -13,6 +13,8 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <algorithm>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <cstdio>
@@ -572,6 +574,12 @@ std::mutex g_text_box_mutex;
 long g_active_text_box = 0;
 std::string g_active_text_box_text;
 NativeGLJavaInterfaceJava::TextBoxStyle g_active_text_box_style;
+// What Stud has sent the focused box and the engine has not yet echoed
+// back, oldest first. The engine reports its TextBox's text after every
+// change, Stud's own included; an echo of an earlier keystroke arriving
+// after a later one must not rewind what is being typed. Anything that is
+// not one of these is a change the engine made itself.
+std::deque<std::string> g_text_sent_unechoed;
 }  // namespace
 
 void NativeGLJavaInterfaceJava::showKeyboard(FakeJni::JLong text_box,
@@ -593,6 +601,7 @@ void NativeGLJavaInterfaceJava::showKeyboard(FakeJni::JLong text_box,
         std::lock_guard<std::mutex> lock(g_text_box_mutex);
         g_active_text_box = static_cast<long>(text_box);
         g_active_text_box_text = text;
+        g_text_sent_unechoed.clear();
         // A focus almost always arrives twice: once for the real box and
         // once for a second one with a degenerate rectangle (live: a
         // 358x36 box followed immediately by a 42x0 one). A box with no
@@ -678,11 +687,39 @@ void NativeGLJavaInterfaceJava::onDataModelNotificationCallback(
     // record_account_info().
     if (kind == "DID_LOG_IN" && data) record_account_info(data->asStdString());
 }
+// The focused TextBox's text, changed by the engine: a chat command such
+// as /team turns into a [Team] tag and takes itself out of the text. The
+// app's own keyboard adopts it, and so does Stud's text box, which
+// follows active_text_box_text(); without this it kept showing "/team"
+// in front of what was typed next, and deleting that "/team" undid the
+// command.
 void NativeGLJavaInterfaceJava::onLuaTextBoxChangedCallback(std::shared_ptr<FakeJni::JString> value) {
-    // Length only, never the content: a real TextBox can be a password field.
-    std::printf("stud: NativeGLJavaInterface.onLuaTextBoxChangedCallback: %zu chars\n",
-                value ? value->asStdString().size() : 0u);
-    std::fflush(stdout);
+    const std::string text = value ? value->asStdString() : std::string();
+    bool adopted = false;
+    {
+        std::lock_guard<std::mutex> lock(g_text_box_mutex);
+        if (g_active_text_box == 0) return;
+        const auto echo =
+            std::find(g_text_sent_unechoed.begin(), g_text_sent_unechoed.end(), text);
+        if (echo != g_text_sent_unechoed.end()) {
+            // Echoes come back in order, so everything sent before this
+            // one has been echoed or never will be.
+            g_text_sent_unechoed.erase(g_text_sent_unechoed.begin(), echo + 1);
+        } else if (text != g_active_text_box_text) {
+            g_active_text_box_text = text;
+            g_text_sent_unechoed.clear();
+            adopted = true;
+        }
+    }
+    if (adopted && text_input_trace_enabled()) {
+        // Length only, never the content: a real TextBox can be a password field.
+        std::printf("stud: onLuaTextBoxChangedCallback: the engine changed the text (%zu chars)\n",
+                    text.size());
+        std::fflush(stdout);
+    }
+}
+void NativeHelperJava::gameActivity_onLuaTextBoxChanged(std::shared_ptr<FakeJni::JString> value) {
+    NativeGLJavaInterfaceJava::onLuaTextBoxChangedCallback(std::move(value));
 }
 void NativeGLJavaInterfaceJava::onLuaTextBoxPropertyChangedCallback() {
     if (text_input_trace_enabled()) log_engine_call("onLuaTextBoxPropertyChangedCallback()");
@@ -810,6 +847,7 @@ void NativeGLJavaInterfaceJava::hideKeyboard() {
     g_active_text_box = 0;
     g_active_text_box_text.clear();
     g_active_text_box_style = {};
+    g_text_sent_unechoed.clear();
     std::printf("stud: hideKeyboard: text box focus released\n");
 }
 
@@ -835,6 +873,7 @@ std::string NativeGLJavaInterfaceJava::active_text_box_text() {
 
 void NativeGLJavaInterfaceJava::set_active_text_box_text(std::string text) {
     std::lock_guard<std::mutex> lock(g_text_box_mutex);
+    g_text_sent_unechoed.push_back(text);
     g_active_text_box_text = std::move(text);
 }
 
