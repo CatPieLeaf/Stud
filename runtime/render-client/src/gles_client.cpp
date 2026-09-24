@@ -370,59 +370,30 @@ void glVertexAttribPointer(GLuint i, GLint s, GLenum t, GLboolean n, GLsizei st,
 }
 
 const GLubyte* glGetString(GLenum name) {
-    // Big enough for the whole GL_EXTENSIONS string.
-    //
-    // This was 512 bytes, and ANGLE's extension list is several kilobytes
-    // so the engine received the first 511 characters of it and nothing
-    // else. Alphabetically that is the GL_AMD_* and GL_ANGLE_* entries and
-    // stops there, which cut off every GL_EXT_texture_compression_*
-    // (s3tc, dxt1, rgtc, bptc) the driver really does support.
-    //
-    // The engine believed the GPU had no block compression at all (its own
-    // capability line read `Caps: Texture: DXT 0`), so textures with alpha
-    // were stored uncompressed against its 64MB video-memory budget and
-    // its streamer kept them at a low mip, transparent textures staying
-    // blurry while opaque ones, which still had ETC2, were sharp.
-    //
-    // Truncation is still possible in principle, so it is reported rather
-    // than left to be discovered the same way twice.
-    // ... and yet the FULL list is not what gets reported, by default.
-    //
-    // Handing the engine everything ANGLE exposes changes which shader
-    // permutations it asks its own pack for, and the pack shipped in the
-    // APK is an Android GLES one that does not contain them, measured
-    // as `Error: shader DefaultUnifiedFlatOpaqueVS80000006 is not
-    // available` for every shader, and a black window. It also made the
-    // engine start calling entry points it had never used (glBufferStorage
-    // sits past the old cutoff), which is real and is now implemented,
-    // but the shader pack is not something Stud can supply.
-    //
-    // So the reported list is capped at the length it has always had.
-    // That is not a fix, it is the status quo held deliberately: the
-    // engine gets exactly the capabilities it got before, and nothing it
-    // has no shaders for. STUD_GL_FULL_EXTENSIONS=1 reports the whole
-    // string for anyone investigating what the extra capabilities would
-    // buy, expect a black window until the shader-pack question is
-    // answered.
-    static thread_local char buf[16384];
-    static const bool full = std::getenv("STUD_GL_FULL_EXTENSIONS") != nullptr;
+    // The whole string, however long: the buffer grows until the answer
+    // fits. It used to be cut short, first by a 512-byte buffer and later
+    // on purpose, and each time the engine lost capabilities it looks for
+    // by name (block compression, anisotropic filtering) and took weaker
+    // paths for them.
+    static thread_local std::vector<char> buf(16384);
     uint64_t a[8] = {name};
     uint32_t written = 0;
-    connection().call(CallId::GlGetString, a, nullptr, 0, buf,
-                      static_cast<uint32_t>(sizeof(buf) - 1), &written);
-    if (written >= sizeof(buf) - 1) written = sizeof(buf) - 1;
+    for (;;) {
+        connection().call(CallId::GlGetString, a, nullptr, 0, buf.data(),
+                          static_cast<uint32_t>(buf.size() - 1), &written);
+        if (written < buf.size() - 1) break;
+        buf.resize(buf.size() * 2);
+    }
     buf[written] = '\0';
-    if (full) return reinterpret_cast<const GLubyte*>(buf);
     // GL_EXT_buffer_storage is taken out of the list. It lets the engine
     // map a buffer persistently and write into it with no further call,
     // expecting the GPU to see those writes. The mapping lives in this
     // process and the buffer in the render host's driver, so nothing
-    // carries the writes across: with the system's own GLES, which
-    // advertises it, every frame came out black. The engine falls back to
-    // ordinary buffer updates, which do cross.
+    // carries the writes across: every frame came out black. The engine
+    // falls back to ordinary buffer updates, which do cross.
     if (name == GL_EXTENSIONS) {
         static constexpr char kUnsupported[] = "GL_EXT_buffer_storage";
-        std::string list(buf, written), kept;
+        std::string list(buf.data(), written), kept;
         for (size_t pos = 0; pos < list.size();) {
             size_t end = list.find(' ', pos);
             if (end == std::string::npos) end = list.size();
@@ -433,30 +404,9 @@ const GLubyte* glGetString(GLenum name) {
             }
             pos = end + 1;
         }
-        std::memcpy(buf, kept.c_str(), kept.size() + 1);
-        written = static_cast<uint32_t>(kept.size());
+        std::memcpy(buf.data(), kept.c_str(), kept.size() + 1);
     }
-
-    // Capped at the length it has always had.
-    //
-    // Reporting more changes which shader permutations the engine asks
-    // its own APK-shipped pack for, and that pack does not contain them:
-    // a black window, live-confirmed twice, once with the whole list,
-    // and again with just two extensions appended
-    // (GL_EXT_disjoint_timer_query, GL_EXT_buffer_storage). Two names
-    // were enough to move the permutation mask, so this is not about
-    // volume and there is no safe subset to sneak through.
-    //
-    // The cost is real and worth stating: the engine cannot use what it
-    // cannot see, so its GPU timing reads 0.00ms even though Stud now
-    // implements the timer queries underneath. Making that visible needs
-    // the shader-pack question answered first.
-    if (written > 511) {
-        buf[511] = '\0';
-        // Never leave a half-written name at the end.
-        if (char* space = std::strrchr(buf, ' ')) *space = '\0';
-    }
-    return reinterpret_cast<const GLubyte*>(buf);
+    return reinterpret_cast<const GLubyte*>(buf.data());
 }
 GLint glGetUniformLocation(GLuint program, const GLchar* name) {
     uint64_t a[8] = {program};
