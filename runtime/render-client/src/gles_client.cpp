@@ -797,8 +797,31 @@ int gl_integerv_count(GLenum pname) {
     }
 }
 
+// The list-valued pnames: how many values each returns is itself a
+// query, the matching GL_NUM_* one.
+GLenum gl_integerv_list_count_pname(GLenum pname) {
+    switch (pname) {
+        case 0x86A3: return 0x86A2;  // GL_COMPRESSED_TEXTURE_FORMATS
+        case 0x87FF: return 0x87FE;  // GL_PROGRAM_BINARY_FORMATS
+        case 0x8DF8: return 0x8DF9;  // GL_SHADER_BINARY_FORMATS
+        default: return 0;
+    }
+}
+
 void glGetIntegerv(GLenum pname, GLint* params) {
     if (params == nullptr) return;
+    // A list is returned whole. It used to come back as its first entry
+    // alone, so the engine's own reading of which texture formats the GPU
+    // takes saw one format where the driver has many.
+    if (const GLenum count_pname = gl_integerv_list_count_pname(pname); count_pname != 0) {
+        GLint n = 0;
+        glGetIntegerv(count_pname, &n);
+        if (n <= 0) return;
+        uint64_t a[8] = {pname, static_cast<uint64_t>(n)};
+        connection().call(CallId::GlGetIntegerv, a, nullptr, 0, params,
+                          static_cast<uint32_t>(n) * sizeof(GLint), nullptr);
+        return;
+    }
     uint64_t a[8] = {pname};
     GLint values[16] = {};
     uint32_t written = 0;

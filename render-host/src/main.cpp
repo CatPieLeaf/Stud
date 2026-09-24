@@ -4453,6 +4453,24 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // uses is safe (the real driver only ever writes the pname's
             // own true count; the rest of the buffer is simply unused,
             // not read).
+            // A list-valued pname (compressed texture formats and the
+            // like) arrives with its length, which the client asked the
+            // matching GL_NUM_* for, and goes back whole.
+            if (a[1] > 0 && (a[0] == 0x86A3 || a[0] == 0x87FF || a[0] == 0x8DF8)) {
+                std::vector<GLint> list(static_cast<size_t>(a[1]));
+                GLint n = 0;
+                fns.glGetIntegerv_(a[0] == 0x86A3 ? 0x86A2 : a[0] == 0x87FF ? 0x87FE : 0x8DF9, &n);
+                if (n > 0 && static_cast<size_t>(n) <= list.size()) {
+                    fns.glGetIntegerv_(static_cast<GLenum>(a[0]), list.data());
+                    list.resize(static_cast<size_t>(n));
+                } else {
+                    list.clear();
+                }
+                out.resize(list.size() * sizeof(GLint));
+                std::memcpy(out.data(), list.data(), out.size());
+                *out_len = static_cast<uint32_t>(out.size());
+                return 1;
+            }
             GLint values[16] = {};
             fns.glGetIntegerv_(static_cast<GLenum>(a[0]), values);
             // Stud's stand-in for framebuffer 0 answers as 0.
