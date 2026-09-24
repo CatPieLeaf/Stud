@@ -746,7 +746,20 @@ void start_session_log() {
     // children write the file themselves, exactly as before.
     const QString socket_path = QString::fromStdString(log_collector_socket_path());
     QDir().mkpath(QFileInfo(socket_path).absolutePath());
+    // Settings' restart starts a new session in this same process. The
+    // collector then only moves to the new file; the quit hook and this
+    // process's own tee already exist, and a second tee would feed the
+    // first one, writing every line once more per restart.
+    static bool dispatching = false;
+    if (dispatching) {
+        stud::ui::start_log_collector(socket_path.toStdString(), path.toStdString());
+        // Re-read STUD_LOG_FILE, so the session's notes sit beside its log.
+        stud::logging::install_crash_reporter("stud-ui");
+        std::printf("stud: session log: %s\n", path.toUtf8().constData());
+        return;
+    }
     if (stud::ui::start_log_collector(socket_path.toStdString(), path.toStdString())) {
+        dispatching = true;
         qputenv("STUD_LOG_SOCKET", socket_path.toUtf8());
         // Whatever ends this session -- the window's X, the tray's Exit,
         // leaving from inside Roblox -- the last batch goes out then and

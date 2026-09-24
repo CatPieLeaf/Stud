@@ -32,6 +32,9 @@ namespace stud::ui {
 // False if either cannot be opened, in which case the caller should leave
 // STUD_LOG_SOCKET unset: the children then write the file themselves,
 // which is what they did before this existed.
+//
+// Called again for a later session in the same process, it keeps the
+// socket and moves the collector over to the new session's file.
 bool start_log_collector(const std::string& socket_path, const std::string& log_path);
 
 // Everything collected so far, on disk now rather than at the next tick.

@@ -18,6 +18,9 @@ namespace {
 
 struct Collector {
     std::mutex mutex;
+    // Held across each write to log_fd and while log_fd is swapped for
+    // the next session's file, so no batch lands half in each.
+    std::mutex write_mutex;
     std::condition_variable wake;
     std::string pending;
     int log_fd = -1;
@@ -61,6 +64,7 @@ void flush_now() {
         std::lock_guard<std::mutex> lock(c.mutex);
         batch.swap(c.pending);
     }
+    std::lock_guard<std::mutex> write_lock(c.write_mutex);
     if (!batch.empty()) write_all(c.log_fd, batch.data(), batch.size());
 }
 
@@ -118,7 +122,19 @@ void writer_thread() {
 bool start_log_collector(const std::string& socket_path, const std::string& log_path) {
     if (socket_path.empty() || log_path.empty()) return false;
     Collector& c = collector();
-    if (c.running.load(std::memory_order_relaxed)) return true;
+    if (c.running.load(std::memory_order_relaxed)) {
+        // A new session in the same process (Settings restarting Stud):
+        // everything the old one said goes to its own file, and from here
+        // on lines go to the new one. The socket and its threads stay.
+        const int next_fd =
+            ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+        if (next_fd < 0) return true;
+        flush_now();
+        std::lock_guard<std::mutex> write_lock(c.write_mutex);
+        ::close(c.log_fd);
+        c.log_fd = next_fd;
+        return true;
+    }
 
     c.log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (c.log_fd < 0) return false;
