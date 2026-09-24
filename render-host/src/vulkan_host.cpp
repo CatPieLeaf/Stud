@@ -443,6 +443,15 @@ struct Loader {
         uint32_t usage;
     };
     std::unordered_map<uint64_t, UntransitionedImage> untransitioned_images;
+    // Which image each view shows, and which images each framebuffer's
+    // attachments are. A render pass transitions its attachments to
+    // their initialLayout and leaves them in finalLayout, which is a
+    // layout change no barrier ever names; without these the first
+    // barrier after such a pass looked like "claims a layout nothing
+    // gave it" and was rewritten to UNDEFINED, discarding what the pass
+    // had just rendered.
+    std::unordered_map<uint64_t, uint64_t> view_image;
+    std::unordered_map<uint64_t, std::vector<uint64_t>> framebuffer_images;
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
 
@@ -1767,6 +1776,8 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         l.swapchain_views.clear();
         l.swapchain_image_list.clear();
         l.untransitioned_images.clear();
+        l.view_image.clear();
+        l.framebuffer_images.clear();
     }
 
     l.device = device;
@@ -5770,6 +5781,7 @@ uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_
     VkResult r = l.vk.vkCreateImageView(l.device, &ci, nullptr, &view);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     if (l.swapchain_images.count(image) != 0) l.swapchain_views.insert(to_u64(view));
+    l.view_image[to_u64(view)] = image;
     return write_handle(to_u64(view), out, out_len);
 }
 
@@ -5870,6 +5882,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::ImageView:
             l.swapchain_views.erase(handle);
+            l.view_image.erase(handle);
             if (l.vk.vkDestroyImageView) {
                 l.vk.vkDestroyImageView(l.device, from_u64<VkImageView>(handle), nullptr);
             }
@@ -5998,6 +6011,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::Framebuffer:
             l.swapchain_framebuffers.erase(handle);
+            l.framebuffer_images.erase(handle);
             if (l.vk.vkDestroyFramebuffer) {
                 l.vk.vkDestroyFramebuffer(l.device, from_u64<VkFramebuffer>(handle), nullptr);
             }
@@ -6474,8 +6488,12 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
     VkResult res = l.vk.vkCreateFramebuffer(l.device, &ci, nullptr, &fb);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     bool targets_screen = false;
+    std::vector<uint64_t>& attached = l.framebuffer_images[to_u64(fb)];
+    attached.clear();
     for (uint32_t i = 0; i < n; ++i) {
         if (l.swapchain_views.count(to_u64(views[i])) != 0) targets_screen = true;
+        const auto image = l.view_image.find(to_u64(views[i]));
+        if (image != l.view_image.end()) attached.push_back(image->second);
     }
     if (targets_screen) {
         l.swapchain_framebuffers.insert(to_u64(fb));
@@ -9440,6 +9458,16 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             bi.clearValueCount = nc;
             bi.pClearValues = clears.empty() ? nullptr : clears.data();
             const uint32_t contents = r.u32();
+            // The pass gives its attachments a layout; see
+            // Loader::framebuffer_images.
+            if (!l.untransitioned_images.empty()) {
+                const auto attached = l.framebuffer_images.find(to_u64(bi.framebuffer));
+                if (attached != l.framebuffer_images.end()) {
+                    for (const uint64_t image : attached->second) {
+                        l.untransitioned_images.erase(image);
+                    }
+                }
+            }
             // STUD_VK_FORCE_CLEAR=1 paints every screen-targeting render
             // pass bright magenta. If the window turns magenta, buffers
             // and presentation are fine and the black is the engine's own
