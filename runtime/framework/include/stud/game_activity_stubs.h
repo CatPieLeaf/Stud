@@ -1187,23 +1187,20 @@ public:
         }
         return codecs;
     }
-    // No, until Stud can do what a yes commits it to.
-    //
-    // A yes sends the engine's screen recorder down its hardware path,
-    // which renders each frame into Android graphics buffers
-    // (AHardwareBuffer, imported into Vulkan) and hands them to the
-    // encoder through AMediaCodec_createInputSurface, a Surface it asks
-    // for by name from libmediandk and configures with
-    // COLOR_FormatSurface (0x7F000789). Stud's encoder takes byte buffers
-    // only, so that path cannot start and nothing is recorded. With a no,
-    // the engine records through its own bundled x264 instead.
+    // Hardware only, as the name says: a software HEVC encode of a game at
+    // its own frame rate is a load the engine is asking not to take on.
+    // The size and rate are within what NVENC, AMF and Quick Sync all do.
     static FakeJni::JBoolean hevcHardwareEncodingSupported(FakeJni::JInt /*width*/,
                                                             FakeJni::JInt /*height*/,
                                                             FakeJni::JInt /*fps*/) {
-        std::printf("stud: MediaCodecInfoUtils.hevcHardwareEncodingSupported() -> no (no "
-                    "input-surface encoding)\n");
+        using EncoderFn = int (*)(const char*);
+        static const auto encoder =
+            reinterpret_cast<EncoderFn>(libmediandk_symbol("stud_video_encoder_support"));
+        const bool hardware = encoder != nullptr && (encoder("video/hevc") & 2) != 0;
+        std::printf("stud: MediaCodecInfoUtils.hevcHardwareEncodingSupported() -> %s\n",
+                    hardware ? "yes" : "no");
         std::fflush(stdout);
-        return false;
+        return hardware;
     }
 };
 
