@@ -3508,7 +3508,11 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return ok == EGL_TRUE;
         }
         case CallId::EglSwapInterval:
-            return fns.eglSwapInterval_(g_displays.at(a[0]), static_cast<EGLint>(a[1])) == EGL_TRUE;
+            // Always 1: one frame per refresh, the GL paths' FIFO, whatever
+            // interval the engine asks for. An interval of 0 presents
+            // uncapped, which is MAILBOX or IMMEDIATE underneath.
+            (void)a[1];
+            return fns.eglSwapInterval_(g_displays.at(a[0]), 1) == EGL_TRUE;
         case CallId::EglTerminate:
             return fns.eglTerminate_(g_displays.at(a[0])) == EGL_TRUE;
         case CallId::EglGetProcAddress: {

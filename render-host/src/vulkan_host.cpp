@@ -1982,11 +1982,9 @@ constexpr uint64_t kFramesInFlight = 2;
 
 // Off with STUD_PRESENT_PACING=0.
 //
-// On by default, and only sound because the default present mode is
-// FIFO: waiting for a frame to be DISPLAYED caps the rate at the
-// refresh rate, which is what FIFO does anyway. Against MAILBOX the
-// same wait would silently undo the reason for choosing MAILBOX, so
-// anyone setting that mode is very likely to want this off.
+// On by default, and sound because the present mode is FIFO: waiting for
+// a frame to be DISPLAYED caps the rate at the refresh rate, which is
+// what FIFO does anyway.
 bool present_pacing_enabled() {
     static const bool on = [] {
         const char* v = std::getenv("STUD_PRESENT_PACING");
@@ -3432,9 +3430,8 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // Which present mode the swapchain actually gets.
 //
 // The engine asks for IMMEDIATE -- observed, not assumed: every session
-// logs `present mode 0 -> 1 (mailbox)`, and 0 is
-// VK_PRESENT_MODE_IMMEDIATE_KHR. This comment used to say FIFO, which
-// sent one investigation looking for a mismatch that was not there.
+// logs `present mode 0 -> 2 (fifo)`, and 0 is
+// VK_PRESENT_MODE_IMMEDIATE_KHR.
 //
 // FIFO is v-sync: one frame per refresh, and a hard ceiling at the
 // display's rate however much headroom the machine has. MAILBOX renders
@@ -3473,11 +3470,12 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // mode the surface does not support is undefined behaviour, not a slow
 // path.
 //
-// STUD_PRESENT_MODE=engine|mailbox|immediate|fifo|fifo-relaxed picks one.
-// `engine` forwards whatever the engine asked for, which is the control
-// for measuring whether any of this helps.
+// STUD_PRESENT_MODE=engine|immediate|fifo-relaxed picks another, for
+// measuring only. `engine` forwards whatever the engine asked for, which
+// is the control for measuring whether any of this helps. MAILBOX is not
+// offered at all, and anything unrecognised is FIFO.
 //
-// FIFO by default, paired with the present pacing below.
+// FIFO always, paired with the present pacing below.
 //
 // The two belong together. FIFO shows every frame that is rendered, in
 // order, one per refresh; pacing holds the queue at two frames instead
@@ -3510,17 +3508,15 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
         return std::find(modes.begin(), modes.end(), m) != modes.end();
     };
 
+    // FIFO is the one mode every driver must support, so it is always
+    // there to fall back to.
     std::vector<VkPresentModeKHR> wanted;
     if (choice == "immediate") {
-        wanted = {VK_PRESENT_MODE_IMMEDIATE_KHR};
-    } else if (choice == "fifo") {
-        wanted = {VK_PRESENT_MODE_FIFO_KHR};
+        wanted = {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR};
     } else if (choice == "fifo-relaxed") {
-        wanted = {VK_PRESENT_MODE_FIFO_RELAXED_KHR};
+        wanted = {VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR};
     } else {
-        // The default: uncap without tearing where the driver can, and
-        // leave the engine's own choice alone where it cannot.
-        wanted = {VK_PRESENT_MODE_MAILBOX_KHR};
+        wanted = {VK_PRESENT_MODE_FIFO_KHR};
     }
     for (VkPresentModeKHR m : wanted) {
         if (!advertised(m) || m == requested) continue;
