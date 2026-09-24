@@ -59,12 +59,6 @@ namespace stud::render_host {
 
 std::string default_socket_path();
 
-// Where a shared host-visible allocation is backed, named by the id the
-// client chose. Both processes derive the same path from the same id, so
-// nothing but the id has to travel. It lives beside the socket, in the
-// runtime directory, which is a tmpfs. These pages are memory, not disk.
-std::string shared_memory_path(uint64_t id);
-
 enum class CallId : uint32_t {
     // EGL
     EglGetDisplay = 1,
@@ -786,6 +780,16 @@ enum class CallId : uint32_t {
     VideoEncoderDequeue,
     VideoEncoderConfig,
     VideoEncoderDestroy,
+
+    // Turns the connection it arrives on into the shared-memory fd
+    // channel, for the rest of that connection's life. After it, each
+    // message from the client is an 8-byte allocation id carrying one
+    // memfd as SCM_RIGHTS, and the host answers each with one byte (1 =
+    // kept). The fd is then named by that id in VkAllocateMemory's a[4] and
+    // VkShareMappedMemory's a[2]. Only ever sent on a connection of its own,
+    // never on one that carries other calls: ancillary data cannot ride a
+    // stream that other threads write into.
+    SharedMemoryFdChannel,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1102,9 +1106,10 @@ inline const char* call_id_name(CallId id) {
         "VideoEncoderDequeue",
         "VideoEncoderConfig",
         "VideoEncoderDestroy",
+        "SharedMemoryFdChannel",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VideoEncoderDestroy) + 1,
+                      static_cast<size_t>(CallId::SharedMemoryFdChannel) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

@@ -1433,7 +1433,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // VK_EXT_external_memory_host, whether or not the engine asked for it.
     //
     // It is what lets host-visible allocations be shared outright with the
-    // process that writes them: Stud maps a file in the runtime directory,
+    // process that writes them: Stud maps a memfd it shares with the host,
     // hands the engine that pointer, and imports the same pages here as
     // real device memory. Without it every byte the engine writes has to
     // be copied across the socket, measured at 197 MB/s in a real game,
@@ -2863,8 +2863,46 @@ uint32_t importable_host_visible_type(uint32_t allowed_bits) {
     return best;
 }
 
-bool map_shared_memory(const std::string& path, uint64_t size, SharedMapping& out) {
-    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+// Fds the client has sent over the shared-memory channel, by the id it
+// chose, until the call that names the id claims them.
+std::mutex& shared_fd_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<uint64_t, int>& shared_fds() {
+    static std::unordered_map<uint64_t, int> m;
+    return m;
+}
+
+void register_shared_fd(uint64_t id, int fd) {
+    std::lock_guard<std::mutex> lock(shared_fd_mutex());
+    auto [it, inserted] = shared_fds().emplace(id, fd);
+    if (!inserted) {
+        // An id is never reused by the client; a duplicate is stale.
+        ::close(it->second);
+        it->second = fd;
+    }
+}
+
+int take_shared_fd(uint64_t id) {
+    std::lock_guard<std::mutex> lock(shared_fd_mutex());
+    auto it = shared_fds().find(id);
+    if (it == shared_fds().end()) return -1;
+    const int fd = it->second;
+    shared_fds().erase(it);
+    return fd;
+}
+
+void forget_shared_fds() {
+    std::lock_guard<std::mutex> lock(shared_fd_mutex());
+    for (auto& kv : shared_fds()) ::close(kv.second);
+    shared_fds().clear();
+}
+
+// Maps the memfd the client sent under `id`. The fd is closed either
+// way: the mapping holds the pages from here on.
+bool map_shared_memory(uint64_t id, uint64_t size, SharedMapping& out) {
+    const int fd = take_shared_fd(id);
     if (fd < 0) return false;
     // The import wants the mapping page-aligned and whole pages long, which
     // is what the client sized the file to.
@@ -2903,13 +2941,13 @@ VkDeviceSize imported_host_pointer_alignment() {
 
 uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vector<uint8_t>& in,
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
-                             const std::string& shared_path) {
+                             uint64_t shared_id) {
     Loader& l = loader();
     if (l.vk.vkAllocateMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     // GPU-only, plain, and scaling in effect: a placeholder; see LazyMemory.
-    if (node_count == 0 && shared_path.empty() && texture_size_scale(l) > 0.0 &&
+    if (node_count == 0 && shared_id == 0 && texture_size_scale(l) > 0.0 &&
         l.get_physical_device_memory_properties != nullptr) {
         VkPhysicalDeviceMemoryProperties mem{};
         l.get_physical_device_memory_properties(l.physical_device, &mem);
@@ -2937,14 +2975,14 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     ai.allocationSize = size;
     ai.memoryTypeIndex = type_index;
 
-    // Shared host memory, when the client asked for it (`shared_path` is
-    // the file it already mapped). Importing those same pages as device
+    // Shared host memory, when the client asked for it (`shared_id` names
+    // the memfd it already mapped). Importing those same pages as device
     // memory means the engine's writes are the device's memory; nothing
     // is copied, and the whole dirty-page tracking and flush path stops
     // being needed for this allocation.
     VkImportMemoryHostPointerInfoEXT import{};
     SharedMapping mapping;
-    if (!shared_path.empty() && map_shared_memory(shared_path, size, mapping) &&
+    if (shared_id != 0 && map_shared_memory(shared_id, size, mapping) &&
         l.vk.vkGetMemoryHostPointerPropertiesEXT != nullptr) {
         VkMemoryHostPointerPropertiesEXT props{};
         props.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
@@ -3201,8 +3239,7 @@ std::map<uint64_t, std::pair<void*, size_t>>& shared_writes() {
 }
 
 uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t size) {
-    const std::string path = stud::render_host::shared_memory_path(shared_id);
-    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    const int fd = take_shared_fd(shared_id);
     if (fd < 0) return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
     const size_t length = (static_cast<size_t>(size) + page - 1) & ~(page - 1);
@@ -6232,17 +6269,16 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                     // engine left behind were freed above with a bare
                     // vkFreeMemory, which does not go through
                     // vk_free_memory_shared_cleanup(); clearing the table
-                    // alone kept every one of those file mappings alive for
-                    // the rest of the process, and the files are already
-                    // unlinked, so their pages stayed charged to the
-                    // runtime tmpfs with nothing left that could release
-                    // them. That repeated on every device the engine
-                    // rebuilt: each join, each leave, each device-loss
-                    // recovery.
+                    // alone kept every one of those mappings, and so their
+                    // pages, alive for the rest of the process. That
+                    // repeated on every device the engine rebuilt: each
+                    // join, each leave, each device-loss recovery.
                     std::lock_guard<std::mutex> lock(shared_memory_mutex());
                     for (auto& kv : shared_memory()) unmap_shared_memory(kv.second);
                     shared_memory().clear();
                 }
+                // Anything sent over the fd channel and never claimed.
+                forget_shared_fds();
                 l.mapped.clear();
                 l.mapped_size.clear();
                 g_swapchain_extents.clear();

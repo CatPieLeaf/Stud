@@ -3779,19 +3779,14 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return stud::render_host::vk_host_has_proc(in);
         case CallId::VkDeviceWaitIdle:
             return stud::render_host::vk_device_wait_idle();
-        case CallId::VkAllocateMemory: {
-            // a[4] non-zero: the client mapped a file for this allocation
-            // and wants it shared rather than copied. The name is derived
-            // from the id so nothing has to travel in the buffer, which
-            // still carries the pNext chain.
-            std::string shared;
-            if (a[4] != 0) {
-                shared = stud::render_host::shared_memory_path(a[4]);
-            }
+        case CallId::VkAllocateMemory:
+            // a[4] non-zero: the client mapped a memfd for this allocation,
+            // sent it over the fd channel under this id, and wants it
+            // shared rather than copied. The buffer still carries the
+            // pNext chain.
             return stud::render_host::vk_allocate_memory(a[1], static_cast<uint32_t>(a[2]), in,
                                                           static_cast<uint32_t>(a[3]), out, out_len,
-                                                          shared);
-        }
+                                                          a[4]);
         case CallId::VkBindImageMemory:
             return stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
         case CallId::VkFreeMemory:
@@ -4823,12 +4818,65 @@ void raise_through_kwin() {
 }
 }  // namespace
 
+// The shared-memory fd channel (CallId::SharedMemoryFdChannel).
+//
+// Process B backs the engine's host-visible memory with memfds rather
+// than files in the runtime directory, and a memfd has no name to open,
+// so the fd itself crosses over: an 8-byte allocation id per message,
+// with the fd attached as SCM_RIGHTS, answered by one byte. The fd is
+// parked under its id until the VkAllocateMemory or VkShareMappedMemory
+// that names it maps it.
+//
+// A connection of its own because ancillary data travels with a
+// particular byte of the stream: on a connection other threads write
+// into, nothing guarantees which request the fd lands beside.
+void serve_shared_fd_channel(int conn_fd) {
+    for (;;) {
+        uint64_t id = 0;
+        char control[CMSG_SPACE(sizeof(int))] = {};
+        iovec iov{&id, sizeof(id)};
+        msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        ssize_t n = ::recvmsg(conn_fd, &msg, MSG_CMSG_CLOEXEC);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return;
+        int fd = -1;
+        for (cmsghdr* c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c)) {
+            if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS &&
+                c->cmsg_len >= CMSG_LEN(sizeof(int))) {
+                std::memcpy(&fd, CMSG_DATA(c), sizeof(fd));
+            }
+        }
+        // The id normally arrives whole with its fd; finish it if not.
+        if (static_cast<size_t>(n) < sizeof(id) &&
+            !read_all(conn_fd, reinterpret_cast<char*>(&id) + n,
+                      static_cast<uint32_t>(sizeof(id) - static_cast<size_t>(n)))) {
+            if (fd >= 0) ::close(fd);
+            return;
+        }
+        const uint8_t kept = (fd >= 0 && id != 0) ? 1 : 0;
+        if (kept) {
+            stud::render_host::register_shared_fd(id, fd);
+        } else if (fd >= 0) {
+            ::close(fd);
+        }
+        if (!write_all(conn_fd, &kept, sizeof(kept))) return;
+    }
+}
+
 void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
     std::vector<unsigned char> in_scratch;
     std::vector<unsigned char> out_scratch;
     for (;;) {
         Header hdr{};
         if (!read_all(conn_fd, &hdr, sizeof(hdr))) break;
+        if (hdr.call_id == stud::render_host::CallId::SharedMemoryFdChannel) {
+            serve_shared_fd_channel(conn_fd);
+            break;
+        }
         in_scratch.resize(hdr.in_buffer_len);
         if (hdr.in_buffer_len > 0 && !read_all(conn_fd, in_scratch.data(), hdr.in_buffer_len)) {
             break;

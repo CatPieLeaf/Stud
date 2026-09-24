@@ -148,12 +148,20 @@ uint64_t vk_device_wait_idle();
 
 // Whether the real driver has this command (name in the buffer).
 uint64_t vk_host_has_proc(const std::vector<uint8_t>& in);
-// `shared_path`, when given, is a file the client has already mapped and
-// written the engine's pointer into: the same pages are imported here as
-// device memory so nothing has to be copied between the two processes.
+// `shared_id`, when non-zero, names a memfd the client has already mapped
+// and handed over the shared-memory fd channel (see register_shared_fd):
+// the same pages are imported here as device memory so nothing has to be
+// copied between the two processes.
 uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vector<uint8_t>& in,
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
-                             const std::string& shared_path = {});
+                             uint64_t shared_id = 0);
+// The shared-memory fd channel's two ends. register_shared_fd() keeps an
+// fd the client sent under the id it chose; take_shared_fd() hands it to
+// whichever call names that id, exactly once, and -1 if there is none.
+// forget_shared_fds() closes whatever was sent and never claimed.
+void register_shared_fd(uint64_t id, int fd);
+int take_shared_fd(uint64_t id);
+void forget_shared_fds();
 uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset);
 uint64_t vk_free_memory(uint64_t memory);
 uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t flags);

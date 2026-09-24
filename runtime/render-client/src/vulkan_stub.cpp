@@ -38,6 +38,11 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <sys/un.h>
+#include <linux/memfd.h>
+#include <mutex>
 #include <unistd.h>
 #include <string>
 #include <string_view>
@@ -965,15 +970,18 @@ namespace {
 // pointer vkMapMemory hands back. Stud used to give it a private buffer
 // and copy whatever changed to the host on every submit, measured at
 // 197 MB/s through the socket in a real game, which was most of what the
-// render thread was doing. Backing the allocation with a file the host
+// render thread was doing. Backing the allocation with memory the host
 // imports as device memory (VK_EXT_external_memory_host) makes those
 // writes land in the device's memory directly, and the copy stops
-// existing. The file lives in the runtime directory, a tmpfs, so these
-// are ordinary anonymous pages; nothing reaches a disk.
+// existing. It is a memfd handed to the host over a channel of its own
+// (see create_shared_allocation), so these are ordinary shared pages with
+// no name and no mount behind them; nothing reaches a disk.
 struct SharedAllocation {
     void* address = nullptr;
     size_t length = 0;
     uint64_t id = 0;
+    // The memfd, while the caller still needs it; -1 once closed.
+    int fd = -1;
 };
 std::map<uint64_t, SharedAllocation>& shared_allocations() {
     static std::map<uint64_t, SharedAllocation> m;
@@ -1024,83 +1032,176 @@ bool shared_memory_enabled() {
     return on;
 }
 
-// Drops the NAME, keeping the pages. Both processes hold a mapping by
-// then, and a mapping keeps the pages alive with no directory entry,
-// the ordinary POSIX shared-memory idiom.
+// The shared-memory fd channel: a connection of the render host's own
+// that carries nothing but memfds (see CallId::SharedMemoryFdChannel).
 //
-// Unlinking here rather than at vkFreeMemory is what makes these
-// impossible to leak. The engine does not free every allocation before
-// the process ends, and a process that crashes or is killed frees none of
-// them, so the files accumulated in $XDG_RUNTIME_DIR/stud with nothing
-// ever removing them, measured at 129 files and 3.1GB, which had filled
-// that tmpfs to 100% and takes the Wayland socket, D-Bus and the rest of
-// the session down with it.
-void unlink_shared_allocation_name(uint64_t id) {
-    if (id != 0) ::unlink(stud::render_host::shared_memory_path(id).c_str());
+// A memfd has no name the host could open, so the descriptor itself is
+// handed over, attached to the allocation id as SCM_RIGHTS. It needs a
+// connection to itself: ancillary data rides one particular byte of the
+// stream, and the render connection is written by a writer thread and
+// several engine threads at once.
+//
+// Opened after the render connection, deliberately. The host serves its
+// FIRST connection on the main loop, which knows nothing of this channel;
+// every later one gets a thread of its own, and that is where the
+// channel is recognised.
+class SharedFdChannel {
+public:
+    // Hands `fd` to the host under `id`, and waits until the host has it,
+    // so the call that names the id next cannot arrive first.
+    bool send(uint64_t id, int fd) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensure_open_locked()) return false;
+        char control[CMSG_SPACE(sizeof(int))] = {};
+        iovec iov{&id, sizeof(id)};
+        msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        cmsghdr* c = CMSG_FIRSTHDR(&msg);
+        c->cmsg_level = SOL_SOCKET;
+        c->cmsg_type = SCM_RIGHTS;
+        c->cmsg_len = CMSG_LEN(sizeof(int));
+        std::memcpy(CMSG_DATA(c), &fd, sizeof(fd));
+        ssize_t n;
+        do {
+            n = ::sendmsg(fd_, &msg, MSG_NOSIGNAL);
+        } while (n < 0 && errno == EINTR);
+        if (n != static_cast<ssize_t>(sizeof(id))) return fail_locked();
+        uint8_t kept = 0;
+        do {
+            n = ::recv(fd_, &kept, sizeof(kept), 0);
+        } while (n < 0 && errno == EINTR);
+        if (n != 1) return fail_locked();
+        return kept == 1;
+    }
+
+private:
+    bool ensure_open_locked() {
+        if (fd_ >= 0) return true;
+        if (broken_) return false;
+        // The render connection first, so this one is never the host's
+        // first connection.
+        (void)stud::render_client::connection();
+        const std::string path = stud::render_host::default_socket_path();
+        const int s = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (s < 0) return fail_locked();
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+        if (::connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+            ::close(s);
+            return fail_locked();
+        }
+        stud::render_host::Header hdr{};
+        hdr.call_id = CallId::SharedMemoryFdChannel;
+        const char* p = reinterpret_cast<const char*>(&hdr);
+        size_t left = sizeof(hdr);
+        while (left > 0) {
+            const ssize_t n = ::send(s, p, left, MSG_NOSIGNAL);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) {
+                ::close(s);
+                return fail_locked();
+            }
+            p += n;
+            left -= static_cast<size_t>(n);
+        }
+        fd_ = s;
+        return true;
+    }
+
+    // A broken channel stays broken: every allocation from then on takes
+    // the copying path, which is slower and correct.
+    bool fail_locked() {
+        if (fd_ >= 0) ::close(fd_);
+        fd_ = -1;
+        if (!broken_) {
+            broken_ = true;
+            std::fprintf(stderr,
+                         "stud: vulkan-client: the shared-memory channel to the render host "
+                         "failed (%s); the engine's mapped writes will be copied instead\n",
+                         std::strerror(errno));
+            std::fflush(stderr);
+        }
+        return false;
+    }
+
+    std::mutex mutex_;
+    int fd_ = -1;
+    bool broken_ = false;
+};
+
+SharedFdChannel& shared_fd_channel() {
+    static SharedFdChannel c;
+    return c;
 }
 
 void release_shared_allocation(SharedAllocation& a) {
     if (a.address != nullptr) ::munmap(a.address, a.length);
-    unlink_shared_allocation_name(a.id);
+    if (a.fd >= 0) ::close(a.fd);
     a = SharedAllocation{};
 }
 
-bool create_shared_allocation(uint64_t size, SharedAllocation& out) {
+// Backs a host-visible allocation with a memfd and hands it to the host.
+//
+// A memfd, not a file in the runtime directory. These used to be files
+// in $XDG_RUNTIME_DIR, a tmpfs usually sized at a tenth of RAM that also
+// holds the Wayland socket, D-Bus and PipeWire's; a heavy game's
+// host-visible memory alone was measured at 1.3 GB of its 3.1 GB, and
+// when it filled the whole desktop went with it. A memfd is the same
+// kind of page (shmem, same huge-page policy), mapped and imported
+// exactly the same way, but it is charged to no mount's size limit, has
+// no name that can be left behind, and dies with its last reference.
+//
+// `out.fd` stays open for the caller, which may need it once more (the
+// write barrier maps the same pages); release_shared_allocation() or the
+// caller closes it. `hand_to_host` false leaves the handover to the
+// caller, for one that must set something else up first and would
+// otherwise leave the host holding an fd nothing ever claims.
+bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to_host = true) {
     static std::atomic<uint64_t> next_id{1};
     const uint64_t id = next_id.fetch_add(1, std::memory_order_relaxed);
-    const std::string path = stud::render_host::shared_memory_path(id);
-    const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    // Through syscall(): bionic only declares memfd_create() from API 30.
+    const int fd = static_cast<int>(::syscall(SYS_memfd_create, "stud-vk-memory", MFD_CLOEXEC));
     if (fd < 0) return false;
     // Whole pages: the import on the other side needs a page-aligned
     // mapping of a whole number of pages.
     const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
     const size_t length = (static_cast<size_t>(size) + page - 1) & ~(page - 1);
     // Reserve the pages now, rather than letting them be filled in on
-    // first touch.
-    //
-    // These files live in $XDG_RUNTIME_DIR, which is a tmpfs, usually
-    // sized at a tenth of RAM. ftruncate alone leaves the file sparse:
-    // it succeeds, mmap succeeds, and the pages are only allocated when
-    // something touches them. If the tmpfs is full at that moment the
-    // kernel answers the touch with SIGBUS, and the fault lands on
-    // whoever was reading or writing the mapping rather than here.
-    //
-    // Live-caught on another machine: the render host died with
-    // "CRASH in stud-render-host, signal 07" inside
-    // vk_write_shared_mapped_memory's memcpy, and the log immediately
-    // after was full of the desktop's own "No space left on device" for
-    // that same tmpfs.
-    //
-    // posix_fallocate allocates the pages here, where ENOSPC is an
-    // ordinary error: returning false means the caller simply does not
-    // share this allocation and ships the bytes down the socket as it
-    // did before sharing existed. Slower, and correct, which a crash is
-    // not. It returns the error directly and does not set errno.
+    // first touch: running out of memory is then an ordinary error here,
+    // where the caller can fall back to copying, instead of a SIGBUS on
+    // whichever process touches the page first. posix_fallocate returns
+    // the error and does not set errno.
     const int reserved = ::posix_fallocate(fd, 0, static_cast<off_t>(length));
     if (reserved != 0) {
-        if (reserved == ENOSPC) {
-            static bool said = false;
-            if (!said) {
-                said = true;
-                std::printf("stud: no room in %s for a %zu KB shared mapping; the engine's "
-                            "writes will be copied instead of shared\n",
-                            path.c_str(), length / 1024);
-                std::fflush(stdout);
-            }
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud: could not reserve a %zu KB shared mapping (%s); the engine's "
+                        "writes will be copied instead of shared\n",
+                        length / 1024, std::strerror(reserved));
+            std::fflush(stdout);
         }
         ::close(fd);
-        ::unlink(path.c_str());
         return false;
     }
     void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
     if (p == MAP_FAILED) {
-        ::unlink(path.c_str());
+        ::close(fd);
+        return false;
+    }
+    if (hand_to_host && !shared_fd_channel().send(id, fd)) {
+        ::munmap(p, length);
+        ::close(fd);
         return false;
     }
     out.address = p;
     out.length = length;
     out.id = id;
+    out.fd = fd;
     return true;
 }
 
@@ -1885,10 +1986,13 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     uint64_t r = stud::render_client::connection().call(
         CallId::VkAllocateMemory, a, chain.empty() ? nullptr : chain.data(),
         static_cast<uint32_t>(chain.size()), reply, sizeof(reply), &written);
-    // The host has opened and mapped it by now (or refused), so the name
-    // has done its whole job. Drop it here, on every path out of this
-    // function, so nothing downstream has to remember to.
-    unlink_shared_allocation_name(shared.id);
+    // The host has its own descriptor by now (sent before this call, and
+    // mapped or refused inside it), so ours is only holding the pages
+    // twice. The mapping keeps them from here on.
+    if (shared.fd >= 0) {
+        ::close(shared.fd);
+        shared.fd = -1;
+    }
     const uint64_t handle = reply[0];
     VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
     if (result != VK_SUCCESS || written < sizeof(uint64_t)) {
@@ -1936,10 +2040,9 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
         auto it = shared_allocations().find(to_u64(memory));
         if (it != shared_allocations().end()) {
             // The host still has the memory object at this point; it drops
-            // its own mapping when it frees it. Unlinking now is safe,
-            // the pages live until both mappings are gone.
-            ::munmap(it->second.address, it->second.length);
-            ::unlink(stud::render_host::shared_memory_path(it->second.id).c_str());
+            // its own mapping when it frees it. The pages live until both
+            // mappings are gone.
+            release_shared_allocation(it->second);
             shared_allocations().erase(it);
         }
     }
@@ -1999,23 +2102,20 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
     bool landed_shared = false;
     if (barrier_ok) {
         SharedAllocation bounce;
-        if (create_shared_allocation(size, bounce)) {
-            const std::string path = stud::render_host::shared_memory_path(bounce.id);
-            const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
-            if (fd >= 0) {
-                if (slot.barrier.allocate_backed_by(static_cast<size_t>(size), fd)) {
-                    uint64_t sa[8] = {to_u64(device), to_u64(memory), bounce.id, size};
-                    const uint64_t sr = stud::render_client::connection().call(
-                        CallId::VkShareMappedMemory, sa, nullptr, 0, nullptr, 0, nullptr);
-                    landed_shared = static_cast<VkResult>(static_cast<int32_t>(sr)) == VK_SUCCESS;
-                    slot.shared_with_host = landed_shared;
-                }
-                ::close(fd);
+        if (create_shared_allocation(size, bounce, /*hand_to_host=*/false)) {
+            // The barrier maps the same memfd itself, and only once it has
+            // does the host get its descriptor, claimed by the call below.
+            if (slot.barrier.allocate_backed_by(static_cast<size_t>(size), bounce.fd) &&
+                shared_fd_channel().send(bounce.id, bounce.fd)) {
+                uint64_t sa[8] = {to_u64(device), to_u64(memory), bounce.id, size};
+                const uint64_t sr = stud::render_client::connection().call(
+                    CallId::VkShareMappedMemory, sa, nullptr, 0, nullptr, 0, nullptr);
+                landed_shared = static_cast<VkResult>(static_cast<int32_t>(sr)) == VK_SUCCESS;
+                slot.shared_with_host = landed_shared;
             }
-            // The client's own mapping of it is not needed: the barrier
-            // holds the pages through its own.
-            if (bounce.address != nullptr) ::munmap(bounce.address, bounce.length);
-            unlink_shared_allocation_name(bounce.id);
+            // The client's own mapping and descriptor are not needed: the
+            // barrier holds the pages through its own mapping.
+            release_shared_allocation(bounce);
         }
     }
     if (landed_shared) {
@@ -2542,22 +2642,20 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyDevice(VkDevice device, const VkAllocat
         pending_decodes().clear();
     }
     // Every host-visible allocation the engine never freed goes with the
-    // device, and so must the file behind it.
+    // device, and so must the memory behind it.
     //
-    // Each one is a file in the runtime directory that this process maps.
-    // The name is already unlinked, so the mapping is the only thing
-    // keeping its pages, and vkFreeMemory is the only place that let go
+    // Each one is shared memory this process maps, and the mapping is
+    // what keeps its pages; vkFreeMemory was the only place that let go
     // of it. The engine does not free everything before destroying its
     // device (22 and 38 allocations at the two teardowns of one measured
     // session), so every join, every leave and every device-loss
-    // recovery left its host-visible memory pinned in that tmpfs for the
-    // life of the process. Measured: 511 MB to 2946 MB of a 3.1 GB
-    // /run/user in thirteen minutes. That tmpfs also holds the Wayland
-    // socket and D-Bus, and the whole desktop degrades when it fills.
+    // recovery left its host-visible memory pinned for the life of the
+    // process. Measured while it was still backed by files in /run/user:
+    // 511 MB to 2946 MB of that 3.1 GB tmpfs in thirteen minutes.
     //
     // The same goes for the write-barrier mappings of memory that was
-    // still mapped: they are backed by a file too, and erasing the entry
-    // is what unmaps it.
+    // still mapped: they are shared memory too, and erasing the entry is
+    // what unmaps it.
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         for (auto& kv : shared_allocations()) release_shared_allocation(kv.second);
