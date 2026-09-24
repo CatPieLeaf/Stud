@@ -55,6 +55,15 @@ Requires:       hicolor-icon-theme
 # it Stud runs and simply offers the engine no video codecs. Either
 # Fedora's own build or RPM Fusion's full one.
 Recommends:     (libavcodec-free or ffmpeg-libs)
+# The system GLES the DesktopGL render path uses is opened at runtime, by
+# SONAME, so rpm cannot see it either.
+Requires:       libEGL.so.1()(64bit)
+Requires:       libGLESv2.so.2()(64bit)
+# The X11 keyboard layout is read from the server through these, opened at
+# runtime too. Weak: without them Stud falls back to the layout names the
+# server publishes.
+Recommends:     libxkbcommon-x11.so.0()(64bit)
+Recommends:     libX11-xcb.so.1()(64bit)
 # Everything else Stud links is found by rpm itself from the ELFs: Qt, Wayland,
 # libxkbcommon, freetype, OpenSSL, libX11 and libXext through ANGLE.
 

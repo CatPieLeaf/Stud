@@ -65,11 +65,18 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # itself, it does not assume a distribution's package name, and naming
 # the package instead is what rpmlint calls explicit-lib-dependency.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit)")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit), libEGL.so.1()(64bit), libGLESv2.so.2()(64bit)")
 # Weak, both of them: mangohud is a Settings toggle, and wl-clipboard is
 # what the tray's "copy server link" shells out to on Wayland. Neither
 # stops Stud from running.
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard, libdecor")
+# The DesktopGL render path opens the system's libEGL and libGLESv2 at
+# runtime, and the X11 keyboard layout is read through libxkbcommon-x11
+# and libX11-xcb, opened the same way: named above and below by SONAME
+# for the same reason libxkbcommon is. The keymap pair is weak, without
+# it Stud falls back to the layout names the X server publishes.
+string(APPEND CPACK_RPM_PACKAGE_SUGGESTS
+    ", libxkbcommon-x11.so.0()(64bit), libX11-xcb.so.1()(64bit)")
 # FFmpeg, for the engine's video playback and screen recording. The render
 # host loads it at runtime by the major version of the headers it was built
 # against (render-host/src/video_codec.cpp), so the dependency is exactly
@@ -182,7 +189,7 @@ libqt6widgets6 (>= 6.4) | libqt6widgets6t64 (>= 6.4), \
 libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
 libqt6webenginewidgets6 (>= 6.4), \
 libqt6keychain1, libvulkan1, libfreetype6, \
-libwayland-client0, libxkbcommon0, libxi6")
+libwayland-client0, libxkbcommon0, libxi6, libegl1, libgles2")
 # wl-clipboard because the tray's "copy server link" shells out to
 # wl-copy: a Wayland compositor only accepts a clipboard offer with the
 # serial of a real input event on one of the application's own surfaces,
@@ -190,7 +197,7 @@ libwayland-client0, libxkbcommon0, libxi6")
 # (ui/src/tray.cpp explains it at the call site). Recommended rather than
 # required, without it that one menu entry says what is missing, and
 # everything else works.
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0, libxkbcommon-x11-0, libx11-xcb1")
 # The same FFmpeg major the render host was built for; see the rpm half.
 if(StudPackagedFfmpeg_FOUND)
     string(APPEND CPACK_DEBIAN_PACKAGE_RECOMMENDS

@@ -71,6 +71,7 @@ optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
   'wl-clipboard: copying a server link from the tray menu on Wayland'
   'libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME'
+  'libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)'
 )
 # The tag carries no leading "v", match what is actually published.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")

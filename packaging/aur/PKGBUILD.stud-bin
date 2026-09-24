@@ -59,6 +59,7 @@ optdepends=(
   'mangohud: the performance overlay Stud can switch on in Settings'
   'wl-clipboard: copying a server link from the tray menu on Wayland'
   'libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME'
+  'libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)'
   'ffmpeg: video playback and screen recording inside games (loaded at runtime)'
 )
 # Stripping a bionic ELF or ANGLE is neither useful nor safe, the same
