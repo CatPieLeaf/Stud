@@ -33,6 +33,7 @@
 #include <QEvent>
 #include <QPainter>
 
+#include <cstdio>
 #include <fstream>
 
 #include <unistd.h>
@@ -745,6 +746,25 @@ void SettingsWindow::onSaveClicked() {
     bool restart_session = false;
     if (!pickedApkPath_.isEmpty() &&
         QFileInfo(pickedApkPath_).absoluteFilePath() != QFileInfo(stored).absoluteFilePath()) {
+        // Refuse an APK Stud cannot run before anything is replaced: the
+        // engine is taken out of it now, into a file beside the cache,
+        // and only a picked APK that yields one gets imported. Importing
+        // first stored the bad APK over the good one, and every launch
+        // after that failed.
+        statusLabel_->setText("Checking the APK...");
+        QApplication::processEvents();
+        const std::string candidate_so =
+            stud::android_glue::default_libroblox_cache_path() + ".next";
+        try {
+            stud::android_glue::extract_apk_native_library(pickedApkPath_.toStdString(),
+                                                            "libroblox.so", candidate_so);
+        } catch (const stud::android_glue::ExtractError&) {
+            QFile::remove(QString::fromStdString(candidate_so));
+            statusLabel_->setText(
+                "That file is not a Roblox APK Stud can run (it has no x86_64 Roblox engine). "
+                "Nothing was changed.");
+            return;
+        }
         // Stop the session BEFORE replacing anything underneath it.
         //
         // A running Stud has the extracted libroblox.so mapped and the
@@ -763,6 +783,7 @@ void SettingsWindow::onSaveClicked() {
             restart_session = true;
         }
         if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
+            QFile::remove(QString::fromStdString(candidate_so));
             statusLabel_->setText("Could not create Stud's APK directory.");
             return;
         }
@@ -777,6 +798,7 @@ void SettingsWindow::onSaveClicked() {
             (QFile::exists(stored) && !QFile::remove(stored)) ||
             !QFile::rename(partial, stored)) {
             QFile::remove(partial);
+            QFile::remove(QString::fromStdString(candidate_so));
             statusLabel_->setText(QString("Could not copy the APK into %1, is there room?")
                                        .arg(QString::fromStdString(stud::paths::apk_dir())));
             return;
@@ -790,6 +812,12 @@ void SettingsWindow::onSaveClicked() {
             if (name != QFileInfo(stored).fileName()) store.remove(name);
         }
         imported = true;
+        // The engine checked above is this APK's; it becomes the cache.
+        const std::string so_path = stud::android_glue::default_libroblox_cache_path();
+        if (std::rename(candidate_so.c_str(), so_path.c_str()) == 0) {
+            std::ofstream(so_path + ".source", std::ios::trunc)
+                << stud::android_glue::apk_source_fingerprint(stored.toStdString()) << "\n";
+        }
     }
     const std::string apk = stored.toStdString();
 

@@ -799,7 +799,17 @@ void start_session_log() {
     std::printf("stud: session log: %s\n", path.toUtf8().constData());
 }
 
-void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
+// Settings, showing why a launch could not happen. A launch Stud cannot
+// make is something the user fixes there, most often by picking another
+// APK; a message box followed by Stud exiting left them no way in.
+void open_settings_for_launch_failure(const QString& reason) {
+    std::fprintf(stderr, "stud: cannot launch: %s\n", reason.toUtf8().constData());
+    stud::ui::SettingsWindow::listenForOpenRequests();
+    stud::ui::SettingsWindow::showSingleton(reason);
+}
+
+// False when nothing was started; Settings is then open saying why.
+bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     stud::config::StudSettings settings;
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
@@ -823,10 +833,9 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         // one. Say that, rather than the old text telling the user to
         // open Stud and go to Settings, which was what they had just
         // done, and from a fresh AppImage was not even possible.
-        QMessageBox::warning(nullptr, "Stud",
-                              "No Roblox APK is configured. Choose one in Settings, from the tray "
-                              "or from Stud's Settings action.");
-        return;
+        open_settings_for_launch_failure(
+            QStringLiteral("No Roblox APK is configured. Select one to finish setting Stud."));
+        return false;
     }
 
     QString render_host_binary = find_render_host_binary();
@@ -835,7 +844,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         QMessageBox::critical(nullptr, "Stud",
                                "Could not find the stud-render-host and/or stud-runtime-bionic "
                                "binaries.");
-        return;
+        return false;
     }
 
     // Once-per-import work (extraction) already happened in
@@ -868,13 +877,11 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
             stud::android_glue::extract_apk_native_library(apk_path, "libroblox.so",
                                                             so_path);
             std::ofstream(launch_stamp_path, std::ios::trunc) << launch_fingerprint << "\n";
-        } catch (const stud::android_glue::ExtractError& e) {
-            QMessageBox::critical(
-                nullptr, "Stud",
-                QString("Could not extract libroblox.so from the configured APK:\n%1\n\nAPK: %2")
-                    .arg(e.what())
-                    .arg(QString::fromStdString(apk_path)));
-            return;
+        } catch (const stud::android_glue::ExtractError&) {
+            open_settings_for_launch_failure(QStringLiteral(
+                "The configured APK is not one Stud can run (it has no x86_64 Roblox engine). "
+                "Select another APK."));
+            return false;
         }
     }
 
@@ -891,7 +898,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         QMessageBox::information(nullptr, "Stud",
                                   "Stud is already running.\n\nClose the existing window before "
                                   "starting it again.");
-        return;
+        return false;
     }
 
     start_session_log();
@@ -980,14 +987,14 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     qint64 render_host_pid = 0;
     if (!render_host.startDetached(&render_host_pid)) {
         QMessageBox::critical(nullptr, "Stud", "Failed to start stud-render-host.");
-        return;
+        return false;
     }
     stud::ui::set_render_host_pid(render_host_pid);
     if (!wait_for_render_host_socket()) {
         QMessageBox::critical(nullptr, "Stud",
                                "stud-render-host did not become ready in time (no real Wayland "
                                "compositor reachable, or ANGLE failed to load, check its stderr).");
-        return;
+        return false;
     }
 
     stud::ipc::LaunchPayload payload;
@@ -1261,6 +1268,7 @@ void launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // can't return before the real handoff actually finishes or its own
     // bounded timeout elapses.
     payload_thread.join();
+    return true;
 }
 
 }  // namespace
@@ -1900,7 +1908,8 @@ int main(int argc, char** argv) {
         }
     }();
     auto proceed = [launch_uri, tray_wanted]() {
-        launch_game(launch_uri);
+        // Settings is open saying why; it is what keeps Stud running now.
+        if (!launch_game(launch_uri)) return;
         // Real magnet-link behavior: hand off and get out of the way,
         // same as qBittorrent doesn't need to stay open once a
         // torrent's been added, the actual game runs in the
