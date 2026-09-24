@@ -274,8 +274,25 @@ class GameActivityStub : public ActivityStub {
 public:
     DEFINE_CLASS_NAME("com/google/androidgamesdk/GameActivity", ActivityStub)
 
-    void finish() {}
-    void setWindowFlags(jint /*flags*/, jint /*mask*/) {}
+    // Activity.finish(): the game's only activity is going away, which on
+    // Android is the app closing. The same path as the app's own Exit
+    // button. Set during bring-up.
+    static inline std::function<void()> on_finish;
+    void finish() {
+        std::printf("stud: GameActivity.finish()\n");
+        std::fflush(stdout);
+        if (on_finish) on_finish();
+    }
+    // GameActivity.setWindowFlags(values, mask): Window.setFlags. The one
+    // flag with a desktop meaning is FLAG_KEEP_SCREEN_ON (0x80), which
+    // the engine sets while a game is on screen. Set during bring-up.
+    static inline std::function<void(bool)> on_keep_screen_on;
+    void setWindowFlags(jint flags, jint mask) {
+        constexpr jint kKeepScreenOn = 0x80;
+        if ((mask & kKeepScreenOn) == 0) return;
+        const bool on = (flags & kKeepScreenOn) != 0;
+        if (on_keep_screen_on) on_keep_screen_on(on);
+    }
     void setWindowFormat(jint /*format*/) {}
     std::shared_ptr<InsetsStub> getWindowInsets(jint /*type*/) {
         return std::make_shared<InsetsStub>();
@@ -981,18 +998,32 @@ public:
 class JNIAchievementStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/achievement/JNIAchievement")
+    // Both calls are asynchronous: `true` only says the request was
+    // accepted, and the answer arrives later through the engine's native
+    // JNIAchievement.success(handle, result) or failure(handle, error).
+    // With no achievements backend (Play Games is not there on a desktop,
+    // and is optional on a phone) the real coroutine answers
+    // success(handle, false): done, not granted, not achieved. Stud used to
+    // accept and then never answer, which left every one of those requests
+    // pending in the engine for the rest of the session. Set during
+    // bring-up.
+    static inline std::function<void(jlong handle)> on_answer_not_achieved;
     static FakeJni::JBoolean grantAchievementForNativeAsync(std::shared_ptr<FakeJni::JString> codeName,
                                                               jlong handle) {
-        std::printf("stud: JNIAchievement.grantAchievementForNativeAsync: codeName=%s handle=%lld "
-                    "(no-op, no real achievements backend)\n",
-                    codeName ? codeName->asStdString().c_str() : "", static_cast<long long>(handle));
+        std::printf("stud: JNIAchievement.grantAchievementForNativeAsync: codeName=%s -> not "
+                    "granted (no achievements backend)\n",
+                    codeName ? codeName->asStdString().c_str() : "");
+        std::fflush(stdout);
+        if (on_answer_not_achieved) on_answer_not_achieved(handle);
         return true;
     }
     static FakeJni::JBoolean hasAchievedForNativeAsync(std::shared_ptr<FakeJni::JString> codeName,
                                                          jlong handle) {
-        std::printf("stud: JNIAchievement.hasAchievedForNativeAsync: codeName=%s handle=%lld "
-                    "(no-op, no real achievements backend)\n",
-                    codeName ? codeName->asStdString().c_str() : "", static_cast<long long>(handle));
+        std::printf("stud: JNIAchievement.hasAchievedForNativeAsync: codeName=%s -> not achieved "
+                    "(no achievements backend)\n",
+                    codeName ? codeName->asStdString().c_str() : "");
+        std::fflush(stdout);
+        if (on_answer_not_achieved) on_answer_not_achieved(handle);
         return true;
     }
 };
@@ -1533,9 +1564,10 @@ public:
     // None/free account): a public, documented value, checked.
     static FakeJni::JInt getMembershipType() { return 0; }
     static FakeJni::JBoolean getHasRobloxSubscription() { return false; }
-    static std::shared_ptr<FakeJni::JString> getTheme() {
-        return std::make_shared<FakeJni::JString>("Light");
-    }
+    // The account's app theme, as Roblox's own enum spells it ("Light",
+    // "Dark"): the theme the app last set through SystemThemeProtocol,
+    // else the desktop's. See system_theme_bridge.h.
+    static std::shared_ptr<FakeJni::JString> getTheme();
     static std::shared_ptr<FakeJni::JString> getLastLoggedInUser() {
         return std::make_shared<FakeJni::JString>("");
     }
@@ -1565,28 +1597,15 @@ public:
 // register_game_activity_stubs()'s classes can be queried.
 void set_native_user_interface_files_dir(std::string path);
 
-// com.roblox.engine.jni.util.NetworkUtils. Real, confirmed against the app's own code class
-// (), found this session via a systematic real-binary
-// string sweep, checked. This is the REAL, correct owner of
-// `getPublicIPv4Addresseses()`, a real, live-confirmed "class is
-// null" gap this project's history had long, wrongly assumed belonged
-// to `NativeUserJavaInterfaceStub` (a plausible-looking guess, since
-// nothing had ever traced the ACTUAL declaring class), and repeatedly
-// documented as a mysterious, unexplained resolution failure even
-// after the method was "correctly implemented" there. It never could
-// have worked: `GetStaticMethodID` matches on the class actually
-// looked up, and `com/roblox/engine/jni/util/NetworkUtils` was never
-// registered at all. Real signature: static, no args, returns String
-// (a real, best-effort colon-joined local-interface-address list on a
-// real device. Stud has no real network-interface enumeration
-// equivalent wired yet, so an honest empty string, matching this
-// method's own real catch-block fallback for when enumeration fails).
+// com.roblox.engine.jni.util.NetworkUtils. getPublicIPv4Addresseses()
+// is, despite its name, every non-loopback IPv4 address on the device's
+// interfaces, each followed by " : " (the app's own code, checked):
+// "192.168.0.10 : 10.8.0.2 : ". Process B shares the host's network, so
+// its interfaces are the machine's own.
 class NetworkUtilsStub : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/util/NetworkUtils")
-    static std::shared_ptr<FakeJni::JString> getPublicIPv4Addresseses() {
-        return std::make_shared<FakeJni::JString>("");
-    }
+    static std::shared_ptr<FakeJni::JString> getPublicIPv4Addresseses();
 };
 
 // com.roblox.engine.jni.NativeQuoteInterface. Real, confirmed against the app's own code

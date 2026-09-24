@@ -733,6 +733,13 @@ int main(int argc, char** argv) {
     // FMOD's Java AudioTrack fallback, through the host's audio output.
     // Before the engine loads: FMOD picks its output while it starts.
     stud::runtime::install_fmod_audio_output();
+    // FLAG_KEEP_SCREEN_ON, to the window that can honour it. Before the
+    // engine loads too: it may set the flag while it starts.
+    stud::jni_bridge::GameActivityStub::on_keep_screen_on = [](bool on) {
+        uint64_t args[8] = {on ? 1u : 0u};
+        stud::render_client::connection().call_void(stud::render_host::CallId::SetKeepScreenOn,
+                                                    args);
+    };
     const bool smooth_zoom_setting = find_named_arg(argc, argv, "--smooth-zoom") != "off";
     stud::jni_bridge::set_smooth_zoom_enabled(smooth_zoom_setting);
     std::printf("stud: smooth zoom %s\n", smooth_zoom_setting ? "on" : "off (per-notch, as Sober)");
@@ -2582,6 +2589,26 @@ int main(int argc, char** argv) {
             };
     }
 
+    // Achievement requests, answered the way the real Java answers them
+    // with no backend: success(handle, false), off the calling thread, as
+    // its coroutine does. See JNIAchievementStub.
+    stud::jni_bridge::JNIAchievementStub::on_answer_not_achieved = [&jvm, &lib](jlong handle) {
+        using SuccessFn = jboolean (*)(JNIEnv*, jobject, jlong, jboolean);
+        static const auto success = reinterpret_cast<SuccessFn>(
+            lib.find_symbol("Java_com_roblox_universalapp_achievement_JNIAchievement_success"));
+        if (success == nullptr) return;
+        std::thread([&jvm, handle] {
+            static_cast<stud::jni_bridge::BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+            FakeJni::LocalFrame frame(jvm);
+            auto& env = frame.getJniEnv();
+            auto* jni_env = static_cast<JNIEnv*>(&env);
+            auto self = std::make_shared<stud::jni_bridge::JNIAchievementStub>();
+            stud::jni_bridge::call_trapping_abort(success, jni_env, env.createLocalReference(self),
+                                                  handle, static_cast<jboolean>(0));
+            stud::jni_bridge::clear_pending_jni_exception(jni_env, "JNIAchievement.success");
+        }).detach();
+    };
+
     // Roblox's own in-game leave button. The engine reports the return to
     // its app shell, and with the setting on that is Stud's cue to end the
     // session rather than sit on the home screen.
@@ -2633,6 +2660,12 @@ int main(int argc, char** argv) {
         stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
                                                 nullptr, 0, nullptr, 0, nullptr);
         g_should_keep_running.store(false, std::memory_order_relaxed);
+    };
+
+    stud::jni_bridge::GameActivityStub::on_finish = [] {
+        if (stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit) {
+            stud::jni_bridge::NativeGLJavaInterfaceStub::on_native_exit();
+        }
     };
 
     // Links the engine wants another application to handle; Roblox
