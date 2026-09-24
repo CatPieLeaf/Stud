@@ -261,7 +261,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "<p>A Linux desktop wrapper that runs the real, unmodified<br>"
         "Roblox Android app.</p>"
         "<p><a href=\"https://github.com/CatPieLeaf/Stud\">"
-        "github.com/CatPieLeaf/Stud</a></p>"
+        "CatPieLeaf/Stud</a></p>"
         "</div>",
         this);
     aboutText->setOpenExternalLinks(true);
