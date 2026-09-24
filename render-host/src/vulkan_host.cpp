@@ -6082,6 +6082,24 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 std::printf("stud-render-host: the engine is done with this device; releasing "
                             "%zu upscale chain(s) and %zu mapping(s) with it\n",
                             g_upscale_chains.size(), shared_writes().size());
+                // What is still alive on it. vkDestroyDevice has been
+                // measured taking a flat 12s here with the queue already
+                // idle, which is a driver waiting on something that is not
+                // GPU work; a swapchain the engine never destroyed, or
+                // Stud's own present fences for one, are what it could be
+                // waiting on.
+                {
+                    size_t rings = 0, in_flight = 0;
+                    for (const auto& kv : present_fence_rings()) {
+                        ++rings;
+                        for (bool b : kv.second.in_flight) in_flight += b ? 1 : 0;
+                    }
+                    std::printf("stud-render-host: still alive at device teardown: %zu engine "
+                                "swapchain(s), %zu present-fence ring(s) with %zu present(s) in "
+                                "flight, %zu swapchain image list(s)\n",
+                                g_swapchain_ci.size(), rings, in_flight,
+                                l.swapchain_image_list.size());
+                }
                 std::fflush(stdout);
 
                 // Stud's own objects first: the device cannot go while
@@ -6210,7 +6228,19 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                     buffer_memory().clear();
                 }
                 {
+                    // Unmapped, not just forgotten. The allocations the
+                    // engine left behind were freed above with a bare
+                    // vkFreeMemory, which does not go through
+                    // vk_free_memory_shared_cleanup(); clearing the table
+                    // alone kept every one of those file mappings alive for
+                    // the rest of the process, and the files are already
+                    // unlinked, so their pages stayed charged to the
+                    // runtime tmpfs with nothing left that could release
+                    // them. That repeated on every device the engine
+                    // rebuilt: each join, each leave, each device-loss
+                    // recovery.
                     std::lock_guard<std::mutex> lock(shared_memory_mutex());
+                    for (auto& kv : shared_memory()) unmap_shared_memory(kv.second);
                     shared_memory().clear();
                 }
                 l.mapped.clear();

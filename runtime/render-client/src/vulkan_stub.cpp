@@ -2541,6 +2541,33 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyDevice(VkDevice device, const VkAllocat
         scratch_pools().clear();
         pending_decodes().clear();
     }
+    // Every host-visible allocation the engine never freed goes with the
+    // device, and so must the file behind it.
+    //
+    // Each one is a file in the runtime directory that this process maps.
+    // The name is already unlinked, so the mapping is the only thing
+    // keeping its pages, and vkFreeMemory is the only place that let go
+    // of it. The engine does not free everything before destroying its
+    // device (22 and 38 allocations at the two teardowns of one measured
+    // session), so every join, every leave and every device-loss
+    // recovery left its host-visible memory pinned in that tmpfs for the
+    // life of the process. Measured: 511 MB to 2946 MB of a 3.1 GB
+    // /run/user in thirteen minutes. That tmpfs also holds the Wayland
+    // socket and D-Bus, and the whole desktop degrades when it fills.
+    //
+    // The same goes for the write-barrier mappings of memory that was
+    // still mapped: they are backed by a file too, and erasing the entry
+    // is what unmaps it.
+    {
+        std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+        for (auto& kv : shared_allocations()) release_shared_allocation(kv.second);
+        shared_allocations().clear();
+    }
+    {
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+        mapped_ranges().clear();
+        non_coherent_allocations().clear();
+    }
     destroy_handle(device, vk_wire::DestroyKind::Device, to_u64(device));
 }
 
