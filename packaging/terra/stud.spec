@@ -71,6 +71,11 @@ Provides:       bundled(angle)
 Provides:       bundled(swiftshader)
 Provides:       bundled(vulkan-loader)
 Provides:       bundled(fidelityfx-fsr1)
+Provides:       bundled(snapdragon-gsr)
+Provides:       bundled(mpv-prescalers)
+Provides:       bundled(volk)
+Provides:       bundled(xxhash)
+Provides:       bundled(miniaudio)
 
 %description
 Stud runs the real, unmodified Roblox app on your Linux desktop, in its own
@@ -104,12 +109,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{appid}.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_datadir}/metainfo/%{appid}.metainfo.xml
 
 %files
-%license %{_datadir}/licenses/%{name}/LICENSE
-%license %{_datadir}/licenses/%{name}/LICENSE.exception
-%license %{_datadir}/licenses/%{name}/NOTICE.md
-%license %{_datadir}/licenses/%{name}/android-bionic/
-%license %{_datadir}/licenses/%{name}/angle/
-%license %{_datadir}/licenses/%{name}/fidelityfx-fsr1/
+# The whole directory, not a list of it: every vendored notice the build
+# installs belongs here, and a list is what fell behind the ones added
+# since and left rpmbuild failing on unpackaged files.
+%license %{_datadir}/licenses/%{name}/
 %doc %{_datadir}/doc/%{name}/README.md
 %doc %{_datadir}/doc/%{name}/copyright
 %{_bindir}/%{name}
