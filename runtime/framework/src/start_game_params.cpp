@@ -48,23 +48,34 @@ END_NATIVE_DESCRIPTOR
 // joinAttemptId/referredByPlayerId/joinAttemptOrigin ALONE (without the
 // opaque gameinfo ticket also going somewhere real) are sufficient for
 // a real join to complete. That's the next real thing to test.
+int join_request_type_for(const DeepLinkJoinInfo& join) {
+    const bool place = join.place_id > 0;
+    if (join.user_id > 0) return 1;
+    if (place && join.conversation_id > 0) return 6;
+    if (!place) return -1;
+    if (!join.link_code.empty() || !join.access_code.empty()) return 2;
+    if (!join.game_instance_id.empty()) return 3;
+    if (!join.reserved_server_access_code.empty()) return 8;
+    return 0;
+}
+
 std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     std::shared_ptr<PlatformParams> platform_params, std::shared_ptr<DeviceParams> device_params,
     std::shared_ptr<SurfaceStub> surface, const DeepLinkJoinInfo& deep_link) {
     auto params = std::make_shared<StartGameParams>();
     params->accessCode_ = std::make_shared<FakeJni::JString>(deep_link.access_code);
-    params->callId_ = std::make_shared<FakeJni::JString>("");
-    params->conversationId_ = 0;
+    params->callId_ = std::make_shared<FakeJni::JString>(deep_link.call_id);
+    params->conversationId_ = deep_link.conversation_id;
     params->deviceParams_ = std::move(device_params);
     params->eventId_ = std::make_shared<FakeJni::JString>(deep_link.event_id);
     params->gameId_ = std::make_shared<FakeJni::JString>(deep_link.game_instance_id);
-    params->gameIdToExclude_ = std::make_shared<FakeJni::JString>("");
+    params->gameIdToExclude_ = std::make_shared<FakeJni::JString>(deep_link.game_id_to_exclude);
     params->gameJoinContext_ = std::make_shared<FakeJni::JString>(deep_link.game_join_context);
     params->isUnder13_ = false;
-    params->isoContext_ = std::make_shared<FakeJni::JString>("");
+    params->isoContext_ = std::make_shared<FakeJni::JString>(deep_link.iso_context);
     params->joinAttemptId_ = std::make_shared<FakeJni::JString>(deep_link.join_attempt_id);
     params->joinAttemptOrigin_ = std::make_shared<FakeJni::JString>(deep_link.join_attempt_origin);
-    params->joinRequestType_ = 0;
+    params->joinRequestType_ = join_request_type_for(deep_link);
     // Live-tested-and-failed-once-already follow-up (see
     // DeepLinkJoinInfo::launch_data's own doc comment): placeId/
     // joinAttemptId/referredByPlayerId/joinAttemptOrigin ALONE, without
@@ -72,7 +83,7 @@ std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     // (clean run, zero traps, but no "Joining game" FLog line either).
     // Trying the raw opaque gameinfo ticket here next.
     params->launchData_ = std::make_shared<FakeJni::JString>(deep_link.launch_data);
-    params->linkCode_ = std::make_shared<FakeJni::JString>("");
+    params->linkCode_ = std::make_shared<FakeJni::JString>(deep_link.link_code);
     // Tested (the engineering notes, "proceed" entry): a real, well-
     // known place ID (1818, "Classic: Crossroads") was tried ALONE here
     // as a cheap experiment before deep-link parsing existed,
@@ -85,18 +96,19 @@ std::shared_ptr<StartGameParams> build_desktop_start_game_params(
     // (see this function's own top-of-file doc comment).
     params->placeId_ = deep_link.place_id;
     params->platformParams_ = std::move(platform_params);
-    params->referralPage_ = std::make_shared<FakeJni::JString>("");
+    params->referralPage_ = std::make_shared<FakeJni::JString>(deep_link.referral_page);
     params->referredByPlayerId_ = deep_link.referred_by_player_id;
-    params->reservedServerAccessCode_ = std::make_shared<FakeJni::JString>("");
+    params->reservedServerAccessCode_ =
+        std::make_shared<FakeJni::JString>(deep_link.reserved_server_access_code);
     params->surface_ = surface;
-    // The real, logged-in user. These were 0/""; Stud was asking the
-    // engine to join an experience as nobody. A real client fills both
-    // from the authenticated session, and the join request is built from
-    // them. The identity is already fetched by Process A
-    // (users.roblox.com/v1/users/authenticated) and handed to
-    // set_native_user_identity() during bring-up, so read it back from
-    // the same place rather than plumbing a second copy through.
-    params->userId_ = native_user_id();
+    // userId is the user being FOLLOWED, as the app sets it from the
+    // launch request (0 for any other join). It used to carry the
+    // signed-in account's id, which on a follow join named the wrong user
+    // and on any other join asked to follow oneself. The signed-in
+    // account goes in username, as the app fills it from its session;
+    // Process A fetched it (users.roblox.com/v1/users/authenticated) and
+    // set_native_user_identity() holds it.
+    params->userId_ = deep_link.user_id;
     params->username_ = std::make_shared<FakeJni::JString>(native_username());
     params->vrContext_ = std::make_shared<ActivityStub>();
     return params;

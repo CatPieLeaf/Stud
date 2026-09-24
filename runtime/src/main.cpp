@@ -2300,6 +2300,13 @@ int main(int argc, char** argv) {
             request.access_code = text("accessCode");
             request.link_code = text("linkCode");
             request.game_instance_id = text("gameInstanceId");
+            request.user_id = number("userId");
+            request.conversation_id = number("conversationId");
+            request.reserved_server_access_code = text("reservedServerAccessCode");
+            request.call_id = text("callId");
+            request.referral_page = text("referralPage");
+            request.iso_context = text("isoContext");
+            request.game_id_to_exclude = text("gameIdToExclude");
             if (request.place_id > 0) {
                 // Which fields arrived, never their contents: the request
                 // carries join tickets, which are credentials.

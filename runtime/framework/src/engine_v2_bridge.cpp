@@ -966,6 +966,14 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
                 join.event_id = request.event_id;
                 join.access_code = request.access_code;
                 join.game_instance_id = request.game_instance_id;
+                join.link_code = request.link_code;
+                join.reserved_server_access_code = request.reserved_server_access_code;
+                join.call_id = request.call_id;
+                join.referral_page = request.referral_page;
+                join.iso_context = request.iso_context;
+                join.game_id_to_exclude = request.game_id_to_exclude;
+                join.user_id = request.user_id;
+                join.conversation_id = request.conversation_id;
                 if (join.place_id == 0) {
                     std::fprintf(stderr,
                                  "stud: experience start NOT acknowledged: the engine has not "

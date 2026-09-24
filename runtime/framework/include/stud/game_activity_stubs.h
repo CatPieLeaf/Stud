@@ -1971,6 +1971,15 @@ public:
         std::string access_code;
         std::string link_code;
         std::string game_instance_id;
+        // The rest of what the app's own launch-request parser reads.
+        // user_id is the user being FOLLOWED, not the signed-in account.
+        long long user_id = 0;
+        long long conversation_id = 0;
+        std::string reserved_server_access_code;
+        std::string call_id;
+        std::string referral_page;
+        std::string iso_context;
+        std::string game_id_to_exclude;
     };
     // Defined after the struct they hold, and private only by convention
     // the accessors below are the API.

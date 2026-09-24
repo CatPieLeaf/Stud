@@ -105,7 +105,23 @@ struct DeepLinkJoinInfo {
     std::string event_id;
     std::string access_code;
     std::string game_instance_id;
+    std::string link_code;
+    std::string reserved_server_access_code;
+    std::string call_id;
+    std::string referral_page;
+    std::string iso_context;
+    std::string game_id_to_exclude;
+    // The user being followed; 0 for any other kind of join.
+    long long user_id = 0;
+    long long conversation_id = 0;
 };
+
+// Which kind of join a request is, the way the app itself decides it
+// (its launch-request parser): 1 follow a user, 6 a party (place plus
+// conversation), 2 a private server (link code or access code), 3 a
+// specific server instance, 8 a reserved server, 0 a plain place join,
+// -1 nothing to join.
+int join_request_type_for(const DeepLinkJoinInfo& join);
 
 // Builds a real, honest StartGameParams. `launch_data`/`game_join_context`
 // are the two real fields AutoValue_StartGameParams.Builder() itself
@@ -117,8 +133,9 @@ struct DeepLinkJoinInfo {
 // sufficient for the real engine to complete a real join; see this
 // function's own .cpp doc comment for the reasoning behind trying this
 // over reimplementing Roblox's own internal join-ticket resolution
-// host-side). accessCode_/reservedServerAccessCode_ remain honest
-// empty placeholders. No real source for those yet. `surface` must be
+// host-side). Every field of the launch request the app itself reads is
+// carried, and joinRequestType is derived from them as the app derives
+// it (join_request_type_for). `surface` must be
 // the SAME Surface object already handed to GameActivity's own
 // lifecycle (see GameActivityLifecycleResult::surface's doc comment),
 // not a fresh one: avoids a second, real, independently-mapped window.
