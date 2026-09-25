@@ -38,7 +38,7 @@ pkgbase = stud-bin
 	options = emptydirs
 	source = stud-bin-1.1.8.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.1.8/stud-1.1.8-x86_64.tar.zst
 	source = stud-1.1.8.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.8.tar.gz
-	sha256sums = cd8e245e5190bbf9da45c400d8967d53502381efeb02c3e159e249dded24b85f
-	sha256sums = eee1bce51b72fbdf3ff3ec7a5d591e5a931598836e6cbd9112eba0f6d6e96cbe
+	sha256sums = 7f79ac9f813daccb08a04c5923c77f24ba921544ceed9a7dd816eec67a1c6032
+	sha256sums = 4e2efdcc73afbeb6ebc86779c46093256122192ed0ce35d9484b1457e07eab4c
 
 pkgname = stud-bin
