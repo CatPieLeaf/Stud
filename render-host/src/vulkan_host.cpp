@@ -1488,21 +1488,10 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     }
     bool fault_enabled = false;
 
-    // Device fault reporting, for the same reason and the other half of
-    // the answer.
-    //
-    // The engine's own log says `DEVICE FAULT SUPPORTED` on this machine,
-    // so it asks about this extension -- but Stud never queried the
-    // report, so a device lost to a hang said only that it was lost.
-    // vkGetDeviceFaultInfoEXT names the faulting addresses and carries
-    // the vendor's own description of what happened there.
-    //
-    // The feature has to be ENABLED at device creation or the report is
-    // empty afterwards, and the engine may already be enabling it in its
-    // own pNext chain. Two copies of one sType in a chain is invalid, so
-    // the chain is walked first and Stud's own struct is added only if
-    // the engine did not bring one.
-    VkPhysicalDeviceFaultFeaturesEXT fault_features{};
+    // VK_EXT_device_fault: passed through when the engine asks for the
+    // feature in its own chain, and never requested by Stud. Stud does
+    // not read the report (see note_result()), so it has no reason to
+    // change the device the engine asked for.
     bool engine_asked_for_fault = false;
     for (const auto* node = reinterpret_cast<const VkBaseInStructure*>(chain); node != nullptr;
          node = node->pNext) {
@@ -1511,23 +1500,17 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
             break;
         }
     }
-    bool stud_added_fault = false;
     if (device_supports_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
         bool already = false;
         for (const std::string& e : extensions) {
             if (e == VK_EXT_DEVICE_FAULT_EXTENSION_NAME) already = true;
         }
         // The extension whenever the engine asks for the feature, since its
-        // own chain needs it; Stud's own request only under STUD_DEBUG.
-        if (!already && (engine_asked_for_fault || stud::logging::debug_enabled())) {
+        // own chain needs it.
+        if (!already && engine_asked_for_fault) {
             extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
         }
-        fault_enabled = already || engine_asked_for_fault || stud::logging::debug_enabled();
-        if (!engine_asked_for_fault && stud::logging::debug_enabled()) {
-            fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
-            fault_features.deviceFault = VK_TRUE;
-            stud_added_fault = true;
-        }
+        fault_enabled = already || engine_asked_for_fault;
     }
 
     // VK_EXT_swapchain_maintenance1: a fence that says when a present is
@@ -1634,10 +1617,6 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // writable while VkDeviceCreateInfo's is not, so the head cannot
     // simply be read back out of ci.
     void* chain_head = const_cast<void*>(chain);
-    if (stud_added_fault) {
-        fault_features.pNext = chain_head;
-        chain_head = &fault_features;
-    }
     if (stud_added_maintenance) {
         swapchain_maintenance.pNext = chain_head;
         chain_head = &swapchain_maintenance;
@@ -7248,8 +7227,9 @@ void note_acquire_failed(uint64_t swapchain, bool failed) {
 void report_checkpoints_after_loss() {
     Loader& l = loader();
     if (l.vk.vkGetQueueCheckpointDataNV == nullptr) {
-        std::printf("stud-render-host: no checkpoint data: the driver does not offer "
-                    "VK_NV_device_diagnostic_checkpoints, so where the GPU stopped is unknown\n");
+        std::printf("stud-render-host: no checkpoint data: checkpoints are only enabled under "
+                    "STUD_DEBUG (and only on a driver with VK_NV_device_diagnostic_checkpoints), "
+                    "so where the GPU stopped is unknown\n");
         std::fflush(stdout);
         return;
     }
@@ -7287,69 +7267,17 @@ void report_checkpoints_after_loss() {
     std::fflush(stdout);
 }
 
-// What the driver says went wrong, as opposed to where.
+// No vkGetDeviceFaultInfoEXT here, on purpose.
 //
-// Checkpoints name the last marker the GPU passed; this names the
-// addresses it faulted on and carries the vendor's own description. On a
-// hang -- a submission the GPU never retires, which is what Roblox's own
-// DeviceRecovery calls `reason=hung` -- the two together are the
-// difference between "something in the frame died" and a specific
-// address in a specific resource.
-//
-// Reported rather than acted on. Stud cannot fix a faulting address; it
-// can only make sure the log names it, because this fires seconds after a
-// freeze the user is already watching and there is no second chance to
-// ask the device, which is about to be destroyed.
-void report_device_fault_after_loss() {
-    Loader& l = loader();
-    if (l.vk.vkGetDeviceFaultInfoEXT == nullptr || l.device == VK_NULL_HANDLE) {
-        std::printf("stud-render-host: no fault report: this driver does not offer "
-                    "VK_EXT_device_fault, so what the GPU faulted on is unknown\n");
-        std::fflush(stdout);
-        return;
-    }
-    VkDeviceFaultCountsEXT counts{};
-    counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
-    if (l.vk.vkGetDeviceFaultInfoEXT(l.device, &counts, nullptr) != VK_SUCCESS) {
-        std::printf("stud-render-host: the driver offers VK_EXT_device_fault but would not say "
-                    "how much fault information it has\n");
-        std::fflush(stdout);
-        return;
-    }
-    // The binary blob is vendor-private and only a vendor's own tool can
-    // read it, so it is counted and not fetched.
-    counts.vendorBinarySize = 0;
-    std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
-    std::vector<VkDeviceFaultVendorInfoEXT> vendor(counts.vendorInfoCount);
-    VkDeviceFaultInfoEXT info{};
-    info.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
-    info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
-    info.pVendorInfos = vendor.empty() ? nullptr : vendor.data();
-    if (l.vk.vkGetDeviceFaultInfoEXT(l.device, &counts, &info) != VK_SUCCESS) {
-        std::printf("stud-render-host: the driver would not hand over its fault report\n");
-        std::fflush(stdout);
-        return;
-    }
-    std::printf("stud-render-host: the driver's own fault report: \"%s\" (%u address(es), %u "
-                "vendor record(s))\n",
-                info.description, counts.addressInfoCount, counts.vendorInfoCount);
-    for (uint32_t i = 0; i < counts.addressInfoCount && i < addresses.size(); ++i) {
-        // The precision is a range, not a slack figure: the reported
-        // address is somewhere within it, so a resource is identified by
-        // masking with it rather than by an exact match.
-        std::printf("stud-render-host:   fault type %u at 0x%llx (precision 0x%llx)\n",
-                    static_cast<unsigned>(addresses[i].addressType),
-                    static_cast<unsigned long long>(addresses[i].reportedAddress),
-                    static_cast<unsigned long long>(addresses[i].addressPrecision));
-    }
-    for (uint32_t i = 0; i < counts.vendorInfoCount && i < vendor.size(); ++i) {
-        std::printf("stud-render-host:   vendor: \"%s\" (fault 0x%llx, code 0x%llx)\n",
-                    vendor[i].description,
-                    static_cast<unsigned long long>(vendor[i].vendorFaultCode),
-                    static_cast<unsigned long long>(vendor[i].vendorFaultData));
-    }
-    std::fflush(stdout);
-}
+// Stud used to ask for the driver's fault report at this point. It never
+// said anything: all five device losses in the captured NVIDIA logs came
+// back with an empty description and no addresses. The sixth time, on
+// 615.71.09, the driver segfaulted inside the call (fault address 0x168,
+// in libnvidia-glcore), and a freeze the engine would otherwise have
+// recovered from became a crash of the whole render host. The extension
+// is only on the device when the engine asks for it, and the device it
+// would be asked about has just been lost, so calling it from here only
+// adds a way to die.
 
 void note_result(VkResult r, const char* where) {
     if (r != VK_ERROR_DEVICE_LOST) return;
@@ -7371,10 +7299,8 @@ void note_result(VkResult r, const char* where) {
                     where != nullptr ? where : "an unnamed call");
         std::fflush(stdout);
         report_checkpoints_after_loss();
-        report_device_fault_after_loss();
-        // Last, so it follows the checkpoints and the fault report in
-        // the log: those say WHERE the GPU stopped and WHAT it faulted
-        // on, and this says what led up to it.
+        // Last, so it follows the checkpoints in the log: those say WHERE
+        // the GPU stopped, and this says what led up to it.
         fr::record(fr::Event::DeviceLost);
         fr::dump("the device was lost");
     }
