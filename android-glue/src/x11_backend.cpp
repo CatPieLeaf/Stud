@@ -100,6 +100,7 @@ struct Xlib {
     Atom (*InternAtom)(Display*, const char*, Bool) = nullptr;
     Status (*SetWMProtocols)(Display*, Window, Atom*, int) = nullptr;
     int (*Flush)(Display*) = nullptr;
+    int (*Sync)(Display*, Bool) = nullptr;
     int (*Pending)(Display*) = nullptr;
     int (*NextEvent)(Display*, XEvent*) = nullptr;
     int (*ChangeProperty)(Display*, Window, Atom, Atom, int, int, const unsigned char*,
@@ -157,6 +158,10 @@ Xlib& xlib() {
 
 Display* g_display = nullptr;
 Window g_window = 0;
+// The window the Vulkan driver presents to, a child of g_window; see
+// content_window(). Created and mapped from the render host's dispatch
+// thread, resized from pump(); Xlib is initialised for threads.
+Window g_content_window = 0;
 std::atomic<bool> g_pointer_locked{false};
 // Confined, which is what a camera drag does: the pointer keeps its own
 // position and its ordinary motion, it simply cannot leave the window.
@@ -291,6 +296,7 @@ bool load_xlib() {
     LOAD(InternAtom, "XInternAtom");
     LOAD(SetWMProtocols, "XSetWMProtocols");
     LOAD(Flush, "XFlush");
+    LOAD(Sync, "XSync");
     LOAD(Pending, "XPending");
     LOAD(NextEvent, "XNextEvent");
     LOAD(ChangeProperty, "XChangeProperty");
@@ -696,6 +702,78 @@ void* vk_display() {
 }
 
 unsigned long window() { return g_window; }
+
+// The Vulkan driver's own window: a child of the main one, the X11 half of
+// native_window_content_surface() (see its comment in native_window.cpp).
+//
+// On X11 the Play hang was the driver waiting in vkDestroySwapchainKHR
+// (22213 ms in one capture) for the server to finish with the last frame
+// it presented. That frame was still the content of the window the next
+// engine device would present to, so nothing could replace it. Unmapping
+// this window before the last swapchain goes lets the server drop the
+// frame at once (see set_content_mapped()), and the main window, black
+// behind it, stays up.
+//
+// Input-transparent, so every event still arrives on the main window
+// exactly as before; without XShape the child is not used at all and the
+// driver gets the main window, the old behaviour.
+namespace {
+// Defined with the text overlay's window, which uses it too.
+bool set_empty_input_shape(Window w);
+}  // namespace
+
+unsigned long content_window() {
+    if (g_display == nullptr || g_window == 0) return g_window;
+    Xlib& x = xlib();
+    if (g_content_window == 0) {
+        const int screen = DefaultScreen(g_display);
+        const int32_t w = g_width.load();
+        const int32_t h = g_height.load();
+        const Window child = x.CreateSimpleWindow(
+            g_display, g_window, 0, 0, static_cast<unsigned int>(w > 0 ? w : 1),
+            static_cast<unsigned int>(h > 0 ? h : 1), 0, BlackPixel(g_display, screen),
+            BlackPixel(g_display, screen));
+        if (child == 0) return g_window;
+        if (!set_empty_input_shape(child)) {
+            x.DestroyWindow(g_display, child);
+            x.Flush(g_display);
+            return g_window;
+        }
+        // The same pixel handling as the main window; see create_window().
+        if (x.ChangeWindowAttributes != nullptr) {
+            XSetWindowAttributes attrs{};
+            attrs.bit_gravity = NorthWestGravity;
+            attrs.background_pixel = BlackPixel(g_display, screen);
+            x.ChangeWindowAttributes(g_display, child, CWBitGravity | CWBackPixel, &attrs);
+        }
+        g_content_window = child;
+        std::printf("stud: android-glue: the Vulkan driver presents to a child window of its "
+                    "own\n");
+        std::fflush(stdout);
+    }
+    set_content_mapped(true);
+    return g_content_window;
+}
+
+// Synchronous, not just flushed: the driver talks to the server on a
+// connection of its own (vk_display()), so the map or unmap has to have
+// happened there before the driver's next request on this window does.
+void set_content_mapped(bool mapped) {
+    if (g_display == nullptr || g_content_window == 0) return;
+    Xlib& x = xlib();
+    if (mapped) {
+        const int32_t w = g_width.load();
+        const int32_t h = g_height.load();
+        if (w > 0 && h > 0 && x.MoveResizeWindow != nullptr) {
+            x.MoveResizeWindow(g_display, g_content_window, 0, 0, static_cast<unsigned int>(w),
+                               static_cast<unsigned int>(h));
+        }
+        x.MapWindow(g_display, g_content_window);
+    } else if (x.UnmapWindow != nullptr) {
+        x.UnmapWindow(g_display, g_content_window);
+    }
+    x.Sync(g_display, False);
+}
 
 
 // X11 input, translated into the same HostInputEvent queue the Wayland
@@ -1144,6 +1222,16 @@ void pump() {
                 if (configure.width > 0 && configure.height > 0) {
                     g_width.store(configure.width);
                     g_height.store(configure.height);
+                    // The driver's window follows at once: an X11
+                    // swapchain has to match its window's size exactly,
+                    // and the engine rebuilds its swapchain for the size
+                    // stored just above.
+                    if (g_content_window != 0 && x.MoveResizeWindow != nullptr) {
+                        x.MoveResizeWindow(g_display, g_content_window, 0, 0,
+                                           static_cast<unsigned int>(configure.width),
+                                           static_cast<unsigned int>(configure.height));
+                        x.Flush(g_display);
+                    }
                 }
                 break;
             }
@@ -1237,6 +1325,27 @@ void pump() {
 }
 
 namespace {
+// Makes `w` transparent to the pointer: an empty INPUT shape, so the
+// server delivers every click and motion to whatever is underneath, as if
+// the window were not there, while still drawing it. XShape lives in
+// libXext, loaded as optionally as everything else here; false means it
+// could not be done.
+bool set_empty_input_shape(Window w) {
+    static void* xext = ::dlopen("libXext.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (xext == nullptr) return false;
+    using CombineRectanglesFn = void (*)(Display*, Window, int, int, int, XRectangle*, int, int,
+                                         int);
+    static auto combine =
+        reinterpret_cast<CombineRectanglesFn>(::dlsym(xext, "XShapeCombineRectangles"));
+    if (combine == nullptr) return false;
+    // ShapeInput is 2 and ShapeSet is 0; named here rather than pulling in
+    // <X11/extensions/shape.h> for two constants.
+    constexpr int kShapeInput = 2;
+    constexpr int kShapeSet = 0;
+    combine(g_display, w, kShapeInput, 0, 0, nullptr, 0, kShapeSet, Unsorted);
+    return true;
+}
+
 // The text overlay's own window.
 //
 // The drawing is shared with the Wayland path; what differs is where the
@@ -1308,20 +1417,7 @@ bool ensure_overlay_window() {
     // while still drawing it. XShape lives in libXext, loaded the same
     // optional way as everything else here, without it the overlay
     // still draws, it just eats clicks, so this is not fatal.
-    if (void* xext = ::dlopen("libXext.so.6", RTLD_NOW | RTLD_LOCAL); xext != nullptr) {
-        using CombineRectanglesFn = void (*)(Display*, Window, int, int, int, XRectangle*, int,
-                                             int, int);
-        auto combine =
-            reinterpret_cast<CombineRectanglesFn>(::dlsym(xext, "XShapeCombineRectangles"));
-        if (combine != nullptr) {
-            // ShapeInput is 2 and ShapeSet is 0; named here rather than
-            // pulling in <X11/extensions/shape.h> for two constants.
-            constexpr int kShapeInput = 2;
-            constexpr int kShapeSet = 0;
-            combine(g_display, g_overlay_window, kShapeInput, 0, 0, nullptr, 0, kShapeSet,
-                    Unsorted);
-        }
-    }
+    set_empty_input_shape(g_overlay_window);
     XGCValues values{};
     g_overlay_gc = x.CreateGC(g_display, g_overlay_window, 0, &values);
     return g_overlay_gc != nullptr;

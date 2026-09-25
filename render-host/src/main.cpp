@@ -4755,7 +4755,11 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 void* vk_dpy = stud::android_glue::native_window_x11_vk_display();
                 if (vk_dpy == nullptr) vk_dpy = window.x11_display;
                 xinfo.dpy = static_cast<Display*>(vk_dpy);
-                xinfo.window = static_cast<::Window>(window.x11_window);
+                // A window of the driver's own, not the main one; see
+                // native_window_x11_content_window().
+                xinfo.window = static_cast<::Window>(
+                    stud::android_glue::native_window_x11_content_window());
+                if (xinfo.window == 0) xinfo.window = static_cast<::Window>(window.x11_window);
                 VkSurfaceKHR xsurface = VK_NULL_HANDLE;
                 VkResult xr = create_xlib(reinterpret_cast<VkInstance>(a[0]), &xinfo, nullptr,
                                            &xsurface);

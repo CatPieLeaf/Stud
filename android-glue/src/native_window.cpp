@@ -3193,7 +3193,19 @@ wl_buffer* make_background_buffer(wl_shm* shm) {
     return content;
 }
 
+unsigned long native_window_x11_content_window() {
+    return display_backend() == DisplayBackend::X11 ? x11::content_window() : 0;
+}
+
+void native_window_attach_content() {
+    if (display_backend() == DisplayBackend::X11) x11::set_content_mapped(true);
+}
+
 void native_window_detach_content() {
+    if (display_backend() == DisplayBackend::X11) {
+        x11::set_content_mapped(false);
+        return;
+    }
     ANativeWindow* window = g_content_window.load();
     if (window == nullptr || window->content_surface == nullptr) return;
     // A null buffer unmaps a subsurface; the window surface and its black

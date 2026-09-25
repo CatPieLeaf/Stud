@@ -31,6 +31,12 @@ void* display();
 // see the definition.
 void* vk_display();
 unsigned long window();
+// The window the Vulkan driver presents to: an input-transparent child of
+// window(), created and mapped on first use. Returns window() itself when a
+// child cannot be made. See content_window() in x11_backend.cpp.
+unsigned long content_window();
+// Maps or unmaps content_window(); a no-op before it exists.
+void set_content_mapped(bool mapped);
 
 // Drains everything the server has sent: resizes update the size below,
 // and a WM close request sets close_requested(). Never blocks.

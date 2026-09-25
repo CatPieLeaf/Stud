@@ -5354,6 +5354,10 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     // bounded second destroy_upscale_chain would have and then lets go
     // regardless, which is what the surface needs here.
     flush_retired_chains("the engine is building another swapchain");
+    // X11 only: the driver's window may have been unmapped when the last
+    // swapchain went, and a swapchain for an unmapped window never shows
+    // anything. A no-op on Wayland.
+    stud::android_glue::native_window_attach_content();
 
     vk_wire::CreateSwapchainHeader h{};
     std::memcpy(&h, in.data(), sizeof(h));
@@ -5984,6 +5988,17 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             const uint64_t live = to_u64(live_swapchain(handle));
             g_swapchain_alias.erase(handle);
             g_swapchain_ci.erase(handle);
+            // X11: the driver waits inside vkDestroySwapchainKHR for the
+            // server to finish with the last frame (22 s once, at Play),
+            // so the window it presented to is unmapped BEFORE the last
+            // swapchain goes, immediately or through a retired chain.
+            // Wayland's wait is at device teardown instead, where
+            // K::Surface and K::Device already detach.
+            if (g_swapchain_ci.empty() &&
+                stud::android_glue::display_backend() ==
+                    stud::android_glue::DisplayBackend::X11) {
+                stud::android_glue::native_window_detach_content();
+            }
             // Stud's own offscreen images and the pass that reads them go
             // with the swapchain they belong to.
             //

@@ -390,10 +390,22 @@ void native_window_set_opaque(::ANativeWindow* window);
 // compositor without wl_subcompositor, wp_viewporter or wl_shm.
 ::wl_surface* native_window_content_surface(::ANativeWindow* window);
 
-// Unmaps the content surface, so the compositor lets go of the last frame
-// the driver presented there. Call only once the driver has no swapchain
-// on it any more; the next swapchain's first present maps it again.
+// The X11 equivalent of native_window_content_surface(): an
+// input-transparent child window, created and mapped on first use. Returns
+// the main window when a child cannot be made, 0 when X11 is not in use.
+unsigned long native_window_x11_content_window();
+
+// Unmaps the content surface (Wayland) or child window (X11), so the
+// compositor or server lets go of the last frame the driver presented
+// there. Call only once the driver has no swapchain that could present to
+// it any more. On Wayland the next swapchain's first present maps it
+// again; on X11 native_window_attach_content() has to, before the driver
+// is asked for a swapchain.
 void native_window_detach_content();
+
+// Maps the X11 content window again after native_window_detach_content().
+// A no-op on Wayland, where the driver's own present does it.
+void native_window_attach_content();
 
 // Stud's own Wayland event queue. Everything this process owns lives on
 // it; the DEFAULT queue belongs to the Vulkan driver and must not be
