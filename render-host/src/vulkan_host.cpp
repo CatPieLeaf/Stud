@@ -32,7 +32,6 @@
 #include <unistd.h>
 #include <mutex>
 #include <shared_mutex>
-#include <thread>
 #include <condition_variable>
 #include <unordered_map>
 #include <unordered_set>
@@ -68,11 +67,6 @@ namespace {
 // old one, and leaving it set turned the first loss of a session into a
 // permanent, one-way disabling of three repair paths.
 std::atomic<bool> g_device_lost{false};
-
-// Presents the driver accepted, across every device. A retired device is
-// destroyed once its replacement has put frames on screen; see
-// destroy_device_later().
-std::atomic<uint64_t> g_presents_total{0};
 
 // The repair submissions' one reusable fence. Declared here rather than
 // as a function-local static because it belongs to whichever device
@@ -2831,60 +2825,6 @@ struct SharedMapping {
     void* address = nullptr;
     size_t length = 0;
 };
-
-// Destroys a device the engine has finished with, off the dispatch path.
-//
-// Pressing Play a second time froze on the Home frame because this
-// process called vkDestroyDevice synchronously while serving the engine,
-// and the driver sat in it for 12 s (12240 of 12249 ms of teardown in
-// session.log from the STUD_DEBUG_CHECKPOINTS run). Nothing else could be
-// served until it returned: not the engine's next vkCreateDevice, and not
-// the first frame of the game.
-//
-// Everything that has to happen with the old device's own entry points
-// still happens synchronously in vk_destroy_handle(): Stud's chains, the
-// device-idle wait, the fence and pool, and every allocation freed. Only
-// the final vkDestroyDevice is moved here, called through the old
-// device's own vkDestroyDevice pointer, which is captured before the next
-// vkCreateDevice reloads the table. That table reload is what sank the
-// earlier park-and-release attempt, which called the new device's pointers
-// on the old device's objects.
-//
-// The destroy waits until the replacement has presented a few frames (or
-// a cap runs out). During the stall the only protocol traffic was pointer
-// motion: the old swapchain's last buffer was still the surface's content,
-// and only a frame from the next device replaces it. The host mappings go
-// with the device, because the driver may still reference imported pages
-// until it is destroyed.
-void destroy_device_later(VkDevice device, PFN_vkDestroyDevice destroy,
-                          std::vector<std::pair<void*, size_t>> mappings) {
-    const uint64_t presents_at_retire = g_presents_total.load(std::memory_order_relaxed);
-    std::thread([device, destroy, mappings = std::move(mappings), presents_at_retire]() {
-        constexpr uint64_t kPresents = 30;
-        constexpr auto kCap = std::chrono::seconds(20);
-        const auto parked_at = std::chrono::steady_clock::now();
-        while (g_presents_total.load(std::memory_order_relaxed) - presents_at_retire < kPresents &&
-               std::chrono::steady_clock::now() - parked_at < kCap) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-        const uint64_t seen = g_presents_total.load(std::memory_order_relaxed) - presents_at_retire;
-        const auto t0 = std::chrono::steady_clock::now();
-        if (destroy != nullptr) destroy(device, nullptr);
-        const auto t1 = std::chrono::steady_clock::now();
-        // Only now. While that device lived, the driver could still be
-        // importing these pages.
-        for (const auto& m : mappings) {
-            if (m.first != nullptr) ::munmap(m.first, m.second);
-        }
-        std::printf("stud-render-host: destroyed the previous device in %.0fms, off the "
-                    "dispatch path, after %.1fs and %llu present(s) on its replacement; "
-                    "released %zu mapping(s) with it\n",
-                    std::chrono::duration<double, std::milli>(t1 - t0).count(),
-                    std::chrono::duration<double>(t0 - parked_at).count(),
-                    static_cast<unsigned long long>(seen), mappings.size());
-        std::fflush(stdout);
-    }).detach();
-}
 std::mutex& shared_memory_mutex() {
     static std::mutex m;
     return m;
@@ -6140,9 +6080,14 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             }
             break;
         case K::Device:
-            // The engine tears its renderer down and rebuilds it
-            // repeatedly (once per mode probe, on every join and leave, and
-            // after every recovery); a session creates four to six devices.
+            // The real VkDevice is still deliberately NOT destroyed: the
+            // engine tears its renderer down and rebuilds it repeatedly
+            // (once per mode probe, and after every recovery), and
+            // destroying it here would invalidate every resolved device
+            // command while the engine still holds them. The comment that
+            // used to sit here also claimed this process owns exactly one
+            // device for its whole life; it does not -- a session creates
+            // four to six.
             //
             // What IS safe to let go of is Stud's own upscale chains.
             // They are built here, referenced by nothing the engine can
@@ -6186,13 +6131,12 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 // It also has to be here for a duller reason: every
                 // l.destroy_* below was resolved with
                 // vkGetDeviceProcAddr(l.device, ...) and belongs to THIS
-                // device. Deferring this work past the next
+                // device. Deferring the destroy past the next
                 // vkCreateDevice would mean calling the new device's
-                // function pointers on the old device's objects. That is
-                // what sank option-D-park-and-release.patch. So all of it
-                // still runs here. Only the final vkDestroyDevice is
-                // deferred, through the old device's own pointer, captured
-                // now; see destroy_device_later().
+                // function pointers on the old device's objects. A
+                // deferred version of this was written and measured
+                // working (see option-D-park-and-release.patch in
+                // Stud-Analysis/gpu) and then dropped for exactly that.
                 std::printf("stud-render-host: the engine is done with this device; releasing "
                             "%zu upscale chain(s) and %zu mapping(s) with it\n",
                             g_upscale_chains.size(), shared_writes().size());
@@ -6313,14 +6257,29 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.live_memory.clear();
 
                 const auto after_frees = std::chrono::steady_clock::now();
+                if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
+                const auto after_destroy = std::chrono::steady_clock::now();
+                {
+                    auto ms = [](auto a, auto b) {
+                        return std::chrono::duration<double, std::milli>(b - a).count();
+                    };
+                    std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
+                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f\n",
+                                ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
+                                ms(after_chains, after_flush), ms(after_flush, after_idle),
+                                ms(after_idle, after_frees), ms(after_frees, after_destroy));
+                    std::fflush(stdout);
+                }
+                l.device = VK_NULL_HANDLE;
 
-                // The mappings go with the device, and are unmapped only
-                // after it is destroyed. While the device lived, the driver
-                // was still importing the pages behind them; unmapping them
-                // with it alive is what segfaulted inside libnvidia-glcore
-                // in an earlier attempt at this.
-                std::vector<std::pair<void*, size_t>> mappings;
-                for (auto& w : shared_writes()) mappings.push_back(w.second);
+                // Only now are these safe to drop. While the device
+                // lived, the driver was still importing the pages behind
+                // the mappings; unmapping them with it alive is what
+                // segfaulted inside libnvidia-glcore in an earlier
+                // attempt at this.
+                for (auto& w : shared_writes()) {
+                    if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
+                }
                 shared_writes().clear();
                 {
                     std::lock_guard<std::mutex> lock(buffer_memory_mutex());
@@ -6336,28 +6295,9 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                     // repeated on every device the engine rebuilt: each
                     // join, each leave, each device-loss recovery.
                     std::lock_guard<std::mutex> lock(shared_memory_mutex());
-                    for (auto& kv : shared_memory()) {
-                        mappings.emplace_back(kv.second.address, kv.second.length);
-                    }
+                    for (auto& kv : shared_memory()) unmap_shared_memory(kv.second);
                     shared_memory().clear();
                 }
-                // The device itself is destroyed off this path, with its own
-                // vkDestroyDevice, once its replacement is on screen; see
-                // destroy_device_later(). This is where the Play hang was.
-                destroy_device_later(l.device, l.vk.vkDestroyDevice, std::move(mappings));
-                const auto after_destroy = std::chrono::steady_clock::now();
-                {
-                    auto ms = [](auto a, auto b) {
-                        return std::chrono::duration<double, std::milli>(b - a).count();
-                    };
-                    std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
-                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice deferred\n",
-                                ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
-                                ms(after_chains, after_flush), ms(after_flush, after_idle),
-                                ms(after_idle, after_frees));
-                    std::fflush(stdout);
-                }
-                l.device = VK_NULL_HANDLE;
                 // Anything sent over the fd channel and never claimed.
                 forget_shared_fds();
                 l.mapped.clear();
@@ -8916,9 +8856,6 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         {
             STUD_ZONE_NAMED("vkQueuePresentKHR");
             res = l.vk.vkQueuePresentKHR(from_u64<VkQueue>(queue), &pi);
-        }
-        if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
-            g_presents_total.fetch_add(1, std::memory_order_relaxed);
         }
         // A frame, as the profiler counts them: what Stud actually put
         // on the screen, not what the engine thought it drew.
