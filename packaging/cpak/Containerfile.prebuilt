@@ -22,8 +22,9 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         qt6-qtbase-gui qt6-qtwebengine qtkeychain-qt6 \
         vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libGLES \
         pulseaudio-libs alsa-lib freetype \
+        libavcodec-free libavutil-free libswscale-free \
         dbus-libs libnotify \
-        wl-clipboard \
+        wl-clipboard libxkbcommon-x11 libX11-xcb \
         plasma-breeze-qt6 \
     && dnf clean all
 
