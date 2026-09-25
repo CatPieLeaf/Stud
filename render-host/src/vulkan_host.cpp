@@ -1469,9 +1469,16 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // suspect turned off and another with it on -- which is no use at all
     // for a fault that appears at random, minutes apart.
     //
-    // A debugging aid, so only under STUD_DEBUG: what ships creates the
-    // device the engine asked for, with nothing diagnostic added to it.
-    if (stud::logging::debug_enabled() &&
+    // A debugging aid, so only under STUD_DEBUG, or when
+    // STUD_VK_ENGINE_CHECKPOINTS asks for markers on the engine's commands:
+    // what ships creates the device the engine asked for, with nothing
+    // diagnostic added to it. The second condition is what
+    // tools/debug-session.sh's STUD_DEBUG_CHECKPOINTS=1 sets. It never set
+    // STUD_DEBUG, so it used to request engine markers on a device with
+    // no checkpoint extension, and silently record nothing.
+    const bool want_checkpoints = stud::logging::debug_enabled() ||
+                                  std::getenv("STUD_VK_ENGINE_CHECKPOINTS") != nullptr;
+    if (want_checkpoints &&
         device_supports_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME)) {
         bool already = false;
         for (const std::string& e : extensions) {
@@ -5068,6 +5075,19 @@ bool record_upscale_blits(UpscaleChain& c) {
         l.vk.vkCmdPipelineBarrier(c.cmd[i], pass_stage | VK_PIPELINE_STAGE_TRANSFER_BIT,
                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
                                nullptr, 2, after);
+        // The pass's last marker, after the copy into the swapchain image
+        // and the barrier that makes it presentable.
+        //
+        // Every device loss so far reported the final COMPUTE marker ("RCAS
+        // sharpen done", or "EASU done" without sharpening) on both stages.
+        // Every frame's pass ends on that marker, and the copy after it had
+        // none, so the report could not say whether the GPU stopped at the
+        // copy into the swapchain or after the whole pass. With this, the
+        // last marker being "handed to the swapchain" means Stud's pass
+        // completed, and anything else means the GPU stopped inside it.
+        if (l.vk.vkCmdSetCheckpointNV != nullptr) {
+            l.vk.vkCmdSetCheckpointNV(c.cmd[i], "stud upscale: handed to the swapchain");
+        }
         if (c.timing_pool != VK_NULL_HANDLE) {
             l.vk.vkCmdWriteTimestamp(c.cmd[i], VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, c.timing_pool,
                                   i * 2 + 1);
@@ -7228,8 +7248,8 @@ void report_checkpoints_after_loss() {
     Loader& l = loader();
     if (l.vk.vkGetQueueCheckpointDataNV == nullptr) {
         std::printf("stud-render-host: no checkpoint data: checkpoints are only enabled under "
-                    "STUD_DEBUG (and only on a driver with VK_NV_device_diagnostic_checkpoints), "
-                    "so where the GPU stopped is unknown\n");
+                    "STUD_DEBUG or STUD_VK_ENGINE_CHECKPOINTS (and only on a driver with "
+                    "VK_NV_device_diagnostic_checkpoints), so where the GPU stopped is unknown\n");
         std::fflush(stdout);
         return;
     }
@@ -9397,10 +9417,11 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     // STUD_VK_ENGINE_CHECKPOINTS=1: mark the ENGINE's commands too.
     //
     // Stud's own upscale pass has been marked since checkpoints went in,
-    // and that answered exactly half the question: a real hang reported
-    // "stud upscale: RCAS sharpen done" on both stages, which proves
-    // Stud's pass FINISHED and says nothing whatsoever about which of the
-    // engine's own thousands of commands the GPU died in.
+    // and that answered only part of the question: a real hang reported
+    // "stud upscale: RCAS sharpen done" on both stages, which shows the
+    // GPU got through Stud's compute dispatches (the copy after them had
+    // no marker of its own until later) and says nothing whatsoever about
+    // which of the engine's own thousands of commands the GPU was in.
     //
     // Stud records those commands, so it can mark them. The marker names
     // the command kind, so the report reads "the GPU stopped in
