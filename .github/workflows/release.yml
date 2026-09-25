@@ -449,8 +449,17 @@ jobs:
           pkg=$(find /work -maxdepth 1 -name '*.pkg.tar.zst' | head -1)
           [ -n "$pkg" ] || { echo "::error::no package for namcap to check"; exit 1; }
           namcap "$pkg" | tee /tmp/namcap.out || true
-          if grep -q ' E: ' /tmp/namcap.out; then
-            grep ' E: ' /tmp/namcap.out | sed 's/^/::error::namcap: /'
+          # The Android libraries are loaded by Stud's own bionic linker
+          # inside the sandbox, never by the system's, so a library they
+          # name is no dependency of the package: namcap matches bionic's
+          # ICU against Arch's icu by file name. Only an error whose every
+          # file is one of those is set aside; the same error on a host
+          # binary still fails.
+          grep ' E: ' /tmp/namcap.out |
+            grep -Ev "detected and not included \(libraries \[[^]]*\] needed in files \[('usr/lib/stud/(android-bionic|lib64)/[^']*'(, )?)+\]\)$" \
+            > /tmp/namcap.errors || true
+          if [ -s /tmp/namcap.errors ]; then
+            sed 's/^/::error::namcap: /' /tmp/namcap.errors
             exit 1
           fi
           SCRIPT
