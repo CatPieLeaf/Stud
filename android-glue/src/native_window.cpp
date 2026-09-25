@@ -318,6 +318,9 @@ std::atomic<int32_t> g_requested_render_scale_120{0};
 // The game window's own surface, for anything that needs to stack a
 // surface of its own above it (the text overlay).
 std::atomic<wl_surface*> g_primary_surface{nullptr};
+// The window whose content surface the Vulkan driver was handed; see
+// native_window_detach_content().
+std::atomic<ANativeWindow*> g_content_window{nullptr};
 // See native_window_set_egl_at_display_size().
 std::atomic<bool> g_egl_at_display_size{false};
 int32_t display_scale_120();
@@ -1607,6 +1610,20 @@ struct ANativeWindow {
     // Stud says what logical size its (larger) buffer represents.
     wp_fractional_scale_v1* fractional_scale = nullptr;
     wp_viewport* viewport = nullptr;
+    // The surface the Vulkan driver presents to, and what goes with it; see
+    // native_window_content_surface(). Null until a Vulkan surface is made
+    // for this window, and on the EGL path, which keeps using `surface`.
+    wl_surface* content_surface = nullptr;
+    wl_subsurface* content_subsurface = nullptr;
+    wp_viewport* content_viewport = nullptr;
+    // The window surface's own content once the driver renders into
+    // content_surface: one black pixel, stretched by `viewport`.
+    wl_buffer* background = nullptr;
+    // Whether `background` is attached to `surface` yet. It may only be
+    // once the first configure is acked, so whichever of
+    // native_window_content_surface() and xdg_surface_configure() comes
+    // second does it.
+    std::atomic<bool> background_attached{false};
     // Size the compositor asked for, in logical units. Buffer pixels are
     // derived from it and the current scale, never stored independently.
     std::atomic<int32_t> logical_width{0};
@@ -1772,6 +1789,13 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
             std::fflush(stdout);
         }
     }
+    // The window surface's own black background, when the driver has
+    // already been given a surface of its own but this configure is the
+    // first one it can be attached in (see native_window_content_surface()).
+    if (window->background != nullptr && !window->background_attached.exchange(true)) {
+        wl_surface_attach(window->surface, window->background, 0, 0);
+        wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
+    }
     if (commit_now) wl_surface_commit(window->surface);
 }
 
@@ -1862,6 +1886,11 @@ void apply_window_geometry(ANativeWindow* window, const char* reason) {
         // compositor has to show with the two disagreeing. See
         // commit_belongs_to_the_frame() below for the whole reasoning.
         wp_viewport_set_destination(window->viewport, logical_w, logical_h);
+    }
+    // The driver's surface is sized the same way, and the same rule holds:
+    // staged here, published by the driver's own next commit.
+    if (window->content_viewport != nullptr) {
+        wp_viewport_set_destination(window->content_viewport, logical_w, logical_h);
     }
     g_logical_width.store(logical_w);
     g_logical_height.store(logical_h);
@@ -2318,6 +2347,14 @@ void ANativeWindow_release(ANativeWindow* window) {
         if (window->shell_surface != nullptr) {
             xdg_surface_destroy(window->shell_surface);
         }
+        if (window->content_viewport != nullptr) wp_viewport_destroy(window->content_viewport);
+        if (window->content_subsurface != nullptr) {
+            wl_subsurface_destroy(window->content_subsurface);
+        }
+        if (window->content_surface != nullptr) wl_surface_destroy(window->content_surface);
+        if (window->background != nullptr) wl_buffer_destroy(window->background);
+        ANativeWindow* expected = window;
+        g_content_window.compare_exchange_strong(expected, nullptr);
         if (window->surface != nullptr) {
             wl_surface_destroy(window->surface);
         }
@@ -2963,6 +3000,9 @@ void native_window_set_opaque(::ANativeWindow* window) {
     // the viewport destination uses.
     wl_region_add(region, 0, 0, window->logical_width.load(), window->logical_height.load());
     wl_surface_set_opaque_region(window->surface, region);
+    if (window->content_surface != nullptr) {
+        wl_surface_set_opaque_region(window->content_surface, region);
+    }
     wl_region_destroy(region);
 }
 
@@ -2974,6 +3014,10 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
         // protocol).
         wp_viewport_set_destination(window->viewport, window->logical_width.load(),
                                      window->logical_height.load());
+        if (window->content_viewport != nullptr) {
+            wp_viewport_set_destination(window->content_viewport, window->logical_width.load(),
+                                         window->logical_height.load());
+        }
         return;
     }
     const int32_t integer_scale = g_render_scale_120.load() / kScaleUnit;
@@ -3029,6 +3073,137 @@ void native_window_apply_surface_scale(::ANativeWindow* window) {
     return window->surface;
 }
 
+namespace {
+// One opaque black pixel, the window surface's own content once the driver
+// presents to a subsurface. The window's viewport stretches it to the
+// window; it is never redrawn.
+wl_buffer* make_background_buffer(wl_shm* shm) {
+    if (shm == nullptr) return nullptr;
+    const int fd = ::memfd_create("stud-window-background", MFD_CLOEXEC);
+    if (fd < 0) return nullptr;
+    constexpr int32_t kBytes = 4;
+    if (::ftruncate(fd, kBytes) != 0) {
+        ::close(fd);
+        return nullptr;
+    }
+    void* p = ::mmap(nullptr, kBytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) {
+        ::close(fd);
+        return nullptr;
+    }
+    *static_cast<uint32_t*>(p) = 0xff000000u;
+    ::munmap(p, kBytes);
+    wl_shm_pool* pool = wl_shm_create_pool(shm, fd, kBytes);
+    ::close(fd);
+    if (pool == nullptr) return nullptr;
+    wl_buffer* buffer = wl_shm_pool_create_buffer(pool, 0, 1, 1, kBytes, WL_SHM_FORMAT_XRGB8888);
+    wl_shm_pool_destroy(pool);
+    return buffer;
+}
+}  // namespace
+
+// The Vulkan driver's own surface: a subsurface of the window.
+//
+// Stud used to hand the driver the window's own wl_surface, the xdg
+// toplevel itself, and keep it for every surface, swapchain and device
+// the engine made in a session. Android gives each SurfaceView a surface
+// of its own and destroys it with the view, and the engine is written for
+// that: every Play is `destroySurfaceView:true` and a new device. Sharing
+// the toplevel cost two things.
+//
+// The window could never let go of the last frame. When the engine tore
+// its swapchain and device down at Play, that swapchain's last buffer was
+// still the window's content, and only another buffer on the same surface
+// could replace it: one the next device could not present until the old
+// device was gone. The driver's vkDestroyDevice waited on that buffer for
+// 12 s (12240 of 12249 ms of one teardown), on the Home frame. In a test
+// build that destroyed devices late, 5 of 6 destroys that ran after a
+// newer frame had replaced it took 23-80 ms. Here the content surface is
+// simply unmapped when the engine is done with it (see
+// native_window_detach_content()), and the compositor lets go at once.
+//
+// And the driver shared its surface with a second writer: every configure
+// ack, viewport and opaque-region change, overlay placement and decoration
+// commit Stud made landed on the surface the driver was committing frames
+// to from another thread (84 such commits in one traced session). Now the
+// driver is the only thing that ever commits a buffer here, as it is in a
+// program that owns its window outright; Stud's commits stay on the
+// window's own surface.
+//
+// Falls back to the window's own surface, the old behaviour, on a
+// compositor missing any of the pieces this needs.
+::wl_surface* native_window_content_surface(::ANativeWindow* window) {
+    if (window == nullptr) return nullptr;
+    if (window->content_surface != nullptr) return window->content_surface;
+    auto& state = wayland_state();
+    if (window->surface == nullptr || window->viewport == nullptr ||
+        state.compositor == nullptr || state.subcompositor == nullptr ||
+        state.viewporter == nullptr || state.shm == nullptr) {
+        return window->surface;
+    }
+    wl_buffer* background = make_background_buffer(state.shm);
+    if (background == nullptr) return window->surface;
+    wl_surface* content = wl_compositor_create_surface(state.compositor);
+    wl_subsurface* sub =
+        content != nullptr
+            ? wl_subcompositor_get_subsurface(state.subcompositor, content, window->surface)
+            : nullptr;
+    if (sub == nullptr) {
+        if (content != nullptr) wl_surface_destroy(content);
+        wl_buffer_destroy(background);
+        return window->surface;
+    }
+    // Desynchronised, so the driver's commits show at once instead of
+    // waiting for the window surface to be committed; directly above the
+    // window surface, so anything else stacked on it (the text overlay)
+    // stays on top; and no input region, so every pointer and touch event
+    // still goes to the window surface exactly as before.
+    wl_subsurface_set_position(sub, 0, 0);
+    wl_subsurface_set_desync(sub);
+    wl_subsurface_place_above(sub, window->surface);
+    wl_region* empty = wl_compositor_create_region(state.compositor);
+    wl_surface_set_input_region(content, empty);
+    wl_region_destroy(empty);
+    window->content_viewport = wp_viewporter_get_viewport(state.viewporter, content);
+    const int32_t logical_w = window->logical_width.load();
+    const int32_t logical_h = window->logical_height.load();
+    if (window->content_viewport != nullptr && logical_w > 0 && logical_h > 0) {
+        wp_viewport_set_destination(window->content_viewport, logical_w, logical_h);
+    }
+    window->content_surface = content;
+    window->content_subsurface = sub;
+    window->background = background;
+    g_content_window.store(window);
+
+    // The window surface gets content of its own: until now the driver's
+    // buffers were what mapped it. Only after the first configure is acked;
+    // before that xdg_surface_configure() attaches it in its own commit.
+    if (window->configured && !window->background_attached.exchange(true)) {
+        wl_surface_attach(window->surface, background, 0, 0);
+        wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
+        if (logical_w > 0 && logical_h > 0) {
+            wp_viewport_set_destination(window->viewport, logical_w, logical_h);
+        }
+    }
+    // Also what applies the subsurface's position and stacking.
+    wl_surface_commit(window->surface);
+    if (state.display != nullptr) wl_display_flush(state.display);
+    std::printf("stud: android-glue: the Vulkan driver presents to a subsurface of its own\n");
+    std::fflush(stdout);
+    return content;
+}
+
+void native_window_detach_content() {
+    ANativeWindow* window = g_content_window.load();
+    if (window == nullptr || window->content_surface == nullptr) return;
+    // A null buffer unmaps a subsurface; the window surface and its black
+    // background stay. The next swapchain's first present maps it again.
+    wl_surface_attach(window->content_surface, nullptr, 0, 0);
+    wl_surface_commit(window->content_surface);
+    auto& state = wayland_state();
+    if (state.display != nullptr) wl_display_flush(state.display);
+}
+
 WaylandOverlayDeps overlay_deps() {
     const auto& state = wayland_state();
     WaylandOverlayDeps d;
@@ -3038,6 +3213,9 @@ WaylandOverlayDeps overlay_deps() {
     d.shm = state.shm;
     d.viewporter = state.viewporter;
     d.parent = g_primary_surface.load();
+    if (ANativeWindow* w = g_content_window.load(); w != nullptr && w->content_surface != nullptr) {
+        d.stack_above = w->content_surface;
+    }
     d.scale_120 = g_render_scale_120.load();
     d.seat = state.seat;
     d.data_device_manager = state.data_device_manager;

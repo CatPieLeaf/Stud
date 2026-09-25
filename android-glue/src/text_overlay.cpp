@@ -493,7 +493,8 @@ void apply_locked(const TextOverlaySpec& spec) {
         // Desynchronised: the overlay redraws on its own keystrokes and
         // must not wait for the engine's next frame to appear.
         wl_subsurface_set_desync(o.subsurface);
-        wl_subsurface_place_above(o.subsurface, deps.parent);
+        wl_subsurface_place_above(o.subsurface,
+                                  deps.stack_above != nullptr ? deps.stack_above : deps.parent);
         if (deps.viewporter != nullptr) {
             o.viewport = wp_viewporter_get_viewport(deps.viewporter, o.surface);
         }

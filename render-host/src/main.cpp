@@ -4774,7 +4774,10 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             VkWaylandSurfaceCreateInfoKHR info{};
             info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
             info.display = window.display;
-            info.surface = window.surface;
+            // A surface of the driver's own, not the window's; see
+            // native_window_content_surface().
+            info.surface = stud::android_glue::native_window_content_surface(g_real_window);
+            if (info.surface == nullptr) info.surface = window.surface;
             VkSurfaceKHR surface = VK_NULL_HANDLE;
             VkResult r = create_wayland(reinterpret_cast<VkInstance>(a[0]), &info, nullptr, &surface);
             if (r != VK_SUCCESS) return kNullHandle;

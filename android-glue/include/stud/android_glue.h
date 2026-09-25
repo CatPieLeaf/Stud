@@ -381,6 +381,20 @@ void native_window_apply_surface_scale(::ANativeWindow* window);
 // implementation.
 void native_window_set_opaque(::ANativeWindow* window);
 
+// The surface the Vulkan driver presents to, the way Android gives a
+// SurfaceView a surface of its own: a desynchronised subsurface of the
+// window, created on first use, which nothing but the driver ever
+// commits a buffer to. The window's own surface keeps Stud's state (the
+// xdg configure acks, the viewport, the overlay's placement) and a black
+// background of Stud's. Falls back to the window's own surface on a
+// compositor without wl_subcompositor, wp_viewporter or wl_shm.
+::wl_surface* native_window_content_surface(::ANativeWindow* window);
+
+// Unmaps the content surface, so the compositor lets go of the last frame
+// the driver presented there. Call only once the driver has no swapchain
+// on it any more; the next swapchain's first present maps it again.
+void native_window_detach_content();
+
 // Stud's own Wayland event queue. Everything this process owns lives on
 // it; the DEFAULT queue belongs to the Vulkan driver and must not be
 // dispatched here, doing so eats the driver's buffer-release events

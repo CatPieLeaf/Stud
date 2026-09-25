@@ -6066,6 +6066,13 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             if (l.destroy_surface) {
                 l.destroy_surface(l.instance, from_u64<VkSurfaceKHR>(handle), nullptr);
             }
+            // The Android SurfaceView behind it is gone, so the window lets
+            // go of the last frame presented on it now, rather than holding
+            // it until the next device presents. That hold is what
+            // vkDestroyDevice waited 12 s on at Play. Only with no swapchain
+            // left anywhere, so a surface the engine still presents to is
+            // never blanked. See native_window_content_surface().
+            if (g_swapchain_ci.empty()) stud::android_glue::native_window_detach_content();
             break;
         case K::Framebuffer:
             l.swapchain_framebuffers.erase(handle);
@@ -6257,6 +6264,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.live_memory.clear();
 
                 const auto after_frees = std::chrono::steady_clock::now();
+                // For an engine that destroys its device before its surface:
+                // the last frame is let go of here instead, before the driver
+                // is asked to free the memory behind it. A no-op when
+                // K::Surface already did it.
+                if (g_swapchain_ci.empty()) stud::android_glue::native_window_detach_content();
                 if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
                 const auto after_destroy = std::chrono::steady_clock::now();
                 {

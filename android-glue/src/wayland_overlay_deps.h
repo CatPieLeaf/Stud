@@ -21,6 +21,10 @@ struct WaylandOverlayDeps {
     // The game window's own surface: the overlay is a subsurface of it,
     // so it moves, clips and stacks with the window for free.
     wl_surface* parent = nullptr;
+    // What the overlay stacks directly above: the surface the game is
+    // presented on, a sibling subsurface when there is one (see
+    // native_window_content_surface()), otherwise the parent itself.
+    wl_surface* stack_above = nullptr;
     // Buffer pixels per 120 logical units, the same figure the window
     // itself is sized with.
     int32_t scale_120 = 120;
