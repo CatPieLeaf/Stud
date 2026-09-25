@@ -1340,18 +1340,6 @@ uint64_t vk_get_physical_device_features2(uint64_t device, const std::vector<uin
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
-// Whether host-visible allocations are imported into the device as host
-// pointers (VK_EXT_external_memory_host) instead of copied on flush.
-// STUD_VK_IMPORT_HOST_MEMORY=1 turns it on; see vk_create_device() for why
-// it is off by default.
-bool host_pointer_import_enabled() {
-    static const bool on = [] {
-        const char* v = std::getenv("STUD_VK_IMPORT_HOST_MEMORY");
-        return v != nullptr && v[0] != '\0' && std::strcmp(v, "0") != 0;
-    }();
-    return on;
-}
-
 // Whether the real driver offers a device extension. Asked before adding
 // one the engine did not request, so a driver without it is simply left
 // alone rather than failing device creation.
@@ -1442,6 +1430,21 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 
     std::vector<const char*> layer_ptrs;
     for (const std::string& s : layers) layer_ptrs.push_back(s.c_str());
+    // VK_EXT_external_memory_host, whether or not the engine asked for it.
+    //
+    // It is what lets host-visible allocations be shared outright with the
+    // process that writes them: Stud maps a memfd it shares with the host,
+    // hands the engine that pointer, and imports the same pages here as
+    // real device memory. Without it every byte the engine writes has to
+    // be copied across the socket, measured at 197 MB/s in a real game,
+    // which is most of what the render thread was doing.
+    if (device_supports_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
+        bool already = false;
+        for (const std::string& e : extensions) {
+            if (e == VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) already = true;
+        }
+        if (!already) extensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    }
 
     // Before anything below asks what this device supports.
     //
@@ -1454,41 +1457,6 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // vulkaninfo lists as present kept resolving to null entry points.
     l.physical_device =
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
-
-    // VK_EXT_external_memory_host, only when STUD_VK_IMPORT_HOST_MEMORY=1.
-    //
-    // It lets host-visible allocations be shared outright with the process
-    // that writes them: Stud maps a memfd it shares with the host, hands
-    // the engine that pointer, and imports the same pages here as device
-    // memory, so nothing is copied.
-    //
-    // It is off by default because it is what the 12-second stalls had in
-    // common. This block used to sit above the l.physical_device
-    // assignment, so on the FIRST device of a render host
-    // device_supports_extension() saw VK_NULL_HANDLE and added nothing:
-    // the device the app starts on (the Home screen, up to the first Play)
-    // never imported a byte. Every later device saw the previous device's
-    // physical device, took the extension and imported 14-43 allocations.
-    // The logs show it in one field, the first device created with one
-    // extension fewer than every later one (11 against 12 in this build),
-    // and across every capture the split is total: 0 of 81 first-device
-    // teardowns stalled, while all 12 of the 12-14 s vkDestroyDevice
-    // stalls (the hang on the Home frame after pressing Play a second
-    // time), the 22 s vkDestroySwapchainKHR under X11, and every 12 s
-    // vkQueuePresentKHR (the in-game freeze, followed by a device loss
-    // that reloads every texture) were on later devices. Without the
-    // switch every device now runs the copying path the first one always
-    // ran.
-    bool stud_import_host_memory = false;
-    if (host_pointer_import_enabled() &&
-        device_supports_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
-        bool already = false;
-        for (const std::string& e : extensions) {
-            if (e == VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) already = true;
-        }
-        if (!already) extensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-        stud_import_host_memory = true;
-    }
 
     // Checkpoints, so a hung GPU can say where it stopped.
     //
@@ -1839,10 +1807,6 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
             l.vk.vkGetQueueCheckpointDataNV = nullptr;
         }
         if (!fault_enabled) l.vk.vkGetDeviceFaultInfoEXT = nullptr;
-        // The import path decides by this pointer alone (vk_allocate_memory,
-        // vk_create_buffer), so clearing it is what keeps every allocation
-        // on the copying path unless Stud enabled the extension for itself.
-        if (!stud_import_host_memory) l.vk.vkGetMemoryHostPointerPropertiesEXT = nullptr;
         // A table that came back empty is worth saying out loud. It means
         // volk had no vkGetDeviceProcAddr to call, and the alternative to
         // this line is the first call through the table faulting at
@@ -3038,15 +3002,8 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     // being needed for this allocation.
     VkImportMemoryHostPointerInfoEXT import{};
     SharedMapping mapping;
-    if (shared_id != 0 && l.vk.vkGetMemoryHostPointerPropertiesEXT == nullptr) {
-        // Importing is off for this device (see vk_create_device()). The
-        // client already sent the memfd; drop it unmapped and answer "not
-        // shared", which puts the allocation on the copying path. This
-        // used to map the file first and test the entry point second, so a
-        // refusal here left the mapping behind for the life of the process.
-        const int fd = take_shared_fd(shared_id);
-        if (fd >= 0) ::close(fd);
-    } else if (shared_id != 0 && map_shared_memory(shared_id, size, mapping)) {
+    if (shared_id != 0 && map_shared_memory(shared_id, size, mapping) &&
+        l.vk.vkGetMemoryHostPointerPropertiesEXT != nullptr) {
         VkMemoryHostPointerPropertiesEXT props{};
         props.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
         const VkResult pr = l.vk.vkGetMemoryHostPointerPropertiesEXT(

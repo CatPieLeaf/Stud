@@ -95,8 +95,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | variable | default | what it does |
 |---|---|---|
 | `STUD_NO_SHARED_MEMORY` | off | Stop sharing mapped memory with the host; everything crosses the socket instead. **perf** |
-| `STUD_VK_IMPORT_HOST_MEMORY` | off | Import the engine's host-visible allocations into the device as host pointers (`VK_EXT_external_memory_host`) instead of copying what it writes. Faster, but on NVIDIA the devices that imported are the ones that stalled for 12+ s when pressing Play, froze in game and then lost the device, and dragged the desktop down with them; without it every device runs the path the first one always ran. |
-| `STUD_SHARE_ALL_HOST_MEMORY` | off | With `STUD_VK_IMPORT_HOST_MEMORY=1`, substitute an importable memory type so every host-visible allocation can be shared. Moves the engine's streaming buffers out of VRAM. |
+| `STUD_SHARE_ALL_HOST_MEMORY` | off | Substitute an importable memory type so every host-visible allocation can be shared. Moves the engine's streaming buffers out of VRAM. |
 | `STUD_VK_NO_WRITE_BARRIER` | off | Use a shadow copy instead of the MMU write barrier. **perf** — `memcmp` over everything mapped, on every submit. |
 | `STUD_VK_NO_UFFD_SCAN` | off | Use the fault-handler barrier instead of kernel-side tracking. **perf** |
 | `STUD_VK_FULL_FLUSH` | off | Send every mapped byte on every submit, tracking nothing. **perf**, by a factor of ~180. |

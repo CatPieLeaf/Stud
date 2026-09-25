@@ -995,27 +995,6 @@ std::set<uint32_t>& host_visible_memory_types() {
     return t;
 }
 
-// Host-visible types the host has already answered "not shared" for.
-//
-// The answer does not change for a type: either importing is off in the
-// host (the default, see vk_create_device() there) or the driver cannot
-// back that type with a host pointer. Offering again costs a memfd, a
-// reservation of the whole allocation in shared memory, and an fd across
-// the channel, all thrown away the moment the reply arrives, so after one
-// refusal the type goes straight to the copying path.
-std::mutex& unshared_memory_types_mutex() {
-    static std::mutex m;
-    return m;
-}
-std::set<uint32_t>& unshared_memory_types() {
-    static std::set<uint32_t> t;
-    return t;
-}
-bool host_refused_sharing(uint32_t type) {
-    std::lock_guard<std::mutex> lock(unshared_memory_types_mutex());
-    return unshared_memory_types().count(type) != 0;
-}
-
 // Host-visible types that are NOT coherent, and the allocations made
 // from them.
 //
@@ -1996,8 +1975,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     SharedAllocation shared;
     bool want_shared = false;
     if (shared_memory_enabled() &&
-        host_visible_memory_types().count(pAllocateInfo->memoryTypeIndex) != 0 &&
-        !host_refused_sharing(pAllocateInfo->memoryTypeIndex)) {
+        host_visible_memory_types().count(pAllocateInfo->memoryTypeIndex) != 0) {
         want_shared = create_shared_allocation(pAllocateInfo->allocationSize, shared);
     }
 
@@ -2037,8 +2015,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
         shared_allocations()[handle] = shared;
     } else if (want_shared) {
         release_shared_allocation(shared);
-        std::lock_guard<std::mutex> lock(unshared_memory_types_mutex());
-        unshared_memory_types().insert(pAllocateInfo->memoryTypeIndex);
     }
     return VK_SUCCESS;
 }
