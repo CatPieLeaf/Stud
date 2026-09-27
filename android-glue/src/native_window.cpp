@@ -3201,19 +3201,20 @@ void native_window_attach_content() {
     if (display_backend() == DisplayBackend::X11) x11::set_content_mapped(true);
 }
 
-void native_window_detach_content() {
+bool native_window_detach_content() {
     if (display_backend() == DisplayBackend::X11) {
         x11::set_content_mapped(false);
-        return;
+        return true;
     }
     ANativeWindow* window = g_content_window.load();
-    if (window == nullptr || window->content_surface == nullptr) return;
+    if (window == nullptr || window->content_surface == nullptr) return false;
     // A null buffer unmaps a subsurface; the window surface and its black
     // background stay. The next swapchain's first present maps it again.
     wl_surface_attach(window->content_surface, nullptr, 0, 0);
     wl_surface_commit(window->content_surface);
     auto& state = wayland_state();
     if (state.display != nullptr) wl_display_flush(state.display);
+    return true;
 }
 
 WaylandOverlayDeps overlay_deps() {
