@@ -397,13 +397,11 @@ unsigned long native_window_x11_content_window();
 
 // Unmaps the content surface (Wayland) or child window (X11), so the
 // compositor or server lets go of the last frame the driver presented
-// there. On Wayland the next present maps it again; on X11
-// native_window_attach_content() has to, before the driver is asked for a
-// swapchain. Never call it while the driver may be inside
-// vkQueuePresentKHR: a commit here would publish whatever that present has
-// staged. Returns whether there was anything to unmap (false on the
-// Wayland fallback path, where the driver has no surface of its own).
-bool native_window_detach_content();
+// there. Call only once the driver has no swapchain that could present to
+// it any more. On Wayland the next swapchain's first present maps it
+// again; on X11 native_window_attach_content() has to, before the driver
+// is asked for a swapchain.
+void native_window_detach_content();
 
 // Maps the X11 content window again after native_window_detach_content().
 // A no-op on Wayland, where the driver's own present does it.

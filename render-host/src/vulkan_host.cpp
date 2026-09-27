@@ -7827,58 +7827,6 @@ std::set<uint64_t>& fences_being_waited_on() {
     return s;
 }
 
-// The in-game freeze, on Wayland: a frame that stops retiring for good.
-//
-// What it looks like, every time: the engine's frame fence does not signal,
-// the GPU is idle, the kernel logs no fault, and after ~11 s the NVIDIA
-// driver gives up and reports VK_ERROR_DEVICE_LOST (one capture: `FENCE
-// STUCK ... submitted -1.0ms ago`, then `SLOW vkWaitForFences 10865.6ms ->
-// -4`, then every texture reloads). Its Play-time twin was the driver
-// waiting 12 s in vkDestroyDevice with the GPU idle, and that one had a
-// cause and a cure: the compositor was still holding the last buffer the
-// driver presented, and unmapping the driver's surface
-// (native_window_detach_content()) made it let go at once -- 12-16 s down
-// to 18-93 ms in every session since.
-//
-// A frame waits on the acquire semaphore of a swapchain image, and that
-// only signals once the compositor hands that image's buffer back. This
-// file has caught the compositor not doing so before (see the upscale
-// fence wait in vk_queue_present: the window went to the background and
-// the images stopped coming back). So after a full second of a stuck
-// frame -- no real frame takes that long -- the surface is detached the
-// same way, to make the compositor release every buffer it holds for it.
-// The driver's next present maps it again; the cost is one frame of the
-// black background.
-//
-// Never while a present is inside the driver: the driver may already have
-// staged its buffer and sync points for the commit it is about to make,
-// and a commit here would publish them without it. vk_queue_present holds
-// queue_mutex() across vkQueuePresentKHR, so failing to take it means
-// "not now", and the next one-second slice tries again.
-enum class StallRelease { kNotYet, kDone, kNotApplicable };
-
-StallRelease release_buffers_held_for_stuck_frame(uint64_t fence) {
-    if (g_device_lost.load(std::memory_order_relaxed)) return StallRelease::kNotApplicable;
-    // Wayland only. On X11 the detach unmaps a child window that only
-    // native_window_attach_content() maps again, before a new swapchain,
-    // so a detach here would leave the window black for good.
-    if (stud::android_glue::display_backend() == stud::android_glue::DisplayBackend::X11) {
-        return StallRelease::kNotApplicable;
-    }
-    std::unique_lock<std::mutex> queue_lock(queue_mutex(), std::try_to_lock);
-    if (!queue_lock.owns_lock()) return StallRelease::kNotYet;
-    // False wherever the driver has no surface of its own: there is
-    // nothing to unmap, and nothing measured that would help.
-    if (!stud::android_glue::native_window_detach_content()) {
-        return StallRelease::kNotApplicable;
-    }
-    std::printf("stud-render-host: a frame has not finished in 1s (fence %llx); detached the "
-                "driver's surface so the compositor hands its buffers back\n",
-                static_cast<unsigned long long>(fence));
-    std::fflush(stdout);
-    return StallRelease::kDone;
-}
-
 struct FenceWaitGuard {
     std::vector<uint64_t> held;
     explicit FenceWaitGuard(const std::vector<VkFence>& fences) {
@@ -7922,9 +7870,6 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
     // that says nothing at all. Waiting in slices keeps the semantics the
     // engine asked for and lets a stuck fence announce itself.
     VkResult res = VK_TIMEOUT;
-    // See release_buffers_held_for_stuck_frame().
-    StallRelease release = StallRelease::kNotYet;
-    std::chrono::steady_clock::time_point released_at{};
     {
         const uint64_t slice_ns = 1000ull * 1000ull * 1000ull;  // 1s
         uint64_t left = timeout;
@@ -7940,10 +7885,6 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
             }
             const double waited = std::chrono::duration<double>(
                                       std::chrono::steady_clock::now() - t0).count();
-            if (release == StallRelease::kNotYet && waited >= 1.0) {
-                release = release_buffers_held_for_stuck_frame(first_fence);
-                if (release == StallRelease::kDone) released_at = std::chrono::steady_clock::now();
-            }
             if (waited >= 5.0 * static_cast<double>(reports + 1)) {
                 ++reports;
                 std::printf("stud-render-host: FENCE STUCK: %u fence(s) have not signalled in "
@@ -7960,17 +7901,6 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
     }
     const double ms = std::chrono::duration<double, std::milli>(
                           std::chrono::steady_clock::now() - t0).count();
-    // Whether the detach did what it is there for. A frame that finishes
-    // right after it says the compositor was holding the buffer; a loss
-    // anyway says it was not, and the premise is wrong.
-    if (release == StallRelease::kDone) {
-        const double after = std::chrono::duration<double, std::milli>(
-                                 std::chrono::steady_clock::now() - released_at).count();
-        std::printf("stud-render-host: the stuck frame %s %.0fms after the detach (%.0fms in "
-                    "all)\n",
-                    res == VK_SUCCESS ? "finished" : "still did not finish; it ended", after, ms);
-        std::fflush(stdout);
-    }
     fr::record(fr::Event::WaitEnd, first_fence, static_cast<uint64_t>(static_cast<int32_t>(res)),
                static_cast<uint64_t>(ms * 1000.0));
     note_latency(g_wait_n, g_wait_us, g_wait_us_max, ms);
