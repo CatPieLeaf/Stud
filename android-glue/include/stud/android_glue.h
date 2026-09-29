@@ -403,6 +403,21 @@ unsigned long native_window_x11_content_window();
 // is asked for a swapchain.
 void native_window_detach_content();
 
+// Tells the window the driver has presented to its content surface. The
+// first call maps the window, together with that frame; every later one
+// is a single atomic load. Wayland only; a no-op elsewhere.
+void native_window_content_presented();
+
+// Whether the driver presents to a content surface native_window_keep_frame()
+// can stand in for, so a caller can skip making or reading a frame back
+// when it could not.
+bool native_window_can_keep_frame();
+
+// Shows a copy of the driver's last frame on the window surface, beneath
+// the content surface, so native_window_detach_content() reveals that
+// frame instead of black. XRGB8888, tightly packed. Wayland only.
+bool native_window_keep_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height);
+
 // Maps the X11 content window again after native_window_detach_content().
 // A no-op on Wayland, where the driver's own present does it.
 void native_window_attach_content();

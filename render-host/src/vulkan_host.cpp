@@ -2021,6 +2021,13 @@ void pace_against_display(VkSwapchainKHR swapchain, uint64_t submitted_id) {
 // released. Called immediately before the swapchain is destroyed, which
 // is the whole point: after this the driver has nothing left to wait
 // for.
+// How long Stud waits for the presentation engine to let go of a
+// swapchain image before giving up on it. Bounded: a compositor that never
+// retires a present must not become a hang of Stud's own making. Two
+// seconds is far longer than any real present and far shorter than the
+// driver timeout this exists to avoid.
+constexpr uint64_t kPresentRetireBoundNs = 2ull * 1000ull * 1000ull * 1000ull;
+
 void settle_present_fences(VkSwapchainKHR swapchain) {
     auto it = present_fence_rings().find(to_u64(swapchain));
     if (it == present_fence_rings().end()) return;
@@ -2035,12 +2042,8 @@ void settle_present_fences(VkSwapchainKHR swapchain) {
         }
         if (!pending.empty()) {
             const auto t0 = std::chrono::steady_clock::now();
-            // Bounded: a compositor that never retires a present must not
-            // become a hang of Stud's own making. Two seconds is far
-            // longer than any real present and far shorter than the
-            // driver timeout this exists to avoid.
             l.vk.vkWaitForFences(l.device, static_cast<uint32_t>(pending.size()), pending.data(),
-                                 VK_TRUE, 2ull * 1000ull * 1000ull * 1000ull);
+                                 VK_TRUE, kPresentRetireBoundNs);
             const double ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - t0).count();
             if (ms > 50.0) {
@@ -5156,6 +5159,19 @@ struct SavedSwapchainCI {
 };
 std::map<uint64_t, SavedSwapchainCI> g_swapchain_ci;
 
+// The image indices each real swapchain has presented, so keep_last_frame()
+// never reads back an image that was never drawn. Keyed by the real
+// handle; cleared when one is created, since the driver reuses addresses.
+std::mutex g_presented_images_mutex;
+std::map<uint64_t, std::set<uint32_t>> g_presented_images;
+
+void forget_presented_images(uint64_t live) {
+    std::lock_guard<std::mutex> lock(g_presented_images_mutex);
+    g_presented_images.erase(live);
+}
+
+void keep_last_frame(uint64_t engine_handle);
+
 VkSwapchainKHR live_swapchain(uint64_t engine_handle) {
     auto it = g_swapchain_alias.find(engine_handle);
     return from_u64<VkSwapchainKHR>(it == g_swapchain_alias.end() ? engine_handle : it->second);
@@ -5429,6 +5445,18 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     g_engine_swapchain_h.store(h.height, std::memory_order_relaxed);
     ci.imageArrayLayers = h.image_array_layers;
     ci.imageUsage = h.image_usage;
+    // Readable, so the last frame can be copied out once when the engine
+    // is done with the swapchain; see keep_last_frame(). Only where the
+    // surface allows it, and only where the copy has somewhere to go.
+    if (stud::android_glue::native_window_can_keep_frame() &&
+        l.get_physical_device_surface_capabilities != nullptr) {
+        VkSurfaceCapabilitiesKHR caps{};
+        if (l.get_physical_device_surface_capabilities(
+                l.physical_device, from_u64<VkSurfaceKHR>(h.surface), &caps) == VK_SUCCESS &&
+            (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0) {
+            ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        }
+    }
     ci.imageSharingMode = static_cast<VkSharingMode>(h.sharing_mode);
     ci.queueFamilyIndexCount = h.queue_family_count;
     ci.pQueueFamilyIndices = families.empty() ? nullptr : families.data();
@@ -5574,6 +5602,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     std::fflush(stdout);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     g_swapchain_extents[to_u64(swapchain)] = ci.imageExtent;
+    forget_presented_images(to_u64(swapchain));
     fr::record(fr::Event::SwapchainNew, to_u64(swapchain), ci.imageExtent.width,
                ci.imageExtent.height);
     {
@@ -5982,6 +6011,13 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             }
             break;
         case K::Swapchain: {
+            // The engine's last swapchain: its last frame is copied out
+            // first, so the window shows it rather than black until the
+            // next device presents. See keep_last_frame().
+            if (g_swapchain_ci.size() == 1 && g_swapchain_ci.count(handle) != 0) {
+                keep_last_frame(handle);
+            }
+            forget_presented_images(to_u64(live_swapchain(handle)));
             g_swapchain_extents.erase(handle);
             // The engine names the handle it was given; what has to be
             // destroyed is whatever that stands for now.
@@ -8060,6 +8096,7 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
     }
     g_swapchain_alias[engine_handle] = to_u64(fresh);
     g_swapchain_extents[engine_handle] = extent;
+    forget_presented_images(to_u64(fresh));
     static int rebuilds = 0;
     if (rebuilds < 8) {
         ++rebuilds;
@@ -8222,33 +8259,28 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
 }
 
 
-// Reads one swapchain image back and reports whether it is all black.
-// Uses its own command buffer and a full queue wait, slow and only ever
-// run a few times behind STUD_VK_PROBE_PIXELS, since the question it
-// answers is worth a stall.
-void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
+// Copies one presentable image into `out`, tightly packed, 4 bytes a
+// pixel. The image must be in PRESENT_SRC_KHR and idle, and is left that
+// way. Its own command buffer and a full queue wait: slow, and only for
+// callers to whom one stall is worth the answer.
+bool read_back_image(VkImage image, VkExtent2D extent, std::vector<uint8_t>& out) {
     Loader& l = loader();
-    if (l.vk.vkGetSwapchainImagesKHR == nullptr || l.vk.vkCreateBuffer == nullptr ||
-        l.vk.vkAllocateMemory == nullptr || l.vk.vkMapMemory == nullptr ||
-        l.vk.vkAllocateCommandBuffers == nullptr || l.vk.vkQueueSubmit == nullptr) {
-        return;
+    if (l.vk.vkCreateBuffer == nullptr || l.vk.vkAllocateMemory == nullptr ||
+        l.vk.vkMapMemory == nullptr || l.vk.vkAllocateCommandBuffers == nullptr ||
+        l.vk.vkQueueSubmit == nullptr || l.probe_pool == VK_NULL_HANDLE) {
+        return false;
     }
-    uint32_t count = 0;
-    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, nullptr);
-    std::vector<VkImage> images(count);
-    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, images.data());
-    if (index >= count) return;
-
-    const uint32_t w = g_window_width.load(std::memory_order_relaxed);
-    const uint32_t h = g_window_height.load(std::memory_order_relaxed);
+    const uint32_t w = extent.width;
+    const uint32_t h = extent.height;
     const VkDeviceSize size = static_cast<VkDeviceSize>(w) * h * 4;
+    if (size == 0) return false;
 
     VkBufferCreateInfo bci{};
     bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bci.size = size;
     bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (l.vk.vkCreateBuffer(l.device, &bci, nullptr, &buffer) != VK_SUCCESS) return;
+    if (l.vk.vkCreateBuffer(l.device, &bci, nullptr, &buffer) != VK_SUCCESS) return false;
 
     VkMemoryRequirements req{};
     l.vk.vkGetBufferMemoryRequirements(l.device, buffer, &req);
@@ -8263,14 +8295,29 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
         if (usable && visible) { type = i; break; }
     }
-    if (type == UINT32_MAX) return;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    auto release = [&] {
+        if (cb != VK_NULL_HANDLE && l.vk.vkFreeCommandBuffers != nullptr) {
+            l.vk.vkFreeCommandBuffers(l.device, l.probe_pool, 1, &cb);
+        }
+        if (memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, memory, nullptr);
+        l.vk.vkDestroyBuffer(l.device, buffer, nullptr);
+    };
+    if (type == UINT32_MAX) {
+        release();
+        return false;
+    }
 
     VkMemoryAllocateInfo mai{};
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = type;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    if (l.vk.vkAllocateMemory(l.device, &mai, nullptr, &memory) != VK_SUCCESS) return;
+    if (l.vk.vkAllocateMemory(l.device, &mai, nullptr, &memory) != VK_SUCCESS) {
+        memory = VK_NULL_HANDLE;
+        release();
+        return false;
+    }
     l.vk.vkBindBufferMemory(l.device, buffer, memory, 0);
 
     VkCommandBufferAllocateInfo cbai{};
@@ -8278,10 +8325,10 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     cbai.commandPool = l.probe_pool;
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cbai.commandBufferCount = 1;
-    VkCommandBuffer cb = VK_NULL_HANDLE;
-    if (l.probe_pool == VK_NULL_HANDLE ||
-        l.vk.vkAllocateCommandBuffers(l.device, &cbai, &cb) != VK_SUCCESS) {
-        return;
+    if (l.vk.vkAllocateCommandBuffers(l.device, &cbai, &cb) != VK_SUCCESS) {
+        cb = VK_NULL_HANDLE;
+        release();
+        return false;
     }
 
     VkCommandBufferBeginInfo bi{};
@@ -8294,7 +8341,7 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_src.image = images[index];
+    to_src.image = image;
     to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -8302,7 +8349,7 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {w, h, 1};
-    l.vk.vkCmdCopyImageToBuffer(cb, images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1,
+    l.vk.vkCmdCopyImageToBuffer(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1,
                                 &region);
     VkImageMemoryBarrier back = to_src;
     back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -8324,20 +8371,124 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
         if (l.vk.vkQueueWaitIdle != nullptr) l.vk.vkQueueWaitIdle(l.probe_queue);
     }
 
+    bool ok = false;
     void* data = nullptr;
     if (l.vk.vkMapMemory(l.device, memory, 0, size, 0, &data) == VK_SUCCESS && data != nullptr) {
         const auto* px = static_cast<const uint8_t*>(data);
-        size_t nonzero = 0;
-        for (VkDeviceSize i = 0; i + 3 < size; i += 4) {
-            if (px[i] != 0 || px[i + 1] != 0 || px[i + 2] != 0) ++nonzero;
-        }
-        std::printf("stud-render-host: PIXELPROBE image %u: %zu non-black of %llu\n", index,
-                    nonzero, static_cast<unsigned long long>(size / 4));
-        std::fflush(stdout);
+        out.assign(px, px + size);
         l.vk.vkUnmapMemory(l.device, memory);
+        ok = true;
     }
-    l.vk.vkFreeMemory(l.device, memory, nullptr);
-    l.vk.vkDestroyBuffer(l.device, buffer, nullptr);
+    release();
+    return ok;
+}
+
+// Reads one swapchain image back and reports whether it is all black.
+// Only ever run a few times behind STUD_VK_PROBE_PIXELS, since the
+// question it answers is worth a stall.
+void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
+    Loader& l = loader();
+    if (l.vk.vkGetSwapchainImagesKHR == nullptr) return;
+    uint32_t count = 0;
+    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, nullptr);
+    std::vector<VkImage> images(count);
+    l.vk.vkGetSwapchainImagesKHR(l.device, swapchain, &count, images.data());
+    if (index >= count) return;
+
+    const VkExtent2D extent{g_window_width.load(std::memory_order_relaxed),
+                            g_window_height.load(std::memory_order_relaxed)};
+    std::vector<uint8_t> px;
+    if (!read_back_image(images[index], extent, px)) return;
+    size_t nonzero = 0;
+    for (size_t i = 0; i + 3 < px.size(); i += 4) {
+        if (px[i] != 0 || px[i + 1] != 0 || px[i + 2] != 0) ++nonzero;
+    }
+    std::printf("stud-render-host: PIXELPROBE image %u: %zu non-black of %zu\n", index, nonzero,
+                px.size() / 4);
+    std::fflush(stdout);
+}
+
+// The engine's last frame, kept on screen while it builds its next device.
+//
+// At Play the engine destroys its swapchain, surface and device and makes
+// new ones, as it does for a SurfaceView on Android. The driver's last
+// frame cannot stay up through that -- the compositor holding it is what
+// vkDestroyDevice waited 12 s on, so native_window_detach_content() takes
+// it down -- and until the next device presented, the window showed black.
+//
+// So before the swapchain goes, one of its images is copied out and handed
+// to the window as a buffer of Stud's own, beneath the driver's surface.
+// The image is acquired like any frame, which is what makes reading it
+// legal: the one on screen belongs to the compositor. With the engine no
+// longer drawing, the swapchain's images all hold the same picture, so an
+// acquired one is the frame on screen in every way that shows.
+//
+// Best effort, and silent when it cannot: no image free right now, an
+// image never presented, a format that is not 8-bit RGBA, the read-back
+// failing. Each of those leaves the black background, the behaviour
+// before this existed.
+void keep_last_frame(uint64_t engine_handle) {
+    Loader& l = loader();
+    if (!stud::android_glue::native_window_can_keep_frame()) return;
+    auto saved = g_swapchain_ci.find(engine_handle);
+    auto extent = g_swapchain_extents.find(engine_handle);
+    if (saved == g_swapchain_ci.end() || extent == g_swapchain_extents.end()) return;
+    const VkSwapchainCreateInfoKHR& ci = saved->second.ci;
+    if ((ci.imageUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) return;
+    bool rgba = false;
+    switch (ci.imageFormat) {
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            break;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            rgba = true;
+            break;
+        default:
+            return;
+    }
+    if (l.vk.vkAcquireNextImageKHR == nullptr || l.vk.vkCreateFence == nullptr ||
+        l.vk.vkWaitForFences == nullptr || l.vk.vkDestroyFence == nullptr ||
+        l.vk.vkGetSwapchainImagesKHR == nullptr) {
+        return;
+    }
+    const VkSwapchainKHR live = live_swapchain(engine_handle);
+
+    VkFenceCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence acquired = VK_NULL_HANDLE;
+    if (l.vk.vkCreateFence(l.device, &fci, nullptr, &acquired) != VK_SUCCESS) return;
+    uint32_t index = 0;
+    // Zero timeout: an image that is free now, or none. Waiting for one
+    // would be waiting on the compositor, which is the thing to avoid here.
+    const VkResult r =
+        l.vk.vkAcquireNextImageKHR(l.device, live, 0, VK_NULL_HANDLE, acquired, &index);
+    bool ready = r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR;
+    if (ready) {
+        ready = l.vk.vkWaitForFences(l.device, 1, &acquired, VK_TRUE, kPresentRetireBoundNs) ==
+                VK_SUCCESS;
+    }
+    l.vk.vkDestroyFence(l.device, acquired, nullptr);
+    if (!ready) return;
+    {
+        std::lock_guard<std::mutex> lock(g_presented_images_mutex);
+        auto seen = g_presented_images.find(to_u64(live));
+        if (seen == g_presented_images.end() || seen->second.count(index) == 0) return;
+    }
+    uint32_t count = 0;
+    l.vk.vkGetSwapchainImagesKHR(l.device, live, &count, nullptr);
+    std::vector<VkImage> images(count);
+    l.vk.vkGetSwapchainImagesKHR(l.device, live, &count, images.data());
+    if (index >= count) return;
+
+    std::vector<uint8_t> px;
+    if (!read_back_image(images[index], extent->second, px)) return;
+    // XRGB8888 is B, G, R, X in memory, which is BGRA's own order.
+    if (rgba) {
+        for (size_t i = 0; i + 3 < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+    }
+    stud::android_glue::native_window_keep_frame(px.data(), extent->second.width,
+                                                  extent->second.height);
 }
 
 
@@ -8896,6 +9047,16 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                        std::chrono::duration<double, std::micro>(present_t1 - present_t0).count()),
                    static_cast<uint64_t>(
                        std::chrono::duration<double, std::micro>(present_t1 - lock_t).count()));
+    }
+    if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
+        {
+            std::lock_guard<std::mutex> lock(g_presented_images_mutex);
+            for (size_t i = 0; i < live.size() && i < indices.size(); ++i) {
+                g_presented_images[to_u64(live[i])].insert(indices[i]);
+            }
+        }
+        // The first one maps the window, with this frame in it.
+        stud::android_glue::native_window_content_presented();
     }
     // Outside the queue lock deliberately: this waits on the DISPLAY, not
     // on the driver's queue, and holding the lock across it would stall

@@ -37,6 +37,7 @@
 #include <string_view>
 #include <unordered_map>
 
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -1620,10 +1621,18 @@ struct ANativeWindow {
     // content_surface: one black pixel, stretched by `viewport`.
     wl_buffer* background = nullptr;
     // Whether `background` is attached to `surface` yet. It may only be
-    // once the first configure is acked, so whichever of
-    // native_window_content_surface() and xdg_surface_configure() comes
-    // second does it.
+    // once the first configure is acked AND the driver has presented its
+    // first frame, so whichever of native_window_content_presented() and
+    // xdg_surface_configure() comes second does it.
     std::atomic<bool> background_attached{false};
+    // Whether the driver has presented to content_surface yet. Until it
+    // has, the window surface carries no buffer and the window is not
+    // mapped; see native_window_content_presented().
+    std::atomic<bool> content_presented{false};
+    // The last frame of a swapchain the engine is done with, standing in
+    // for `background` until the next device presents; see
+    // native_window_keep_frame().
+    wl_buffer* kept_frame = nullptr;
     // Size the compositor asked for, in logical units. Buffer pixels are
     // derived from it and the current scale, never stored independently.
     std::atomic<int32_t> logical_width{0};
@@ -1790,9 +1799,10 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
         }
     }
     // The window surface's own black background, when the driver has
-    // already been given a surface of its own but this configure is the
-    // first one it can be attached in (see native_window_content_surface()).
-    if (window->background != nullptr && !window->background_attached.exchange(true)) {
+    // already presented to a surface of its own but this configure is the
+    // first one it can be attached in (see native_window_content_presented()).
+    if (window->background != nullptr && window->content_presented.load() &&
+        !window->background_attached.exchange(true)) {
         wl_surface_attach(window->surface, window->background, 0, 0);
         wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
     }
@@ -2353,6 +2363,7 @@ void ANativeWindow_release(ANativeWindow* window) {
         }
         if (window->content_surface != nullptr) wl_surface_destroy(window->content_surface);
         if (window->background != nullptr) wl_buffer_destroy(window->background);
+        if (window->kept_frame != nullptr) wl_buffer_destroy(window->kept_frame);
         ANativeWindow* expected = window;
         g_content_window.compare_exchange_strong(expected, nullptr);
         if (window->surface != nullptr) {
@@ -3153,13 +3164,14 @@ wl_buffer* make_background_buffer(wl_shm* shm) {
         wl_buffer_destroy(background);
         return window->surface;
     }
-    // Desynchronised, so the driver's commits show at once instead of
-    // waiting for the window surface to be committed; directly above the
-    // window surface, so anything else stacked on it (the text overlay)
-    // stays on top; and no input region, so every pointer and touch event
-    // still goes to the window surface exactly as before.
+    // Synchronised for now, which is a subsurface's default: the driver's
+    // first frame waits for the window surface's commit, so the two appear
+    // together (see native_window_content_presented(), which makes it
+    // desynchronised from then on). Directly above the window surface, so
+    // anything else stacked on it (the text overlay) stays on top; and no
+    // input region, so every pointer and touch event still goes to the
+    // window surface exactly as before.
     wl_subsurface_set_position(sub, 0, 0);
-    wl_subsurface_set_desync(sub);
     wl_subsurface_place_above(sub, window->surface);
     wl_region* empty = wl_compositor_create_region(state.compositor);
     wl_surface_set_input_region(content, empty);
@@ -3175,17 +3187,12 @@ wl_buffer* make_background_buffer(wl_shm* shm) {
     window->background = background;
     g_content_window.store(window);
 
-    // The window surface gets content of its own: until now the driver's
-    // buffers were what mapped it. Only after the first configure is acked;
-    // before that xdg_surface_configure() attaches it in its own commit.
-    if (window->configured && !window->background_attached.exchange(true)) {
-        wl_surface_attach(window->surface, background, 0, 0);
-        wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
-        if (logical_w > 0 && logical_h > 0) {
-            wp_viewport_set_destination(window->viewport, logical_w, logical_h);
-        }
-    }
-    // Also what applies the subsurface's position and stacking.
+    // No background yet. Attaching it here mapped the window black for as
+    // long as the engine took to draw its first frame, which is the black
+    // screen seen at every start; native_window_content_presented()
+    // attaches it together with that frame instead.
+    //
+    // This commit is what applies the subsurface's position and stacking.
     wl_surface_commit(window->surface);
     if (state.display != nullptr) wl_display_flush(state.display);
     std::printf("stud: android-glue: the Vulkan driver presents to a subsurface of its own\n");
@@ -3214,6 +3221,106 @@ void native_window_detach_content() {
     wl_surface_commit(window->content_surface);
     auto& state = wayland_state();
     if (state.display != nullptr) wl_display_flush(state.display);
+}
+
+// The window's first frame.
+//
+// Before the driver had a surface of its own, its first buffer was what
+// mapped the window, so the window appeared with the engine's first frame
+// already in it. The subsurface made the window surface carry a black
+// pixel of Stud's, attached when the driver was handed its surface -- and
+// the engine takes a while to draw anything after that, so every start
+// showed a black window first.
+//
+// So the window surface stays without a buffer, unmapped, until the
+// driver's first present has returned. The subsurface is still
+// synchronised then, so that frame is waiting in its cached state, and
+// the one commit below maps the window, applies the frame and makes the
+// subsurface desynchronised for every frame after it.
+void native_window_content_presented() {
+    ANativeWindow* window = g_content_window.load();
+    if (window == nullptr || window->content_presented.load(std::memory_order_relaxed)) return;
+    if (window->content_presented.exchange(true)) return;
+    wl_subsurface_set_desync(window->content_subsurface);
+    if (window->configured && !window->background_attached.exchange(true)) {
+        wl_surface_attach(window->surface, window->background, 0, 0);
+        wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
+        const int32_t logical_w = window->logical_width.load();
+        const int32_t logical_h = window->logical_height.load();
+        if (logical_w > 0 && logical_h > 0) {
+            wp_viewport_set_destination(window->viewport, logical_w, logical_h);
+        }
+    }
+    wl_surface_commit(window->surface);
+    auto& state = wayland_state();
+    if (state.display != nullptr) wl_display_flush(state.display);
+}
+
+bool native_window_can_keep_frame() {
+    if (display_backend() == DisplayBackend::X11) return false;
+    ANativeWindow* window = g_content_window.load();
+    return window != nullptr && window->content_surface != nullptr &&
+           wayland_state().shm != nullptr;
+}
+
+// The last frame, in the window surface's own buffer.
+//
+// native_window_detach_content() has to take the driver's last frame off
+// the screen before the engine's device goes -- the compositor holding it
+// is what vkDestroyDevice waited 12 s on -- and what showed through then
+// was the black background, for as long as the next device took to
+// present. A copy of that frame, in memory of Stud's own, is what shows
+// through instead: it looks exactly like the driver's buffer still being
+// there, and it is not the driver's buffer, so nothing waits on it.
+//
+// Replaces the previous kept frame; it stays until the next one, beneath
+// the driver's own frames, which cover it completely.
+bool native_window_keep_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height) {
+    if (!native_window_can_keep_frame() || xrgb8888 == nullptr || width == 0 || height == 0) {
+        return false;
+    }
+    ANativeWindow* window = g_content_window.load();
+    // Not before the window is mapped: the first frame does that, with
+    // the background (see native_window_content_presented()).
+    if (!window->background_attached.load()) return false;
+    auto& state = wayland_state();
+    const size_t stride = static_cast<size_t>(width) * 4;
+    const size_t bytes = stride * height;
+    const int fd = ::memfd_create("stud-kept-frame", MFD_CLOEXEC);
+    if (fd < 0) return false;
+    // Allocated, not just sized: a sparse file on a full tmpfs fails at
+    // the first write, with SIGBUS, instead of here.
+    if (::posix_fallocate(fd, 0, static_cast<off_t>(bytes)) != 0) {
+        ::close(fd);
+        return false;
+    }
+    void* p = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) {
+        ::close(fd);
+        return false;
+    }
+    std::memcpy(p, xrgb8888, bytes);
+    ::munmap(p, bytes);
+    wl_shm_pool* pool = wl_shm_create_pool(state.shm, fd, static_cast<int32_t>(bytes));
+    ::close(fd);
+    if (pool == nullptr) return false;
+    wl_buffer* buffer =
+        wl_shm_pool_create_buffer(pool, 0, static_cast<int32_t>(width),
+                                  static_cast<int32_t>(height), static_cast<int32_t>(stride),
+                                  WL_SHM_FORMAT_XRGB8888);
+    wl_shm_pool_destroy(pool);
+    if (buffer == nullptr) return false;
+    wl_surface_attach(window->surface, buffer, 0, 0);
+    wl_surface_damage_buffer(window->surface, 0, 0, static_cast<int32_t>(width),
+                             static_cast<int32_t>(height));
+    wl_surface_commit(window->surface);
+    if (state.display != nullptr) wl_display_flush(state.display);
+    // The one it replaces is no longer attached; its memory is the
+    // compositor's until it lets go, which destroying the proxy does not
+    // disturb.
+    if (window->kept_frame != nullptr) wl_buffer_destroy(window->kept_frame);
+    window->kept_frame = buffer;
+    return true;
 }
 
 WaylandOverlayDeps overlay_deps() {
