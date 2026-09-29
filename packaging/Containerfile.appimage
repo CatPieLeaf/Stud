@@ -20,10 +20,13 @@
 # Beyond that, this base matches the distribution Stud is developed and
 # tested on, so the AppImage is built the same way the working build is.
 #
-# The cost is a glibc floor of 2.43: this will not run on anything older
-# than a 2026-era distribution. That is the trade, deliberately. Lowering
-# it again means an older base here and in the release workflow, which
-# pins the same image.
+# What a new base would otherwise cost, a glibc floor of 2.43, the
+# AppImage does not pay: it carries this base's glibc and C++ runtime and
+# starts every executable through them (see "glibc travels with the
+# bundle" in packaging/build-appimage.sh). What it still takes from the
+# host is the graphics and audio stack and the display server's own
+# libraries, which are backwards compatible in the direction that
+# matters.
 #
 # The other reason a base is chosen carefully: linuxdeploy rewrites the
 # rpath of every library it bundles, and the patchelf it carries corrupts
@@ -46,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         kde-style-breeze \
         libwayland-dev libwayland-egl-backend-dev wayland-protocols \
         libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-        libxkbcommon-dev \
+        libxkbcommon-dev libxi-dev \
         libavcodec-dev libavutil-dev libswscale-dev \
     && rm -rf /var/lib/apt/lists/*
 

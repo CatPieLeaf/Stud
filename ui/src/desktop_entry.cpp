@@ -83,12 +83,12 @@ bool write_index_theme(const QString& icons_dir) {
 // Runs a HOST command, with the host's own library path rather than the
 // bundle's.
 //
-// An AppImage puts its own Qt on LD_LIBRARY_PATH so that bundled plugins
-// can find their own libraries (see the AppRun in
-// packaging/build-appimage.sh). Every one of the commands below is a Qt
-// or GLib application belonging to the host, and handing it this
-// bundle's Qt instead of its own is how an AppImage breaks the desktop
-// tools it shells out to. AppRun saves the original for exactly this.
+// Every one of the commands below is a Qt or GLib application belonging
+// to the host, and handing it a bundle's libraries or platform theme
+// instead of its own is how an AppImage breaks the desktop tools it
+// shells out to. The AppImage's AppRun records the original
+// LD_LIBRARY_PATH for exactly this (see packaging/build-appimage.sh); it
+// no longer changes it, but a bundle that did would be undone here.
 void run_best_effort(const QString& program, const QStringList& args) {
     if (QStandardPaths::findExecutable(program).isEmpty()) return;
     QProcess process;

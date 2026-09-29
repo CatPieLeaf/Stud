@@ -58,9 +58,9 @@ jobs:
     # the Flatpak and the cpak image all come from the install tree this
     # job produces, so they cannot hold different binaries.
     #
-    # The AppImage is the exception and builds its own, because it links
-    # against an older glibc than this container has, which is also why
-    # it keeps a separate ANGLE cache.
+    # The AppImage is the exception and builds its own, on the base its
+    # bundled glibc comes from, which is also why it keeps a separate
+    # ANGLE cache.
     name: Build and package
     permissions:
       contents: read
@@ -508,12 +508,11 @@ jobs:
           if-no-files-found: error
 
   appimage:
-    # Bumped alongside the packages job, with the same trade: an
-    # AppImage's whole promise is running anywhere, and building on
-    # ubuntu:26.04 raises its glibc floor to 2.43, so it now needs a
-    # 2026-era distribution rather than any of the last few years'. The
-    # base to lower it again is an older Ubuntu here and in
-    # packaging/Containerfile.appimage, which pins the same image.
+    # Built on the same current base as the packages job, but without
+    # its glibc floor: the AppImage carries ubuntu:26.04's glibc and C++
+    # runtime and starts every executable through them (see
+    # packaging/build-appimage.sh), so it runs on older distributions
+    # too. packaging/Containerfile.appimage pins the same image.
     name: AppImage
     permissions:
       contents: read

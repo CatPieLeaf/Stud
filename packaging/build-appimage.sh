@@ -3,9 +3,11 @@
 # Builds Stud as an AppImage: one file that runs on any distribution
 # without installing anything.
 #
-# It bundles what a distribution's package would depend on; Qt, the
-# Vulkan loader, and the libraries those pull in, alongside what Stud
-# ships either way: ANGLE, the bionic set, and Process B.
+# It bundles what a distribution's package would depend on; Qt, glibc,
+# and the libraries those pull in, alongside what Stud ships either way:
+# ANGLE, the bionic set, and Process B. What stays on the host is what
+# belongs to the host: the graphics and audio stack, and the display
+# server's own libraries (see exclude_libs below).
 #
 # Usage:
 #   packaging/build-appimage.sh [build-dir]
@@ -126,6 +128,21 @@ fetch_tool linuxdeploy-plugin-qt \
 # point of having moved Stud's own libraries out of its way.
 fetch_tool appimagetool \
     "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+# sharun, which runs every one of Stud's executables through the bundle's
+# own glibc; see "glibc travels with the bundle" below. Pinned, and
+# checked, because it is copied INTO the image rather than only run while
+# building it.
+sharun_version=v0.8.1
+sharun_sha256=18d970f56eca2c527ffd3993b161b6bc340055129db14b394a77cb67d8bbfff9
+if [ ! -x "$tools/sharun-$sharun_version" ]; then
+    say "downloading sharun $sharun_version"
+    curl -fL --progress-bar -o "$tools/sharun-$sharun_version.part" \
+        "https://github.com/VHSgunzo/sharun/releases/download/$sharun_version/sharun-x86_64"
+    echo "$sharun_sha256  $tools/sharun-$sharun_version.part" | sha256sum -c --quiet - ||
+        die "sharun $sharun_version does not match its pinned checksum"
+    chmod +x "$tools/sharun-$sharun_version.part"
+    mv "$tools/sharun-$sharun_version.part" "$tools/sharun-$sharun_version"
+fi
 
 rm -rf "$appdir"
 say "installing into an AppDir"
@@ -215,14 +232,17 @@ fi
 # excludelist: anything X, xcb, GL, or glibc-adjacent stays outside.
 #
 # There is a second reason, which is what libxkbcommon and libffi are
-# doing here. AppRun puts this bundle's own lib directory on
-# LD_LIBRARY_PATH so that hand-copied Qt plugins can find what they need,
-# and that path is inherited by the HOST code the graphics stack loads
-# into render-host, a Vulkan implicit layer such as MangoHud, most
-# obviously. A bundled copy of a library that layer also needs is then
-# shadowing the host's, in a process neither of them is prepared for.
-# Stud ships no MangoHud and never should; the least it can do is stay
-# out of the way of the one the user installed.
+# doing here. Every one of Stud's processes finds this bundle's libraries
+# first (see "glibc travels with the bundle" below), and so does the HOST
+# code the graphics stack loads into render-host, a Vulkan implicit layer
+# such as MangoHud, most obviously. A bundled copy of a library that
+# layer also needs is then shadowing the host's, in a process neither of
+# them is prepared for. Stud ships no MangoHud and never should; the
+# least it can do is stay out of the way of the one the user installed.
+#
+# glibc and the C++ runtime are on this list only to keep linuxdeploy's
+# hands off them. They ARE bundled, afterwards, as one set taken
+# together from this build machine.
 exclude_libs=(
     "libxcb*.so*" "libX11*.so*" "libXext.so*" "libXrender.so*" "libXi.so*"
     "libGL.so*" "libGLX.so*" "libEGL.so*" "libGLdispatch.so*" "libOpenGL.so*"
@@ -380,6 +400,74 @@ for libssl in /usr/lib/x86_64-linux-gnu/libssl.so.3 /lib/x86_64-linux-gnu/libssl
 done
 [ -e "$appdir/usr/lib/libssl.so.3" ] || die "no libssl.so.3 to bundle; Stud could not log in"
 
+# glibc travels with the bundle.
+#
+# Everything here was built on a current distribution, so it needs that
+# distribution's glibc and libstdc++: GLIBC_2.43 and GLIBCXX_3.4.32 on
+# this base. Relying on the host's meant the AppImage refused to start
+# anywhere older, with `version GLIBC_2.38 not found` from every bundled
+# library at once. An older build base would lower that floor only by
+# giving up the current Qt and KF6 Breeze this image is built for.
+#
+# So the bundle carries its own glibc, and each of Stud's executables is
+# started through it by sharun (github.com/VHSgunzo/sharun, the loader the
+# Anylinux AppImages use). The executable's path is a hardlink to sharun;
+# sharun loads the bundle's own ld-linux in-process, hands it this
+# bundle's library directory as an ARGUMENT, and runs the real binary out
+# of usr/shared/bin. Three things follow from doing it that way rather
+# than with LD_LIBRARY_PATH:
+#
+#   /proc/self/exe is still the path Stud was started as, so every
+#   "where am I installed" lookup Stud makes keeps working unchanged.
+#
+#   Nothing is exported. bwrap, a browser, xdg-open, anything of the
+#   host's that Stud starts, runs on the host's own glibc; a bundled
+#   libc on their LD_LIBRARY_PATH would take every one of them down.
+#
+#   The host's libraries are still found, after the bundle's: the GPU
+#   driver, the Vulkan loader, the audio stack, everything in
+#   exclude_libs. Built against an older glibc, each of them runs on this
+#   newer one, which is the direction glibc keeps compatible.
+#
+# One process per executable, so each has its own hardlink: stud-ui
+# starts render-host and the web view by path, and QtWebEngine starts
+# its helper the same way.
+say "bundling glibc, and starting every executable through it"
+usr="$appdir/usr"
+mkdir -p "$usr/shared/bin" "$usr/shared/lib"
+find "$usr/lib" -maxdepth 1 \( -type f -o -type l \) -name '*.so*' -exec mv -t "$usr/shared/lib/" {} +
+# The runtime set, from one glibc. libnss_* are not needed: files and dns
+# have been part of libc itself since 2.34, and anything else the host's
+# nsswitch.conf names is the host's own module, loaded from the host.
+for lib in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libmvec.so.1 libdl.so.2 \
+           libpthread.so.0 librt.so.1 libresolv.so.2 libutil.so.1 libanl.so.1 \
+           libstdc++.so.6 libgcc_s.so.1; do
+    found=""
+    for dir in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /lib64; do
+        [ -e "$dir/$lib" ] && { found="$dir/$lib"; break; }
+    done
+    [ -n "$found" ] || die "no $lib on this machine to bundle"
+    cp -L "$found" "$usr/shared/lib/$lib"
+done
+cp "$tools/sharun-$sharun_version" "$usr/sharun"
+chmod +x "$usr/sharun"
+stud_exes=(usr/bin/stud usr/libexec/stud/stud-render-host usr/libexec/stud/stud-webview)
+while IFS= read -r webengine; do
+    stud_exes+=("${webengine#"$appdir/"}")
+done < <(find "$usr" -path "$usr/shared" -prune -o -type f -name QtWebEngineProcess -print)
+for exe in "${stud_exes[@]}"; do
+    [ -f "$appdir/$exe" ] || continue
+    name="$(basename "$exe")"
+    [ -e "$usr/shared/bin/$name" ] && die "two executables are called $name; sharun tells them apart by name"
+    mv "$appdir/$exe" "$usr/shared/bin/$name"
+    ln "$usr/sharun" "$appdir/$exe"
+done
+[ -f "$usr/shared/bin/stud" ] || die "no usr/bin/stud to start through sharun"
+[ -f "$usr/shared/bin/stud-render-host" ] || die "no stud-render-host to start through sharun"
+# The directories under shared/lib sharun should search, written once
+# here rather than worked out at every start.
+(cd "$usr" && ./sharun -g >/dev/null)
+
 # A real AppRun, replacing the symlink to the binary linuxdeploy leaves.
 #
 # linuxdeploy's apprun-hooks mechanism needs an AppRun that sources them,
@@ -394,23 +482,18 @@ done
 rm -f "$appdir/AppRun"
 cat > "$appdir/AppRun" <<'APPRUN'
 #!/bin/sh
-# Stud's AppImage entry point. Libraries and Qt plugins are already found
-# through the RPATHs and qt.conf linuxdeploy wrote; this sets the one
-# thing Qt cannot work out for itself inside a bundle.
+# Stud's AppImage entry point. Libraries, glibc included, are found by
+# sharun, which usr/bin/stud is (see packaging/build-appimage.sh), and Qt
+# plugins through the qt.conf linuxdeploy wrote; this sets the one thing
+# Qt cannot work out for itself inside a bundle.
 here="$(dirname "$(readlink -f "$0")")"
 
-# Qt plugins copied in rather than deployed carry no RUNPATH of their
-# own, so a plugin whose own library is in this bundle cannot find it and
-# fails to load with no explanation beyond "Failed to load". Stud keeps
-# host libraries out of usr/lib deliberately (see exclude_libs in
-# packaging/build-appimage.sh), so putting it on the search path exposes
-# only the bundle's own Qt.
-#
-# STUD_HOST_LD_LIBRARY_PATH carries the original across, so anything Stud
-# runs that belongs to the host, kbuildsycoca6, update-desktop-database,
-# a browser, can be given its own environment back instead of this Qt.
+# Nothing goes on LD_LIBRARY_PATH: the bundle's glibc is on it the moment
+# it is, and every host program Stud starts would load it. The original
+# is still recorded, so anything Stud runs that belongs to the host,
+# kbuildsycoca6, update-desktop-database, a browser, is given exactly the
+# environment it would have had.
 export STUD_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
-export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 [ -n "$QT_QPA_PLATFORMTHEME" ] || export QT_QPA_PLATFORMTHEME=xdgdesktopportal
 
