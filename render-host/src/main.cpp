@@ -1273,8 +1273,21 @@ void run_ui_helper_detached(const char* mode, const std::string& argument) {
     ::_exit(127);
 }
 
+// One stud-ui helper at a time.
+//
+// The calls that run one are dispatched without the dispatch lock (see
+// blocks_in_the_driver()), because each is a whole Qt process starting
+// up and, for the game lookup, an HTTPS round trip. They still must not
+// overlap each other: two keyring helpers writing the same secret at once
+// is not something either was written to survive.
+std::mutex& ui_helper_mutex() {
+    static std::mutex m;
+    return m;
+}
+
 bool run_ui_secret_helper(const char* mode, const std::string& name, const std::string& input,
                            std::string* capture) {
+    std::lock_guard<std::mutex> helper_lock(ui_helper_mutex());
     int to_child[2] = {-1, -1};
     int from_child[2] = {-1, -1};
     if (::pipe(to_child) != 0) return false;
@@ -5282,6 +5295,19 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::VideoEncoderDequeue:
         case stud::render_host::CallId::VideoEncoderConfig:
         case stud::render_host::CallId::VideoEncoderDestroy:
+        // Each of these starts stud-ui and waits for it: a Qt process
+        // starting up, ~150-250 ms, and for the game lookup an HTTPS
+        // round trip on top. Measured at launch: four of them back to back
+        // (two keyring reads, two stores), and the engine's first Vulkan
+        // call arrived only after the last had finished. Under the
+        // dispatch lock, every other connection -- the engine's graphics
+        // among them -- waited out every one. They share no state with
+        // anything the lock protects; run_ui_secret_helper() serialises
+        // them among themselves.
+        case stud::render_host::CallId::StoreSecret:
+        case stud::render_host::CallId::DeleteSecret:
+        case stud::render_host::CallId::LoadSecret:
+        case stud::render_host::CallId::SetGamePresence:
             return true;
         default:
             return false;
