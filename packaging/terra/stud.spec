@@ -68,6 +68,7 @@ Recommends:     libX11-xcb.so.1()(64bit)
 # libxkbcommon, freetype, OpenSSL, libX11 and libXext through ANGLE.
 
 Provides:       bundled(angle)
+Provides:       bundled(bionic)
 Provides:       bundled(swiftshader)
 Provides:       bundled(vulkan-loader)
 Provides:       bundled(fidelityfx-fsr1)
