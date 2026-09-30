@@ -1,10 +1,7 @@
 %global appid io.github.catpieleaf.Stud
 
-# Nothing here is compiled: the release archive CI built from the tag is
-# installed as it stands. ANGLE cannot be built in a build system without
-# network (its own build runs `gclient sync`), and the bionic set is
-# extracted from a real Android system image, so a from-source package is
-# not possible here. packaging/aur/README.md has the whole reasoning.
+# Installs the release archive Stud's CI builds, prebuilt ANGLE and bionic
+# included.
 %global debug_package %{nil}
 
 # Stripping a bionic ELF or ANGLE is neither useful nor safe, and these are
