@@ -373,6 +373,8 @@ jobs:
         # replaced by the step above).
         run: |
           cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
+          # The tag's tree predates the bump the release commits to main.
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           cat > /tmp/makepkg.sh <<'SCRIPT'
           #!/bin/bash
           # The shebang matters: this file is mounted into the container
@@ -737,6 +739,12 @@ jobs:
           if n != 1:
               print(f"::error::expected one source tarball to rewrite, rewrote {n}")
               sys.exit(1)
+          # The tag's tree predates the bump the release commits to main,
+          # so the version comes from the tag, like every other package.
+          s, n = re.subn(r"-DSTUD_VERSION=\S+", "-DSTUD_VERSION=" + os.environ["VERSION"], s)
+          if n != 1:
+              print(f"::error::expected one -DSTUD_VERSION to rewrite, rewrote {n}")
+              sys.exit(1)
           open(p, "w").write(s)
           PY
           grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
@@ -818,12 +826,13 @@ jobs:
           done
           gh release upload "$TAG" "${packages[@]}" --clobber
 
-  # The checksums the Flathub, AUR and cpak recipes carry, filled in from
-  # the release that now exists and committed to main, so they never have
-  # to be done by hand. Its own job: a failure here cannot undo the upload
-  # above, and a re-run of just this job is enough to finish it.
-  checksums:
-    name: Release checksums
+  # The version bump and the checksums the Flathub, AUR and cpak recipes
+  # carry, both from the release that now exists (the tag name is the
+  # version), committed to main so neither is ever done by hand. Its own
+  # job: a failure here cannot undo the upload above, and a re-run of just
+  # this job is enough to finish it.
+  bump:
+    name: Version and checksums
     permissions:
       contents: write
     needs: publish
@@ -836,6 +845,15 @@ jobs:
         with:
           # main, not the tag: the result is committed there.
           ref: main
+
+      - name: Version
+        uses: ./.github/actions/setup
+        with:
+          dependencies: "false"
+
+      - name: Bump the version
+        # A no-op when main already carries this version.
+        run: python3 tools/bump-version.py "$VERSION"
 
       - uses: actions/download-artifact@v8
         with:
@@ -872,12 +890,12 @@ jobs:
         run: |
           git add -u
           if git diff --cached --quiet; then
-            echo "the recipes already carry this release's checksums"
+            echo "main already carries this release's version and checksums"
             exit 0
           fi
           git -c user.name="github-actions[bot]" \
               -c user.email="41898283+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore: $TAG release checksums"
+              commit -m "chore: $VERSION"
           # main may have moved while the release built; rebase once onto it.
           git push origin HEAD:main ||
             { git pull --rebase origin main && git push origin HEAD:main; }

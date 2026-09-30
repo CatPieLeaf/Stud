@@ -277,6 +277,9 @@ endif()
 set(STUD_EXEC "stud")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.desktop.in"
                "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.desktop" @ONLY)
+# AppStream's release date is the day this was built, which for a release
+# is the day CI built it from the tag. SOURCE_DATE_EPOCH, when set, wins.
+string(TIMESTAMP STUD_RELEASE_DATE "%Y-%m-%d" UTC)
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.metainfo.xml.in"
                "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.metainfo.xml" @ONLY)
 

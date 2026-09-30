@@ -31,6 +31,10 @@ release fails without them.
   it compiles the decoder's dependencies out of the runtime sub-build's
   own checkout.
 
+- **`bump-version.py`**: writes a new version into every file that names
+  it, and adds the Terra spec's changelog entry. The release workflow runs
+  it with the tag's version and commits the result to main.
+
 - **`fill-release-checksums.py`**: after a release is published, writes
   its digests into the two AUR PKGBUILDs and the Flatpak manifest, pins
   the cpak image, regenerates `cpak.lock.json` and both `.SRCINFO` files.
