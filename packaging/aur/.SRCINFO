@@ -39,6 +39,6 @@ pkgbase = stud
 	optdepends = libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME
 	optdepends = libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)
 	source = stud-1.1.10.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.10.tar.gz
-	sha256sums = 4e2efdcc73afbeb6ebc86779c46093256122192ed0ce35d9484b1457e07eab4c
+	sha256sums = 05ecdc1cac034dba105b6cd97088147c096b01b74dbe4b607b9d57c1df35217c
 
 pkgname = stud
