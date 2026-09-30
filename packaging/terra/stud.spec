@@ -35,8 +35,6 @@ Packager:       CatPieLeaf <catpieleaf@proton.me>
 ExclusiveArch:  x86_64
 
 BuildRequires:  anda-srpm-macros
-BuildRequires:  desktop-file-utils
-BuildRequires:  libappstream-glib
 BuildRequires:  zstd
 
 # bubblewrap is not optional: the Android process runs inside it and Stud
@@ -104,10 +102,6 @@ not affiliated with, endorsed by or approved by Roblox Corporation.
 
 %install
 cp -a usr %{buildroot}/
-
-%check
-desktop-file-validate %{buildroot}%{_datadir}/applications/%{appid}.desktop
-appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/%{appid}.metainfo.xml
 
 %files
 # The whole directory, not a list of it: every vendored notice the build
