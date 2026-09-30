@@ -8,8 +8,8 @@ tree, because they belong to one specific release, re-cutting a tag
 changes both, so they sit as placeholders until a release exists, and
 this fills them in from the one that does.
 
-Run it after a release is published, before submitting to the AUR or
-Flathub:
+The release workflow runs it after every published release and commits
+the result to main (the `checksums` job). By hand, to redo one:
 
     tools/fill-release-checksums.py 1.1.10
 
