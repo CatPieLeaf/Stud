@@ -37,6 +37,44 @@ env:
   TAG: ${{ github.event.release.tag_name }}
 
 jobs:
+  # A release's version bump and changelog entries, written on top of the
+  # tag before anything is built: the version in every file, and this
+  # release's entry in the metainfo and the Terra spec from the
+  # ## SUMMARY: section of the release description. Every build job lays
+  # these files over its checkout (.github/actions/setup), so the packages
+  # carry them, and the last job commits the same to main.
+  #
+  # It runs on a manual run too, and does nothing there: the build jobs
+  # need it, and a skipped job would skip them.
+  prepare:
+    name: Release files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'release'
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Bump the version and write the changelogs
+        if: github.event_name == 'release'
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+          PUBLISHED: ${{ github.event.release.published_at }}
+        run: |
+          printf '%s\n' "$RELEASE_BODY" | python3 tools/release-summary.py \
+            --metainfo "$RUNNER_TEMP/summary.xml" --changelog "$RUNNER_TEMP/summary.txt"
+          python3 tools/bump-version.py "${TAG#v}" --date "${PUBLISHED%%T*}" \
+            --description "$RUNNER_TEMP/summary.xml" --changelog "$RUNNER_TEMP/summary.txt"
+          git diff --stat
+          git diff --name-only -z | tar -cf "$RUNNER_TEMP/release-files.tar" --null -T -
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'release'
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release-files.tar
+          if-no-files-found: error
+
   packages:
     # Built on fedora:44, matching the Fedora this is developed and
     # tested on, so an installed package is the same build that was
@@ -61,6 +99,7 @@ jobs:
     name: Build and package
     permissions:
       contents: read
+    needs: prepare
     runs-on: ubuntu-latest
     container: fedora:44
     steps:
@@ -102,8 +141,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_BUILD_TESTS=OFF \
-            -DSTUD_VERSION="${VERSION}" \
-            -DSTUD_RELEASE_DESCRIPTION_FILE="${RELEASE_DESCRIPTION_FILE:-}"
+            -DSTUD_VERSION="${VERSION}"
           cmake --build build -j"$(nproc)"
 
       # One build, several wrappers. Building each format separately would
@@ -374,8 +412,6 @@ jobs:
         # replaced by the step above).
         run: |
           cp packaging/aur/PKGBUILD.bin "$PWD/PKGBUILD"
-          # The tag's tree predates the bump the release commits to main.
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           cat > /tmp/makepkg.sh <<'SCRIPT'
           #!/bin/bash
           # The shebang matters: this file is mounted into the container
@@ -481,6 +517,7 @@ jobs:
     name: AppImage
     permissions:
       contents: read
+    needs: prepare
     runs-on: ubuntu-latest
     # The same base packaging/Containerfile.appimage pins, for the reasons
     # given there. Running it as the job's container means
@@ -520,7 +557,7 @@ jobs:
 
       - name: Build the AppImage
         run: |
-          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION} -DSTUD_RELEASE_DESCRIPTION_FILE=${RELEASE_DESCRIPTION_FILE:-}"
+          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION}"
           packaging/build-appimage.sh
 
       - name: Validate AppImage contents
@@ -576,6 +613,7 @@ jobs:
     name: deb
     permissions:
       contents: read
+    needs: prepare
     runs-on: ubuntu-latest
     container: ubuntu:24.04
     env:
@@ -613,8 +651,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_BUILD_TESTS=OFF \
-            -DSTUD_VERSION="${VERSION}" \
-            -DSTUD_RELEASE_DESCRIPTION_FILE="${RELEASE_DESCRIPTION_FILE:-}"
+            -DSTUD_VERSION="${VERSION}"
           cmake --build build -j"$(nproc)"
 
       - name: Check the Qt floor this build sets
@@ -698,7 +735,7 @@ jobs:
           [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
           cp "$archive" stud-archive.tar.zst
           python3 - <<'PY'
-          import os, re, shutil, sys
+          import os, re, sys
           p = "packaging/flatpak/io.github.catpieleaf.Stud.yml"
           s = open(p).read()
           # Matches whatever checksum the manifest carries, not one literal
@@ -740,20 +777,6 @@ jobs:
                          "          - flatpak-repo\n", s)
           if n != 1:
               print(f"::error::expected one source tarball to rewrite, rewrote {n}")
-              sys.exit(1)
-          # The tag's tree predates the bump the release commits to main,
-          # so the version comes from the tag, like every other package.
-          opts = "-DSTUD_VERSION=" + os.environ["VERSION"]
-          # ...and the release summary, copied into the checkout, since
-          # flatpak-builder only sees what its sources bring in.
-          notes = os.environ.get("RELEASE_DESCRIPTION_FILE", "")
-          if notes:
-              shutil.copy(notes, "release-description.xml")
-              opts += ("\n      - -DSTUD_RELEASE_DESCRIPTION_FILE="
-                       "/run/build/stud/release-description.xml")
-          s, n = re.subn(r"-DSTUD_VERSION=\S+", lambda m: opts, s)
-          if n != 1:
-              print(f"::error::expected one -DSTUD_VERSION to rewrite, rewrote {n}")
               sys.exit(1)
           open(p, "w").write(s)
           PY
@@ -860,13 +883,22 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependencies: "false"
+          # Written again below on main itself, rather than the prepare
+          # job's files laid over it, so nothing committed to main after
+          # the tag is overwritten.
+          release-files: "false"
 
-      - name: Bump the version
-        # A no-op when main already carries this version. The Terra spec's
-        # changelog entry is the release's ## SUMMARY: section.
+      - name: Bump the version and write the changelogs
+        # What the prepare job wrote on the tag, now on main, from the same
+        # release description and the same date.
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+          PUBLISHED: ${{ github.event.release.published_at }}
         run: |
-          python3 tools/bump-version.py "$VERSION" \
-            --changelog "${RELEASE_CHANGELOG_FILE:-/dev/null}"
+          printf '%s\n' "$RELEASE_BODY" | python3 tools/release-summary.py \
+            --metainfo "$RUNNER_TEMP/summary.xml" --changelog "$RUNNER_TEMP/summary.txt"
+          python3 tools/bump-version.py "$VERSION" --date "${PUBLISHED%%T*}" \
+            --description "$RUNNER_TEMP/summary.xml" --changelog "$RUNNER_TEMP/summary.txt"
 
       - uses: actions/download-artifact@v8
         with:

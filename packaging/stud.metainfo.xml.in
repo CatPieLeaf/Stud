@@ -96,7 +96,8 @@
     <content_attribute id="violence-cartoon">moderate</content_attribute>
   </content_rating>
 
+  <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
-    <release version="@STUD_VERSION@" date="@STUD_RELEASE_DATE@">@STUD_RELEASE_DESCRIPTION@</release>
+    <release version="1.1.10" date="2026-09-30"/>
   </releases>
 </component>

@@ -8,10 +8,9 @@ colon optional) and ends at the next heading. Its bullet points become the list;
 other line becomes a paragraph. Markdown is reduced to plain text, since
 neither AppStream nor rpm renders it.
 
---metainfo writes an AppStream <description> for the metainfo's
-<release>, which CMake reads through STUD_RELEASE_DESCRIPTION_FILE.
---changelog writes "- item" lines for the Terra spec's %changelog entry,
-which tools/bump-version.py reads.
+--metainfo writes an AppStream <description> for the metainfo's <release>,
+--changelog "- item" lines for the Terra spec's %changelog entry.
+tools/bump-version.py writes both into the repository.
 
 With no such section both files are written empty and a warning says so:
 a release without a summary is still a release.

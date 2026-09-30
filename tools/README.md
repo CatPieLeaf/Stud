@@ -32,12 +32,14 @@ release fails without them.
   own checkout.
 
 - **`bump-version.py`**: writes a new version into every file that names
-  it, and adds the Terra spec's changelog entry. The release workflow runs
-  it with the tag's version and commits the result to main.
+  it, and writes the release's entry in the metainfo and the Terra spec's
+  changelog. The release workflow runs it with the tag's version and commits
+  the result to main.
 
 - **`release-summary.py`**: reads the `## SUMMARY:` section of a release
-  description into an AppStream `<description>` for the metainfo and the
-  Terra spec's changelog entry. The release workflow runs it.
+  description, for the metainfo's `<release>` entry and the Terra spec's
+  changelog entry, which `bump-version.py` writes. The release workflow
+  runs both.
 
 - **`fill-release-checksums.py`**: after a release is published, writes
   its digests into the two AUR PKGBUILDs and the Flatpak manifest, pins
