@@ -6830,7 +6830,24 @@ uint64_t vk_allocate_descriptor_sets(const std::vector<uint8_t>& in, std::vector
 
     std::vector<VkDescriptorSet> sets(n);
     VkResult res = l.vk.vkAllocateDescriptorSets(l.device, &ai, sets.data());
-    if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
+    if (res != VK_SUCCESS) {
+        // Nobody reads this result: the call is reply-free and the client
+        // has already told the engine it succeeded. So it is said here,
+        // once per kind of failure, because every later use of these ids
+        // resolves to nothing -- and before resolve_descriptor_set()'s
+        // callers checked, that nothing went to the driver and crashed
+        // render-host.
+        static std::mutex said_mutex;
+        static std::set<int32_t> said;
+        std::lock_guard<std::mutex> lock(said_mutex);
+        if (said.insert(static_cast<int32_t>(res)).second) {
+            std::fprintf(stderr,
+                         "stud-render-host: vkAllocateDescriptorSets failed (%d) for %u set(s); "
+                         "the engine was told it succeeded, so their ids will not resolve\n",
+                         static_cast<int>(res), n);
+        }
+        return static_cast<uint64_t>(static_cast<int32_t>(res));
+    }
     {
         std::lock_guard<std::mutex> lock(descriptor_set_mutex());
         for (uint32_t i = 0; i < n; ++i) {
@@ -6934,8 +6951,14 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
             ++reported;
         }
     }
+    // A set that never resolved is not handed to the driver: NVIDIA
+    // dereferences it and takes render-host down with it (live-caught at
+    // startup, SIGSEGV in libnvidia-glcore under this call). There is no
+    // set to update, so there is nothing to do.
+    const VkDescriptorSet resolved = resolve_descriptor_set(set);
+    if (resolved == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     std::vector<uint8_t> data(in.begin(), in.end());
-    l.update_descriptor_set_with_template(l.device, resolve_descriptor_set(set),
+    l.update_descriptor_set_with_template(l.device, resolved,
                                            from_u64<VkDescriptorUpdateTemplate>(tmpl),
                                            data.data());
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
@@ -9783,6 +9806,10 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             const uint32_t nd = r.u32();
             std::vector<uint32_t> offsets(nd);
             for (auto& o : offsets) o = r.u32();
+            // Read in full above either way, so the stream stays in step;
+            // a set that never resolved is not bound, for the same reason
+            // vk_update_descriptor_set_with_template() does not update one.
+            if (std::find(sets.begin(), sets.end(), VK_NULL_HANDLE) != sets.end()) break;
             l.vk.vkCmdBindDescriptorSets(cb, static_cast<VkPipelineBindPoint>(bp), layout, first, ns,
                                         sets.empty() ? nullptr : sets.data(), nd,
                                         offsets.empty() ? nullptr : offsets.data());
