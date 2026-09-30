@@ -5786,6 +5786,341 @@ std::unordered_map<uint64_t, OwnedDescriptorSet>& descriptor_sets() {
     return m;
 }
 
+void destroy_swapchain(Loader& l, uint64_t handle) {
+    // The engine's last swapchain: its last frame is copied out
+    // first, so the window shows it rather than black until the
+    // next device presents. See keep_last_frame().
+    if (g_swapchain_ci.size() == 1 && g_swapchain_ci.count(handle) != 0) {
+        keep_last_frame(handle);
+    }
+    forget_presented_images(to_u64(live_swapchain(handle)));
+    g_swapchain_extents.erase(handle);
+    // The engine names the handle it was given; what has to be
+    // destroyed is whatever that stands for now.
+    const uint64_t live = to_u64(live_swapchain(handle));
+    g_swapchain_alias.erase(handle);
+    g_swapchain_ci.erase(handle);
+    // X11: the driver waits inside vkDestroySwapchainKHR for the
+    // server to finish with the last frame (22 s once, at Play),
+    // so the window it presented to is unmapped BEFORE the last
+    // swapchain goes, immediately or through a retired chain.
+    // Wayland's wait is at device teardown instead, where
+    // K::Surface and K::Device already detach.
+    if (g_swapchain_ci.empty() &&
+        stud::android_glue::display_backend() ==
+            stud::android_glue::DisplayBackend::X11) {
+        stud::android_glue::native_window_detach_content();
+    }
+    // Stud's own offscreen images and the pass that reads them go
+    // with the swapchain they belong to.
+    //
+    // And the swapchain does not go anywhere while that pass is
+    // still running. destroy_upscale_chain() defers a chain whose
+    // work has not finished, which is right -- but destroying the
+    // swapchain underneath it anyway leaves the GPU writing into
+    // images that no longer exist, and that is how a GPU hangs.
+    //
+    // Live-caught on Wayland with FSR on, in this order: "the
+    // upscale pass was still running when its swapchain went away;
+    // keeping it until the GPU is done with it", a present that
+    // blocked for 12006ms and then succeeded, and the engine's own
+    // vkWaitForFences coming back VK_ERROR_DEVICE_LOST with
+    // "DeviceRecovery trigger: endRender reason=hung". The
+    // driver's reset is what ended the freeze.
+    //
+    // So the swapchain is handed to the retired chain and
+    // destroyed with it, once the fences say the GPU has let go.
+    bool swapchain_held_by_chain = false;
+    {
+        auto chain = g_upscale_chains.find(handle);
+        if (chain != g_upscale_chains.end()) {
+            size_t retired_before = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+                retired_before = g_retired_chains.size();
+            }
+            destroy_upscale_chain(chain->second);
+            g_upscale_chains.erase(chain);
+            std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+            if (g_retired_chains.size() > retired_before) {
+                g_retired_chains.back().destroy_with_chain =
+                    from_u64<VkSwapchainKHR>(live);
+                swapchain_held_by_chain = true;
+            }
+        }
+    }
+    auto images = l.swapchain_image_list.find(handle);
+    if (images != l.swapchain_image_list.end()) {
+        for (uint64_t image : images->second) {
+            l.swapchain_images.erase(image);
+            l.swapchain_views.erase(image);
+            l.retired_images.insert(image);
+        }
+        l.swapchain_image_list.erase(images);
+    }
+    if (swapchain_held_by_chain) {
+        // Destroyed by sweep_retired_chains(), with the pass that
+        // is still writing into it.
+        return;
+    }
+    if (l.vk.vkDestroySwapchainKHR) {
+        // Timed for the same reason the create is: a rebuild is a
+        // destroy and a create, and 22 seconds of it has to belong
+        // to one of them. If the destroy is the slow half then
+        // what the driver waits for is the old swapchain's
+        // presents retiring, and destroying before creating rather
+        // than handing it over as oldSwapchain would change
+        // nothing; if the create is, it would.
+        const auto destroy_t0 = std::chrono::steady_clock::now();
+        settle_present_fences(from_u64<VkSwapchainKHR>(live));
+        l.vk.vkDestroySwapchainKHR(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
+        const double destroy_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - destroy_t0).count();
+        if (destroy_ms > 50.0) {
+            std::printf("stud-render-host: SLOW vkDestroySwapchainKHR %.0fms\n",
+                        destroy_ms);
+            std::fflush(stdout);
+        }
+    }
+}
+
+void destroy_device(Loader& l, uint64_t handle) {
+    // The real VkDevice is still deliberately NOT destroyed: the
+    // engine tears its renderer down and rebuilds it repeatedly
+    // (once per mode probe, and after every recovery), and
+    // destroying it here would invalidate every resolved device
+    // command while the engine still holds them. The comment that
+    // used to sit here also claimed this process owns exactly one
+    // device for its whole life; it does not -- a session creates
+    // four to six.
+    //
+    // What IS safe to let go of is Stud's own upscale chains.
+    // They are built here, referenced by nothing the engine can
+    // see, and this message is the engine saying it has finished
+    // with the device they live on. Destroying them now, while
+    // l.device is still that device, is the only moment it can be
+    // done correctly: after the next vkCreateDevice, l.device
+    // names a different device and every handle in these chains
+    // belongs to a device it was never created on.
+    //
+    // They are the largest allocations in this file -- full
+    // resolution offscreen, staging and sharpened images, their
+    // memory, views, descriptor pools, pipelines, semaphores and
+    // fences, per swapchain image -- and stranding one per
+    // recovery is the measured climb from 1941 MB to 2230 MB
+    // across four of them, while the scene being drawn got
+    // simpler.
+    //
+    // Deliberately NOT touching shared_memory(), buffer_memory()
+    // or shared_writes() here. Those describe memory the engine
+    // imported, and the real device is still alive underneath, so
+    // the driver may still reference those pages. An earlier
+    // attempt to free them at a new device's creation unmapped
+    // pages out from under the driver and segfaulted inside
+    // libnvidia-glcore. Their growth is real and is not fixable
+    // without either destroying the device for real or keying
+    // them per device; see Stud-Analysis/gpu/stud-freeze.md.
+    if (from_u64<VkDevice>(handle) == l.device && l.device != VK_NULL_HANDLE) {
+        // Destroyed HERE, while l.device still names it.
+        //
+        // Two things make this the right moment and not an
+        // assumption. The engine sending vkDestroyDevice is the
+        // spec's own precondition that it has already destroyed
+        // every object it made. And Stud's Vulkan path is
+        // single-threaded: one host thread per connection, all
+        // Vulkan traffic on one socket, and the client serialises
+        // every request on a single call_mutex_, so nothing of
+        // ours can be inside a call on this device while this one
+        // is being dispatched.
+        //
+        // It also has to be here for a duller reason: every
+        // l.destroy_* below was resolved with
+        // vkGetDeviceProcAddr(l.device, ...) and belongs to THIS
+        // device. Deferring the destroy past the next
+        // vkCreateDevice would mean calling the new device's
+        // function pointers on the old device's objects. A
+        // deferred version of this was written and measured
+        // working (see option-D-park-and-release.patch in
+        // Stud-Analysis/gpu) and then dropped for exactly that.
+        std::printf("stud-render-host: the engine is done with this device; releasing "
+                    "%zu upscale chain(s) and %zu mapping(s) with it\n",
+                    g_upscale_chains.size(), shared_writes().size());
+        // What is still alive on it. vkDestroyDevice has been
+        // measured taking a flat 12s here with the queue already
+        // idle, which is a driver waiting on something that is not
+        // GPU work; a swapchain the engine never destroyed, or
+        // Stud's own present fences for one, are what it could be
+        // waiting on.
+        {
+            size_t rings = 0, in_flight = 0;
+            for (const auto& kv : present_fence_rings()) {
+                ++rings;
+                for (bool b : kv.second.in_flight) in_flight += b ? 1 : 0;
+            }
+            std::printf("stud-render-host: still alive at device teardown: %zu engine "
+                        "swapchain(s), %zu present-fence ring(s) with %zu present(s) in "
+                        "flight, %zu swapchain image list(s)\n",
+                        g_swapchain_ci.size(), rings, in_flight,
+                        l.swapchain_image_list.size());
+        }
+        std::fflush(stdout);
+
+        // Stud's own objects first: the device cannot go while
+        // they are on it, and the engine never knew about them.
+        // TIMED, because this teardown is where joining a game
+        // stalls and which step costs it was guesswork. Measured
+        // at 2.7 seconds of dead time between the engine's last
+        // log line and its next. Device destroy happens a handful
+        // of times a session, so a few clocks and one line cost
+        // nothing and settle it.
+        const auto teardown_t0 = std::chrono::steady_clock::now();
+        for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
+        g_upscale_chains.clear();
+        const auto after_chains = std::chrono::steady_clock::now();
+        flush_retired_chains("the engine is done with this device");
+        const auto after_flush = std::chrono::steady_clock::now();
+        if (l.vk.vkDeviceWaitIdle != nullptr) l.vk.vkDeviceWaitIdle(l.device);
+        const auto after_idle = std::chrono::steady_clock::now();
+        if (g_repair_fence != VK_NULL_HANDLE && l.vk.vkDestroyFence != nullptr) {
+            l.vk.vkDestroyFence(l.device, g_repair_fence, nullptr);
+            g_repair_fence = VK_NULL_HANDLE;
+        }
+        if (l.probe_pool != VK_NULL_HANDLE && l.vk.vkDestroyCommandPool != nullptr) {
+            l.vk.vkDestroyCommandPool(l.device, l.probe_pool, nullptr);
+            l.probe_pool = VK_NULL_HANDLE;
+        }
+        l.probe_queue = VK_NULL_HANDLE;
+        l.have_first_queue_family = false;
+
+        // The engine's own allocations, freed before the device
+        // that owns them.
+        //
+        // Not tidiness: "All child objects created on device that
+        // can be destroyed or freed must have been destroyed or
+        // freed prior to destroying device" is a hard
+        // requirement, and the validation layer caught Stud
+        // breaking it on every single device destroy -- "VkDevice
+        // has 14 leaked objects", VkDeviceMemory among them.
+        //
+        // The engine dropped its renderer without freeing them,
+        // which is its business while a device lives forever. It
+        // stopped being harmless when Stud began destroying the
+        // device, so Stud cleans up after it rather than handing
+        // the driver a device with live children -- the same
+        // shape as the bug that makes this driver misbehave when
+        // objects outlive what created them.
+        //
+        // Freed here, AFTER device_wait_idle above and after
+        // Stud's own chains are gone, so nothing is still reading
+        // them; and before the mappings below are dropped,
+        // because unmapping pages the driver still imports is
+        // what segfaulted inside libnvidia-glcore once already.
+        // THE BUFFERS ARE DELIBERATELY LEFT ALONE. Do not add
+        // a loop here that destroys them.
+        //
+        // It was tried, to close the rest of the "VkDevice has N
+        // leaked objects" report, and it CRASHED. The sequence,
+        // 155 log lines apart in one session:
+        //
+        //   destroying 14 buffer(s) the engine left behind
+        //   ...
+        //   CRASH, signal 11, fault address 0xf8
+        //   last: vk_cmd_record kind=14   (CopyBufferToImage)
+        //
+        // inside libnvidia-glcore, with a matching
+        // "vkCmdCopyBufferToImage(): srcBuffer Invalid VkBuffer
+        // Object" from the validation layer. The engine keeps
+        // using those handles after it has abandoned the device
+        // they belong to, so destroying them turns a leak into a
+        // dangling pointer the driver dereferences.
+        //
+        // Measured either way in back-to-back sessions: freeing
+        // the memory alone gave 0 crashes and 0 invalid buffers;
+        // adding the buffer destroy gave 1 of each. A leak the
+        // validation layer complains about is better than a
+        // segfault.
+        //
+        // Nothing to clear here any more: the set that was kept
+        // for that destroy went with it. See Loader, where
+        // live_buffers used to sit.
+
+        if (l.vk.vkFreeMemory != nullptr && !l.live_memory.empty()) {
+            std::printf("stud-render-host: freeing %zu memory allocation(s) the engine "
+                        "left behind, before destroying the device that owns them\n",
+                        l.live_memory.size());
+            std::fflush(stdout);
+            for (uint64_t m : l.live_memory) {
+                auto lz = lazy_memory().find(m);
+                if (lz == lazy_memory().end()) {
+                    l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
+                } else if (lz->second.real != VK_NULL_HANDLE) {
+                    l.vk.vkFreeMemory(l.device, lz->second.real, nullptr);
+                }
+            }
+            lazy_memory().clear();
+        }
+        l.live_memory.clear();
+
+        const auto after_frees = std::chrono::steady_clock::now();
+        // For an engine that destroys its device before its surface:
+        // the last frame is let go of here instead, before the driver
+        // is asked to free the memory behind it. A no-op when
+        // K::Surface already did it.
+        if (g_swapchain_ci.empty()) stud::android_glue::native_window_detach_content();
+        if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
+        const auto after_destroy = std::chrono::steady_clock::now();
+        {
+            auto ms = [](auto a, auto b) {
+                return std::chrono::duration<double, std::milli>(b - a).count();
+            };
+            std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
+                        "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f\n",
+                        ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
+                        ms(after_chains, after_flush), ms(after_flush, after_idle),
+                        ms(after_idle, after_frees), ms(after_frees, after_destroy));
+            std::fflush(stdout);
+        }
+        l.device = VK_NULL_HANDLE;
+
+        // Only now are these safe to drop. While the device
+        // lived, the driver was still importing the pages behind
+        // the mappings; unmapping them with it alive is what
+        // segfaulted inside libnvidia-glcore in an earlier
+        // attempt at this.
+        for (auto& w : shared_writes()) {
+            if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
+        }
+        shared_writes().clear();
+        {
+            std::lock_guard<std::mutex> lock(buffer_memory_mutex());
+            buffer_memory().clear();
+        }
+        {
+            // Unmapped, not just forgotten. The allocations the
+            // engine left behind were freed above with a bare
+            // vkFreeMemory, which does not go through
+            // vk_free_memory_shared_cleanup(); clearing the table
+            // alone kept every one of those mappings, and so their
+            // pages, alive for the rest of the process. That
+            // repeated on every device the engine rebuilt: each
+            // join, each leave, each device-loss recovery.
+            std::lock_guard<std::mutex> lock(shared_memory_mutex());
+            for (auto& kv : shared_memory()) unmap_shared_memory(kv.second);
+            shared_memory().clear();
+        }
+        // Anything sent over the fd channel and never claimed.
+        forget_shared_fds();
+        l.mapped.clear();
+        l.mapped_size.clear();
+        g_swapchain_extents.clear();
+        l.retired_images.clear();
+        l.untransitioned_images.clear();
+        // The loss, if there was one, belonged to the device that
+        // has just gone.
+        g_device_lost.store(false, std::memory_order_relaxed);
+    }
+}
+
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
     Loader& l = loader();
     using K = vk_wire::DestroyKind;
@@ -5864,104 +6199,9 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.vk.vkDestroyQueryPool(l.device, from_u64<VkQueryPool>(handle), nullptr);
             }
             break;
-        case K::Swapchain: {
-            // The engine's last swapchain: its last frame is copied out
-            // first, so the window shows it rather than black until the
-            // next device presents. See keep_last_frame().
-            if (g_swapchain_ci.size() == 1 && g_swapchain_ci.count(handle) != 0) {
-                keep_last_frame(handle);
-            }
-            forget_presented_images(to_u64(live_swapchain(handle)));
-            g_swapchain_extents.erase(handle);
-            // The engine names the handle it was given; what has to be
-            // destroyed is whatever that stands for now.
-            const uint64_t live = to_u64(live_swapchain(handle));
-            g_swapchain_alias.erase(handle);
-            g_swapchain_ci.erase(handle);
-            // X11: the driver waits inside vkDestroySwapchainKHR for the
-            // server to finish with the last frame (22 s once, at Play),
-            // so the window it presented to is unmapped BEFORE the last
-            // swapchain goes, immediately or through a retired chain.
-            // Wayland's wait is at device teardown instead, where
-            // K::Surface and K::Device already detach.
-            if (g_swapchain_ci.empty() &&
-                stud::android_glue::display_backend() ==
-                    stud::android_glue::DisplayBackend::X11) {
-                stud::android_glue::native_window_detach_content();
-            }
-            // Stud's own offscreen images and the pass that reads them go
-            // with the swapchain they belong to.
-            //
-            // And the swapchain does not go anywhere while that pass is
-            // still running. destroy_upscale_chain() defers a chain whose
-            // work has not finished, which is right -- but destroying the
-            // swapchain underneath it anyway leaves the GPU writing into
-            // images that no longer exist, and that is how a GPU hangs.
-            //
-            // Live-caught on Wayland with FSR on, in this order: "the
-            // upscale pass was still running when its swapchain went away;
-            // keeping it until the GPU is done with it", a present that
-            // blocked for 12006ms and then succeeded, and the engine's own
-            // vkWaitForFences coming back VK_ERROR_DEVICE_LOST with
-            // "DeviceRecovery trigger: endRender reason=hung". The
-            // driver's reset is what ended the freeze.
-            //
-            // So the swapchain is handed to the retired chain and
-            // destroyed with it, once the fences say the GPU has let go.
-            bool swapchain_held_by_chain = false;
-            {
-                auto chain = g_upscale_chains.find(handle);
-                if (chain != g_upscale_chains.end()) {
-                    size_t retired_before = 0;
-                    {
-                        std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
-                        retired_before = g_retired_chains.size();
-                    }
-                    destroy_upscale_chain(chain->second);
-                    g_upscale_chains.erase(chain);
-                    std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
-                    if (g_retired_chains.size() > retired_before) {
-                        g_retired_chains.back().destroy_with_chain =
-                            from_u64<VkSwapchainKHR>(live);
-                        swapchain_held_by_chain = true;
-                    }
-                }
-            }
-            auto images = l.swapchain_image_list.find(handle);
-            if (images != l.swapchain_image_list.end()) {
-                for (uint64_t image : images->second) {
-                    l.swapchain_images.erase(image);
-                    l.swapchain_views.erase(image);
-                    l.retired_images.insert(image);
-                }
-                l.swapchain_image_list.erase(images);
-            }
-            if (swapchain_held_by_chain) {
-                // Destroyed by sweep_retired_chains(), with the pass that
-                // is still writing into it.
-                break;
-            }
-            if (l.vk.vkDestroySwapchainKHR) {
-                // Timed for the same reason the create is: a rebuild is a
-                // destroy and a create, and 22 seconds of it has to belong
-                // to one of them. If the destroy is the slow half then
-                // what the driver waits for is the old swapchain's
-                // presents retiring, and destroying before creating rather
-                // than handing it over as oldSwapchain would change
-                // nothing; if the create is, it would.
-                const auto destroy_t0 = std::chrono::steady_clock::now();
-                settle_present_fences(from_u64<VkSwapchainKHR>(live));
-                l.vk.vkDestroySwapchainKHR(l.device, from_u64<VkSwapchainKHR>(live), nullptr);
-                const double destroy_ms = std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - destroy_t0).count();
-                if (destroy_ms > 50.0) {
-                    std::printf("stud-render-host: SLOW vkDestroySwapchainKHR %.0fms\n",
-                                destroy_ms);
-                    std::fflush(stdout);
-                }
-            }
+        case K::Swapchain:
+            destroy_swapchain(l, handle);
             break;
-        }
         case K::Surface:
             // Nothing may still be presenting to it. A deferred upscale
             // pass holds its swapchain, and a swapchain outliving its
@@ -5992,240 +6232,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             }
             break;
         case K::Device:
-            // The real VkDevice is still deliberately NOT destroyed: the
-            // engine tears its renderer down and rebuilds it repeatedly
-            // (once per mode probe, and after every recovery), and
-            // destroying it here would invalidate every resolved device
-            // command while the engine still holds them. The comment that
-            // used to sit here also claimed this process owns exactly one
-            // device for its whole life; it does not -- a session creates
-            // four to six.
-            //
-            // What IS safe to let go of is Stud's own upscale chains.
-            // They are built here, referenced by nothing the engine can
-            // see, and this message is the engine saying it has finished
-            // with the device they live on. Destroying them now, while
-            // l.device is still that device, is the only moment it can be
-            // done correctly: after the next vkCreateDevice, l.device
-            // names a different device and every handle in these chains
-            // belongs to a device it was never created on.
-            //
-            // They are the largest allocations in this file -- full
-            // resolution offscreen, staging and sharpened images, their
-            // memory, views, descriptor pools, pipelines, semaphores and
-            // fences, per swapchain image -- and stranding one per
-            // recovery is the measured climb from 1941 MB to 2230 MB
-            // across four of them, while the scene being drawn got
-            // simpler.
-            //
-            // Deliberately NOT touching shared_memory(), buffer_memory()
-            // or shared_writes() here. Those describe memory the engine
-            // imported, and the real device is still alive underneath, so
-            // the driver may still reference those pages. An earlier
-            // attempt to free them at a new device's creation unmapped
-            // pages out from under the driver and segfaulted inside
-            // libnvidia-glcore. Their growth is real and is not fixable
-            // without either destroying the device for real or keying
-            // them per device; see Stud-Analysis/gpu/stud-freeze.md.
-            if (from_u64<VkDevice>(handle) == l.device && l.device != VK_NULL_HANDLE) {
-                // Destroyed HERE, while l.device still names it.
-                //
-                // Two things make this the right moment and not an
-                // assumption. The engine sending vkDestroyDevice is the
-                // spec's own precondition that it has already destroyed
-                // every object it made. And Stud's Vulkan path is
-                // single-threaded: one host thread per connection, all
-                // Vulkan traffic on one socket, and the client serialises
-                // every request on a single call_mutex_, so nothing of
-                // ours can be inside a call on this device while this one
-                // is being dispatched.
-                //
-                // It also has to be here for a duller reason: every
-                // l.destroy_* below was resolved with
-                // vkGetDeviceProcAddr(l.device, ...) and belongs to THIS
-                // device. Deferring the destroy past the next
-                // vkCreateDevice would mean calling the new device's
-                // function pointers on the old device's objects. A
-                // deferred version of this was written and measured
-                // working (see option-D-park-and-release.patch in
-                // Stud-Analysis/gpu) and then dropped for exactly that.
-                std::printf("stud-render-host: the engine is done with this device; releasing "
-                            "%zu upscale chain(s) and %zu mapping(s) with it\n",
-                            g_upscale_chains.size(), shared_writes().size());
-                // What is still alive on it. vkDestroyDevice has been
-                // measured taking a flat 12s here with the queue already
-                // idle, which is a driver waiting on something that is not
-                // GPU work; a swapchain the engine never destroyed, or
-                // Stud's own present fences for one, are what it could be
-                // waiting on.
-                {
-                    size_t rings = 0, in_flight = 0;
-                    for (const auto& kv : present_fence_rings()) {
-                        ++rings;
-                        for (bool b : kv.second.in_flight) in_flight += b ? 1 : 0;
-                    }
-                    std::printf("stud-render-host: still alive at device teardown: %zu engine "
-                                "swapchain(s), %zu present-fence ring(s) with %zu present(s) in "
-                                "flight, %zu swapchain image list(s)\n",
-                                g_swapchain_ci.size(), rings, in_flight,
-                                l.swapchain_image_list.size());
-                }
-                std::fflush(stdout);
-
-                // Stud's own objects first: the device cannot go while
-                // they are on it, and the engine never knew about them.
-                // TIMED, because this teardown is where joining a game
-                // stalls and which step costs it was guesswork. Measured
-                // at 2.7 seconds of dead time between the engine's last
-                // log line and its next. Device destroy happens a handful
-                // of times a session, so a few clocks and one line cost
-                // nothing and settle it.
-                const auto teardown_t0 = std::chrono::steady_clock::now();
-                for (auto& kv : g_upscale_chains) destroy_upscale_chain(kv.second, true);
-                g_upscale_chains.clear();
-                const auto after_chains = std::chrono::steady_clock::now();
-                flush_retired_chains("the engine is done with this device");
-                const auto after_flush = std::chrono::steady_clock::now();
-                if (l.vk.vkDeviceWaitIdle != nullptr) l.vk.vkDeviceWaitIdle(l.device);
-                const auto after_idle = std::chrono::steady_clock::now();
-                if (g_repair_fence != VK_NULL_HANDLE && l.vk.vkDestroyFence != nullptr) {
-                    l.vk.vkDestroyFence(l.device, g_repair_fence, nullptr);
-                    g_repair_fence = VK_NULL_HANDLE;
-                }
-                if (l.probe_pool != VK_NULL_HANDLE && l.vk.vkDestroyCommandPool != nullptr) {
-                    l.vk.vkDestroyCommandPool(l.device, l.probe_pool, nullptr);
-                    l.probe_pool = VK_NULL_HANDLE;
-                }
-                l.probe_queue = VK_NULL_HANDLE;
-                l.have_first_queue_family = false;
-
-                // The engine's own allocations, freed before the device
-                // that owns them.
-                //
-                // Not tidiness: "All child objects created on device that
-                // can be destroyed or freed must have been destroyed or
-                // freed prior to destroying device" is a hard
-                // requirement, and the validation layer caught Stud
-                // breaking it on every single device destroy -- "VkDevice
-                // has 14 leaked objects", VkDeviceMemory among them.
-                //
-                // The engine dropped its renderer without freeing them,
-                // which is its business while a device lives forever. It
-                // stopped being harmless when Stud began destroying the
-                // device, so Stud cleans up after it rather than handing
-                // the driver a device with live children -- the same
-                // shape as the bug that makes this driver misbehave when
-                // objects outlive what created them.
-                //
-                // Freed here, AFTER device_wait_idle above and after
-                // Stud's own chains are gone, so nothing is still reading
-                // them; and before the mappings below are dropped,
-                // because unmapping pages the driver still imports is
-                // what segfaulted inside libnvidia-glcore once already.
-                // THE BUFFERS ARE DELIBERATELY LEFT ALONE. Do not add
-                // a loop here that destroys them.
-                //
-                // It was tried, to close the rest of the "VkDevice has N
-                // leaked objects" report, and it CRASHED. The sequence,
-                // 155 log lines apart in one session:
-                //
-                //   destroying 14 buffer(s) the engine left behind
-                //   ...
-                //   CRASH, signal 11, fault address 0xf8
-                //   last: vk_cmd_record kind=14   (CopyBufferToImage)
-                //
-                // inside libnvidia-glcore, with a matching
-                // "vkCmdCopyBufferToImage(): srcBuffer Invalid VkBuffer
-                // Object" from the validation layer. The engine keeps
-                // using those handles after it has abandoned the device
-                // they belong to, so destroying them turns a leak into a
-                // dangling pointer the driver dereferences.
-                //
-                // Measured either way in back-to-back sessions: freeing
-                // the memory alone gave 0 crashes and 0 invalid buffers;
-                // adding the buffer destroy gave 1 of each. A leak the
-                // validation layer complains about is better than a
-                // segfault.
-                //
-                // Nothing to clear here any more: the set that was kept
-                // for that destroy went with it. See Loader, where
-                // live_buffers used to sit.
-
-                if (l.vk.vkFreeMemory != nullptr && !l.live_memory.empty()) {
-                    std::printf("stud-render-host: freeing %zu memory allocation(s) the engine "
-                                "left behind, before destroying the device that owns them\n",
-                                l.live_memory.size());
-                    std::fflush(stdout);
-                    for (uint64_t m : l.live_memory) {
-                        auto lz = lazy_memory().find(m);
-                        if (lz == lazy_memory().end()) {
-                            l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
-                        } else if (lz->second.real != VK_NULL_HANDLE) {
-                            l.vk.vkFreeMemory(l.device, lz->second.real, nullptr);
-                        }
-                    }
-                    lazy_memory().clear();
-                }
-                l.live_memory.clear();
-
-                const auto after_frees = std::chrono::steady_clock::now();
-                // For an engine that destroys its device before its surface:
-                // the last frame is let go of here instead, before the driver
-                // is asked to free the memory behind it. A no-op when
-                // K::Surface already did it.
-                if (g_swapchain_ci.empty()) stud::android_glue::native_window_detach_content();
-                if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
-                const auto after_destroy = std::chrono::steady_clock::now();
-                {
-                    auto ms = [](auto a, auto b) {
-                        return std::chrono::duration<double, std::milli>(b - a).count();
-                    };
-                    std::printf("stud-render-host: device teardown %.0fms total: chains %.0f, "
-                                "flush %.0f, waitIdle %.0f, frees %.0f, destroyDevice %.0f\n",
-                                ms(teardown_t0, after_destroy), ms(teardown_t0, after_chains),
-                                ms(after_chains, after_flush), ms(after_flush, after_idle),
-                                ms(after_idle, after_frees), ms(after_frees, after_destroy));
-                    std::fflush(stdout);
-                }
-                l.device = VK_NULL_HANDLE;
-
-                // Only now are these safe to drop. While the device
-                // lived, the driver was still importing the pages behind
-                // the mappings; unmapping them with it alive is what
-                // segfaulted inside libnvidia-glcore in an earlier
-                // attempt at this.
-                for (auto& w : shared_writes()) {
-                    if (w.second.first != nullptr) ::munmap(w.second.first, w.second.second);
-                }
-                shared_writes().clear();
-                {
-                    std::lock_guard<std::mutex> lock(buffer_memory_mutex());
-                    buffer_memory().clear();
-                }
-                {
-                    // Unmapped, not just forgotten. The allocations the
-                    // engine left behind were freed above with a bare
-                    // vkFreeMemory, which does not go through
-                    // vk_free_memory_shared_cleanup(); clearing the table
-                    // alone kept every one of those mappings, and so their
-                    // pages, alive for the rest of the process. That
-                    // repeated on every device the engine rebuilt: each
-                    // join, each leave, each device-loss recovery.
-                    std::lock_guard<std::mutex> lock(shared_memory_mutex());
-                    for (auto& kv : shared_memory()) unmap_shared_memory(kv.second);
-                    shared_memory().clear();
-                }
-                // Anything sent over the fd channel and never claimed.
-                forget_shared_fds();
-                l.mapped.clear();
-                l.mapped_size.clear();
-                g_swapchain_extents.clear();
-                l.retired_images.clear();
-                l.untransitioned_images.clear();
-                // The loss, if there was one, belonged to the device that
-                // has just gone.
-                g_device_lost.store(false, std::memory_order_relaxed);
-            }
+            destroy_device(l, handle);
             break;
         case K::Instance:
             // Same reasoning as Device.
@@ -8459,6 +8466,113 @@ bool make_presentable_on_skip(UpscaleChain& c, uint32_t index, uint64_t queue,
     return true;
 }
 
+// A census of what Stud itself is still holding.
+//
+// Some sessions freeze repeatedly and some never do, with identical
+// startup logs, and the user's reading is that something accumulates
+// on the bad ones. Nothing Stud printed could confirm or deny that:
+// the write barrier's own counters are flat, texture errors do not
+// correlate, and an event-rate profile of a freezing session against
+// a clean one differs only in how much the player moved.
+//
+// So this counts the things that could grow without anyone noticing.
+// Every one of them is a container Stud adds to and is supposed to
+// erase from; a number that climbs across a session and never comes
+// down is the accumulation, and a session where they all stay flat
+// says the idea is wrong. Printed rarely, so it costs nothing.
+void report_holdings() {
+    Loader& l = loader();
+        static uint64_t presents_seen = 0;
+        if (stud::logging::debug_enabled() && (++presents_seen % 1800) == 0) {
+            size_t shared = 0;
+            size_t buffers = 0;
+            {
+                std::lock_guard<std::mutex> lock(shared_memory_mutex());
+                shared = shared_memory().size();
+            }
+            {
+                std::lock_guard<std::mutex> lock(buffer_memory_mutex());
+                buffers = buffer_memory().size();
+            }
+            size_t retired = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+                retired = g_retired_chains.size();
+            }
+            // Images created and never transitioned out of UNDEFINED.
+            //
+            // These are exactly the candidates for
+            // VUID-vkCmdDraw-None-09600 ("expects VkImage ... to be in
+            // SHADER_READ_ONLY_OPTIMAL -- instead, current layout is
+            // UNDEFINED"), and naming them is the only way to tell the
+            // two causes apart: an image whose FIRST barrier lied about
+            // where it started, which make_barrier_legal() corrects, and
+            // an image that never receives a barrier at all, which it
+            // cannot. The first fix was verified on a short single-device
+            // run and the error came back during real play on different
+            // images, so the difference matters.
+            if (!l.untransitioned_images.empty()) {
+                // Grouped by what they are, because "74 handles" is not a
+                // finding and "74 of one 1024x1024 sampled image" is.
+                struct Kind {
+                    uint32_t format, width, height, usage;
+                    bool operator<(const Kind& o) const {
+                        return std::tie(format, width, height, usage) <
+                               std::tie(o.format, o.width, o.height, o.usage);
+                    }
+                };
+                std::map<Kind, size_t> kinds;
+                for (const auto& [handle, info] : l.untransitioned_images) {
+                    (void)handle;
+                    ++kinds[Kind{info.format, info.width, info.height, info.usage}];
+                }
+                std::printf("stud-render-host: %zu image(s) created and never transitioned out "
+                            "of UNDEFINED, in %zu kind(s):",
+                            l.untransitioned_images.size(), kinds.size());
+                int shown = 0;
+                for (const auto& [k, n] : kinds) {
+                    if (shown++ >= 8) {
+                        std::printf(" ...");
+                        break;
+                    }
+                    std::printf(" [%zux format=%u %ux%u usage=0x%x]", n, k.format, k.width,
+                                k.height, k.usage);
+                }
+                std::printf("\n");
+                std::fflush(stdout);
+            }
+            std::printf("stud-render-host: still held after %llu presents: %zu shared mappings, "
+                        "%zu buffer bindings, %zu upscale chains, %zu retired chains, "
+                        "%zu swapchain extents\n",
+                        static_cast<unsigned long long>(presents_seen), shared, buffers,
+                        g_upscale_chains.size(), retired, g_swapchain_extents.size());
+            // Latency beside the census, so degradation and accumulation
+            // can be read off the same line at the same moment. If a
+            // session degrades as it runs, one of these two rises while
+            // the other does not.
+            const uint64_t wn = g_wait_n.exchange(0, std::memory_order_relaxed);
+            const uint64_t wus = g_wait_us.exchange(0, std::memory_order_relaxed);
+            const uint64_t wmax = g_wait_us_max.exchange(0, std::memory_order_relaxed);
+            const uint64_t w50 = g_wait_over_50.exchange(0, std::memory_order_relaxed);
+            const uint64_t w250 = g_wait_over_250.exchange(0, std::memory_order_relaxed);
+            const uint64_t pn = g_present_n.exchange(0, std::memory_order_relaxed);
+            const uint64_t pus = g_present_us.exchange(0, std::memory_order_relaxed);
+            const uint64_t pmax = g_present_us_max.exchange(0, std::memory_order_relaxed);
+            const uint64_t p50 = g_present_over_50.exchange(0, std::memory_order_relaxed);
+            std::printf("stud-render-host: since the last census: %llu fence waits (mean %.2fms, "
+                        "max %.1fms, %llu over 50ms, %llu over 250ms), %llu presents (mean "
+                        "%.2fms, max %.1fms, %llu over 50ms)\n",
+                        static_cast<unsigned long long>(wn),
+                        wn ? static_cast<double>(wus) / wn / 1000.0 : 0.0, wmax / 1000.0,
+                        static_cast<unsigned long long>(w50),
+                        static_cast<unsigned long long>(w250),
+                        static_cast<unsigned long long>(pn),
+                        pn ? static_cast<double>(pus) / pn / 1000.0 : 0.0, pmax / 1000.0,
+                        static_cast<unsigned long long>(p50));
+            std::fflush(stdout);
+        }
+}
+
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     STUD_ZONE();
     Loader& l = loader();
@@ -8981,111 +9095,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             fr::dump("a present ran long");
         }
     }
-    // A census of what Stud itself is still holding.
-    //
-    // Some sessions freeze repeatedly and some never do, with identical
-    // startup logs, and the user's reading is that something accumulates
-    // on the bad ones. Nothing Stud printed could confirm or deny that:
-    // the write barrier's own counters are flat, texture errors do not
-    // correlate, and an event-rate profile of a freezing session against
-    // a clean one differs only in how much the player moved.
-    //
-    // So this counts the things that could grow without anyone noticing.
-    // Every one of them is a container Stud adds to and is supposed to
-    // erase from; a number that climbs across a session and never comes
-    // down is the accumulation, and a session where they all stay flat
-    // says the idea is wrong. Printed rarely, so it costs nothing.
-    {
-        static uint64_t presents_seen = 0;
-        if (stud::logging::debug_enabled() && (++presents_seen % 1800) == 0) {
-            size_t shared = 0;
-            size_t buffers = 0;
-            {
-                std::lock_guard<std::mutex> lock(shared_memory_mutex());
-                shared = shared_memory().size();
-            }
-            {
-                std::lock_guard<std::mutex> lock(buffer_memory_mutex());
-                buffers = buffer_memory().size();
-            }
-            size_t retired = 0;
-            {
-                std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
-                retired = g_retired_chains.size();
-            }
-            // Images created and never transitioned out of UNDEFINED.
-            //
-            // These are exactly the candidates for
-            // VUID-vkCmdDraw-None-09600 ("expects VkImage ... to be in
-            // SHADER_READ_ONLY_OPTIMAL -- instead, current layout is
-            // UNDEFINED"), and naming them is the only way to tell the
-            // two causes apart: an image whose FIRST barrier lied about
-            // where it started, which make_barrier_legal() corrects, and
-            // an image that never receives a barrier at all, which it
-            // cannot. The first fix was verified on a short single-device
-            // run and the error came back during real play on different
-            // images, so the difference matters.
-            if (!l.untransitioned_images.empty()) {
-                // Grouped by what they are, because "74 handles" is not a
-                // finding and "74 of one 1024x1024 sampled image" is.
-                struct Kind {
-                    uint32_t format, width, height, usage;
-                    bool operator<(const Kind& o) const {
-                        return std::tie(format, width, height, usage) <
-                               std::tie(o.format, o.width, o.height, o.usage);
-                    }
-                };
-                std::map<Kind, size_t> kinds;
-                for (const auto& [handle, info] : l.untransitioned_images) {
-                    (void)handle;
-                    ++kinds[Kind{info.format, info.width, info.height, info.usage}];
-                }
-                std::printf("stud-render-host: %zu image(s) created and never transitioned out "
-                            "of UNDEFINED, in %zu kind(s):",
-                            l.untransitioned_images.size(), kinds.size());
-                int shown = 0;
-                for (const auto& [k, n] : kinds) {
-                    if (shown++ >= 8) {
-                        std::printf(" ...");
-                        break;
-                    }
-                    std::printf(" [%zux format=%u %ux%u usage=0x%x]", n, k.format, k.width,
-                                k.height, k.usage);
-                }
-                std::printf("\n");
-                std::fflush(stdout);
-            }
-            std::printf("stud-render-host: still held after %llu presents: %zu shared mappings, "
-                        "%zu buffer bindings, %zu upscale chains, %zu retired chains, "
-                        "%zu swapchain extents\n",
-                        static_cast<unsigned long long>(presents_seen), shared, buffers,
-                        g_upscale_chains.size(), retired, g_swapchain_extents.size());
-            // Latency beside the census, so degradation and accumulation
-            // can be read off the same line at the same moment. If a
-            // session degrades as it runs, one of these two rises while
-            // the other does not.
-            const uint64_t wn = g_wait_n.exchange(0, std::memory_order_relaxed);
-            const uint64_t wus = g_wait_us.exchange(0, std::memory_order_relaxed);
-            const uint64_t wmax = g_wait_us_max.exchange(0, std::memory_order_relaxed);
-            const uint64_t w50 = g_wait_over_50.exchange(0, std::memory_order_relaxed);
-            const uint64_t w250 = g_wait_over_250.exchange(0, std::memory_order_relaxed);
-            const uint64_t pn = g_present_n.exchange(0, std::memory_order_relaxed);
-            const uint64_t pus = g_present_us.exchange(0, std::memory_order_relaxed);
-            const uint64_t pmax = g_present_us_max.exchange(0, std::memory_order_relaxed);
-            const uint64_t p50 = g_present_over_50.exchange(0, std::memory_order_relaxed);
-            std::printf("stud-render-host: since the last census: %llu fence waits (mean %.2fms, "
-                        "max %.1fms, %llu over 50ms, %llu over 250ms), %llu presents (mean "
-                        "%.2fms, max %.1fms, %llu over 50ms)\n",
-                        static_cast<unsigned long long>(wn),
-                        wn ? static_cast<double>(wus) / wn / 1000.0 : 0.0, wmax / 1000.0,
-                        static_cast<unsigned long long>(w50),
-                        static_cast<unsigned long long>(w250),
-                        static_cast<unsigned long long>(pn),
-                        pn ? static_cast<double>(pus) / pn / 1000.0 : 0.0, pmax / 1000.0,
-                        static_cast<unsigned long long>(p50));
-            std::fflush(stdout);
-        }
-    }
+    report_holdings();
 
     static const bool time_presents = std::getenv("STUD_VK_HOST_TIME") != nullptr;
     if (time_presents) {
