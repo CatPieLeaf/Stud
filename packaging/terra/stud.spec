@@ -106,7 +106,7 @@ cp -a usr %{buildroot}/
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/%{appid}.desktop
-appstream-util validate-relax --nonet %{buildroot}%{_datadir}/metainfo/%{appid}.metainfo.xml
+appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/%{appid}.metainfo.xml
 
 %files
 # The whole directory, not a list of it: every vendored notice the build
@@ -119,37 +119,10 @@ appstream-util validate-relax --nonet %{buildroot}%{_datadir}/metainfo/%{appid}.
 %{_prefix}/lib/%{name}/
 %{_libexecdir}/%{name}/
 %{_datadir}/applications/%{appid}.desktop
-%{_datadir}/metainfo/%{appid}.metainfo.xml
+%{_metainfodir}/%{appid}.metainfo.xml
 %{_datadir}/icons/hicolor/*/apps/%{appid}.png
 %{_mandir}/man1/%{name}.1*
 
 %changelog
 * Wed Sep 30 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.10-1
-- Update to 1.1.10
-
-* Tue Sep 29 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.9-1
-- Update to 1.1.9
-
-* Thu Sep 24 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.8-1
-- Update to 1.1.8
-
-* Tue Sep 22 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.7-1
-- Update to 1.1.7
-
-* Mon Sep 21 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.6-1
-- Update to 1.1.6
-
-* Thu Sep 17 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.5-1
-- Update to 1.1.5
-
-* Thu Sep 17 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.4-1
-- Update to 1.1.4
-
-* Wed Sep 16 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.3-1
-- Update to 1.1.3
-
-* Tue Sep 15 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.2-1
-- Update to 1.1.2
-
-* Tue Sep 15 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.1-1
 - Initial package
