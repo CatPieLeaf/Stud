@@ -71,12 +71,6 @@ void vk_set_vulkan_enabled(bool enabled);
 // should do.
 void vk_set_preferred_device_index(uint32_t index);
 
-// Translates that same index into the "vendorId:deviceId" token Mesa's
-// MESA_VK_DEVICE_SELECT expects, by asking the real loader what is at
-// that position. Empty when it cannot be determined. Used on the OpenGL
-// path, where Zink, not the engine, is the one choosing a GPU.
-std::string vk_device_select_token_for_index(uint32_t index);
-
 uint64_t vk_enumerate_instance_version(std::vector<uint8_t>& out, uint32_t* out_len);
 uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& in,
                                                      uint32_t capacity,

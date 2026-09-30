@@ -2512,12 +2512,6 @@ void set_render_scale_120(int32_t requested_scale_120) {
     std::fflush(stdout);
 }
 
-// The DISPLAY's scale, which is what Android's DisplayMetrics.density
-// means. Not the buffer scale: those diverge whenever HiDPI rendering is
-// off, and reporting the buffer's told the engine this was a 1.0 display
-// on a 1.25 desktop.
-int32_t native_window_buffer_scale_120() { return display_scale_120(); }
-
 // Pairs the output with xdg-output once both globals have arrived, and
 // waits for its logical_size. Safe to call repeatedly. Defined here
 // rather than beside the other helpers because it needs the listener,

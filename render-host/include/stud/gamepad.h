@@ -63,10 +63,6 @@ void poll(std::vector<Event>& out);
 // node could only be opened read-only.
 bool set_rumble(int device_id, float strong, float weak, int duration_ms);
 
-// Whether any open pad can rumble at all, what the engine is told when
-// it asks whether this platform supports haptics.
-bool any_rumble_capable();
-
 // How many controllers are open right now, for the diagnostics command
 // and the startup line.
 int device_count();

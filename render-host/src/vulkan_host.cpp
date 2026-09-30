@@ -55,9 +55,14 @@ namespace stud::render_host {
 // a window as a side effect of a query.
 namespace {
 // The extent each live swapchain was actually created with. Recorded so
-// a resize can be seen; NOT used to force VK_ERROR_OUT_OF_DATE_KHR;
-// see swapchain_is_out_of_date's own comment for the live result of
-// trying that.
+// a resize can be seen; NOT used to force VK_ERROR_OUT_OF_DATE_KHR. A
+// Wayland surface never goes out of date on its own, so returning it on a
+// resize looks like the textbook fix, and it was live-tested and is wrong
+// for this engine: it logs `VULKAN ERROR: vkAcquireNextImageKHR ...
+// returned -1000001004` and stops presenting entirely. The engine rebuilds
+// its swapchain from its own resize path, which only needs
+// vkGetPhysicalDeviceSurfaceCapabilitiesKHR to report the window's real
+// size; sync_vk_window_size() in render-host's main loop keeps that true.
 // Once the driver has lost the device, every further call on it is
 // meaningless and some are lethal: a vkQueueSubmit issued after the loss
 // is where NVIDIA's driver segfaulted, live-caught, inside the very next
@@ -970,49 +975,6 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
         std::fflush(stdout);
     }
     return static_cast<uint64_t>(static_cast<int32_t>(r));
-}
-
-std::string vk_device_select_token_for_index(uint32_t index) {
-    // Mesa selects its Vulkan device from MESA_VK_DEVICE_SELECT, which
-    // names a GPU by vendor and device id rather than by position. Ask
-    // the real loader what is at the position the user chose, the same
-    // enumeration order the settings window listed, and translate.
-    Loader& l = loader();
-    if (vkCreateInstance == nullptr) return {};
-    VkApplicationInfo app{};
-    app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    app.apiVersion = VK_API_VERSION_1_0;
-    VkInstanceCreateInfo ci{};
-    ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    ci.pApplicationInfo = &app;
-    VkInstance instance = VK_NULL_HANDLE;
-    if (vkCreateInstance(&ci, nullptr, &instance) != VK_SUCCESS) return {};
-    // A table of its own: volk's globals belong to the engine's instance,
-    // and loading them from this throwaway one would point every later
-    // instance-level call at an instance destroyed a few lines down.
-    VolkInstanceTable table{};
-    volkLoadInstanceTable(&table, instance);
-    const auto enumerate = table.vkEnumeratePhysicalDevices;
-    const auto get_props = table.vkGetPhysicalDeviceProperties;
-    const auto destroy = table.vkDestroyInstance;
-    std::string token;
-    if (enumerate != nullptr && get_props != nullptr) {
-        uint32_t count = 0;
-        enumerate(instance, &count, nullptr);
-        std::vector<VkPhysicalDevice> devices(count);
-        if (count > 0) enumerate(instance, &count, devices.data());
-        if (index < devices.size()) {
-            VkPhysicalDeviceProperties props{};
-            get_props(devices[index], &props);
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%x:%x", props.vendorID, props.deviceID);
-            token = buf;
-            std::printf("stud-render-host: GPU %u is %s (%s)\n", index, props.deviceName, buf);
-            std::fflush(stdout);
-        }
-    }
-    if (destroy != nullptr) destroy(instance, nullptr);
-    return token;
 }
 
 uint64_t vk_get_physical_device_properties(uint64_t device, std::vector<uint8_t>& out,
@@ -5548,29 +5510,6 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         }
     }
     return write_handle(to_u64(swapchain), out, out_len);
-}
-
-// True when this swapchain no longer matches the window it presents to.
-//
-// Deliberately NOT wired into vkAcquireNextImageKHR or vkQueuePresentKHR.
-// A Wayland surface never goes out of date on its own (the buffer defines
-// the size), so returning VK_ERROR_OUT_OF_DATE_KHR on a resize looks like
-// the textbook fix, and it was live-tested and is wrong for this engine:
-// it logs `VULKAN ERROR: vkAcquireNextImageKHR ... returned -1000001004`
-// and stops presenting entirely (frozen at the same frame, confirmed by a
-// present counter that stopped advancing). The engine rebuilds its
-// swapchain from its own resize path instead, which only needs
-// vkGetPhysicalDeviceSurfaceCapabilitiesKHR to report the window's real
-// current size. That is what sync_vk_window_size() in render-host's main
-// loop keeps true. Kept because "did this swapchain outlive its window
-// size" is the question a future resize bug will ask first.
-bool swapchain_is_out_of_date(uint64_t swapchain) {
-    const uint32_t win_w = g_window_width.load(std::memory_order_relaxed);
-    const uint32_t win_h = g_window_height.load(std::memory_order_relaxed);
-    if (win_w == 0 || win_h == 0) return false;
-    auto it = g_swapchain_extents.find(swapchain);
-    if (it == g_swapchain_extents.end()) return false;
-    return it->second.width != win_w || it->second.height != win_h;
 }
 
 // Stud keeps handles of its own to repair a resize; both are dropped the

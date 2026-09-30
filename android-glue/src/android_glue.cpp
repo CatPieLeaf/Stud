@@ -3,7 +3,6 @@
 #include "stud/ndk_types.h"
 
 #include <unordered_map>
-#include <unordered_set>
 
 namespace stud::android_glue {
 
@@ -84,20 +83,7 @@ const std::unordered_map<std::string_view, void*>& implemented() {
     return table;
 }
 
-const std::unordered_set<std::string_view>& data_symbols() {
-    static const std::unordered_set<std::string_view> names = {
-        "AMEDIAFORMAT_KEY_MIME",       "AMEDIAFORMAT_KEY_WIDTH",
-        "AMEDIAFORMAT_KEY_HEIGHT",     "AMEDIAFORMAT_KEY_BIT_RATE",
-        "AMEDIAFORMAT_KEY_CHANNEL_COUNT", "AMEDIAFORMAT_KEY_COLOR_FORMAT",
-        "AMEDIAFORMAT_KEY_FRAME_RATE", "AMEDIAFORMAT_KEY_I_FRAME_INTERVAL",
-        "AMEDIAFORMAT_KEY_SAMPLE_RATE", "AMEDIAFORMAT_KEY_STRIDE",
-    };
-    return names;
-}
-
 }  // namespace
-
-bool is_data_symbol(std::string_view name) { return data_symbols().count(name) != 0; }
 
 void* resolve(std::string_view name) {
     if (auto it = implemented().find(name); it != implemented().end()) {

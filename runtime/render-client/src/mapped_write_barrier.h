@@ -84,10 +84,6 @@ public:
     // writable protection, so the next flush sends them.
     void mark_clean_and_protect(std::size_t offset, std::size_t len);
 
-    // Byte ranges written since the last re-arm, merged into runs so a
-    // rewritten region travels as one write rather than many.
-    std::vector<std::pair<std::size_t, std::size_t>> dirty_runs() const;
-
     // What to send, and re-arm, as one step.
     //
     // Reading the runs and re-arming as two separate operations leaves a
@@ -200,9 +196,6 @@ unsigned long long barrier_fault_count();
 // is already installed. Safe to call repeatedly. False means the
 // barrier is unavailable and callers keep the compare-based path.
 bool install_write_barrier();
-
-// True when the barrier is installed and usable.
-bool write_barrier_available();
 
 // Registers/unregisters an allocation with the fault dispatcher.
 // False when the registry is full: the caller must not protect pages

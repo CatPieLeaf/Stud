@@ -582,14 +582,6 @@ void poll(std::vector<Event>& out) {
     }
 }
 
-bool any_rumble_capable() {
-    for (const auto& [path, device] : devices()) {
-        (void)path;
-        if (device.can_rumble) return true;
-    }
-    return false;
-}
-
 int device_count() { return static_cast<int>(devices().size()); }
 
 }  // namespace stud::render_host::gamepad

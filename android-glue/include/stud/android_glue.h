@@ -252,12 +252,6 @@ void wayland_dispatch_decorations();
 // derived from the display's scale and is decided here.
 void set_render_scale_120(int32_t requested_scale_120);
 
-// The scale actually in effect, in 120ths (120 = 1x, 150 = 1.25x,
-// 240 = 2x), the unit the Wayland fractional-scale protocol itself
-// uses, and the only one that can express a fractionally-scaled desktop.
-// Buffer pixels = logical units * this / 120.
-int32_t native_window_buffer_scale_120();
-
 // Waits, briefly and boundedly, for the compositor to report this
 // surface's fractional scale, then returns it.
 //
@@ -451,14 +445,6 @@ std::vector<int32_t> display_supported_refresh_mhz();
 // convention as stud::libc_shim::resolve. Suitable to pass directly as (or
 // wrap into) a stud::linker::SymbolResolver.
 void* resolve(std::string_view name);
-
-// True if `name` resolves to a real DATA object (the 9
-// `AMEDIAFORMAT_KEY_*` string-constant pointers) rather than a callable
-// function. See stud::libc_shim::is_data_symbol's header comment for why
-// this distinction is queryable, same reasoning applies here: wrapping
-// one of these in a call trampoline breaks it, since Roblox's code
-// dereferences the resolved address directly as data, never calls it.
-bool is_data_symbol(std::string_view name);
 
 // Real fix for a real, confirmed gap in real, public native_app_glue
 // (NDK/AGDK library code, statically linked into libroblox.so alongside

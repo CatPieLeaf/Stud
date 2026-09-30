@@ -288,18 +288,6 @@ void MappedWriteBarrier::mark_clean_and_protect_locked(std::size_t offset, std::
     if (cleaned != 0) dirty_pages_.fetch_sub(cleaned, std::memory_order_acq_rel);
 }
 
-std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs() const {
-    if (base_ == nullptr) return {};
-    if (uffd_) {
-        // Reading without re-arming is exactly the split this mechanism
-        // exists to remove, so it is not offered: callers use
-        // take_dirty_runs_and_protect().
-        return {{0, size_}};
-    }
-    std::lock_guard<std::mutex> guard(lock_);
-    return dirty_runs_locked();
-}
-
 std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::dirty_runs_locked() const {
     std::vector<std::pair<std::size_t, std::size_t>> runs;
     if (base_ == nullptr) return runs;
@@ -427,8 +415,6 @@ bool install_write_barrier() {
     std::fflush(stdout);
     return true;
 }
-
-bool write_barrier_available() { return g_installed.load(std::memory_order_acquire); }
 
 unsigned long long barrier_fault_count() { return g_fault_count; }
 

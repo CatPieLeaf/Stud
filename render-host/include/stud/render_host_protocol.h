@@ -1733,8 +1733,6 @@ public:
         }).detach();
     }
 
-    bool writer_active() const { return writer_started_; }
-
     // True on the thread that owns the socket, i.e. inside an action.
     bool on_writer_thread() const {
         return writer_started_ && std::this_thread::get_id() == writer_thread_;
