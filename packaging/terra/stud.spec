@@ -74,6 +74,9 @@ Provides:       bundled(mpv-prescalers)
 Provides:       bundled(volk)
 Provides:       bundled(xxhash)
 Provides:       bundled(miniaudio)
+Provides:       bundled(miniz)
+Provides:       bundled(json)
+Provides:       bundled(libjnivm)
 
 %description
 Stud runs the real, unmodified Roblox app on your Linux desktop, in its own
