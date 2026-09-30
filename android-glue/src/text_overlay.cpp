@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include "wayland_overlay_deps.h"
 
 #include "stud/android_glue.h"
+#include "text_input.h"
 #include "x11_backend.h"
 
 // See stud/text_overlay.h for why this exists at all. In short: a focused
@@ -134,6 +136,52 @@ TextOverlaySpec& current() {
 bool& caret_on() {
     static bool on = true;
     return on;
+}
+
+// What an input method is composing; see set_text_overlay_preedit().
+struct Preedit {
+    std::string text;
+    int32_t cursor = -1;
+};
+Preedit& preedit() {
+    static Preedit p;
+    return p;
+}
+
+// The spec as drawn: the committed text with any composition spliced in
+// at the caret, highlighted like a selection -- no new drawing needed to
+// set it apart -- and the caret where the input method puts it within
+// the composition. A password box shows none of it.
+TextOverlaySpec with_preedit(const TextOverlaySpec& spec) {
+    const Preedit& p = preedit();
+    if (p.text.empty() || spec.password || !spec.visible) return spec;
+    TextOverlaySpec drawn = spec;
+    const auto caret = static_cast<size_t>(
+        std::clamp<int32_t>(spec.caret, 0, static_cast<int32_t>(spec.text.size())));
+    drawn.text.insert(caret, p.text);
+    const auto length = static_cast<int32_t>(p.text.size());
+    drawn.selection_begin = static_cast<int32_t>(caret);
+    drawn.selection_end = static_cast<int32_t>(caret) + length;
+    const int32_t inside = p.cursor < 0 || p.cursor > length ? length : p.cursor;
+    drawn.caret = static_cast<int32_t>(caret) + inside;
+    return drawn;
+}
+
+// Where the caret was last drawn, in the drawing's own space: its x from
+// the layout the draw left behind, its top and height the box's. False
+// when nothing has been laid out.
+bool caret_x(const TextOverlaySpec& drawn, float* x) {
+    const Overlay& o = overlay();
+    if (o.pen.empty()) return false;
+    const auto caret = static_cast<size_t>(std::max<int32_t>(drawn.caret, 0));
+    for (const auto& e : o.pen) {
+        if (e.first == caret) {
+            *x = o.origin_abs + static_cast<float>(e.second) / 64.0f;
+            return true;
+        }
+    }
+    *x = o.origin_abs + static_cast<float>(o.pen.back().second) / 64.0f;
+    return true;
 }
 
 void release_buffer(Overlay& o) {
@@ -542,13 +590,57 @@ void apply_locked(const TextOverlaySpec& spec) {
     o.mapped_visible = true;
 }
 
+// Draws, then tells the input method where it may type: only while a
+// TextBox has focus, and at the caret, so its candidate window opens next
+// to the text rather than at a corner of the window.
+void apply_and_report(const TextOverlaySpec& spec) {
+    const TextOverlaySpec drawn = with_preedit(spec);
+    apply_locked(drawn);
+    const bool active = drawn.visible && drawn.width > 0.0f && drawn.height > 0.0f;
+    float x = 0.0f;
+    const bool placed = active && caret_x(drawn, &x);
+    if (display_backend() == DisplayBackend::X11) {
+        // apply_locked_x11() drew in device pixels, so the layout is in
+        // them too; the box's own top and height follow the same scale.
+        const float measured = native_window_device_px_from_pointer(1.0f);
+        const float to_device = measured > 0.0f ? measured : 1.0f;
+        x11::set_input_method_target(active, drawn.password, static_cast<int>(std::lround(x)),
+                                     static_cast<int>(std::lround(drawn.y * to_device)),
+                                     static_cast<int>(std::lround(drawn.height * to_device)));
+        return;
+    }
+    if (!placed) {
+        text_input_set_target(active, drawn.password, 0, 0, 0, 0);
+        return;
+    }
+    // Buffer pixels to the window surface's logical units, which is what
+    // the protocol's cursor rectangle is in.
+    const int32_t scale_120 = overlay_deps().scale_120;
+    text_input_set_target(active, drawn.password, to_logical(static_cast<int32_t>(std::lround(x)), scale_120),
+                          to_logical(static_cast<int32_t>(std::lround(drawn.y)), scale_120), 1,
+                          to_logical(static_cast<int32_t>(std::lround(drawn.height)), scale_120));
+}
+
 }  // namespace
 
 void set_text_overlay(const TextOverlaySpec& spec) {
     std::lock_guard<std::mutex> lock(state_mutex());
+    // A box losing focus abandons whatever was being composed in it.
+    if (!spec.visible) preedit() = Preedit{};
     current() = spec;
     caret_on() = true;
-    apply_locked(current());
+    apply_and_report(current());
+}
+
+void set_text_overlay_preedit(const std::string& text, int32_t cursor) {
+    std::lock_guard<std::mutex> lock(state_mutex());
+    Preedit& p = preedit();
+    if (p.text == text && p.cursor == cursor) return;
+    p.text = text;
+    p.cursor = cursor;
+    if (!current().visible) return;
+    caret_on() = true;
+    apply_and_report(current());
 }
 
 int32_t text_overlay_offset_at_x(float x) {
@@ -577,7 +669,7 @@ void tick_text_overlay() {
     std::lock_guard<std::mutex> lock(state_mutex());
     if (!current().visible) return;
     caret_on() = !caret_on();
-    apply_locked(current());
+    apply_and_report(current());
 }
 
 }  // namespace stud::android_glue

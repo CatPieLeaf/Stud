@@ -18,6 +18,9 @@
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <xdg-activation-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
+#include <text-input-unstable-v3-client-protocol.h>
+
+#include "text_input.h"
 #include <libdecor.h>
 #include <xkbcommon/xkbcommon.h>
 #include "stud/key_compose.h"
@@ -1311,6 +1314,11 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
         state->seat =
             static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, bind_version));
         wl_seat_add_listener(state->seat, &kSeatListener, state);
+        stud::android_glue::text_input_attach_seat(state->seat);
+    } else if (std::string_view(interface) == zwp_text_input_manager_v3_interface.name) {
+        // Input methods; see text_input.h. Absent on a compositor without
+        // text-input-v3, and then typing works exactly as it did.
+        stud::android_glue::text_input_bind_manager(state->display, registry, name, version);
     } else if (std::string_view(interface) == zwp_idle_inhibit_manager_v1_interface.name) {
         state->idle_inhibit_manager = static_cast<zwp_idle_inhibit_manager_v1*>(
             wl_registry_bind(registry, name, &zwp_idle_inhibit_manager_v1_interface, 1));

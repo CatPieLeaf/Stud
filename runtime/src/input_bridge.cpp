@@ -1149,6 +1149,62 @@ void dispatch_gamepad_event(const stud::android_glue::HostInputEvent& ev, const 
 // engine discards key events while a box has focus, and a repeat is the
 // key still being down rather than a fresh press. All of that is exactly
 // as it was; only its surroundings changed.
+// The editor's contents, handed everywhere they are shown or read: the
+// engine (nativePassText), the overlay that draws the box, and AGDK's own
+// text-input callback, which needs no Java EditText and no IME (see
+// resolve_agdk()). Typed keys and input-method text both end here.
+void publish_text_edit(const InputFns& fns, long text_box) {
+    auto& ed = editor();
+    const std::string text = ed.text();
+    NativeGLJavaInterfaceJava::set_active_text_box_text(text);
+    deliver_text(fns, text, text_box, /*done=*/false);
+    push_text_overlay(true, text, ed.caret(), ed.selection_begin(), ed.selection_end());
+    if (g_agdk_env != nullptr) send_agdk_text(*g_agdk_env, g_agdk_activity_ref, text);
+}
+
+// Text from an input method (android-glue/src/text_input.h): a commit, or
+// a request to delete around the caret before one. It edits the focused
+// TextBox exactly as typing does; with no TextBox focused there is nothing
+// for it to go into, and the input method is not engaged then anyway.
+void dispatch_text_input_event(const stud::android_glue::HostInputEvent& ev,
+                               const InputFns& fns) {
+    using Ev = stud::android_glue::HostInputEvent;
+    const long text_box = NativeGLJavaInterfaceJava::active_text_box();
+    if (text_box == 0 || fns.pass_text == nullptr) return;
+    auto& ed = editor();
+    if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
+        ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
+    }
+    bool changed = false;
+    if (ev.type == Ev::kTextCommit) {
+        const size_t n = ::strnlen(ev.composed_utf8, sizeof(ev.composed_utf8));
+        const std::string text(ev.composed_utf8, n);
+        // One line, as with a paste: a newline would smuggle a control
+        // character into a single-line box.
+        if (text.find_first_of("\r\n") == std::string::npos) changed = ed.insert(text);
+    } else {
+        // Byte counts, in the protocol's own UTF-8 units; the editor
+        // removes whole characters, so it stops at the first one that
+        // would take it past the count.
+        const auto before = static_cast<size_t>(ev.a);
+        const auto after = static_cast<size_t>(ev.b);
+        const size_t start = ed.text().size();
+        while (start - ed.text().size() < before && ed.caret() > 0) {
+            const size_t was = ed.text().size();
+            if (!ed.backspace() || ed.text().size() == was) break;
+            changed = true;
+        }
+        const size_t mid = ed.text().size();
+        while (mid - ed.text().size() < after &&
+               ed.caret() < static_cast<int>(ed.text().size())) {
+            const size_t was = ed.text().size();
+            if (!ed.del() || ed.text().size() == was) break;
+            changed = true;
+        }
+    }
+    if (changed) publish_text_edit(fns, text_box);
+}
+
 void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
                         JNIEnv* jni_env) {
             bool down = ev.a != 0.0f;
@@ -1397,15 +1453,7 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
                             std::fflush(stdout);
                         }
                     }
-                    NativeGLJavaInterfaceJava::set_active_text_box_text(text);
-                    deliver_text(fns, text, text_box, /*done=*/false);
-                    push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
-                                      ed.selection_end());
-                    // ...and through AGDK's own text-input callback, which
-                    // needs no Java EditText and no IME. See resolve_agdk().
-                    if (g_agdk_env != nullptr) {
-                        send_agdk_text(*g_agdk_env, g_agdk_activity_ref, text);
-                    }
+                    publish_text_edit(fns, text_box);
                 }
             }
 
@@ -2119,6 +2167,10 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         }
         case Ev::kKey:
             dispatch_key_event(ev, fns, jni_env);
+            return;
+        case Ev::kTextCommit:
+        case Ev::kTextDeleteSurrounding:
+            dispatch_text_input_event(ev, fns);
             return;
         case Ev::kPointerEnter:
         case Ev::kWindowRedrawNeeded: {

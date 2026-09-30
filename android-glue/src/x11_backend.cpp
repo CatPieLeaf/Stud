@@ -1,7 +1,10 @@
 #include "x11_backend.h"
 
 #include "stud/android_glue.h"
+#include "text_input.h"
 
+#include <atomic>
+#include <clocale>
 #include <set>
 #include <chrono>
 #include <string>
@@ -143,6 +146,20 @@ struct Xlib {
                                  Window*) = nullptr;
     int (*RaiseWindow)(Display*, Window) = nullptr;
     char* (*ResourceManagerString)(Display*) = nullptr;
+    // XIM, the X11 input-method protocol; see setup_input_method(). All
+    // optional: an Xlib without them means no input method, not no X11.
+    Bool (*SupportsLocale)() = nullptr;
+    char* (*SetLocaleModifiers)(const char*) = nullptr;
+    XIM (*OpenIM)(Display*, struct _XrmHashBucketRec*, char*, char*) = nullptr;
+    char* (*GetIMValues)(XIM, ...) = nullptr;
+    XIC (*CreateIC)(XIM, ...) = nullptr;
+    char* (*GetICValues)(XIC, ...) = nullptr;
+    char* (*SetICValues)(XIC, ...) = nullptr;
+    XVaNestedList (*VaCreateNestedList)(int, ...) = nullptr;
+    void (*SetICFocus)(XIC) = nullptr;
+    void (*UnsetICFocus)(XIC) = nullptr;
+    Bool (*FilterEvent)(XEvent*, Window) = nullptr;
+    int (*Utf8LookupString)(XIC, XKeyPressedEvent*, char*, int, KeySym*, Status*) = nullptr;
     int (*SetWindowBackgroundPixmap)(Display*, Window, Pixmap) = nullptr;
     int (*ChangeWindowAttributes)(Display*, Window, unsigned long,
                                   XSetWindowAttributes*) = nullptr;
@@ -277,6 +294,18 @@ bool load_xlib() {
 #define LOAD(field, name) \
     x.field = reinterpret_cast<decltype(x.field)>(sym(name))
     LOAD(InitThreads, "XInitThreads");
+    LOAD(SupportsLocale, "XSupportsLocale");
+    LOAD(SetLocaleModifiers, "XSetLocaleModifiers");
+    LOAD(OpenIM, "XOpenIM");
+    LOAD(GetIMValues, "XGetIMValues");
+    LOAD(CreateIC, "XCreateIC");
+    LOAD(GetICValues, "XGetICValues");
+    LOAD(SetICValues, "XSetICValues");
+    LOAD(VaCreateNestedList, "XVaCreateNestedList");
+    LOAD(SetICFocus, "XSetICFocus");
+    LOAD(UnsetICFocus, "XUnsetICFocus");
+    LOAD(FilterEvent, "XFilterEvent");
+    LOAD(Utf8LookupString, "Xutf8LookupString");
     LOAD(SetErrorHandler, "XSetErrorHandler");
     LOAD(SetIOErrorHandler, "XSetIOErrorHandler");
     LOAD(GetErrorText, "XGetErrorText");
@@ -459,6 +488,106 @@ namespace {
 void load_server_keymap();
 }  // namespace
 
+namespace {
+
+// The X11 half of text_input.h: XIM.
+//
+// An input context is created once, for the main window, but only FOCUSED
+// while a TextBox is (see set_input_method_target()): an unfocused context
+// gets no keys, so an input method left in a composing mode cannot eat the
+// keys a game is played with. While it is focused, XFilterEvent() hands
+// every key to the input method first, and what it commits comes back as a
+// KeyPress with keycode 0 that Xutf8LookupString() turns into the text.
+XIM g_im = nullptr;
+XIC g_ic = nullptr;
+bool g_ic_spot = false;  // over-the-spot: the IM draws at a point Stud gives it
+bool g_ic_focused = false;
+std::atomic<bool> g_ime_want{false};
+std::atomic<int> g_ime_x{0};
+std::atomic<int> g_ime_y{0};
+std::atomic<bool> g_ime_dirty{false};
+
+void setup_input_method(long event_mask) {
+    Xlib& x = xlib();
+    if (x.OpenIM == nullptr || x.CreateIC == nullptr || x.FilterEvent == nullptr ||
+        x.Utf8LookupString == nullptr || x.SetICFocus == nullptr || x.UnsetICFocus == nullptr) {
+        return;
+    }
+    // XIM speaks the locale's encoding and finds the input method through
+    // XMODIFIERS (@im=fcitx, @im=ibus), both of which need the character
+    // type category of the user's locale. Only that category: numbers and
+    // everything else this process prints stay as they were.
+    std::setlocale(LC_CTYPE, "");
+    if (x.SupportsLocale != nullptr && !x.SupportsLocale()) std::setlocale(LC_CTYPE, "C.UTF-8");
+    if (x.SetLocaleModifiers != nullptr) x.SetLocaleModifiers("");
+    g_im = x.OpenIM(g_display, nullptr, nullptr, nullptr);
+    if (g_im == nullptr) {
+        const char* modifiers = std::getenv("XMODIFIERS");
+        std::printf("stud: android-glue: no X input method running (XMODIFIERS=%s)\n",
+                    modifiers != nullptr ? modifiers : "");
+        std::fflush(stdout);
+        return;
+    }
+    // Over-the-spot when the input method offers it, so its preedit and
+    // candidates appear at the caret; otherwise root-window style, where it
+    // draws in a window of its own.
+    XIMStyles* styles = nullptr;
+    if (x.GetIMValues != nullptr &&
+        x.GetIMValues(g_im, XNQueryInputStyle, &styles, nullptr) == nullptr && styles != nullptr) {
+        for (unsigned short i = 0; i < styles->count_styles; ++i) {
+            if (styles->supported_styles[i] == (XIMPreeditPosition | XIMStatusNothing)) {
+                g_ic_spot = true;
+            }
+        }
+        if (x.Free != nullptr) x.Free(styles);
+    }
+    if (g_ic_spot) {
+        g_ic = x.CreateIC(g_im, XNInputStyle, XIMPreeditPosition | XIMStatusNothing,
+                          XNClientWindow, g_window, XNFocusWindow, g_window, nullptr);
+    }
+    if (g_ic == nullptr) {
+        g_ic_spot = false;
+        g_ic = x.CreateIC(g_im, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
+                          XNClientWindow, g_window, XNFocusWindow, g_window, nullptr);
+    }
+    if (g_ic == nullptr) return;
+    x.UnsetICFocus(g_ic);
+    // Some input methods need events of their own on the client window.
+    long filter_mask = 0;
+    if (x.GetICValues != nullptr &&
+        x.GetICValues(g_ic, XNFilterEvents, &filter_mask, nullptr) == nullptr &&
+        (filter_mask & ~event_mask) != 0) {
+        x.SelectInput(g_display, g_window, event_mask | filter_mask);
+    }
+    std::printf("stud: android-glue: X input method ready (%s)\n",
+                g_ic_spot ? "at the caret" : "in its own window");
+    std::fflush(stdout);
+}
+
+// On the event thread, which owns the input context.
+void apply_input_method_target() {
+    if (g_ic == nullptr || !g_ime_dirty.exchange(false)) return;
+    Xlib& x = xlib();
+    const bool want = g_ime_want.load();
+    if (want && g_ic_spot && x.SetICValues != nullptr && x.VaCreateNestedList != nullptr) {
+        XPoint spot{static_cast<short>(g_ime_x.load()), static_cast<short>(g_ime_y.load())};
+        XVaNestedList attrs = x.VaCreateNestedList(0, XNSpotLocation, &spot, nullptr);
+        if (attrs != nullptr) {
+            x.SetICValues(g_ic, XNPreeditAttributes, attrs, nullptr);
+            if (x.Free != nullptr) x.Free(attrs);
+        }
+    }
+    if (want && !g_ic_focused) {
+        x.SetICFocus(g_ic);
+        g_ic_focused = true;
+    } else if (!want && g_ic_focused) {
+        x.UnsetICFocus(g_ic);
+        g_ic_focused = false;
+    }
+}
+
+}  // namespace
+
 bool create_window(int32_t width, int32_t height) {
     if (!available()) return false;
     if (g_window != 0) return true;
@@ -478,10 +607,12 @@ bool create_window(int32_t width, int32_t height) {
     // StructureNotify carries ConfigureNotify (resizes) and the
     // map/unmap pair; the rest is real input, which this backend now
     // delivers into the same queue the Wayland listeners feed.
-    x.SelectInput(g_display, g_window,
-                  StructureNotifyMask | VisibilityChangeMask | FocusChangeMask |
-                      KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
-                      PointerMotionMask | EnterWindowMask | LeaveWindowMask);
+    constexpr long kEventMask = StructureNotifyMask | VisibilityChangeMask | FocusChangeMask |
+                                KeyPressMask | KeyReleaseMask | ButtonPressMask |
+                                ButtonReleaseMask | PointerMotionMask | EnterWindowMask |
+                                LeaveWindowMask;
+    x.SelectInput(g_display, g_window, kEventMask);
+    setup_input_method(kEventMask);
 
     // Device-level motion, so a camera spin is not stopped by the window
     // edge. Optional: without it the core motion above is all there is.
@@ -1187,14 +1318,32 @@ void on_key(unsigned int keycode, unsigned int state, bool pressed) {
 
 }  // namespace
 
+void set_input_method_target(bool active, bool sensitive, int x, int y, int height) {
+    // A password box keeps the input method out, as the Wayland side asks
+    // with its content type; XIM has no such request, so it is simply not
+    // engaged there.
+    const bool want = active && !sensitive;
+    g_ime_x.store(x);
+    // The spot is the baseline point the preedit is drawn from.
+    g_ime_y.store(y + height);
+    if (g_ime_want.exchange(want) != want || want) g_ime_dirty.store(true);
+}
+
 void pump() {
     if (g_display == nullptr || g_window == 0) return;
     Xlib& x = xlib();
     // Only what has already arrived: XNextEvent blocks, and this is
     // called from the same loop that services the render socket.
+    apply_input_method_target();
     while (x.Pending(g_display) > 0) {
         XEvent event{};
         x.NextEvent(g_display, &event);
+        // The input method sees every event first while it is engaged,
+        // and one it consumes is not Stud's to act on.
+        if (g_ic != nullptr && event.type != GenericEvent &&
+            x.FilterEvent(&event, None) == True) {
+            continue;
+        }
         if (g_raw_motion && event.type == GenericEvent &&
             event.xcookie.extension == g_xi_opcode && x.GetEventData != nullptr &&
             x.GetEventData(g_display, &event.xcookie) == True) {
@@ -1269,6 +1418,30 @@ void pump() {
                 on_button(event.xbutton.button, false, event.xbutton.x, event.xbutton.y);
                 break;
             case KeyPress:
+                // Keycode 0 is no key at all: it is how XIM delivers what the
+                // input method committed.
+                if (event.xkey.keycode == 0) {
+                    if (g_ic != nullptr && g_ic_focused) {
+                        char buf[256];
+                        KeySym keysym = 0;
+                        Status status = 0;
+                        const int n = x.Utf8LookupString(g_ic, &event.xkey, buf,
+                                                         static_cast<int>(sizeof(buf)), &keysym,
+                                                         &status);
+                        if ((status == XLookupChars || status == XLookupBoth) && n > 0) {
+                            stud::android_glue::text_input_push_commit(std::string(buf, n));
+                        } else if (status == XBufferOverflow && n > 0) {
+                            std::string big(static_cast<size_t>(n), '\0');
+                            const int m = x.Utf8LookupString(g_ic, &event.xkey, big.data(), n,
+                                                             &keysym, &status);
+                            if (m > 0) {
+                                big.resize(static_cast<size_t>(m));
+                                stud::android_glue::text_input_push_commit(big);
+                            }
+                        }
+                    }
+                    break;
+                }
                 on_key(event.xkey.keycode, event.xkey.state, true);
                 break;
             case KeyRelease:

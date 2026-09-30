@@ -158,6 +158,24 @@ add_custom_command(
     DEPENDS "${PointerConstraintsXml}"
 )
 
+# text-input-v3: how a Wayland client hears from the user's input method
+# (fcitx5, IBus, ...), which is what composes Chinese, Japanese or Korean
+# into a TextBox. Unstable in name only: GTK, Qt and every major
+# compositor implement it. See src/text_input.h.
+set(TextInputXml "${WaylandProtocolsDataDir}/unstable/text-input/text-input-unstable-v3.xml")
+set(TextInputHeader "${XdgShellGeneratedDir}/text-input-unstable-v3-client-protocol.h")
+set(TextInputSource "${XdgShellGeneratedDir}/text-input-unstable-v3-protocol.c")
+add_custom_command(
+    OUTPUT "${TextInputHeader}"
+    COMMAND "${WaylandScanner}" client-header "${TextInputXml}" "${TextInputHeader}"
+    DEPENDS "${TextInputXml}"
+)
+add_custom_command(
+    OUTPUT "${TextInputSource}"
+    COMMAND "${WaylandScanner}" private-code "${TextInputXml}" "${TextInputSource}"
+    DEPENDS "${TextInputXml}"
+)
+
 # The pointer-warp protocol: the only way a Wayland client can put the
 # pointer somewhere. The old trick, lock the pointer, set a cursor
 # position hint, unlock, and let the compositor apply the hint, drops
@@ -285,6 +303,7 @@ add_library(stud_android_glue STATIC
     src/native_window.cpp
     src/x11_backend.cpp
     src/text_overlay.cpp
+    src/text_input.cpp
     src/clipboard.cpp
     src/media_format.cpp
     src/android_glue.cpp
@@ -302,6 +321,8 @@ add_library(stud_android_glue STATIC
     "${ViewporterHeader}"
     "${PointerConstraintsSource}"
     "${PointerConstraintsHeader}"
+    "${TextInputSource}"
+    "${TextInputHeader}"
     "${PointerWarpSource}"
     "${PointerWarpHeader}"
     "${IdleInhibitSource}"

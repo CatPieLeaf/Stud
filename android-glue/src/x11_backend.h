@@ -38,6 +38,11 @@ unsigned long content_window();
 // Maps or unmaps content_window(); a no-op before it exists.
 void set_content_mapped(bool mapped);
 
+// Engages the input method (XIM) while a TextBox has focus, at the caret:
+// x and y are the top of the caret in window pixels, height the line's.
+// See text_input.h; this is its X11 half.
+void set_input_method_target(bool active, bool sensitive, int x, int y, int height);
+
 // Drains everything the server has sent: resizes update the size below,
 // and a WM close request sets close_requested(). Never blocks.
 void pump();

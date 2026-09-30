@@ -78,6 +78,13 @@ struct TextOverlaySpec {
 // spec repeatedly; only a real change redraws.
 void set_text_overlay(const TextOverlaySpec& spec);
 
+// Text an input method is still composing, drawn at the caret and
+// highlighted, but never part of `text`: it belongs to the input method
+// until it is committed. `cursor` is a byte offset into it, or -1 for the
+// end. An empty string ends the composition. See
+// android-glue/src/text_input.h.
+void set_text_overlay_preedit(const std::string& preedit, int32_t cursor);
+
 // Blink the caret. Called from whoever pumps Wayland; does nothing when
 // the overlay is hidden.
 void tick_text_overlay();

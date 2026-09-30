@@ -566,6 +566,15 @@ struct HostInputEvent {
         // round -- measured at up to 833ms, spread evenly across the
         // second it spends hidden at 1fps.
         kWindowRedrawNeeded = 16,
+        // Text an input method committed into the focused TextBox, UTF-8
+        // in composed_utf8. A commit longer than that field arrives as
+        // several of these in order, split between characters. See
+        // android-glue/src/text_input.h.
+        kTextCommit = 17,
+        // An input method asking for text around the caret to go first:
+        // `a` bytes before it and `b` bytes after, in the protocol's own
+        // UTF-8 units.
+        kTextDeleteSurrounding = 18,
     };
     uint32_t type = 0;
     uint32_t code = 0;
