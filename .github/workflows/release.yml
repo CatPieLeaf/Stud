@@ -31,10 +31,9 @@ concurrency:
 
 env:
   # The version the packages carry comes from the tag being released, so
-  # an rpm can never disagree with the release it is attached to. A
-  # leading "v" is stripped: rpm and AppStream both want a bare number.
-  # Empty on a manual run, which takes the version its tree declares
-  # instead (the "Version of a manual build" step in each job).
+  # an rpm can never disagree with the release it is attached to. Empty
+  # on a manual run; .github/actions/setup fills it in from the tree and
+  # derives VERSION, the same without a leading "v".
   TAG: ${{ github.event.release.tag_name }}
 
 jobs:
@@ -58,8 +57,7 @@ jobs:
     # job produces, so they cannot hold different binaries.
     #
     # The AppImage is the exception and builds its own, on the base its
-    # bundled glibc comes from, which is also why it keeps a separate
-    # ANGLE cache.
+    # bundled glibc comes from.
     name: Build and package
     permissions:
       contents: read
@@ -70,7 +68,7 @@ jobs:
         # Before checkout on purpose: the image has no git, and
         # actions/checkout and actions/cache both need it and tar.
         run: |
-          dnf install -y --setopt=install_weak_deps=False \
+          dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build \
             qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
             wayland-devel wayland-protocols-devel libxkbcommon-devel \
@@ -87,58 +85,8 @@ jobs:
           # that release names.
           ref: ${{ env.TAG || 'main' }}
 
-      - name: Version of a manual build
-        # No release, so no tag: the checkout above took main, and the
-        # version is the one its CMakeLists.txt declares.
-        if: env.TAG == ''
-        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
-
-      - name: Free up disk space
-        # Only matters on a cache miss, when ANGLE's own checkout needs
-        # about 15 GB. Harmless otherwise.
-        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
-
-      - name: Work out the dependency cache key
-        # Hashes what the dependencies are, not the script that fetches
-        # them; see tools/dependency-id.sh.
-        id: deps
-        run: |
-          echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-          echo "appimage=$(sh tools/dependency-id.sh appimage | sha256sum | cut -c1-16)" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Cache Android NDK
-        # One key for both jobs: the NDK is downloaded, not built, so the
-        # container that extracted it makes no difference; it compiles
-        # Process B with its own toolchain rather than the host's. Caching
-        # it per-container stored 2.2 GB twice against a 10 GB limit and
-        # made the AppImage job re-download what this one had just fetched.
-        uses: actions/cache@v6
-        with:
-          path: third_party/android-ndk-r28c
-          key: ndk-${{ steps.deps.outputs.id }}
-
-      - name: Cache ANGLE and bionic
-        # Per-container, unlike the NDK above: ANGLE is COMPILED here,
-        # against this container's glibc, so a Fedora build and an Ubuntu
-        # one are not interchangeable.
-        uses: actions/cache@v6
-        with:
-          path: |
-            third_party/angle
-            third_party/android-bionic
-          key: deps-${{ steps.deps.outputs.id }}
-
-      - name: Fetch dependencies
-        # A cold cache builds ANGLE from source: several GB of checkout and
-        # about an hour. Its sources are no use afterwards, only the two
-        # libraries it produced, which is all the cache keeps, so they go
-        # straight back to the disk the rest of the build needs.
-        run: |
-          df -h /__w | tail -1
-          tools/setup.sh
-          rm -rf third_party/angle-src third_party/depot_tools
-          df -h /__w | tail -1
+      - name: Version and dependencies
+        uses: ./.github/actions/setup
 
       - name: Build
         run: |
@@ -154,7 +102,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_BUILD_TESTS=OFF \
-            -DSTUD_VERSION="${TAG#v}"
+            -DSTUD_VERSION="${VERSION}"
           cmake --build build -j"$(nproc)"
 
       # One build, several wrappers. Building each format separately would
@@ -230,7 +178,7 @@ jobs:
           done
           # What the Flatpak manifest expects: the tree rooted at usr/,
           # compressed the way its `type: archive` source reads it.
-          tar -C install-tree -caf "stud-${TAG#v}-x86_64.tar.zst" usr
+          tar -C install-tree -caf "stud-${VERSION}-x86_64.tar.zst" usr
 
       - name: Validate install tree and rpm
         # Two different questions, and both have shipped broken before.
@@ -322,11 +270,10 @@ jobs:
         with:
           ref: ${{ env.TAG || 'main' }}
 
-      - name: Version of a manual build
-        # No release, so no tag: the checkout above took main, and the
-        # version is the one its CMakeLists.txt declares.
-        if: env.TAG == ''
-        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
+      - name: Version
+        uses: ./.github/actions/setup
+        with:
+          dependencies: "false"
 
       - uses: actions/download-artifact@v8
         with:
@@ -415,7 +362,7 @@ jobs:
           install -m755 /tmp/qtonly/webview/stud-webview /work/install-tree/usr/libexec/stud/stud-webview
           SCRIPT
           chmod +x /tmp/qtbuild.sh
-          podman run --rm -e STUD_VERSION="${TAG#v}" -v "$PWD":/work:z \
+          podman run --rm -e STUD_VERSION="${VERSION}" -v "$PWD":/work:z \
             -v /tmp/qtbuild.sh:/qtbuild.sh:z docker.io/library/archlinux:latest /qtbuild.sh
           file install-tree/usr/bin/stud install-tree/usr/libexec/stud/stud-webview
 
@@ -498,7 +445,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
         run: |
-          version="${TAG#v}"
+          version="${VERSION}"
           # Only this file is ever built, so anything added to the
           # from-source Containerfile instead reaches nobody.
           python3 tools/check-cpak-runtime.py
@@ -563,59 +510,14 @@ jobs:
           # that release names.
           ref: ${{ env.TAG || 'main' }}
 
-      - name: Version of a manual build
-        # No release, so no tag: the checkout above took main, and the
-        # version is the one its CMakeLists.txt declares.
-        if: env.TAG == ''
-        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
-
-      - name: Free up disk space
-        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
-
-      - name: Work out the dependency cache key
-        # Hashes what the dependencies are, not the script that fetches
-        # them; see tools/dependency-id.sh.
-        id: deps
-        run: |
-          echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-          echo "appimage=$(sh tools/dependency-id.sh appimage | sha256sum | cut -c1-16)" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Cache Android NDK
-        # The same key the packages job uses; see the comment there.
-        uses: actions/cache@v6
+      - name: Version and dependencies
+        uses: ./.github/actions/setup
         with:
-          path: third_party/android-ndk-r28c
-          key: ndk-${{ steps.deps.outputs.id }}
-
-      - name: Cache ANGLE and bionic
-        uses: actions/cache@v6
-        with:
-          path: |
-            third_party/angle
-            third_party/android-bionic
-          key: deps-${{ steps.deps.outputs.id }}
-
-      - name: Cache AppImage tools
-        uses: actions/cache@v6
-        with:
-          path: third_party/appimage-tools
-          key: appimage-tools-${{ steps.deps.outputs.appimage }}
-
-      - name: Fetch dependencies
-        # A cold cache builds ANGLE from source: several GB of checkout and
-        # about an hour. Its sources are no use afterwards, only the two
-        # libraries it produced, which is all the cache keeps, so they go
-        # straight back to the disk the rest of the build needs.
-        run: |
-          df -h /__w | tail -1
-          tools/setup.sh
-          rm -rf third_party/angle-src third_party/depot_tools
-          df -h /__w | tail -1
+          appimage-tools: "true"
 
       - name: Build the AppImage
         run: |
-          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${TAG#v}"
+          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION}"
           packaging/build-appimage.sh
 
       - name: Validate AppImage contents
@@ -695,42 +597,8 @@ jobs:
           # The tag being released, not whatever the default branch holds.
           ref: ${{ env.TAG || 'main' }}
 
-      - name: Version of a manual build
-        # No release, so no tag: the checkout above took main, and the
-        # version is the one its CMakeLists.txt declares.
-        if: env.TAG == ''
-        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
-
-      - name: Free up disk space
-        run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
-
-      - name: Work out the dependency cache key
-        id: deps
-        run: echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Android NDK
-        # The same key every other job uses: the NDK is a downloaded
-        # archive, so which container extracted it makes no difference.
-        uses: actions/cache@v6
-        with:
-          path: third_party/android-ndk-r28c
-          key: ndk-${{ steps.deps.outputs.id }}
-
-      - name: Cache ANGLE and bionic
-        # The same key every other job uses; see the packages job.
-        uses: actions/cache@v6
-        with:
-          path: |
-            third_party/angle
-            third_party/android-bionic
-          key: deps-${{ steps.deps.outputs.id }}
-
-      - name: Fetch dependencies
-        run: |
-          df -h /__w | tail -1
-          tools/setup.sh
-          rm -rf third_party/angle-src third_party/depot_tools
-          df -h /__w | tail -1
+      - name: Version and dependencies
+        uses: ./.github/actions/setup
 
       - name: Build
         # /usr for the same reason the packages job pins it: the install
@@ -742,7 +610,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_BUILD_TESTS=OFF \
-            -DSTUD_VERSION="${TAG#v}"
+            -DSTUD_VERSION="${VERSION}"
           cmake --build build -j"$(nproc)"
 
       - name: Check the Qt floor this build sets
@@ -806,11 +674,10 @@ jobs:
         with:
           ref: ${{ env.TAG || 'main' }}
 
-      - name: Version of a manual build
-        # No release, so no tag: the checkout above took main, and the
-        # version is the one its CMakeLists.txt declares.
-        if: env.TAG == ''
-        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
+      - name: Version
+        uses: ./.github/actions/setup
+        with:
+          dependencies: "false"
 
       - uses: actions/download-artifact@v8
         with:
@@ -897,7 +764,7 @@ jobs:
             --repo=flatpak-repo build-dir \
             packaging/flatpak/io.github.catpieleaf.Stud.yml
           flatpak build-bundle flatpak-repo \
-            "stud-${TAG#v}-x86_64.flatpak" io.github.catpieleaf.Stud
+            "stud-${VERSION}-x86_64.flatpak" io.github.catpieleaf.Stud
 
       - name: Validate Flatpak contents
         # Half of this one is compiled here and half is copied from the
