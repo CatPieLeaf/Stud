@@ -1220,6 +1220,17 @@ std::string fix_uint_index_arithmetic(const std::string& src) {
 //
 // bin/stud is two levels up from libexec/stud, and from lib/stud too,
 // which is where Arch puts it (namcap rejects libexec).
+// The directory this binary runs from; empty when it cannot be read.
+std::string own_exe_dir() {
+    char buf[4096];
+    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    const std::string exe(buf);
+    const auto slash = exe.find_last_of('/');
+    return slash == std::string::npos ? std::string() : exe.substr(0, slash);
+}
+
 std::vector<std::string> ui_helper_candidates(const std::string& own_dir) {
     std::vector<std::string> paths;
     if (!own_dir.empty()) {
@@ -1232,6 +1243,19 @@ std::vector<std::string> ui_helper_candidates(const std::string& own_dir) {
     return paths;
 }
 
+// Replaces this (forked) process with stud-ui run as `stud <mode> <argument>`,
+// trying each candidate in turn; exits 127 if none of them runs.
+[[noreturn]] void exec_ui_helper(const char* mode, const std::string& argument) {
+    for (const std::string& path : ui_helper_candidates(own_exe_dir())) {
+        if (path.find('/') == std::string::npos) {
+            ::execlp(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
+        } else {
+            ::execl(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
+        }
+    }
+    ::_exit(127);
+}
+
 void run_ui_helper_detached(const char* mode, const std::string& argument) {
     const pid_t pid = ::fork();
     if (pid != 0) {
@@ -1242,25 +1266,7 @@ void run_ui_helper_detached(const char* mode, const std::string& argument) {
     // process never has to reap it.
     if (::fork() != 0) ::_exit(0);
     ::setsid();
-    std::string own_dir;
-    {
-        char buf[4096];
-        const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = '\0';
-            const std::string exe(buf);
-            const auto slash = exe.find_last_of('/');
-            if (slash != std::string::npos) own_dir = exe.substr(0, slash);
-        }
-    }
-    for (const std::string& path : ui_helper_candidates(own_dir)) {
-        if (path.find('/') == std::string::npos) {
-            ::execlp(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
-        } else {
-            ::execl(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
-        }
-    }
-    ::_exit(127);
+    exec_ui_helper(mode, argument);
 }
 
 // One stud-ui helper at a time.
@@ -1297,25 +1303,7 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
             ::close(from_child[1]);
         }
         ::setsid();
-        std::string own_dir;
-        {
-            char buf[4096];
-            const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-            if (n > 0) {
-                buf[n] = '\0';
-                const std::string exe(buf);
-                const auto slash = exe.find_last_of('/');
-                if (slash != std::string::npos) own_dir = exe.substr(0, slash);
-            }
-        }
-        for (const std::string& path : ui_helper_candidates(own_dir)) {
-            if (path.find('/') == std::string::npos) {
-                ::execlp(path.c_str(), path.c_str(), mode, name.c_str(), nullptr);
-            } else {
-                ::execl(path.c_str(), path.c_str(), mode, name.c_str(), nullptr);
-            }
-        }
-        ::_exit(127);
+        exec_ui_helper(mode, name);
     }
     ::close(to_child[0]);
     if (capture != nullptr) ::close(from_child[1]);
@@ -1869,17 +1857,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 ::setsid();
                 // Next to this binary first, so a build tree runs its own
                 // viewer rather than one that happens to be installed.
-                std::string own_dir;
-                {
-                    char buf[4096];
-                    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-                    if (n > 0) {
-                        buf[n] = '\0';
-                        const std::string exe(buf);
-                        const auto slash = exe.find_last_of('/');
-                        if (slash != std::string::npos) own_dir = exe.substr(0, slash);
-                    }
-                }
+                const std::string own_dir = own_exe_dir();
                 if (!own_dir.empty()) {
                     // Build tree first, then an install tree, where the
                     // viewer is this binary's own neighbour.
