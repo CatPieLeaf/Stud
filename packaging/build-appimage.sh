@@ -558,9 +558,17 @@ restore_private
 
 say "packing the image"
 mkdir -p "$build_dir/packages"
-out="$build_dir/packages/Stud-$(uname -m).AppImage"
-rm -f "$out"
-ARCH="$(uname -m)" "$tools/appimagetool" "$appdir" "$out"
+packages="$(cd "$build_dir/packages" && pwd)"
+out="$packages/Stud-$(uname -m).AppImage"
+rm -f "$out" "$out.zsync"
+# Update information, so AppImageUpdate and other updaters can update Stud
+# in place from the newest GitHub release. appimagetool also writes the
+# matching .zsync when zsyncmake is installed (the build container has it),
+# and writes it into the directory it runs in, hence the cd.
+update_info="gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$(uname -m).AppImage.zsync"
+appimagetool="$(cd "$tools" && pwd)/appimagetool"
+appdir="$(cd "$appdir" && pwd)"
+(cd "$packages" && ARCH="$(uname -m)" "$appimagetool" -u "$update_info" "$appdir" "$out")
 
 say "written: $out"
 ls -la "$out" >&2

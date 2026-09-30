@@ -594,11 +594,19 @@ jobs:
           chmod +x "$appimage"
           ( cd /tmp && "$OLDPWD/$appimage" --appimage-extract >/dev/null )
           python3 tools/validate-payload.py /tmp/squashfs-root --label "AppImage"
+          # Update information, and the .zsync it points to. Read from the
+          # ELF section: with APPIMAGE_EXTRACT_AND_RUN set, the runtime
+          # launches Stud instead of answering --appimage-updateinformation.
+          readelf -p .upd_info "$appimage" | grep -q 'gh-releases-zsync|CatPieLeaf|Stud|latest|' ||
+            { echo "::error::the AppImage has no update information"; exit 1; }
+          [ -s "$appimage.zsync" ] || { echo "::error::no .zsync next to the AppImage"; exit 1; }
 
       - uses: actions/upload-artifact@v7
         with:
           name: appimage
-          path: build-appimage/packages/*.AppImage
+          path: |
+            build-appimage/packages/*.AppImage
+            build-appimage/packages/*.AppImage.zsync
           if-no-files-found: error
 
   deb:
@@ -872,10 +880,10 @@ jobs:
           mapfile -t packages < <(find artifacts -type f \
             \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' \
                -o -name '*.pkg.tar.zst' -o -name 'stud-*-x86_64.tar.zst' \
-               -o -name '*.flatpak' \))
+               -o -name '*.flatpak' -o -name '*.AppImage.zsync' \))
           # Every format is required. This is the last check that what
           # the release promises is actually attached to it.
-          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.flatpak$' '\.pkg\.tar\.zst$'; do
+          for required in '\.rpm$' '\.deb$' '\.AppImage$' '\.AppImage\.zsync$' '\.flatpak$' '\.pkg\.tar\.zst$'; do
             printf '%s\n' "${packages[@]}" | grep -qE "$required" ||
               { echo "no package matching $required" >&2; exit 1; }
           done
