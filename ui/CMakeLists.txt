@@ -63,15 +63,14 @@ target_include_directories(stud_ui_deep_link_handoff PUBLIC src
 # Qt window.
 add_library(stud_ui_gpu_enum STATIC
     src/gpu_enum.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
 )
 target_include_directories(stud_ui_gpu_enum PUBLIC src)
+target_include_directories(stud_ui_gpu_enum PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk")
+# Headers only: the loader is opened at run time through volk, so the
+# launcher starts on a machine with no Vulkan and Settings lists no GPUs
+# there instead of failing to start with "libvulkan.so.1: cannot open".
 target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers ${CMAKE_DL_LIBS})
-# Stud's OWN direct Vulkan usage (this process only enumerates GPUs for
-# the Settings UI: the render-host/process-b Vulkan proxy, Phase 4, is
-# a separate, IPC-based design, not an in-process dlopen interposition
-# like the old, now-deleted vulkan-wsi/ module), linking the real
-# loader directly is correct and intentional here.
-target_link_libraries(stud_ui_gpu_enum PRIVATE Vulkan::Vulkan)
 
 # Real QtKeychain-backed credential storage; its own small library,
 # same reasoning as stud_ui_gpu_enum (independently testable, see
