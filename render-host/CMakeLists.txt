@@ -179,6 +179,15 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/sgsr_gles_frag.h"
      "static const char kSgsrGlesFragment[] = R\"STUDSGSR(${StudSgsrGlesText})STUDSGSR\";\n")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SgsrGlesSrc}")
 
+# volk loads a window-system command only when it is built for that
+# platform: main.cpp creates the Wayland and X11 surfaces through it.
+#
+# Target-wide, not on volk.c alone. These defines add members to volk's
+# VolkDeviceTable and VolkInstanceTable, so a file that includes volk.h
+# without them lays those structs out differently from volk.c, and
+# volkLoadDeviceTable() writes a table bigger than the one it was handed.
+target_compile_definitions(stud-render-host PRIVATE VK_USE_PLATFORM_WAYLAND_KHR
+                                                    VK_USE_PLATFORM_XLIB_KHR)
 target_include_directories(stud-render-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # What miniaudio is allowed to be. These are set on the target rather than

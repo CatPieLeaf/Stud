@@ -51,12 +51,12 @@
 
 #include <wayland-client.h>
 
-#define VK_NO_PROTOTYPES
-#define VK_USE_PLATFORM_WAYLAND_KHR
-// The X11 window backend needs the Xlib WSI structs; Xlib itself is still
-// only ever reached through android-glue, which dlopens it.
-#define VK_USE_PLATFORM_XLIB_KHR
-#include <vulkan/vulkan.h>
+// Through volk, like vulkan_host.cpp: the two surface commands below are
+// its globals, loaded with the engine's instance. The Wayland and Xlib
+// platforms are defined for the whole target (render-host/CMakeLists.txt);
+// the X11 window backend needs the Xlib WSI structs, while Xlib itself is
+// still only ever reached through android-glue, which dlopens it.
+#include "volk.h"
 
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
@@ -731,16 +731,6 @@ struct RealWindow {
                         : reinterpret_cast<EGLNativeWindowType>(egl_window);
     }
 };
-
-// Real Vulkan loader, for the one narrow interposition this module
-// handles: redirecting Roblox's vkCreateAndroidSurfaceKHR (an
-// Android-only extension with no Linux equivalent) to the real
-// vkCreateWaylandSurfaceKHR, using the SAME Wayland display/surface
-// android-glue's native_window.cpp already owns here. See
-// render_host_protocol.h's own doc comment for why this is deliberately
-// not a full Vulkan struct marshaller.
-void* g_vulkan_handle = nullptr;
-PFN_vkGetInstanceProcAddr g_real_vk_get_instance_proc_addr = nullptr;
 
 // The one real window, captured once at startup. Anything needing it
 // reads this rather than re-deriving it, re-deriving is what created a
@@ -4739,8 +4729,16 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 1;
         }
 
+        // Roblox's vkCreateAndroidSurfaceKHR (an Android-only extension with
+        // no Linux equivalent), redirected to the real vkCreateWaylandSurfaceKHR
+        // on the SAME Wayland display/surface android-glue's native_window.cpp
+        // already owns here. See render_host_protocol.h's own doc comment for
+        // why this is deliberately not a full Vulkan struct marshaller.
+        //
+        // volk's globals were loaded with the engine's instance, the one
+        // this names: vulkan_host.cpp's own loader, not a second libvulkan
+        // opened here for this one call.
         case CallId::VkCreateWaylandSurfaceForAndroidSurface: {
-            if (g_real_vk_get_instance_proc_addr == nullptr) return kNullHandle;
             // X11 answers the same request with an Xlib surface.
             //
             // The call id still says Wayland because it is the engine's
@@ -4751,9 +4749,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // the NVIDIA driver at wl_proxy_create_wrapper, reached from
             // vkGetPhysicalDeviceSurfaceSupportKHR.
             if (window.on_x11()) {
-                auto create_xlib = reinterpret_cast<PFN_vkCreateXlibSurfaceKHR>(
-                    g_real_vk_get_instance_proc_addr(reinterpret_cast<VkInstance>(a[0]),
-                                                       "vkCreateXlibSurfaceKHR"));
+                const PFN_vkCreateXlibSurfaceKHR create_xlib = vkCreateXlibSurfaceKHR;
                 if (create_xlib == nullptr) {
                     std::fprintf(stderr,
                                   "stud-render-host: the Vulkan driver has no "
@@ -4784,9 +4780,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 }
                 return reinterpret_cast<uint64_t>(xsurface);
             }
-            auto create_wayland = reinterpret_cast<PFN_vkCreateWaylandSurfaceKHR>(
-                g_real_vk_get_instance_proc_addr(reinterpret_cast<VkInstance>(a[0]),
-                                                   "vkCreateWaylandSurfaceKHR"));
+            const PFN_vkCreateWaylandSurfaceKHR create_wayland = vkCreateWaylandSurfaceKHR;
             if (create_wayland == nullptr) return kNullHandle;
             VkWaylandSurfaceCreateInfoKHR info{};
             info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
@@ -5979,14 +5973,6 @@ int main(int argc, char** argv) {
     RESOLVE(glCompressedTexImage2D); RESOLVE(glCompressedTexSubImage2D); RESOLVE(glReadPixels);
 #undef RESOLVE
 
-    // Real Vulkan loader, for the vkCreateAndroidSurfaceKHR redirect,
-    // same real system libvulkan.so.1 (or ANGLE's own bundled one) any
-    // native Vulkan app on this host would load.
-    g_vulkan_handle = ::dlopen("libvulkan.so.1", RTLD_NOW);
-    if (g_vulkan_handle != nullptr) {
-        g_real_vk_get_instance_proc_addr =
-            reinterpret_cast<PFN_vkGetInstanceProcAddr>(::dlsym(g_vulkan_handle, "vkGetInstanceProcAddr"));
-    }
 
     std::string socket_path = stud::render_host::default_socket_path();
     std::string parent = socket_path.substr(0, socket_path.find_last_of('/'));

@@ -295,10 +295,6 @@ struct Loader {
     // built on still read the same way.
     VolkDeviceTable vk{};
     PFN_vkGetInstanceProcAddr get_instance_proc_addr = nullptr;
-    PFN_vkEnumerateInstanceVersion enumerate_instance_version = nullptr;
-    PFN_vkEnumerateInstanceExtensionProperties enumerate_instance_extension_properties = nullptr;
-    PFN_vkEnumerateInstanceLayerProperties enumerate_instance_layer_properties = nullptr;
-    PFN_vkCreateInstance create_instance = nullptr;
     bool tried = false;
 
     // The instance this process created on the engine's behalf, plus the
@@ -306,39 +302,20 @@ struct Loader {
     // one; keeping it here is what lets a later physical-device call
     // resolve its own entry points.
     VkInstance instance = VK_NULL_HANDLE;
-    PFN_vkEnumeratePhysicalDevices enumerate_physical_devices = nullptr;
-    PFN_vkGetPhysicalDeviceProperties get_physical_device_properties = nullptr;
     // Needed for the imported-host-pointer alignment, which is a
     // properties2 chain and has no 1.0 equivalent.
     PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties2 = nullptr;
-    PFN_vkGetPhysicalDeviceFeatures get_physical_device_features = nullptr;
-    PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties = nullptr;
-    PFN_vkGetPhysicalDeviceQueueFamilyProperties get_physical_device_queue_family_properties =
-        nullptr;
-    PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extension_properties = nullptr;
     PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2 = nullptr;
-    PFN_vkCreateDevice create_device = nullptr;
-    PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties = nullptr;
-    PFN_vkGetPhysicalDeviceImageFormatProperties get_physical_device_image_format_properties =
-        nullptr;
-    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR get_physical_device_surface_capabilities =
-        nullptr;
 
     // Device-level commands, resolved from the device itself once it
     // exists, the spec's own requirement, and what reaches the
     // driver's real implementations rather than loader trampolines.
     VkDevice device = VK_NULL_HANDLE;
-    PFN_vkGetDeviceProcAddr get_device_proc_addr = nullptr;
     // The rest of the destroy family. Without these the objects the
     // engine creates for every pipeline it builds were never freed,
     // measured at 2668 unimplemented destroy calls across a few
     // sessions, which is GPU memory that grows with every join.
-    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR get_surface_formats = nullptr;
-    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR get_surface_present_modes = nullptr;
-    PFN_vkGetPhysicalDeviceSurfaceSupportKHR get_surface_support = nullptr;
     PFN_vkGetPhysicalDeviceImageFormatProperties2 get_image_format_properties2 = nullptr;
-    PFN_vkDestroySurfaceKHR destroy_surface = nullptr;
-    PFN_vkDestroyInstance destroy_instance = nullptr;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     VkCommandPool probe_pool = VK_NULL_HANDLE;
     VkQueue probe_queue = VK_NULL_HANDLE;
@@ -488,22 +465,10 @@ Loader& loader() {
         if (l.get_instance_proc_addr == nullptr) return l;
         // volk uses the loader this process already opened rather than
         // dlopen'ing its own, so there is exactly one libvulkan in play.
+        //
+        // This also resolves the global commands (vkCreateInstance and the
+        // vkEnumerateInstance* family); nothing below looks one up by name.
         volkInitializeCustom(l.get_instance_proc_addr);
-        // Captures the function pointer, not the static itself: capturing a
-        // variable with static storage is deprecated in C++20.
-        auto global = [get = l.get_instance_proc_addr](const char* n) {
-            return get(VK_NULL_HANDLE, n);
-        };
-        l.enumerate_instance_version =
-            reinterpret_cast<PFN_vkEnumerateInstanceVersion>(global("vkEnumerateInstanceVersion"));
-        l.enumerate_instance_extension_properties =
-            reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
-                global("vkEnumerateInstanceExtensionProperties"));
-        l.enumerate_instance_layer_properties =
-            reinterpret_cast<PFN_vkEnumerateInstanceLayerProperties>(
-                global("vkEnumerateInstanceLayerProperties"));
-        l.create_instance =
-            reinterpret_cast<PFN_vkCreateInstance>(global("vkCreateInstance"));
         std::printf("stud-render-host: real Vulkan loader ready\n");
         std::fflush(stdout);
     }
@@ -519,8 +484,8 @@ uint64_t vk_enumerate_instance_version(std::vector<uint8_t>& out, uint32_t* out_
     // answer is the 1.0 version number.
     uint32_t version = VK_API_VERSION_1_0;
     VkResult r = VK_SUCCESS;
-    if (l.enumerate_instance_version != nullptr) {
-        r = l.enumerate_instance_version(&version);
+    if (vkEnumerateInstanceVersion != nullptr) {
+        r = vkEnumerateInstanceVersion(&version);
     } else if (l.get_instance_proc_addr == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
@@ -535,7 +500,7 @@ uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& 
                                                      std::vector<uint8_t>& out,
                                                      uint32_t* out_len) {
     Loader& l = loader();
-    if (l.enumerate_instance_extension_properties == nullptr) {
+    if (vkEnumerateInstanceExtensionProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     std::string layer;
@@ -546,7 +511,7 @@ uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& 
     // report it even when the caller's array is too small; that is what
     // the real two-call idiom needs in order to work.
     uint32_t count = 0;
-    VkResult r = l.enumerate_instance_extension_properties(layer_ptr, &count, nullptr);
+    VkResult r = vkEnumerateInstanceExtensionProperties(layer_ptr, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -556,7 +521,7 @@ uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& 
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         props.resize(returned);
-        r = l.enumerate_instance_extension_properties(layer_ptr, &returned, props.data());
+        r = vkEnumerateInstanceExtensionProperties(layer_ptr, &returned, props.data());
     }
 
     const uint32_t reported = capacity > 0 ? returned : count;
@@ -575,11 +540,11 @@ uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& 
 uint64_t vk_enumerate_instance_layer_properties(uint32_t capacity, std::vector<uint8_t>& out,
                                                  uint32_t* out_len) {
     Loader& l = loader();
-    if (l.enumerate_instance_layer_properties == nullptr) {
+    if (vkEnumerateInstanceLayerProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     uint32_t count = 0;
-    VkResult r = l.enumerate_instance_layer_properties(&count, nullptr);
+    VkResult r = vkEnumerateInstanceLayerProperties(&count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -589,7 +554,7 @@ uint64_t vk_enumerate_instance_layer_properties(uint32_t capacity, std::vector<u
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         props.resize(returned);
-        r = l.enumerate_instance_layer_properties(&returned, props.data());
+        r = vkEnumerateInstanceLayerProperties(&returned, props.data());
     }
 
     const uint32_t reported = capacity > 0 ? returned : count;
@@ -614,11 +579,11 @@ uint64_t vk_enumerate_instance_layer_properties(uint32_t capacity, std::vector<u
 // loader and its layers, not of any object.
 bool instance_supports_extension(const char* name) {
     Loader& l = loader();
-    if (l.enumerate_instance_extension_properties == nullptr) return false;
+    if (vkEnumerateInstanceExtensionProperties == nullptr) return false;
     uint32_t n = 0;
-    l.enumerate_instance_extension_properties(nullptr, &n, nullptr);
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
     std::vector<VkExtensionProperties> props(n);
-    if (n > 0) l.enumerate_instance_extension_properties(nullptr, &n, props.data());
+    if (n > 0) vkEnumerateInstanceExtensionProperties(nullptr, &n, props.data());
     for (const auto& p : props) {
         if (std::strcmp(p.extensionName, name) == 0) return true;
     }
@@ -638,7 +603,7 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INCOMPATIBLE_DRIVER));
     }
     Loader& l = loader();
-    if (l.create_instance == nullptr) {
+    if (vkCreateInstance == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     if (in.size() < sizeof(vk_wire::CreateInstanceHeader)) {
@@ -841,7 +806,7 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     }
 
     VkInstance instance = VK_NULL_HANDLE;
-    VkResult r = l.create_instance(&ci, nullptr, &instance);
+    VkResult r = vkCreateInstance(&ci, nullptr, &instance);
     std::printf("stud-render-host: vkCreateInstance -> %d (layers=%zu extensions=%zu)\n",
                 static_cast<int>(r), layer_ptrs.size(), ext_ptrs.size());
     std::fflush(stdout);
@@ -867,63 +832,20 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     live_layers.clear();
     for (const std::string& e : extensions) live_extensions.insert(e);
     for (const std::string& s : layers) live_layers.insert(s);
-    auto inst = [&l](const char* n) { return l.get_instance_proc_addr(l.instance, n); };
-    l.enumerate_physical_devices =
-        reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(inst("vkEnumeratePhysicalDevices"));
-    l.get_physical_device_properties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
-        inst("vkGetPhysicalDeviceProperties"));
-    l.get_physical_device_properties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
-        inst("vkGetPhysicalDeviceProperties2"));
-    if (l.get_physical_device_properties2 == nullptr) {
-        l.get_physical_device_properties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
-            inst("vkGetPhysicalDeviceProperties2KHR"));
-    }
-    l.get_physical_device_features =
-        reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(inst("vkGetPhysicalDeviceFeatures"));
-    l.get_physical_device_memory_properties =
-        reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
-            inst("vkGetPhysicalDeviceMemoryProperties"));
-    l.get_physical_device_queue_family_properties =
-        reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
-            inst("vkGetPhysicalDeviceQueueFamilyProperties"));
-    l.enumerate_device_extension_properties =
-        reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-            inst("vkEnumerateDeviceExtensionProperties"));
-    // The engine asks for the KHR alias; either spelling resolves to the
-    // same implementation, so accept whichever the driver exposes.
-    l.get_physical_device_features2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
-        inst("vkGetPhysicalDeviceFeatures2"));
-    if (l.get_physical_device_features2 == nullptr) {
-        l.get_physical_device_features2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(
-            inst("vkGetPhysicalDeviceFeatures2KHR"));
-    }
-    l.create_device = reinterpret_cast<PFN_vkCreateDevice>(inst("vkCreateDevice"));
-    l.get_physical_device_format_properties =
-        reinterpret_cast<PFN_vkGetPhysicalDeviceFormatProperties>(
-            inst("vkGetPhysicalDeviceFormatProperties"));
-    l.get_physical_device_image_format_properties =
-        reinterpret_cast<PFN_vkGetPhysicalDeviceImageFormatProperties>(
-            inst("vkGetPhysicalDeviceImageFormatProperties"));
-    l.get_physical_device_surface_capabilities =
-        reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
-            inst("vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));
-    l.get_device_proc_addr =
-        reinterpret_cast<PFN_vkGetDeviceProcAddr>(inst("vkGetDeviceProcAddr"));
-    l.destroy_surface = reinterpret_cast<PFN_vkDestroySurfaceKHR>(inst("vkDestroySurfaceKHR"));
-    l.destroy_instance = reinterpret_cast<PFN_vkDestroyInstance>(inst("vkDestroyInstance"));
-    l.get_surface_formats = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
-        inst("vkGetPhysicalDeviceSurfaceFormatsKHR"));
-    l.get_surface_present_modes = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
-        inst("vkGetPhysicalDeviceSurfacePresentModesKHR"));
-    l.get_surface_support = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
-        inst("vkGetPhysicalDeviceSurfaceSupportKHR"));
-    l.get_image_format_properties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceImageFormatProperties2>(
-        inst("vkGetPhysicalDeviceImageFormatProperties2"));
-    if (l.get_image_format_properties2 == nullptr) {
-        l.get_image_format_properties2 =
-            reinterpret_cast<PFN_vkGetPhysicalDeviceImageFormatProperties2>(
-                inst("vkGetPhysicalDeviceImageFormatProperties2KHR"));
-    }
+    // Every instance-level command is volk's own global, loaded by
+    // volkLoadInstanceOnly() above; a misspelt name does not compile. Only
+    // the commands promoted to core with a KHR name before that are kept
+    // here, because the engine may run on a driver that has only one of
+    // the two spellings, and either is the same implementation.
+    l.get_physical_device_properties2 = vkGetPhysicalDeviceProperties2 != nullptr
+                                            ? vkGetPhysicalDeviceProperties2
+                                            : vkGetPhysicalDeviceProperties2KHR;
+    l.get_physical_device_features2 = vkGetPhysicalDeviceFeatures2 != nullptr
+                                          ? vkGetPhysicalDeviceFeatures2
+                                          : vkGetPhysicalDeviceFeatures2KHR;
+    l.get_image_format_properties2 = vkGetPhysicalDeviceImageFormatProperties2 != nullptr
+                                         ? vkGetPhysicalDeviceImageFormatProperties2
+                                         : vkGetPhysicalDeviceImageFormatProperties2KHR;
 
     uint64_t handle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(instance));
     out.resize(sizeof(handle));
@@ -952,11 +874,11 @@ uint64_t write_pod(const T& value, std::vector<uint8_t>& out, uint32_t* out_len)
 uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& out,
                                         uint32_t* out_len) {
     Loader& l = loader();
-    if (l.enumerate_physical_devices == nullptr || l.instance == VK_NULL_HANDLE) {
+    if (vkEnumeratePhysicalDevices == nullptr || l.instance == VK_NULL_HANDLE) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     uint32_t count = 0;
-    VkResult r = l.enumerate_physical_devices(l.instance, &count, nullptr);
+    VkResult r = vkEnumeratePhysicalDevices(l.instance, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -968,7 +890,7 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
     if (count > 0) {
         all.resize(count);
         uint32_t got = count;
-        r = l.enumerate_physical_devices(l.instance, &got, all.data());
+        r = vkEnumeratePhysicalDevices(l.instance, &got, all.data());
         if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
             return static_cast<uint64_t>(static_cast<int32_t>(r));
         }
@@ -1056,7 +978,7 @@ std::string vk_device_select_token_for_index(uint32_t index) {
     // the real loader what is at the position the user chose, the same
     // enumeration order the settings window listed, and translate.
     Loader& l = loader();
-    if (l.create_instance == nullptr) return {};
+    if (vkCreateInstance == nullptr) return {};
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.apiVersion = VK_API_VERSION_1_0;
@@ -1064,11 +986,15 @@ std::string vk_device_select_token_for_index(uint32_t index) {
     ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo = &app;
     VkInstance instance = VK_NULL_HANDLE;
-    if (l.create_instance(&ci, nullptr, &instance) != VK_SUCCESS) return {};
-    auto inst = [&l, instance](const char* n) { return l.get_instance_proc_addr(instance, n); };
-    auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(inst("vkEnumeratePhysicalDevices"));
-    auto get_props = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(inst("vkGetPhysicalDeviceProperties"));
-    auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(inst("vkDestroyInstance"));
+    if (vkCreateInstance(&ci, nullptr, &instance) != VK_SUCCESS) return {};
+    // A table of its own: volk's globals belong to the engine's instance,
+    // and loading them from this throwaway one would point every later
+    // instance-level call at an instance destroyed a few lines down.
+    VolkInstanceTable table{};
+    volkLoadInstanceTable(&table, instance);
+    const auto enumerate = table.vkEnumeratePhysicalDevices;
+    const auto get_props = table.vkGetPhysicalDeviceProperties;
+    const auto destroy = table.vkDestroyInstance;
     std::string token;
     if (enumerate != nullptr && get_props != nullptr) {
         uint32_t count = 0;
@@ -1092,11 +1018,11 @@ std::string vk_device_select_token_for_index(uint32_t index) {
 uint64_t vk_get_physical_device_properties(uint64_t device, std::vector<uint8_t>& out,
                                             uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_properties == nullptr) {
+    if (vkGetPhysicalDeviceProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDeviceProperties props{};
-    l.get_physical_device_properties(
+    vkGetPhysicalDeviceProperties(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &props);
     // Same: one line naming the device Stud renders on.
     static bool announced_device_name = false;
@@ -1113,11 +1039,11 @@ uint64_t vk_get_physical_device_properties(uint64_t device, std::vector<uint8_t>
 uint64_t vk_get_physical_device_features(uint64_t device, std::vector<uint8_t>& out,
                                           uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_features == nullptr) {
+    if (vkGetPhysicalDeviceFeatures == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDeviceFeatures features{};
-    l.get_physical_device_features(
+    vkGetPhysicalDeviceFeatures(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &features);
     return write_pod(features, out, out_len);
 }
@@ -1125,11 +1051,11 @@ uint64_t vk_get_physical_device_features(uint64_t device, std::vector<uint8_t>& 
 uint64_t vk_get_physical_device_memory_properties(uint64_t device, std::vector<uint8_t>& out,
                                                    uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_memory_properties == nullptr) {
+    if (vkGetPhysicalDeviceMemoryProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDeviceMemoryProperties mem{};
-    l.get_physical_device_memory_properties(
+    vkGetPhysicalDeviceMemoryProperties(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &mem);
 
     // Cap each heap at just under 4GiB, because the engine truncates
@@ -1187,19 +1113,19 @@ uint64_t vk_get_physical_device_queue_family_properties(uint64_t device, uint32_
                                                          std::vector<uint8_t>& out,
                                                          uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_queue_family_properties == nullptr) {
+    if (vkGetPhysicalDeviceQueueFamilyProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDevice pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
     uint32_t count = 0;
-    l.get_physical_device_queue_family_properties(pd, &count, nullptr);
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &count, nullptr);
 
     std::vector<VkQueueFamilyProperties> props;
     uint32_t returned = 0;
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         props.resize(returned);
-        l.get_physical_device_queue_family_properties(pd, &returned, props.data());
+        vkGetPhysicalDeviceQueueFamilyProperties(pd, &returned, props.data());
     }
 
     const uint32_t reported = capacity > 0 ? returned : count;
@@ -1218,7 +1144,7 @@ uint64_t vk_enumerate_device_extension_properties(uint64_t device, const std::ve
                                                    uint32_t capacity, std::vector<uint8_t>& out,
                                                    uint32_t* out_len) {
     Loader& l = loader();
-    if (l.enumerate_device_extension_properties == nullptr) {
+    if (vkEnumerateDeviceExtensionProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDevice pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
@@ -1227,7 +1153,7 @@ uint64_t vk_enumerate_device_extension_properties(uint64_t device, const std::ve
     const char* layer_ptr = layer.empty() ? nullptr : layer.c_str();
 
     uint32_t count = 0;
-    VkResult r = l.enumerate_device_extension_properties(pd, layer_ptr, &count, nullptr);
+    VkResult r = vkEnumerateDeviceExtensionProperties(pd, layer_ptr, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -1237,7 +1163,7 @@ uint64_t vk_enumerate_device_extension_properties(uint64_t device, const std::ve
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         props.resize(returned);
-        r = l.enumerate_device_extension_properties(pd, layer_ptr, &returned, props.data());
+        r = vkEnumerateDeviceExtensionProperties(pd, layer_ptr, &returned, props.data());
     }
 
     const uint32_t reported = capacity > 0 ? returned : count;
@@ -1345,14 +1271,14 @@ uint64_t vk_get_physical_device_features2(uint64_t device, const std::vector<uin
 // alone rather than failing device creation.
 bool device_supports_extension(const char* name) {
     Loader& l = loader();
-    if (l.physical_device == VK_NULL_HANDLE || l.enumerate_device_extension_properties == nullptr) {
+    if (l.physical_device == VK_NULL_HANDLE || vkEnumerateDeviceExtensionProperties == nullptr) {
         return false;
     }
     uint32_t n = 0;
-    l.enumerate_device_extension_properties(l.physical_device, nullptr, &n, nullptr);
+    vkEnumerateDeviceExtensionProperties(l.physical_device, nullptr, &n, nullptr);
     std::vector<VkExtensionProperties> props(n);
     if (n > 0) {
-        l.enumerate_device_extension_properties(l.physical_device, nullptr, &n, props.data());
+        vkEnumerateDeviceExtensionProperties(l.physical_device, nullptr, &n, props.data());
     }
     for (const auto& p : props) {
         if (std::strcmp(p.extensionName, name) == 0) return true;
@@ -1367,7 +1293,7 @@ void flush_retired_chains(const char* why);
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.create_device == nullptr) {
+    if (vkCreateDevice == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     if (in.size() < sizeof(vk_wire::CreateDeviceHeader)) {
@@ -1652,7 +1578,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 
     VkDevice device = VK_NULL_HANDLE;
     // l.physical_device was set above, before the support checks.
-    VkResult r = l.create_device(l.physical_device, &ci, nullptr, &device);
+    VkResult r = vkCreateDevice(l.physical_device, &ci, nullptr, &device);
     std::printf("stud-render-host: vkCreateDevice -> %d (queues=%zu extensions=%zu chain=%u)\n",
                 static_cast<int>(r), queues.size(), ext_ptrs.size(), hdr.chain_node_count);
     std::fflush(stdout);
@@ -1780,7 +1706,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     }
 
     l.device = device;
-    if (l.get_device_proc_addr != nullptr) {
+    if (vkGetDeviceProcAddr != nullptr) {
         // volk resolves the whole device table in one call. It uses the
         // loader this process already dlopen'd, handed over by
         // volkInitializeCustom() at instance creation.
@@ -1813,23 +1739,14 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
             std::fflush(stdout);
         }
 
-        auto dev = [&l](const char* n) { return l.get_device_proc_addr(l.device, n); };
-        l.create_descriptor_update_template =
-            reinterpret_cast<PFN_vkCreateDescriptorUpdateTemplate>(
-                dev("vkCreateDescriptorUpdateTemplate"));
-        if (l.create_descriptor_update_template == nullptr) {
-            l.create_descriptor_update_template =
-                reinterpret_cast<PFN_vkCreateDescriptorUpdateTemplate>(
-                    dev("vkCreateDescriptorUpdateTemplateKHR"));
-        }
-        l.update_descriptor_set_with_template =
-            reinterpret_cast<PFN_vkUpdateDescriptorSetWithTemplate>(
-                dev("vkUpdateDescriptorSetWithTemplate"));
-        if (l.update_descriptor_set_with_template == nullptr) {
-            l.update_descriptor_set_with_template =
-                reinterpret_cast<PFN_vkUpdateDescriptorSetWithTemplate>(
-                    dev("vkUpdateDescriptorSetWithTemplateKHR"));
-        }
+        // Core in 1.1, a KHR extension before it: whichever spelling the
+        // driver has, from the device table volk already loaded.
+        l.create_descriptor_update_template = l.vk.vkCreateDescriptorUpdateTemplate != nullptr
+                                                  ? l.vk.vkCreateDescriptorUpdateTemplate
+                                                  : l.vk.vkCreateDescriptorUpdateTemplateKHR;
+        l.update_descriptor_set_with_template = l.vk.vkUpdateDescriptorSetWithTemplate != nullptr
+                                                    ? l.vk.vkUpdateDescriptorSetWithTemplate
+                                                    : l.vk.vkUpdateDescriptorSetWithTemplateKHR;
         // Said at startup, because the answer decides what a later "no
         // checkpoints" line MEANS: with the entry points resolved it says
         // the GPU never reached Stud's own work, and without them it says
@@ -1862,11 +1779,11 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 uint64_t vk_get_physical_device_format_properties(uint64_t device, uint32_t format,
                                                    std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_format_properties == nullptr) {
+    if (vkGetPhysicalDeviceFormatProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkFormatProperties props{};
-    l.get_physical_device_format_properties(
+    vkGetPhysicalDeviceFormatProperties(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)),
         static_cast<VkFormat>(format), &props);
     return write_pod(props, out, out_len);
@@ -1878,11 +1795,11 @@ uint64_t vk_get_physical_device_image_format_properties(uint64_t device, uint32_
                                                          std::vector<uint8_t>& out,
                                                          uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_image_format_properties == nullptr) {
+    if (vkGetPhysicalDeviceImageFormatProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkImageFormatProperties props{};
-    VkResult r = l.get_physical_device_image_format_properties(
+    VkResult r = vkGetPhysicalDeviceImageFormatProperties(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)),
         static_cast<VkFormat>(format), static_cast<VkImageType>(type),
         static_cast<VkImageTiling>(tiling), usage, flags, &props);
@@ -2389,24 +2306,22 @@ void note_bind(uint64_t memory, bool redirected, uint64_t offset, uint64_t repor
 // took it there. Falls back to the size where the budget is not reported.
 VkDeviceSize device_local_heap_size(Loader& l) {
     static VkDeviceSize size = 0;
-    if (size != 0 || l.get_physical_device_memory_properties == nullptr) return size;
+    if (size != 0 || vkGetPhysicalDeviceMemoryProperties == nullptr) return size;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
     VkPhysicalDeviceMemoryProperties2 props2{};
     props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
     props2.pNext = &budget;
-    auto get2 = l.get_instance_proc_addr != nullptr
-                    ? reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2>(
-                          l.get_instance_proc_addr(l.instance,
-                                                   "vkGetPhysicalDeviceMemoryProperties2"))
-                    : nullptr;
+    const PFN_vkGetPhysicalDeviceMemoryProperties2 get2 =
+        vkGetPhysicalDeviceMemoryProperties2 != nullptr ? vkGetPhysicalDeviceMemoryProperties2
+                                                        : vkGetPhysicalDeviceMemoryProperties2KHR;
     const bool have_budget = get2 != nullptr && device_supports_extension("VK_EXT_memory_budget");
     VkPhysicalDeviceMemoryProperties mem{};
     if (have_budget) {
         get2(l.physical_device, &props2);
         mem = props2.memoryProperties;
     } else {
-        l.get_physical_device_memory_properties(l.physical_device, &mem);
+        vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mem);
     }
     for (uint32_t i = 0; i < mem.memoryHeapCount; ++i) {
         if ((mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
@@ -2419,8 +2334,8 @@ VkDeviceSize device_local_heap_size(Loader& l) {
 
 uint32_t device_local_type(Loader& l, uint32_t allowed) {
     VkPhysicalDeviceMemoryProperties mem{};
-    if (l.get_physical_device_memory_properties != nullptr) {
-        l.get_physical_device_memory_properties(l.physical_device, &mem);
+    if (vkGetPhysicalDeviceMemoryProperties != nullptr) {
+        vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mem);
     }
     for (uint32_t i = 0; i < mem.memoryTypeCount; ++i) {
         if ((allowed & (1u << i)) != 0 &&
@@ -2443,8 +2358,8 @@ uint32_t device_local_type(Loader& l, uint32_t allowed) {
 VkResult allocate_somewhere(Loader& l, VkDeviceSize size, uint32_t allowed,
                             const void* pnext, VkDeviceMemory* out) {
     VkPhysicalDeviceMemoryProperties mem{};
-    if (l.get_physical_device_memory_properties != nullptr) {
-        l.get_physical_device_memory_properties(l.physical_device, &mem);
+    if (vkGetPhysicalDeviceMemoryProperties != nullptr) {
+        vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mem);
     }
     std::vector<uint32_t> order;
     const uint32_t first = device_local_type(l, allowed);
@@ -2668,12 +2583,12 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
                                                       std::vector<uint8_t>& out,
                                                       uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_physical_device_surface_capabilities == nullptr) {
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkSurfaceCapabilitiesKHR caps{};
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
-    VkResult r = l.get_physical_device_surface_capabilities(
+    VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)),
         from_u64<VkSurfaceKHR>(surface), &caps);
 
@@ -2762,8 +2677,8 @@ uint64_t vk_host_has_proc(const std::vector<uint8_t>& in) {
         l.get_instance_proc_addr(l.instance, name.c_str()) != nullptr) {
         return 1;
     }
-    if (l.get_device_proc_addr != nullptr && l.device != VK_NULL_HANDLE &&
-        l.get_device_proc_addr(l.device, name.c_str()) != nullptr) {
+    if (vkGetDeviceProcAddr != nullptr && l.device != VK_NULL_HANDLE &&
+        vkGetDeviceProcAddr(l.device, name.c_str()) != nullptr) {
         return 1;
     }
     return 0;
@@ -2854,11 +2769,11 @@ std::unordered_map<uint64_t, SharedMapping>& shared_memory() {
 // device without anything having to be flushed by hand.
 uint32_t importable_host_visible_type(uint32_t allowed_bits) {
     Loader& l = loader();
-    if (l.physical_device == VK_NULL_HANDLE || l.get_physical_device_memory_properties == nullptr) {
+    if (l.physical_device == VK_NULL_HANDLE || vkGetPhysicalDeviceMemoryProperties == nullptr) {
         return UINT32_MAX;
     }
     VkPhysicalDeviceMemoryProperties mp{};
-    l.get_physical_device_memory_properties(l.physical_device, &mp);
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
     uint32_t best = UINT32_MAX;
     for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
         if ((allowed_bits & (1u << i)) == 0) continue;
@@ -2957,9 +2872,9 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     }
     // GPU-only, plain, and scaling in effect: a placeholder; see LazyMemory.
     if (node_count == 0 && shared_id == 0 && texture_size_scale(l) > 0.0 &&
-        l.get_physical_device_memory_properties != nullptr) {
+        vkGetPhysicalDeviceMemoryProperties != nullptr) {
         VkPhysicalDeviceMemoryProperties mem{};
-        l.get_physical_device_memory_properties(l.physical_device, &mem);
+        vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mem);
         if (type_index < mem.memoryTypeCount &&
             (mem.memoryTypes[type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ==
                 0) {
@@ -3359,7 +3274,7 @@ uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_
 uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint32_t capacity,
                                  std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_surface_formats == nullptr) {
+    if (vkGetPhysicalDeviceSurfaceFormatsKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDevice pd =
@@ -3367,7 +3282,7 @@ uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
-    VkResult r = l.get_surface_formats(pd, surf, &count, nullptr);
+    VkResult r = vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surf, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -3376,7 +3291,7 @@ uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         formats.resize(returned);
-        r = l.get_surface_formats(pd, surf, &returned, formats.data());
+        r = vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surf, &returned, formats.data());
     }
     const uint32_t reported = capacity > 0 ? returned : count;
     const uint32_t stride = static_cast<uint32_t>(sizeof(VkSurfaceFormatKHR));
@@ -3393,7 +3308,7 @@ uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint
 uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface, uint32_t capacity,
                                        std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_surface_present_modes == nullptr) {
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDevice pd =
@@ -3401,7 +3316,7 @@ uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
-    VkResult r = l.get_surface_present_modes(pd, surf, &count, nullptr);
+    VkResult r = vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surf, &count, nullptr);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
@@ -3410,7 +3325,7 @@ uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface
     if (capacity > 0 && count > 0) {
         returned = count < capacity ? count : capacity;
         modes.resize(returned);
-        r = l.get_surface_present_modes(pd, surf, &returned, modes.data());
+        r = vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surf, &returned, modes.data());
     }
     const uint32_t reported = capacity > 0 ? returned : count;
     out.resize(sizeof(uint32_t) + sizeof(uint32_t) * returned);
@@ -3426,12 +3341,12 @@ uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface
 uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family, uint64_t surface,
                                  std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    if (l.get_surface_support == nullptr) {
+    if (vkGetPhysicalDeviceSurfaceSupportKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkBool32 supported = VK_FALSE;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
-    VkResult r = l.get_surface_support(
+    VkResult r = vkGetPhysicalDeviceSurfaceSupportKHR(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)), queue_family,
         from_u64<VkSurfaceKHR>(surface), &supported);
     write_pod(supported, out, out_len);
@@ -3509,14 +3424,14 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
     if (choice == "engine" || surface == VK_NULL_HANDLE) return requested;
 
     Loader& l = loader();
-    if (l.get_surface_present_modes == nullptr || l.physical_device == VK_NULL_HANDLE) {
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR == nullptr || l.physical_device == VK_NULL_HANDLE) {
         return requested;
     }
     uint32_t count = 0;
-    l.get_surface_present_modes(l.physical_device, surface, &count, nullptr);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(l.physical_device, surface, &count, nullptr);
     if (count == 0) return requested;
     std::vector<VkPresentModeKHR> modes(count);
-    l.get_surface_present_modes(l.physical_device, surface, &count, modes.data());
+    vkGetPhysicalDeviceSurfacePresentModesKHR(l.physical_device, surface, &count, modes.data());
     auto advertised = [&](VkPresentModeKHR m) {
         return std::find(modes.begin(), modes.end(), m) != modes.end();
     };
@@ -4161,7 +4076,7 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
         l.vk.vkCreateBuffer == nullptr || l.vk.vkGetBufferMemoryRequirements == nullptr ||
         l.vk.vkBindBufferMemory == nullptr || l.vk.vkDestroyBuffer == nullptr ||
         l.vk.vkMapMemory == nullptr || l.vk.vkAllocateMemory == nullptr || l.vk.vkFreeMemory == nullptr ||
-        l.get_physical_device_memory_properties == nullptr ||
+        vkGetPhysicalDeviceMemoryProperties == nullptr ||
         l.vk.vkCreateCommandPool == nullptr || l.vk.vkAllocateCommandBuffers == nullptr ||
         l.vk.vkBeginCommandBuffer == nullptr || l.vk.vkEndCommandBuffer == nullptr ||
         l.vk.vkCmdPipelineBarrier == nullptr || l.vk.vkCmdCopyBufferToImage == nullptr ||
@@ -4225,7 +4140,7 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
     VkMemoryRequirements req{};
     l.vk.vkGetBufferMemoryRequirements(l.device, staging, &req);
     VkPhysicalDeviceMemoryProperties props{};
-    l.get_physical_device_memory_properties(l.physical_device, &props);
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &props);
     uint32_t chosen = UINT32_MAX;
     for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
         const VkMemoryPropertyFlags want =
@@ -4331,13 +4246,13 @@ bool upload_ravu_lut(UpscaleChain& c, const uint32_t* words, size_t bytes, VkIma
 bool allocate_offscreen_memory(VkImage image, VkDeviceMemory& memory) {
     Loader& l = loader();
     if (l.vk.vkGetImageMemoryRequirements == nullptr || l.vk.vkAllocateMemory == nullptr ||
-        l.vk.vkBindImageMemory == nullptr || l.get_physical_device_memory_properties == nullptr) {
+        l.vk.vkBindImageMemory == nullptr || vkGetPhysicalDeviceMemoryProperties == nullptr) {
         return false;
     }
     VkMemoryRequirements req{};
     l.vk.vkGetImageMemoryRequirements(l.device, image, &req);
     VkPhysicalDeviceMemoryProperties props{};
-    l.get_physical_device_memory_properties(l.physical_device, &props);
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &props);
     uint32_t chosen = UINT32_MAX;
     for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
         const bool usable = (req.memoryTypeBits & (1u << i)) != 0;
@@ -5449,9 +5364,9 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     // is done with the swapchain; see keep_last_frame(). Only where the
     // surface allows it, and only where the copy has somewhere to go.
     if (stud::android_glue::native_window_can_keep_frame() &&
-        l.get_physical_device_surface_capabilities != nullptr) {
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR != nullptr) {
         VkSurfaceCapabilitiesKHR caps{};
-        if (l.get_physical_device_surface_capabilities(
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
                 l.physical_device, from_u64<VkSurfaceKHR>(h.surface), &caps) == VK_SUCCESS &&
             (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0) {
             ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -6114,8 +6029,8 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // surface is what left the WSI answering SURFACE_LOST to
             // every later vkCreateSwapchainKHR.
             flush_retired_chains("the engine destroys its surface");
-            if (l.destroy_surface) {
-                l.destroy_surface(l.instance, from_u64<VkSurfaceKHR>(handle), nullptr);
+            if (vkDestroySurfaceKHR) {
+                vkDestroySurfaceKHR(l.instance, from_u64<VkSurfaceKHR>(handle), nullptr);
             }
             // The Android SurfaceView behind it is gone, so the window lets
             // go of the last frame presented on it now, rather than holding
@@ -7437,10 +7352,10 @@ void report_upscale_timing(UpscaleChain& c, uint32_t index) {
     static bool period_known = false;
     if (!period_known) {
         period_known = true;
-        if (l.get_physical_device_properties != nullptr &&
+        if (vkGetPhysicalDeviceProperties != nullptr &&
             l.physical_device != VK_NULL_HANDLE) {
             VkPhysicalDeviceProperties props{};
-            l.get_physical_device_properties(l.physical_device, &props);
+            vkGetPhysicalDeviceProperties(l.physical_device, &props);
             period_ns = props.limits.timestampPeriod;
         }
         if (period_ns <= 0.0f) {
@@ -8308,7 +8223,7 @@ bool read_back_image(VkImage image, VkExtent2D extent, std::vector<uint8_t>& out
     VkMemoryRequirements req{};
     l.vk.vkGetBufferMemoryRequirements(l.device, buffer, &req);
     VkPhysicalDeviceMemoryProperties mem{};
-    l.get_physical_device_memory_properties(l.physical_device, &mem);
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mem);
     uint32_t type = UINT32_MAX;
     for (uint32_t i = 0; i < mem.memoryTypeCount; ++i) {
         const bool usable = (req.memoryTypeBits & (1u << i)) != 0;
