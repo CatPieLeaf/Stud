@@ -2952,31 +2952,18 @@ void gl_scale_present(const RealFns& fns, GlScaleTarget& t) {
     }
 }
 
+// Defined below the per-domain dispatchers it hands to; a command batch
+// (GlCommandBatch) calls back into it for each call it carries.
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
-                   const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
+                  const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len);
+
+// Split out of dispatch(), whose switch it was part of: EGL: displays, contexts, surfaces and the swap.
+// Answers nullopt for any id that is not one of these, and a case that
+// breaks out answers kNullHandle, exactly as it did inside dispatch().
+std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns, RealWindow& window,
+                                          const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                                          uint32_t* out_len) {
     const uint64_t* a = hdr.args;
-    *out_len = 0;
-    // Real pixel-source resolution: when a real GL_PIXEL_UNPACK_BUFFER is
-    // bound on the client, `pixels` is a byte offset into it, and the client
-    // sends no pixel bytes at all; see Header's own doc comment.
-    auto pixels_ptr = [&]() -> const void* {
-        if (hdr.pixel_buffer_offset_plus_one != 0) {
-            return reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1);
-        }
-        return in.empty() ? nullptr : in.data();
-    };
-    // Temporary diagnostic answering a real, concrete question: does
-    // the engine ever issue a single real draw/clear call, or does it only
-    // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
-    // EglSwapBuffers alone (see that case below), extended here to the
-    // three calls that actually put pixels in a frame, since "the swap
-    // loop runs" and "something real gets drawn" are two different real
-    // facts and this project had only ever confirmed the first one.
-    const bool draw_trace = render_call_trace_enabled();
-    if (draw_trace && (hdr.call_id == CallId::GlClear || hdr.call_id == CallId::GlDrawArrays ||
-                        hdr.call_id == CallId::GlDrawElements)) {
-        std::printf("stud-render-host: real draw/clear call id=%d\n", static_cast<int>(hdr.call_id));
-    }
     switch (hdr.call_id) {
         // ---- EGL ----
         case CallId::EglGetDisplay: {
@@ -3509,6 +3496,29 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return p != nullptr ? 1 : 0;
         }
 
+        default:
+            return std::nullopt;
+    }
+    return kNullHandle;
+}
+
+// Split out of dispatch(), whose switch it was part of: GLES2/GLES3: every GL entry point the engine forwards.
+// Answers nullopt for any id that is not one of these, and a case that
+// breaks out answers kNullHandle, exactly as it did inside dispatch().
+std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, RealWindow& window,
+                                         const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                                         uint32_t* out_len) {
+    const uint64_t* a = hdr.args;
+    // Real pixel-source resolution: when a real GL_PIXEL_UNPACK_BUFFER is
+    // bound on the client, `pixels` is a byte offset into it, and the client
+    // sends no pixel bytes at all; see Header's own doc comment.
+    auto pixels_ptr = [&]() -> const void* {
+        if (hdr.pixel_buffer_offset_plus_one != 0) {
+            return reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1);
+        }
+        return in.empty() ? nullptr : in.data();
+    };
+    switch (hdr.call_id) {
         // ---- GLES2: scalar state ----
         case CallId::GlActiveTexture: fns.glActiveTexture_(static_cast<GLenum>(a[0])); return 0;
         case CallId::GlAttachShader: fns.glAttachShader_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1])); return 0;
@@ -3948,322 +3958,6 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                     p[13], p[14]);
             return 0;
         }
-        case CallId::GetWindowSize: {
-            uint64_t w = static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
-            uint64_t h = static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
-            return (w << 32) | (h & 0xffffffffu);
-        }
-        case CallId::AudioOpenStream:
-            return stud::render_host::audio_open_stream(static_cast<int>(a[0]),
-                                                        static_cast<int>(a[1]),
-                                                        static_cast<int>(a[2]));
-        case CallId::AudioWriteFrames:
-            return stud::render_host::audio_write_frames(a[0], in.data(), in.size());
-        case CallId::AudioGetUnderruns:
-            return stud::render_host::audio_underruns();
-
-        // Video decoding; see video_codec.h. Each takes the decoder's own
-        // lock, not the dispatch lock (see blocks_in_the_driver).
-        case CallId::VideoDecoderSupported:
-        case CallId::VideoDecoderCreate: {
-            const std::string mime(reinterpret_cast<const char*>(in.data()),
-                                   strnlen(reinterpret_cast<const char*>(in.data()), in.size()));
-            return hdr.call_id == CallId::VideoDecoderSupported
-                       ? (stud::render_host::video_decoder_supported(mime.c_str()) ? 1 : 0)
-                       : stud::render_host::video_decoder_create(mime.c_str());
-        }
-        case CallId::VideoDecoderConfigure:
-            return static_cast<uint64_t>(static_cast<int64_t>(
-                stud::render_host::video_decoder_configure(
-                    a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), in.data(),
-                    static_cast<uint32_t>(in.size()))));
-        case CallId::VideoDecoderQueue:
-            return static_cast<uint64_t>(static_cast<int64_t>(
-                stud::render_host::video_decoder_queue(a[0], in.data(),
-                                                       static_cast<uint32_t>(in.size()),
-                                                       static_cast<int64_t>(a[1]), a[2] != 0)));
-        case CallId::VideoDecoderDequeue:
-            return static_cast<uint64_t>(static_cast<int64_t>(
-                stud::render_host::video_decoder_dequeue(a[0], out, out_len)));
-        case CallId::VideoDecoderFlush:
-            stud::render_host::video_decoder_flush(a[0]);
-            return 0;
-        case CallId::VideoDecoderDestroy:
-            stud::render_host::video_decoder_destroy(a[0]);
-            return 0;
-        case CallId::VideoEncoderSupported:
-        case CallId::VideoEncoderCreate: {
-            const std::string mime(reinterpret_cast<const char*>(in.data()),
-                                   strnlen(reinterpret_cast<const char*>(in.data()), in.size()));
-            if (hdr.call_id == CallId::VideoEncoderCreate) {
-                return stud::render_host::video_encoder_create(mime.c_str());
-            }
-            const auto support = stud::render_host::video_encoder_supported(mime.c_str());
-            return (support.supported ? 1u : 0u) | (support.hardware ? 2u : 0u);
-        }
-        case CallId::VideoEncoderConfigure:
-            return static_cast<uint64_t>(static_cast<int64_t>(
-                stud::render_host::video_encoder_configure(
-                    a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
-                    static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]),
-                    static_cast<uint32_t>(a[5]), static_cast<uint32_t>(a[6]))));
-        case CallId::VideoEncoderQueue:
-            return static_cast<uint64_t>(static_cast<int64_t>(
-                stud::render_host::video_encoder_queue(a[0], in.data(),
-                                                       static_cast<uint32_t>(in.size()),
-                                                       static_cast<int64_t>(a[1]), a[2] != 0)));
-        case CallId::VideoEncoderDequeue:
-            return static_cast<uint64_t>(static_cast<int64_t>(
-                stud::render_host::video_encoder_dequeue(a[0], out, out_len)));
-        case CallId::VideoEncoderConfig:
-            out = stud::render_host::video_encoder_config(a[0]);
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        case CallId::VideoEncoderDestroy:
-            stud::render_host::video_encoder_destroy(a[0]);
-            return 0;
-        case CallId::AudioCloseStream:
-            stud::render_host::audio_close_stream(a[0]);
-            return 1;
-
-        // Vulkan, instance level. The real driver lives only here.
-        case CallId::VkEnumerateInstanceVersion:
-            return stud::render_host::vk_enumerate_instance_version(out, out_len);
-        case CallId::VkEnumerateInstanceExtensionProperties:
-            return stud::render_host::vk_enumerate_instance_extension_properties(
-                in, static_cast<uint32_t>(a[0]), out, out_len);
-        case CallId::VkEnumerateInstanceLayerProperties:
-            return stud::render_host::vk_enumerate_instance_layer_properties(
-                static_cast<uint32_t>(a[0]), out, out_len);
-        case CallId::VkCreateInstance:
-            return stud::render_host::vk_create_instance(in, out, out_len);
-        case CallId::VkEnumeratePhysicalDevices:
-            return stud::render_host::vk_enumerate_physical_devices(static_cast<uint32_t>(a[0]),
-                                                                     out, out_len);
-        case CallId::VkGetPhysicalDeviceProperties:
-            return stud::render_host::vk_get_physical_device_properties(a[0], out, out_len);
-        case CallId::VkGetPhysicalDeviceFeatures:
-            return stud::render_host::vk_get_physical_device_features(a[0], out, out_len);
-        case CallId::VkGetPhysicalDeviceMemoryProperties:
-            return stud::render_host::vk_get_physical_device_memory_properties(a[0], out, out_len);
-        case CallId::VkGetPhysicalDeviceQueueFamilyProperties:
-            return stud::render_host::vk_get_physical_device_queue_family_properties(
-                a[0], static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::VkEnumerateDeviceExtensionProperties:
-            return stud::render_host::vk_enumerate_device_extension_properties(
-                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::VkGetPhysicalDeviceFeatures2:
-            return stud::render_host::vk_get_physical_device_features2(
-                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::VkCreateDevice:
-            return stud::render_host::vk_create_device(a[0], in, out, out_len);
-        case CallId::VkGetPhysicalDeviceFormatProperties:
-            return stud::render_host::vk_get_physical_device_format_properties(
-                a[0], static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::VkGetPhysicalDeviceImageFormatProperties:
-            return stud::render_host::vk_get_physical_device_image_format_properties(
-                a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
-                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]),
-                static_cast<uint32_t>(a[5]), out, out_len);
-        case CallId::VkGetDeviceQueue:
-            return stud::render_host::vk_get_device_queue(
-                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
-        case CallId::VkCreateCommandPool:
-            return stud::render_host::vk_create_command_pool(
-                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
-        case CallId::VkCreateSemaphore:
-            return stud::render_host::vk_create_semaphore(static_cast<uint32_t>(a[1]), out,
-                                                           out_len);
-        case CallId::VkCreateFence:
-            return stud::render_host::vk_create_fence(static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::VkCreateQueryPool:
-            return stud::render_host::vk_create_query_pool(
-                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
-                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]), out, out_len);
-        case CallId::VkCreatePipelineCache:
-            return stud::render_host::vk_create_pipeline_cache(static_cast<uint32_t>(a[1]), in,
-                                                                out, out_len);
-        case CallId::VkGetPipelineCacheData:
-            return stud::render_host::vk_get_pipeline_cache_data(
-                a[1], static_cast<uint32_t>(a[2]), out, out_len);
-        case CallId::VkDestroyPipelineCache:
-            return stud::render_host::vk_destroy_pipeline_cache(a[1]);
-        case CallId::VkCreateImage:
-            return stud::render_host::vk_create_image(in, out, out_len);
-        case CallId::VkGetImageMemoryRequirements:
-            return stud::render_host::vk_get_image_memory_requirements(a[1], out, out_len);
-        case CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
-            return stud::render_host::vk_get_physical_device_surface_capabilities(a[0], a[1], out,
-                                                                                   out_len);
-        case CallId::VkCreateBuffer:
-            return stud::render_host::vk_create_buffer(
-                static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
-                static_cast<uint32_t>(a[4]), out, out_len);
-        case CallId::VkGetBufferMemoryRequirements:
-            return stud::render_host::vk_get_buffer_memory_requirements(a[1], out, out_len);
-        case CallId::VkBindBufferMemory:
-            return stud::render_host::vk_bind_buffer_memory(a[1], a[2], a[3]);
-        case CallId::VkCreateImageView:
-            return stud::render_host::vk_create_image_view(in, out, out_len);
-        case CallId::VkCreateShaderModule:
-            return stud::render_host::vk_create_shader_module(in, out, out_len);
-        case CallId::VkDestroyHandle:
-            return stud::render_host::vk_destroy_handle(static_cast<uint32_t>(a[1]), a[2]);
-        case CallId::VkCreateRenderPass:
-            return stud::render_host::vk_create_render_pass(in, out, out_len);
-        case CallId::VkCreateFramebuffer:
-            return stud::render_host::vk_create_framebuffer(in, out, out_len);
-        case CallId::VkCreateSampler:
-            return stud::render_host::vk_create_sampler(in, out, out_len);
-        case CallId::VkCreatePipelineLayout:
-            return stud::render_host::vk_create_pipeline_layout(in, out, out_len);
-        case CallId::VkCreateDescriptorSetLayout:
-            return stud::render_host::vk_create_descriptor_set_layout(in, out, out_len);
-        case CallId::VkCreateDescriptorPool:
-            return stud::render_host::vk_create_descriptor_pool(in, out, out_len);
-        case CallId::VkAllocateDescriptorSets:
-            return stud::render_host::vk_allocate_descriptor_sets(in, out, out_len);
-        case CallId::VkResetDescriptorPool:
-            return stud::render_host::vk_reset_descriptor_pool(a[1],
-                                                                static_cast<uint32_t>(a[2]));
-        case CallId::VkCreateDescriptorUpdateTemplate:
-            return stud::render_host::vk_create_descriptor_update_template(in, out, out_len);
-        case CallId::VkUpdateDescriptorSetWithTemplate:
-            return stud::render_host::vk_update_descriptor_set_with_template(a[1], a[2], in);
-        case CallId::VkCreateGraphicsPipelines:
-            return stud::render_host::vk_create_graphics_pipelines(in, out, out_len);
-        case CallId::VkCreateComputePipelines:
-            return stud::render_host::vk_create_compute_pipelines(in, out, out_len);
-        case CallId::VkAllocateCommandBuffers:
-            return stud::render_host::vk_allocate_command_buffers(
-                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]), out, out_len);
-        // Both are normally sent reply-free (see sync_command_buffer_calls()
-        // in the Vulkan client), so the client cannot see these results and
-        // this is the only place a failure can be noticed at all. Said once
-        // each rather than per frame: a command buffer that fails to open
-        // fails every frame.
-        case CallId::VkBeginCommandBuffer: {
-            const uint64_t r = stud::render_host::vk_begin_command_buffer(
-                a[0], static_cast<uint32_t>(a[1]));
-            report_reply_free_failure(hdr.call_id, r);
-            return r;
-        }
-        case CallId::VkEndCommandBuffer: {
-            const uint64_t r = stud::render_host::vk_end_command_buffer(a[0]);
-            report_reply_free_failure(hdr.call_id, r);
-            return r;
-        }
-        case CallId::VkResetCommandPool:
-            return stud::render_host::vk_reset_command_pool(a[1], static_cast<uint32_t>(a[2]));
-        // Reply-free in the normal configuration, like the command-buffer
-        // bracket above, so this is the only place a failure can be seen.
-        case CallId::VkQueueSubmit: {
-            const uint64_t r = stud::render_host::vk_queue_submit(a[0], a[1], in);
-            report_reply_free_failure(hdr.call_id, r);
-            return r;
-        }
-        case CallId::VkWaitForFences:
-            return stud::render_host::vk_wait_for_fences(in, static_cast<uint32_t>(a[1]), a[2]);
-        case CallId::VkResetFences:
-            return stud::render_host::vk_reset_fences(in);
-        case CallId::VkAcquireNextImageKHR:
-            return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
-        case CallId::VkQueuePresentKHR: {
-            note_frame_pacing();
-            // The throttle happens BEFORE the dispatch lock is taken;
-            // see throttle_before_dispatch().
-            const uint64_t r = stud::render_host::vk_queue_present(a[0], in);
-            // OUT_OF_DATE and SUBOPTIMAL are the compositor telling the
-            // engine to rebuild, not failures, and they happen on every
-            // resize. Reporting them would be noise, and the rebuild path
-            // already says what it did.
-            const int32_t v = static_cast<int32_t>(r);
-            if (v != -1000001004 && v != 1000001003) report_reply_free_failure(hdr.call_id, r);
-            return r;
-        }
-        case CallId::VkGetQueryPoolResults:
-            return stud::render_host::vk_get_query_pool_results(
-                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]),
-                static_cast<uint32_t>(a[4]), static_cast<uint32_t>(a[5]), out, out_len);
-        case CallId::VkCmdRecord:
-            return stud::render_host::vk_cmd_record(a[0], static_cast<uint32_t>(a[1]), in);
-        case CallId::VkCmdRecordBatch: {
-            // [u64 command buffer][u32 kind][u32 length][payload] repeated.
-            // Executed strictly in order, which is what makes a batch
-            // identical to the same commands sent one at a time.
-            size_t off = 0;
-            while (off + 16 <= in.size()) {
-                uint64_t cb = 0;
-                uint32_t kind = 0;
-                uint32_t len = 0;
-                std::memcpy(&cb, in.data() + off, sizeof(cb));
-                std::memcpy(&kind, in.data() + off + 8, sizeof(kind));
-                std::memcpy(&len, in.data() + off + 12, sizeof(len));
-                off += 16;
-                if (off + len > in.size()) break;
-                // Read where it already is: copying each command out of
-                // the batch first is a copy of the whole batch per frame.
-                stud::render_host::vk_cmd_record(cb, kind, in.data() + off, len);
-                off += len;
-            }
-            return 0;
-        }
-        case CallId::VkHostHasProc:
-            return stud::render_host::vk_host_has_proc(in);
-        case CallId::VkDeviceWaitIdle:
-            return stud::render_host::vk_device_wait_idle();
-        case CallId::VkAllocateMemory:
-            // a[4] non-zero: the client mapped a memfd for this allocation,
-            // sent it over the fd channel under this id, and wants it
-            // shared rather than copied. The buffer still carries the
-            // pNext chain.
-            return stud::render_host::vk_allocate_memory(a[1], static_cast<uint32_t>(a[2]), in,
-                                                          static_cast<uint32_t>(a[3]), out, out_len,
-                                                          a[4]);
-        case CallId::VkBindImageMemory:
-            return stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
-        case CallId::VkFreeMemory:
-            return stud::render_host::vk_free_memory(a[1]);
-        case CallId::VkMapMemory:
-            return stud::render_host::vk_map_memory(a[1], a[2], a[3],
-                                                     static_cast<uint32_t>(a[4]));
-        case CallId::VkWriteMappedMemory:
-            return stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
-        case CallId::VkReadMappedMemory:
-            return stud::render_host::vk_read_mapped_memory(a[1], a[2], a[3], out, out_len);
-        case CallId::VkShareMappedMemory:
-            return stud::render_host::vk_share_mapped_memory(a[1], a[2], a[3]);
-        case CallId::VkWriteSharedMappedMemory:
-            return stud::render_host::vk_write_shared_mapped_memory(a[1], a[2], a[3]);
-        case CallId::VkUnmapMemory:
-            return stud::render_host::vk_unmap_memory(a[1]);
-        case CallId::VkFlushMappedMemoryRanges:
-            return stud::render_host::vk_flush_mapped_memory_ranges(a[1], a[2], a[3]);
-        case CallId::VkGetPhysicalDeviceSurfaceFormatsKHR:
-            return stud::render_host::vk_get_surface_formats(a[0], a[1],
-                                                              static_cast<uint32_t>(a[2]), out,
-                                                              out_len);
-        case CallId::VkGetPhysicalDeviceSurfacePresentModesKHR:
-            return stud::render_host::vk_get_surface_present_modes(
-                a[0], a[1], static_cast<uint32_t>(a[2]), out, out_len);
-        case CallId::VkGetPhysicalDeviceSurfaceSupportKHR:
-            return stud::render_host::vk_get_surface_support(a[0], static_cast<uint32_t>(a[1]),
-                                                              a[2], out, out_len);
-        case CallId::VkCreateSwapchainKHR:
-            return stud::render_host::vk_create_swapchain(in, out, out_len);
-        case CallId::VkGetSwapchainImagesKHR:
-            return stud::render_host::vk_get_swapchain_images(a[1], static_cast<uint32_t>(a[2]),
-                                                               out, out_len);
-        case CallId::VkGetPhysicalDeviceImageFormatProperties2:
-            return stud::render_host::vk_get_image_format_properties2(
-                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
-        // Everything that is not graphics lives in its own function; see
-        // dispatch_platform_call().
-        default:
-            if (auto handled = dispatch_platform_call(hdr, window, in, out, out_len)) {
-                return *handled;
-            }
-            break;
         case CallId::GlTexStorage2D:
             trace_texture_upload("storage", g_bound_texture_2d, static_cast<GLint>(a[1]),
                                  static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
@@ -4707,6 +4401,251 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return 1;
         }
 
+        default:
+            return std::nullopt;
+    }
+    return kNullHandle;
+}
+
+// Split out of dispatch(), whose switch it was part of: Vulkan: everything vulkan_host.cpp implements, by call id.
+// Answers nullopt for any id that is not one of these, and a case that
+// breaks out answers kNullHandle, exactly as it did inside dispatch().
+std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
+                                         const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                                         uint32_t* out_len) {
+    const uint64_t* a = hdr.args;
+    switch (hdr.call_id) {
+        // Vulkan, instance level. The real driver lives only here.
+        case CallId::VkEnumerateInstanceVersion:
+            return stud::render_host::vk_enumerate_instance_version(out, out_len);
+        case CallId::VkEnumerateInstanceExtensionProperties:
+            return stud::render_host::vk_enumerate_instance_extension_properties(
+                in, static_cast<uint32_t>(a[0]), out, out_len);
+        case CallId::VkEnumerateInstanceLayerProperties:
+            return stud::render_host::vk_enumerate_instance_layer_properties(
+                static_cast<uint32_t>(a[0]), out, out_len);
+        case CallId::VkCreateInstance:
+            return stud::render_host::vk_create_instance(in, out, out_len);
+        case CallId::VkEnumeratePhysicalDevices:
+            return stud::render_host::vk_enumerate_physical_devices(static_cast<uint32_t>(a[0]),
+                                                                     out, out_len);
+        case CallId::VkGetPhysicalDeviceProperties:
+            return stud::render_host::vk_get_physical_device_properties(a[0], out, out_len);
+        case CallId::VkGetPhysicalDeviceFeatures:
+            return stud::render_host::vk_get_physical_device_features(a[0], out, out_len);
+        case CallId::VkGetPhysicalDeviceMemoryProperties:
+            return stud::render_host::vk_get_physical_device_memory_properties(a[0], out, out_len);
+        case CallId::VkGetPhysicalDeviceQueueFamilyProperties:
+            return stud::render_host::vk_get_physical_device_queue_family_properties(
+                a[0], static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkEnumerateDeviceExtensionProperties:
+            return stud::render_host::vk_enumerate_device_extension_properties(
+                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkGetPhysicalDeviceFeatures2:
+            return stud::render_host::vk_get_physical_device_features2(
+                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkCreateDevice:
+            return stud::render_host::vk_create_device(a[0], in, out, out_len);
+        case CallId::VkGetPhysicalDeviceFormatProperties:
+            return stud::render_host::vk_get_physical_device_format_properties(
+                a[0], static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkGetPhysicalDeviceImageFormatProperties:
+            return stud::render_host::vk_get_physical_device_image_format_properties(
+                a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]),
+                static_cast<uint32_t>(a[5]), out, out_len);
+        case CallId::VkGetDeviceQueue:
+            return stud::render_host::vk_get_device_queue(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkCreateCommandPool:
+            return stud::render_host::vk_create_command_pool(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkCreateSemaphore:
+            return stud::render_host::vk_create_semaphore(static_cast<uint32_t>(a[1]), out,
+                                                           out_len);
+        case CallId::VkCreateFence:
+            return stud::render_host::vk_create_fence(static_cast<uint32_t>(a[1]), out, out_len);
+        case CallId::VkCreateQueryPool:
+            return stud::render_host::vk_create_query_pool(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]), out, out_len);
+        case CallId::VkCreatePipelineCache:
+            return stud::render_host::vk_create_pipeline_cache(static_cast<uint32_t>(a[1]), in,
+                                                                out, out_len);
+        case CallId::VkGetPipelineCacheData:
+            return stud::render_host::vk_get_pipeline_cache_data(
+                a[1], static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkDestroyPipelineCache:
+            return stud::render_host::vk_destroy_pipeline_cache(a[1]);
+        case CallId::VkCreateImage:
+            return stud::render_host::vk_create_image(in, out, out_len);
+        case CallId::VkGetImageMemoryRequirements:
+            return stud::render_host::vk_get_image_memory_requirements(a[1], out, out_len);
+        case CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
+            return stud::render_host::vk_get_physical_device_surface_capabilities(a[0], a[1], out,
+                                                                                   out_len);
+        case CallId::VkCreateBuffer:
+            return stud::render_host::vk_create_buffer(
+                static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
+                static_cast<uint32_t>(a[4]), out, out_len);
+        case CallId::VkGetBufferMemoryRequirements:
+            return stud::render_host::vk_get_buffer_memory_requirements(a[1], out, out_len);
+        case CallId::VkBindBufferMemory:
+            return stud::render_host::vk_bind_buffer_memory(a[1], a[2], a[3]);
+        case CallId::VkCreateImageView:
+            return stud::render_host::vk_create_image_view(in, out, out_len);
+        case CallId::VkCreateShaderModule:
+            return stud::render_host::vk_create_shader_module(in, out, out_len);
+        case CallId::VkDestroyHandle:
+            return stud::render_host::vk_destroy_handle(static_cast<uint32_t>(a[1]), a[2]);
+        case CallId::VkCreateRenderPass:
+            return stud::render_host::vk_create_render_pass(in, out, out_len);
+        case CallId::VkCreateFramebuffer:
+            return stud::render_host::vk_create_framebuffer(in, out, out_len);
+        case CallId::VkCreateSampler:
+            return stud::render_host::vk_create_sampler(in, out, out_len);
+        case CallId::VkCreatePipelineLayout:
+            return stud::render_host::vk_create_pipeline_layout(in, out, out_len);
+        case CallId::VkCreateDescriptorSetLayout:
+            return stud::render_host::vk_create_descriptor_set_layout(in, out, out_len);
+        case CallId::VkCreateDescriptorPool:
+            return stud::render_host::vk_create_descriptor_pool(in, out, out_len);
+        case CallId::VkAllocateDescriptorSets:
+            return stud::render_host::vk_allocate_descriptor_sets(in, out, out_len);
+        case CallId::VkResetDescriptorPool:
+            return stud::render_host::vk_reset_descriptor_pool(a[1],
+                                                                static_cast<uint32_t>(a[2]));
+        case CallId::VkCreateDescriptorUpdateTemplate:
+            return stud::render_host::vk_create_descriptor_update_template(in, out, out_len);
+        case CallId::VkUpdateDescriptorSetWithTemplate:
+            return stud::render_host::vk_update_descriptor_set_with_template(a[1], a[2], in);
+        case CallId::VkCreateGraphicsPipelines:
+            return stud::render_host::vk_create_graphics_pipelines(in, out, out_len);
+        case CallId::VkCreateComputePipelines:
+            return stud::render_host::vk_create_compute_pipelines(in, out, out_len);
+        case CallId::VkAllocateCommandBuffers:
+            return stud::render_host::vk_allocate_command_buffers(
+                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]), out, out_len);
+        // Both are normally sent reply-free (see sync_command_buffer_calls()
+        // in the Vulkan client), so the client cannot see these results and
+        // this is the only place a failure can be noticed at all. Said once
+        // each rather than per frame: a command buffer that fails to open
+        // fails every frame.
+        case CallId::VkBeginCommandBuffer: {
+            const uint64_t r = stud::render_host::vk_begin_command_buffer(
+                a[0], static_cast<uint32_t>(a[1]));
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkEndCommandBuffer: {
+            const uint64_t r = stud::render_host::vk_end_command_buffer(a[0]);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkResetCommandPool:
+            return stud::render_host::vk_reset_command_pool(a[1], static_cast<uint32_t>(a[2]));
+        // Reply-free in the normal configuration, like the command-buffer
+        // bracket above, so this is the only place a failure can be seen.
+        case CallId::VkQueueSubmit: {
+            const uint64_t r = stud::render_host::vk_queue_submit(a[0], a[1], in);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkWaitForFences:
+            return stud::render_host::vk_wait_for_fences(in, static_cast<uint32_t>(a[1]), a[2]);
+        case CallId::VkResetFences:
+            return stud::render_host::vk_reset_fences(in);
+        case CallId::VkAcquireNextImageKHR:
+            return stud::render_host::vk_acquire_next_image(a[1], a[2], a[3], a[4], out, out_len);
+        case CallId::VkQueuePresentKHR: {
+            note_frame_pacing();
+            // The throttle happens BEFORE the dispatch lock is taken;
+            // see throttle_before_dispatch().
+            const uint64_t r = stud::render_host::vk_queue_present(a[0], in);
+            // OUT_OF_DATE and SUBOPTIMAL are the compositor telling the
+            // engine to rebuild, not failures, and they happen on every
+            // resize. Reporting them would be noise, and the rebuild path
+            // already says what it did.
+            const int32_t v = static_cast<int32_t>(r);
+            if (v != -1000001004 && v != 1000001003) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkGetQueryPoolResults:
+            return stud::render_host::vk_get_query_pool_results(
+                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]),
+                static_cast<uint32_t>(a[4]), static_cast<uint32_t>(a[5]), out, out_len);
+        case CallId::VkCmdRecord:
+            return stud::render_host::vk_cmd_record(a[0], static_cast<uint32_t>(a[1]), in);
+        case CallId::VkCmdRecordBatch: {
+            // [u64 command buffer][u32 kind][u32 length][payload] repeated.
+            // Executed strictly in order, which is what makes a batch
+            // identical to the same commands sent one at a time.
+            size_t off = 0;
+            while (off + 16 <= in.size()) {
+                uint64_t cb = 0;
+                uint32_t kind = 0;
+                uint32_t len = 0;
+                std::memcpy(&cb, in.data() + off, sizeof(cb));
+                std::memcpy(&kind, in.data() + off + 8, sizeof(kind));
+                std::memcpy(&len, in.data() + off + 12, sizeof(len));
+                off += 16;
+                if (off + len > in.size()) break;
+                // Read where it already is: copying each command out of
+                // the batch first is a copy of the whole batch per frame.
+                stud::render_host::vk_cmd_record(cb, kind, in.data() + off, len);
+                off += len;
+            }
+            return 0;
+        }
+        case CallId::VkHostHasProc:
+            return stud::render_host::vk_host_has_proc(in);
+        case CallId::VkDeviceWaitIdle:
+            return stud::render_host::vk_device_wait_idle();
+        case CallId::VkAllocateMemory:
+            // a[4] non-zero: the client mapped a memfd for this allocation,
+            // sent it over the fd channel under this id, and wants it
+            // shared rather than copied. The buffer still carries the
+            // pNext chain.
+            return stud::render_host::vk_allocate_memory(a[1], static_cast<uint32_t>(a[2]), in,
+                                                          static_cast<uint32_t>(a[3]), out, out_len,
+                                                          a[4]);
+        case CallId::VkBindImageMemory:
+            return stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
+        case CallId::VkFreeMemory:
+            return stud::render_host::vk_free_memory(a[1]);
+        case CallId::VkMapMemory:
+            return stud::render_host::vk_map_memory(a[1], a[2], a[3],
+                                                     static_cast<uint32_t>(a[4]));
+        case CallId::VkWriteMappedMemory:
+            return stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
+        case CallId::VkReadMappedMemory:
+            return stud::render_host::vk_read_mapped_memory(a[1], a[2], a[3], out, out_len);
+        case CallId::VkShareMappedMemory:
+            return stud::render_host::vk_share_mapped_memory(a[1], a[2], a[3]);
+        case CallId::VkWriteSharedMappedMemory:
+            return stud::render_host::vk_write_shared_mapped_memory(a[1], a[2], a[3]);
+        case CallId::VkUnmapMemory:
+            return stud::render_host::vk_unmap_memory(a[1]);
+        case CallId::VkFlushMappedMemoryRanges:
+            return stud::render_host::vk_flush_mapped_memory_ranges(a[1], a[2], a[3]);
+        case CallId::VkGetPhysicalDeviceSurfaceFormatsKHR:
+            return stud::render_host::vk_get_surface_formats(a[0], a[1],
+                                                              static_cast<uint32_t>(a[2]), out,
+                                                              out_len);
+        case CallId::VkGetPhysicalDeviceSurfacePresentModesKHR:
+            return stud::render_host::vk_get_surface_present_modes(
+                a[0], a[1], static_cast<uint32_t>(a[2]), out, out_len);
+        case CallId::VkGetPhysicalDeviceSurfaceSupportKHR:
+            return stud::render_host::vk_get_surface_support(a[0], static_cast<uint32_t>(a[1]),
+                                                              a[2], out, out_len);
+        case CallId::VkCreateSwapchainKHR:
+            return stud::render_host::vk_create_swapchain(in, out, out_len);
+        case CallId::VkGetSwapchainImagesKHR:
+            return stud::render_host::vk_get_swapchain_images(a[1], static_cast<uint32_t>(a[2]),
+                                                               out, out_len);
+        case CallId::VkGetPhysicalDeviceImageFormatProperties2:
+            return stud::render_host::vk_get_image_format_properties2(
+                a[0], in, static_cast<uint32_t>(a[1]), out, out_len);
         // Roblox's vkCreateAndroidSurfaceKHR (an Android-only extension with
         // no Linux equivalent), redirected to the real vkCreateWaylandSurfaceKHR
         // on the SAME Wayland display/surface android-glue's native_window.cpp
@@ -4783,6 +4722,117 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             return reinterpret_cast<uint64_t>(surface);
         }
 
+        default:
+            return std::nullopt;
+    }
+    return kNullHandle;
+}
+
+uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
+                   const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
+    const uint64_t* a = hdr.args;
+    *out_len = 0;
+    // Temporary diagnostic answering a real, concrete question: does
+    // the engine ever issue a single real draw/clear call, or does it only
+    // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
+    // EglSwapBuffers alone (see that case below), extended here to the
+    // three calls that actually put pixels in a frame, since "the swap
+    // loop runs" and "something real gets drawn" are two different real
+    // facts and this project had only ever confirmed the first one.
+    const bool draw_trace = render_call_trace_enabled();
+    if (draw_trace && (hdr.call_id == CallId::GlClear || hdr.call_id == CallId::GlDrawArrays ||
+                        hdr.call_id == CallId::GlDrawElements)) {
+        std::printf("stud-render-host: real draw/clear call id=%d\n", static_cast<int>(hdr.call_id));
+    }
+    if (auto handled = dispatch_egl_call(hdr, fns, window, in, out, out_len)) return *handled;
+    if (auto handled = dispatch_gl_call(hdr, fns, window, in, out, out_len)) return *handled;
+    if (auto handled = dispatch_vk_call(hdr, window, in, out, out_len)) return *handled;
+    switch (hdr.call_id) {
+        case CallId::GetWindowSize: {
+            uint64_t w = static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
+            uint64_t h = static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
+            return (w << 32) | (h & 0xffffffffu);
+        }
+        case CallId::AudioOpenStream:
+            return stud::render_host::audio_open_stream(static_cast<int>(a[0]),
+                                                        static_cast<int>(a[1]),
+                                                        static_cast<int>(a[2]));
+        case CallId::AudioWriteFrames:
+            return stud::render_host::audio_write_frames(a[0], in.data(), in.size());
+        case CallId::AudioGetUnderruns:
+            return stud::render_host::audio_underruns();
+
+        // Video decoding; see video_codec.h. Each takes the decoder's own
+        // lock, not the dispatch lock (see blocks_in_the_driver).
+        case CallId::VideoDecoderSupported:
+        case CallId::VideoDecoderCreate: {
+            const std::string mime(reinterpret_cast<const char*>(in.data()),
+                                   strnlen(reinterpret_cast<const char*>(in.data()), in.size()));
+            return hdr.call_id == CallId::VideoDecoderSupported
+                       ? (stud::render_host::video_decoder_supported(mime.c_str()) ? 1 : 0)
+                       : stud::render_host::video_decoder_create(mime.c_str());
+        }
+        case CallId::VideoDecoderConfigure:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_decoder_configure(
+                    a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), in.data(),
+                    static_cast<uint32_t>(in.size()))));
+        case CallId::VideoDecoderQueue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_decoder_queue(a[0], in.data(),
+                                                       static_cast<uint32_t>(in.size()),
+                                                       static_cast<int64_t>(a[1]), a[2] != 0)));
+        case CallId::VideoDecoderDequeue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_decoder_dequeue(a[0], out, out_len)));
+        case CallId::VideoDecoderFlush:
+            stud::render_host::video_decoder_flush(a[0]);
+            return 0;
+        case CallId::VideoDecoderDestroy:
+            stud::render_host::video_decoder_destroy(a[0]);
+            return 0;
+        case CallId::VideoEncoderSupported:
+        case CallId::VideoEncoderCreate: {
+            const std::string mime(reinterpret_cast<const char*>(in.data()),
+                                   strnlen(reinterpret_cast<const char*>(in.data()), in.size()));
+            if (hdr.call_id == CallId::VideoEncoderCreate) {
+                return stud::render_host::video_encoder_create(mime.c_str());
+            }
+            const auto support = stud::render_host::video_encoder_supported(mime.c_str());
+            return (support.supported ? 1u : 0u) | (support.hardware ? 2u : 0u);
+        }
+        case CallId::VideoEncoderConfigure:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_encoder_configure(
+                    a[0], static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                    static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]),
+                    static_cast<uint32_t>(a[5]), static_cast<uint32_t>(a[6]))));
+        case CallId::VideoEncoderQueue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_encoder_queue(a[0], in.data(),
+                                                       static_cast<uint32_t>(in.size()),
+                                                       static_cast<int64_t>(a[1]), a[2] != 0)));
+        case CallId::VideoEncoderDequeue:
+            return static_cast<uint64_t>(static_cast<int64_t>(
+                stud::render_host::video_encoder_dequeue(a[0], out, out_len)));
+        case CallId::VideoEncoderConfig:
+            out = stud::render_host::video_encoder_config(a[0]);
+            *out_len = static_cast<uint32_t>(out.size());
+            return 1;
+        case CallId::VideoEncoderDestroy:
+            stud::render_host::video_encoder_destroy(a[0]);
+            return 0;
+        case CallId::AudioCloseStream:
+            stud::render_host::audio_close_stream(a[0]);
+            return 1;
+
+        // Everything that is not graphics lives in its own function; see
+        // dispatch_platform_call().
+        default:
+            if (auto handled = dispatch_platform_call(hdr, window, in, out, out_len)) {
+                return *handled;
+            }
+            break;
         // Process C owns exactly one real window for this MVP (created
         // once, at startup), a fixed sentinel handle (1) stands in for
         // "the" ANativeWindow; acquire/release are real no-ops here
