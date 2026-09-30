@@ -40,17 +40,22 @@ env:
   TAG: ${{ github.event.release.tag_name }}
 
 jobs:
-  # A release's version bump and changelog entries, written on top of the
-  # tag before anything is built: the version in every file, and this
-  # release's entry in the metainfo and the Terra spec from the
-  # ## SUMMARY: section of the release description. Every build job lays
-  # these files over its checkout (.github/actions/setup), so the packages
-  # carry them, and the last job commits the same to main.
+  # A release's version bump and changelog entries, committed on top of the
+  # tag, and the tag moved onto that commit before anything is built: the
+  # version in every file, and this release's entry in the metainfo and the
+  # Terra spec from the ## SUMMARY: section of the release description. So
+  # the tag, its source archives and every package carry them. It happens
+  # while the release is still a pre-release, before anything that follows
+  # the latest release can see it. main is fast-forwarded to the same commit
+  # when it has not moved since the tag; otherwise the last job writes the
+  # same files to main itself.
   #
   # It runs on a manual run too, and does nothing there: the build jobs
   # need it, and a skipped job would skip them.
   prepare:
     name: Release files
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -69,14 +74,24 @@ jobs:
           python3 tools/bump-version.py "${TAG#v}" --date "${PUBLISHED%%T*}" \
             --description "$RUNNER_TEMP/summary.xml" --changelog "$RUNNER_TEMP/summary.txt"
           git diff --stat
-          git diff --name-only -z | tar -cf "$RUNNER_TEMP/release-files.tar" --null -T -
 
-      - uses: actions/upload-artifact@v7
+      - name: Move the tag onto them
+        # Nothing to commit when the tag already carries them, a re-run.
+        # An edit made with this workflow's own token starts no new run.
         if: github.event_name == 'release'
-        with:
-          name: release-files
-          path: ${{ runner.temp }}/release-files.tar
-          if-no-files-found: error
+        run: |
+          git add -u
+          if git diff --cached --quiet; then
+            echo "$TAG already carries this release's files"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898283+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore: ${TAG#v}"
+          git tag -f "$TAG"
+          git push --force origin "refs/tags/$TAG"
+          git push origin HEAD:refs/heads/main ||
+            echo "main has moved on since $TAG; the last job writes these files to it"
 
   packages:
     # Built on fedora:44, matching the Fedora this is developed and
@@ -898,14 +913,11 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependencies: "false"
-          # Written again below on main itself, rather than the prepare
-          # job's files laid over it, so nothing committed to main after
-          # the tag is overwritten.
-          release-files: "false"
 
       - name: Bump the version and write the changelogs
-        # What the prepare job wrote on the tag, now on main, from the same
-        # release description and the same date.
+        # What the prepare job committed to the tag, now on main, from the
+        # same release description and the same date: nothing to do when
+        # main was fast-forwarded to that commit.
         env:
           RELEASE_BODY: ${{ github.event.release.body }}
           PUBLISHED: ${{ github.event.release.published_at }}
@@ -955,7 +967,7 @@ jobs:
           fi
           git -c user.name="github-actions[bot]" \
               -c user.email="41898283+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore: $VERSION"
+              commit -m "chore: $VERSION release checksums"
           # main may have moved while the release built; rebase once onto it.
           git push origin HEAD:main ||
             { git pull --rebase origin main && git push origin HEAD:main; }

@@ -11,30 +11,10 @@ inputs:
   appimage-tools:
     description: Also restore linuxdeploy and appimagetool
     default: "false"
-  release-files:
-    description: On a release, lay the prepare job's files over the checkout
-    default: "true"
 
 runs:
   using: composite
   steps:
-    # This release's version bump and changelog entries, written by the
-    # prepare job on top of the tag, so that what is built carries them
-    # rather than the tag's own, older copies.
-    - name: Download the release files
-      if: github.event_name == 'release' && inputs.release-files == 'true'
-      uses: actions/download-artifact@v8
-      with:
-        name: release-files
-        path: .release-files
-
-    - name: Lay the release files over the checkout
-      if: github.event_name == 'release' && inputs.release-files == 'true'
-      shell: bash
-      run: |
-        tar -xvf .release-files/release-files.tar
-        rm -rf .release-files
-
     - name: Version
       # A release builds its tag. A manual run has none and takes the
       # version main's CMakeLists.txt declares. VERSION is TAG without a
