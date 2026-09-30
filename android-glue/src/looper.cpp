@@ -67,7 +67,7 @@ struct AndroidPollSourceShape {
 // t_looper) and returns exactly what real ALooper_pollOnce would.
 // ALooper_pollOnce() itself is now a thin wrapper over this.
 int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* outEvents,
-                         void** outData) {
+                         void** outData, bool floor_zero_timeout = true) {
     if (looper == nullptr) return ALOOPER_POLL_ERROR;
 
     // Caught in testing: issue, fixed (the engineering notes, "fix the busy-loop
@@ -106,7 +106,8 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
         const int parsed = std::atoi(v);
         return (parsed < 0 || parsed > 100) ? 1 : parsed;
     }();
-    const int effective_timeout = (timeoutMillis == 0) ? poll_floor_ms : timeoutMillis;
+    const int effective_timeout =
+        (timeoutMillis == 0 && floor_zero_timeout) ? poll_floor_ms : timeoutMillis;
 
     while (true) {
         epoll_event ev{};
@@ -159,6 +160,20 @@ bool looper_trace_enabled() {
 }  // namespace
 
 
+// A thread's looper goes away with the thread, as on Android, unless it
+// has fds registered: those are the orphans poll_orphaned_loopers_once()
+// exists to keep polling (native_app_glue's). Without this, every thread
+// the engine starts and finishes left an epoll fd and an ALooper behind,
+// hundreds per session, until the process hit its fd limit, and the
+// orphan poller waited on every one of them each pass.
+struct ThreadLooperOwner {
+    ~ThreadLooperOwner() {
+        ALooper* looper = t_looper;
+        if (looper != nullptr && looper->fd_callbacks.empty()) ALooper_release(looper);
+    }
+};
+thread_local ThreadLooperOwner t_looper_owner;
+
 ALooper* ALooper_prepare(int /*opts*/) {
     if (t_looper != nullptr) {
         if (looper_trace_enabled())
@@ -171,6 +186,7 @@ ALooper* ALooper_prepare(int /*opts*/) {
     // -Wextra pointing at the members that do not need naming.
     t_looper = new ALooper{};
     t_looper->epoll_fd = epfd;
+    (void)&t_looper_owner;  // first use registers its destructor for this thread
     if (looper_trace_enabled())
         std::fprintf(stderr, "stud: [ALooper] ALooper_prepare() tid=%ld created t_looper=%p\n",
                  static_cast<long>(::syscall(SYS_gettid)), static_cast<void*>(t_looper));
@@ -253,16 +269,23 @@ bool poll_orphaned_loopers_once() {
     // ALooper_prepare()/other real android_glue functions that also take
     // g_all_loopers_mutex, so holding it across the dispatch would risk
     // a real, avoidable self-deadlock.
+    // Each looper is held for the duration of the poll: the thread that
+    // owns it can exit and release it meanwhile, and the last reference
+    // is then this one.
     std::vector<ALooper*> loopers;
     {
         std::lock_guard<std::mutex> lock(g_all_loopers_mutex);
         loopers = g_all_loopers;
+        for (ALooper* looper : loopers) looper->ref_count.fetch_add(1);
     }
 
     bool dispatched_any = false;
     const ALooper* calling_thread_looper = t_looper;
     for (ALooper* looper : loopers) {
-        if (looper == calling_thread_looper) continue;  // already polled by the caller itself
+        if (looper == calling_thread_looper || looper->fd_callbacks.empty()) {
+            ALooper_release(looper);  // already polled by the caller, or nothing to poll
+            continue;
+        }
 
         int out_fd = -1;
         int out_events = 0;
@@ -272,8 +295,14 @@ bool poll_orphaned_loopers_once() {
         // own (blocking-with-a-real-timeout) poll of its own looper; a
         // blocking wait here would stall that loop for orphaned loopers
         // that may never receive another event again.
-        int ident = poll_once_on_looper(looper, /*timeoutMillis=*/0, &out_fd, &out_events, &out_data);
-        if (ident < 0 || out_data == nullptr) continue;  // TIMEOUT/ERROR, or a callback-based fd
+        // A true zero timeout: the 1ms floor is for a thread spinning on its
+        // own looper, and applied here it cost 1ms per looper per pass.
+        int ident = poll_once_on_looper(looper, /*timeoutMillis=*/0, &out_fd, &out_events,
+                                        &out_data, /*floor_zero_timeout=*/false);
+        if (ident < 0 || out_data == nullptr) {  // TIMEOUT/ERROR, or a callback-based fd
+            ALooper_release(looper);
+            continue;
+        }
 
         auto* source = static_cast<AndroidPollSourceShape*>(out_data);
         if (source->process != nullptr) {
@@ -285,6 +314,7 @@ bool poll_orphaned_loopers_once() {
             source->process(source->app, source);
             dispatched_any = true;
         }
+        ALooper_release(looper);
     }
     return dispatched_any;
 }
