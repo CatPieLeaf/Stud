@@ -1137,18 +1137,6 @@ void dispatch_gamepad_event(const stud::android_glue::HostInputEvent& ev, const 
 }
 
 
-// One key event, on its way to the engine.
-//
-// The largest arm of dispatch_event()'s switch by a wide margin, and the
-// most self-contained: it touches neither the pointer position the other
-// arms carry between them nor anything else they share, only the event,
-// the resolved entry points and the JNI environment.
-//
-// What it does is not simple, and the comments inside record why: a key
-// released into a text box stays released until it is really let go, the
-// engine discards key events while a box has focus, and a repeat is the
-// key still being down rather than a fresh press. All of that is exactly
-// as it was; only its surroundings changed.
 // The editor's contents, handed everywhere they are shown or read: the
 // engine (nativePassText), the overlay that draws the box, and AGDK's own
 // text-input callback, which needs no Java EditText and no IME (see
@@ -1205,353 +1193,1038 @@ void dispatch_text_input_event(const stud::android_glue::HostInputEvent& ev,
     if (changed) publish_text_edit(fns, text_box);
 }
 
+// One key event, on its way to the engine.
+//
+// The largest arm of dispatch_event()'s switch by a wide margin, and the
+// most self-contained: it touches neither the pointer position the other
+// arms carry between them nor anything else they share, only the event,
+// the resolved entry points and the JNI environment.
+//
+// What it does is not simple, and the comments inside record why: a key
+// released into a text box stays released until it is really let go, the
+// engine discards key events while a box has focus, and a repeat is the
+// key still being down rather than a fresh press. All of that is exactly
+// as it was; only its surroundings changed.
 void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
                         JNIEnv* jni_env) {
-            bool down = ev.a != 0.0f;
-            // What this process believes is held. android-glue keeps its
-            // own set for focus changes, but a Lua TextBox taking focus is
-            // something only this side ever hears about.
-            if (down) {
-                held_keys().insert(ev.code);
-            } else {
-                held_keys().erase(ev.code);
-            }
+    bool down = ev.a != 0.0f;
+    // What this process believes is held. android-glue keeps its
+    // own set for focus changes, but a Lua TextBox taking focus is
+    // something only this side ever hears about.
+    if (down) {
+        held_keys().insert(ev.code);
+    } else {
+        held_keys().erase(ev.code);
+    }
 
-            // A key already released into text entry stays released until
-            // it is really let go. Without this the next auto-repeat,
-            // 25 a second, presses it straight back down, which is why
-            // the character kept walking while its owner typed.
+    // A key already released into text entry stays released until
+    // it is really let go. Without this the next auto-repeat,
+    // 25 a second, presses it straight back down, which is why
+    // the character kept walking while its owner typed.
+    //
+    // Withheld from the ENGINE only. It still types: W was held
+    // when the chat box took focus, so W was in this set, so every
+    // W after that was dropped before it ever reached the editor
+    // and the one letter the player could not type into chat was
+    // the one they had been walking with. What has to stay
+    // untouched is the engine's own idea that the key is down; the
+    // text a keystroke produces has nothing to do with that.
+    bool held_through_text_entry = false;
+    {
+        auto& released_into_text = keys_released_into_text_entry();
+        if (released_into_text.count(ev.code) != 0) {
+            // Withheld from the engine until the text box lets go,
+            // releases included.
             //
-            // Withheld from the ENGINE only. It still types: W was held
-            // when the chat box took focus, so W was in this set, so every
-            // W after that was dropped before it ever reached the editor
-            // and the one letter the player could not type into chat was
-            // the one they had been walking with. What has to stay
-            // untouched is the engine's own idea that the key is down; the
-            // text a keystroke produces has nothing to do with that.
-            bool held_through_text_entry = false;
-            {
-                auto& released_into_text = keys_released_into_text_entry();
-                if (released_into_text.count(ev.code) != 0) {
-                    // Withheld from the engine until the text box lets go,
-                    // releases included.
-                    //
-                    // An earlier version erased the key here on a real
-                    // release, on the reasoning that the user had let go so
-                    // the suppression was done. That was the bug: while a
-                    // text box has focus the engine discards key events, so
-                    // that release never landed either, and with the key
-                    // no longer in this set there was nothing left to
-                    // re-send when the box let go, which is the one moment
-                    // a release can actually be heard. Live-caught: the
-                    // "text box let go" line never printed because this set
-                    // was already empty.
-                    //
-                    // The set is cleared in exactly one place now, at the
-                    // moment focus is released, right after the real
-                    // releases are sent.
-                    held_through_text_entry = true;
-                }
-            }
-            // Track modifiers locally: Wayland reports them in a separate
-            // event Stud does not forward, and every synthesized KeyEvent
-            // has to carry them the way a real keyboard would.
-            static bool shift_down = false;
-            // A repeat is a press that never had a matching release, so it
-            // must not disturb the latched modifier state.
-            const bool is_repeat = ev.b != 0.0f;
-            if (is_repeat) {
-                // Modifiers themselves do not repeat usefully.
-            } else if (ev.code == 42 || ev.code == 54) {  // LEFTSHIFT / RIGHTSHIFT
-                shift_down = down;
-                g_meta_state = down ? (g_meta_state | 0x1) : (g_meta_state & ~0x1);
-            } else if (ev.code == 56 || ev.code == 100) {  // LEFTALT / RIGHTALT
-                g_meta_state = down ? (g_meta_state | 0x02) : (g_meta_state & ~0x02);
-            } else if (ev.code == 29 || ev.code == 97) {  // LEFTCTRL / RIGHTCTRL
-                g_meta_state = down ? (g_meta_state | 0x1000) : (g_meta_state & ~0x1000);
-            }
-            // Escape gives the pointer back, whatever is holding it; see
-            // g_lock_suppressed. The key still reaches the engine as
-            // normal; this only lets go of the lock alongside it.
-            if (down && !is_repeat && ev.code == 1) {  // KEY_ESC
-                if (g_drag_locked.load()) g_lock_suppressed = true;
-                apply_pointer_lock();
-            }
-            // What this key really types, according to the compositor's own
-            // keymap. Stud's own table is positional and describes a US
-            // layout, so it is only the fallback now, for the X11 backend,
-            // and for the moment before the keymap has arrived.
-            std::string typed_text;
-            if (!text_from_keymap(ev.keysym, ev.codepoint, ev.composed_utf8,
-                                  sizeof(ev.composed_utf8), &typed_text)) {
-                // Only reached with no keymap at all, the X11 backend, or
-                // the moment before wl_keyboard.keymap arrives.
-                char from_table = 0;
-                if (char_for_scan_code(ev.code, shift_down, &from_table)) {
-                    typed_text.assign(1, from_table);
-                }
-            }
-            // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
-            // real one goes through whole rather than being truncated.
-            // KeyEvent.getUnicodeChar() is a single code point, so a
-            // multi-character composed result has none to report, the
-            // text still reaches the engine through typed_text, and
-            // neither does a dead key, which types nothing on its own.
-            const jint unicode_char =
-                ev.codepoint != 0
-                    ? static_cast<jint>(ev.codepoint)
-                    : (ev.composed_utf8[0] != '\0' || typed_text.empty()
-                           ? 0
-                           : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
-            // A key pinned to its position (see position_must_be_kept) is
-            // being reported for where it sits, so the Android key code
-            // has to agree: on ABNT2 that key types "'" but is the grave
-            // the inventory is bound to, and the two arguments describing
-            // one press must not name different keys. Typing is
-            // unaffected either way, it travels as text, never as this.
-            const bool keep_position =
-                typed_text.size() == 1 && !is_keypad_scan_code(ev.code) &&
-                position_must_be_kept(ev.code, typed_text[0], ev.layout_chars);
-            const jint key_code = keep_position
-                                      ? android_key_code_for_scan_code(ev.code)
-                                      : android_key_code_for_event(ev.code, ev.keysym);
-            // The scan code is what the engine actually keys off; it
-            // indexes a table straight to a USB HID usage code, and never
-            // reads the Android key code at all. So it has to carry what
-            // the key types rather than where it sits. See
-            // engine_scan_code_for_event().
-            const jint scan_code = static_cast<jint>(
-                engine_scan_code_for_event(ev.code, typed_text, ev.layout_chars));
+            // An earlier version erased the key here on a real
+            // release, on the reasoning that the user had let go so
+            // the suppression was done. That was the bug: while a
+            // text box has focus the engine discards key events, so
+            // that release never landed either, and with the key
+            // no longer in this set there was nothing left to
+            // re-send when the box let go, which is the one moment
+            // a release can actually be heard. Live-caught: the
+            // "text box let go" line never printed because this set
+            // was already empty.
+            //
+            // The set is cleared in exactly one place now, at the
+            // moment focus is released, right after the real
+            // releases are sent.
+            held_through_text_entry = true;
+        }
+    }
+    // Track modifiers locally: Wayland reports them in a separate
+    // event Stud does not forward, and every synthesized KeyEvent
+    // has to carry them the way a real keyboard would.
+    static bool shift_down = false;
+    // A repeat is a press that never had a matching release, so it
+    // must not disturb the latched modifier state.
+    const bool is_repeat = ev.b != 0.0f;
+    if (is_repeat) {
+        // Modifiers themselves do not repeat usefully.
+    } else if (ev.code == 42 || ev.code == 54) {  // LEFTSHIFT / RIGHTSHIFT
+        shift_down = down;
+        g_meta_state = down ? (g_meta_state | 0x1) : (g_meta_state & ~0x1);
+    } else if (ev.code == 56 || ev.code == 100) {  // LEFTALT / RIGHTALT
+        g_meta_state = down ? (g_meta_state | 0x02) : (g_meta_state & ~0x02);
+    } else if (ev.code == 29 || ev.code == 97) {  // LEFTCTRL / RIGHTCTRL
+        g_meta_state = down ? (g_meta_state | 0x1000) : (g_meta_state & ~0x1000);
+    }
+    // Escape gives the pointer back, whatever is holding it; see
+    // g_lock_suppressed. The key still reaches the engine as
+    // normal; this only lets go of the lock alongside it.
+    if (down && !is_repeat && ev.code == 1) {  // KEY_ESC
+        if (g_drag_locked.load()) g_lock_suppressed = true;
+        apply_pointer_lock();
+    }
+    // What this key really types, according to the compositor's own
+    // keymap. Stud's own table is positional and describes a US
+    // layout, so it is only the fallback now, for the X11 backend,
+    // and for the moment before the keymap has arrived.
+    std::string typed_text;
+    if (!text_from_keymap(ev.keysym, ev.codepoint, ev.composed_utf8,
+                          sizeof(ev.composed_utf8), &typed_text)) {
+        // Only reached with no keymap at all, the X11 backend, or
+        // the moment before wl_keyboard.keymap arrives.
+        char from_table = 0;
+        if (char_for_scan_code(ev.code, shift_down, &from_table)) {
+            typed_text.assign(1, from_table);
+        }
+    }
+    // KeyEvent.getUnicodeChar() is a code point, not a byte, so the
+    // real one goes through whole rather than being truncated.
+    // KeyEvent.getUnicodeChar() is a single code point, so a
+    // multi-character composed result has none to report, the
+    // text still reaches the engine through typed_text, and
+    // neither does a dead key, which types nothing on its own.
+    const jint unicode_char =
+        ev.codepoint != 0
+            ? static_cast<jint>(ev.codepoint)
+            : (ev.composed_utf8[0] != '\0' || typed_text.empty()
+                   ? 0
+                   : static_cast<jint>(static_cast<unsigned char>(typed_text[0])));
+    // A key pinned to its position (see position_must_be_kept) is
+    // being reported for where it sits, so the Android key code
+    // has to agree: on ABNT2 that key types "'" but is the grave
+    // the inventory is bound to, and the two arguments describing
+    // one press must not name different keys. Typing is
+    // unaffected either way, it travels as text, never as this.
+    const bool keep_position =
+        typed_text.size() == 1 && !is_keypad_scan_code(ev.code) &&
+        position_must_be_kept(ev.code, typed_text[0], ev.layout_chars);
+    const jint key_code = keep_position
+                              ? android_key_code_for_scan_code(ev.code)
+                              : android_key_code_for_event(ev.code, ev.keysym);
+    // The scan code is what the engine actually keys off; it
+    // indexes a table straight to a USB HID usage code, and never
+    // reads the Android key code at all. So it has to carry what
+    // the key types rather than where it sits. See
+    // engine_scan_code_for_event().
+    const jint scan_code = static_cast<jint>(
+        engine_scan_code_for_event(ev.code, typed_text, ev.layout_chars));
 
-            // Real text entry. When the engine has told us a Lua TextBox
-            // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
-            // must go back as the TextBox's whole updated contents via
-            // nativePassText, a real device does exactly this from its
-            // IME, never as key events.
-            long text_box = NativeGLJavaInterfaceJava::active_text_box();
+    // Real text entry. When the engine has told us a Lua TextBox
+    // is focused (NativeGLJavaInterface.showKeyboard), keystrokes
+    // must go back as the TextBox's whole updated contents via
+    // nativePassText, a real device does exactly this from its
+    // IME, never as key events.
+    long text_box = NativeGLJavaInterfaceJava::active_text_box();
 
-            // What a version-specific read of the engine's own
-            // focused-text-box fields found, while that probe existed: on
-            // the id-4 service singleton, 0x9c8 is null while 0xa78/0xa80
-            // both hold real pointers. An earlier reading took that null
-            // 0x9c8 for the reason typing does not echo, and is retracted.
-            // Its consumer takes 0x9c8 only as a fast path, falling through to
-            // a second path built on 0xa80, so
-            // syncTextboxTextAndCursorPosition2 really does reach the
-            // focused box. See this file's header for what actually
-            // suppresses the drawing. The probe itself is gone: it answered
-            // its question, and its offsets belong to one Roblox build.
-            // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
-            // real device performs when its keyboard opens over the GL view.
-            // This was tried twice before and disproven, but both attempts
-            // predate `java.lang.String.getBytes` existing at all, and
-            // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
-            // focused box's own text. Off by default.
-            if (down && text_box != 0 && std::getenv("STUD_IME_HANDSHAKE") != nullptr) {
-                static bool handshaken = false;
-                if (!handshaken) {
-                    handshaken = true;
-                    if (fns.get_text_box_info != nullptr) {
-                        jobject info = nullptr;
-                        call_trapping_abort_with_result(fns.get_text_box_info, info, jni_env,
-                                                        nullptr);
-                        std::printf("stud: IME handshake: nativeGetTextBoxInfo -> %s\n",
-                                    info != nullptr ? "object" : "null");
-                    }
-                    if (fns.update_keyboard_size != nullptr) {
-                        // A real open keyboard covers the bottom of the view.
-                        // The real caller only reports visible=true when the
-                        // measured height exceeds 10, so this must be a real
-                        // rectangle, not zeroes.
-                        // The event carries the live surface size, which is
-                        // the same thing the window owner reports.
-                        const jint w = static_cast<jint>(ev.surface_width);
-                        const jint h = static_cast<jint>(ev.surface_height);
-                        const jint kb_h = h / 3 > 10 ? h / 3 : 300;
-                        call_trapping_abort(fns.update_keyboard_size, jni_env, nullptr,
-                                            static_cast<jboolean>(JNI_TRUE), 0, h - kb_h, w, kb_h);
-                        std::printf("stud: IME handshake: updateKeyboardSize(true, 0,%d,%d,%d)\n",
-                                    h - kb_h, w, kb_h);
-                    }
+    // What a version-specific read of the engine's own
+    // focused-text-box fields found, while that probe existed: on
+    // the id-4 service singleton, 0x9c8 is null while 0xa78/0xa80
+    // both hold real pointers. An earlier reading took that null
+    // 0x9c8 for the reason typing does not echo, and is retracted.
+    // Its consumer takes 0x9c8 only as a fast path, falling through to
+    // a second path built on 0xa80, so
+    // syncTextboxTextAndCursorPosition2 really does reach the
+    // focused box. See this file's header for what actually
+    // suppresses the drawing. The probe itself is gone: it answered
+    // its question, and its offsets belong to one Roblox build.
+    // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
+    // real device performs when its keyboard opens over the GL view.
+    // This was tried twice before and disproven, but both attempts
+    // predate `java.lang.String.getBytes` existing at all, and
+    // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
+    // focused box's own text. Off by default.
+    if (down && text_box != 0 && std::getenv("STUD_IME_HANDSHAKE") != nullptr) {
+        static bool handshaken = false;
+        if (!handshaken) {
+            handshaken = true;
+            if (fns.get_text_box_info != nullptr) {
+                jobject info = nullptr;
+                call_trapping_abort_with_result(fns.get_text_box_info, info, jni_env,
+                                                nullptr);
+                std::printf("stud: IME handshake: nativeGetTextBoxInfo -> %s\n",
+                            info != nullptr ? "object" : "null");
+            }
+            if (fns.update_keyboard_size != nullptr) {
+                // A real open keyboard covers the bottom of the view.
+                // The real caller only reports visible=true when the
+                // measured height exceeds 10, so this must be a real
+                // rectangle, not zeroes.
+                // The event carries the live surface size, which is
+                // the same thing the window owner reports.
+                const jint w = static_cast<jint>(ev.surface_width);
+                const jint h = static_cast<jint>(ev.surface_height);
+                const jint kb_h = h / 3 > 10 ? h / 3 : 300;
+                call_trapping_abort(fns.update_keyboard_size, jni_env, nullptr,
+                                    static_cast<jboolean>(JNI_TRUE), 0, h - kb_h, w, kb_h);
+                std::printf("stud: IME handshake: updateKeyboardSize(true, 0,%d,%d,%d)\n",
+                            h - kb_h, w, kb_h);
+            }
+            std::fflush(stdout);
+        }
+    }
+
+    if (down && text_box != 0 && fns.pass_text != nullptr) {
+        auto& ed = editor();
+        if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
+            // The engine replaced the contents (a fresh focus, or
+            // Lua setting the text), adopt it.
+            ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
+        }
+        const bool ctrl = (g_meta_state & 0x1000) != 0;
+        bool changed = false;
+        bool moved = false;
+        if (ctrl && (ev.code == 30)) {  // Ctrl+A
+            ed.select_all();
+            moved = true;
+        } else if (ctrl && (ev.code == 46 || ev.code == 45)) {  // Ctrl+C / Ctrl+X
+            set_clipboard(ed.selected_text());
+            if (ev.code == 45) changed = ed.delete_selection();  // cut
+            moved = true;
+        } else if (ctrl && ev.code == 47) {  // Ctrl+V
+            std::string pasted = get_clipboard();
+            // A text box takes one line: a pasted newline ends the
+            // paste rather than smuggling a control character in.
+            const size_t newline = pasted.find_first_of("\r\n");
+            if (newline != std::string::npos) pasted.resize(newline);
+            changed = ed.insert(pasted);
+        } else if (ev.code == 14) {  // BACKSPACE
+            changed = ed.backspace();
+        } else if (ev.code == 111) {  // DELETE
+            changed = ed.del();
+        } else if (ev.code == 105) {  // LEFT
+            ed.move_left(shift_down);
+            moved = true;
+        } else if (ev.code == 106) {  // RIGHT
+            ed.move_right(shift_down);
+            moved = true;
+        } else if (ev.code == 102) {  // HOME
+            ed.move_home(shift_down);
+            moved = true;
+        } else if (ev.code == 107) {  // END
+            ed.move_end(shift_down);
+            moved = true;
+        } else if (ev.code == 28) {  // ENTER
+            // Real order from RbxKeyboard.onEditorAction: sync the
+            // text first, then report the return key, then the final
+            // done=true nativePassText.
+            deliver_text(fns, ed.text(), text_box, /*done=*/true);
+            if (fns.return_pressed != nullptr) {
+                call_trapping_abort(fns.return_pressed, jni_env, nullptr,
+                                    static_cast<jlong>(text_box));
+            }
+        } else if (!typed_text.empty() && !ctrl) {
+            changed = ed.insert(typed_text);
+        }
+        const std::string text = ed.text();
+        if (moved && !changed) {
+            // Caret and selection moved without the text changing:
+            // the engine has nothing new to receive, but what is
+            // drawn has to follow.
+            push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
+                              ed.selection_end());
+        }
+        if (changed) {
+            if (input_trace_enabled()) {
+                // Length only, never the content, which can be a password.
+                std::printf("stud: input bridge: nativePassText -> %zu chars\n",
+                            text.size());
+                std::fflush(stdout);
+            }
+            if (input_trace_enabled()) {
+                static bool told_handle = false;
+                if (!told_handle) {
+                    told_handle = true;
+                    std::printf("stud: input bridge: TextBox handle=0x%llx\n",
+                                static_cast<unsigned long long>(text_box));
                     std::fflush(stdout);
                 }
             }
+            publish_text_edit(fns, text_box);
+        }
+    }
 
-            if (down && text_box != 0 && fns.pass_text != nullptr) {
-                auto& ed = editor();
-                if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
-                    // The engine replaced the contents (a fresh focus, or
-                    // Lua setting the text), adopt it.
-                    ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
-                }
-                const bool ctrl = (g_meta_state & 0x1000) != 0;
-                bool changed = false;
-                bool moved = false;
-                if (ctrl && (ev.code == 30)) {  // Ctrl+A
-                    ed.select_all();
-                    moved = true;
-                } else if (ctrl && (ev.code == 46 || ev.code == 45)) {  // Ctrl+C / Ctrl+X
-                    set_clipboard(ed.selected_text());
-                    if (ev.code == 45) changed = ed.delete_selection();  // cut
-                    moved = true;
-                } else if (ctrl && ev.code == 47) {  // Ctrl+V
-                    std::string pasted = get_clipboard();
-                    // A text box takes one line: a pasted newline ends the
-                    // paste rather than smuggling a control character in.
-                    const size_t newline = pasted.find_first_of("\r\n");
-                    if (newline != std::string::npos) pasted.resize(newline);
-                    changed = ed.insert(pasted);
-                } else if (ev.code == 14) {  // BACKSPACE
-                    changed = ed.backspace();
-                } else if (ev.code == 111) {  // DELETE
-                    changed = ed.del();
-                } else if (ev.code == 105) {  // LEFT
-                    ed.move_left(shift_down);
-                    moved = true;
-                } else if (ev.code == 106) {  // RIGHT
-                    ed.move_right(shift_down);
-                    moved = true;
-                } else if (ev.code == 102) {  // HOME
-                    ed.move_home(shift_down);
-                    moved = true;
-                } else if (ev.code == 107) {  // END
-                    ed.move_end(shift_down);
-                    moved = true;
-                } else if (ev.code == 28) {  // ENTER
-                    // Real order from RbxKeyboard.onEditorAction: sync the
-                    // text first, then report the return key, then the final
-                    // done=true nativePassText.
-                    deliver_text(fns, ed.text(), text_box, /*done=*/true);
-                    if (fns.return_pressed != nullptr) {
-                        call_trapping_abort(fns.return_pressed, jni_env, nullptr,
-                                            static_cast<jlong>(text_box));
-                    }
-                } else if (!typed_text.empty() && !ctrl) {
-                    changed = ed.insert(typed_text);
-                }
-                const std::string text = ed.text();
-                if (moved && !changed) {
-                    // Caret and selection moved without the text changing:
-                    // the engine has nothing new to receive, but what is
-                    // drawn has to follow.
-                    push_text_overlay(true, text, ed.caret(), ed.selection_begin(),
-                                      ed.selection_end());
-                }
-                if (changed) {
-                    if (input_trace_enabled()) {
-                        // Length only, never the content, which can be a password.
-                        std::printf("stud: input bridge: nativePassText -> %zu chars\n",
-                                    text.size());
-                        std::fflush(stdout);
-                    }
-                    if (input_trace_enabled()) {
-                        static bool told_handle = false;
-                        if (!told_handle) {
-                            told_handle = true;
-                            std::printf("stud: input bridge: TextBox handle=0x%llx\n",
-                                        static_cast<unsigned long long>(text_box));
+    // Real Android Back. The app shell leaves a page (a WebView
+    // page, a settings screen) on KEYCODE_BACK, which every real
+    // device has as a button or a gesture and which Stud had no
+    // way to send at all, leaving a user stuck on any screen
+    // whose only exit is Back, live-reported exactly that way.
+    // Escape stays KEYCODE_ESCAPE, because that is what a real
+    // hardware keyboard sends and what Roblox uses in-game for
+    // its own menu; Alt+Left is the desktop convention for
+    // "back" and is what is bound here instead.
+    // Everything above is local: the editor, the overlay, and the
+    // text the engine is told through nativePassText. Below is the
+    // key itself, which is the one thing a withheld key must not
+    // send, in either of its two paths.
+    if (held_through_text_entry) return;
+
+    const bool alt_left_back = ev.code == 105 && (g_meta_state & kMetaAlt) != 0;
+    if (alt_left_back) {
+        if (g_agdk_env != nullptr) {
+            send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down,
+                          static_cast<jint>(ev.code), kKeyCodeBack, unicode_char);
+        }
+        if (fns.key_event != nullptr) {
+            call_trapping_abort(fns.key_event, jni_env, nullptr,
+                                static_cast<jboolean>(down ? JNI_TRUE : JNI_FALSE),
+                                static_cast<jint>(ev.code), kKeyCodeBack,
+                                static_cast<jboolean>(JNI_FALSE));
+        }
+        if (down) {
+            std::printf("stud: input bridge: Alt+Left -> KEYCODE_BACK\n");
+            std::fflush(stdout);
+        }
+        return;
+    }
+
+    if (g_agdk_env != nullptr) {
+        send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, scan_code, key_code,
+                      unicode_char);
+    }
+    // One-shot per path, so a live run says exactly which of the
+    // three real key paths actually reached the engine.
+    {
+        static bool told_text = false, told_key = false;
+        if (!told_text && text_box != 0) {
+            told_text = true;
+            std::printf("stud: input bridge: text path ACTIVE (TextBox focused, "
+                        "pass_text=%d)\n", fns.pass_text != nullptr);
+            std::fflush(stdout);
+        }
+        if (!told_key) {
+            told_key = true;
+            std::printf("stud: input bridge: nativePassKeyEvent path active "
+                        "(scan=%u->%d keycode=%d unicode=%d)\n", ev.code,
+                        scan_code, key_code, unicode_char);
+            std::fflush(stdout);
+        }
+    }
+    if (fns.key_event == nullptr) return;
+    // Every key actually handed to the engine, one line each,
+    // immediately before the call, so a run says what the engine
+    // received rather than leaving it to be inferred from what
+    // Stud meant to send.
+    //
+    // BEHIND STUD_INPUT_TRACE, which is where it always belonged.
+    // It used to run in every session, bounded to 60 events so it
+    // could not fill a log -- but the bound was the wrong
+    // protection. These lines are scan codes and key codes, which
+    // is what was typed, and the first sixty keystrokes of a
+    // session are the ones most likely to be a login. The session
+    // log exists to be exported and sent to someone, and this
+    // project's own rule is that a password, a cookie or a
+    // TextBox's contents never reach it. A keystroke is all three
+    // by another name.
+    if (input_trace_enabled()) {
+        static int traced = 0;
+        if (traced < 60) {
+            ++traced;
+            std::printf("stud: key -> engine: %s scan=%u->%d keycode=%d repeat=%d "
+                        "textbox=%d\n",
+                        down ? "down" : "up  ", ev.code, scan_code, key_code,
+                        ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0);
+            std::fflush(stdout);
+        }
+    }
+    // A held key repeats, and says so: real Android reports the
+    // same through KeyEvent.getRepeatCount(), which is exactly
+    // what this argument stands for.
+    call_trapping_abort(fns.key_event, jni_env, nullptr,
+                        static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
+                        scan_code,
+                        key_code,
+                        static_cast<jboolean>(ev.b != 0.0f ? JNI_TRUE : JNI_FALSE));
+}
+
+void dispatch_pointer_motion(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                             JNIEnv* jni_env, float& last_x, float& last_y) {
+    if (g_touch_down) send_touch(fns, jni_env, ev, 1);
+    if (fns.mouse_move == nullptr) return;
+    // Real caller (the app's own input handler) passes absolute position plus the
+    // delta since the previous move, both already divided by the
+    // display density, so `last_x`/`last_y` are kept in those
+    // same units, not pixels.
+    const float x = to_density_independent(ev.x);
+    const float y = to_density_independent(ev.y);
+    // First move after a lock: take the position, report no
+    // movement. The pointer did not travel from the accumulated
+    // position to here. That difference is an artefact of the
+    // lock, and reporting it as a delta moves the camera.
+    // The position reported to the engine is INTEGRATED from the
+    // pointer's movement; it is never assigned from the pointer's
+    // absolute position.
+    //
+    // That one distinction is what removes the teleport, in both
+    // directions. While the pointer is locked it cannot move, so
+    // the reported position advances by relative deltas instead,
+    // and the moment the lock ends, assigning the physical
+    // position back would snap the engine's cursor across the
+    // whole distance the hand travelled. Integrating means there
+    // is nothing to snap: the reported position simply carries on
+    // from where it was, moved by however far the mouse moves.
+    //
+    // An earlier attempt kept an offset between the two and added
+    // it to each absolute position. That compounds, the offset
+    // was computed from a position that already contained the
+    // previous one, so every drag displaced the cursor further,
+    // and a third-person camera ended up somewhere random. There
+    // is no offset here to compound.
+    // The real client's own unlocked mouse path, followed
+    // exactly (the app's own mouse handler, the branch taken whenever
+    // getButtonState() != 0, and the ordinary hover path beside
+    // it):
+    //
+    //     float x = event.getX() / density;
+    //     float y = event.getY() / density;
+    //     float dx = x - lastX, dy = y - lastY;
+    //     lastX = x; lastY = y;
+    //     nativePassMouseMove(x, y, dx, dy);
+    //
+    // The position it passes is the POINTER'S OWN, every time.
+    // Stud used to integrate the deltas into a position of its
+    // own instead, and clamp that to the window. Both were
+    // mistakes and both were visible: an integrated position
+    // drifts away from the pointer, and once it has drifted past
+    // an edge the clamp holds it there, a cursor stuck against
+    // the left of the screen, which the real client has no notion
+    // of. It also cannot drift back, because nothing ever
+    // reconciles the two.
+    //
+    // Integration is only needed while the pointer is locked and
+    // has no position of its own; that is the branch above, and
+    // the resync flag is what carries the two back into agreement
+    // when the lock ends.
+    const bool resync = g_resync_after_unlock.exchange(false);
+    if (resync || !g_have_prev_raw) {
+        g_prev_raw_x = x;
+        g_prev_raw_y = y;
+        g_have_prev_raw = true;
+    }
+    const float dx = x - g_prev_raw_x;
+    const float dy = y - g_prev_raw_y;
+    g_prev_raw_x = x;
+    g_prev_raw_y = y;
+    if (input_trace_enabled()) {
+        // Motions during a drag, and the first few after it ends,
+        // the window where a jump would happen.
+        static int after_release = 0;
+        if (g_button_state != 0) {
+            after_release = 4;
+        } else if (after_release > 0) {
+            --after_release;
+        }
+        if (g_button_state != 0 || after_release > 0) {
+            std::printf("stud: move pos=(%.1f,%.1f) d=(%.1f,%.1f) raw=(%.1f,%.1f) "
+                        "state=0x%x locked=%d%s\n",
+                        last_x, last_y, dx, dy, ev.x, ev.y,
+                        static_cast<unsigned>(g_button_state),
+                        g_drag_locked.load() ? 1 : 0, resync ? " RESYNC" : "");
+            std::fflush(stdout);
+        }
+    }
+    if (g_text_drag.load() && NativeGLJavaInterfaceJava::active_text_box() != 0) {
+        auto& ed = editor();
+        ed.set_caret(text_offset_at(last_x), /*select=*/true);
+        push_text_overlay(true, ed.text(), ed.caret(), ed.selection_begin(),
+                          ed.selection_end());
+    }
+    // The real client's mouse path, in full (the app's own mouse handler,
+    // reached from onTouch() for any event whose
+    // source is SOURCE_MOUSE and whose tool type is not FINGER):
+    //
+    //     x = event.getX() / density;  y = event.getY() / density;
+    //     dx = x - lastX;  dy = y - lastY;
+    //     lastX = x; lastY = y;
+    //     nativePassMouseMove(x, y, dx, dy);
+    //
+    // Nothing else runs on that path. The position passed is
+    // the pointer's own, every time, and the camera rotates from
+    // the deltas beside it.
+    //
+    // NO PAN. onTouch() returns y(motionEvent) for a real mouse
+    // before it ever reaches the GestureDetector, so
+    // nativePassMousePan is never called for one, the pan at
+    // the app's own input handler is guarded by SOURCE_MOUSE but is only
+    // reachable for an event whose tool type IS a finger, which a
+    // mouse's never is. Stud sent it anyway, and a pan carries an
+    // anchor: it tells the engine a gesture is under way about a
+    // fixed point, so the engine pins its cursor there for the
+    // duration and takes the position back at the end. That is
+    // the cursor jumping to where the hand stopped, and
+    // everything built to hide it, snapping the position back
+    // to the anchor on release, locking the real pointer for a
+    // drag, clamping the position inside the window, was
+    // working around a gesture the platform should never have
+    // reported.
+    //
+    // No clamp either. The client bounds nothing here; only its
+    // ACTION_SCROLL branch floors the position it reports at
+    // zero, which is the wheel's business and not the pointer's.
+    if (g_warp_pending) {
+        // Nothing here is the hand: either an event that was
+        // already on its way when the warp was asked for, or the
+        // warp itself arriving. Keep the engine's cursor where it
+        // is, report no movement, and measure the next real
+        // movement from wherever the pointer actually is now.
+        const float to_target = std::fabs(ev.x - g_warp_target_px) +
+                                std::fabs(ev.y - g_warp_target_py);
+        const float to_origin = std::fabs(ev.x - g_warp_from_px) +
+                                std::fabs(ev.y - g_warp_from_py);
+        const bool landed = to_target <= to_origin;
+        const bool timed_out =
+            std::chrono::steady_clock::now() - g_warp_started >
+            std::chrono::milliseconds(80);
+        g_prev_raw_x = x;
+        g_prev_raw_y = y;
+        g_have_prev_raw = true;
+        g_last_raw_px = ev.x;
+        g_last_raw_py = ev.y;
+        if (landed || timed_out) {
+            g_warp_pending = false;
+            if (input_trace_enabled()) {
+                std::printf("stud: warp %s at (%.1f,%.1f)\n",
+                            landed ? "landed" : "gave up (not seen)",
+                            static_cast<double>(ev.x), static_cast<double>(ev.y));
+                std::fflush(stdout);
+            }
+        }
+        return;
+    }
+    g_last_raw_px = ev.x;
+    g_last_raw_py = ev.y;
+    if (g_drag_confined) {
+        // Per EVENT, not per poll. The camera sets its pin a frame
+        // or so after the press, and an 8ms poll can miss the whole
+        // of a short flick, which is exactly when the cursor was
+        // still jumping: the gesture ended before Stud ever saw the
+        // pin, so it treated a rotation as a UI drag.
+        g_engine_mouse_behavior.store(static_cast<int>(stud::runtime::read_mouse_behavior()));
+    }
+    if (g_drag_confined && engine_pins_cursor()) {
+        // The engine is pinning its own cursor RIGHT NOW; it
+        // says so (MouseBehavior == LockCurrentPosition), which
+        // is the one thing this used to have to guess at.
+        //
+        // While that lasts the engine ignores every position it
+        // is given, so the position is left exactly where its
+        // cursor is and only the movement is sent, from the
+        // relative stream, which keeps reporting what the device
+        // did even once the pointer has reached the confinement
+        // boundary and stopped. That is what makes a spin
+        // unlimited, and what makes the end of one a non-event:
+        // nothing was moved, so nothing has to be put back.
+        if (!g_pin_seen) {
+            g_pin_seen = true;
+            // The press point, not wherever the pointer had got to
+            // by the time this was noticed. The camera pins on the
+            // button-down it receives, so that is where the
+            // engine's own cursor is standing, adopting the
+            // current position instead puts the cursor (and the
+            // warp at the end) a flick's worth away from it.
+            g_pin_x = g_drag_anchor_x;
+            g_pin_y = g_drag_anchor_y;
+            g_pin_px = g_drag_anchor_px;
+            g_pin_py = g_drag_anchor_py;
+            if (input_trace_enabled()) {
+                std::printf("stud: the engine pinned its cursor at (%.1f,%.1f)\n",
+                            static_cast<double>(g_pin_x), static_cast<double>(g_pin_y));
+                std::fflush(stdout);
+            }
+        }
+        last_x = g_pin_x;
+        last_y = g_pin_y;
+        return;
+    }
+    last_x = x;
+    last_y = y;
+    if (g_drag_confined) {
+        // Confined but NOT pinned: an ordinary drag, including a
+        // right-drag on an in-game UI, where the engine really is
+        // following the positions it is given. The cursor follows
+        // the hand; only the movement is withheld, because the
+        // relative event for this same motion carries it and
+        // sending it twice would turn the camera twice as far.
+        return;
+    }
+    call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
+}
+
+void dispatch_pointer_relative(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                               JNIEnv* jni_env, float& last_x, float& last_y) {
+    // Mouse look. `ev.x`/`ev.y` are the raw delta, not a position:
+    // the compositor is holding the cursor still, so this is the
+    // only motion there is. The real captured-pointer path
+    // (the app's own input handler) reads exactly this; Android's
+    // AXIS_RELATIVE_X/Y, and adds it to the position it tracks
+    // itself before passing both on, which is what this mirrors.
+    // (It only skips the accumulation under FFlag
+    // AndroidMouseLockButtonFix, whose compiled-in default is
+    // false.) Deliberately not routed through AGDK's
+    // onTouchEventNative: a captured pointer does not go through
+    // the view's ordinary touch path on a real device either.
+    if (fns.mouse_move == nullptr) return;
+    // The captured-pointer path, as the client itself handles it
+    // (reached from onCapturedPointer while the view holds
+    // pointer capture): it divides the relative axis values by
+    // the display density, adds them to the position it is
+    // tracking, and passes that position alongside the deltas.
+    //
+    // So the position is INTEGRATED by the deltas rather than
+    // frozen: it is the client's idea of where the cursor now is,
+    // and capture does not suspend that; it only changes where
+    // the movement comes from.
+    //
+    // Stud used to freeze the position here and pass the stale one
+    // with each delta. That is why a camera rotation ended
+    // somewhere else: the engine spent the whole gesture being
+    // told the cursor had not moved, and the first ordinary move
+    // afterwards, which passes the pointer's real position,
+    // moved it the entire distance at once. The jump was never at
+    // the release; it was on the next motion after it, which is
+    // exactly how it presents.
+    // The position does NOT advance while the pointer is
+    // captured; only the deltas do.
+    //
+    // The client has both behaviours and a flag picks between
+    // them: it integrates the deltas into its position only when
+    // that flag is off, and passes the position either way.
+    //
+    // The flag is FFlagAndroidMouseLockButtonFix, and
+    // production serves it True, so the branch is NOT taken and
+    // the client passes its position unchanged with each delta.
+    // Integrating instead is what left the orbit teleporting: the
+    // engine holds its cursor still for the gesture, so the
+    // position Stud had accumulated meant nothing to it, and the
+    // first ordinary move after the button came up handed it that
+    // accumulated position all at once.
+    //
+    // Frozen, it comes out right by construction: the pointer is
+    // locked and therefore physically still at the anchor, the
+    // position the engine was given never left the anchor either,
+    // and the first absolute position after the unlock IS the
+    // anchor. Nothing moves that should not.
+    if (input_trace_enabled() && (g_button_state != 0 || g_drag_locked.load())) {
+        // The camera's whole input while the engine has its cursor
+        // pinned. A rotation that jumps means one of these deltas
+        // is wrong, and nothing has ever looked at them.
+        static float run_x = 0.0f;
+        static float run_y = 0.0f;
+        run_x += ev.x;
+        run_y += ev.y;
+        std::printf("stud: rel d=(%.1f,%.1f) run=(%.1f,%.1f) pos=(%.1f,%.1f)%s\n",
+                    static_cast<double>(ev.x), static_cast<double>(ev.y),
+                    static_cast<double>(run_x), static_cast<double>(run_y),
+                    last_x, last_y,
+                    (std::fabs(ev.x) > 40.0f || std::fabs(ev.y) > 40.0f) ? "  <-- JUMP"
+                                                                         : "");
+        std::fflush(stdout);
+    }
+    call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, ev.x, ev.y);
+}
+
+void dispatch_pointer_button(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                             JNIEnv* jni_env, float& last_x, float& last_y) {
+    // While the pointer is locked the compositor is not moving it,
+    // so a button event still carries the position from before the
+    // lock. Adopting that would throw away everything accumulated
+    // during the drag, including on the release that ends it,
+    // which is the moment the accumulated position is needed.
+    if (!g_drag_locked.load()) {
+        // Move by however far the pointer has travelled since the
+        // last event, for the same reason as the motion path: the
+        // reported position is integrated, never assigned.
+        const float bx = to_density_independent(ev.x);
+        const float by = to_density_independent(ev.y);
+        if (g_have_prev_raw) {
+            last_x += bx - g_prev_raw_x;
+            last_y += by - g_prev_raw_y;
+        }
+        g_prev_raw_x = bx;
+        g_prev_raw_y = by;
+        g_have_prev_raw = true;
+    }
+
+    {
+        // Real MotionEvent button bits: PRIMARY=1, SECONDARY=2,
+        // TERTIARY=4. `ev.code` is already the Android button index
+        // the app's own handler works in (getActionButton() - 1).
+        jint bit = ev.code == 0 ? 1 : (ev.code == 1 ? 2 : 4);
+        bool down = ev.a != 0.0f;
+        const jint before = g_button_state;
+        if (down) {
+            g_button_state |= bit;
+            g_down_time = now_ms();
+        } else {
+            g_button_state &= ~bit;
+        }
+        // The anchor is the point the gesture began at, and it
+        // lasts until every button is up, the same lifetime the
+        // real client's gesture has.
+        // A right-button drag inside an experience locks the
+        // pointer, and nothing else.
+        //
+        // Read straight off Sober's own Wayland traffic, which is
+        // the same engine behaving correctly on this machine.
+        // Every in-experience right press is followed immediately
+        // by zwp_pointer_constraints_v1.lock_pointer(..., nil,
+        // PERSISTENT) and every release by
+        // zwp_locked_pointer_v1.destroy(), one for one, five times
+        // running. Left presses get none. Right drags earlier in
+        // the same session, before the join, get none.
+        //
+        // Note what is NOT there: no set_cursor_position_hint
+        // anywhere in the log. The compositor does not move a
+        // locked pointer, so destroying the lock leaves it where
+        // the drag began, the cursor "stays where it was
+        // locked" for free, and moving afterwards carries on from
+        // there. Sending a hint moves the pointer a second time,
+        // and putting the reported position back on the anchor
+        // moves the engine's cursor a third: those two together
+        // are the "teleports to origin then back" this used to
+        // do. Neither is wanted; the lock alone is the whole
+        // mechanism.
+        // OPEN: this locks for EVERY right press inside an
+        // experience, and a right-drag over an in-game UI should
+        // not lock at all.
+        //
+        // Sober gets this right and the difference is engine
+        // state, not input handling. Measured from its own Wayland
+        // traffic, one session, one game: a right press that
+        // orbits the camera is followed immediately by
+        // lock_pointer + locked(), and a right press over a UI,
+        // a real 2.5-second drag with 583 motion events, takes
+        // no lock at all. The lock arrives on the PRESS, before
+        // any motion, so whatever decides it is already known at
+        // press time.
+        //
+        // In the client the only thing that requests capture is
+        // nativeGetMainWindowIsMouseLockedCenter() (the app's own input handler)
+        // and in Stud that call is live (never trapped) and
+        // reads 0 through an entire session, orbit included, in
+        // 9,480 polls. It does go to 1 for first person. So the
+        // engine simply is not entering that state for an orbit
+        // here, where it must be doing so for Sober, and the cause
+        // is something Stud tells the engine about itself rather
+        // than anything on this path.
+        if ((bit & kCameraButtons) != 0 &&
+            stud::jni_bridge::NativeHelperJava::experience_is_loaded()) {
+            // From the live button state, not from this one edge:
+            // releasing the right button while the middle is still
+            // held is still a drag.
+            const bool held = (g_button_state & kCameraButtons) != 0;
+            if (held && !g_drag_anchored) {
+                g_drag_anchored = true;
+                // Where the cursor is, which at a press is also
+                // where the pointer is, the two only come apart
+                // during the gesture, and are put back together at
+                // the end of it.
+                g_drag_anchor_x = to_density_independent(ev.x);
+                g_drag_anchor_y = to_density_independent(ev.y);
+                g_drag_anchor_px = ev.x;
+                g_drag_anchor_py = ev.y;
+                g_pin_seen = false;
+                last_x = g_drag_anchor_x;
+                last_y = g_drag_anchor_y;
+                set_pointer_confined(true);
+            } else if (!held && g_drag_anchored) {
+                g_drag_anchored = false;
+                // One last read before the engine lets go. A
+                // gesture short enough to finish between two polls
+                // would otherwise look like it was never pinned at
+                // all, the engine drops the pin on its own frame
+                // after this button-up, so right now it still says
+                // what it was doing.
+                if (!g_pin_seen) {
+                    g_engine_mouse_behavior.store(
+                        static_cast<int>(stud::runtime::read_mouse_behavior()));
+                    if (engine_pins_cursor()) {
+                        g_pin_seen = true;
+                        g_pin_x = g_drag_anchor_x;
+                        g_pin_y = g_drag_anchor_y;
+                        g_pin_px = g_drag_anchor_px;
+                        g_pin_py = g_drag_anchor_py;
+                        if (input_trace_enabled()) {
+                            std::printf("stud: the engine was pinning after all, "
+                                        "caught at the release\n");
                             std::fflush(stdout);
                         }
                     }
-                    publish_text_edit(fns, text_box);
                 }
-            }
-
-            // Real Android Back. The app shell leaves a page (a WebView
-            // page, a settings screen) on KEYCODE_BACK, which every real
-            // device has as a button or a gesture and which Stud had no
-            // way to send at all, leaving a user stuck on any screen
-            // whose only exit is Back, live-reported exactly that way.
-            // Escape stays KEYCODE_ESCAPE, because that is what a real
-            // hardware keyboard sends and what Roblox uses in-game for
-            // its own menu; Alt+Left is the desktop convention for
-            // "back" and is what is bound here instead.
-            // Everything above is local: the editor, the overlay, and the
-            // text the engine is told through nativePassText. Below is the
-            // key itself, which is the one thing a withheld key must not
-            // send, in either of its two paths.
-            if (held_through_text_entry) return;
-
-            const bool alt_left_back = ev.code == 105 && (g_meta_state & kMetaAlt) != 0;
-            if (alt_left_back) {
-                if (g_agdk_env != nullptr) {
-                    send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down,
-                                  static_cast<jint>(ev.code), kKeyCodeBack, unicode_char);
+                set_pointer_confined(false);
+                // The pointer goes back to the cursor, not the
+                // cursor to the pointer. The cursor did not move
+                // for the whole gesture, so returning the pointer
+                // to it leaves nothing to reconcile: the next
+                // ordinary motion arrives at the anchor and moves
+                // the cursor by the hand's own movement from
+                // there.
+                //
+                // The resync makes that first motion adopt
+                // whatever position it really carries with a zero
+                // delta, so a compositor that cannot warp loses
+                // the cursor's place rather than turning the
+                // difference into camera movement.
+                if (g_pin_seen) {
+                    // The engine held its cursor still for part of
+                    // this gesture, so the pointer is somewhere
+                    // else by now. Put the pointer back ON the
+                    // cursor rather than moving the cursor to the
+                    // pointer; that direction is the teleport.
+                    begin_warp(g_pin_px, g_pin_py);
+                    last_x = g_pin_x;
+                    last_y = g_pin_y;
                 }
-                if (fns.key_event != nullptr) {
-                    call_trapping_abort(fns.key_event, jni_env, nullptr,
-                                        static_cast<jboolean>(down ? JNI_TRUE : JNI_FALSE),
-                                        static_cast<jint>(ev.code), kKeyCodeBack,
-                                        static_cast<jboolean>(JNI_FALSE));
-                }
-                if (down) {
-                    std::printf("stud: input bridge: Alt+Left -> KEYCODE_BACK\n");
+                if (input_trace_enabled()) {
+                    std::printf("stud: drag ended at (%.1f,%.1f), %s\n",
+                                static_cast<double>(last_x), static_cast<double>(last_y),
+                                g_pin_seen
+                                    ? (pointer_warp_available()
+                                           ? "the engine had pinned its cursor, pointer "
+                                             "put back on it"
+                                           : "the engine had pinned its cursor, and this "
+                                             "compositor cannot warp")
+                                    : "the cursor followed the hand, nothing to put back");
                     std::fflush(stdout);
                 }
-                return;
+                g_pin_seen = false;
             }
-
-            if (g_agdk_env != nullptr) {
-                send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down, scan_code, key_code,
-                              unicode_char);
-            }
-            // One-shot per path, so a live run says exactly which of the
-            // three real key paths actually reached the engine.
-            {
-                static bool told_text = false, told_key = false;
-                if (!told_text && text_box != 0) {
-                    told_text = true;
-                    std::printf("stud: input bridge: text path ACTIVE (TextBox focused, "
-                                "pass_text=%d)\n", fns.pass_text != nullptr);
-                    std::fflush(stdout);
-                }
-                if (!told_key) {
-                    told_key = true;
-                    std::printf("stud: input bridge: nativePassKeyEvent path active "
-                                "(scan=%u->%d keycode=%d unicode=%d)\n", ev.code,
-                                scan_code, key_code, unicode_char);
-                    std::fflush(stdout);
-                }
-            }
-            if (fns.key_event == nullptr) return;
-            // Every key actually handed to the engine, one line each,
-            // immediately before the call, so a run says what the engine
-            // received rather than leaving it to be inferred from what
-            // Stud meant to send.
+            g_lock_from_drag = held && drag_lock_enabled();
+            apply_pointer_lock();
+        }
+        if (down && before == 0) {
+        } else if (!down && g_button_state == 0) {
+            // A drag ends wherever the hand ends. Nothing is
+            // put back.
             //
-            // BEHIND STUD_INPUT_TRACE, which is where it always belonged.
-            // It used to run in every session, bounded to 60 events so it
-            // could not fill a log -- but the bound was the wrong
-            // protection. These lines are scan codes and key codes, which
-            // is what was typed, and the first sixty keystrokes of a
-            // session are the ones most likely to be a login. The session
-            // log exists to be exported and sent to someone, and this
-            // project's own rule is that a password, a cookie or a
-            // TextBox's contents never reach it. A keystroke is all three
-            // by another name.
-            if (input_trace_enabled()) {
-                static int traced = 0;
-                if (traced < 60) {
-                    ++traced;
-                    std::printf("stud: key -> engine: %s scan=%u->%d keycode=%d repeat=%d "
-                                "textbox=%d\n",
-                                down ? "down" : "up  ", ev.code, scan_code, key_code,
-                                ev.b != 0.0f ? 1 : 0, text_box != 0 ? 1 : 0);
-                    std::fflush(stdout);
+            // This used to snap the reported position to the point
+            // the drag began, on the reasoning that the engine
+            // pins its own cursor for a camera rotation
+            // (MouseBehavior.LockCurrentPosition) and takes the
+            // position back from the platform on release. That
+            // moved only Stud's idea of the cursor: the desktop
+            // pointer stayed where the hand ended, so the two
+            // disagreed, visible the moment the pointer left the
+            // window, and as a cursor teleporting back in a view
+            // whose camera does not rotate at all.
+            //
+            // Locking the real pointer for the drag to make them
+            // agree was tried and rejected: a drag is meant to
+            // move the cursor freely and leave it where it is
+            // released. So the reported position simply follows
+            // the pointer, the whole way through, and there is
+            // nothing for either cursor to jump to.
+            //
+            // Inside an experience the lock taken above ends here.
+            // The compositor does not move a locked pointer, so it
+            // is still where the drag began, which is where the
+            // engine's pinned cursor is, and the next motion
+            // event re-bases rather than applying a delta across
+            // the gap.
+        }
+        // A primary press inside the focused box places the caret
+        // and starts a selection drag; the release ends it. The
+        // press still reaches the engine, so the box keeps its own
+        // focus behaviour.
+        if (bit == 1) {
+            if (down && point_in_focused_box(last_x, last_y)) {
+                auto& ed = editor();
+                if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
+                    ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
                 }
+                ed.set_caret(text_offset_at(last_x), /*select=*/false);
+                g_text_drag.store(true);
+                push_text_overlay(true, ed.text(), ed.caret(), ed.selection_begin(),
+                                  ed.selection_end());
+            } else if (!down) {
+                g_text_drag.store(false);
             }
-            // A held key repeats, and says so: real Android reports the
-            // same through KeyEvent.getRepeatCount(), which is exactly
-            // what this argument stands for.
-            call_trapping_abort(fns.key_event, jni_env, nullptr,
-                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
-                                scan_code,
-                                key_code,
-                                static_cast<jboolean>(ev.b != 0.0f ? JNI_TRUE : JNI_FALSE));
-            return;
+        }
+        // No lock is taken for a held button: the cursor travels
+        // with the hand, which is what the real client does and
+        // what an in-game UI needs. The engine's own LockCenter
+        // answer still locks, and it is polled above.
+        // Deliberately NOT locking the pointer merely because a
+        // button is held.
+        //
+        // The real device does not: the app's own input handler takes Android's
+        // pointer capture only when
+        // nativeGetMainWindowIsMouseLockedCenter() is true, and a
+        // trace of that predicate shows it stays false through an
+        // entire session including in-game camera rotation. So on
+        // real hardware a drag-to-rotate leaves the pointer free
+        // and the engine follows ordinary absolute positions.
+        //
+        // Locking on a button was tried at length and every
+        // version traded one bug for another, because the engine
+        // pins its own cursor for some drags and not others and
+        // reports neither: holding the pointer still is right for
+        // in-game rotation and wrong for the avatar editor, which
+        // wants the cursor to travel with the hand. Faithful
+        // absolute positions need no such distinction. The lock
+        // remains for the one case the engine does report,
+        // shift-lock and first person, below.
+    }
+    // Only the primary button maps onto a real touch pointer.
+    if (ev.code == 0) {
+        bool down = ev.a != 0.0f;
+        if (down != g_touch_down) {
+            g_touch_down = down;
+            send_touch(fns, jni_env, ev, down ? 0 : 2);
+        }
+    }
+    if (input_trace_enabled()) {
+        std::printf("stud: button %s code=%u -> engine pos=(%.1f,%.1f) raw=(%.1f,%.1f) "
+                    "state=0x%x locked=%d\n",
+                    ev.a != 0.0f ? "DOWN" : "up  ", ev.code, last_x, last_y, ev.x, ev.y,
+                    static_cast<unsigned>(g_button_state), g_drag_locked.load() ? 1 : 0);
+        std::fflush(stdout);
+    }
+    if (fns.mouse_button == nullptr) return;
+    // A RELEASE outside the view is reported at the view's edge,
+    // and nothing else is touched.
+    //
+    // While a button is held the compositor keeps delivering
+    // motion after the pointer has left the window; that is what
+    // an implicit grab is for, so the release can arrive at a
+    // coordinate the view does not contain. Live-captured: a
+    // right-button release at x=-95.0 on a 1728-wide surface, with
+    // the engine simply not acting on it and the button left held
+    // for ever. A real Android view never receives such an event
+    // at all, so the nearest point it CAN act on is the honest
+    // translation.
+    //
+    // Only the release, and only when it is genuinely outside:
+    // motion is left exactly as it was, because the position
+    // stream during a drag is what the engine's own cursor
+    // behaviour is built on and clamping that breaks it (tried,
+    // and it put a wall under every UI and 2D-camera drag).
+    float button_x = last_x;
+    float button_y = last_y;
+    if (ev.a == 0.0f && ev.surface_width > 0 && ev.surface_height > 0) {
+        const float w = to_density_independent(static_cast<float>(ev.surface_width));
+        const float h = to_density_independent(static_cast<float>(ev.surface_height));
+        button_x = button_x < 0.0f ? 0.0f : (button_x > w - 1.0f ? w - 1.0f : button_x);
+        button_y = button_y < 0.0f ? 0.0f : (button_y > h - 1.0f ? h - 1.0f : button_y);
+        if (input_trace_enabled() && (button_x != last_x || button_y != last_y)) {
+            std::printf("stud: release was outside the view (%.1f,%.1f), reported at "
+                        "(%.1f,%.1f)\n", static_cast<double>(last_x),
+                        static_cast<double>(last_y), static_cast<double>(button_x),
+                        static_cast<double>(button_y));
+            std::fflush(stdout);
+        }
+    }
+    call_trapping_abort(fns.mouse_button, jni_env, nullptr, button_x, button_y,
+                        static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
+                        static_cast<jint>(ev.code));
 }
 
-
+void dispatch_pointer_leave(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                            JNIEnv* jni_env, float& last_x, float& last_y) {
+    using Ev = stud::android_glue::HostInputEvent;
+    // A drag lock cannot survive the pointer crossing the surface
+    // boundary in either direction. Leaving means the release that
+    // would have ended it is never coming; entering means it was
+    // somehow outstanding while the pointer was free, which it
+    // never should be. Either way, let go.
+    if (g_lock_from_drag) {
+        g_lock_from_drag = false;
+        apply_pointer_lock();
+    }
+    // Real hover enter/exit. Without these the engine has no way to
+    // know the pointer is inside the window at all, and Roblox
+    // only draws its own cursor while it believes it is.
+    if (ev.type == Ev::kPointerEnter && fns.mouse_move != nullptr) {
+        // Tell the engine where the pointer came in, straight
+        // away. A hover-enter carries no position the engine acts
+        // on, so without this its cursor stays wherever it was
+        // when the pointer last left and only catches up on the
+        // next movement, which is why it took a moment to
+        // appear, in the wrong place, instead of being there.
+        const float x = to_density_independent(ev.x);
+        const float y = to_density_independent(ev.y);
+        // Take the entry point for the reported position AND for
+        // the baseline movement is measured against.
+        //
+        // Only the first was being set. The reported position is
+        // integrated from the pointer's movement, so the next
+        // motion measured itself against wherever the pointer was
+        // when it last left, a delta across everything that
+        // happened outside the window, and the cursor jumped off
+        // the moment it came back in. Re-basing here is what makes
+        // entering smooth: the pointer really is at this point,
+        // so this is the one place adopting it is correct.
+        // Carrying whatever shift a camera drag left behind, so
+        // Nothing to carry across: a camera drag leaves the
+        // pointer on the cursor, so entering is just entering.
+        last_x = x;
+        last_y = y;
+        g_prev_raw_x = x;
+        g_prev_raw_y = y;
+        g_have_prev_raw = true;
+        call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, 0.0f, 0.0f);
+    }
+    if (ev.type == Ev::kPointerLeave && g_button_state != 0) {
+        // Release whatever is still held.
+        //
+        // Wayland stops sending button events the moment the
+        // pointer leaves the surface, so a button released outside
+        // after dragging out of the window, or when another
+        // surface takes the pointer, or on alt-tab, is a release
+        // Stud never hears about. The engine is then left holding
+        // a button forever: a left-drag that never ends (the climb
+        // fling that will not let go), and a right button that
+        // stays "down" so mouse look never releases the cursor.
+        //
+        // A real device cannot reach this state, because its
+        // window system does not take the pointer away mid-gesture
+        // without ending the gesture. Ending it here is what makes
+        // Stud behave the same.
+        for (jint bit : {1, 2, 4}) {
+            if ((g_button_state & bit) == 0) continue;
+            const jint code = bit == 1 ? 0 : (bit == 2 ? 1 : 3);
+            g_button_state &= ~bit;
+            if (fns.mouse_button != nullptr) {
+                call_trapping_abort(fns.mouse_button, jni_env, nullptr, last_x, last_y,
+                                    static_cast<jboolean>(JNI_FALSE), code);
+            }
+        }
+        if (g_touch_down) {
+            g_touch_down = false;
+            send_touch(fns, jni_env, ev, 2);
+        }
+        g_text_drag.store(false);
+        // No button is held any more, so nothing justifies keeping
+        // the pointer locked, or fenced in.
+        g_lock_from_drag = false;
+        apply_pointer_lock();
+        g_drag_anchored = false;
+        g_warp_pending = false;
+        set_pointer_confined(false);
+        if (input_trace_enabled()) {
+            std::printf("stud: pointer left the surface, released every held button\n");
+            std::fflush(stdout);
+        }
+    }
+    // Explicit, and load-bearing: this case used to fall through
+    // to `default: return`, which was harmless only while nothing
+    // sat between the two. The gamepad cases below now do, and
+    // without this every pointer enter and leave was handled as a
+    // controller being plugged in.
+}
 
 void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, JNIEnv* jni_env,
                     float& last_x, float& last_y) {
@@ -1561,585 +2234,15 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         g_surface_px_h = static_cast<float>(ev.surface_height);
     }
     switch (ev.type) {
-        case Ev::kPointerMotion: {
-            if (g_touch_down) send_touch(fns, jni_env, ev, 1);
-            if (fns.mouse_move == nullptr) return;
-            // Real caller (the app's own input handler) passes absolute position plus the
-            // delta since the previous move, both already divided by the
-            // display density, so `last_x`/`last_y` are kept in those
-            // same units, not pixels.
-            const float x = to_density_independent(ev.x);
-            const float y = to_density_independent(ev.y);
-            // First move after a lock: take the position, report no
-            // movement. The pointer did not travel from the accumulated
-            // position to here. That difference is an artefact of the
-            // lock, and reporting it as a delta moves the camera.
-            // The position reported to the engine is INTEGRATED from the
-            // pointer's movement; it is never assigned from the pointer's
-            // absolute position.
-            //
-            // That one distinction is what removes the teleport, in both
-            // directions. While the pointer is locked it cannot move, so
-            // the reported position advances by relative deltas instead,
-            // and the moment the lock ends, assigning the physical
-            // position back would snap the engine's cursor across the
-            // whole distance the hand travelled. Integrating means there
-            // is nothing to snap: the reported position simply carries on
-            // from where it was, moved by however far the mouse moves.
-            //
-            // An earlier attempt kept an offset between the two and added
-            // it to each absolute position. That compounds, the offset
-            // was computed from a position that already contained the
-            // previous one, so every drag displaced the cursor further,
-            // and a third-person camera ended up somewhere random. There
-            // is no offset here to compound.
-            // The real client's own unlocked mouse path, followed
-            // exactly (the app's own mouse handler, the branch taken whenever
-            // getButtonState() != 0, and the ordinary hover path beside
-            // it):
-            //
-            //     float x = event.getX() / density;
-            //     float y = event.getY() / density;
-            //     float dx = x - lastX, dy = y - lastY;
-            //     lastX = x; lastY = y;
-            //     nativePassMouseMove(x, y, dx, dy);
-            //
-            // The position it passes is the POINTER'S OWN, every time.
-            // Stud used to integrate the deltas into a position of its
-            // own instead, and clamp that to the window. Both were
-            // mistakes and both were visible: an integrated position
-            // drifts away from the pointer, and once it has drifted past
-            // an edge the clamp holds it there, a cursor stuck against
-            // the left of the screen, which the real client has no notion
-            // of. It also cannot drift back, because nothing ever
-            // reconciles the two.
-            //
-            // Integration is only needed while the pointer is locked and
-            // has no position of its own; that is the branch above, and
-            // the resync flag is what carries the two back into agreement
-            // when the lock ends.
-            const bool resync = g_resync_after_unlock.exchange(false);
-            if (resync || !g_have_prev_raw) {
-                g_prev_raw_x = x;
-                g_prev_raw_y = y;
-                g_have_prev_raw = true;
-            }
-            const float dx = x - g_prev_raw_x;
-            const float dy = y - g_prev_raw_y;
-            g_prev_raw_x = x;
-            g_prev_raw_y = y;
-            if (input_trace_enabled()) {
-                // Motions during a drag, and the first few after it ends,
-                // the window where a jump would happen.
-                static int after_release = 0;
-                if (g_button_state != 0) {
-                    after_release = 4;
-                } else if (after_release > 0) {
-                    --after_release;
-                }
-                if (g_button_state != 0 || after_release > 0) {
-                    std::printf("stud: move pos=(%.1f,%.1f) d=(%.1f,%.1f) raw=(%.1f,%.1f) "
-                                "state=0x%x locked=%d%s\n",
-                                last_x, last_y, dx, dy, ev.x, ev.y,
-                                static_cast<unsigned>(g_button_state),
-                                g_drag_locked.load() ? 1 : 0, resync ? " RESYNC" : "");
-                    std::fflush(stdout);
-                }
-            }
-            if (g_text_drag.load() && NativeGLJavaInterfaceJava::active_text_box() != 0) {
-                auto& ed = editor();
-                ed.set_caret(text_offset_at(last_x), /*select=*/true);
-                push_text_overlay(true, ed.text(), ed.caret(), ed.selection_begin(),
-                                  ed.selection_end());
-            }
-            // The real client's mouse path, in full (the app's own mouse handler,
-            // reached from onTouch() for any event whose
-            // source is SOURCE_MOUSE and whose tool type is not FINGER):
-            //
-            //     x = event.getX() / density;  y = event.getY() / density;
-            //     dx = x - lastX;  dy = y - lastY;
-            //     lastX = x; lastY = y;
-            //     nativePassMouseMove(x, y, dx, dy);
-            //
-            // Nothing else runs on that path. The position passed is
-            // the pointer's own, every time, and the camera rotates from
-            // the deltas beside it.
-            //
-            // NO PAN. onTouch() returns y(motionEvent) for a real mouse
-            // before it ever reaches the GestureDetector, so
-            // nativePassMousePan is never called for one, the pan at
-            // the app's own input handler is guarded by SOURCE_MOUSE but is only
-            // reachable for an event whose tool type IS a finger, which a
-            // mouse's never is. Stud sent it anyway, and a pan carries an
-            // anchor: it tells the engine a gesture is under way about a
-            // fixed point, so the engine pins its cursor there for the
-            // duration and takes the position back at the end. That is
-            // the cursor jumping to where the hand stopped, and
-            // everything built to hide it, snapping the position back
-            // to the anchor on release, locking the real pointer for a
-            // drag, clamping the position inside the window, was
-            // working around a gesture the platform should never have
-            // reported.
-            //
-            // No clamp either. The client bounds nothing here; only its
-            // ACTION_SCROLL branch floors the position it reports at
-            // zero, which is the wheel's business and not the pointer's.
-            if (g_warp_pending) {
-                // Nothing here is the hand: either an event that was
-                // already on its way when the warp was asked for, or the
-                // warp itself arriving. Keep the engine's cursor where it
-                // is, report no movement, and measure the next real
-                // movement from wherever the pointer actually is now.
-                const float to_target = std::fabs(ev.x - g_warp_target_px) +
-                                        std::fabs(ev.y - g_warp_target_py);
-                const float to_origin = std::fabs(ev.x - g_warp_from_px) +
-                                        std::fabs(ev.y - g_warp_from_py);
-                const bool landed = to_target <= to_origin;
-                const bool timed_out =
-                    std::chrono::steady_clock::now() - g_warp_started >
-                    std::chrono::milliseconds(80);
-                g_prev_raw_x = x;
-                g_prev_raw_y = y;
-                g_have_prev_raw = true;
-                g_last_raw_px = ev.x;
-                g_last_raw_py = ev.y;
-                if (landed || timed_out) {
-                    g_warp_pending = false;
-                    if (input_trace_enabled()) {
-                        std::printf("stud: warp %s at (%.1f,%.1f)\n",
-                                    landed ? "landed" : "gave up (not seen)",
-                                    static_cast<double>(ev.x), static_cast<double>(ev.y));
-                        std::fflush(stdout);
-                    }
-                }
-                return;
-            }
-            g_last_raw_px = ev.x;
-            g_last_raw_py = ev.y;
-            if (g_drag_confined) {
-                // Per EVENT, not per poll. The camera sets its pin a frame
-                // or so after the press, and an 8ms poll can miss the whole
-                // of a short flick, which is exactly when the cursor was
-                // still jumping: the gesture ended before Stud ever saw the
-                // pin, so it treated a rotation as a UI drag.
-                g_engine_mouse_behavior.store(static_cast<int>(stud::runtime::read_mouse_behavior()));
-            }
-            if (g_drag_confined && engine_pins_cursor()) {
-                // The engine is pinning its own cursor RIGHT NOW; it
-                // says so (MouseBehavior == LockCurrentPosition), which
-                // is the one thing this used to have to guess at.
-                //
-                // While that lasts the engine ignores every position it
-                // is given, so the position is left exactly where its
-                // cursor is and only the movement is sent, from the
-                // relative stream, which keeps reporting what the device
-                // did even once the pointer has reached the confinement
-                // boundary and stopped. That is what makes a spin
-                // unlimited, and what makes the end of one a non-event:
-                // nothing was moved, so nothing has to be put back.
-                if (!g_pin_seen) {
-                    g_pin_seen = true;
-                    // The press point, not wherever the pointer had got to
-                    // by the time this was noticed. The camera pins on the
-                    // button-down it receives, so that is where the
-                    // engine's own cursor is standing, adopting the
-                    // current position instead puts the cursor (and the
-                    // warp at the end) a flick's worth away from it.
-                    g_pin_x = g_drag_anchor_x;
-                    g_pin_y = g_drag_anchor_y;
-                    g_pin_px = g_drag_anchor_px;
-                    g_pin_py = g_drag_anchor_py;
-                    if (input_trace_enabled()) {
-                        std::printf("stud: the engine pinned its cursor at (%.1f,%.1f)\n",
-                                    static_cast<double>(g_pin_x), static_cast<double>(g_pin_y));
-                        std::fflush(stdout);
-                    }
-                }
-                last_x = g_pin_x;
-                last_y = g_pin_y;
-                return;
-            }
-            last_x = x;
-            last_y = y;
-            if (g_drag_confined) {
-                // Confined but NOT pinned: an ordinary drag, including a
-                // right-drag on an in-game UI, where the engine really is
-                // following the positions it is given. The cursor follows
-                // the hand; only the movement is withheld, because the
-                // relative event for this same motion carries it and
-                // sending it twice would turn the camera twice as far.
-                return;
-            }
-            call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
+        case Ev::kPointerMotion:
+            dispatch_pointer_motion(ev, fns, jni_env, last_x, last_y);
             return;
-        }
-        case Ev::kPointerRelative: {
-            // Mouse look. `ev.x`/`ev.y` are the raw delta, not a position:
-            // the compositor is holding the cursor still, so this is the
-            // only motion there is. The real captured-pointer path
-            // (the app's own input handler) reads exactly this; Android's
-            // AXIS_RELATIVE_X/Y, and adds it to the position it tracks
-            // itself before passing both on, which is what this mirrors.
-            // (It only skips the accumulation under FFlag
-            // AndroidMouseLockButtonFix, whose compiled-in default is
-            // false.) Deliberately not routed through AGDK's
-            // onTouchEventNative: a captured pointer does not go through
-            // the view's ordinary touch path on a real device either.
-            if (fns.mouse_move == nullptr) return;
-            // The captured-pointer path, as the client itself handles it
-            // (reached from onCapturedPointer while the view holds
-            // pointer capture): it divides the relative axis values by
-            // the display density, adds them to the position it is
-            // tracking, and passes that position alongside the deltas.
-            //
-            // So the position is INTEGRATED by the deltas rather than
-            // frozen: it is the client's idea of where the cursor now is,
-            // and capture does not suspend that; it only changes where
-            // the movement comes from.
-            //
-            // Stud used to freeze the position here and pass the stale one
-            // with each delta. That is why a camera rotation ended
-            // somewhere else: the engine spent the whole gesture being
-            // told the cursor had not moved, and the first ordinary move
-            // afterwards, which passes the pointer's real position,
-            // moved it the entire distance at once. The jump was never at
-            // the release; it was on the next motion after it, which is
-            // exactly how it presents.
-            // The position does NOT advance while the pointer is
-            // captured; only the deltas do.
-            //
-            // The client has both behaviours and a flag picks between
-            // them: it integrates the deltas into its position only when
-            // that flag is off, and passes the position either way.
-            //
-            // The flag is FFlagAndroidMouseLockButtonFix, and
-            // production serves it True, so the branch is NOT taken and
-            // the client passes its position unchanged with each delta.
-            // Integrating instead is what left the orbit teleporting: the
-            // engine holds its cursor still for the gesture, so the
-            // position Stud had accumulated meant nothing to it, and the
-            // first ordinary move after the button came up handed it that
-            // accumulated position all at once.
-            //
-            // Frozen, it comes out right by construction: the pointer is
-            // locked and therefore physically still at the anchor, the
-            // position the engine was given never left the anchor either,
-            // and the first absolute position after the unlock IS the
-            // anchor. Nothing moves that should not.
-            if (input_trace_enabled() && (g_button_state != 0 || g_drag_locked.load())) {
-                // The camera's whole input while the engine has its cursor
-                // pinned. A rotation that jumps means one of these deltas
-                // is wrong, and nothing has ever looked at them.
-                static float run_x = 0.0f;
-                static float run_y = 0.0f;
-                run_x += ev.x;
-                run_y += ev.y;
-                std::printf("stud: rel d=(%.1f,%.1f) run=(%.1f,%.1f) pos=(%.1f,%.1f)%s\n",
-                            static_cast<double>(ev.x), static_cast<double>(ev.y),
-                            static_cast<double>(run_x), static_cast<double>(run_y),
-                            last_x, last_y,
-                            (std::fabs(ev.x) > 40.0f || std::fabs(ev.y) > 40.0f) ? "  <-- JUMP"
-                                                                                 : "");
-                std::fflush(stdout);
-            }
-            call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, ev.x, ev.y);
+        case Ev::kPointerRelative:
+            dispatch_pointer_relative(ev, fns, jni_env, last_x, last_y);
             return;
-        }
-        case Ev::kPointerButton: {
-            // While the pointer is locked the compositor is not moving it,
-            // so a button event still carries the position from before the
-            // lock. Adopting that would throw away everything accumulated
-            // during the drag, including on the release that ends it,
-            // which is the moment the accumulated position is needed.
-            if (!g_drag_locked.load()) {
-                // Move by however far the pointer has travelled since the
-                // last event, for the same reason as the motion path: the
-                // reported position is integrated, never assigned.
-                const float bx = to_density_independent(ev.x);
-                const float by = to_density_independent(ev.y);
-                if (g_have_prev_raw) {
-                    last_x += bx - g_prev_raw_x;
-                    last_y += by - g_prev_raw_y;
-                }
-                g_prev_raw_x = bx;
-                g_prev_raw_y = by;
-                g_have_prev_raw = true;
-            }
-
-            {
-                // Real MotionEvent button bits: PRIMARY=1, SECONDARY=2,
-                // TERTIARY=4. `ev.code` is already the Android button index
-                // the app's own handler works in (getActionButton() - 1).
-                jint bit = ev.code == 0 ? 1 : (ev.code == 1 ? 2 : 4);
-                bool down = ev.a != 0.0f;
-                const jint before = g_button_state;
-                if (down) {
-                    g_button_state |= bit;
-                    g_down_time = now_ms();
-                } else {
-                    g_button_state &= ~bit;
-                }
-                // The anchor is the point the gesture began at, and it
-                // lasts until every button is up, the same lifetime the
-                // real client's gesture has.
-                // A right-button drag inside an experience locks the
-                // pointer, and nothing else.
-                //
-                // Read straight off Sober's own Wayland traffic, which is
-                // the same engine behaving correctly on this machine.
-                // Every in-experience right press is followed immediately
-                // by zwp_pointer_constraints_v1.lock_pointer(..., nil,
-                // PERSISTENT) and every release by
-                // zwp_locked_pointer_v1.destroy(), one for one, five times
-                // running. Left presses get none. Right drags earlier in
-                // the same session, before the join, get none.
-                //
-                // Note what is NOT there: no set_cursor_position_hint
-                // anywhere in the log. The compositor does not move a
-                // locked pointer, so destroying the lock leaves it where
-                // the drag began, the cursor "stays where it was
-                // locked" for free, and moving afterwards carries on from
-                // there. Sending a hint moves the pointer a second time,
-                // and putting the reported position back on the anchor
-                // moves the engine's cursor a third: those two together
-                // are the "teleports to origin then back" this used to
-                // do. Neither is wanted; the lock alone is the whole
-                // mechanism.
-                // OPEN: this locks for EVERY right press inside an
-                // experience, and a right-drag over an in-game UI should
-                // not lock at all.
-                //
-                // Sober gets this right and the difference is engine
-                // state, not input handling. Measured from its own Wayland
-                // traffic, one session, one game: a right press that
-                // orbits the camera is followed immediately by
-                // lock_pointer + locked(), and a right press over a UI,
-                // a real 2.5-second drag with 583 motion events, takes
-                // no lock at all. The lock arrives on the PRESS, before
-                // any motion, so whatever decides it is already known at
-                // press time.
-                //
-                // In the client the only thing that requests capture is
-                // nativeGetMainWindowIsMouseLockedCenter() (the app's own input handler)
-                // and in Stud that call is live (never trapped) and
-                // reads 0 through an entire session, orbit included, in
-                // 9,480 polls. It does go to 1 for first person. So the
-                // engine simply is not entering that state for an orbit
-                // here, where it must be doing so for Sober, and the cause
-                // is something Stud tells the engine about itself rather
-                // than anything on this path.
-                if ((bit & kCameraButtons) != 0 &&
-                    stud::jni_bridge::NativeHelperJava::experience_is_loaded()) {
-                    // From the live button state, not from this one edge:
-                    // releasing the right button while the middle is still
-                    // held is still a drag.
-                    const bool held = (g_button_state & kCameraButtons) != 0;
-                    if (held && !g_drag_anchored) {
-                        g_drag_anchored = true;
-                        // Where the cursor is, which at a press is also
-                        // where the pointer is, the two only come apart
-                        // during the gesture, and are put back together at
-                        // the end of it.
-                        g_drag_anchor_x = to_density_independent(ev.x);
-                        g_drag_anchor_y = to_density_independent(ev.y);
-                        g_drag_anchor_px = ev.x;
-                        g_drag_anchor_py = ev.y;
-                        g_pin_seen = false;
-                        last_x = g_drag_anchor_x;
-                        last_y = g_drag_anchor_y;
-                        set_pointer_confined(true);
-                    } else if (!held && g_drag_anchored) {
-                        g_drag_anchored = false;
-                        // One last read before the engine lets go. A
-                        // gesture short enough to finish between two polls
-                        // would otherwise look like it was never pinned at
-                        // all, the engine drops the pin on its own frame
-                        // after this button-up, so right now it still says
-                        // what it was doing.
-                        if (!g_pin_seen) {
-                            g_engine_mouse_behavior.store(
-                                static_cast<int>(stud::runtime::read_mouse_behavior()));
-                            if (engine_pins_cursor()) {
-                                g_pin_seen = true;
-                                g_pin_x = g_drag_anchor_x;
-                                g_pin_y = g_drag_anchor_y;
-                                g_pin_px = g_drag_anchor_px;
-                                g_pin_py = g_drag_anchor_py;
-                                if (input_trace_enabled()) {
-                                    std::printf("stud: the engine was pinning after all, "
-                                                "caught at the release\n");
-                                    std::fflush(stdout);
-                                }
-                            }
-                        }
-                        set_pointer_confined(false);
-                        // The pointer goes back to the cursor, not the
-                        // cursor to the pointer. The cursor did not move
-                        // for the whole gesture, so returning the pointer
-                        // to it leaves nothing to reconcile: the next
-                        // ordinary motion arrives at the anchor and moves
-                        // the cursor by the hand's own movement from
-                        // there.
-                        //
-                        // The resync makes that first motion adopt
-                        // whatever position it really carries with a zero
-                        // delta, so a compositor that cannot warp loses
-                        // the cursor's place rather than turning the
-                        // difference into camera movement.
-                        if (g_pin_seen) {
-                            // The engine held its cursor still for part of
-                            // this gesture, so the pointer is somewhere
-                            // else by now. Put the pointer back ON the
-                            // cursor rather than moving the cursor to the
-                            // pointer; that direction is the teleport.
-                            begin_warp(g_pin_px, g_pin_py);
-                            last_x = g_pin_x;
-                            last_y = g_pin_y;
-                        }
-                        if (input_trace_enabled()) {
-                            std::printf("stud: drag ended at (%.1f,%.1f), %s\n",
-                                        static_cast<double>(last_x), static_cast<double>(last_y),
-                                        g_pin_seen
-                                            ? (pointer_warp_available()
-                                                   ? "the engine had pinned its cursor, pointer "
-                                                     "put back on it"
-                                                   : "the engine had pinned its cursor, and this "
-                                                     "compositor cannot warp")
-                                            : "the cursor followed the hand, nothing to put back");
-                            std::fflush(stdout);
-                        }
-                        g_pin_seen = false;
-                    }
-                    g_lock_from_drag = held && drag_lock_enabled();
-                    apply_pointer_lock();
-                }
-                if (down && before == 0) {
-                } else if (!down && g_button_state == 0) {
-                    // A drag ends wherever the hand ends. Nothing is
-                    // put back.
-                    //
-                    // This used to snap the reported position to the point
-                    // the drag began, on the reasoning that the engine
-                    // pins its own cursor for a camera rotation
-                    // (MouseBehavior.LockCurrentPosition) and takes the
-                    // position back from the platform on release. That
-                    // moved only Stud's idea of the cursor: the desktop
-                    // pointer stayed where the hand ended, so the two
-                    // disagreed, visible the moment the pointer left the
-                    // window, and as a cursor teleporting back in a view
-                    // whose camera does not rotate at all.
-                    //
-                    // Locking the real pointer for the drag to make them
-                    // agree was tried and rejected: a drag is meant to
-                    // move the cursor freely and leave it where it is
-                    // released. So the reported position simply follows
-                    // the pointer, the whole way through, and there is
-                    // nothing for either cursor to jump to.
-                    //
-                    // Inside an experience the lock taken above ends here.
-                    // The compositor does not move a locked pointer, so it
-                    // is still where the drag began, which is where the
-                    // engine's pinned cursor is, and the next motion
-                    // event re-bases rather than applying a delta across
-                    // the gap.
-                }
-                // A primary press inside the focused box places the caret
-                // and starts a selection drag; the release ends it. The
-                // press still reaches the engine, so the box keeps its own
-                // focus behaviour.
-                if (bit == 1) {
-                    if (down && point_in_focused_box(last_x, last_y)) {
-                        auto& ed = editor();
-                        if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
-                            ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
-                        }
-                        ed.set_caret(text_offset_at(last_x), /*select=*/false);
-                        g_text_drag.store(true);
-                        push_text_overlay(true, ed.text(), ed.caret(), ed.selection_begin(),
-                                          ed.selection_end());
-                    } else if (!down) {
-                        g_text_drag.store(false);
-                    }
-                }
-                // No lock is taken for a held button: the cursor travels
-                // with the hand, which is what the real client does and
-                // what an in-game UI needs. The engine's own LockCenter
-                // answer still locks, and it is polled above.
-                // Deliberately NOT locking the pointer merely because a
-                // button is held.
-                //
-                // The real device does not: the app's own input handler takes Android's
-                // pointer capture only when
-                // nativeGetMainWindowIsMouseLockedCenter() is true, and a
-                // trace of that predicate shows it stays false through an
-                // entire session including in-game camera rotation. So on
-                // real hardware a drag-to-rotate leaves the pointer free
-                // and the engine follows ordinary absolute positions.
-                //
-                // Locking on a button was tried at length and every
-                // version traded one bug for another, because the engine
-                // pins its own cursor for some drags and not others and
-                // reports neither: holding the pointer still is right for
-                // in-game rotation and wrong for the avatar editor, which
-                // wants the cursor to travel with the hand. Faithful
-                // absolute positions need no such distinction. The lock
-                // remains for the one case the engine does report,
-                // shift-lock and first person, below.
-            }
-            // Only the primary button maps onto a real touch pointer.
-            if (ev.code == 0) {
-                bool down = ev.a != 0.0f;
-                if (down != g_touch_down) {
-                    g_touch_down = down;
-                    send_touch(fns, jni_env, ev, down ? 0 : 2);
-                }
-            }
-            if (input_trace_enabled()) {
-                std::printf("stud: button %s code=%u -> engine pos=(%.1f,%.1f) raw=(%.1f,%.1f) "
-                            "state=0x%x locked=%d\n",
-                            ev.a != 0.0f ? "DOWN" : "up  ", ev.code, last_x, last_y, ev.x, ev.y,
-                            static_cast<unsigned>(g_button_state), g_drag_locked.load() ? 1 : 0);
-                std::fflush(stdout);
-            }
-            if (fns.mouse_button == nullptr) return;
-            // A RELEASE outside the view is reported at the view's edge,
-            // and nothing else is touched.
-            //
-            // While a button is held the compositor keeps delivering
-            // motion after the pointer has left the window; that is what
-            // an implicit grab is for, so the release can arrive at a
-            // coordinate the view does not contain. Live-captured: a
-            // right-button release at x=-95.0 on a 1728-wide surface, with
-            // the engine simply not acting on it and the button left held
-            // for ever. A real Android view never receives such an event
-            // at all, so the nearest point it CAN act on is the honest
-            // translation.
-            //
-            // Only the release, and only when it is genuinely outside:
-            // motion is left exactly as it was, because the position
-            // stream during a drag is what the engine's own cursor
-            // behaviour is built on and clamping that breaks it (tried,
-            // and it put a wall under every UI and 2D-camera drag).
-            float button_x = last_x;
-            float button_y = last_y;
-            if (ev.a == 0.0f && ev.surface_width > 0 && ev.surface_height > 0) {
-                const float w = to_density_independent(static_cast<float>(ev.surface_width));
-                const float h = to_density_independent(static_cast<float>(ev.surface_height));
-                button_x = button_x < 0.0f ? 0.0f : (button_x > w - 1.0f ? w - 1.0f : button_x);
-                button_y = button_y < 0.0f ? 0.0f : (button_y > h - 1.0f ? h - 1.0f : button_y);
-                if (input_trace_enabled() && (button_x != last_x || button_y != last_y)) {
-                    std::printf("stud: release was outside the view (%.1f,%.1f), reported at "
-                                "(%.1f,%.1f)\n", static_cast<double>(last_x),
-                                static_cast<double>(last_y), static_cast<double>(button_x),
-                                static_cast<double>(button_y));
-                    std::fflush(stdout);
-                }
-            }
-            call_trapping_abort(fns.mouse_button, jni_env, nullptr, button_x, button_y,
-                                static_cast<jboolean>(ev.a != 0.0f ? JNI_TRUE : JNI_FALSE),
-                                static_cast<jint>(ev.code));
+        case Ev::kPointerButton:
+            dispatch_pointer_button(ev, fns, jni_env, last_x, last_y);
             return;
-        }
         case Ev::kPointerAxis: {
             if (fns.mouse_wheel == nullptr) return;
             // The real caller clamps both coordinates at zero here.
@@ -2242,98 +2345,9 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             return;
         }
-        case Ev::kPointerLeave: {
-            // A drag lock cannot survive the pointer crossing the surface
-            // boundary in either direction. Leaving means the release that
-            // would have ended it is never coming; entering means it was
-            // somehow outstanding while the pointer was free, which it
-            // never should be. Either way, let go.
-            if (g_lock_from_drag) {
-                g_lock_from_drag = false;
-                apply_pointer_lock();
-            }
-            // Real hover enter/exit. Without these the engine has no way to
-            // know the pointer is inside the window at all, and Roblox
-            // only draws its own cursor while it believes it is.
-            if (ev.type == Ev::kPointerEnter && fns.mouse_move != nullptr) {
-                // Tell the engine where the pointer came in, straight
-                // away. A hover-enter carries no position the engine acts
-                // on, so without this its cursor stays wherever it was
-                // when the pointer last left and only catches up on the
-                // next movement, which is why it took a moment to
-                // appear, in the wrong place, instead of being there.
-                const float x = to_density_independent(ev.x);
-                const float y = to_density_independent(ev.y);
-                // Take the entry point for the reported position AND for
-                // the baseline movement is measured against.
-                //
-                // Only the first was being set. The reported position is
-                // integrated from the pointer's movement, so the next
-                // motion measured itself against wherever the pointer was
-                // when it last left, a delta across everything that
-                // happened outside the window, and the cursor jumped off
-                // the moment it came back in. Re-basing here is what makes
-                // entering smooth: the pointer really is at this point,
-                // so this is the one place adopting it is correct.
-                // Carrying whatever shift a camera drag left behind, so
-                // Nothing to carry across: a camera drag leaves the
-                // pointer on the cursor, so entering is just entering.
-                last_x = x;
-                last_y = y;
-                g_prev_raw_x = x;
-                g_prev_raw_y = y;
-                g_have_prev_raw = true;
-                call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, 0.0f, 0.0f);
-            }
-            if (ev.type == Ev::kPointerLeave && g_button_state != 0) {
-                // Release whatever is still held.
-                //
-                // Wayland stops sending button events the moment the
-                // pointer leaves the surface, so a button released outside
-                // after dragging out of the window, or when another
-                // surface takes the pointer, or on alt-tab, is a release
-                // Stud never hears about. The engine is then left holding
-                // a button forever: a left-drag that never ends (the climb
-                // fling that will not let go), and a right button that
-                // stays "down" so mouse look never releases the cursor.
-                //
-                // A real device cannot reach this state, because its
-                // window system does not take the pointer away mid-gesture
-                // without ending the gesture. Ending it here is what makes
-                // Stud behave the same.
-                for (jint bit : {1, 2, 4}) {
-                    if ((g_button_state & bit) == 0) continue;
-                    const jint code = bit == 1 ? 0 : (bit == 2 ? 1 : 3);
-                    g_button_state &= ~bit;
-                    if (fns.mouse_button != nullptr) {
-                        call_trapping_abort(fns.mouse_button, jni_env, nullptr, last_x, last_y,
-                                            static_cast<jboolean>(JNI_FALSE), code);
-                    }
-                }
-                if (g_touch_down) {
-                    g_touch_down = false;
-                    send_touch(fns, jni_env, ev, 2);
-                }
-                g_text_drag.store(false);
-                // No button is held any more, so nothing justifies keeping
-                // the pointer locked, or fenced in.
-                g_lock_from_drag = false;
-                apply_pointer_lock();
-                g_drag_anchored = false;
-                g_warp_pending = false;
-                set_pointer_confined(false);
-                if (input_trace_enabled()) {
-                    std::printf("stud: pointer left the surface, released every held button\n");
-                    std::fflush(stdout);
-                }
-            }
-            // Explicit, and load-bearing: this case used to fall through
-            // to `default: return`, which was harmless only while nothing
-            // sat between the two. The gamepad cases below now do, and
-            // without this every pointer enter and leave was handled as a
-            // controller being plugged in.
+        case Ev::kPointerLeave:
+            dispatch_pointer_leave(ev, fns, jni_env, last_x, last_y);
             return;
-        }
         case Ev::kPointerPinch: {
             if (fns.mouse_pinch == nullptr) return;
             // The real caller scales the change in pinch factor by 3.5
