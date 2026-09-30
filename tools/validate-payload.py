@@ -154,6 +154,31 @@ def find_private_dir(root: Path) -> Path | None:
     return None
 
 
+def find_sharun_dir(root: Path) -> Path | None:
+    """The AppImage's sharun directory, or None for every other package.
+
+    The AppImage carries its own glibc, and each of Stud's executables in
+    it is a hardlink to sharun, a small static loader that runs the real
+    binary from shared/bin through the bundled ld-linux (see "glibc
+    travels with the bundle" in packaging/build-appimage.sh). The file at
+    the usual path is then the loader, not the program, and checking it
+    would report a static binary with no libraries and no shaders.
+    """
+    for candidate in ("usr", "."):
+        d = root / candidate
+        if (d / "sharun").is_file() and (d / "shared" / "bin").is_dir():
+            return d
+    return None
+
+
+def real_binary(sharun_dir: Path | None, p: Path) -> Path:
+    """The program that runs when p is started."""
+    if sharun_dir is None:
+        return p
+    real = sharun_dir / "shared" / "bin" / p.name
+    return real if real.exists() else p
+
+
 def find_data_dir(root: Path) -> Path | None:
     """Where ANGLE and the bionic runtime live, which is not always the same place."""
     for candidate in ("usr/lib/stud", "usr/libexec/stud", "lib/stud", "libexec/stud"):
@@ -173,6 +198,25 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
     r.note(f"executables: {private.relative_to(root)}")
     r.note(f"ANGLE and bionic: {data.relative_to(root)}")
 
+    # ---- the AppImage's own glibc, when it carries one -------------------
+    sharun_dir = find_sharun_dir(root)
+    if sharun_dir is not None:
+        r.note(f"sharun layout: {sharun_dir.relative_to(root) if sharun_dir != root else '.'}")
+        shared_lib = sharun_dir / "shared" / "lib"
+        for name in ("ld-linux-x86-64.so.2", "libc.so.6", "libstdc++.so.6"):
+            r.check((shared_lib / name).exists(),
+                    f"the bundled runtime is missing {name}; every executable would fail to start")
+        sharun_bytes = (sharun_dir / "sharun").read_bytes()
+        for launcher_path in [sharun_dir / "bin" / "stud"] + [
+                private / n for n in ("stud-render-host", "stud-webview")]:
+            if launcher_path.exists():
+                r.check(launcher_path.read_bytes() == sharun_bytes,
+                        f"{launcher_path.relative_to(root)} is not sharun, so it would run "
+                        f"without the bundled glibc")
+                r.check((sharun_dir / "shared" / "bin" / launcher_path.name).exists(),
+                        f"no shared/bin/{launcher_path.name} behind "
+                        f"{launcher_path.relative_to(root)}")
+
     # ---- the executables ------------------------------------------------
     launcher = None
     for candidate in ("usr/bin/stud", "bin/stud"):
@@ -183,7 +227,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         r.check(is_elf(launcher), "usr/bin/stud is not an ELF executable")
 
     for name in ("stud-render-host", "stud-runtime-bionic", "stud-webview"):
-        p = private / name
+        p = real_binary(sharun_dir, private / name)
         if r.check(p.exists(), f"{name} is missing"):
             r.check(is_elf(p), f"{name} is not an ELF executable")
             # Guards against a truncated or stub file, not against a small
@@ -205,7 +249,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
     # nothing at all while still being offered in Settings. A correct
     # build carries exactly three: RAVU-Zoom anti-ringing, SGSR
     # edge-direction, and RCAS, which sharpens after RAVU.
-    host = private / "stud-render-host"
+    host = real_binary(sharun_dir, private / "stud-render-host")
     if host.exists():
         modules = count_spirv_modules(host.read_bytes())
         r.check(modules == 3,
