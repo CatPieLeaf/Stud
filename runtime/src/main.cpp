@@ -536,6 +536,327 @@ void poll_web_view_and_deep_links(stud::jni_bridge::BionicAwareJvm& jvm,
 
 
 
+// Real logd sink (the engineering notes, "FLog output has never
+// appeared"). Live-caught via a live syscall trace: this process repeatedly calls
+// connect("/dev/socket/logdw") and gets ENOENT, over and over,
+// i.e. libroblox's own logging really is being emitted, straight to
+// Android's logd write socket, bypassing the public
+// __android_log_* API entirely (which is exactly why interposing
+// those functions previously observed ZERO calls). The socket
+// simply doesn't exist in Stud's sandbox, so every message is
+// dropped by the kernel.
+//
+// Creating a real SOCK_DGRAM socket at that path and reading it
+// gives Stud the engine's own real log stream, the single most
+// valuable diagnostic this project has lacked for its whole
+// history. Bound before libroblox.so is ever dlopen()'d so nothing
+// is missed.
+//
+// Wire format is liblog's own: a packed header
+// (uint8 log_id, uint16 tid, uint32 sec, uint32 nsec) followed by
+// one priority byte, then NUL-terminated tag and message.
+void start_logd_sink() {
+    ::mkdir("/dev/socket", 0755);
+    ::unlink("/dev/socket/logdw");
+    int logd_fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (logd_fd >= 0) {
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", "/dev/socket/logdw");
+        if (::bind(logd_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+            std::printf("stud: logd sink listening on /dev/socket/logdw\n");
+            std::fflush(stdout);
+            std::thread([logd_fd] {
+                std::vector<char> buf(8192);
+                for (;;) {
+                    ssize_t n = ::recv(logd_fd, buf.data(), buf.size(), 0);
+                    if (n <= 0) {
+                        if (n < 0 && (errno == EINTR)) continue;
+                        if (n < 0) break;
+                        continue;
+                    }
+                    constexpr size_t kHeader = 1 + 2 + 4 + 4;  // packed liblog header
+                    if (static_cast<size_t>(n) <= kHeader + 1) continue;
+                    const char* payload = buf.data() + kHeader;
+                    size_t remaining = static_cast<size_t>(n) - kHeader;
+                    int priority = static_cast<unsigned char>(payload[0]);
+                    const char* tag = payload + 1;
+                    size_t tag_max = remaining - 1;
+                    size_t tag_len = ::strnlen(tag, tag_max);
+                    const char* message = tag + tag_len + 1;
+                    if (tag_len + 1 >= tag_max) continue;
+                    size_t msg_max = tag_max - tag_len - 1;
+                    size_t msg_len = ::strnlen(message, msg_max);
+                    static const char* kPrio = "??VDIWEF";
+                    char prio_char = (priority >= 0 && priority < 8) ? kPrio[priority] : '?';
+                    stud::jni_bridge::note_engine_log_line(message, msg_len);
+                    std::printf("[logd:%c/%.*s] %.*s\n", prio_char, static_cast<int>(tag_len),
+                                tag, static_cast<int>(msg_len), message);
+                    std::fflush(stdout);
+                }
+            }).detach();
+        } else {
+            std::fprintf(stderr, "stud: could not bind /dev/socket/logdw: %s\n",
+                         std::strerror(errno));
+            ::close(logd_fd);
+        }
+    }
+}
+
+// Clear everything derived from the previous APK when the user
+// picks a different one. Extraction alone only overwrites files
+// that still exist in the new build, so assets deleted between
+// versions used to linger forever, mixed in with the new ones:
+// and the engine's own caches (rbx-storage, the flag cache, the
+// decompressed-model cache) are keyed to the build that wrote
+// them. Live-reported: "stud is still using roblox 2.733. it is
+// not clearing stuff whenever a new apk is saved."
+void invalidate_stale_extracted_assets(const std::string& apk_path, const std::string& asset_dir) {
+    const std::string fingerprint = stud::android_glue::apk_source_fingerprint(apk_path);
+    const std::string stamp_path = cache_subdir("assets.source");
+    std::string previous;
+    if (std::ifstream stamp{stamp_path}) {
+        std::getline(stamp, previous);
+    }
+    if (!fingerprint.empty() && previous != fingerprint) {
+        std::error_code ec;
+        if (!previous.empty()) {
+            std::printf("stud: configured APK changed, clearing extracted assets and "
+                        "engine caches, keeping your Roblox settings\n");
+            std::fflush(stdout);
+        }
+        std::filesystem::remove_all(asset_dir, ec);
+        std::filesystem::remove_all(cache_subdir("cache"), ec);
+        std::filesystem::remove_all(stud::paths::engine_cache_overflow_dir(), ec);
+        // Only what the previous BUILD wrote, not what the user
+        // did.
+        //
+        // This used to delete files/ whole, which took the real
+        // Roblox preferences with it, graphics quality, volume,
+        // the signed-in account. Every time a new APK was
+        // saved. Live-reported, and the reason those files are
+        // kept under ~/.local/share rather than in the cache in
+        // the first place.
+        //
+        // What is listed here is state keyed to the build that
+        // wrote it: the fetched flag cache, the asset store and
+        // its index, and the CA bundle this launch re-provisions
+        // anyway. Everything else in appData, the settings
+        // XMLs, LocalStorage, frm.cfg, is the user's and stays.
+        {
+            const std::string files = stud::paths::engine_files_dir();
+            const std::string app_data = files + "/appData";
+            for (const std::string& entry :
+                 {app_data + "/ClientSettings", app_data + "/rbx-storage.db",
+                  app_data + "/rbx-storage.db-shm", app_data + "/rbx-storage.db-wal",
+                  app_data + "/rbx-storage.id", app_data + "/rbx-storage-sc",
+                  files + "/exe"}) {
+                std::filesystem::remove_all(entry, ec);
+            }
+        }
+        std::ofstream out{stamp_path, std::ios::trunc};
+        out << fingerprint << "\n";
+    }
+}
+
+// The engine's localStorage document, kept in safe storage. A plaintext
+// file left by an older Stud is moved there once, then deleted.
+void restore_local_storage() {
+    stud::jni_bridge::LocalStoragePlatformJava::set_storage_hooks(
+        [](const std::string& document) {
+            std::string payload = std::string(kLocalStorageSecretName) + "\n" + document;
+            uint64_t args[8] = {};
+            stud::render_client::connection().call(
+                stud::render_host::CallId::StoreSecret, args, payload.data(),
+                static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
+        },
+        [] {
+            std::vector<char> buffer(64 * 1024);
+            uint32_t written = 0;
+            uint64_t args[8] = {};
+            const uint64_t ok = stud::render_client::connection().call(
+                stud::render_host::CallId::LoadSecret, args, kLocalStorageSecretName,
+                static_cast<uint32_t>(std::strlen(kLocalStorageSecretName)), buffer.data(),
+                static_cast<uint32_t>(buffer.size()), &written);
+            if (ok == 0 || written == 0) return std::string();
+            return std::string(buffer.data(), std::min<size_t>(written, buffer.size()));
+        });
+    stud::jni_bridge::LocalStoragePlatformJava::load();
+
+    // One-time move off the plaintext file an earlier build wrote.
+    // That file held a real .ROBLOSECURITY in the clear; reading it
+    // once into safe storage and removing it is the only way an
+    // existing install stops leaving one on disk. Nothing is written
+    // back to it, and no keyring entry other than Stud's own
+    // safe-storage key is touched.
+    std::string data_home;
+    if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg != nullptr && *xdg != '\0') {
+        data_home = xdg;
+    } else if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        data_home = std::string(home) + "/.local/share";
+    }
+    if (!data_home.empty()) {
+        const std::string legacy = data_home + "/stud/localstorage.json";
+        std::error_code ec;
+        if (std::filesystem::exists(legacy, ec)) {
+            std::string text;
+            {
+                std::ifstream in(legacy, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in),
+                            std::istreambuf_iterator<char>());
+            }
+            stud::jni_bridge::LocalStoragePlatformJava::load_from(text);
+            stud::jni_bridge::LocalStoragePlatformJava::save_now();
+            std::filesystem::remove(legacy, ec);
+            std::printf("stud: moved the local-storage document out of the plaintext file "
+                        "and into safe storage (%zu bytes)\n",
+                        text.size());
+            std::fflush(stdout);
+        }
+    }
+}
+
+// ClientSettings as the engine will read it: the fetched body with Stud's
+// defaults, the render path's flags and the user's overrides merged in, or
+// the body unchanged if it cannot be parsed.
+std::string merge_client_settings(const std::string& body, const std::string& graphics_mode,
+                                  const stud::jni_bridge::FlagOverrides& overrides) {
+    std::string client_settings_body = body;
+    const std::map<std::string, bool> renderer_flags =
+        renderer_flags_for_mode(graphics_mode);
+    if (!client_settings_body.empty()) {
+        try {
+            auto doc = nlohmann::json::parse(client_settings_body);
+            auto& app = doc["applicationSettings"];
+            if (!app.is_object()) app = nlohmann::json::object();
+            // Stud's own defaults first, so a hand-edited override
+            // of the same flag below replaces any of them.
+            std::string defaults_named;
+            for (const auto& [name, value] : stud_default_flags()) {
+                const std::string key = client_settings_key(name, value);
+                app[key] = value;
+                // Named, because up to now nothing said whether this
+                // channel reached the engine at all, and the only way
+                // to tell a default apart from an engine default was
+                // to look at the screen and guess.
+                if (!defaults_named.empty()) defaults_named += ", ";
+                defaults_named += key;
+            }
+            std::printf("stud: applied Stud's engine defaults: %s\n", defaults_named.c_str());
+            for (const auto& [name, value] : renderer_flags) {
+                const std::string text = value ? "True" : "False";
+                app[client_settings_key(name, text)] = text;
+            }
+            if (!renderer_flags.empty()) {
+                std::printf("stud: render path \"%s\": asked the engine for %zu renderer "
+                            "flag(s)\n",
+                            graphics_mode.c_str(), renderer_flags.size());
+            }
+            auto wire = nlohmann::json::parse(overrides.to_wire_format());
+            size_t merged = 0;
+            for (auto it = wire.begin(); it != wire.end(); ++it) {
+                // Real responses carry every value as a string, and
+                // booleans are capitalised, checked against a live
+                // clientsettingscdn response, which spells them
+                // exactly "True"/"False". Stud used to write "true"/
+                // "false", which is a different string to any parser
+                // that compares them literally.
+                const std::string text = it.value().is_string()
+                                             ? it.value().get<std::string>()
+                                             : it.value().dump();
+                app[client_settings_key(it.key(), text)] = text;
+                ++merged;
+            }
+            client_settings_body = doc.dump();
+            std::printf("stud: merged %zu FFlag override(s) into ClientSettings\n", merged);
+            std::fflush(stdout);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "stud: could not merge FFlag overrides into ClientSettings: %s\n",
+                         e.what());
+            client_settings_body = body;
+        }
+    }
+    return client_settings_body;
+}
+
+// The Discord presence, once per experience change. The place id
+// is the engine's own answer (gameActivity_onGameLoaded), and
+// leaving the experience clears it back to Stud's own identity.
+//
+// The last one reported is kept, so one join updates the presence once
+// rather than every 250ms loop iteration.
+void report_game_presence() {
+    static long long reported_place_id = -1;
+    static std::string reported_instance_id;
+    const bool in_experience = stud::jni_bridge::NativeHelperJava::experience_is_loaded();
+    const long long place = in_experience
+                                ? stud::jni_bridge::NativeHelperJava::last_place_id()
+                                : 0;
+    // The server too, not just the experience: a link with no
+    // instance id joins whichever server the backend picks,
+    // which is not the one the person sharing it is in.
+    const std::string instance =
+        place > 0 ? stud::jni_bridge::current_game_instance_id() : std::string();
+    if (place != reported_place_id || instance != reported_instance_id) {
+        reported_place_id = place;
+        reported_instance_id = instance;
+        if (place <= 0) stud::jni_bridge::clear_game_instance_id();
+        std::string body = place > 0 ? std::to_string(place) : std::string();
+        if (!body.empty() && !instance.empty()) body += " " + instance;
+        if (place > 0 && instance.empty()) {
+            // Says so rather than quietly linking to the
+            // experience: the instance comes from the engine's
+            // own join line, and not having it is the one way
+            // this produces a link to the wrong server.
+            std::printf("stud: presence: no instance id yet for place %lld\n", place);
+            std::fflush(stdout);
+        }
+        uint64_t presence_args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::SetGamePresence, presence_args,
+            body.empty() ? nullptr : body.data(), static_cast<uint32_t>(body.size()),
+            nullptr, 0, nullptr);
+    }
+}
+
+// Whether a join's server region has been named yet, so a single join
+// notifies once rather than every 250ms loop iteration.
+// The server region, once per join.
+//
+// The engine's own join line names a 10.x UDMUX address that
+// locates nothing, so the routable server is read off the engine's
+// own UDP socket instead, and only once it has actually
+// connected, which is why this is polled rather than done at the
+// join callback. Rechecked while an experience is loaded so a
+// server hop within one session is reported too.
+void report_server_region() {
+    static bool reported_server_region = false;
+    const bool in_experience = stud::jni_bridge::NativeHelperJava::experience_is_loaded();
+    if (!in_experience) {
+        // Left the experience: arm it again for the next join.
+        reported_server_region = false;
+    } else if (!reported_server_region) {
+        const std::string server = stud::jni_bridge::game_server_address();
+        if (!server.empty()) {
+            // Once per experience, deliberately. Re-reporting on
+            // any change looked reasonable and was wrong: leaving a
+            // game is not instant, so for a moment the game socket
+            // is gone while the experience still reads as loaded,
+            // and whatever OTHER public UDP peer the engine happens
+            // to hold then becomes the only candidate, which was
+            // reported as the "server region" on the way back to
+            // the home screen, naming somewhere the user never
+            // joined and sending an unrelated address to be looked
+            // up. Sampling once, on the way in, cannot do that.
+            reported_server_region = true;
+            uint64_t region_args[8] = {};
+            stud::render_client::connection().call(
+                stud::render_host::CallId::NotifyServerRegion, region_args, server.data(),
+                static_cast<uint32_t>(server.size()), nullptr, 0, nullptr);
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     // Before anything else prints: the session log Process A named, so
     // this process's whole bring-up is in it (stud/session_log.h).
@@ -610,72 +931,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Real logd sink (the engineering notes, "FLog output has never
-    // appeared"). Live-caught via a live syscall trace: this process repeatedly calls
-    // connect("/dev/socket/logdw") and gets ENOENT, over and over,
-    // i.e. libroblox's own logging really is being emitted, straight to
-    // Android's logd write socket, bypassing the public
-    // __android_log_* API entirely (which is exactly why interposing
-    // those functions previously observed ZERO calls). The socket
-    // simply doesn't exist in Stud's sandbox, so every message is
-    // dropped by the kernel.
-    //
-    // Creating a real SOCK_DGRAM socket at that path and reading it
-    // gives Stud the engine's own real log stream, the single most
-    // valuable diagnostic this project has lacked for its whole
-    // history. Bound before libroblox.so is ever dlopen()'d so nothing
-    // is missed.
-    //
-    // Wire format is liblog's own: a packed header
-    // (uint8 log_id, uint16 tid, uint32 sec, uint32 nsec) followed by
-    // one priority byte, then NUL-terminated tag and message.
-    {
-        ::mkdir("/dev/socket", 0755);
-        ::unlink("/dev/socket/logdw");
-        int logd_fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-        if (logd_fd >= 0) {
-            sockaddr_un addr{};
-            addr.sun_family = AF_UNIX;
-            std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", "/dev/socket/logdw");
-            if (::bind(logd_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
-                std::printf("stud: logd sink listening on /dev/socket/logdw\n");
-                std::fflush(stdout);
-                std::thread([logd_fd] {
-                    std::vector<char> buf(8192);
-                    for (;;) {
-                        ssize_t n = ::recv(logd_fd, buf.data(), buf.size(), 0);
-                        if (n <= 0) {
-                            if (n < 0 && (errno == EINTR)) continue;
-                            if (n < 0) break;
-                            continue;
-                        }
-                        constexpr size_t kHeader = 1 + 2 + 4 + 4;  // packed liblog header
-                        if (static_cast<size_t>(n) <= kHeader + 1) continue;
-                        const char* payload = buf.data() + kHeader;
-                        size_t remaining = static_cast<size_t>(n) - kHeader;
-                        int priority = static_cast<unsigned char>(payload[0]);
-                        const char* tag = payload + 1;
-                        size_t tag_max = remaining - 1;
-                        size_t tag_len = ::strnlen(tag, tag_max);
-                        const char* message = tag + tag_len + 1;
-                        if (tag_len + 1 >= tag_max) continue;
-                        size_t msg_max = tag_max - tag_len - 1;
-                        size_t msg_len = ::strnlen(message, msg_max);
-                        static const char* kPrio = "??VDIWEF";
-                        char prio_char = (priority >= 0 && priority < 8) ? kPrio[priority] : '?';
-                        stud::jni_bridge::note_engine_log_line(message, msg_len);
-                        std::printf("[logd:%c/%.*s] %.*s\n", prio_char, static_cast<int>(tag_len),
-                                    tag, static_cast<int>(msg_len), message);
-                        std::fflush(stdout);
-                    }
-                }).detach();
-            } else {
-                std::fprintf(stderr, "stud: could not bind /dev/socket/logdw: %s\n",
-                             std::strerror(errno));
-                ::close(logd_fd);
-            }
-        }
-    }
+    start_logd_sink();
 
     // Gap found in testing: on a real Android device, __system_properties_init()
     // is called once by Zygote/app_process during real system boot, long
@@ -904,61 +1160,7 @@ int main(int argc, char** argv) {
     std::string asset_dir;
     if (!apk_path.empty()) {
         asset_dir = cache_subdir("assets");
-        // Clear everything derived from the previous APK when the user
-        // picks a different one. Extraction alone only overwrites files
-        // that still exist in the new build, so assets deleted between
-        // versions used to linger forever, mixed in with the new ones:
-        // and the engine's own caches (rbx-storage, the flag cache, the
-        // decompressed-model cache) are keyed to the build that wrote
-        // them. Live-reported: "stud is still using roblox 2.733. it is
-        // not clearing stuff whenever a new apk is saved."
-        {
-            const std::string fingerprint = stud::android_glue::apk_source_fingerprint(apk_path);
-            const std::string stamp_path = cache_subdir("assets.source");
-            std::string previous;
-            if (std::ifstream stamp{stamp_path}) {
-                std::getline(stamp, previous);
-            }
-            if (!fingerprint.empty() && previous != fingerprint) {
-                std::error_code ec;
-                if (!previous.empty()) {
-                    std::printf("stud: configured APK changed, clearing extracted assets and "
-                                "engine caches, keeping your Roblox settings\n");
-                    std::fflush(stdout);
-                }
-                std::filesystem::remove_all(asset_dir, ec);
-                std::filesystem::remove_all(cache_subdir("cache"), ec);
-                std::filesystem::remove_all(stud::paths::engine_cache_overflow_dir(), ec);
-                // Only what the previous BUILD wrote, not what the user
-                // did.
-                //
-                // This used to delete files/ whole, which took the real
-                // Roblox preferences with it, graphics quality, volume,
-                // the signed-in account. Every time a new APK was
-                // saved. Live-reported, and the reason those files are
-                // kept under ~/.local/share rather than in the cache in
-                // the first place.
-                //
-                // What is listed here is state keyed to the build that
-                // wrote it: the fetched flag cache, the asset store and
-                // its index, and the CA bundle this launch re-provisions
-                // anyway. Everything else in appData, the settings
-                // XMLs, LocalStorage, frm.cfg, is the user's and stays.
-                {
-                    const std::string files = stud::paths::engine_files_dir();
-                    const std::string app_data = files + "/appData";
-                    for (const std::string& entry :
-                         {app_data + "/ClientSettings", app_data + "/rbx-storage.db",
-                          app_data + "/rbx-storage.db-shm", app_data + "/rbx-storage.db-wal",
-                          app_data + "/rbx-storage.id", app_data + "/rbx-storage-sc",
-                          files + "/exe"}) {
-                        std::filesystem::remove_all(entry, ec);
-                    }
-                }
-                std::ofstream out{stamp_path, std::ios::trunc};
-                out << fingerprint << "\n";
-            }
-        }
+        invalidate_stale_extracted_assets(apk_path, asset_dir);
         try {
             stud::android_glue::extract_apk_assets(apk_path, asset_dir);
             std::printf("stud: extracted assets from %s into %s\n", apk_path.c_str(), asset_dir.c_str());
@@ -1367,60 +1569,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    {
-        stud::jni_bridge::LocalStoragePlatformJava::set_storage_hooks(
-            [](const std::string& document) {
-                std::string payload = std::string(kLocalStorageSecretName) + "\n" + document;
-                uint64_t args[8] = {};
-                stud::render_client::connection().call(
-                    stud::render_host::CallId::StoreSecret, args, payload.data(),
-                    static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-            },
-            [] {
-                std::vector<char> buffer(64 * 1024);
-                uint32_t written = 0;
-                uint64_t args[8] = {};
-                const uint64_t ok = stud::render_client::connection().call(
-                    stud::render_host::CallId::LoadSecret, args, kLocalStorageSecretName,
-                    static_cast<uint32_t>(std::strlen(kLocalStorageSecretName)), buffer.data(),
-                    static_cast<uint32_t>(buffer.size()), &written);
-                if (ok == 0 || written == 0) return std::string();
-                return std::string(buffer.data(), std::min<size_t>(written, buffer.size()));
-            });
-        stud::jni_bridge::LocalStoragePlatformJava::load();
-
-        // One-time move off the plaintext file an earlier build wrote.
-        // That file held a real .ROBLOSECURITY in the clear; reading it
-        // once into safe storage and removing it is the only way an
-        // existing install stops leaving one on disk. Nothing is written
-        // back to it, and no keyring entry other than Stud's own
-        // safe-storage key is touched.
-        std::string data_home;
-        if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg != nullptr && *xdg != '\0') {
-            data_home = xdg;
-        } else if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-            data_home = std::string(home) + "/.local/share";
-        }
-        if (!data_home.empty()) {
-            const std::string legacy = data_home + "/stud/localstorage.json";
-            std::error_code ec;
-            if (std::filesystem::exists(legacy, ec)) {
-                std::string text;
-                {
-                    std::ifstream in(legacy, std::ios::binary);
-                    text.assign(std::istreambuf_iterator<char>(in),
-                                std::istreambuf_iterator<char>());
-                }
-                stud::jni_bridge::LocalStoragePlatformJava::load_from(text);
-                stud::jni_bridge::LocalStoragePlatformJava::save_now();
-                std::filesystem::remove(legacy, ec);
-                std::printf("stud: moved the local-storage document out of the plaintext file "
-                            "and into safe storage (%zu bytes)\n",
-                            text.size());
-                std::fflush(stdout);
-            }
-        }
-    }
+    restore_local_storage();
     if (launch_payload && launch_payload->authenticated_user_id != 0) {
         stud::jni_bridge::set_native_user_identity(launch_payload->authenticated_user_id,
                                                     launch_payload->authenticated_username,
@@ -1588,62 +1737,8 @@ int main(int argc, char** argv) {
         // locked decision in flag_overrides.h: overrides still come only
         // from the raw, hand-edited file, never from a Settings toggle,
         // only how they reach the engine changes.
-        std::string client_settings_body = launch_payload->client_settings_body;
-
-        const std::map<std::string, bool> renderer_flags =
-            renderer_flags_for_mode(graphics_mode);
-        if (!client_settings_body.empty()) {
-            try {
-                auto doc = nlohmann::json::parse(client_settings_body);
-                auto& app = doc["applicationSettings"];
-                if (!app.is_object()) app = nlohmann::json::object();
-                // Stud's own defaults first, so a hand-edited override
-                // of the same flag below replaces any of them.
-                std::string defaults_named;
-                for (const auto& [name, value] : stud_default_flags()) {
-                    const std::string key = client_settings_key(name, value);
-                    app[key] = value;
-                    // Named, because up to now nothing said whether this
-                    // channel reached the engine at all, and the only way
-                    // to tell a default apart from an engine default was
-                    // to look at the screen and guess.
-                    if (!defaults_named.empty()) defaults_named += ", ";
-                    defaults_named += key;
-                }
-                std::printf("stud: applied Stud's engine defaults: %s\n", defaults_named.c_str());
-                for (const auto& [name, value] : renderer_flags) {
-                    const std::string text = value ? "True" : "False";
-                    app[client_settings_key(name, text)] = text;
-                }
-                if (!renderer_flags.empty()) {
-                    std::printf("stud: render path \"%s\": asked the engine for %zu renderer "
-                                "flag(s)\n",
-                                graphics_mode.c_str(), renderer_flags.size());
-                }
-                auto wire = nlohmann::json::parse(overrides.to_wire_format());
-                size_t merged = 0;
-                for (auto it = wire.begin(); it != wire.end(); ++it) {
-                    // Real responses carry every value as a string, and
-                    // booleans are capitalised, checked against a live
-                    // clientsettingscdn response, which spells them
-                    // exactly "True"/"False". Stud used to write "true"/
-                    // "false", which is a different string to any parser
-                    // that compares them literally.
-                    const std::string text = it.value().is_string()
-                                                 ? it.value().get<std::string>()
-                                                 : it.value().dump();
-                    app[client_settings_key(it.key(), text)] = text;
-                    ++merged;
-                }
-                client_settings_body = doc.dump();
-                std::printf("stud: merged %zu FFlag override(s) into ClientSettings\n", merged);
-                std::fflush(stdout);
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "stud: could not merge FFlag overrides into ClientSettings: %s\n",
-                             e.what());
-                client_settings_body = launch_payload->client_settings_body;
-            }
-        }
+        std::string client_settings_body =
+            merge_client_settings(launch_payload->client_settings_body, graphics_mode, overrides);
         try {
             auto client_settings_result = stud::jni_bridge::run_client_settings_bridge(
                 jvm, lib, client_settings_body,
@@ -2756,17 +2851,10 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
     };
 
-    // Whether to name the game server's region on a join, and the last
-    // one reported, so a single join notifies once rather than every
-    // 250ms loop iteration.
+    // Whether to name the game server's region on a join.
     const bool notify_server_region = find_named_arg(argc, argv, "--notify-region") != "off";
-    bool reported_server_region = false;
-    // Whether to report the current experience to Discord, and the last
-    // one reported, so one join updates the presence once rather than
-    // every 250ms loop iteration.
+    // Whether to report the current experience to Discord.
     const bool discord_presence_enabled = find_named_arg(argc, argv, "--discord-presence") == "on";
-    long long reported_place_id = -1;
-    std::string reported_instance_id;
 
     std::printf("stud: entering the real event loop (Ctrl+C to stop) ...\n");
     std::fflush(stdout);
@@ -2789,82 +2877,9 @@ int main(int argc, char** argv) {
         // rendering, matching real Android's own single-main-thread
         // Looper contract.
         stud::jni_bridge::LooperJava::getMainLooper()->drain_pending(jvm);
-        // A/B for the idle-pacing problem (STUD_KEEP_FOREGROUND=1): Stud tells
-        // the engine's task scheduler it is in the foreground exactly once, at
-        // bring-up, long before the app is actually up. If anything flips it
-        // back to background mode afterwards, the scheduler runs at its low
-        // background frequency, which is exactly what "the animation only
-        // advances while the mouse moves" looks like.
+        if (discord_presence_enabled) report_game_presence();
 
-        // The Discord presence, once per experience change. The place id
-        // is the engine's own answer (gameActivity_onGameLoaded), and
-        // leaving the experience clears it back to Stud's own identity.
-        if (discord_presence_enabled) {
-            const bool in_experience = stud::jni_bridge::NativeHelperJava::experience_is_loaded();
-            const long long place = in_experience
-                                        ? stud::jni_bridge::NativeHelperJava::last_place_id()
-                                        : 0;
-            // The server too, not just the experience: a link with no
-            // instance id joins whichever server the backend picks,
-            // which is not the one the person sharing it is in.
-            const std::string instance =
-                place > 0 ? stud::jni_bridge::current_game_instance_id() : std::string();
-            if (place != reported_place_id || instance != reported_instance_id) {
-                reported_place_id = place;
-                reported_instance_id = instance;
-                if (place <= 0) stud::jni_bridge::clear_game_instance_id();
-                std::string body = place > 0 ? std::to_string(place) : std::string();
-                if (!body.empty() && !instance.empty()) body += " " + instance;
-                if (place > 0 && instance.empty()) {
-                    // Says so rather than quietly linking to the
-                    // experience: the instance comes from the engine's
-                    // own join line, and not having it is the one way
-                    // this produces a link to the wrong server.
-                    std::printf("stud: presence: no instance id yet for place %lld\n", place);
-                    std::fflush(stdout);
-                }
-                uint64_t presence_args[8] = {};
-                stud::render_client::connection().call(
-                    stud::render_host::CallId::SetGamePresence, presence_args,
-                    body.empty() ? nullptr : body.data(), static_cast<uint32_t>(body.size()),
-                    nullptr, 0, nullptr);
-            }
-        }
-
-        // The server region, once per join.
-        //
-        // The engine's own join line names a 10.x UDMUX address that
-        // locates nothing, so the routable server is read off the engine's
-        // own UDP socket instead, and only once it has actually
-        // connected, which is why this is polled rather than done at the
-        // join callback. Rechecked while an experience is loaded so a
-        // server hop within one session is reported too.
-        if (notify_server_region) {
-            const bool in_experience = stud::jni_bridge::NativeHelperJava::experience_is_loaded();
-            if (!in_experience) {
-                // Left the experience: arm it again for the next join.
-                reported_server_region = false;
-            } else if (!reported_server_region) {
-                const std::string server = stud::jni_bridge::game_server_address();
-                if (!server.empty()) {
-                    // Once per experience, deliberately. Re-reporting on
-                    // any change looked reasonable and was wrong: leaving a
-                    // game is not instant, so for a moment the game socket
-                    // is gone while the experience still reads as loaded,
-                    // and whatever OTHER public UDP peer the engine happens
-                    // to hold then becomes the only candidate, which was
-                    // reported as the "server region" on the way back to
-                    // the home screen, naming somewhere the user never
-                    // joined and sending an unrelated address to be looked
-                    // up. Sampling once, on the way in, cannot do that.
-                    reported_server_region = true;
-                    uint64_t region_args[8] = {};
-                    stud::render_client::connection().call(
-                        stud::render_host::CallId::NotifyServerRegion, region_args, server.data(),
-                        static_cast<uint32_t>(server.size()), nullptr, 0, nullptr);
-                }
-            }
-        }
+        if (notify_server_region) report_server_region();
 
         // The window changed size; see poll_window_resize().
         poll_window_resize(jvm, lib, v2_platform_params, lifecycle, layout_density,
