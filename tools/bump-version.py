@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Bump Stud's version everywhere it is written down.
 
-    tools/bump-version.py <version>
+    tools/bump-version.py <version> [--changelog FILE]
 
 The current version is the one CMakeLists.txt declares; every file below
 that names it is rewritten to the new one, and the Terra spec gets a
-changelog entry. Nothing happens when the tree already has that version.
+changelog entry: the "- item" lines in FILE (tools/release-summary.py
+writes them from the release's # SUMMARY), or "- Update to <version>".
+Nothing happens when the tree already has that version.
 
 The release workflow runs this for every published release, with the
 version taken from the tag, and commits the result to main together with
@@ -13,6 +15,7 @@ the release's checksums (tools/fill-release-checksums.py), which also
 regenerates the .SRCINFO files and cpak.lock.json this touches.
 """
 
+import argparse
 import datetime
 import re
 import sys
@@ -41,12 +44,13 @@ SPEC = "packaging/terra/stud.spec"
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
-        return 2
-    new = sys.argv[1].removeprefix("v")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("version")
+    ap.add_argument("--changelog", help="the entry's \"- item\" lines")
+    args = ap.parse_args()
+    new = args.version.removeprefix("v")
     if not re.fullmatch(r"\d+(\.\d+)+", new):
-        print(f"not a version: {sys.argv[1]}", file=sys.stderr)
+        print(f"not a version: {args.version}", file=sys.stderr)
         return 2
     old = re.search(r"^project\(Stud VERSION ([0-9.]+)",
                     (ROOT / "CMakeLists.txt").read_text(), re.M).group(1)
@@ -75,7 +79,8 @@ def main() -> int:
         print(f"{SPEC}: no Version: or %changelog entry to follow", file=sys.stderr)
         return 1
     today = datetime.date.today().strftime("%a %b %d %Y")
-    entry = f"* {today} {who.group(1)} - {new}-1\n- Update to {new}\n\n"
+    lines = open(args.changelog).read().strip() if args.changelog else ""
+    entry = f"* {today} {who.group(1)} - {new}-1\n{lines or f'- Update to {new}'}\n\n"
     path.write_text(head + sep + entry + changelog)
     print(f"{SPEC}: Version and changelog")
     return 0

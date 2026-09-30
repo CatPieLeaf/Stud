@@ -97,6 +97,6 @@
   </content_rating>
 
   <releases>
-    <release version="@STUD_VERSION@" date="@STUD_RELEASE_DATE@"/>
+    <release version="@STUD_VERSION@" date="@STUD_RELEASE_DATE@">@STUD_RELEASE_DESCRIPTION@</release>
   </releases>
 </component>

@@ -26,6 +26,21 @@ runs:
         echo "TAG=$tag" >> "$GITHUB_ENV"
         echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
 
+    - name: Release summary
+      # What's new, from the # SUMMARY section of the release description:
+      # the metainfo's <release> description, and the Terra spec's
+      # changelog entry. A manual run has no release, so neither.
+      if: github.event_name == 'release'
+      shell: bash
+      env:
+        RELEASE_BODY: ${{ github.event.release.body }}
+      run: |
+        out="$RUNNER_TEMP/release-summary"
+        printf '%s\n' "$RELEASE_BODY" |
+          python3 tools/release-summary.py --metainfo "$out.xml" --changelog "$out.txt"
+        echo "RELEASE_DESCRIPTION_FILE=$out.xml" >> "$GITHUB_ENV"
+        echo "RELEASE_CHANGELOG_FILE=$out.txt" >> "$GITHUB_ENV"
+
     - name: Free up disk space
       # Only matters on a cache miss, when ANGLE's own checkout needs
       # about 15 GB. Harmless otherwise.

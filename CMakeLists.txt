@@ -280,6 +280,14 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.desktop.in"
 # AppStream's release date is the day this was built, which for a release
 # is the day CI built it from the tag. SOURCE_DATE_EPOCH, when set, wins.
 string(TIMESTAMP STUD_RELEASE_DATE "%Y-%m-%d" UTC)
+# ...and its "what's new", an AppStream <description> CI writes from the
+# release's # SUMMARY section (tools/release-summary.py). None otherwise.
+set(STUD_RELEASE_DESCRIPTION_FILE "" CACHE FILEPATH
+    "AppStream <description> of this release's changes; empty for none")
+set(STUD_RELEASE_DESCRIPTION "")
+if(STUD_RELEASE_DESCRIPTION_FILE)
+    file(READ "${STUD_RELEASE_DESCRIPTION_FILE}" STUD_RELEASE_DESCRIPTION)
+endif()
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.metainfo.xml.in"
                "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.metainfo.xml" @ONLY)
 

@@ -102,7 +102,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_BUILD_TESTS=OFF \
-            -DSTUD_VERSION="${VERSION}"
+            -DSTUD_VERSION="${VERSION}" \
+            -DSTUD_RELEASE_DESCRIPTION_FILE="${RELEASE_DESCRIPTION_FILE:-}"
           cmake --build build -j"$(nproc)"
 
       # One build, several wrappers. Building each format separately would
@@ -519,7 +520,7 @@ jobs:
 
       - name: Build the AppImage
         run: |
-          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION}"
+          export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION} -DSTUD_RELEASE_DESCRIPTION_FILE=${RELEASE_DESCRIPTION_FILE:-}"
           packaging/build-appimage.sh
 
       - name: Validate AppImage contents
@@ -612,7 +613,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
             -DSTUD_BUILD_TESTS=OFF \
-            -DSTUD_VERSION="${VERSION}"
+            -DSTUD_VERSION="${VERSION}" \
+            -DSTUD_RELEASE_DESCRIPTION_FILE="${RELEASE_DESCRIPTION_FILE:-}"
           cmake --build build -j"$(nproc)"
 
       - name: Check the Qt floor this build sets
@@ -696,7 +698,7 @@ jobs:
           [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
           cp "$archive" stud-archive.tar.zst
           python3 - <<'PY'
-          import os, re, sys
+          import os, re, shutil, sys
           p = "packaging/flatpak/io.github.catpieleaf.Stud.yml"
           s = open(p).read()
           # Matches whatever checksum the manifest carries, not one literal
@@ -741,7 +743,15 @@ jobs:
               sys.exit(1)
           # The tag's tree predates the bump the release commits to main,
           # so the version comes from the tag, like every other package.
-          s, n = re.subn(r"-DSTUD_VERSION=\S+", "-DSTUD_VERSION=" + os.environ["VERSION"], s)
+          opts = "-DSTUD_VERSION=" + os.environ["VERSION"]
+          # ...and the release summary, copied into the checkout, since
+          # flatpak-builder only sees what its sources bring in.
+          notes = os.environ.get("RELEASE_DESCRIPTION_FILE", "")
+          if notes:
+              shutil.copy(notes, "release-description.xml")
+              opts += ("\n      - -DSTUD_RELEASE_DESCRIPTION_FILE="
+                       "/run/build/stud/release-description.xml")
+          s, n = re.subn(r"-DSTUD_VERSION=\S+", lambda m: opts, s)
           if n != 1:
               print(f"::error::expected one -DSTUD_VERSION to rewrite, rewrote {n}")
               sys.exit(1)
@@ -852,8 +862,11 @@ jobs:
           dependencies: "false"
 
       - name: Bump the version
-        # A no-op when main already carries this version.
-        run: python3 tools/bump-version.py "$VERSION"
+        # A no-op when main already carries this version. The Terra spec's
+        # changelog entry is the release's # SUMMARY.
+        run: |
+          python3 tools/bump-version.py "$VERSION" \
+            --changelog "${RELEASE_CHANGELOG_FILE:-/dev/null}"
 
       - uses: actions/download-artifact@v8
         with:

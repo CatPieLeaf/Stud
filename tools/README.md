@@ -35,6 +35,10 @@ release fails without them.
   it, and adds the Terra spec's changelog entry. The release workflow runs
   it with the tag's version and commits the result to main.
 
+- **`release-summary.py`**: reads the `# SUMMARY` section of a release
+  description into an AppStream `<description>` for the metainfo and the
+  Terra spec's changelog entry. The release workflow runs it.
+
 - **`fill-release-checksums.py`**: after a release is published, writes
   its digests into the two AUR PKGBUILDs and the Flatpak manifest, pins
   the cpak image, regenerates `cpak.lock.json` and both `.SRCINFO` files.
