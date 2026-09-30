@@ -98,6 +98,15 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
-    <release version="1.1.10" date="2026-09-30"/>
+    <release version="1.1.10" date="2026-09-30">
+      <description>
+        <ul>
+          <li>Settings opens even on a machine with no Vulkan loader</li>
+          <li>The AppImage runs on stock distributions under X11</li>
+          <li>Software centers show Stud's icon and what changed in each release</li>
+          <li>A large internal cleanup, with no change in how Stud behaves</li>
+        </ul>
+      </description>
+    </release>
   </releases>
 </component>
