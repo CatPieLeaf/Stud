@@ -1,6 +1,6 @@
 pkgbase = stud
 	pkgdesc = An Unofficial Open-Source Roblox Launcher for Linux
-	pkgver = 1.1.8
+	pkgver = 1.1.9
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
 	arch = x86_64
@@ -38,7 +38,7 @@ pkgbase = stud
 	optdepends = wl-clipboard: copying a server link from the tray menu on Wayland
 	optdepends = libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME
 	optdepends = libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)
-	source = stud-1.1.8.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.8.tar.gz
+	source = stud-1.1.9.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.1.9.tar.gz
 	sha256sums = 4e2efdcc73afbeb6ebc86779c46093256122192ed0ce35d9484b1457e07eab4c
 
 pkgname = stud
