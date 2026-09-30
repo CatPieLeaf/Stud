@@ -400,6 +400,37 @@ for libssl in /usr/lib/x86_64-linux-gnu/libssl.so.3 /lib/x86_64-linux-gnu/libssl
 done
 [ -e "$appdir/usr/lib/libssl.so.3" ] || die "no libssl.so.3 to bundle; Stud could not log in"
 
+# What Qt's X11 platform plugin needs beyond the X libraries every desktop
+# has.
+#
+# exclude_libs keeps libxcb* and libxkbcommon* out of the bundle, and
+# libxcb itself, libxcb-util and libxkbcommon must stay out (see there).
+# But since Qt 6.5 the xcb plugin also links these six, and a stock
+# distribution without a Qt 6 desktop of its own does not carry them:
+# measured on a clean Ubuntu 22.04, the plugin refused to load
+# ("xcb-cursor0 or libxcb-cursor0 is needed") and Stud never opened a
+# window under X11. Each is a thin extension over the host's own libxcb or
+# libxkbcommon, which they keep using; none of them is what an implicit
+# Vulkan layer loads. The list is the whole closure measured on that
+# system, not a guess: the last three are what the first ones need.
+#
+# libxcb-util is one of them. The exclude list's own note has it
+# segfaulting in its initialiser when bundled, but that is the symptom of
+# linuxdeploy's patchelf corrupting a library (see NO_STRIP above), and
+# these are copied as they are, never patched: run from this bundle on a
+# clean Ubuntu 22.04 and on a current Fedora, X11 and Wayland, it loads.
+say "bundling what Qt's X11 platform plugin needs"
+for lib in libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-keysyms.so.1 libxcb-xkb.so.1 \
+           libxcb-xinput.so.0 libxkbcommon-x11.so.0 libxcb-image.so.0 \
+           libxcb-render-util.so.0 libxcb-util.so.1; do
+    found=""
+    for dir in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /lib64; do
+        [ -e "$dir/$lib" ] && { found="$dir/$lib"; break; }
+    done
+    [ -n "$found" ] || die "no $lib on this machine to bundle; Stud would open no window on X11"
+    cp -L "$found" "$appdir/usr/lib/$lib"
+done
+
 # glibc travels with the bundle.
 #
 # Everything here was built on a current distribution, so it needs that
