@@ -1,10 +1,13 @@
 # Builds Stud from source and attaches the packages to a release.
 #
 # It runs when a release is PUBLISHED, and at no other time: no push
-# builds, no pull-request builds. Run by hand (workflow_dispatch), it
-# builds main, whichever branch it is started from, and leaves every package as an
-# artifact of the run: nothing is uploaded to a release and no image is
-# pushed, so the pipeline can be exercised without cutting one.
+# builds, no pull-request builds. Publish it as a pre-release: the publish
+# job makes it the latest release once every package is attached.
+#
+# Run by hand (workflow_dispatch), it builds main, whichever branch it is
+# started from, and leaves every package as an artifact of the run: nothing
+# is uploaded to a release and no image is pushed, so the pipeline can be
+# exercised without cutting one.
 #
 # The long pole is ANGLE, which builds from source and takes about an
 # hour. It is cached, so that happens once per container image and every
@@ -858,6 +861,18 @@ jobs:
               { echo "no package matching $required" >&2; exit 1; }
           done
           gh release upload "$TAG" "${packages[@]}" --clobber
+
+      - name: Make it the latest release
+        # A release is published as a pre-release, which is what starts this
+        # workflow, and only becomes the latest release here, once every
+        # package is attached. Anything that follows the latest release,
+        # Terra's update bot among them, would otherwise see the new version
+        # while its archive was still being built and fail to download it.
+        # An edit made with this workflow's own token starts no new run.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$TAG" --prerelease=false --latest
 
   # The version bump and the checksums the Flathub, AUR and cpak recipes
   # carry, both from the release that now exists (the tag name is the
