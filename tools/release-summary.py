@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""A release's changelog, from the # SUMMARY section of its description.
+"""A release's changelog, from the ## SUMMARY: section of its description.
 
     tools/release-summary.py --metainfo OUT.xml --changelog OUT.txt < body.md
 
-The section starts at a heading that reads SUMMARY (any level, any case)
-and ends at the next heading. Its bullet points become the list; any
+The section starts at the heading "## SUMMARY:" (any level or case, the
+colon optional) and ends at the next heading. Its bullet points become the list; any
 other line becomes a paragraph. Markdown is reduced to plain text, since
 neither AppStream nor rpm renders it.
 
@@ -23,7 +23,7 @@ import re
 import sys
 
 HEADING = re.compile(r"^ {0,3}#{1,6}(\s|$)")
-SUMMARY = re.compile(r"^ {0,3}#{1,6}\s*summary\s*#*\s*$", re.I)
+SUMMARY = re.compile(r"^ {0,3}#{1,6}\s*summary\s*:?\s*#*\s*$", re.I)
 BULLET = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])\s+(.*)")
 
 
@@ -78,7 +78,7 @@ def main() -> int:
 
     paragraphs, items = summary(sys.stdin.read())
     if not paragraphs and not items:
-        print("::warning::the release description has no # SUMMARY section, "
+        print("::warning::the release description has no ## SUMMARY: section, "
               "so this release carries no changelog")
     with open(args.metainfo, "w") as out:
         out.write(metainfo(paragraphs, items))

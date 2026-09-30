@@ -863,7 +863,7 @@ jobs:
 
       - name: Bump the version
         # A no-op when main already carries this version. The Terra spec's
-        # changelog entry is the release's # SUMMARY.
+        # changelog entry is the release's ## SUMMARY: section.
         run: |
           python3 tools/bump-version.py "$VERSION" \
             --changelog "${RELEASE_CHANGELOG_FILE:-/dev/null}"

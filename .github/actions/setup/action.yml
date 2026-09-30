@@ -27,7 +27,7 @@ runs:
         echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
 
     - name: Release summary
-      # What's new, from the # SUMMARY section of the release description:
+      # What's new, from the ## SUMMARY: section of the release description:
       # the metainfo's <release> description, and the Terra spec's
       # changelog entry. A manual run has no release, so neither.
       if: github.event_name == 'release'

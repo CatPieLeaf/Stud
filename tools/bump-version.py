@@ -6,7 +6,7 @@
 The current version is the one CMakeLists.txt declares; every file below
 that names it is rewritten to the new one, and the Terra spec gets a
 changelog entry: the "- item" lines in FILE (tools/release-summary.py
-writes them from the release's # SUMMARY), or "- Update to <version>".
+writes them from the release's ## SUMMARY:), or "- Update to <version>".
 Nothing happens when the tree already has that version.
 
 The release workflow runs this for every published release, with the
