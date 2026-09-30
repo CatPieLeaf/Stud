@@ -1,9 +1,10 @@
 # Builds Stud from source and attaches the packages to a release.
 #
 # It runs when a release is PUBLISHED, and at no other time: no push
-# builds, no pull-request builds. (workflow_dispatch is here so the
-# pipeline can be exercised without cutting a release; it only ever
-# runs when someone presses the button.)
+# builds, no pull-request builds. Run by hand (workflow_dispatch), it
+# builds main, whichever branch it is started from, and leaves every package as an
+# artifact of the run: nothing is uploaded to a release and no image is
+# pushed, so the pipeline can be exercised without cutting one.
 #
 # The long pole is ANGLE, which builds from source and takes about an
 # hour. It is cached, so that happens once per container image and every
@@ -17,10 +18,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to build and upload to"
-        required: true
 
 # Read-only by default; the two jobs that need more say so themselves.
 # Only `publish` writes to the release, and only the cpak image push needs
@@ -29,14 +26,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  group: release-${{ github.event.release.tag_name || 'main' }}
   cancel-in-progress: false
 
 env:
   # The version the packages carry comes from the tag being released, so
   # an rpm can never disagree with the release it is attached to. A
   # leading "v" is stripped: rpm and AppStream both want a bare number.
-  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  # Empty on a manual run, which takes the version its tree declares
+  # instead (the "Version of a manual build" step in each job).
+  TAG: ${{ github.event.release.tag_name }}
 
 jobs:
   packages:
@@ -86,7 +85,13 @@ jobs:
           # The tag being released, not whatever the default branch holds:
           # the packages attached to a release must be built from the code
           # that release names.
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || 'main' }}
+
+      - name: Version of a manual build
+        # No release, so no tag: the checkout above took main, and the
+        # version is the one its CMakeLists.txt declares.
+        if: env.TAG == ''
+        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
 
       - name: Free up disk space
         # Only matters on a cache miss, when ANGLE's own checkout needs
@@ -270,7 +275,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || 'main' }}
 
       - name: Lint Flatpak manifest
         # The same linter Flathub runs on a submission. It exits 0 for
@@ -315,7 +320,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || 'main' }}
+
+      - name: Version of a manual build
+        # No release, so no tag: the checkout above took main, and the
+        # version is the one its CMakeLists.txt declares.
+        if: env.TAG == ''
+        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v8
         with:
@@ -482,9 +493,10 @@ jobs:
             --tree install-tree --package "$pkg" --kind arch --work /tmp/arch-payload
           python3 tools/validate-payload.py /tmp/arch-payload --label "Arch package"
 
-      - name: Publish cpak image
+      - name: Build the cpak image, and publish it for a release
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
         run: |
           version="${TAG#v}"
           # Only this file is ever built, so anything added to the
@@ -493,6 +505,9 @@ jobs:
           podman build -f packaging/cpak/Containerfile.prebuilt \
             -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" \
             -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest" .
+          # A manual run builds the image, which is the test, and stops:
+          # :latest belongs to the newest release.
+          [ "$EVENT" = release ] || exit 0
           echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
@@ -546,7 +561,13 @@ jobs:
           # The tag being released, not whatever the default branch holds:
           # the packages attached to a release must be built from the code
           # that release names.
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || 'main' }}
+
+      - name: Version of a manual build
+        # No release, so no tag: the checkout above took main, and the
+        # version is the one its CMakeLists.txt declares.
+        if: env.TAG == ''
+        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
 
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
@@ -672,7 +693,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # The tag being released, not whatever the default branch holds.
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || 'main' }}
+
+      - name: Version of a manual build
+        # No release, so no tag: the checkout above took main, and the
+        # version is the one its CMakeLists.txt declares.
+        if: env.TAG == ''
+        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
 
       - name: Free up disk space
         run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
@@ -777,7 +804,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || 'main' }}
+
+      - name: Version of a manual build
+        # No release, so no tag: the checkout above took main, and the
+        # version is the one its CMakeLists.txt declares.
+        if: env.TAG == ''
+        run: echo "TAG=$(sed -n 's/^project(Stud VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v8
         with:
@@ -887,6 +920,9 @@ jobs:
     permissions:
       contents: write
     needs: [packages, containers, appimage, deb, flatpak]
+    # Only a release has anywhere to publish to; a manual run's packages
+    # stay as the artifacts of its jobs.
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     # Not in a container: this is where the GitHub CLI already lives.
     steps:
