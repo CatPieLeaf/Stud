@@ -325,6 +325,26 @@ EngineV2BridgeResult run_engine_v2_early_init(FakeJni::Jvm& jvm,
     return result;
 }
 
+// nativeAppBridgeV2StartAppWithParams, bounded like every V2 call. Shared
+// by bring-up and resume_lua_app_after_game(), so the two send exactly the
+// same call with exactly the same parameters.
+BoundedCallOutcome start_app_with_params(FakeJni::Jvm& jvm, V2VoidOneObjFn fn,
+                                         std::shared_ptr<PlatformParams> platform_params,
+                                         std::shared_ptr<SurfaceJava> surface, const char* name) {
+    return run_bounded_v2_call(name, [&jvm, fn, platform_params, surface] {
+        static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+        FakeJni::LocalFrame inner_frame(jvm);
+        auto& inner_env = inner_frame.getJniEnv();
+        auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
+        jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
+        auto start_app_params = build_desktop_start_app_params(platform_params, surface);
+        jobject params_ref = inner_env.createLocalReference(std::move(start_app_params));
+        bool ok = call_trapping_abort(fn, inner_jni_env, inner_class, params_ref);
+        clear_pending_jni_exception(inner_jni_env, "engine_v2_bridge");
+        return ok;
+    });
+}
+
 EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                              std::shared_ptr<PlatformParams> platform_params,
                                              std::shared_ptr<DeviceParams> device_params,
@@ -512,19 +532,8 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         // not reused from any outer scope. Only real, thread-safe
         // values (shared_ptr copies, the raw jvm reference) cross the
         // thread boundary.
-        auto outcome =
-            run_bounded_v2_call("nativeAppBridgeV2StartAppWithParams", [&jvm, fn, platform_params, surface] {
-                static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
-                FakeJni::LocalFrame inner_frame(jvm);
-                auto& inner_env = inner_frame.getJniEnv();
-                auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
-                jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-                auto start_app_params = build_desktop_start_app_params(platform_params, surface);
-                jobject params_ref = inner_env.createLocalReference(std::move(start_app_params));
-                bool ok = call_trapping_abort(fn, inner_jni_env, inner_class, params_ref);
-                clear_pending_jni_exception(inner_jni_env, "engine_v2_bridge");
-                return ok;
-            });
+        auto outcome = start_app_with_params(jvm, fn, platform_params, surface,
+                                             "nativeAppBridgeV2StartAppWithParams");
         result.start_app_with_params_trapped_abort = outcome.trapped_abort;
         result.start_app_with_params_still_running = outcome.still_running;
     } else if (lib.find_symbol(
@@ -862,6 +871,37 @@ bool notify_surface_resized(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
             return call_update_surface_pair(jvm, lib, platform_params, surface, called_app,
                                             called_game, /*update_game_surface=*/false);
         });
+    return !outcome.still_running && !outcome.trapped_abort;
+}
+
+// Back from a game: StartApp again, as the real app does.
+//
+// On a phone the game runs in an activity of its own, so returning to the
+// home screen re-creates the app view's surface, and the app's own
+// surface handler (vi/e.F(Surface) in the app) answers that with
+// nativeAppBridgeV2StartAppWithParams. A real capture shows it after every
+// game, 48 ms after the engine's returnToLuaApp:
+//
+//   42.300  replaceDataModel (stage:5) ... setStage: LuaApp
+//           ActivityNativeMain: "Back from game. Resuming Lua App."
+//   42.349  nativeAppBridgeV2StartApp -> startLuaApp: (stage:LuaApp)
+//           returnToLuaApp: (in LuaApp stage) resume App
+//           SurfaceController::resume dataModel -> run
+//
+// Stud plays the game in the same window, so no surface is re-created and
+// nothing sent it. Without it the engine was back on the home screen with
+// its data model never resumed, drawn once a second and unresponsive --
+// the home-screen freeze after leaving a game.
+bool resume_lua_app_after_game(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                               const std::shared_ptr<PlatformParams>& platform_params,
+                               const std::shared_ptr<SurfaceJava>& surface) {
+    if (platform_params == nullptr || surface == nullptr) return false;
+    void* addr = lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams");
+    if (addr == nullptr) return false;
+    auto outcome = start_app_with_params(jvm, reinterpret_cast<V2VoidOneObjFn>(addr),
+                                         platform_params, surface,
+                                         "nativeAppBridgeV2StartAppWithParams (back from a game)");
     return !outcome.still_running && !outcome.trapped_abort;
 }
 

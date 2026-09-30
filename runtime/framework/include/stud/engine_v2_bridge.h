@@ -391,6 +391,12 @@ bool notify_surface_resized(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
                             const std::shared_ptr<PlatformParams>& platform_params,
                             const std::shared_ptr<SurfaceJava>& surface);
 
+// StartApp again after leaving a game, as the real app's own view does when
+// its surface comes back; see the definition for the capture.
+bool resume_lua_app_after_game(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                               const std::shared_ptr<PlatformParams>& platform_params,
+                               const std::shared_ptr<SurfaceJava>& surface);
+
 EngineV2BridgeResult run_engine_v2_early_init(FakeJni::Jvm& jvm,
                                                 const stud::linker::LoadedLibrary& lib,
                                                 std::shared_ptr<InitParams> init_params);

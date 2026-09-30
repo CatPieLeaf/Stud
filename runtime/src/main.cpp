@@ -2667,10 +2667,23 @@ int main(int argc, char** argv) {
     // launch. The engine's own experience flag is what tells them apart.
     // It is still set at this point and cleared by onExperienceStop.
     const bool close_on_leave = find_named_arg(argc, argv, "--close-on-leave") == "on";
-    stud::jni_bridge::NativeHelperJava::on_returned_to_app = [assert_foreground, close_on_leave]() {
+    stud::jni_bridge::NativeHelperJava::on_returned_to_app = [assert_foreground, close_on_leave,
+                                                              &jvm, &lib, v2_platform_params,
+                                                              &lifecycle]() {
         assert_foreground();
-        if (!close_on_leave) return;
         if (!stud::jni_bridge::NativeHelperJava::experience_is_loaded()) return;
+        if (!close_on_leave) {
+            // Back on the home screen after a real game: StartApp again,
+            // the way the app's own view does when it comes back (see
+            // resume_lua_app_after_game()). On its own thread, because this
+            // runs on the engine's callback thread and the call waits for
+            // the engine.
+            std::thread([&jvm, &lib, v2_platform_params, &lifecycle] {
+                stud::jni_bridge::resume_lua_app_after_game(jvm, lib, v2_platform_params,
+                                                            lifecycle.surface);
+            }).detach();
+            return;
+        }
         std::printf("stud: left the experience and closeOnLeave is set, shutting down\n");
         std::fflush(stdout);
         // Close the window here, not after teardown.
