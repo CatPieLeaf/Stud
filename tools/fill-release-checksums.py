@@ -236,20 +236,33 @@ def main() -> int:
     # ("manifest version 3.0 requires a digest-pinned image").
     image = json.loads(CPAK.read_text())["image"]
     repo = image.split("@", 1)[0].rsplit(":", 1)[0]
-    digest = args.image_digest or registry_digest(repo, args.tag)
+    # What the registry serves for the tag is what an install pulls, so a
+    # digest from anywhere else has to match it. The release workflow once
+    # pinned the local image's digest, which the push had re-encoded away:
+    # the registry had no such manifest, and every cpak install failed.
+    published = registry_digest(repo, args.tag)
+    if args.image_digest and published and args.image_digest != published:
+        print(f"--image-digest {args.image_digest} is not what {repo}:{args.tag} "
+              f"serves ({published})", file=sys.stderr)
+        return 1
+    digest = args.image_digest or published
     if digest:
         data = json.loads(CPAK.read_text())
         data["image"] = f"{repo}@{digest}"
         CPAK.write_text(json.dumps(data, indent=2) + "\n")
         print(f"cpak image:      {digest}")
 
-        # cpak validates the lock against the manifest at install time
-        # ("cpak.lock.json does not match the root manifest"), so it is
-        # regenerated here rather than left to go stale.
+        # cpak checks the lock against the manifest for a local install and
+        # `cpak test` ("cpak.lock.json does not match the root manifest"), so
+        # it is regenerated here rather than left to go stale. It also
+        # resolves the image, so a failure means the pin is wrong: stop
+        # before anything is committed.
         lock = ROOT / "cpak.lock.json"
         if shutil.which("cpak"):
             rc = subprocess.run(["cpak", "lock", str(CPAK)], cwd=ROOT).returncode
             print("cpak lock:       " + ("written" if rc == 0 else f"FAILED (rc={rc})"))
+            if rc != 0:
+                return 1
         elif lock.exists():
             print(f"cpak is not installed, {lock.name} is now STALE, regenerate it with "
                   "`cpak lock cpak.json`", file=sys.stderr)

@@ -513,10 +513,14 @@ jobs:
           # :latest belongs to the newest release.
           [ "$EVENT" = release ] || exit 0
           echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
+          # The digest the registry stores, from the push itself. The local
+          # image's own digest is not it: podman re-encodes the image as it
+          # pushes, and a pin to the local one named a manifest the registry
+          # did not have.
+          podman push --digestfile cpak-image-digest.txt \
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
-          podman inspect --format '{{index .RepoDigests 0}}' \
-            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" | tee cpak-image-digest.txt
+          cat cpak-image-digest.txt
 
       - uses: actions/upload-artifact@v7
         with:
