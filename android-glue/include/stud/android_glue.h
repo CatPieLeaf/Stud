@@ -640,5 +640,10 @@ void native_window_pump_key_repeat();
 // own queue there.
 void native_window_pump_x11_events_only();
 void native_window_pump_x11();
+// X11: the window's size is back to the one the engine renders at, so a
+// resize's stretched copy can give way to the driver's window again.
+void native_window_x11_resize_settled();
+// X11: a frame was presented, so a window hidden for a resize can be shown.
+void native_window_x11_frame_presented();
 
 }  // namespace stud::android_glue

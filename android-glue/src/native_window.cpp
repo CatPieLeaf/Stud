@@ -3243,6 +3243,14 @@ wl_buffer* make_background_buffer(wl_shm* shm) {
     return content;
 }
 
+void native_window_x11_resize_settled() {
+    if (display_backend() == DisplayBackend::X11) x11::resize_settled_at_engine_size();
+}
+
+void native_window_x11_frame_presented() {
+    if (display_backend() == DisplayBackend::X11) x11::frame_presented();
+}
+
 unsigned long native_window_x11_content_window() {
     return display_backend() == DisplayBackend::X11 ? x11::content_window() : 0;
 }

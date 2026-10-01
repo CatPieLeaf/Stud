@@ -9056,6 +9056,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         }
         // The first one maps the window, with this frame in it.
         stud::android_glue::native_window_content_presented();
+        stud::android_glue::native_window_x11_frame_presented();
     }
     // Outside the queue lock deliberately: this waits on the DISPLAY, not
     // on the driver's queue, and holding the lock across it would stall

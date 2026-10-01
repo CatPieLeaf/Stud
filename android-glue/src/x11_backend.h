@@ -37,6 +37,11 @@ unsigned long window();
 unsigned long content_window();
 // Maps or unmaps content_window(); a no-op before it exists.
 void set_content_mapped(bool mapped);
+// Ends a resize's stretched copy when the window settles back at the size
+// the engine already renders at; see resize_settled_at_engine_size().
+void resize_settled_at_engine_size();
+// A frame was presented into content_window(); shows it if a resize hid it.
+void frame_presented();
 
 // Engages the input method (XIM) while a TextBox has focus, at the caret:
 // x and y are the top of the caret in window pixels, height the line's.

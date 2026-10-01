@@ -9,6 +9,8 @@
 #include <chrono>
 #include <string>
 #include <thread>
+#include <mutex>
+#include <type_traits>
 
 #include <X11/Xatom.h>
 #include "stud_window_icon.h"
@@ -142,6 +144,10 @@ struct Xlib {
                     unsigned int) = nullptr;
     int (*MoveResizeWindow)(Display*, Window, int, int, unsigned int, unsigned int) = nullptr;
     int (*UnmapWindow)(Display*, Window) = nullptr;
+    Pixmap (*CreatePixmap)(Display*, Drawable, unsigned int, unsigned int, unsigned int) = nullptr;
+    int (*CopyArea)(Display*, Drawable, Drawable, GC, int, int, unsigned int, unsigned int, int,
+                    int) = nullptr;
+    Status (*GetWindowAttributes)(Display*, Window, XWindowAttributes*) = nullptr;
     Bool (*TranslateCoordinates)(Display*, Window, Window, int, int, int*, int*,
                                  Window*) = nullptr;
     int (*RaiseWindow)(Display*, Window) = nullptr;
@@ -354,6 +360,9 @@ bool load_xlib() {
     LOAD(PutImage, "XPutImage");
     LOAD(MoveResizeWindow, "XMoveResizeWindow");
     LOAD(UnmapWindow, "XUnmapWindow");
+    LOAD(CreatePixmap, "XCreatePixmap");
+    LOAD(CopyArea, "XCopyArea");
+    LOAD(GetWindowAttributes, "XGetWindowAttributes");
     LOAD(TranslateCoordinates, "XTranslateCoordinates");
     LOAD(RaiseWindow, "XRaiseWindow");
     LOAD(ResourceManagerString, "XResourceManagerString");
@@ -610,7 +619,7 @@ bool create_window(int32_t width, int32_t height) {
     constexpr long kEventMask = StructureNotifyMask | VisibilityChangeMask | FocusChangeMask |
                                 KeyPressMask | KeyReleaseMask | ButtonPressMask |
                                 ButtonReleaseMask | PointerMotionMask | EnterWindowMask |
-                                LeaveWindowMask;
+                                LeaveWindowMask | ExposureMask;
     x.SelectInput(g_display, g_window, kEventMask);
     setup_input_method(kEventMask);
 
@@ -853,6 +862,164 @@ namespace {
 bool set_empty_input_shape(Window w);
 }  // namespace
 
+// A stretched copy of the last frame while the window is being resized.
+//
+// X11 has no viewport. When the window grows, the driver's child window
+// keeps showing its old-size frame in the corner and the rest is the
+// window's black background, until the engine has rebuilt at the new
+// size, which waits for the drag to settle. Wayland instead stretches the
+// current frame to the window at once.
+//
+// The same thing here, done by the X server: at the first size change
+// of a resize, what the child window shows is copied into a pixmap
+// (server side, nothing read back from the GPU), the child is hidden, and
+// the copy is painted stretched to the window on every size change and
+// every expose. It ends when the child is shown again, which is when the
+// engine starts its swapchain for the new size, or when the window
+// settles back at the size the engine already has. Without XRender, or
+// without the child window, nothing changes.
+struct XRenderFns {
+    void* handle = nullptr;
+    const void* (*FindVisualFormat)(Display*, const Visual*) = nullptr;
+    unsigned long (*CreatePicture)(Display*, Drawable, const void*, unsigned long,
+                                   const void*) = nullptr;
+    void (*SetPictureTransform)(Display*, unsigned long, void*) = nullptr;
+    void (*SetPictureFilter)(Display*, unsigned long, const char*, int*, int) = nullptr;
+    void (*Composite)(Display*, int, unsigned long, unsigned long, unsigned long, int, int, int,
+                      int, int, int, unsigned int, unsigned int) = nullptr;
+    void (*FreePicture)(Display*, unsigned long) = nullptr;
+};
+
+// libXrender, loaded only for this; Xrender.h is not needed for the few
+// stable entry points used.
+const XRenderFns* xrender() {
+    static const XRenderFns fns = [] {
+        XRenderFns f;
+        f.handle = ::dlopen("libXrender.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (f.handle == nullptr) return f;
+        auto load = [&](auto& field, const char* name) {
+            field = reinterpret_cast<std::remove_reference_t<decltype(field)>>(::dlsym(f.handle, name));
+            return field != nullptr;
+        };
+        if (!(load(f.FindVisualFormat, "XRenderFindVisualFormat") &&
+              load(f.CreatePicture, "XRenderCreatePicture") &&
+              load(f.SetPictureTransform, "XRenderSetPictureTransform") &&
+              load(f.SetPictureFilter, "XRenderSetPictureFilter") &&
+              load(f.Composite, "XRenderComposite") &&
+              load(f.FreePicture, "XRenderFreePicture"))) {
+            f.handle = nullptr;
+        }
+        return f;
+    }();
+    return fns.handle != nullptr ? &fns : nullptr;
+}
+
+// XTransform's layout: a 3x3 matrix of 16.16 fixed point.
+struct RenderTransform {
+    int matrix[3][3];
+};
+constexpr int kPictOpSrc = 1;
+
+struct ResizeStretch {
+    bool active = false;
+    Pixmap snapshot = 0;
+    unsigned long source = 0;       // Picture over the snapshot
+    unsigned long destination = 0;  // Picture over the main window
+    int source_w = 0;
+    int source_h = 0;
+};
+// Configure and expose arrive on the display pump; the child is shown
+// again from the render thread, when a swapchain is built.
+std::mutex g_stretch_mutex;
+ResizeStretch g_stretch;
+// Set when the child should be shown again but nothing has been presented
+// into it yet: shown then, it is black until the engine's next frame, and a
+// stretch that starts in that moment copies the black. So it stays hidden,
+// with the stretch painted, until frame_presented().
+std::atomic<bool> g_show_child_on_present{false};
+
+void paint_stretch_locked() {
+    const XRenderFns* r = xrender();
+    const int w = g_width.load();
+    const int h = g_height.load();
+    if (!g_stretch.active || r == nullptr || w <= 0 || h <= 0) return;
+    // Maps window pixels back to snapshot pixels.
+    RenderTransform t{};
+    t.matrix[0][0] = static_cast<int>(static_cast<int64_t>(g_stretch.source_w) * 65536 / w);
+    t.matrix[1][1] = static_cast<int>(static_cast<int64_t>(g_stretch.source_h) * 65536 / h);
+    t.matrix[2][2] = 65536;
+    r->SetPictureTransform(g_display, g_stretch.source, &t);
+    r->Composite(g_display, kPictOpSrc, g_stretch.source, 0, g_stretch.destination, 0, 0, 0, 0,
+                 0, 0, static_cast<unsigned int>(w), static_cast<unsigned int>(h));
+    xlib().Flush(g_display);
+}
+
+void end_stretch_locked() {
+    if (!g_stretch.active) return;
+    if (const XRenderFns* r = xrender()) {
+        r->FreePicture(g_display, g_stretch.source);
+        r->FreePicture(g_display, g_stretch.destination);
+    }
+    xlib().FreePixmap(g_display, g_stretch.snapshot);
+    g_stretch = ResizeStretch{};
+}
+
+// The child window, at its current size, into a pixmap; then hidden.
+bool begin_stretch_locked(int old_w, int old_h) {
+    if (g_stretch.active) return true;
+    Xlib& x = xlib();
+    const XRenderFns* r = xrender();
+    if (r == nullptr || g_content_window == 0 || old_w <= 0 || old_h <= 0) return false;
+    XWindowAttributes child{};
+    XWindowAttributes main{};
+    if (x.GetWindowAttributes(g_display, g_content_window, &child) == 0 ||
+        child.map_state != IsViewable || x.GetWindowAttributes(g_display, g_window, &main) == 0) {
+        return false;
+    }
+    const void* child_format = r->FindVisualFormat(g_display, child.visual);
+    const void* main_format = r->FindVisualFormat(g_display, main.visual);
+    if (child_format == nullptr || main_format == nullptr) return false;
+    const Pixmap snapshot = x.CreatePixmap(g_display, g_window, static_cast<unsigned int>(old_w),
+                                           static_cast<unsigned int>(old_h),
+                                           static_cast<unsigned int>(child.depth));
+    if (snapshot == 0) return false;
+    GC gc = x.CreateGC(g_display, snapshot, 0, nullptr);
+    x.CopyArea(g_display, g_content_window, snapshot, gc, 0, 0, static_cast<unsigned int>(old_w),
+               static_cast<unsigned int>(old_h), 0, 0);
+    x.FreeGC(g_display, gc);
+    g_stretch.snapshot = snapshot;
+    g_stretch.source = r->CreatePicture(g_display, snapshot, child_format, 0, nullptr);
+    g_stretch.destination = r->CreatePicture(g_display, g_window, main_format, 0, nullptr);
+    r->SetPictureFilter(g_display, g_stretch.source, "bilinear", nullptr, 0);
+    g_stretch.source_w = old_w;
+    g_stretch.source_h = old_h;
+    g_stretch.active = true;
+    x.UnmapWindow(g_display, g_content_window);
+    x.Sync(g_display, False);
+    return true;
+}
+
+// The window settled at the size the engine already renders at, so no new
+// swapchain is coming to end the stretch: show the child again now.
+// A frame has been presented: the child has something to show, so a resize's
+// stretch can give way to it.
+void frame_presented() {
+    if (!g_show_child_on_present.exchange(false)) return;
+    Xlib& x = xlib();
+    x.MapWindow(g_display, g_content_window);
+    std::lock_guard<std::mutex> lock(g_stretch_mutex);
+    end_stretch_locked();
+    x.Sync(g_display, False);
+}
+
+void resize_settled_at_engine_size() {
+    {
+        std::lock_guard<std::mutex> lock(g_stretch_mutex);
+        if (!g_stretch.active) return;
+    }
+    set_content_mapped(true);
+}
+
 unsigned long content_window() {
     if (g_display == nullptr || g_window == 0) return g_window;
     Xlib& x = xlib();
@@ -898,6 +1065,16 @@ void set_content_mapped(bool mapped) {
         if (w > 0 && h > 0 && x.MoveResizeWindow != nullptr) {
             x.MoveResizeWindow(g_display, g_content_window, 0, 0, static_cast<unsigned int>(w),
                                static_cast<unsigned int>(h));
+        }
+        {
+            // Sized now, so a swapchain built for it matches, but shown on
+            // its first frame; see g_show_child_on_present.
+            std::lock_guard<std::mutex> lock(g_stretch_mutex);
+            if (g_stretch.active) {
+                g_show_child_on_present.store(true);
+                x.Sync(g_display, False);
+                return;
+            }
         }
         x.MapWindow(g_display, g_content_window);
     } else if (x.UnmapWindow != nullptr) {
@@ -1369,8 +1546,19 @@ void pump() {
             case ConfigureNotify: {
                 const auto& configure = event.xconfigure;
                 if (configure.width > 0 && configure.height > 0) {
+                    const bool resized = configure.width != g_width.load() ||
+                                         configure.height != g_height.load();
+                    std::unique_lock<std::mutex> stretch_lock(g_stretch_mutex);
+                    if (resized) begin_stretch_locked(g_width.load(), g_height.load());
                     g_width.store(configure.width);
                     g_height.store(configure.height);
+                    // While the stretch is up the child is hidden, and it
+                    // is sized when shown again (set_content_mapped).
+                    if (g_stretch.active) {
+                        paint_stretch_locked();
+                        break;
+                    }
+                    stretch_lock.unlock();
                     // The driver's window follows at once: an X11
                     // swapchain has to match its window's size exactly,
                     // and the engine rebuilds its swapchain for the size
@@ -1384,6 +1572,12 @@ void pump() {
                 }
                 break;
             }
+            case Expose:
+                if (event.xexpose.count == 0) {
+                    std::lock_guard<std::mutex> lock(g_stretch_mutex);
+                    paint_stretch_locked();
+                }
+                break;
             case VisibilityNotify: {
                 const bool visible = event.xvisibility.state != VisibilityFullyObscured;
                 if (visible != g_visible.exchange(visible)) {

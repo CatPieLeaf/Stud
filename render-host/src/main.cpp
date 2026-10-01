@@ -4948,7 +4948,11 @@ void sync_vk_window_size() {
     const auto h = static_cast<uint32_t>(ANativeWindow_getHeight(g_real_window));
     if (w == 0 || h == 0) return;
     static uint32_t last_w = 0, last_h = 0;
-    if (w == last_w && h == last_h) return;
+    if (w == last_w && h == last_h) {
+        // No rebuild is coming for a size the engine already has.
+        stud::android_glue::native_window_x11_resize_settled();
+        return;
+    }
 
     // Let the drag FINISH before the engine is told.
     //
