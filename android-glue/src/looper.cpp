@@ -169,7 +169,17 @@ bool looper_trace_enabled() {
 struct ThreadLooperOwner {
     ~ThreadLooperOwner() {
         ALooper* looper = t_looper;
-        if (looper != nullptr && looper->fd_callbacks.empty()) ALooper_release(looper);
+        if (looper == nullptr) return;
+        // Only a looper still in the registry: one already released to
+        // nothing elsewhere is gone, and t_looper merely still names it.
+        bool unused = false;
+        {
+            std::lock_guard<std::mutex> lock(g_all_loopers_mutex);
+            const auto& all = g_all_loopers;
+            unused = std::find(all.begin(), all.end(), looper) != all.end() &&
+                     looper->fd_callbacks.empty();
+        }
+        if (unused) ALooper_release(looper);
     }
 };
 thread_local ThreadLooperOwner t_looper_owner;
@@ -222,7 +232,20 @@ void ALooper_release(ALooper* looper) {
     // well-behaved ALooper_release should tolerate this rather than
     // requiring every caller to null-check first.
     if (looper == nullptr) return;
-    int prev_ref = looper->ref_count.fetch_sub(1);
+    // The last reference is dropped and the looper leaves the registry in
+    // one step, under the registry's lock, which the orphan poller also
+    // takes to add its own references. Apart, the poller could take a
+    // reference to a looper already at zero and about to be freed, and
+    // then free it a second time.
+    int prev_ref = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_all_loopers_mutex);
+        prev_ref = looper->ref_count.fetch_sub(1);
+        if (prev_ref == 1) {
+            auto& all = g_all_loopers;
+            all.erase(std::remove(all.begin(), all.end(), looper), all.end());
+        }
+    }
     if (looper_trace_enabled())
         std::fprintf(stderr, "stud: [ALooper] ALooper_release(%p) tid=%ld prev_ref=%d t_looper=%p\n",
                      static_cast<void*>(looper), static_cast<long>(::syscall(SYS_gettid)), prev_ref,
@@ -230,11 +253,6 @@ void ALooper_release(ALooper* looper) {
     if (prev_ref == 1) {
         ::close(looper->epoll_fd);
         if (t_looper == looper) t_looper = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(g_all_loopers_mutex);
-            auto& all = g_all_loopers;
-            all.erase(std::remove(all.begin(), all.end(), looper), all.end());
-        }
         delete looper;
     }
 }
