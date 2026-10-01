@@ -332,6 +332,36 @@ jobs:
         with:
           dependencies: "false"
 
+      - name: Pull the build images
+        # Registries answer 503, sometimes for hours: registry.fedoraproject.org
+        # failed a run at the cpak step, after everything else had built.
+        # Pulled once here, with retries, and from the second source each
+        # one is also published at when the first stays down, tagged under
+        # the name the steps below use; every podman call below then finds
+        # them locally. An image added below belongs in this list too.
+        run: |
+          pull() {
+            local attempt
+            for attempt in 1 2 3; do
+              podman pull -q "$1" && return 0
+              [ "$attempt" = 3 ] || sleep $(( attempt * 10 ))
+            done
+            return 1
+          }
+          for pair in docker.io/library/archlinux:base \
+                      docker.io/library/archlinux:latest \
+                      docker.io/library/archlinux:base-devel \
+                      "registry.fedoraproject.org/fedora:44 quay.io/fedora/fedora:44"; do
+            read -r image mirror <<< "$pair"
+            pull "$image" && continue
+            if [ -n "$mirror" ] && pull "$mirror"; then
+              echo "::warning::$image is unavailable, using $mirror"
+              podman tag "$mirror" "$image"
+              continue
+            fi
+            echo "::error::could not pull $image"; exit 1
+          done
+
       - uses: actions/download-artifact@v8
         with:
           name: packages
