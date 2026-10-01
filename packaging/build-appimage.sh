@@ -7,7 +7,7 @@
 # (github.com/pkgforge-dev/Anylinux-AppImages). It carries every library
 # Stud needs, glibc and mesa included, and starts each executable through
 # sharun, so nothing about the host's libraries is a requirement. The
-# image is packed as DwarFS behind uruntime, which mounts it with FUSE
+# image is packed as SquashFS behind uruntime, which mounts it with FUSE
 # when it can and without it when it cannot.
 #
 # Usage:
@@ -113,15 +113,9 @@ say "installing Anylinux's mesa"
 "$tools/get-debloated-pkgs.sh" --add-mesa
 
 rm -rf "$appdir"
-mkdir -p "$build_dir/packages"
 export APPDIR="$appdir"
-export OUTPATH="$build_dir/packages"
-export OUTNAME="Stud-$arch.AppImage"
 export DESKTOP="/usr/share/applications/$app_id.desktop"
 export ICON="/usr/share/icons/hicolor/512x512/apps/$app_id.png"
-# AppImageUpdate and other updaters update Stud in place from the newest
-# GitHub release; appimagetool writes the matching .zsync beside it.
-export UPINFO="gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$arch.AppImage.zsync"
 export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_PULSE=1
 # Only the UI can be traced: render-host and the web view exit at once
 # without the session stud-ui hands them.
@@ -210,9 +204,30 @@ do
         die "no $plugin in the bundle"
 done
 
-say "packing the image"
-rm -f "$OUTPATH/$OUTNAME" "$OUTPATH/$OUTNAME.zsync"
-"$tools/quick-sharun.sh" --make-appimage
+# Packed as SquashFS behind uruntime, not the DwarFS quick-sharun makes:
+# AppImageHub, firejail --appimage and the classic AppImage runtime can
+# only mount SquashFS, and AppImageHub tests every image that way.
+uruntime_version=v0.8.1
+uruntime_sha256=2153e68d63f570c7ebe3d1f38df0fa16814f34d839c5cce2ee42667e327708e8
+uruntime="$tools/uruntime-$uruntime_version"
+curl -fsSL -o "$uruntime" \
+    "https://github.com/VHSgunzo/uruntime/releases/download/$uruntime_version/uruntime-appimage-squashfs-$arch"
+echo "$uruntime_sha256  $uruntime" | sha256sum -c --quiet - || die "uruntime does not match its pinned checksum"
+chmod +x "$uruntime"
 
-[ -f "$OUTPATH/$OUTNAME" ] || die "no $OUTNAME was written"
-say "written: $OUTPATH/$OUTNAME"
+say "packing the image"
+packages="$build_dir/packages"
+out="$packages/Stud-$arch.AppImage"
+mkdir -p "$packages"
+rm -f "$out" "$out.zsync" "$work/image.squashfs"
+"$uruntime" --appimage-mksquashfs "$appdir" "$work/image.squashfs" \
+    -comp zstd -Xcompression-level 19 -b 1M -all-root -noappend -no-progress -quiet
+cp "$uruntime" "$out"
+# AppImageUpdate and other updaters update Stud in place from the newest
+# GitHub release, through the .zsync published beside it.
+"$out" --appimage-addupdinfo "gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$arch.AppImage.zsync"
+cat "$work/image.squashfs" >> "$out"
+rm -f "$work/image.squashfs"
+(cd "$packages" && zsyncmake -u "${out##*/}" -o "${out##*/}.zsync" "${out##*/}")
+
+say "written: $out"

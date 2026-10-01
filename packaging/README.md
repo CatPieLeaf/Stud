@@ -35,7 +35,7 @@ packaging/build-appimage.sh                                       # anywhere
 
 The AppImage builds in an Arch container with [quick-sharun] from the
 [Anylinux AppImages] project. It bundles every library, glibc and mesa
-included, and packs a DwarFS image behind [uruntime].
+included, and packs a SquashFS image behind [uruntime].
 
 [quick-sharun]: https://github.com/pkgforge-dev/Anylinux-AppImages/blob/main/useful-tools/quick-sharun.sh
 [Anylinux AppImages]: https://github.com/pkgforge-dev/Anylinux-AppImages
