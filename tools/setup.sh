@@ -433,6 +433,11 @@ fetch_aosp_dir() {
         | tar xz -C "$into" 2>/dev/null; then
         return 0
     fi
+    # +archive is the endpoint gitiles sheds first under load; single files
+    # keep being served, so the same tree is then fetched file by file.
+    if fetch_aosp_tree "$repo" "$path" "$into"; then
+        return 0
+    fi
 
     local mirror="platform_$(printf '%s' "$repo" | tr / _)"
     local cached="$third_party/.aosp-mirror/$mirror-$AOSP_BRANCH.tar.gz"
@@ -450,6 +455,38 @@ fetch_aosp_dir() {
     local strip=$(( 1 + $(printf '%s' "$path" | tr -cd / | wc -c) + 1 ))
     tar xz -C "$into" --strip-components="$strip" \
         --wildcards "*/$path/*" -f "$cached"
+}
+
+# Unpacks one directory of an AOSP repo from googlesource one file at a
+# time, recursing into subdirectories. Each file is checked against the
+# object id its tree lists, as aosp_blob below does, and a symlink is made
+# a symlink again, as the archive would have it.
+fetch_aosp_tree() {
+    local repo="$1" path="$2" into="$3"
+    local base="$AOSP/platform/$repo/+/refs/heads/$AOSP_BRANCH/$path"
+    local list mode type id name target
+    need git
+    mkdir -p "$into"
+    list="$(mktemp)"
+    fetch_archive "$base/?format=TEXT" | base64 -d > "$list" || { rm -f "$list"; return 1; }
+    while IFS=$' \t' read -r mode type id name; do
+        case "$type" in
+            tree)
+                fetch_aosp_tree "$repo" "$path/$name" "$into/$name" || { rm -f "$list"; return 1; }
+                ;;
+            blob)
+                fetch_archive "$base/$name?format=TEXT" | base64 -d > "$into/$name" &&
+                    [ "$(git hash-object "$into/$name")" = "$id" ] ||
+                    { warn "could not fetch $repo/$path/$name intact"; rm -f "$list"; return 1; }
+                if [ "$mode" = 120000 ]; then
+                    target="$(cat "$into/$name")"
+                    rm -f "$into/$name"
+                    ln -s "$target" "$into/$name"
+                fi
+                ;;
+        esac
+    done < "$list"
+    rm -f "$list"
 }
 
 # Downloads one file out of a googlesource repo and checks it really is
