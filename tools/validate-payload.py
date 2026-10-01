@@ -269,7 +269,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
     # ---- what a desktop needs to show Stud at all -----------------------
     if expect_desktop_files:
         share = root / "usr" / "share"
-        if not share.is_dir():
+        if not (share / "applications").is_dir():
             share = root / "share"  # the AppImage's flat layout
         r.check((share / "applications" / "io.github.catpieleaf.Stud.desktop").exists(),
                 "no .desktop entry")

@@ -170,6 +170,9 @@ cp -a /usr/libexec/stud/stud-runtime-bionic /usr/libexec/stud/lib64 "$appdir/lib
     "applications/$app_id.desktop" "metainfo/$app_id.metainfo.xml" \
     icons/hicolor/*/apps/"$app_id.png" licenses/stud doc/stud \
     "$appdir/share/")
+# AppImageHub reads the AppStream metainfo only from usr/share/metainfo.
+mkdir -p "$appdir/usr/share"
+ln -s ../../share/metainfo "$appdir/usr/share/metainfo"
 
 # What the old AppRun set, sourced by quick-sharun's AppRun before Stud
 # starts.
