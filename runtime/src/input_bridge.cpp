@@ -2275,7 +2275,6 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         case Ev::kTextDeleteSurrounding:
             dispatch_text_input_event(ev, fns);
             return;
-        case Ev::kPointerEnter:
         case Ev::kWindowRedrawNeeded: {
             // The window was just mapped, so its contents are gone.
             //
@@ -2345,6 +2344,10 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
             }
             return;
         }
+        // Enter and leave are one handler. Enter once fell through into the
+        // redraw request above, so every time the pointer crossed into the
+        // window the engine rebuilt its render targets at the same size.
+        case Ev::kPointerEnter:
         case Ev::kPointerLeave:
             dispatch_pointer_leave(ev, fns, jni_env, last_x, last_y);
             return;
