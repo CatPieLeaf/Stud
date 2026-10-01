@@ -464,11 +464,11 @@ aosp_blob() {
     need curl; need git
 
     local want
-    want="$(curl -fsSL "$AOSP/$repo/+/refs/heads/$AOSP_BRANCH/$dir/?format=TEXT" \
+    want="$(fetch_archive "$AOSP/$repo/+/refs/heads/$AOSP_BRANCH/$dir/?format=TEXT" \
             | base64 -d 2>/dev/null | awk -v n="$name" '$4 == n { print $3 }')"
     [ -n "$want" ] || { warn "$name is not in $repo at $AOSP_BRANCH"; return 1; }
 
-    curl -fsSL "$AOSP/$repo/+/refs/heads/$AOSP_BRANCH/$dir/$name?format=TEXT" \
+    fetch_archive "$AOSP/$repo/+/refs/heads/$AOSP_BRANCH/$dir/$name?format=TEXT" \
         | base64 -d > "$dest" || { warn "could not download $name"; return 1; }
 
     local got; got="$(git hash-object "$dest")"
@@ -659,7 +659,7 @@ fetch_bionic_notices() {
     do
         url="${pair%%|*}"; to="${pair##*|}"
         [ -s "$dest/$to" ] && continue
-        if curl -sfL --max-time 60 "$url?format=TEXT" | base64 -d > "$dest/$to" 2>/dev/null &&
+        if fetch_archive "$url?format=TEXT" | base64 -d > "$dest/$to" 2>/dev/null &&
            [ -s "$dest/$to" ]; then
             :
         else
