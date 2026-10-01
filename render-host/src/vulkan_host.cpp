@@ -8155,7 +8155,8 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
 // pixel. The image must be in PRESENT_SRC_KHR and idle, and is left that
 // way. Its own command buffer and a full queue wait: slow, and only for
 // callers to whom one stall is worth the answer.
-bool read_back_image(VkImage image, VkExtent2D extent, std::vector<uint8_t>& out) {
+bool read_back_image(VkImage image, VkExtent2D extent, std::vector<uint8_t>& out,
+                     VkImageLayout layout) {
     Loader& l = loader();
     if (l.vk.vkCreateBuffer == nullptr || l.vk.vkAllocateMemory == nullptr ||
         l.vk.vkMapMemory == nullptr || l.vk.vkAllocateCommandBuffers == nullptr ||
@@ -8229,7 +8230,7 @@ bool read_back_image(VkImage image, VkExtent2D extent, std::vector<uint8_t>& out
     l.vk.vkBeginCommandBuffer(cb, &bi);
     VkImageMemoryBarrier to_src{};
     to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_src.oldLayout = layout;
     to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -8245,7 +8246,7 @@ bool read_back_image(VkImage image, VkExtent2D extent, std::vector<uint8_t>& out
                                 &region);
     VkImageMemoryBarrier back = to_src;
     back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    back.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    back.newLayout = layout;
     back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     back.dstAccessMask = 0;
     l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -8290,7 +8291,7 @@ void probe_swapchain_pixels(VkSwapchainKHR swapchain, uint32_t index) {
     const VkExtent2D extent{g_window_width.load(std::memory_order_relaxed),
                             g_window_height.load(std::memory_order_relaxed)};
     std::vector<uint8_t> px;
-    if (!read_back_image(images[index], extent, px)) return;
+    if (!read_back_image(images[index], extent, px, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)) return;
     size_t nonzero = 0;
     for (size_t i = 0; i + 3 < px.size(); i += 4) {
         if (px[i] != 0 || px[i + 1] != 0 || px[i + 2] != 0) ++nonzero;
@@ -8374,7 +8375,7 @@ void keep_last_frame(uint64_t engine_handle) {
     if (index >= count) return;
 
     std::vector<uint8_t> px;
-    if (!read_back_image(images[index], extent->second, px)) return;
+    if (!read_back_image(images[index], extent->second, px, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)) return;
     // XRGB8888 is B, G, R, X in memory, which is BGRA's own order.
     if (rgba) {
         for (size_t i = 0; i + 3 < px.size(); i += 4) std::swap(px[i], px[i + 2]);
@@ -8383,6 +8384,42 @@ void keep_last_frame(uint64_t engine_handle) {
                                                   extent->second.height);
 }
 
+
+// The engine's frame that pass `index` just consumed, for an X11 restore
+// (native_window_x11_set_restore_frame). Waits for the pass, which leaves
+// the engine's image back in COLOR_ATTACHMENT_OPTIMAL. Rare: once per
+// minimise. Silent when it cannot, which leaves the black background.
+void keep_frame_for_restore(UpscaleChain& c, uint32_t index) {
+    Loader& l = loader();
+    if (index >= c.offscreen.size() || index >= c.fence.size() ||
+        l.vk.vkWaitForFences == nullptr ||
+        l.vk.vkWaitForFences(l.device, 1, &c.fence[index], VK_TRUE, kPresentRetireBoundNs) !=
+            VK_SUCCESS) {
+        return;
+    }
+    bool rgba = false;
+    switch (c.format) {
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            break;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            rgba = true;
+            break;
+        default:
+            return;
+    }
+    std::vector<uint8_t> px;
+    if (!read_back_image(c.offscreen[index], c.engine, px,
+                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)) {
+        return;
+    }
+    if (rgba) {
+        for (size_t i = 0; i + 3 < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+    }
+    stud::android_glue::native_window_x11_set_restore_frame(px.data(), c.engine.width,
+                                                             c.engine.height);
+}
 
 // Make the swapchain image legal to present when the upscale pass did not
 // run.
@@ -8956,6 +8993,10 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 if (sr == VK_SUCCESS) {
                     c.in_flight[index] = true;
                     report_upscale_timing(c, index);
+                    // X11, minimised: the frame its restore will show.
+                    if (stud::android_glue::native_window_x11_wants_restore_frame()) {
+                        keep_frame_for_restore(c, index);
+                    }
                     // The present now waits on the pass, not on the
                     // engine, the engine's own semaphores have already
                     // been consumed by the submit above, and waiting on

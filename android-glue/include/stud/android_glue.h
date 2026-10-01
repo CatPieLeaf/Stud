@@ -645,5 +645,10 @@ void native_window_pump_x11();
 void native_window_x11_resize_settled();
 // X11: a frame was presented, so a window hidden for a resize can be shown.
 void native_window_x11_frame_presented();
+// X11: whether the minimised window wants a frame to show on its restore,
+// and that frame (XRGB8888, as native_window_keep_frame takes).
+bool native_window_x11_wants_restore_frame();
+void native_window_x11_set_restore_frame(const uint8_t* xrgb8888, uint32_t width,
+                                         uint32_t height);
 
 }  // namespace stud::android_glue

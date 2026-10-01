@@ -42,6 +42,10 @@ void set_content_mapped(bool mapped);
 void resize_settled_at_engine_size();
 // A frame was presented into content_window(); shows it if a resize hid it.
 void frame_presented();
+// The minimised window wants a frame for its restore; consumed when read.
+bool wants_restore_frame();
+// That frame, 4 bytes a pixel in XRGB8888 order, made the window's background.
+void set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height);
 
 // Engages the input method (XIM) while a TextBox has focus, at the caret:
 // x and y are the top of the caret in window pixels, height the line's.

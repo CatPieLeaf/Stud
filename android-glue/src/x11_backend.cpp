@@ -1001,12 +1001,81 @@ bool begin_stretch_locked(int old_w, int old_h) {
 
 // The window settled at the size the engine already renders at, so no new
 // swapchain is coming to end the stretch: show the child again now.
-// A frame has been presented: the child has something to show, so a resize's
-// stretch can give way to it.
+// The last frame as the main window's background, for a restore.
+//
+// Minimised, the window loses its contents, and restored, the driver's
+// child window is black until the engine draws again, which takes a
+// moment after an idle stretch in the background. So at the minimise the
+// child is hidden and a frame is asked for (wants_restore_frame()); the
+// render host reads back the next frame it presents and hands it here,
+// where it becomes the window's background. The server paints a
+// background itself the moment the window is mapped, so the restore
+// shows that frame at once, and the child comes back with the engine's
+// next frame (frame_presented()).
+std::atomic<bool> g_want_restore_frame{false};
+std::atomic<bool> g_restore_background_set{false};
+
+bool wants_restore_frame() { return g_want_restore_frame.exchange(false); }
+
+void set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height) {
+    Xlib& x = xlib();
+    const XRenderFns* r = xrender();
+    const int32_t win_w = g_width.load();
+    const int32_t win_h = g_height.load();
+    if (g_display == nullptr || g_window == 0 || r == nullptr || xrgb8888 == nullptr ||
+        width == 0 || height == 0 || win_w <= 0 || win_h <= 0) {
+        return;
+    }
+    XWindowAttributes main{};
+    if (x.GetWindowAttributes(g_display, g_window, &main) == 0 || main.depth != 24) return;
+    const void* format = r->FindVisualFormat(g_display, main.visual);
+    if (format == nullptr) return;
+    XImage* image = x.CreateImage(g_display, main.visual, 24, ZPixmap, 0,
+                                  const_cast<char*>(reinterpret_cast<const char*>(xrgb8888)),
+                                  width, height, 32, 0);
+    if (image == nullptr) return;
+    const Pixmap frame = x.CreatePixmap(g_display, g_window, width, height, 24);
+    GC gc = x.CreateGC(g_display, frame, 0, nullptr);
+    x.PutImage(g_display, frame, gc, image, 0, 0, 0, 0, width, height);
+    x.FreeGC(g_display, gc);
+    // Only the header: the pixels are the caller's.
+    if (x.Free != nullptr) x.Free(image);
+    // Stretched to the window, as the resize copy is.
+    const Pixmap background = x.CreatePixmap(g_display, g_window, static_cast<unsigned int>(win_w),
+                                             static_cast<unsigned int>(win_h), 24);
+    const unsigned long source = r->CreatePicture(g_display, frame, format, 0, nullptr);
+    const unsigned long destination = r->CreatePicture(g_display, background, format, 0, nullptr);
+    RenderTransform t{};
+    t.matrix[0][0] = static_cast<int>(static_cast<int64_t>(width) * 65536 / win_w);
+    t.matrix[1][1] = static_cast<int>(static_cast<int64_t>(height) * 65536 / win_h);
+    t.matrix[2][2] = 65536;
+    r->SetPictureTransform(g_display, source, &t);
+    r->SetPictureFilter(g_display, source, "bilinear", nullptr, 0);
+    r->Composite(g_display, kPictOpSrc, source, 0, destination, 0, 0, 0, 0, 0, 0,
+                 static_cast<unsigned int>(win_w), static_cast<unsigned int>(win_h));
+    r->FreePicture(g_display, source);
+    r->FreePicture(g_display, destination);
+    x.FreePixmap(g_display, frame);
+    // The server keeps the background; the pixmap can go.
+    x.SetWindowBackgroundPixmap(g_display, g_window, background);
+    x.FreePixmap(g_display, background);
+    g_restore_background_set.store(true);
+    x.Sync(g_display, False);
+}
+
+// A frame has been presented: the child has something to show, so a
+// resize's stretch, or a restore's background, can give way to it. Not
+// while the window is minimised: shown then, the child would be what the
+// restore finds, and it is black again by then.
 void frame_presented() {
-    if (!g_show_child_on_present.exchange(false)) return;
+    if (!g_visible.load() || !g_show_child_on_present.exchange(false)) return;
     Xlib& x = xlib();
     x.MapWindow(g_display, g_content_window);
+    if (g_restore_background_set.exchange(false)) {
+        XSetWindowAttributes attrs{};
+        attrs.background_pixel = BlackPixel(g_display, DefaultScreen(g_display));
+        x.ChangeWindowAttributes(g_display, g_window, CWBackPixel, &attrs);
+    }
     std::lock_guard<std::mutex> lock(g_stretch_mutex);
     end_stretch_locked();
     x.Sync(g_display, False);
@@ -1588,6 +1657,13 @@ void pump() {
                 break;
             }
             case UnmapNotify:
+                // Minimised: hide the driver's window and ask for a frame
+                // to show on the restore; see set_restore_frame().
+                if (event.xunmap.window == g_window && g_content_window != 0) {
+                    x.UnmapWindow(g_display, g_content_window);
+                    g_show_child_on_present.store(true);
+                    g_want_restore_frame.store(true);
+                }
                 if (g_visible.exchange(false)) {
                     std::printf("stud: android-glue: window no longer visible (unmapped)\n");
                     std::fflush(stdout);

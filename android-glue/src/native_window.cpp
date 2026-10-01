@@ -3251,6 +3251,15 @@ void native_window_x11_frame_presented() {
     if (display_backend() == DisplayBackend::X11) x11::frame_presented();
 }
 
+bool native_window_x11_wants_restore_frame() {
+    return display_backend() == DisplayBackend::X11 && x11::wants_restore_frame();
+}
+
+void native_window_x11_set_restore_frame(const uint8_t* xrgb8888, uint32_t width,
+                                         uint32_t height) {
+    if (display_backend() == DisplayBackend::X11) x11::set_restore_frame(xrgb8888, width, height);
+}
+
 unsigned long native_window_x11_content_window() {
     return display_backend() == DisplayBackend::X11 ? x11::content_window() : 0;
 }
