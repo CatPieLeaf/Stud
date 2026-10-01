@@ -2952,6 +2952,14 @@ void gl_scale_present(const RealFns& fns, GlScaleTarget& t) {
     }
 }
 
+// The window size the engine is meant to render at: the compositor's size
+// once it has settled (sync_vk_window_size), width in the high half.
+// GetWindowSize answers with this, so Process B's surface notifications
+// and the Vulkan surface extent describe the same size. They used to
+// differ mid-drag: the engine was told every raw size while its
+// swapchain stayed at the last settled one. Zero until the first size.
+std::atomic<uint64_t> g_settled_window_size{0};
+
 // Defined below the per-domain dispatchers it hands to; a command batch
 // (GlCommandBatch) calls back into it for each call it carries.
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
@@ -4749,6 +4757,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
     if (auto handled = dispatch_vk_call(hdr, window, in, out, out_len)) return *handled;
     switch (hdr.call_id) {
         case CallId::GetWindowSize: {
+            if (const uint64_t settled = g_settled_window_size.load()) return settled;
             uint64_t w = static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
             uint64_t h = static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
             return (w << 32) | (h & 0xffffffffu);
@@ -5004,6 +5013,7 @@ void sync_vk_window_size() {
     last_w = w;
     last_h = h;
     last_applied_at = std::chrono::steady_clock::now();
+    g_settled_window_size.store((static_cast<uint64_t>(w) << 32) | h);
     stud::render_host::vk_set_window_size(w, h);
     // What the upscaler writes: the window in the display's own pixels,
     // which is a different number from the one above whenever the engine

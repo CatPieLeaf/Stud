@@ -272,7 +272,34 @@ bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResu
                          static_cast<jint>(height), static_cast<jint>(1));
     });
     clear_pending_jni_exception(static_cast<JNIEnv*>(&e), "onSurfaceChangedNative");
-    std::printf("stud: onSurfaceChangedNative(%dx%d) -> %s\n", width, height, ok ? "ok" : "trapped");
+    // The rest of what a real device sends after a geometry change, in its
+    // order: the surface wants its picture back, then the content rect and
+    // the insets are reported against the new size. Each is looked up
+    // here, on this thread, for the reason given above.
+    if (ok) {
+        if (jmethodID redraw = e.GetMethodID(cls, "onSurfaceRedrawNeededNative",
+                                             "(JLandroid/view/Surface;)V")) {
+            ok = call_trapping_abort([&] { e.CallVoidMethod(activity_ref, redraw, ptr, surface_ref); });
+            clear_pending_jni_exception(static_cast<JNIEnv*>(&e), "onSurfaceRedrawNeededNative");
+        }
+    }
+    if (ok) {
+        if (jmethodID rect = e.GetMethodID(cls, "onContentRectChangedNative", "(JIIII)V")) {
+            ok = call_trapping_abort([&] {
+                e.CallVoidMethod(activity_ref, rect, ptr, static_cast<jint>(0), static_cast<jint>(0),
+                                 static_cast<jint>(width), static_cast<jint>(height));
+            });
+            clear_pending_jni_exception(static_cast<JNIEnv*>(&e), "onContentRectChangedNative");
+        }
+    }
+    if (ok) {
+        if (jmethodID insets = e.GetMethodID(cls, "onWindowInsetsChangedNative", "(J)V")) {
+            ok = call_trapping_abort([&] { e.CallVoidMethod(activity_ref, insets, ptr); });
+            clear_pending_jni_exception(static_cast<JNIEnv*>(&e), "onWindowInsetsChangedNative");
+        }
+    }
+    std::printf("stud: surface changed to %dx%d (surface, redraw, content rect, insets) -> %s\n",
+                width, height, ok ? "ok" : "trapped");
     std::fflush(stdout);
     return ok;
 }
