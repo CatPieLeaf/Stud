@@ -112,8 +112,8 @@ jobs:
     # the Flatpak and the cpak image all come from the install tree this
     # job produces, so they cannot hold different binaries.
     #
-    # The AppImage is the exception and builds its own, on the base its
-    # bundled glibc comes from.
+    # The AppImage is the exception and builds its own on Arch, which is
+    # what its bundling tool is written against.
     name: Build and package
     permissions:
       contents: read
@@ -531,39 +531,31 @@ jobs:
           if-no-files-found: error
 
   appimage:
-    # Built on the same current base as the packages job, but without
-    # its glibc floor: the AppImage carries ubuntu:26.04's glibc and C++
-    # runtime and starts every executable through them (see
-    # packaging/build-appimage.sh), so it runs on older distributions
-    # too. packaging/Containerfile.appimage pins the same image.
+    # Its own build, on Arch: quick-sharun, which bundles it, is written
+    # against Arch's paths. The image carries every library it needs,
+    # glibc included, so the base sets no floor on where it runs.
     name: AppImage
     permissions:
       contents: read
     needs: prepare
     runs-on: ubuntu-latest
-    # The same base packaging/Containerfile.appimage pins, for the reasons
-    # given there. Running it as the job's container means
-    # build-appimage.sh does not have to start one of its own.
-    container: ubuntu:26.04
+    # The packages packaging/Containerfile.appimage installs. Running it
+    # as the job's container means build-appimage.sh does not have to
+    # start one of its own.
+    container: archlinux:latest
     env:
       STUD_APPIMAGE_IN_CONTAINER: "1"
-      APPIMAGE_EXTRACT_AND_RUN: "1"
-      DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git curl ca-certificates \
-            file desktop-file-utils zsync fuse3 unzip tar xz-utils zstd python3 e2fsprogs \
-            qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
-            qt6-l10n-tools libqt6opengl6-dev qtkeychain-qt6-dev libssl-dev \
-            qt6-wayland qt6-wayland-dev qt6-xdgdesktopportal-platformtheme \
-            kde-style-breeze \
-            libwayland-dev libwayland-egl-backend-dev wayland-protocols \
-            libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
-            libxkbcommon-dev libxi-dev \
-            libavcodec-dev libavutil-dev libswscale-dev
+          pacman -Syu --noconfirm --needed \
+            base-devel cmake ninja git python curl unzip zstd e2fsprogs \
+            pkgconf wayland-protocols vulkan-headers ffmpeg \
+            qt6-base qt6-webengine qt6-wayland qtkeychain-qt6 breeze \
+            vulkan-icd-loader libglvnd libx11 libxext libxi libxrender \
+            freetype2 wayland libxkbcommon libxkbcommon-x11 libdecor \
+            openssl libpulse alsa-lib \
+            patchelf strace xorg-server-xvfb desktop-file-utils zsync wget
 
       - uses: actions/checkout@v7
         with:
@@ -574,8 +566,6 @@ jobs:
 
       - name: Version and dependencies
         uses: ./.github/actions/setup
-        with:
-          appimage-tools: "true"
 
       - name: Build the AppImage
         run: |
@@ -595,8 +585,7 @@ jobs:
           ( cd /tmp && "$OLDPWD/$appimage" --appimage-extract >/dev/null )
           python3 tools/validate-payload.py /tmp/squashfs-root --label "AppImage"
           # Update information, and the .zsync it points to. Read from the
-          # ELF section: with APPIMAGE_EXTRACT_AND_RUN set, the runtime
-          # launches Stud instead of answering --appimage-updateinformation.
+          # ELF section uruntime keeps it in, without running the image.
           readelf -p .upd_info "$appimage" | grep -q 'gh-releases-zsync|CatPieLeaf|Stud|latest|' ||
             { echo "::error::the AppImage has no update information"; exit 1; }
           [ -s "$appimage.zsync" ] || { echo "::error::no .zsync next to the AppImage"; exit 1; }
@@ -635,11 +624,8 @@ jobs:
     # any of them. Verified on the binary rather than assumed: a build
     # there needs Qt_6.4 and nothing above it (`objdump -p`).
     #
-    # It cannot share the AppImage job, which pins ubuntu:26.04
-    # deliberately (packaging/Containerfile.appimage explains why: the
-    # bundle carries its own Qt, and 24.04 has no KF6 for the Breeze
-    # style), and it cannot share the rpm's Fedora container for the
-    # reason at the top of this comment.
+    # It cannot share the rpm's Fedora container for the reason at the
+    # top of this comment.
     name: deb
     permissions:
       contents: read

@@ -29,10 +29,6 @@
 # interchangeable copies, with no guarantee the packages carried the same
 # one. The other two pieces were never container-specific either: the NDK
 # is downloaded and bionic is extracted from an Android system image.
-#
-# Not warmed here: the AppImage job's linuxdeploy/appimagetool cache. Those
-# are two small downloads, not an hour of compiling, so a cold one costs a
-# release almost nothing and is not worth a third job to avoid.
 
 name: Dependency cache
 

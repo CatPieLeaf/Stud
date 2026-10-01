@@ -30,14 +30,16 @@ cmake --build build
 
 cpack -G RPM -B build/packages --config build/CPackConfig.cmake   # Fedora
 cpack -G DEB -B build/packages --config build/CPackConfig.cmake   # Debian/Ubuntu
-packaging/build-appimage.sh build                                 # anywhere
+packaging/build-appimage.sh                                       # anywhere
 ```
 
-The AppImage script downloads [linuxdeploy] and its [Qt plugin] on first
-run and caches them in `third_party/appimage-tools`.
+The AppImage builds in an Arch container with [quick-sharun] from the
+[Anylinux AppImages] project. It bundles every library, glibc and mesa
+included, and packs a DwarFS image behind [uruntime].
 
-[linuxdeploy]: https://github.com/linuxdeploy/linuxdeploy
-[Qt plugin]: https://github.com/linuxdeploy/linuxdeploy-plugin-qt
+[quick-sharun]: https://github.com/pkgforge-dev/Anylinux-AppImages/blob/main/useful-tools/quick-sharun.sh
+[Anylinux AppImages]: https://github.com/pkgforge-dev/Anylinux-AppImages
+[uruntime]: https://github.com/VHSgunzo/uruntime
 
 ## What is bundled, and what is depended on
 
@@ -51,8 +53,9 @@ the AppArmor or SELinux policy that lets it create a user namespace;
 a binary copied into a package would be refused on exactly the
 distributions that matter.
 
-The deb and the rpm depend on Qt. The AppImage bundles it. That is the
-ordinary split: a system package should use the system Qt.
+The deb and the rpm depend on Qt. The AppImage bundles it, along with
+everything else down to glibc. That is the ordinary split: a system
+package should use the system Qt.
 
 ## Appearing in a software centre
 

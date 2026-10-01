@@ -3,57 +3,39 @@
 # Builds Stud as an AppImage: one file that runs on any distribution
 # without installing anything.
 #
-# It bundles what a distribution's package would depend on; Qt, glibc,
-# and the libraries those pull in, alongside what Stud ships either way:
-# ANGLE, the bionic set, and Process B. What stays on the host is what
-# belongs to the host: the graphics and audio stack, and the display
-# server's own libraries (see exclude_libs below).
+# The bundle is made by quick-sharun, from the Anylinux AppImages project
+# (github.com/pkgforge-dev/Anylinux-AppImages). It carries every library
+# Stud needs, glibc and mesa included, and starts each executable through
+# sharun, so nothing about the host's libraries is a requirement. The
+# image is packed as DwarFS behind uruntime, which mounts it with FUSE
+# when it can and without it when it cannot.
 #
 # Usage:
 #   packaging/build-appimage.sh [build-dir]
 #
-# The build directory defaults to ./build and must already be configured
-# and built (tools/setup.sh, cmake, cmake --build). linuxdeploy and its
-# Qt plugin are downloaded on first run and cached next to it.
+# It runs in a container built from packaging/Containerfile.appimage,
+# needs podman or docker, and writes build-appimage/packages/.
 #
-# bubblewrap is deliberately NOT bundled. It needs the AppArmor or
-# SELinux policy that a distribution ships with its own build to create a
-# user namespace at all, so a copied-in binary would be refused on the
-# distributions that matter. The AppImage checks for it and says so.
+# bubblewrap is deliberately NOT bundled. It needs the AppArmor or SELinux
+# policy a distribution ships with its own build to create a user
+# namespace at all, so a copied-in binary would be refused on the
+# distributions that matter. Stud checks for it and says so.
 
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Unless we are already inside it, the whole thing runs in a container
-# built from packaging/Containerfile.appimage. See that file for why:
-# an AppImage has to be built against libraries at least as old as the
-# oldest machine meant to run it, and linuxdeploy's own patchelf
-# corrupts libraries from a current distribution outright.
-#
-# STUD_APPIMAGE_NO_CONTAINER=1 builds on this machine instead, which is
-# useful for iterating on the script and produces an image that will only
-# run on machines as new as this one.
-if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" != 1 ] && [ "${STUD_APPIMAGE_NO_CONTAINER:-0}" != 1 ]; then
+if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" != 1 ]; then
     engine=""
     for candidate in podman docker; do
         command -v "$candidate" >/dev/null 2>&1 && { engine="$candidate"; break; }
     done
-    if [ -z "$engine" ]; then
-        echo "appimage: podman or docker is needed to build in a container." >&2
-        echo "appimage: STUD_APPIMAGE_NO_CONTAINER=1 builds here instead, but the" >&2
-        echo "appimage: result will only run on machines as new as this one." >&2
-        exit 1
-    fi
+    [ -n "$engine" ] || { echo "appimage: podman or docker is needed" >&2; exit 1; }
     printf '\033[1mappimage:\033[0m building the image with %s\n' "$engine" >&2
     "$engine" build -f "$repo_root/packaging/Containerfile.appimage" \
         -t stud-appimage-build "$repo_root" >&2
-    # tools/setup.sh links rather than copies anything it was pointed at
-    # (STUD_NDK_SRC and friends), so an entry of third_party/ can be a
-    # symlink out of the repository, which resolves to nothing inside a
-    # container that only has the repository mounted, and the build then
-    # quietly produces no Process B. Mount each such target at its own
-    # path so the link resolves there too.
+    # tools/setup.sh can link third_party/ entries out of the repository;
+    # mount each target at its own path so the link resolves inside too.
     link_mounts=()
     for entry in "$repo_root"/third_party/*; do
         [ -L "$entry" ] || continue
@@ -61,514 +43,176 @@ if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" != 1 ] && [ "${STUD_APPIMAGE_NO_CONTAINE
         case "$target" in "$repo_root"/*) continue;; esac
         [ -e "$target" ] && link_mounts+=(-v "$target:$target:ro,z")
     done
-
     printf '\033[1mappimage:\033[0m building in the container\n' >&2
     exec "$engine" run --rm \
         -v "$repo_root:/src:z" \
         "${link_mounts[@]+"${link_mounts[@]}"}" \
         -e STUD_APPIMAGE_IN_CONTAINER=1 \
-        -e APPIMAGE_EXTRACT_AND_RUN=1 \
+        -e STUD_CMAKE_ARGS="${STUD_CMAKE_ARGS:-}" \
         stud-appimage-build \
         /src/packaging/build-appimage.sh "${@:-}"
 fi
-# Inside the container Stud is built there too: a build tree from the
-# host was linked against the host's libraries, which is exactly what
-# building in a container exists to avoid.
-if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" = 1 ]; then
-    build_dir="${1:-$repo_root/build-appimage}"
-    # Configured every time, not only when there is no cache. Whether
-    # Process B, ANGLE and bionic are built at all is decided at
-    # configure time from what third_party/ holds, so a tree configured
-    # before tools/setup.sh ran keeps producing an image without them
-    # until it is configured again.
-    printf '\033[1mappimage:\033[0m configuring\n' >&2
-    # STUD_CMAKE_ARGS passes anything else through, release automation
-    # uses it to set -DSTUD_VERSION from the tag being built, so the
-    # AppImage's own metadata says what the release says.
-    # shellcheck disable=SC2086
-    # Tests are not run from the AppImage build and nothing in CI runs
-    # ctest at all, so compiling them here is release time for nothing.
-    cmake -S "$repo_root" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-        -DSTUD_BUILD_TESTS=OFF ${STUD_CMAKE_ARGS:-} >&2
-    printf '\033[1mappimage:\033[0m building\n' >&2
-    cmake --build "$build_dir" -j"$(nproc)" >&2
-else
-    build_dir="${1:-$repo_root/build}"
-fi
-work="$build_dir/appimage"
-appdir="$work/AppDir"
-tools="${STUD_APPIMAGE_TOOLS:-$repo_root/third_party/appimage-tools}"
 
 say() { printf '\033[1mappimage:\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mappimage:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ -d "$build_dir" ] || die "no build directory at $build_dir, configure and build first"
+build_dir="${1:-$repo_root/build-appimage}"
+work="$build_dir/appimage"
+appdir="$work/AppDir"
+arch="$(uname -m)"
 
 app_id="$(grep -m1 '^set(STUD_APP_ID' "$repo_root/CMakeLists.txt" | cut -d'"' -f2)"
 [ -n "$app_id" ] || die "could not read STUD_APP_ID out of CMakeLists.txt"
 
-# linuxdeploy, and its Qt plugin, which is what knows how to bring in the
-# platform plugins, the QPA bits and QtWebEngine's own helper process.
+# Configured every time: whether Process B, ANGLE and bionic are built at
+# all is decided at configure time from what third_party/ holds.
+# STUD_CMAKE_ARGS passes anything else through; release automation sets
+# -DSTUD_VERSION with it.
+say "building"
+# shellcheck disable=SC2086
+cmake -S "$repo_root" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_TESTS=OFF ${STUD_CMAKE_ARGS:-} >&2
+cmake --build "$build_dir" -j"$(nproc)" >&2
+
+# quick-sharun deploys from the system, not from a staging tree, and this
+# container is thrown away afterwards.
+say "installing into /usr"
+cmake --install "$build_dir" >/dev/null
+
+# A build with third_party/ missing still succeeds, it just has no
+# Process B, no ANGLE and no bionic: a window that cannot run Roblox.
+for required in \
+    /usr/bin/stud \
+    /usr/libexec/stud/stud-render-host \
+    /usr/libexec/stud/stud-runtime-bionic \
+    /usr/lib/stud/angle/libEGL.so \
+    /usr/lib/stud/android-bionic/linker64 \
+    /usr/lib/stud/android-bionic/libc.so
+do
+    [ -e "$required" ] || die "the install produced no $required, run tools/setup.sh first"
+done
+
+# Anylinux's tools, pinned to one commit and checked, since what they
+# download ends up inside the image.
+anylinux_rev=de2a80d6229298518cc737ced6b3fa5832053ea5
+tools="$work/tools"
 mkdir -p "$tools"
 fetch_tool() {
-    local name="$1" url="$2"
-    if [ ! -x "$tools/$name" ]; then
-        say "downloading $name"
-        curl -fL --progress-bar -o "$tools/$name" "$url"
-        chmod +x "$tools/$name"
-    fi
+    local name="$1" sha256="$2"
+    curl -fsSL -o "$tools/$name" \
+        "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/$anylinux_rev/useful-tools/$name"
+    echo "$sha256  $tools/$name" | sha256sum -c --quiet - || die "$name does not match its pinned checksum"
+    chmod +x "$tools/$name"
 }
-fetch_tool linuxdeploy \
-    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
-fetch_tool linuxdeploy-plugin-qt \
-    "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
-# The image is packed with appimagetool directly rather than through
-# linuxdeploy's output plugin. linuxdeploy re-scans and re-resolves the
-# whole AppDir whenever it runs, so asking it to pack would undo the
-# point of having moved Stud's own libraries out of its way.
-fetch_tool appimagetool \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
-# sharun, which runs every one of Stud's executables through the bundle's
-# own glibc; see "glibc travels with the bundle" below. Pinned, and
-# checked, because it is copied INTO the image rather than only run while
-# building it.
-sharun_version=v0.8.1
-sharun_sha256=18d970f56eca2c527ffd3993b161b6bc340055129db14b394a77cb67d8bbfff9
-if [ ! -x "$tools/sharun-$sharun_version" ]; then
-    say "downloading sharun $sharun_version"
-    curl -fL --progress-bar -o "$tools/sharun-$sharun_version.part" \
-        "https://github.com/VHSgunzo/sharun/releases/download/$sharun_version/sharun-x86_64"
-    echo "$sharun_sha256  $tools/sharun-$sharun_version.part" | sha256sum -c --quiet - ||
-        die "sharun $sharun_version does not match its pinned checksum"
-    chmod +x "$tools/sharun-$sharun_version.part"
-    mv "$tools/sharun-$sharun_version.part" "$tools/sharun-$sharun_version"
-fi
+fetch_tool quick-sharun.sh 8026711b271c0d67d37075cd7e8c50dbd9fa635c012f9edb92a2c0d41573664b
+fetch_tool get-debloated-pkgs.sh 217ff68aafe085d2d4ab34a50e267805af43736ad8ef880c01ef88e52db8589f
+
+# Mesa without the LLVM it normally drags in. NVIDIA's driver is never
+# bundled: sharun loads the host's, whatever libc it was built against.
+say "installing Anylinux's mesa"
+"$tools/get-debloated-pkgs.sh" --add-mesa
 
 rm -rf "$appdir"
-say "installing into an AppDir"
-DESTDIR="$appdir" cmake --install "$build_dir" --prefix /usr >/dev/null
+mkdir -p "$build_dir/packages"
+export APPDIR="$appdir"
+export OUTPATH="$build_dir/packages"
+export OUTNAME="Stud-$arch.AppImage"
+export DESKTOP="/usr/share/applications/$app_id.desktop"
+export ICON="/usr/share/icons/hicolor/512x512/apps/$app_id.png"
+# AppImageUpdate and other updaters update Stud in place from the newest
+# GitHub release; appimagetool writes the matching .zsync beside it.
+export UPINFO="gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$arch.AppImage.zsync"
+export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_PULSE=1
+# Only the UI can be traced: render-host and the web view exit at once
+# without the session stud-ui hands them.
+export STRACE_BINARY=stud
 
-# linuxdeploy wants to be told the entry point, the icon and the desktop
-# entry; everything else it works out from the binary itself.
-[ -x "$appdir/usr/bin/stud" ] || die "the install produced no usr/bin/stud"
-
-# Everything Stud cannot run without, checked before anything is packed.
-#
-# A build with third_party/ missing configures, compiles and links
-# perfectly well. It just silently produces no Process B, no ANGLE and
-# no bionic, because those targets and install rules are conditional on
-# the dependency being present. The result is an AppImage that starts,
-# shows its window, and cannot run Roblox at all. That is exactly the
-# kind of failure that looks like success in a log, so it is an error
-# here rather than a warning.
-for required in \
-    usr/libexec/stud/stud-runtime-bionic \
-    usr/lib/stud/angle/libEGL.so \
-    usr/lib/stud/android-bionic/linker64 \
-    usr/lib/stud/android-bionic/libc.so
-do
-    [ -e "$appdir/$required" ] ||
-        die "the install produced no $required, run tools/setup.sh first"
-done
-
-# The helper processes are not on PATH inside an AppImage, and
-# linuxdeploy only follows the libraries of what it is given, so each
-# one is passed explicitly to have its dependencies bundled too.
-extra_exes=()
-for exe in stud-render-host stud-webview; do
-    [ -f "$appdir/usr/libexec/stud/$exe" ] && extra_exes+=("--executable=$appdir/usr/libexec/stud/$exe")
-done
-
-export QMAKE="${QMAKE:-qmake6}"
-
-# linuxdeploy ships its own binutils, and that copy is older than the
-# relocation format a current distribution's Qt is built with; it
-# refuses every library with a .relr.dyn section, which on Fedora is all
-# of them, and the Qt plugin then fails outright. Stripping only saves
-# space, so it is turned off rather than worked around.
-export NO_STRIP=1
-
-# Everything Stud ships that is NOT a host library is moved out of the
-# AppDir while linuxdeploy runs, and put back afterwards.
-#
-# linuxdeploy walks every ELF file it finds and resolves each one's
-# dependencies against the host. For bionic that is wrong in principle
-# and fails in practice, libc.so needs "ld-android.so", a soname the
-# Android linker answers from itself and no host has, and for ANGLE it
-# is unnecessary, since that build is self-contained. Neither needs
-# patching, deploying or interpreting; they only need to be in the
-# finished image at the path the binaries look for them at.
-private_dir="$work/private"
-rm -rf "$private_dir"; mkdir -p "$private_dir/lib" "$private_dir/libexec"
-[ -d "$appdir/usr/lib/stud" ] && mv "$appdir/usr/lib/stud" "$private_dir/lib/stud"
-[ -d "$appdir/usr/libexec/stud/lib64" ] && mv "$appdir/usr/libexec/stud/lib64" "$private_dir/libexec/lib64"
-[ -f "$appdir/usr/libexec/stud/stud-runtime-bionic" ] &&
-    mv "$appdir/usr/libexec/stud/stud-runtime-bionic" "$private_dir/libexec/stud-runtime-bionic"
-
-restore_private() {
-    [ -d "$private_dir/lib/stud" ] && mv "$private_dir/lib/stud" "$appdir/usr/lib/stud"
-    [ -d "$private_dir/libexec/lib64" ] && mv "$private_dir/libexec/lib64" "$appdir/usr/libexec/stud/lib64"
-    [ -f "$private_dir/libexec/stud-runtime-bionic" ] &&
-        mv "$private_dir/libexec/stud-runtime-bionic" "$appdir/usr/libexec/stud/stud-runtime-bionic"
-    rm -rf "$private_dir"
-}
-trap restore_private EXIT
-
-# linuxdeploy and its plugin are themselves AppImages, and a machine
-# without FUSE cannot mount one. They both understand being unpacked
-# instead, which costs nothing here.
-if [ ! -e /dev/fuse ]; then
-    say "no /dev/fuse, running the tools unpacked"
-    export APPIMAGE_EXTRACT_AND_RUN=1
-fi
-
-# Libraries that must come from the host, not the bundle.
-#
-# These sit close enough to the display server and the graphics stack
-# that a copy taken from the build machine is an ABI gamble on every
-# other one. libxcb-util is the concrete case: bundling it segfaults
-# inside its own initialiser on a machine whose xcb differs, before any
-# of Stud's code runs. The rule of thumb is the AppImage project's own
-# excludelist: anything X, xcb, GL, or glibc-adjacent stays outside.
-#
-# There is a second reason, which is what libxkbcommon and libffi are
-# doing here. Every one of Stud's processes finds this bundle's libraries
-# first (see "glibc travels with the bundle" below), and so does the HOST
-# code the graphics stack loads into render-host, a Vulkan implicit layer
-# such as MangoHud, most obviously. A bundled copy of a library that
-# layer also needs is then shadowing the host's, in a process neither of
-# them is prepared for. Stud ships no MangoHud and never should; the
-# least it can do is stay out of the way of the one the user installed.
-#
-# glibc and the C++ runtime are on this list only to keep linuxdeploy's
-# hands off them. They ARE bundled, afterwards, as one set taken
-# together from this build machine.
-exclude_libs=(
-    "libxcb*.so*" "libX11*.so*" "libXext.so*" "libXrender.so*" "libXi.so*"
-    "libGL.so*" "libGLX.so*" "libEGL.so*" "libGLdispatch.so*" "libOpenGL.so*"
-    "libdrm.so*" "libgbm.so*" "libwayland-*.so*" "libvulkan.so*"
-    "libxkbcommon*.so*" "libffi.so*"
-    "libasound.so*" "libjack.so*" "libpipewire*.so*" "libpulse*.so*"
-    "libc.so*" "libm.so*" "libdl.so*" "libpthread.so*" "librt.so*"
-    "libstdc++.so*" "libgcc_s.so*"
+# Everything Stud loads by name at runtime and so no tracer would see:
+# render-host's window system and Vulkan, miniaudio's backends, and the
+# KF6 plugin Breeze asks the compositor through.
+qt_plugins="$(qmake6 -query QT_INSTALL_PLUGINS)"
+dlopened=(
+    /usr/lib/libvulkan.so.1
+    /usr/lib/libX11-xcb.so.1 /usr/lib/libXext.so.6 /usr/lib/libXi.so.6 /usr/lib/libXrender.so.1
+    /usr/lib/libxkbcommon-x11.so.0 /usr/lib/libdecor-0.so.0
+    /usr/lib/libasound.so.2 /usr/lib/libpulse.so.0
+    "$qt_plugins"/kf6/kwindowsystem/*.so
 )
-exclude_args=()
-for pattern in "${exclude_libs[@]}"; do exclude_args+=("--exclude-library=$pattern"); done
 
-# Stud is a Wayland application, so the Wayland platform plugin has to
-# be in the bundle, linuxdeploy-plugin-qt deploys only libqxcb.so
-# unless it is told otherwise, and a bundle with no Wayland plugin falls
-# back to XWayland (or, with no X at all, refuses to start).
-#
-# Its file name is not stable across Qt versions. Up to 6.9 there was one
-# plugin per integration (libqwayland-generic.so, libqwayland-egl.so);
-# 6.10 merged them into a single libqwayland.so advertising the same
-# keys, so naming either set outright is a build that breaks on the next
-# base image, which is exactly how this broke on ubuntu:26.04. They are
-# discovered from the Qt this build is deploying from instead.
-qt_plugin_dir="$("${QMAKE}" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
-[ -d "$qt_plugin_dir/platforms" ] ||
-    die "$QMAKE reports no plugin directory, there is no Qt to take a platform plugin from"
-wayland_platform_plugins=()
-for plugin in "$qt_plugin_dir"/platforms/libqwayland*.so; do
-    [ -e "$plugin" ] || continue
-    wayland_platform_plugins+=("$(basename "$plugin")")
+say "bundling"
+"$tools/quick-sharun.sh" \
+    /usr/bin/stud \
+    /usr/libexec/stud/stud-render-host \
+    /usr/libexec/stud/stud-webview \
+    "${dlopened[@]}"
+
+# quick-sharun rewrites every /usr/lib and /usr/share it finds in an
+# executable to point into the bundle. Stud's are not its own files: the
+# host's MangoHud, and paths inside Process B's Android sandbox
+# (/system/usr/share/i18n). Its executables go back in unrewritten.
+for exe in /usr/bin/stud /usr/libexec/stud/stud-render-host /usr/libexec/stud/stud-webview; do
+    strip -o "$appdir/shared/bin/${exe##*/}" "$exe"
 done
-[ "${#wayland_platform_plugins[@]}" -gt 0 ] ||
-    die "no Wayland platform plugin in $qt_plugin_dir/platforms, the bundle would fall back to XWayland"
-EXTRA_PLATFORM_PLUGINS="$(IFS=';'; printf '%s' "${wayland_platform_plugins[*]}")"
-export EXTRA_PLATFORM_PLUGINS
-say "deploying the Wayland platform plugin: $EXTRA_PLATFORM_PLUGINS"
+# Bundling glycin adds a bwrap wrapper to bin/, which AppRun puts first on
+# PATH. Process B's sandbox must be the host's own bwrap, untouched.
+rm -f "$appdir/bin/bwrap"
 
-
-say "bundling dependencies"
-"$tools/linuxdeploy" \
-    --appdir "$appdir" \
-    "${exclude_args[@]}" \
-    --plugin qt \
-    --desktop-file "$appdir/usr/share/applications/$app_id.desktop" \
-    --icon-file "$appdir/usr/share/icons/hicolor/512x512/apps/$app_id.png" \
-    "${extra_exes[@]}"
-
-# Drop the host libraries out of the bundle.
-#
-# --exclude-library above only governs what linuxdeploy itself deploys;
-# the Qt plugin runs as its own process and copies Qt's dependencies
-# regardless, which is how libxcb-util ends up in the AppDir anyway. So
-# they are removed here, after everything has been bundled and before
-# the image is packed.
-say "removing host libraries from the bundle"
-for pattern in "${exclude_libs[@]}"; do
-    find "$appdir/usr/lib" -maxdepth 1 -name "$pattern" -print -delete 2>/dev/null || true
+# stud-ui starts its siblings by path, from libexec/stud beside bin/.
+# A hardlink to sharun there runs the same shared/bin binary.
+mkdir -p "$appdir/libexec/stud"
+for exe in stud-render-host stud-webview; do
+    ln -f "$appdir/sharun" "$appdir/libexec/stud/$exe"
 done
 
-# Two plugin directories linuxdeploy-plugin-qt does not deploy, copied
-# straight out of the Qt it just deployed from. EXTRA_PLUGINS is not a
-# variable this plugin honours, tried, and it changed nothing.
-#
-# wayland-graphics-integration-client holds the client buffer
-# integrations. Without it the Wayland platform plugin loads and then
-# reports `Failed to load client buffer integration: "wayland-egl"` with
-# `Available client buffer integrations: QList()`, which is a window that
-# never gets a buffer.
-#
-# platformthemes is what makes a Qt application look like the desktop it
-# runs on rather than like bare Qt. Native Breeze is out of reach here by
-# construction. It is a KF6 plugin built against the host's own Qt, and
-# this bundle carries a different one, but the XDG portal theme needs
-# nothing except the portal and gives the desktop's real colours, fonts
-# and icon theme.
-#
-# They are copied rather than run through linuxdeploy on purpose: every
-# library either needs is already in the bundle and already loaded by the
-# time Qt dlopens them (the Wayland platform plugin has libQt6WaylandClient
-# open before it looks for a buffer integration), and patchelf is exactly
-# what has to be kept away from these; see NO_STRIP above.
-# styles is the real Breeze widget style. A widget style is a Qt plugin
-# and can only load into the Qt it was built against, so the host's own
-# Breeze can never load into this bundle whatever version it is, the
-# only way an AppImage looks like the desktop it is running on is to
-# carry a matching one. That is why this image is built on a base that
-# has KF6 at all (see packaging/Containerfile.appimage).
-# kf6/kwindowsystem is Breeze's own way of asking the compositor about a
-# window; without it KWindowSystem says `Could not find any platform
-# plugin` on every launch and answers its callers with nothing.
-for plugin_dir in wayland-graphics-integration-client platformthemes styles kf6/kwindowsystem; do
-    if [ -d "$qt_plugin_dir/$plugin_dir" ]; then
-        say "bundling the $plugin_dir plugins"
-        mkdir -p "$appdir/usr/plugins/$plugin_dir"
-        cp -n "$qt_plugin_dir/$plugin_dir"/*.so "$appdir/usr/plugins/$plugin_dir/" 2>/dev/null || true
-    fi
-done
-[ -e "$appdir/usr/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so" ] ||
-    die "no wayland-egl client buffer integration, the window would never get a buffer"
-[ -e "$appdir/usr/plugins/platformthemes/libqxdgdesktopportal.so" ] ||
-    die "no XDG portal platform theme. Stud would not follow the desktop's theme"
-[ -e "$appdir/usr/plugins/styles/breeze6.so" ] ||
-    die "no Breeze style. Stud would look like bare Qt next to the same build from an rpm"
+# Stud's own files that are not host libraries, copied as they are:
+# ANGLE is self-contained, and bionic and Process B are Android ELF that
+# no host tool may patch, strip or resolve.
+say "adding ANGLE, bionic and Process B"
+cp -a /usr/lib/stud "$appdir/lib/stud"
+cp -a /usr/libexec/stud/stud-runtime-bionic /usr/libexec/stud/lib64 "$appdir/libexec/stud/"
+# Stud's own share/ files: the desktop entry and icons it installs for
+# the user, and the licences of everything it redistributes.
+(cd /usr/share && cp -a --parents \
+    "applications/$app_id.desktop" "metainfo/$app_id.metainfo.xml" \
+    icons/hicolor/*/apps/"$app_id.png" licenses/stud doc/stud \
+    "$appdir/share/")
 
-# Those plugins were copied, not deployed, so nothing has brought their
-# own libraries along, Breeze alone pulls a good deal of KF6. Walked
-# here with ldd, skipping anything on the exclude list above (which must
-# come from the host) and anything already bundled.
-say "bundling what the copied plugins need"
-bundle_deps_of() {
-    local target="$1" resolved
-    ldd "$target" 2>/dev/null | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' | while read -r resolved; do
-        local base; base="$(basename "$resolved")"
-        [ -e "$appdir/usr/lib/$base" ] && continue
-        local skip=0 pattern
-        for pattern in "${exclude_libs[@]}"; do
-            # shellcheck disable=SC2254
-            case "$base" in $pattern) skip=1; break;; esac
-        done
-        [ "$skip" = 1 ] && continue
-        cp -n "$resolved" "$appdir/usr/lib/" 2>/dev/null || true
-    done
-}
-for plugin_dir in wayland-graphics-integration-client platformthemes styles kf6/kwindowsystem; do
-    for plugin in "$appdir/usr/plugins/$plugin_dir"/*.so; do
-        [ -e "$plugin" ] || continue
-        bundle_deps_of "$plugin"
-    done
-done
-# One more pass: the libraries just copied have dependencies of their own
-# (KF6 is a graph, not a list). Repeated until nothing new appears.
-for _ in 1 2 3 4 5 6; do
-    before="$(find "$appdir/usr/lib" -maxdepth 1 -name '*.so*' | wc -l)"
-    for lib in "$appdir/usr/lib"/*.so*; do
-        [ -f "$lib" ] || continue
-        bundle_deps_of "$lib"
-    done
-    [ "$(find "$appdir/usr/lib" -maxdepth 1 -name '*.so*' | wc -l)" = "$before" ] && break
-done
-
-# Qt's OpenSSL backend is built to dlopen libssl rather than link it
-# (Ubuntu configures Qt with openssl-runtime), so linuxdeploy, which
-# follows DT_NEEDED and nothing else, cannot see it and does not bring
-# it. libcrypto arrives anyway, pulled in by something that does link it,
-# and the result is a bundle that has half of OpenSSL, a TLS plugin that
-# cannot load, and every HTTPS request failing with
-# `TLS initialization failed`. Stud's login is an HTTPS request.
-#
-# Bundling both halves is deliberate: a bundled libcrypto beside the
-# host's libssl is a worse pairing than bundling the two together.
-say "bundling the OpenSSL library Qt dlopens"
-for libssl in /usr/lib/x86_64-linux-gnu/libssl.so.3 /lib/x86_64-linux-gnu/libssl.so.3; do
-    [ -e "$libssl" ] || continue
-    cp -n "$libssl" "$appdir/usr/lib/" && break
-done
-[ -e "$appdir/usr/lib/libssl.so.3" ] || die "no libssl.so.3 to bundle; Stud could not log in"
-
-# What Qt's X11 platform plugin needs beyond the X libraries every desktop
-# has.
-#
-# exclude_libs keeps libxcb* and libxkbcommon* out of the bundle, and
-# libxcb itself, libxcb-util and libxkbcommon must stay out (see there).
-# But since Qt 6.5 the xcb plugin also links these six, and a stock
-# distribution without a Qt 6 desktop of its own does not carry them:
-# measured on a clean Ubuntu 22.04, the plugin refused to load
-# ("xcb-cursor0 or libxcb-cursor0 is needed") and Stud never opened a
-# window under X11. Each is a thin extension over the host's own libxcb or
-# libxkbcommon, which they keep using; none of them is what an implicit
-# Vulkan layer loads. The list is the whole closure measured on that
-# system, not a guess: the last three are what the first ones need.
-#
-# libxcb-util is one of them. The exclude list's own note has it
-# segfaulting in its initialiser when bundled, but that is the symptom of
-# linuxdeploy's patchelf corrupting a library (see NO_STRIP above), and
-# these are copied as they are, never patched: run from this bundle on a
-# clean Ubuntu 22.04 and on a current Fedora, X11 and Wayland, it loads.
-say "bundling what Qt's X11 platform plugin needs"
-for lib in libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-keysyms.so.1 libxcb-xkb.so.1 \
-           libxcb-xinput.so.0 libxkbcommon-x11.so.0 libxcb-image.so.0 \
-           libxcb-render-util.so.0 libxcb-util.so.1; do
-    found=""
-    for dir in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /lib64; do
-        [ -e "$dir/$lib" ] && { found="$dir/$lib"; break; }
-    done
-    [ -n "$found" ] || die "no $lib on this machine to bundle; Stud would open no window on X11"
-    cp -L "$found" "$appdir/usr/lib/$lib"
-done
-
-# glibc travels with the bundle.
-#
-# Everything here was built on a current distribution, so it needs that
-# distribution's glibc and libstdc++: GLIBC_2.43 and GLIBCXX_3.4.32 on
-# this base. Relying on the host's meant the AppImage refused to start
-# anywhere older, with `version GLIBC_2.38 not found` from every bundled
-# library at once. An older build base would lower that floor only by
-# giving up the current Qt and KF6 Breeze this image is built for.
-#
-# So the bundle carries its own glibc, and each of Stud's executables is
-# started through it by sharun (github.com/VHSgunzo/sharun, the loader the
-# Anylinux AppImages use). The executable's path is a hardlink to sharun;
-# sharun loads the bundle's own ld-linux in-process, hands it this
-# bundle's library directory as an ARGUMENT, and runs the real binary out
-# of usr/shared/bin. Three things follow from doing it that way rather
-# than with LD_LIBRARY_PATH:
-#
-#   /proc/self/exe is still the path Stud was started as, so every
-#   "where am I installed" lookup Stud makes keeps working unchanged.
-#
-#   Nothing is exported. bwrap, a browser, xdg-open, anything of the
-#   host's that Stud starts, runs on the host's own glibc; a bundled
-#   libc on their LD_LIBRARY_PATH would take every one of them down.
-#
-#   The host's libraries are still found, after the bundle's: the GPU
-#   driver, the Vulkan loader, the audio stack, everything in
-#   exclude_libs. Built against an older glibc, each of them runs on this
-#   newer one, which is the direction glibc keeps compatible.
-#
-# One process per executable, so each has its own hardlink: stud-ui
-# starts render-host and the web view by path, and QtWebEngine starts
-# its helper the same way.
-say "bundling glibc, and starting every executable through it"
-usr="$appdir/usr"
-mkdir -p "$usr/shared/bin" "$usr/shared/lib"
-find "$usr/lib" -maxdepth 1 \( -type f -o -type l \) -name '*.so*' -exec mv -t "$usr/shared/lib/" {} +
-# The runtime set, from one glibc. libnss_* are not needed: files and dns
-# have been part of libc itself since 2.34, and anything else the host's
-# nsswitch.conf names is the host's own module, loaded from the host.
-for lib in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libmvec.so.1 libdl.so.2 \
-           libpthread.so.0 librt.so.1 libresolv.so.2 libutil.so.1 libanl.so.1 \
-           libstdc++.so.6 libgcc_s.so.1; do
-    found=""
-    for dir in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /lib64; do
-        [ -e "$dir/$lib" ] && { found="$dir/$lib"; break; }
-    done
-    [ -n "$found" ] || die "no $lib on this machine to bundle"
-    cp -L "$found" "$usr/shared/lib/$lib"
-done
-cp "$tools/sharun-$sharun_version" "$usr/sharun"
-chmod +x "$usr/sharun"
-stud_exes=(usr/bin/stud usr/libexec/stud/stud-render-host usr/libexec/stud/stud-webview)
-while IFS= read -r webengine; do
-    stud_exes+=("${webengine#"$appdir/"}")
-done < <(find "$usr" -path "$usr/shared" -prune -o -type f -name QtWebEngineProcess -print)
-for exe in "${stud_exes[@]}"; do
-    [ -f "$appdir/$exe" ] || continue
-    name="$(basename "$exe")"
-    [ -e "$usr/shared/bin/$name" ] && die "two executables are called $name; sharun tells them apart by name"
-    mv "$appdir/$exe" "$usr/shared/bin/$name"
-    ln "$usr/sharun" "$appdir/$exe"
-done
-[ -f "$usr/shared/bin/stud" ] || die "no usr/bin/stud to start through sharun"
-[ -f "$usr/shared/bin/stud-render-host" ] || die "no stud-render-host to start through sharun"
-# The directories under shared/lib sharun should search, written once
-# here rather than worked out at every start.
-(cd "$usr" && ./sharun -g >/dev/null)
-
-# A real AppRun, replacing the symlink to the binary linuxdeploy leaves.
-#
-# linuxdeploy's apprun-hooks mechanism needs an AppRun that sources them,
-# and it does not write one when the entry point is a plain symlink,
-# so the one thing that has to happen before Qt starts is done here.
-#
-# Qt picks a platform theme by looking for the plugin its own desktop
-# would use, which on KDE is a KF6 plugin built against the host's Qt,
-# deliberately not in this bundle, and not loadable in it. Asking for the
-# portal theme by name gets the desktop's real colours, fonts and icon
-# theme with nothing but the portal, which every modern desktop runs.
-rm -f "$appdir/AppRun"
-cat > "$appdir/AppRun" <<'APPRUN'
-#!/bin/sh
-# Stud's AppImage entry point. Libraries, glibc included, are found by
-# sharun, which usr/bin/stud is (see packaging/build-appimage.sh), and Qt
-# plugins through the qt.conf linuxdeploy wrote; this sets the one thing
-# Qt cannot work out for itself inside a bundle.
-here="$(dirname "$(readlink -f "$0")")"
-
-# Nothing goes on LD_LIBRARY_PATH: the bundle's glibc is on it the moment
-# it is, and every host program Stud starts would load it. The original
-# is still recorded, so anything Stud runs that belongs to the host,
-# kbuildsycoca6, update-desktop-database, a browser, is given exactly the
-# environment it would have had.
+# What the old AppRun set, sourced by quick-sharun's AppRun before Stud
+# starts.
+cat > "$appdir/bin/stud.hook" <<'HOOK'
+# Host programs Stud starts (desktop tools, a browser) get back exactly
+# the library path they would have had; see ui/src/desktop_entry.cpp.
 export STUD_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 
-[ -n "$QT_QPA_PLATFORMTHEME" ] || export QT_QPA_PLATFORMTHEME=xdgdesktopportal
+# AppRun.lib moves XDG_CACHE_HOME to ~/.cache/AppImage-Cache. Stud's cache
+# (the extracted APK, the engine's state) stays where every other package
+# of Stud keeps it; CACHEDIR is the value from before the move.
+export XDG_CACHE_HOME="$CACHEDIR"
 
-# Breeze is carried in this bundle, but only a KDE desktop should get it:
-# on GNOME or anywhere else the portal theme's own choice is the right
-# one, and forcing Breeze there would be the same mistake in reverse.
+# The host's own platform theme is a plugin built against the host's Qt
+# and cannot load here; the portal one gives the desktop's real colours,
+# fonts and icons.
+[ -n "${QT_QPA_PLATFORMTHEME:-}" ] || export QT_QPA_PLATFORMTHEME=xdgdesktopportal
+
+# Breeze only on KDE; anywhere else the portal theme's choice is right.
 case "${XDG_CURRENT_DESKTOP:-}" in
-    *KDE*)
-        [ -n "$QT_STYLE_OVERRIDE" ] ||
-            [ ! -e "$here/usr/plugins/styles/breeze6.so" ] ||
-            export QT_STYLE_OVERRIDE=Breeze
-        ;;
+    *KDE*) [ -n "${QT_STYLE_OVERRIDE:-}" ] || export QT_STYLE_OVERRIDE=Breeze ;;
 esac
+HOOK
 
-exec "$here/usr/bin/stud" "$@"
-APPRUN
-chmod +x "$appdir/AppRun"
-
-# Put Stud's own libraries back before the image is packed.
-trap - EXIT
-restore_private
-
-# Audio needs nothing bundled. render-host compiles miniaudio in and
-# opens the host's own libasound, libpulse or libjack by name. Bundling
-# an audio library here would actively break it: a copy built on one
-# distribution looks for ALSA plugins at that distribution's paths, finds
-# no pipewire or pulse plugin on the user's machine, and falls back to
-# talking to the hardware directly, which is the reported "audio does not
-# work and Stud never appears in the volume mixer".
-
+for plugin in \
+    platforms/libqwayland.so \
+    wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
+    platformthemes/libqxdgdesktopportal.so \
+    styles/breeze6.so
+do
+    [ -n "$(find "$appdir" -path "*/plugins/$plugin" -print -quit)" ] ||
+        die "no $plugin in the bundle"
+done
 
 say "packing the image"
-mkdir -p "$build_dir/packages"
-packages="$(cd "$build_dir/packages" && pwd)"
-out="$packages/Stud-$(uname -m).AppImage"
-rm -f "$out" "$out.zsync"
-# Update information, so AppImageUpdate and other updaters can update Stud
-# in place from the newest GitHub release. appimagetool also writes the
-# matching .zsync when zsyncmake is installed (the build container has it),
-# and writes it into the directory it runs in, hence the cd.
-update_info="gh-releases-zsync|CatPieLeaf|Stud|latest|Stud-$(uname -m).AppImage.zsync"
-appimagetool="$(cd "$tools" && pwd)/appimagetool"
-appdir="$(cd "$appdir" && pwd)"
-(cd "$packages" && ARCH="$(uname -m)" "$appimagetool" -u "$update_info" "$appdir" "$out")
+rm -f "$OUTPATH/$OUTNAME" "$OUTPATH/$OUTNAME.zsync"
+"$tools/quick-sharun.sh" --make-appimage
 
-say "written: $out"
-ls -la "$out" >&2
+[ -f "$OUTPATH/$OUTNAME" ] || die "no $OUTNAME was written"
+say "written: $OUTPATH/$OUTNAME"

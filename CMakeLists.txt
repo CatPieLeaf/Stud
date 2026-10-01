@@ -256,7 +256,7 @@ endif()
 #
 # One install tree feeds every format: the deb and the rpm are CPack
 # packaging exactly what `cmake --install` lays down, and the AppImage is
-# linuxdeploy bundling the same tree (packaging/build-appimage.sh).
+# quick-sharun bundling the same layout (packaging/build-appimage.sh).
 #
 # The layout is deliberately relocatable; every binary finds bionic,
 # ANGLE and its sibling processes relative to its own path, because an

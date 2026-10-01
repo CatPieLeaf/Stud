@@ -8,9 +8,6 @@ inputs:
   dependencies:
     description: Restore or fetch the NDK, ANGLE and bionic
     default: "true"
-  appimage-tools:
-    description: Also restore linuxdeploy and appimagetool
-    default: "false"
 
 runs:
   using: composite
@@ -41,8 +38,6 @@ runs:
       shell: bash
       run: |
         echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-        echo "appimage=$(sh tools/dependency-id.sh appimage | sha256sum | cut -c1-16)" \
-          >> "$GITHUB_OUTPUT"
 
     - name: Cache Android NDK
       # Its own key: it is a plain download, and every job wants it.
@@ -63,13 +58,6 @@ runs:
           third_party/angle
           third_party/android-bionic
         key: deps-${{ steps.deps.outputs.id }}
-
-    - name: Cache AppImage tools
-      if: inputs.dependencies == 'true' && inputs.appimage-tools == 'true'
-      uses: actions/cache@v6
-      with:
-        path: third_party/appimage-tools
-        key: appimage-tools-${{ steps.deps.outputs.appimage }}
 
     - name: Fetch dependencies
       # tools/setup.sh skips whatever the caches restored. A cold cache

@@ -159,8 +159,8 @@ def find_sharun_dir(root: Path) -> Path | None:
 
     The AppImage carries its own glibc, and each of Stud's executables in
     it is a hardlink to sharun, a small static loader that runs the real
-    binary from shared/bin through the bundled ld-linux (see "glibc
-    travels with the bundle" in packaging/build-appimage.sh). The file at
+    binary from shared/bin through the bundled ld-linux (see
+    packaging/build-appimage.sh). The file at
     the usual path is then the loader, not the program, and checking it
     would report a static binary with no libraries and no shaders.
     """
@@ -269,6 +269,8 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
     # ---- what a desktop needs to show Stud at all -----------------------
     if expect_desktop_files:
         share = root / "usr" / "share"
+        if not share.is_dir():
+            share = root / "share"  # the AppImage's flat layout
         r.check((share / "applications" / "io.github.catpieleaf.Stud.desktop").exists(),
                 "no .desktop entry")
         r.check((share / "metainfo" / "io.github.catpieleaf.Stud.metainfo.xml").exists(),
