@@ -375,6 +375,12 @@ void native_window_apply_surface_scale(::ANativeWindow* window);
 // implementation.
 void native_window_set_opaque(::ANativeWindow* window);
 
+// Lets a Wayland resize publish both of the window's surfaces in one
+// commit. try_lock must not block; while it is held no frame is presented,
+// so the content surface can be committed from the Wayland thread without
+// racing the driver's own commit. render-host passes its queue lock.
+void native_window_set_present_guard(bool (*try_lock)(), void (*unlock)());
+
 // The surface the Vulkan driver presents to, the way Android gives a
 // SurfaceView a surface of its own: a desynchronised subsurface of the
 // window, created on first use, which nothing but the driver ever

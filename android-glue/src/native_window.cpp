@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <thread>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -1673,6 +1674,26 @@ namespace {
 // Defined below; the configure handler applies geometry after its ack.
 void apply_window_geometry(ANativeWindow* window, const char* reason);
 
+std::atomic<bool (*)()> g_present_try_lock{nullptr};
+std::atomic<void (*)()> g_present_unlock{nullptr};
+
+// Holds presents off for at most one refresh: long enough for the frame
+// being presented right now to finish, and no longer, since the Wayland
+// thread must not stall behind a present that is stuck in the driver.
+// Without a refresh rate it tries once.
+bool hold_presents_for_one_refresh() {
+    bool (*try_lock)() = g_present_try_lock.load();
+    if (try_lock == nullptr) return false;
+    const int32_t mhz = stud::android_glue::display_refresh_mhz();
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::nanoseconds(mhz > 0 ? 1000000000000LL / mhz : 0);
+    do {
+        if (try_lock()) return true;
+        std::this_thread::yield();
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
+}
+
 void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     auto* window = static_cast<ANativeWindow*>(data);
     // Ack, THEN apply, THEN commit. The order is what this function is
@@ -1698,9 +1719,20 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
     // itself and never waits on the client.
     xdg_surface_ack_configure(surface, serial);
     bool published_geometry = false;
+    // A new size is published atomically when presents can be held: the
+    // content surface goes synchronised, its new viewport is committed
+    // into its cached state, and the window surface's commit below then
+    // applies both surfaces' geometry together. Otherwise the content's
+    // new size waited for the driver's next frame, showing the old frame
+    // at the old size inside the resized window until then.
+    bool presents_held = false;
     if (window->geometry_pending) {
         window->geometry_pending = false;
+        presents_held = window->content_subsurface != nullptr &&
+                        window->content_presented.load() && hold_presents_for_one_refresh();
+        if (presents_held) wl_subsurface_set_sync(window->content_subsurface);
         apply_window_geometry(window, "resized");
+        if (presents_held) wl_surface_commit(window->content_surface);
         published_geometry = true;
     }
     // Commit when there is something to publish, and when this is the
@@ -1815,6 +1847,10 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
         wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
     }
     if (commit_now) wl_surface_commit(window->surface);
+    if (presents_held) {
+        wl_subsurface_set_desync(window->content_subsurface);
+        if (void (*unlock)() = g_present_unlock.load()) unlock();
+    }
 }
 
 const xdg_surface_listener kShellSurfaceListener = {
@@ -3003,6 +3039,11 @@ int32_t native_window_wait_for_display_scale_120() {
 // wl_surface.set_opaque_region is the protocol's own answer: it tells the
 // compositor to ignore alpha for this area entirely. The GL path never
 // needed it because EGL picks an opaque visual; Vulkan does not.
+void native_window_set_present_guard(bool (*try_lock)(), void (*unlock)()) {
+    g_present_unlock.store(unlock);
+    g_present_try_lock.store(try_lock);
+}
+
 void native_window_set_opaque(::ANativeWindow* window) {
     if (window == nullptr || window->surface == nullptr) return;
     auto& state = wayland_state();

@@ -2672,6 +2672,14 @@ std::mutex& queue_mutex() {
     return m;
 }
 
+// The Wayland resize publishes both window surfaces in one commit while
+// it holds this; see native_window_set_present_guard().
+const bool g_present_guard_registered = [] {
+    stud::android_glue::native_window_set_present_guard(
+        [] { return queue_mutex().try_lock(); }, [] { queue_mutex().unlock(); });
+    return true;
+}();
+
 
 
 
