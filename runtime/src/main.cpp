@@ -638,20 +638,25 @@ void invalidate_stale_extracted_assets(const std::string& apk_path, const std::s
         // kept under ~/.local/share rather than in the cache in
         // the first place.
         //
-        // What is listed here is state keyed to the build that
-        // wrote it: the fetched flag cache, the asset store and
-        // its index, and the CA bundle this launch re-provisions
-        // anyway. Everything else in appData, the settings
-        // XMLs, LocalStorage, frm.cfg, is the user's and stays.
+        // What is kept is named, not what is cleared: the user's own
+        // settings (the *Settings*.xml files and frm.cfg) and the app's
+        // LocalStorage. Everything else in appData is state the
+        // previous build wrote for itself -- the fetched flag cache, the
+        // asset store and its index, and whatever store a newer build
+        // adds under a name nothing here could list in advance (2.740
+        // added tmp-capture-storage). The CA bundle in exe/ goes too;
+        // this launch re-provisions it.
         {
             const std::string files = stud::paths::engine_files_dir();
-            const std::string app_data = files + "/appData";
-            for (const std::string& entry :
-                 {app_data + "/ClientSettings", app_data + "/rbx-storage.db",
-                  app_data + "/rbx-storage.db-shm", app_data + "/rbx-storage.db-wal",
-                  app_data + "/rbx-storage.id", app_data + "/rbx-storage-sc",
-                  files + "/exe"}) {
-                std::filesystem::remove_all(entry, ec);
+            std::filesystem::remove_all(files + "/exe", ec);
+            for (const auto& entry :
+                 std::filesystem::directory_iterator(files + "/appData", ec)) {
+                const std::string name = entry.path().filename().string();
+                const bool is_settings_file =
+                    entry.is_regular_file(ec) && name.find("Settings") != std::string::npos &&
+                    name.size() > 4 && name.compare(name.size() - 4, 4, ".xml") == 0;
+                if (name == "LocalStorage" || name == "frm.cfg" || is_settings_file) continue;
+                std::filesystem::remove_all(entry.path(), ec);
             }
         }
         std::ofstream out{stamp_path, std::ios::trunc};
