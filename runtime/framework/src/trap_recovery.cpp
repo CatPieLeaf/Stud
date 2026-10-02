@@ -424,24 +424,6 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
                 char label[32];
                 std::snprintf(label, sizeof(label), "rbp-%d", slot * 8);
                 describe_address(label, value);
-
-                // Live struct-field dump for anything that
-                // resolved to real, mapped memory, reads are safe
-                // (addr_is_mapped() already confirmed it; heap pages
-                // are contiguous readable memory even a bit past one
-                // logical allocation's own bounds). Prints 0x400..0x448
-                // as raw 8-byte fields so the *actual* live value at
-                // the offset that faulted (0x430) is visible directly,
-                // not inferred from reading the code.
-                if (value != 0 && addr_is_mapped(value + 0x448)) {
-                    for (uintptr_t off = 0x400; off <= 0x448; off += 8) {
-                        auto field = *reinterpret_cast<uintptr_t*>(value + off);
-                        char fbuf[64];
-                        int fn = std::snprintf(fbuf, sizeof(fbuf),
-                                                "STUD_TRAP:     [%s+0x%lx] = 0x%lx\n", label, off, field);
-                        ::syscall(SYS_write, 2, fbuf, fn > 0 ? fn : 0);
-                    }
-                }
             }
         }
         // Bug found in testing: g_tolerate_wild_sigsegv (set by
