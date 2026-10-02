@@ -20,7 +20,7 @@
 # space.
 
 pkgname=stud
-pkgver=1.1.10
+pkgver=1.1.11
 pkgrel=1
 pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')

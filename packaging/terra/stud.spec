@@ -21,7 +21,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*
 
 Name:           stud
-Version:        1.1.10
+Version:        1.1.11
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -119,5 +119,11 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Oct 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.11-1
+- Resizing, maximizing and restoring the window is smooth on Wayland and X11
+- Fixed a leak that made Stud slower the longer it ran
+- The AppImage now carries everything it needs, glibc and graphics drivers included, and runs on FUSE-less systems
+- The AppImage can update itself in place with AppImageUpdate and other updaters
+
 * Wed Sep 30 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.10-1
 - Initial package

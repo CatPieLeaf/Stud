@@ -98,6 +98,16 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.1.11" date="2026-10-02">
+      <description>
+        <ul>
+          <li>Resizing, maximizing and restoring the window is smooth on Wayland and X11</li>
+          <li>Fixed a leak that made Stud slower the longer it ran</li>
+          <li>The AppImage now carries everything it needs, glibc and graphics drivers included, and runs on FUSE-less systems</li>
+          <li>The AppImage can update itself in place with AppImageUpdate and other updaters</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.10" date="2026-09-30">
       <description>
         <ul>
