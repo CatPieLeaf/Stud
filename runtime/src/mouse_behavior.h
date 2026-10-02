@@ -28,16 +28,20 @@ namespace stud::runtime {
 // So it answers only for LockCenter (first person, shift lock) and says
 // nothing about LockCurrentPosition, which is the case that matters.
 //
-// This reads the same field, and finds it the same way the engine's own
-// code does: by DECODING that exported function at startup, the
-// getter's address and argument, the guard object it takes, and the two
-// field displacements, out of whichever libroblox.so is actually
-// loaded. Nothing here is a constant taken from one build; if
-// the function's shape changes, the decode fails, the probe reports
-// "unknown", and the caller falls back to its own behaviour. That is the
-// honest reading of this project's version-agnostic rule for a fact that
-// exists nowhere else: no hardcoded offsets, a validity check, and a
-// working fallback.
+// This reads the same field, found the way the engine's own code finds
+// it: the exported function is decoded at startup, with a real x86
+// decoder, by what its instructions do. The walk follows which register
+// holds the getter's object, follows calls that are handed that object
+// (2.740 moved the whole body into a helper), and takes the chain of loads
+// that ends in the comparison with LockCenter. Register choice, encodings,
+// inlining and the lock taken around the read do not matter to it.
+//
+// Found is then not trusted. The same exported predicate keeps answering
+// for LockCenter, so every poll checks the field against it
+// (verify_mouse_behavior); the first real disagreement switches the field
+// off for the run and the cursor follows the predicate alone. A byte
+// pattern that matched the wrong instructions is exactly how the cursor
+// started teleporting after 2.740: that cannot drive the cursor again.
 //
 // Real MouseBehavior values, from Roblox's own published enum.
 enum class MouseBehavior : int {
@@ -52,8 +56,13 @@ enum class MouseBehavior : int {
 bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib);
 
 // The engine's current MouseBehavior, or kUnknown if the probe could not
-// be built or the read failed. Takes the same guard the engine's own
-// predicate takes around the read, and every fault is trapped.
+// be built, has been switched off, or the read failed. Every fault is
+// trapped.
 MouseBehavior read_mouse_behavior();
+
+// Checks a field reading against the engine's own LockCenter predicate,
+// read around it. A disagreement switches the field off for the run.
+// Returns whether the field may still be used.
+bool verify_mouse_behavior(MouseBehavior field, bool predicate_locks_center);
 
 }  // namespace stud::runtime

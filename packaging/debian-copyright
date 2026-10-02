@@ -107,6 +107,8 @@ Comment:
    libjnivm      Christopher Homberger
    nlohmann/json Niels Lohmann
    miniz         Rich Geldreich and contributors
+   Zydis         Florian Bernd, Joel Höner
+   Zycore        Florian Bernd, Joel Höner
    detex         Hans-Kristian Lemmens
    PVRTDecompress  Imagination Technologies (PowerVR Native SDK)
 

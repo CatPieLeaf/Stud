@@ -2841,26 +2841,27 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                         std::fflush(stdout);
                     }
                 }
-                const bool probe_valid = g_engine_mouse_behavior.load() !=
-                                         static_cast<int>(stud::runtime::MouseBehavior::kUnknown);
-                if (probe_valid) {
-                    // The field itself, not the predicate over it. Both
-                    // read the same MouseBehavior, the predicate just
-                    // answers for one of its three values, and a live
-                    // capture caught them disagreeing, which is worth
-                    // knowing about rather than silently picking one.
-                    const bool field_says_center = engine_locks_center();
-                    if (asked && (locked != 0) != field_says_center) {
-                        static bool said = false;
-                        if (!said) {
-                            said = true;
-                            std::printf("stud: the engine's LockCenter predicate (%d) and its own "
-                                        "MouseBehavior (%d) disagree, going with the field\n",
-                                        static_cast<int>(locked), g_engine_mouse_behavior.load());
-                            std::fflush(stdout);
-                        }
+                // The decoded field is checked against the predicate, not the
+                // other way round: the predicate is the engine's own answer
+                // through an exported entry point, the field is Stud's
+                // decode of where that answer lives. The field is read again
+                // after the predicate, and only two equal readings around it
+                // count, so the engine changing mode between the reads is
+                // not taken for a wrong decode.
+                if (asked && g_engine_mouse_behavior.load() !=
+                                 static_cast<int>(stud::runtime::MouseBehavior::kUnknown)) {
+                    const auto again = stud::runtime::read_mouse_behavior();
+                    if (static_cast<int>(again) == g_engine_mouse_behavior.load() &&
+                        !stud::runtime::verify_mouse_behavior(again, locked != 0)) {
+                        g_engine_mouse_behavior.store(
+                            static_cast<int>(stud::runtime::MouseBehavior::kUnknown));
                     }
-                    locked = field_says_center ? 1 : 0;
+                }
+                if (g_engine_mouse_behavior.load() !=
+                    static_cast<int>(stud::runtime::MouseBehavior::kUnknown)) {
+                    // The field covers what the predicate cannot:
+                    // LockCurrentPosition, the camera drag.
+                    locked = engine_locks_center() ? 1 : 0;
                     asked = true;
                 }
                 if (asked) {

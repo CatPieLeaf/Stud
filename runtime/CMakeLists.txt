@@ -154,6 +154,21 @@ FetchContent_Declare(
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
 
+# An x86-64 decoder, for reading the engine's own code by what it does
+# rather than by byte patterns that change with every build; see
+# src/mouse_behavior.cpp. Decoder only: no formatter, tools or docs.
+FetchContent_Declare(
+    zydis
+    GIT_REPOSITORY https://github.com/zyantific/zydis.git
+    GIT_TAG        v4.1.1
+)
+set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
+set(ZYDIS_BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(ZYDIS_FEATURE_FORMATTER OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zydis)
+
 set(FRAMEWORK_SRC "${CMAKE_CURRENT_SOURCE_DIR}/framework")
 add_library(stud_runtime_framework STATIC
     "${FRAMEWORK_SRC}/src/platform_params.cpp"
@@ -349,6 +364,7 @@ target_include_directories(stud-runtime-bionic PRIVATE
     "${RENDER_HOST_SRC}/include"
 )
 target_link_libraries(stud-runtime-bionic PRIVATE
+    Zydis
     stud_runtime_framework
     stud_runtime_libandroid
     stud_runtime_libEGL

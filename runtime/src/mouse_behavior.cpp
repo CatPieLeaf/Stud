@@ -1,180 +1,278 @@
 #include "mouse_behavior.h"
 
+#include <Zydis/Zydis.h>
+
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "stud/trap_recovery.h"
 
 namespace stud::runtime {
 namespace {
 
-// What the decode found in the engine's own exported predicate. Every
-// field comes out of that function's instruction stream; none of it is a
-// constant measured against one build of the APK.
+// What the decode found. Every field comes out of the loaded engine's own
+// instructions; none of it is a number taken from one build.
 struct Probe {
-    bool valid = false;
-    void* (*getter)(int) = nullptr;   // the singleton getter and its argument
-    int getter_arg = 0;
-    void (*guard_enter)(void*) = nullptr;  // the scope guard the engine
-    void (*guard_leave)(void*) = nullptr;  // takes around the read
-    int32_t guard_offset = 0;              // the member the guard is built on
-    int32_t subsystem_offset = 0;          // the input subsystem
-    int32_t behavior_offset = 0;           // MouseBehavior
+    void* (*getter)(int) = nullptr;  // the singleton getter
+    int getter_arg = 0;              // and the argument the engine passes it
+    // The loads from the getter's object to MouseBehavior: every entry but
+    // the last is a pointer load, the last is the field itself.
+    std::vector<int32_t> path;
 };
 
 Probe g_probe;
+// Cleared for good the moment the decode is shown wrong (see
+// verify_mouse_behavior), so a wrong field never drives the cursor twice.
+std::atomic<bool> g_enabled{false};
+bool g_verified = false;
 
-int32_t read_i32(const unsigned char* p) {
-    int32_t v = 0;
-    std::memcpy(&v, p, sizeof(v));
-    return v;
+// A register's value, as far as the walk can tell.
+struct Value {
+    enum Kind : uint8_t { kNothing, kImmediate, kEngine };
+    Kind kind = kNothing;
+    int64_t imm = 0;
+    // kEngine: the getter's object, followed through these loads.
+    std::vector<int32_t> loads;
+};
+using Registers = std::array<Value, ZYDIS_REGISTER_MAX_VALUE + 1>;
+
+ZydisRegister full(ZydisRegister r) {
+    return r == ZYDIS_REGISTER_NONE ? r
+                                    : ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, r);
 }
 
-// The function is small and straight-line (no branches at all; it ends
-// in one compare and a stack-guard check), so a linear walk over its
-// first bytes is enough; there is nothing to follow.
-constexpr size_t kScanBytes = 0x90;
+void clobber_caller_saved(Registers& regs) {
+    for (ZydisRegister r : {ZYDIS_REGISTER_RAX, ZYDIS_REGISTER_RCX, ZYDIS_REGISTER_RDX,
+                            ZYDIS_REGISTER_RSI, ZYDIS_REGISTER_RDI, ZYDIS_REGISTER_R8,
+                            ZYDIS_REGISTER_R9, ZYDIS_REGISTER_R10, ZYDIS_REGISTER_R11}) {
+        regs[r] = Value{};
+    }
+}
+
+// How far one walk reads. Bounds the decode, not anything the engine does.
+constexpr int kMaxInstructions = 256;
+constexpr int kMaxCallDepth = 4;
+
+// Follows the engine's predicate by what each instruction DOES: which
+// register holds the getter's object, which loads lead from it, and which
+// of them is compared with LockCenter. Calls that take the object are
+// followed into, which is what survives the compiler moving the body into
+// a helper (as 2.740 did); register choice, encodings and the lock it takes
+// around the read do not matter.
+bool walk(const ZydisDecoder& dec, const unsigned char* at, Registers regs, int depth,
+          Probe& out) {
+    for (int n = 0; n < kMaxInstructions; ++n) {
+        ZydisDecodedInstruction ins;
+        ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
+        if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&dec, at, ZYDIS_MAX_INSTRUCTION_LENGTH, &ins,
+                                                 ops))) {
+            return false;
+        }
+        // The engine's object plus one load, if this memory operand is one.
+        auto load_from = [&](const ZydisDecodedOperand& m, Value& v) {
+            const ZydisRegister base = full(m.mem.base);
+            if (m.mem.index != ZYDIS_REGISTER_NONE || base == ZYDIS_REGISTER_NONE) return false;
+            if (regs[base].kind != Value::kEngine) return false;
+            v = regs[base];
+            v.loads.push_back(static_cast<int32_t>(m.mem.disp.value));
+            return true;
+        };
+        switch (ins.mnemonic) {
+            case ZYDIS_MNEMONIC_RET:
+                return false;
+            case ZYDIS_MNEMONIC_CALL:
+            case ZYDIS_MNEMONIC_JMP: {
+                const bool is_call = ins.mnemonic == ZYDIS_MNEMONIC_CALL;
+                ZyanU64 target = 0;
+                const bool direct =
+                    ops[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && ops[0].imm.is_relative &&
+                    ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(
+                        &ins, &ops[0], reinterpret_cast<ZyanU64>(at), &target));
+                const Value rdi = regs[ZYDIS_REGISTER_RDI];
+                if (direct && is_call && out.getter == nullptr && rdi.kind == Value::kImmediate) {
+                    // The singleton getter, with the engine's own argument.
+                    out.getter = reinterpret_cast<void* (*)(int)>(target);
+                    out.getter_arg = static_cast<int>(rdi.imm);
+                    clobber_caller_saved(regs);
+                    regs[ZYDIS_REGISTER_RAX] = Value{Value::kEngine, 0, {}};
+                    break;
+                }
+                if (direct && rdi.kind == Value::kEngine && rdi.loads.empty() &&
+                    depth < kMaxCallDepth) {
+                    // The object handed on: the body lives in there.
+                    Registers inner{};
+                    inner[ZYDIS_REGISTER_RDI] = rdi;
+                    if (walk(dec, reinterpret_cast<const unsigned char*>(target), inner,
+                             depth + 1, out)) {
+                        return true;
+                    }
+                }
+                if (!is_call) return false;
+                clobber_caller_saved(regs);
+                break;
+            }
+            case ZYDIS_MNEMONIC_CMP: {
+                // The test itself: a value reached from the object, compared
+                // with LockCenter's own enum value.
+                if (ops[1].type != ZYDIS_OPERAND_TYPE_IMMEDIATE ||
+                    ops[1].imm.value.s != static_cast<int64_t>(MouseBehavior::kLockCenter)) {
+                    break;
+                }
+                Value v;
+                if (ops[0].type == ZYDIS_OPERAND_TYPE_REGISTER) {
+                    v = regs[full(ops[0].reg.value)];
+                } else if (ops[0].type != ZYDIS_OPERAND_TYPE_MEMORY || !load_from(ops[0], v)) {
+                    break;
+                }
+                if (v.kind == Value::kEngine && !v.loads.empty()) {
+                    out.path = v.loads;
+                    return true;
+                }
+                break;
+            }
+            case ZYDIS_MNEMONIC_MOV:
+            case ZYDIS_MNEMONIC_MOVZX:
+            case ZYDIS_MNEMONIC_MOVSX:
+            case ZYDIS_MNEMONIC_MOVSXD: {
+                if (ops[0].type != ZYDIS_OPERAND_TYPE_REGISTER) break;  // a store
+                Value v;
+                if (ops[1].type == ZYDIS_OPERAND_TYPE_REGISTER) {
+                    v = regs[full(ops[1].reg.value)];
+                } else if (ops[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+                    v = Value{Value::kImmediate, ops[1].imm.value.s, {}};
+                } else if (ops[1].type != ZYDIS_OPERAND_TYPE_MEMORY || !load_from(ops[1], v)) {
+                    v = Value{};
+                }
+                regs[full(ops[0].reg.value)] = v;
+                break;
+            }
+            case ZYDIS_MNEMONIC_XOR:
+                // xor r, r: the compiler's way of writing zero.
+                if (ops[0].type == ZYDIS_OPERAND_TYPE_REGISTER &&
+                    ops[1].type == ZYDIS_OPERAND_TYPE_REGISTER &&
+                    full(ops[0].reg.value) == full(ops[1].reg.value)) {
+                    regs[full(ops[0].reg.value)] = Value{Value::kImmediate, 0, {}};
+                    break;
+                }
+                [[fallthrough]];
+            default:
+                // Anything else that writes a register leaves it unknown.
+                for (int i = 0; i < ins.operand_count_visible; ++i) {
+                    if (ops[i].type == ZYDIS_OPERAND_TYPE_REGISTER &&
+                        (ops[i].actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) != 0) {
+                        regs[full(ops[i].reg.value)] = Value{};
+                    }
+                }
+                break;
+        }
+        at += ins.length;
+    }
+    return false;
+}
+
+const char* name_of(MouseBehavior b) {
+    switch (b) {
+        case MouseBehavior::kDefault: return "Default";
+        case MouseBehavior::kLockCenter: return "LockCenter";
+        case MouseBehavior::kLockCurrentPosition: return "LockCurrentPosition";
+        default: return "unknown";
+    }
+}
 
 }  // namespace
 
 bool init_mouse_behavior_probe(const stud::linker::LoadedLibrary& lib) {
+    g_enabled.store(false);
     g_probe = Probe{};
-    auto* fn = static_cast<const unsigned char*>(lib.find_symbol(
+    g_verified = false;
+    const auto* fn = static_cast<const unsigned char*>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_"
         "nativeGetMainWindowIsMouseLockedCenter"));
     if (fn == nullptr) {
-        std::printf("stud: MouseBehavior probe: the engine does not export the predicate to "
-                    "decode, the cursor falls back to following the pointer\n");
+        std::printf("stud: MouseBehavior: the engine does not export its LockCenter predicate, "
+                    "the cursor falls back to following the pointer\n");
         std::fflush(stdout);
         return false;
     }
-
+    ZydisDecoder dec;
+    ZydisDecoderInit(&dec, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
     Probe p;
-    const unsigned char* call_after_getter = nullptr;
-    for (size_t i = 0; i + 6 < kScanBytes; ++i) {
-        const unsigned char* at = fn + i;
-        // The singleton getter, with the
-        // engine's own argument rather than a guess at one.
-        if (p.getter == nullptr && at[0] == 0xbf && at[5] == 0xe8) {
-            p.getter_arg = read_i32(at + 1);
-            const unsigned char* next = at + 10;
-            p.getter = reinterpret_cast<void* (*)(int)>(
-                const_cast<unsigned char*>(next + read_i32(at + 6)));
-            call_after_getter = next;
-            continue;
-        }
-        // The member the scope guard is built on.
-        if (p.getter != nullptr && p.guard_offset == 0 && at[0] == 0x48 && at[1] == 0x05) {
-            p.guard_offset = read_i32(at + 2);
-            continue;
-        }
-        // call rel32, after the getter: first is the guard's constructor,
-        // second (past the compare) its destructor.
-        if (call_after_getter != nullptr && at > call_after_getter && at[0] == 0xe8) {
-            const unsigned char* next = at + 5;
-            auto* target = reinterpret_cast<void (*)(void*)>(
-                const_cast<unsigned char*>(next + read_i32(at + 1)));
-            if (p.guard_enter == nullptr) {
-                p.guard_enter = target;
-            } else if (p.guard_leave == nullptr) {
-                p.guard_leave = target;
-            }
-            continue;
-        }
-        // The load of the input subsystem.
-        if (p.subsystem_offset == 0 && at[0] == 0x48 && at[1] == 0x8b && at[2] == 0x83) {
-            p.subsystem_offset = read_i32(at + 3);
-            continue;
-        }
-        // The MouseBehavior test itself. The
-        // immediate must be LockCenter's own value, or this is not the
-        // comparison this decode is looking for.
-        if (p.behavior_offset == 0 && at[0] == 0x83 && at[1] == 0xb8 && at[6] == 0x01) {
-            p.behavior_offset = read_i32(at + 2);
-            continue;
-        }
-    }
-
-    // Every piece has to be there, and the offsets have to be sane
-    // structure members rather than whatever a changed instruction stream
-    // happened to decode to.
-    const bool sane = p.getter != nullptr && p.guard_enter != nullptr && p.guard_leave != nullptr &&
-                      p.guard_offset > 0 && p.guard_offset < (1 << 20) && p.subsystem_offset > 0 &&
-                      p.subsystem_offset < (1 << 20) && p.behavior_offset > 0 &&
-                      p.behavior_offset < (1 << 20);
-    if (!sane) {
-        std::printf("stud: MouseBehavior probe: the engine's predicate is not the shape this "
-                    "decodes (getter=%d guard=%d/%d off=%d/%d/%d), the cursor falls back to "
-                    "following the pointer\n",
-                    p.getter != nullptr ? 1 : 0, p.guard_enter != nullptr ? 1 : 0,
-                    p.guard_leave != nullptr ? 1 : 0, p.guard_offset, p.subsystem_offset,
-                    p.behavior_offset);
+    if (!walk(dec, fn, Registers{}, 0, p) || p.getter == nullptr) {
+        std::printf("stud: MouseBehavior: could not follow the engine's LockCenter predicate to "
+                    "the field it tests (getter %s), the cursor falls back to the predicate\n",
+                    p.getter != nullptr ? "found" : "not found");
         std::fflush(stdout);
         return false;
     }
-    p.valid = true;
     g_probe = p;
-    // The offsets themselves are decoded per build and say nothing useful
-    // in a log; that it decoded at all is the fact worth keeping.
-    std::printf("stud: MouseBehavior decoded from this build\n");
+    g_enabled.store(true);
+    // Found is not the same as right; verify_mouse_behavior() says which.
+    std::printf("stud: MouseBehavior: decoded a %zu-load path from the engine's predicate, "
+                "checking it against the predicate itself\n",
+                p.path.size());
     std::fflush(stdout);
     return true;
 }
 
 namespace {
 
-// The engine's own body, replayed: take the object, take the guard it
-// takes, read the field, drop the guard. Run through the trap machinery
-// by its caller, so a stale pointer costs a reading rather than the
-// process.
-int read_behavior_locked() {
+int read_behavior() {
     const Probe& p = g_probe;
-    auto* obj = static_cast<unsigned char*>(p.getter(p.getter_arg));
-    if (obj == nullptr) return -1;
-    // The guard is {pointer to the member, a flag byte}, built on the
-    // stack exactly as the engine builds it.
-    struct Guard {
-        void* member;
-        unsigned char engaged;
-    } guard{};
-    guard.member = obj + p.guard_offset;
-    guard.engaged = 0;
-    p.guard_enter(&guard);
-    void* subsystem = nullptr;
-    std::memcpy(&subsystem, obj + p.subsystem_offset, sizeof(subsystem));
-    int behavior = -1;
-    if (subsystem != nullptr) {
-        std::memcpy(&behavior, static_cast<unsigned char*>(subsystem) + p.behavior_offset,
-                    sizeof(behavior));
+    auto* at = static_cast<unsigned char*>(p.getter(p.getter_arg));
+    for (size_t i = 0; at != nullptr && i + 1 < p.path.size(); ++i) {
+        void* next = nullptr;
+        std::memcpy(&next, at + p.path[i], sizeof(next));
+        at = static_cast<unsigned char*>(next);
     }
-    p.guard_leave(&guard);
-    return behavior;
+    if (at == nullptr) return -1;
+    // Read without the engine's lock: one aligned 32-bit load cannot tear,
+    // and replaying the lock means calling the engine's own lock functions
+    // with whatever shape this build gives them. Trapped by the caller, so
+    // an object torn down mid-read costs a reading, not the process.
+    int32_t v = -1;
+    std::memcpy(&v, at + p.path.back(), sizeof(v));
+    return v;
 }
 
 }  // namespace
 
 MouseBehavior read_mouse_behavior() {
-    if (!g_probe.valid) return MouseBehavior::kUnknown;
+    if (!g_enabled.load()) return MouseBehavior::kUnknown;
     int behavior = -1;
-    const bool ok = stud::jni_bridge::call_trapping_abort_with_result(&read_behavior_locked,
-                                                                      behavior);
-    if (!ok) {
-        // One failed read is not worth a line every 8ms, and a probe that
-        // faults once will fault again: stop asking.
-        static bool said = false;
-        if (!said) {
-            said = true;
-            std::printf("stud: MouseBehavior probe trapped, disabled for this run\n");
-            std::fflush(stdout);
-        }
-        g_probe.valid = false;
+    if (!stud::jni_bridge::call_trapping_abort_with_result(&read_behavior, behavior)) {
+        g_enabled.store(false);
+        std::printf("stud: MouseBehavior: reading the decoded field trapped, disabled for this "
+                    "run\n");
+        std::fflush(stdout);
         return MouseBehavior::kUnknown;
     }
-    // Only the real enum's own values; anything else means the decode
-    // found the wrong field and must not drive the cursor.
+    // Only the real enum's own values; anything else is not this field.
     if (behavior < 0 || behavior > 2) return MouseBehavior::kUnknown;
     return static_cast<MouseBehavior>(behavior);
+}
+
+bool verify_mouse_behavior(MouseBehavior field, bool predicate_locks_center) {
+    if (!g_enabled.load() || field == MouseBehavior::kUnknown) return g_enabled.load();
+    const bool field_locks_center = field == MouseBehavior::kLockCenter;
+    if (field_locks_center != predicate_locks_center) {
+        g_enabled.store(false);
+        std::printf("stud: MouseBehavior: the decoded field says %s but the engine's own "
+                    "predicate says LockCenter=%d; the decode is wrong for this build and is "
+                    "off, the cursor follows the predicate\n",
+                    name_of(field), predicate_locks_center ? 1 : 0);
+        std::fflush(stdout);
+        return false;
+    }
+    if (!g_verified && field_locks_center) {
+        g_verified = true;
+        std::printf("stud: MouseBehavior: decoded field confirmed by the engine's predicate\n");
+        std::fflush(stdout);
+    }
+    return true;
 }
 
 }  // namespace stud::runtime

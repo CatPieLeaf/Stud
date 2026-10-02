@@ -75,6 +75,8 @@ Provides:       bundled(miniaudio)
 Provides:       bundled(miniz)
 Provides:       bundled(json)
 Provides:       bundled(libjnivm)
+Provides:       bundled(zydis)
+Provides:       bundled(zycore)
 
 %description
 Stud runs the real, unmodified Roblox app on your Linux desktop, in its own
