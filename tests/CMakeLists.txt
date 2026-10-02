@@ -5,6 +5,10 @@
 # Not wired back into the host-side test suite yet; revisit once the
 # new runtime's own bring-up is proven, not blocking it.
 
+add_executable(stud_socket_reader_test socket_reader_test.cpp)
+target_include_directories(stud_socket_reader_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/src)
+add_test(NAME socket_reader_test COMMAND stud_socket_reader_test)
+
 add_executable(stud_media_format_test media_format_test.cpp)
 target_link_libraries(stud_media_format_test PRIVATE stud_android_glue)
 add_test(NAME media_format_test COMMAND stud_media_format_test)

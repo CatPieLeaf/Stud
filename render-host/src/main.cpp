@@ -26,6 +26,7 @@
 // render_host_protocol.h's own doc comment for why.
 
 #include "flight_recorder.h"
+#include "socket_reader.h"
 #include "stud/session_log.h"
 #include "stud/android_glue.h"
 #include "stud/text_overlay.h"
@@ -5489,15 +5490,20 @@ void serve_shared_fd_channel(int conn_fd) {
 void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
     std::vector<unsigned char> in_scratch;
     std::vector<unsigned char> out_scratch;
-    for (;;) {
-        Header hdr{};
-        if (!read_all(conn_fd, &hdr, sizeof(hdr))) break;
-        if (hdr.call_id == stud::render_host::CallId::SharedMemoryFdChannel) {
-            serve_shared_fd_channel(conn_fd);
-            break;
-        }
+    // The first header is read on its own: it is where a connection turns
+    // into the shared-fd channel, whose bytes carry SCM_RIGHTS and must
+    // reach recvmsg() rather than a buffer (see socket_reader.h).
+    Header hdr{};
+    bool serving = read_all(conn_fd, &hdr, sizeof(hdr));
+    if (serving && hdr.call_id == stud::render_host::CallId::SharedMemoryFdChannel) {
+        serve_shared_fd_channel(conn_fd);
+        serving = false;
+    }
+    stud::render_host::SocketReader reader(conn_fd);
+    for (bool first = true; serving; first = false) {
+        if (!first && !reader.read(&hdr, sizeof(hdr))) break;
         in_scratch.resize(hdr.in_buffer_len);
-        if (hdr.in_buffer_len > 0 && !read_all(conn_fd, in_scratch.data(), hdr.in_buffer_len)) {
+        if (hdr.in_buffer_len > 0 && !reader.read(in_scratch.data(), hdr.in_buffer_len)) {
             break;
         }
         out_scratch.clear();
@@ -6094,6 +6100,9 @@ int main(int argc, char** argv) {
         // running inline so it also pumps the compositor, exactly as
         // before.
         serve_extra_connections(listen_fd, fns, real_window);
+        // The GL connection never carries the shared-fd channel, which only
+        // ever arrives on a socket of its own; see serve_connection_thread().
+        stud::render_host::SocketReader reader(conn_fd);
         for (;;) {
             if (stud::android_glue::window_close_requested()) {
                 // Not straight out of the door. Leaving a running
@@ -6140,25 +6149,27 @@ int main(int argc, char** argv) {
             pollfd cpfds[2] = {{conn_fd, POLLIN, 0}, {wl_fd, POLLIN, 0}};
             // Pipelined requests arrive in bulk, so drain what is already
             // buffered before going back to poll(): one poll per request was
-            // itself a large share of the per-frame cost. FIONREAD is an
-            // honest "is there already a whole request waiting", checked.
+            // itself a large share of the per-frame cost. What the reader
+            // already holds comes first: a whole request can be sitting there
+            // with the socket itself empty, and poll() would wait past it.
             serve_extra_connections(listen_fd, fns, real_window);
             int pending = 0;
             const bool have_buffered =
-                ::ioctl(conn_fd, FIONREAD, &pending) == 0 &&
-                static_cast<size_t>(pending) >= sizeof(Header);
+                reader.buffered() + (::ioctl(conn_fd, FIONREAD, &pending) == 0
+                                         ? static_cast<size_t>(pending) : 0) >=
+                sizeof(Header);
             if (!have_buffered) {
                 ::poll(cpfds, 2, wayland_poll_ms());
                 pump_display(real_window, (cpfds[1].revents & POLLIN) != 0);
                 if (!(cpfds[0].revents & POLLIN)) continue;
             }
             Header hdr{};
-            if (!read_all(conn_fd, &hdr, sizeof(hdr))) {
+            if (!reader.read(&hdr, sizeof(hdr))) {
                 std::printf("stud-render-host: client disconnected\n");
                 break;
             }
             g_in_scratch.resize(hdr.in_buffer_len);
-            if (hdr.in_buffer_len > 0 && !read_all(conn_fd, g_in_scratch.data(), hdr.in_buffer_len)) {
+            if (hdr.in_buffer_len > 0 && !reader.read(g_in_scratch.data(), hdr.in_buffer_len)) {
                 break;
             }
             g_out_scratch.clear();
