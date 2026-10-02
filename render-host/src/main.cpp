@@ -4498,8 +4498,13 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
                 static_cast<uint32_t>(a[4]), out, out_len);
         case CallId::VkGetBufferMemoryRequirements:
             return stud::render_host::vk_get_buffer_memory_requirements(a[1], out, out_len);
-        case CallId::VkBindBufferMemory:
-            return stud::render_host::vk_bind_buffer_memory(a[1], a[2], a[3]);
+        // Sent reply-free by the Vulkan client, so this is the only place
+        // a failed bind can be seen.
+        case CallId::VkBindBufferMemory: {
+            const uint64_t r = stud::render_host::vk_bind_buffer_memory(a[1], a[2], a[3]);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkCreateImageView:
             return stud::render_host::vk_create_image_view(in, out, out_len);
         case CallId::VkCreateShaderModule:

@@ -47,6 +47,7 @@
 #include <string>
 #include <string_view>
 #include <map>
+#include <unordered_map>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -321,11 +322,13 @@ VkResult simple_create(const uint64_t (&a)[8], H* outHandle) {
 // same usage flags -- so after the first of each, this answers from
 // memory.
 //
-// Keyed on the exact serialised create parameters, and COMPARED in full
-// rather than by a hash. A hash collision here would hand the engine
+// Keyed on the exact serialised create parameters, and COMPARED in full,
+// not by hash alone. A hash collision here would hand the engine
 // another object's alignment or size, which is memory corruption that
-// would surface far from its cause; the key is a few dozen bytes and the
-// comparison is cheaper than the syscall it avoids either way.
+// would surface far from its cause. A hash table is still right: it only
+// uses the hash to find candidates and compares every candidate's whole
+// key, while the tree it replaced compared strings at every level of
+// every lookup, on the engine's render thread.
 class MemoryRequirementsCache {
 public:
     // Called at create time, once the real handle is known.
@@ -377,8 +380,8 @@ public:
 
 private:
     std::mutex mutex_;
-    std::map<uint64_t, std::string> shape_of_;
-    std::map<std::string, VkMemoryRequirements> by_shape_;
+    std::unordered_map<uint64_t, std::string> shape_of_;
+    std::unordered_map<std::string, VkMemoryRequirements> by_shape_;
     uint64_t hits_ = 0;
     uint64_t misses_ = 0;
 };
@@ -442,8 +445,8 @@ struct EmulatedImage {
     uint32_t width = 0;
     uint32_t height = 0;
 };
-std::map<uint64_t, EmulatedImage>& emulated_images() {
-    static std::map<uint64_t, EmulatedImage> m;
+std::unordered_map<uint64_t, EmulatedImage>& emulated_images() {
+    static std::unordered_map<uint64_t, EmulatedImage> m;
     return m;
 }
 // Where each buffer's memory lives, so a staging buffer's bytes can be
@@ -457,14 +460,14 @@ struct BufferBinding {
     // fetch_pending_readbacks().
     uint64_t size = 0;
 };
-std::map<uint64_t, BufferBinding>& buffer_bindings() {
-    static std::map<uint64_t, BufferBinding> m;
+std::unordered_map<uint64_t, BufferBinding>& buffer_bindings() {
+    static std::unordered_map<uint64_t, BufferBinding> m;
     return m;
 }
 // Sizes as created, kept until the buffer is bound. Same lock as
 // buffer_bindings().
-std::map<uint64_t, uint64_t>& buffer_sizes() {
-    static std::map<uint64_t, uint64_t> m;
+std::unordered_map<uint64_t, uint64_t>& buffer_sizes() {
+    static std::unordered_map<uint64_t, uint64_t> m;
     return m;
 }
 // Whether a format Stud CAN decode actually needs decoding on this
@@ -2464,9 +2467,14 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindBufferMemory(VkDevice device, VkBuffer
                                                         VkDeviceMemory memory,
                                                         VkDeviceSize memoryOffset) {
     uint64_t a[8] = {to_u64(device), to_u64(buffer), to_u64(memory), memoryOffset};
-    uint64_t r = stud::render_client::connection().call(CallId::VkBindBufferMemory, a, nullptr, 0,
-                                                         nullptr, 0, nullptr);
-    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) {
+    // Reply-free, as vkQueueSubmit is. The engine binds every buffer it
+    // creates, on its own render thread, which was one blocking round
+    // trip each while an experience streams in. The bind keeps its place
+    // in the ordered stream, so everything that uses the buffer still
+    // reaches the host after it; its only failures are out-of-memory, and
+    // render-host names any of them (report_reply_free_failure).
+    stud::render_client::connection().call_void(CallId::VkBindBufferMemory, a);
+    {
         // Only needed to find a staging buffer's bytes when a copy out of
         // it has to be decoded; see stud_vkCmdCopyBufferToImage.
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
@@ -2475,7 +2483,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindBufferMemory(VkDevice device, VkBuffer
             to_u64(memory), memoryOffset,
             size_it == buffer_sizes().end() ? 0 : size_it->second};
     }
-    return static_cast<VkResult>(static_cast<int32_t>(r));
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImageView(VkDevice device,
