@@ -1,6 +1,5 @@
 #include "stud/native_flags_bridge.h"
 
-#include "stud/real_native_flag_names.h"
 #include "stud/trap_recovery.h"
 
 namespace stud::jni_bridge {
@@ -25,13 +24,12 @@ NativeFlagsBridgeResult run_native_flags_bridge(FakeJni::Jvm& jvm,
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
 
+    // Called in its place in the boot sequence, with no names. The engine
+    // only looks each name up and returns the values to the app's Java
+    // side, which Stud does not run, so nothing here reads the answer;
+    // see native_flags_bridge.h.
     jclass string_class = env.FindClass("java/lang/String");
-    jobjectArray flag_names_array =
-        env.NewObjectArray(kRealNativeFlagNamesCount, string_class, nullptr);
-    for (int i = 0; i < kRealNativeFlagNamesCount; ++i) {
-        jstring name_ref = env.NewStringUTF(kRealNativeFlagNames[i]);
-        jni_env->SetObjectArrayElement(flag_names_array, i, name_ref);
-    }
+    jobjectArray flag_names_array = env.NewObjectArray(0, string_class, nullptr);
     auto* fn = reinterpret_cast<StringArrayFn>(addr);
 
     result.called = true;
