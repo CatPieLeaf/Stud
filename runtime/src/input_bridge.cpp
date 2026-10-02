@@ -109,6 +109,9 @@ using GamepadSupportedMotionFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, ji
 // even though the engine logs handleTextBoxFocused_AndroidLayer_.
 using UpdateKeyboardSizeFn = void (*)(JNIEnv*, jclass, jboolean, jint, jint, jint, jint);
 using GetTextBoxInfoFn = jobject (*)(JNIEnv*, jclass);
+// FlagJniInterface.nativeGetFFlag(String name, boolean default), how the
+// app's own input handler reads the flags it branches on.
+using GetFFlagFn = jboolean (*)(JNIEnv*, jclass, jstring, jboolean);
 //
 // Live-tested and DISPROVEN, twice, do not re-try: completing the IME
 // handshake on focus, nativeGetTextBoxInfo() plus updateKeyboardSize(true,
@@ -130,6 +133,7 @@ struct InputFns {
     UpdateKeyboardSizeFn update_keyboard_size = nullptr;
     GetTextBoxInfoFn get_text_box_info = nullptr;
     IsMouseLockedFn is_mouse_locked = nullptr;
+    GetFFlagFn get_fflag = nullptr;
     MousePinchFn mouse_pinch = nullptr;
     GamepadConnectFn gamepad_connect = nullptr;
     GamepadDisconnectFn gamepad_disconnect = nullptr;
@@ -1763,6 +1767,41 @@ void dispatch_pointer_motion(const stud::android_glue::HostInputEvent& ev, const
     call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
 }
 
+// Whether the app, with a captured pointer, holds its position still and
+// passes only the deltas (FFlagAndroidMouseLockButtonFix on), or adds the
+// deltas into it (off). Read from the engine on the first captured move of
+// the session, which is after ClientSettings: the app reads the same flag
+// the same way, so whichever way a build sets it, Stud follows. A build
+// that no longer knows the flag has made one branch permanent; that is
+// taken to be the fix, the branch every build since its introduction
+// serves.
+bool app_holds_captured_position(const InputFns& fns, JNIEnv* jni_env) {
+    static int decided = -1;
+    if (decided >= 0) return decided != 0;
+    bool holds = true;
+    const char* why = "the engine does not know the flag; the fix is taken as permanent";
+    if (fns.get_fflag != nullptr) {
+        jstring name = jni_env->NewStringUTF("AndroidMouseLockButtonFix");
+        // Asked twice with opposite defaults: equal answers are the
+        // engine's own value, different ones are its default echoed back.
+        jboolean with_false = 0;
+        jboolean with_true = 1;
+        call_trapping_abort_with_result(fns.get_fflag, with_false, jni_env, nullptr, name,
+                                        static_cast<jboolean>(JNI_FALSE));
+        call_trapping_abort_with_result(fns.get_fflag, with_true, jni_env, nullptr, name,
+                                        static_cast<jboolean>(JNI_TRUE));
+        if (with_false == with_true) {
+            holds = with_false != 0;
+            why = holds ? "the engine's flag is on" : "the engine's flag is off";
+        }
+    }
+    decided = holds ? 1 : 0;
+    std::printf("stud: captured pointer: %s the position (FFlagAndroidMouseLockButtonFix: %s)\n",
+                holds ? "holding" : "integrating deltas into", why);
+    std::fflush(stdout);
+    return holds;
+}
+
 void dispatch_pointer_relative(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
                                JNIEnv* jni_env, float& last_x, float& last_y) {
     // Mouse look. `ev.x`/`ev.y` are the raw delta, not a position:
@@ -1803,8 +1842,9 @@ void dispatch_pointer_relative(const stud::android_glue::HostInputEvent& ev, con
     // them: it integrates the deltas into its position only when
     // that flag is off, and passes the position either way.
     //
-    // The flag is FFlagAndroidMouseLockButtonFix, and
-    // production serves it True, so the branch is NOT taken and
+    // The flag is FFlagAndroidMouseLockButtonFix, read from the
+    // engine rather than assumed (app_holds_captured_position).
+    // Production serves it True, so the branch is NOT taken and
     // the client passes its position unchanged with each delta.
     // Integrating instead is what left the orbit teleporting: the
     // engine holds its cursor still for the gesture, so the
@@ -1832,6 +1872,11 @@ void dispatch_pointer_relative(const stud::android_glue::HostInputEvent& ev, con
                     (std::fabs(ev.x) > 40.0f || std::fabs(ev.y) > 40.0f) ? "  <-- JUMP"
                                                                          : "");
         std::fflush(stdout);
+    }
+    // The app's other branch, for a build that serves the flag off.
+    if (!app_holds_captured_position(fns, jni_env)) {
+        last_x += ev.x;
+        last_y += ev.y;
     }
     call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, ev.x, ev.y);
 }
@@ -2414,6 +2459,8 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_nativeGetTextBoxInfo"));
     fns.is_mouse_locked = reinterpret_cast<IsMouseLockedFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeInputInterface_nativeGetMainWindowIsMouseLockedCenter"));
+    fns.get_fflag = reinterpret_cast<GetFFlagFn>(
+        lib.find_symbol("Java_com_roblox_client_flags_FlagJniInterface_nativeGetFFlag"));
     fns.mouse_pinch = reinterpret_cast<MousePinchFn>(
         lib.find_symbol("Java_com_roblox_engine_jni_NativeInputInterface_nativePassMousePinch"));
     fns.gamepad_connect = reinterpret_cast<GamepadConnectFn>(lib.find_symbol(
