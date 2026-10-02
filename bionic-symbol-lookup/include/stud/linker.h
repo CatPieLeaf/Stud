@@ -2,6 +2,9 @@
 
 #include <dlfcn.h>
 
+#include <cstdio>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,10 +36,28 @@ public:
     explicit LoadedLibrary(void* handle) : handle_(handle) {}
 
     void* find_symbol(std::string_view name) const {
-        return ::dlsym(handle_, std::string(name).c_str());
+        const std::string symbol(name);
+        void* addr = ::dlsym(handle_, symbol.c_str());
+        if (addr == nullptr) note_missing(symbol);
+        return addr;
     }
 
 private:
+    // An engine entry point this build does not export, named once, the
+    // first time anything looks for it. Every JNI export Stud calls is
+    // looked up through here, so a Roblox update that renames or drops one
+    // (a V2 becoming V3) shows up by name on its first launch instead of as
+    // a feature that silently stopped working.
+    static void note_missing(const std::string& symbol) {
+        if (symbol.rfind("Java_", 0) != 0 && symbol.rfind("JNI_", 0) != 0) return;
+        static std::mutex mutex;
+        static std::set<std::string> reported;
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!reported.insert(symbol).second) return;
+        std::printf("stud: this Roblox build does not export %s\n", symbol.c_str());
+        std::fflush(stdout);
+    }
+
     void* handle_;
 };
 
