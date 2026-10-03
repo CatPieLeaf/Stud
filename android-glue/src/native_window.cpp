@@ -3317,7 +3317,7 @@ void native_window_content_presented() {
 }
 
 bool native_window_can_keep_frame() {
-    if (display_backend() == DisplayBackend::X11) return false;
+    if (display_backend() == DisplayBackend::X11) return true;
     ANativeWindow* window = g_content_window.load();
     return window != nullptr && window->content_surface != nullptr &&
            wayland_state().shm != nullptr;
@@ -3339,6 +3339,7 @@ bool native_window_keep_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t 
     if (!native_window_can_keep_frame() || xrgb8888 == nullptr || width == 0 || height == 0) {
         return false;
     }
+    if (display_backend() == DisplayBackend::X11) return x11::keep_frame(xrgb8888, width, height);
     ANativeWindow* window = g_content_window.load();
     // Not before the window is mapped: the first frame does that, with
     // the background (see native_window_content_presented()).

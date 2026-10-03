@@ -415,7 +415,8 @@ bool native_window_can_keep_frame();
 
 // Shows a copy of the driver's last frame on the window surface, beneath
 // the content surface, so native_window_detach_content() reveals that
-// frame instead of black. XRGB8888, tightly packed. Wayland only.
+// frame instead of black. XRGB8888, tightly packed. On X11 the frame is
+// the main window's background, behind the driver's child window.
 bool native_window_keep_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height);
 
 // Maps the X11 content window again after native_window_detach_content().

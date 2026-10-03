@@ -1017,23 +1017,23 @@ std::atomic<bool> g_restore_background_set{false};
 
 bool wants_restore_frame() { return g_want_restore_frame.exchange(false); }
 
-void set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height) {
+bool set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height) {
     Xlib& x = xlib();
     const XRenderFns* r = xrender();
     const int32_t win_w = g_width.load();
     const int32_t win_h = g_height.load();
     if (g_display == nullptr || g_window == 0 || r == nullptr || xrgb8888 == nullptr ||
         width == 0 || height == 0 || win_w <= 0 || win_h <= 0) {
-        return;
+        return false;
     }
     XWindowAttributes main{};
-    if (x.GetWindowAttributes(g_display, g_window, &main) == 0 || main.depth != 24) return;
+    if (x.GetWindowAttributes(g_display, g_window, &main) == 0 || main.depth != 24) return false;
     const void* format = r->FindVisualFormat(g_display, main.visual);
-    if (format == nullptr) return;
+    if (format == nullptr) return false;
     XImage* image = x.CreateImage(g_display, main.visual, 24, ZPixmap, 0,
                                   const_cast<char*>(reinterpret_cast<const char*>(xrgb8888)),
                                   width, height, 32, 0);
-    if (image == nullptr) return;
+    if (image == nullptr) return false;
     const Pixmap frame = x.CreatePixmap(g_display, g_window, width, height, 24);
     GC gc = x.CreateGC(g_display, frame, 0, nullptr);
     x.PutImage(g_display, frame, gc, image, 0, 0, 0, 0, width, height);
@@ -1061,6 +1061,20 @@ void set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height)
     x.FreePixmap(g_display, background);
     g_restore_background_set.store(true);
     x.Sync(g_display, False);
+    return true;
+}
+
+// Between two swapchains -- a game opening, the engine rebuilding its
+// device -- the driver's window is hidden (native_window_detach_content)
+// and the main window behind it showed its black background until the
+// next swapchain presented. The last frame as that background instead,
+// the same way a restore shows one, and the driver's window back with
+// the next swapchain's first frame (frame_presented()), not before it:
+// shown earlier, it is black itself until that frame.
+bool keep_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height) {
+    if (!set_restore_frame(xrgb8888, width, height)) return false;
+    g_show_child_on_present.store(true);
+    return true;
 }
 
 // A frame has been presented: the child has something to show, so a
@@ -1106,12 +1120,16 @@ unsigned long content_window() {
             x.Flush(g_display);
             return g_window;
         }
-        // The same pixel handling as the main window; see create_window().
+        // The same pixel handling as the main window (see create_window()),
+        // except for the background: none, so the server never paints
+        // black into it of its own accord. Where nothing has been
+        // presented yet it shows what is behind it -- the main window,
+        // and the frame kept there (keep_frame()).
         if (x.ChangeWindowAttributes != nullptr) {
             XSetWindowAttributes attrs{};
             attrs.bit_gravity = NorthWestGravity;
-            attrs.background_pixel = BlackPixel(g_display, screen);
-            x.ChangeWindowAttributes(g_display, child, CWBitGravity | CWBackPixel, &attrs);
+            attrs.background_pixmap = None;
+            x.ChangeWindowAttributes(g_display, child, CWBitGravity | CWBackPixmap, &attrs);
         }
         g_content_window = child;
         std::printf("stud: android-glue: the Vulkan driver presents to a child window of its "
@@ -1137,10 +1155,11 @@ void set_content_mapped(bool mapped) {
         }
         {
             // Sized now, so a swapchain built for it matches, but shown on
-            // its first frame; see g_show_child_on_present.
+            // its first frame; see g_show_child_on_present. Already set
+            // after a minimise or with a kept frame (keep_frame()).
             std::lock_guard<std::mutex> lock(g_stretch_mutex);
-            if (g_stretch.active) {
-                g_show_child_on_present.store(true);
+            if (g_stretch.active) g_show_child_on_present.store(true);
+            if (g_show_child_on_present.load()) {
                 x.Sync(g_display, False);
                 return;
             }

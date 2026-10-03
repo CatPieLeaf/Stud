@@ -45,7 +45,10 @@ void frame_presented();
 // The minimised window wants a frame for its restore; consumed when read.
 bool wants_restore_frame();
 // That frame, 4 bytes a pixel in XRGB8888 order, made the window's background.
-void set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height);
+bool set_restore_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height);
+// The engine's last frame, shown in place of the driver's window while the
+// next swapchain comes up; see keep_frame() in x11_backend.cpp.
+bool keep_frame(const uint8_t* xrgb8888, uint32_t width, uint32_t height);
 
 // Engages the input method (XIM) while a TextBox has focus, at the caret:
 // x and y are the top of the caret in window pixels, height the line's.
