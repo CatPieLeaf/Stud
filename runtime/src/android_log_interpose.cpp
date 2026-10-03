@@ -21,6 +21,7 @@
 #include <dlfcn.h>
 #include <cstring>
 
+#include "flag_cache_guard.h"
 #include "stud/game_instance.h"
 
 namespace {
@@ -42,10 +43,16 @@ const char* priority_name(int prio) {
     }
 }
 
+// Every engine line, to everything in Stud that reads them.
+void note_line(const char* text, size_t length) {
+    stud::jni_bridge::note_engine_log_line(text, length);
+    stud::flag_cache_guard::note_engine_log_line(text, length);
+}
+
 }  // namespace
 
 extern "C" int __android_log_write(int prio, const char* tag, const char* text) {
-    if (text != nullptr) stud::jni_bridge::note_engine_log_line(text, std::strlen(text));
+    if (text != nullptr) note_line(text, std::strlen(text));
     std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)",
                 text ? text : "(null)");
     std::fflush(stdout);
@@ -55,7 +62,7 @@ extern "C" int __android_log_write(int prio, const char* tag, const char* text) 
 }
 
 extern "C" int __android_log_buf_write(int buf_id, int prio, const char* tag, const char* text) {
-    if (text != nullptr) stud::jni_bridge::note_engine_log_line(text, std::strlen(text));
+    if (text != nullptr) note_line(text, std::strlen(text));
     std::printf("[roblox buf=%d %s/%s]: %s\n", buf_id, priority_name(prio),
                 tag ? tag : "(null)", text ? text : "(null)");
     std::fflush(stdout);
@@ -70,7 +77,7 @@ extern "C" int __android_log_vprint(int prio, const char* tag, const char* fmt, 
     va_copy(ap_copy, ap);
     std::vsnprintf(buf, sizeof(buf), fmt ? fmt : "", ap_copy);
     va_end(ap_copy);
-    stud::jni_bridge::note_engine_log_line(buf, std::strlen(buf));
+    note_line(buf, std::strlen(buf));
     std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*, va_list);
@@ -91,7 +98,7 @@ extern "C" int __android_log_print(int prio, const char* tag, const char* fmt, .
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt ? fmt : "", ap);
     va_end(ap);
-    stud::jni_bridge::note_engine_log_line(buf, std::strlen(buf));
+    note_line(buf, std::strlen(buf));
     std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*, va_list);

@@ -56,6 +56,7 @@
 #include "stud/album_bridge.h"
 #include "fmod_audio_output.h"
 #include "stud/flag_overrides.h"
+#include "flag_cache_guard.h"
 #include "stud/android_framework.h"
 #include "stud/protocol_platforms.h"
 #include "stud/app_java_classes.h"
@@ -1605,6 +1606,8 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories(files_dir, ec);
         if (!ec) native_settings_config.files_directory = files_dir;
         std::filesystem::create_directories(cache_dir, ec);
+        // Before the engine is told where its cache is; see flag_cache_guard.h.
+        stud::flag_cache_guard::remove_tombstones(cache_dir);
         if (!ec) {
             native_settings_config.cache_directory = cache_dir;
             native_settings_config.base_internal_directory = files_dir;
