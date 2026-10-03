@@ -572,17 +572,11 @@ void SettingsWindow::showIdleStatus() {
 }
 
 void SettingsWindow::onRenderPathChanged(int index) {
-    const bool can_overlay = index == kRenderPathVulkan || index == kRenderPathDesktopGL;
+    const bool can_overlay = index != kRenderPathSoftware;
     mangohudCheck_->setEnabled(can_overlay);
-    if (can_overlay) {
-        mangohudCheck_->setToolTip(
-            "Shows MangoHud's performance overlay over Stud's own window.");
-    } else {
-        mangohudCheck_->setToolTip(
-            "Not available on this render path: it presents through ANGLE's own\n"
-            "Vulkan, which MangoHud cannot overlay without crashing on a game join.\n"
-            "Use the Vulkan or OpenGL render path for the overlay.");
-    }
+    mangohudCheck_->setToolTip(can_overlay
+                                   ? "Shows MangoHud's performance overlay over Stud's own window."
+                                   : "Not available on the software render path.");
     // The signal is blocked so restoring the box does not overwrite what
     // the user actually asked for, switching away and back keeps it.
     const QSignalBlocker block(mangohudCheck_);

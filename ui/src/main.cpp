@@ -34,6 +34,9 @@
 #include "stud/bionic_runtime.h"
 #include "stud/ipc.h"
 #include "stud/settings.h"
+#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
+#include "stud/dev_backend_config.h"
+#endif
 
 #include <QApplication>
 #include <QGuiApplication>
@@ -314,38 +317,27 @@ bool another_instance_is_running() {
 // render-host, but which API that process presents with depends on the
 // render path, and MangoHud has a separate hook for each.
 //
-// * Vulkan path: render-host calls the real driver itself, so MangoHud's
-//   Vulkan layer sits exactly where it belongs. MANGOHUD=1 enables it and
-//   nothing else is needed.
+// * The Vulkan path, and ANGLE on Vulkan (the GL path's normal backend):
+//   both present through Vulkan, and on Wayland onto Stud's own present
+//   layer (render-host/src/owned_swapchain.h), which MangoHud's implicit
+//   layer sits above. MANGOHUD=1 enables it and nothing else is needed.
 //
-// * Every other path renders through Stud's own ANGLE build. There the
-//   Vulkan layer is the wrong hook and an actively harmful one: ANGLE's
-//   use of Vulkan is an implementation detail, and ANGLE recreates its
-//   swapchain whenever the engine tears down and rebuilds its EGL window
-//   surface, which it does on joining a game. MangoHud has a
-//   long-standing crash on swapchain recreation
-//   (flightlessmango/MangoHud#1259, #1774), and that is the live-reported
+//   ANGLE used to be the exception. It recreates its swapchain whenever
+//   the engine rebuilds its EGL window surface, which it does on joining
+//   a game, and MangoHud has a long-standing crash on swapchain
+//   recreation (flightlessmango/MangoHud#1259, #1774), live-reported as
 //   "Stud crashed with MangoHud on the ANGLE path when joining a game".
-//   The layer is therefore switched off BY NAME through the Vulkan
-//   loader's own VK_LOADER_LAYERS_DISABLE, which also covers a user who
-//   has MANGOHUD=1 in their own environment and never asked Stud for it.
+//   The layer was switched off there. It is on again now that the
+//   swapchain under it is Stud's; a crash on a game join with the overlay
+//   on would mean MangoHud's own recreation bug is still reachable.
 //
-//   What replaces it is MangoHud's OpenGL hook, which is what the
-//   `mangohud` wrapper script itself sets up: MANGOHUD=1 plus its shim on
-//   LD_PRELOAD. The shim is needed rather than plain symbol interposition
-//   because render-host resolves every entry point with dlsym() against
-//   ANGLE's own handle, which ordinary LD_PRELOAD interposition never
-//   sees; the shim hooks dlopen/dlsym themselves.
-//
-//   Measured, on this machine, so neither half is assumed: with the shim
-//   preloaded the ANGLE desktop-GL backend really does load
-//   libMangoHud_opengl.so and MangoHud logs real per-frame FPS for it
-//   (that path presents through the system EGL, which the shim can hook).
-//   The ANGLE-to-Vulkan and SwiftShader backends do not; they present
-//   through their own vkQueuePresentKHR and never touch the system EGL,
-//   so on those two there is no overlay to offer once the crashing layer
-//   is off. That is the honest trade: the Vulkan render path and the
-//   OpenGL one show the HUD, the two in between do not crash.
+// * ANGLE on desktop GL, a developer-only backend, presents through the
+//   system EGL, which only MangoHud's OpenGL hook sees: MANGOHUD=1 plus
+//   its shim on LD_PRELOAD, which is what the `mangohud` wrapper script
+//   itself sets up. The shim is needed rather than plain symbol
+//   interposition because render-host resolves every entry point with
+//   dlsym() against ANGLE's own handle, which ordinary LD_PRELOAD
+//   interposition never sees; the shim hooks dlopen/dlsym themselves.
 // What VK_LOADER_LAYERS_DISABLE said before Stud touched it, so the value
 // this process needs for itself is never mistaken for the user's own.
 QString g_host_layers_disable;
@@ -485,6 +477,20 @@ void apply_present_layer_environment(QProcessEnvironment& env, const QString& re
     append(QStringLiteral("VK_INSTANCE_LAYERS"), QStringLiteral("VK_LAYER_STUD_present"));
 }
 
+// Whether the GL render path runs ANGLE on the host's desktop GL rather
+// than on Vulkan. Only the developer render toggle can choose that.
+bool angle_on_desktop_gl() {
+#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
+    try {
+        const auto backend =
+            stud::render::load_dev_render_backend_config(stud::config::default_config_path());
+        return backend && backend->mode == stud::render::DevRenderBackendMode::kDesktopGL;
+    } catch (const std::runtime_error&) {
+    }
+#endif
+    return false;
+}
+
 void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vulkan_render_path) {
     // Undo what keep_mangohud_out_of_this_process() did to our own
     // environment before deciding anything: that entry was for Stud's UI,
@@ -517,23 +523,13 @@ void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vul
                                           ? QStringLiteral("read_cfg,picmip=-17")
                                           : existing + QStringLiteral(",picmip=-17"));
     }
-    if (enabled && vulkan_render_path) {
-        env.insert("MANGOHUD", "1");
-        return;
-    }
-    if (!enabled) {
-        // Nothing to do unless the environment already carries it, in
-        // which case the guard below still matters on the ANGLE paths.
-        if (!env.contains("MANGOHUD") || vulkan_render_path) return;
-    } else {
-        env.insert("MANGOHUD", "1");
-    }
-    // An ANGLE path, with MangoHud on one way or the other.
-    const QString existing = env.value("VK_LOADER_LAYERS_DISABLE");
-    const QString disabled = QStringLiteral("VK_LAYER_MANGOHUD_overlay_*");
-    env.insert("VK_LOADER_LAYERS_DISABLE",
-                existing.isEmpty() ? disabled : existing + "," + disabled);
     if (!enabled) return;
+    env.insert("MANGOHUD", "1");
+    // The Vulkan path and ANGLE on Vulkan both present through Vulkan, onto
+    // Stud's own present layer, which MangoHud's layer sits above; that is
+    // all either needs. ANGLE on desktop GL, a developer-only backend,
+    // presents through GL instead, which only MangoHud's GL shim sees.
+    if (vulkan_render_path || !angle_on_desktop_gl()) return;
     // $LIB is expanded by the dynamic linker itself (lib64 or lib), which
     // is exactly how MangoHud's own wrapper spells this.
     const QString shim = QStringLiteral("/usr/$LIB/mangohud/libMangoHud_shim.so");
