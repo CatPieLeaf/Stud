@@ -114,15 +114,29 @@ Every one of those is under a permissive licence and ships with its own
 licence text and copyright notice, installed to
 `/usr/share/licenses/stud/` and kept beside the libraries themselves.
 
-Three more are compiled into Stud's own binaries, so their notices are
+Five more are compiled into Stud's own binaries, so their notices are
 installed to `/usr/share/licenses/stud/` too:
 
  - volk, the Vulkan entry-point loader (MIT)
  - xxHash, the texture cache key (BSD-2-Clause)
  - miniaudio, the audio device (Unlicense or MIT-0)
+ - Zydis and its Zycore library, the runtime's x86-64 decoder (MIT)
+
+Stud's present layer (`libstud_present_layer.so`) carries code generated
+from wayland-protocols' `linux-dmabuf-v1` and `linux-drm-syncobj-v1`
+(MIT) and links libdrm (MIT), which the rpm, deb and Arch packages take
+from the system and the AppImage bundles. On X11 it
+opens libxcb's DRI3 and Present libraries by name at runtime (MIT); they
+are not redistributed.
 
 libdecor's header is vendored for types only (MIT); the library itself is
 opened by name at runtime and is not redistributed.
+
+The AppImage alone also carries uruntime, its runtime, and sharun, the
+launcher every program in it starts through, both by VHSgunzo (MIT); the
+AppRun scripts of the Anylinux AppImages project's quick-sharun, which
+builds it (MIT); and Mesa's drivers, from that project's debloated Mesa
+(MIT).
 
 The three upscale shaders are built from vendored references: RAVU-Zoom
 from mpv-prescalers (LGPL-3.0-or-later), SGSR (BSD-3-Clause) and FSR1's

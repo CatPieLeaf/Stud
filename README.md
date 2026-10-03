@@ -81,7 +81,7 @@
  - Three separate processes in the shape of a browser's, the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
  - Vulkan by default, with OpenGL through ANGLE, OpenGL, and software-rendering in Settings
  - **Upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size. Two to pick from: **RAVU-Zoom AR**, which looks each neighbourhood up in a table trained offline, and **SGSR1 ED**, the lightweight one, which reconstructs edges from the pixels alone and is the one to pick on a laptop or an integrated GPU
- - Smooth zoom in/out just like Windows client
+ - Smooth zoom in/out, just like the Windows client
  - **Sound and voice chat with nothing to install**: the audio device is built into Stud rather than loaded from a library the machine might not have. It speaks PulseAudio (which is how it reaches PipeWire), ALSA, JACK and OSS
  - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring, the same safe-storage arrangement Chromium uses
  - `roblox://` links from a browser open straight into the experience
@@ -89,10 +89,11 @@
  - Copy Link in an experience puts the real invite link on your clipboard
  - Discord Rich Presence, with a join button
  - Tells you which country the game server is in when you join
- - MangoHud overlay toggle, HiDPI and UI scaling, GPU picker, system tray
+ - **Stud presents its own frames**, on Wayland and X11 alike: a Vulkan layer of its own takes each finished frame to the compositor or X server with no driver swapchain in between, so a late compositor costs a dropped frame, never a freeze. MangoHud sits above it and sees an ordinary swapchain
+ - MangoHud overlay toggle, on Vulkan and ANGLE alike, HiDPI and UI scaling, GPU picker, system tray
  - Caps the frame rate while nothing can see the window: minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
- - Ships as an **rpm**, a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, and a **Flatpak**, plus an [AUR](https://aur.archlinux.org/packages/stud-bin) package and a [cpak](https://github.com/Containerpak/cpak)
+ - Ships as an **rpm** (also in the [Terra](https://terra.fyralabs.com) repository), a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, a **Flatpak** and a [cpak](https://github.com/Containerpak/cpak)
 
 <br>
 
@@ -129,7 +130,7 @@ Three processes, talking over a Unix socket:
 |---|---|---|
 | `stud-ui` | glibc, Qt6 | settings, deep links, starting the other two, then gets out of the way |
 | `stud-runtime-bionic` | real bionic, inside `bwrap` | the engine, the JNI bridge, the Android framework stand-in |
-| `stud-render-host` | glibc | Wayland or X11, ANGLE, the real Vulkan surface, audio |
+| `stud-render-host` | glibc | Wayland or X11, ANGLE, the real Vulkan surface and Stud's own swapchain, audio |
 
 Every GL and Vulkan call the engine makes is forwarded from the bionic process to the render host over that socket. It is the only place the two worlds meet, and it is Stud's own code on both sides.
 
@@ -144,13 +145,14 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 
 ### 1 - Install the system packages
 
-Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, EGL/GLESv2 headers, the Vulkan loader and headers, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
+Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, libdrm, X11 (libXi, and libxcb's DRI3 and Present headers), EGL/GLESv2 headers, the Vulkan loader and headers, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler. FFmpeg's headers are optional: without them the build goes ahead and in-game video has no decoders. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
 
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-devel \
   qtkeychain-qt6-devel wayland-devel wayland-protocols-devel libxkbcommon-devel \
-  libglvnd-devel vulkan-loader-devel vulkan-headers freetype-devel \
-  openssl-devel bubblewrap wl-clipboard
+  libdrm-devel libXi-devel libglvnd-devel vulkan-loader-devel vulkan-headers \
+  freetype-devel openssl-devel 'pkgconfig(libavcodec)' 'pkgconfig(libavutil)' \
+  'pkgconfig(libswscale)' bubblewrap wl-clipboard
 ```
 
 <details>
@@ -159,8 +161,9 @@ sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-deve
 ```bash
 sudo apt install cmake ninja-build build-essential qt6-base-dev qt6-webengine-dev \
   qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
-  libxkbcommon-dev libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev \
-  libssl-dev bubblewrap wl-clipboard
+  libdrm-dev libxkbcommon-dev libxi-dev libxcb-dri3-dev libxcb-present-dev \
+  libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev libssl-dev \
+  libavcodec-dev libavutil-dev libswscale-dev bubblewrap wl-clipboard
 ```
 </details>
 
@@ -250,6 +253,20 @@ Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/rele
 
 ## 🔵 R P M  ( F E D O R A )
 
+Stud is in [Terra](https://terra.fyralabs.com), so it installs and updates like any other package. Add the Terra repository once:
+
+```bash
+sudo dnf install --nogpgcheck --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' terra-release
+```
+
+Then install Stud:
+
+```bash
+sudo dnf install stud
+```
+
+Or install the rpm from a release by hand:
+
 ```bash
 sudo dnf install ./stud-*.x86_64.rpm
 ```
@@ -273,17 +290,9 @@ them.
 sudo pacman -U stud-*-x86_64.pkg.tar.zst
 ```
 
-Or from the [AUR](https://aur.archlinux.org/packages/stud-bin): `paru -S stud-bin`,
-which installs the same prebuilt package:
-
-```bash
-git clone https://aur.archlinux.org/stud-bin.git && cd stud-bin && makepkg -si
-```
-
-To build from source instead, use the PKGBUILD in this repository at
-`packaging/aur/` and expect around an hour, almost all of it ANGLE. It is not
-the AUR package because it downloads ANGLE's own dependencies while it builds,
-which a clean chroot cannot do. `packaging/aur/README.md` explains.
+Stud is not on the AUR yet. To build from source instead, use the PKGBUILD in
+this repository at `packaging/aur/` and expect around an hour, almost all of it
+ANGLE.
 
 ## 🔶 F L A T P A K
 
@@ -299,7 +308,7 @@ each release and carries everything it needs. The manifest it is built from is i
 ## ⬛ C P A K
 
 ```bash
-cpak install github.com/CatPieLeaf/Stud
+cpak install github.com/catpieleaf/stud
 ```
 
 [cpak](https://github.com/Containerpak/cpak) installs from an OCI image and runs it
@@ -358,8 +367,12 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
  - [xxHash](https://github.com/Cyan4973/xxHash): the texture cache's 128-bit key, vendored at `third_party/xxhash` (BSD-2-Clause). It replaced two hand-rolled FNV-1a streams and runs on every cache hit, where it is most of what a hit costs
  - [libdecor](https://gitlab.freedesktop.org/libdecor/libdecor): draws the window's titlebar on a compositor that implements no server-side decorations, its header vendored at `third_party/libdecor` (MIT). Opened by name at runtime, so it is optional: without it such a compositor leaves the window undecorated, exactly as before
  - [miniaudio](https://github.com/mackron/miniaudio): the render host's audio device, vendored at `third_party/miniaudio` (public domain or MIT-0). It speaks ALSA, PulseAudio, JACK and OSS itself and is compiled in, so audio needs no library installed and no package declares one
+ - [Zydis](https://github.com/zyantific/zydis), with its [Zycore](https://github.com/zyantific/zycore-c) library: the x86-64 decoder the runtime reads the engine's own code with, to find what it needs by what the code does rather than by byte patterns that change every build (MIT). Fetched at build time and compiled into `stud-runtime-bionic`
+ - [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) and [libdrm](https://gitlab.freedesktop.org/mesa/drm): Stud's present layer speaks `linux-dmabuf-v1` and `linux-drm-syncobj-v1`, generated from the system's own protocol files, and creates its sync objects through libdrm (MIT). On X11 it uses libxcb's DRI3 and Present, opened at runtime and not redistributed (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
+ - [Anylinux AppImages](https://github.com/pkgforge-dev/Anylinux-AppImages): the AppImage is built with its quick-sharun, whose AppRun scripts ship inside it, and with its debloated Mesa, built without LLVM, which the AppImage's Mesa drivers come from (MIT)
+ - [uruntime](https://github.com/VHSgunzo/uruntime) and [sharun](https://github.com/VHSgunzo/sharun), by VHSgunzo: the AppImage's runtime, which mounts the image, and the launcher every program inside it starts through (MIT)
  - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The logo is an image; the font itself is not shipped with Stud
 
 Every binary Stud redistributes carries its own licence and copyright notice. `tools/setup.sh` fetches them, and a package installs them to `/usr/share/licenses/stud/` and beside the libraries themselves.

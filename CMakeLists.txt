@@ -431,6 +431,14 @@ set(STUD_RUNTIME_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/runtime-prefix/src/runti
 if(NOT STUD_BUILD_QT_ONLY)
 install(PROGRAMS "${STUD_RUNTIME_BUILD_DIR}/stud-runtime-bionic"
         DESTINATION "${STUD_LIBEXEC_DIR}" OPTIONAL)
+# Zydis and Zycore are compiled into it, fetched by that sub-build; their
+# notices travel with it for the same reason volk's and xxHash's do.
+install(FILES "${STUD_RUNTIME_BUILD_DIR}/_deps/zydis-src/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/zydis"
+        RENAME "LICENSE-Zydis.txt" OPTIONAL)
+install(FILES "${STUD_RUNTIME_BUILD_DIR}/_deps/zydis-src/dependencies/zycore/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/zydis"
+        RENAME "LICENSE-Zycore.txt" OPTIONAL)
 install(DIRECTORY "${STUD_RUNTIME_BUILD_DIR}/lib64/"
         DESTINATION "${STUD_LIBEXEC_DIR}/lib64"
         FILE_PERMISSIONS

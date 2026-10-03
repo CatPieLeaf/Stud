@@ -67,7 +67,9 @@ Files: third_party/wayland-protocols/*
 Copyright: 2023 the wayland-protocols contributors
 License: MIT
 Comment:
- One staging protocol, used when the host's own copy is too old.
+ One staging protocol, used when the host's own copy is too old. The
+ present layer's linux-dmabuf-v1 and linux-drm-syncobj-v1 bindings are
+ generated from the host's copy at build time, under the same licence.
 
 Files: third_party/angle/*
 Copyright: 2018 The ANGLE Project Authors
