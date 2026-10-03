@@ -568,18 +568,22 @@ private:
 // call would have silently failed the same "class is null"/"method ID
 // null" way this whole session's sweep keeps finding and fixing.
 //
-// Functional (not just signature-matching) backing: an in-memory,
-// per-name-singleton key/value store, matching real Android's own
-// per-file-singleton `getSharedPreferences(name, mode)` semantics (the
-// same name always returns the same live instance). String-keyed,
-// String-valued only, the only real, evidenced value type (no
-// putBoolean/putInt/getBoolean/getInt method-name strings were found in
-// the same scan); grown further only if real evidence shows those are
-// actually needed. Deliberately NOT persisted to disk yet (process
-// lifetime only): a real, honest, smaller first step; real disk
-// persistence (matching a real device's `SharedPreferences.xml` file
-// backing) is a natural, low-risk follow-up once live evidence shows
-// this path is actually exercised.
+// Functional (not just signature-matching) backing: a per-name-singleton
+// key/value store, matching real Android's own per-file-singleton
+// `getSharedPreferences(name, mode)` semantics (the same name always
+// returns the same live instance). String-keyed, String-valued only, the
+// only real, evidenced value type (no putBoolean/putInt/getBoolean/getInt
+// method-name strings were found in the same scan); grown further only if
+// real evidence shows those are actually needed.
+//
+// PERSISTED, like a device's own shared_prefs/<name>.xml: loaded when a
+// name is first opened, written back on apply()/commit(). It used to live
+// for the process only, and that broke the engine's flag cache. The
+// engine signs flag_cache.dat and keeps its FlagCache state here; with
+// that state gone at every launch, the next start read the cache, logged
+// "[FlagCache] Security failure.", skipped its blocking CDN fetch and
+// came up on default flags -- broken shadows and text, every graphics
+// feature the server flags enable missing -- until the cache was cleared.
 class SharedPreferencesEditorJava;
 
 class SharedPreferencesJava : public FakeJni::JObject {
@@ -591,11 +595,13 @@ public:
 
     FakeJni::JBoolean contains(std::shared_ptr<FakeJni::JString> key) {
         if (!key) return false;
+        std::lock_guard<std::mutex> lock(mutex_);
         return values_.count(key->asStdString()) != 0;
     }
     std::shared_ptr<FakeJni::JString> getString(std::shared_ptr<FakeJni::JString> key,
                                                  std::shared_ptr<FakeJni::JString> defValue) {
         if (key) {
+            std::lock_guard<std::mutex> lock(mutex_);
             auto it = values_.find(key->asStdString());
             if (it != values_.end()) {
                 return std::make_shared<FakeJni::JString>(it->second);
@@ -605,11 +611,22 @@ public:
     }
     std::shared_ptr<SharedPreferencesEditorJava> edit();
 
-    void put(const std::string& key, std::string value) { values_[key] = std::move(value); }
-    void remove(const std::string& key) { values_.erase(key); }
+    void put(const std::string& key, std::string value) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        values_[key] = std::move(value);
+    }
+    void remove(const std::string& key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        values_.erase(key);
+    }
+    // Reads this name's file, if there is one. Called once, by get_or_create().
+    void load();
+    // Writes this name's file, whole, replacing the last one atomically.
+    void save();
 
 private:
     std::string name_;
+    std::mutex mutex_;
     std::unordered_map<std::string, std::string> values_;
 };
 
@@ -632,8 +649,13 @@ public:
         }
         return std::static_pointer_cast<SharedPreferencesEditorJava>(shared_from_this());
     }
-    void apply() {}
-    FakeJni::JBoolean commit() { return true; }
+    void apply() {
+        if (prefs_) prefs_->save();
+    }
+    FakeJni::JBoolean commit() {
+        if (prefs_) prefs_->save();
+        return true;
+    }
 
 private:
     std::shared_ptr<SharedPreferencesJava> prefs_;

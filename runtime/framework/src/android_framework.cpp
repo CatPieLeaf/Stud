@@ -4,6 +4,7 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <cctype>
 
@@ -13,6 +14,9 @@
 // the C++ type, so the complete type is needed here (the header can only
 // forward-declare it, app_java_classes.h includes that header).
 #include "stud/app_java_classes.h"
+#include "stud/stud_paths.h"
+
+#include <nlohmann/json.hpp>
 
 #include <jnivm/class.h>
 #include <jnivm/env.h>
@@ -782,13 +786,74 @@ std::shared_ptr<DisplayMetricsJava> ResourcesJava::getDisplayMetrics() {
     return metrics;
 }
 
+namespace {
+// Where a preferences name lives: <data dir>/shared_prefs/<name>.json, the
+// counterpart of a device's /data/data/<package>/shared_prefs/<name>.xml.
+// Data, not cache, so a cache clean does not lose it, and outside appData,
+// which an APK change clears.
+std::string shared_prefs_path(const std::string& name) {
+    std::string safe = name.empty() ? std::string("default") : name;
+    for (char& c : safe) {
+        if (c == '/' || c == '\\') c = '_';
+    }
+    return stud::paths::data_dir() + "/shared_prefs/" + safe + ".json";
+}
+}  // namespace
+
 std::shared_ptr<SharedPreferencesJava> SharedPreferencesJava::get_or_create(const std::string& name) {
+    static std::mutex mutex;
     static std::unordered_map<std::string, std::shared_ptr<SharedPreferencesJava>> instances;
+    std::lock_guard<std::mutex> lock(mutex);
     auto it = instances.find(name);
     if (it != instances.end()) return it->second;
     auto created = std::make_shared<SharedPreferencesJava>(name);
+    created->load();
     instances.emplace(name, created);
     return created;
+}
+
+void SharedPreferencesJava::load() {
+    std::ifstream in(shared_prefs_path(name_));
+    if (!in.is_open()) return;
+    nlohmann::json doc;
+    try {
+        in >> doc;
+    } catch (const nlohmann::json::parse_error& e) {
+        std::printf("stud: SharedPreferences '%s' could not be read back (%s); starting it empty\n",
+                    name_.c_str(), e.what());
+        std::fflush(stdout);
+        return;
+    }
+    if (!doc.is_object()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [key, value] : doc.items()) {
+        if (value.is_string()) values_[key] = value.get<std::string>();
+    }
+}
+
+void SharedPreferencesJava::save() {
+    nlohmann::json doc = nlohmann::json::object();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [key, value] : values_) doc[key] = value;
+    }
+    const std::string path = shared_prefs_path(name_);
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    // Written beside it and renamed over it, so a reader never sees half a
+    // file and a crash mid-write leaves the previous one intact.
+    const std::string temp = path + ".tmp." + std::to_string(::getpid());
+    {
+        std::ofstream out(temp, std::ios::trunc);
+        if (!out.is_open()) return;
+        out << doc.dump();
+        if (!out.good()) {
+            std::filesystem::remove(temp, ec);
+            return;
+        }
+    }
+    std::filesystem::rename(temp, path, ec);
+    if (ec) std::filesystem::remove(temp, ec);
 }
 
 std::shared_ptr<SharedPreferencesEditorJava> SharedPreferencesJava::edit() {
