@@ -12,7 +12,7 @@ FROM docker.io/library/archlinux:latest
 
 RUN pacman -Syu --noconfirm --needed \
         base-devel cmake ninja git python curl unzip zstd e2fsprogs \
-        pkgconf wayland-protocols vulkan-headers ffmpeg \
+        pkgconf wayland-protocols libdrm vulkan-headers ffmpeg \
         qt6-base qt6-webengine qt6-wayland qtkeychain-qt6 breeze \
         vulkan-icd-loader libglvnd libx11 libxext libxi libxrender \
         freetype2 wayland libxkbcommon libxkbcommon-x11 libdecor \

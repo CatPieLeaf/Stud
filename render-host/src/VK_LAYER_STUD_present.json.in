@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.2.0",
+    "layer": {
+        "name": "VK_LAYER_STUD_present",
+        "type": "GLOBAL",
+        "library_path": "./libstud_present_layer.so",
+        "api_version": "1.4.0",
+        "implementation_version": "1",
+        "description": "Stud's own swapchain on Wayland"
+    }
+}

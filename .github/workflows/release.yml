@@ -128,7 +128,7 @@ jobs:
           dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build \
             qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
-            wayland-devel wayland-protocols-devel libxkbcommon-devel \
+            wayland-devel wayland-protocols-devel libxkbcommon-devel libdrm-devel \
             libXi-devel \
             libglvnd-devel vulkan-loader-devel vulkan-headers \
             freetype-devel openssl-devel \
@@ -580,7 +580,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja git python curl unzip zstd e2fsprogs \
-            pkgconf wayland-protocols vulkan-headers ffmpeg \
+            pkgconf wayland-protocols libdrm vulkan-headers ffmpeg \
             qt6-base qt6-webengine qt6-wayland qtkeychain-qt6 breeze \
             vulkan-icd-loader libglvnd libx11 libxext libxi libxrender \
             freetype2 wayland libxkbcommon libxkbcommon-x11 libdecor \
@@ -674,7 +674,7 @@ jobs:
             qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
             qt6-l10n-tools libqt6opengl6-dev qtkeychain-qt6-dev libssl-dev \
             qt6-wayland qt6-wayland-dev \
-            libwayland-dev libwayland-egl-backend-dev wayland-protocols \
+            libwayland-dev libwayland-egl-backend-dev wayland-protocols libdrm-dev \
             libegl1-mesa-dev libgles2-mesa-dev libfreetype-dev libvulkan-dev \
             libxkbcommon-dev libxi-dev \
             libavcodec-dev libavutil-dev libswscale-dev

@@ -62,6 +62,7 @@ makedepends=(
   'zstd'
   'e2fsprogs'
   'wayland-protocols'
+  'libdrm'
   'vulkan-headers'
   'pkgconf'
   'ffmpeg'

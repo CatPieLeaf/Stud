@@ -168,6 +168,52 @@ endif()
 add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_codec.cpp)
+
+# Stud's own swapchain (src/owned_swapchain.h), as the Vulkan layer
+# VK_LAYER_STUD_present (src/present_layer.cpp). A library of its own,
+# loaded by the Vulkan loader below MangoHud and any other implicit layer.
+# Its manifest sits beside it, where render-host points the loader.
+#
+# Hidden by default: only the loader's entry point is exported, so volk's
+# copy in here never collides with render-host's.
+add_library(stud_present_layer SHARED src/present_layer.cpp src/owned_swapchain.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c")
+set_target_properties(stud_present_layer PROPERTIES
+    C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
+target_compile_definitions(stud_present_layer PRIVATE VK_USE_PLATFORM_WAYLAND_KHR)
+target_include_directories(stud_present_layer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+pkg_check_modules(StudWaylandClient REQUIRED IMPORTED_TARGET wayland-client)
+target_link_libraries(stud_present_layer PRIVATE PkgConfig::StudWaylandClient ${CMAKE_DL_LIBS})
+configure_file(src/VK_LAYER_STUD_present.json.in
+               "${CMAKE_CURRENT_BINARY_DIR}/VK_LAYER_STUD_present.json" @ONLY)
+add_dependencies(stud-render-host stud_present_layer)
+install(TARGETS stud_present_layer LIBRARY DESTINATION "${STUD_LIBEXEC_DIR}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/VK_LAYER_STUD_present.json"
+        DESTINATION "${STUD_LIBEXEC_DIR}")
+
+# The layer presents through linux-dmabuf and linux-drm-syncobj. Bindings
+# generated from the system's wayland-protocols, the same way android-glue
+# generates xdg-shell's.
+find_program(WaylandScanner NAMES wayland-scanner REQUIRED)
+pkg_get_variable(StudProtocolsDir wayland-protocols pkgdatadir)
+pkg_check_modules(Drm REQUIRED IMPORTED_TARGET libdrm)
+foreach(StudProtocol
+        "stable/linux-dmabuf/linux-dmabuf-v1.xml"
+        "staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml")
+    get_filename_component(StudProtocolName "${StudProtocol}" NAME_WE)
+    set(StudProtocolHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/${StudProtocolName}-client-protocol.h")
+    set(StudProtocolSource "${CMAKE_CURRENT_BINARY_DIR}/generated/${StudProtocolName}-protocol.c")
+    add_custom_command(
+        OUTPUT "${StudProtocolHeader}" "${StudProtocolSource}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${WaylandScanner}" client-header "${StudProtocolsDir}/${StudProtocol}" "${StudProtocolHeader}"
+        COMMAND "${WaylandScanner}" private-code "${StudProtocolsDir}/${StudProtocol}" "${StudProtocolSource}"
+        DEPENDS "${StudProtocolsDir}/${StudProtocol}"
+    )
+    target_sources(stud_present_layer PRIVATE "${StudProtocolHeader}" "${StudProtocolSource}")
+endforeach()
+target_link_libraries(stud_present_layer PRIVATE PkgConfig::Drm)
 # SGSR's own GLES fragment shader, for the upscaler on the GL path. GLES
 # compiles its shaders at run time, so the vendored source is embedded as
 # text, byte for byte; the few adjustments it needs are made where it is

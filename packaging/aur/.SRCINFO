@@ -14,6 +14,7 @@ pkgbase = stud
 	makedepends = zstd
 	makedepends = e2fsprogs
 	makedepends = wayland-protocols
+	makedepends = libdrm
 	makedepends = vulkan-headers
 	makedepends = pkgconf
 	makedepends = ffmpeg

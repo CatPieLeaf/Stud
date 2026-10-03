@@ -18,7 +18,7 @@
 # ...and neither ANGLE's libEGL/libGLESv2/libvulkan nor Stud's own Android libraries of the
 # same names may be advertised as system provides: they are Stud's private
 # copies, loaded by path.
-%global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*
+%global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
 Version:        1.1.11

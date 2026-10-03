@@ -468,6 +468,23 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
     std::fflush(stdout);
 }
 
+// Stud's own swapchain: the Vulkan layer VK_LAYER_STUD_present, whose
+// manifest is installed beside render-host (render-host/src/present_layer.cpp).
+// Enabled for render-host's whole process, so it is under the engine's
+// Vulkan and ANGLE's alike, and below MangoHud, which the loader always
+// places above a layer enabled this way. Wayland only: on X11 it owns
+// nothing and would only hide the driver's present timing.
+void apply_present_layer_environment(QProcessEnvironment& env, const QString& render_host_dir) {
+    if (env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty()) return;
+    if (!QFile::exists(render_host_dir + QStringLiteral("/VK_LAYER_STUD_present.json"))) return;
+    auto append = [&env](const QString& name, const QString& value) {
+        const QString existing = env.value(name);
+        env.insert(name, existing.isEmpty() ? value : existing + QLatin1Char(':') + value);
+    };
+    append(QStringLiteral("VK_ADD_LAYER_PATH"), render_host_dir);
+    append(QStringLiteral("VK_INSTANCE_LAYERS"), QStringLiteral("VK_LAYER_STUD_present"));
+}
+
 void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vulkan_render_path) {
     // Undo what keep_mangohud_out_of_this_process() did to our own
     // environment before deciding anything: that entry was for Stud's UI,
@@ -1018,6 +1035,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         const bool vulkan_path = graphics_mode_arg == QStringLiteral("vulkan");
         apply_mangohud_environment(env, settings.mangohud, vulkan_path);
+        apply_present_layer_environment(env, QFileInfo(render_host_binary).absolutePath());
         apply_gpu_selection_environment(env, settings, vulkan_path);
         render_host.setProcessEnvironment(env);
     }

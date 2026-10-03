@@ -138,6 +138,7 @@ say "bundling"
     /usr/bin/stud \
     /usr/libexec/stud/stud-render-host \
     /usr/libexec/stud/stud-webview \
+    /usr/libexec/stud/libstud_present_layer.so \
     "${dlopened[@]}"
 
 # quick-sharun rewrites every /usr/lib and /usr/share it finds in an
@@ -157,6 +158,12 @@ mkdir -p "$appdir/libexec/stud"
 for exe in stud-render-host stud-webview; do
     ln -f "$appdir/sharun" "$appdir/libexec/stud/$exe"
 done
+# Stud's present layer: stud-ui points the Vulkan loader at the manifest
+# beside render-host, and the library itself was bundled above with its
+# dependencies, so the manifest's path is rewritten to that copy.
+[ -e "$appdir/lib/libstud_present_layer.so" ] || die "quick-sharun did not bundle the present layer"
+sed 's|"library_path": "[^"]*"|"library_path": "../../lib/libstud_present_layer.so"|' \
+    /usr/libexec/stud/VK_LAYER_STUD_present.json > "$appdir/libexec/stud/VK_LAYER_STUD_present.json"
 
 # Stud's own files that are not host libraries, copied as they are:
 # ANGLE is self-contained, and bionic and Process B are Android ELF that
