@@ -1,19 +1,28 @@
 #include "owned_swapchain.h"
 
+#include <dlfcn.h>
 #include <drm_fourcc.h>
 #include <fcntl.h>
+#include <linux/dma-buf.h>
+#include <poll.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
 #include <wayland-client.h>
+#include <xcb/dri3.h>
+#include <xcb/present.h>
 #include <xf86drm.h>
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
+#include <type_traits>
 #include <utility>
 
 #include "linux-dmabuf-v1-client-protocol.h"
@@ -46,9 +55,21 @@ struct Compositor {
     bool feedback_done = false;
 };
 
+// What one X server offers, through DRI3 and Present on the connection the
+// driver was handed for the surface.
+struct XServer {
+    xcb_connection_t* conn = nullptr;
+    // The GPU the server composites on: the device DRI3 hands out.
+    dev_t main_device = 0;
+    bool usable = false;
+};
+
+// Where a surface's frames go: a Wayland surface, or an X11 window.
 struct Target {
     Compositor* compositor = nullptr;
     wl_surface* surface = nullptr;
+    XServer* x = nullptr;
+    uint32_t window = 0;
 };
 
 // A buffer the compositor gets: an exported image, its wl_buffer, and the
@@ -61,6 +82,11 @@ struct Buffer {
     wp_linux_drm_syncobj_timeline_v1* timeline = nullptr;
     // The last release point handed to the compositor; 0 = never attached.
     uint64_t point = 0;
+    // X11: the pixmap over the same memory, and the dma-buf itself, which
+    // carries the copy's fence to the server and the server's back.
+    uint32_t pixmap = 0;
+    int dmabuf = -1;
+    bool held = false;  // presented, and no IdleNotify for it yet
 };
 
 // An image the engine draws into.
@@ -99,11 +125,17 @@ struct Swapchain {
     uint32_t next_image = 0;
     uint32_t next_buffer = 0;
     uint64_t dropped = 0;
+    // X11: the Present events this swapchain's pixmaps report on.
+    uint32_t eid = 0;
+    xcb_special_event_t* events = nullptr;
+    uint32_t serial = 0;
+    uint8_t depth = 0;
 };
 
 struct State {
     std::mutex mutex;
     std::map<wl_display*, Compositor> compositors;
+    std::map<xcb_connection_t*, XServer> x_servers;
     std::map<VkSurfaceKHR, Target> targets;
     std::map<wl_surface*, wp_linux_drm_syncobj_surface_v1*> syncobj_surfaces;
     // By dispatch key, which a device shares with its queues.
@@ -235,6 +267,213 @@ bool usable(const Compositor& c) {
            c.drm_fd >= 0 && !c.importable.empty();
 }
 
+// --- the X server -------------------------------------------------------
+
+// libxcb, its DRI3 and Present halves, and libX11-xcb, opened rather than
+// linked: the layer is loaded on Wayland-only machines too, and a layer
+// that fails to load takes the whole Vulkan instance down with it.
+struct Xcb {
+    bool loaded = false;
+    decltype(&xcb_get_extension_data) get_extension_data = nullptr;
+    decltype(&xcb_generate_id) generate_id = nullptr;
+    decltype(&xcb_flush) flush = nullptr;
+    decltype(&xcb_request_check) request_check = nullptr;
+    decltype(&xcb_get_geometry) get_geometry = nullptr;
+    decltype(&xcb_get_geometry_reply) get_geometry_reply = nullptr;
+    decltype(&xcb_free_pixmap) free_pixmap = nullptr;
+    decltype(&xcb_register_for_special_xge) register_special = nullptr;
+    decltype(&xcb_unregister_for_special_event) unregister_special = nullptr;
+    decltype(&xcb_poll_for_special_event) poll_special = nullptr;
+    xcb_extension_t* dri3_id = nullptr;
+    decltype(&xcb_dri3_query_version) dri3_query_version = nullptr;
+    decltype(&xcb_dri3_query_version_reply) dri3_query_version_reply = nullptr;
+    decltype(&xcb_dri3_open) dri3_open = nullptr;
+    decltype(&xcb_dri3_open_reply) dri3_open_reply = nullptr;
+    decltype(&xcb_dri3_open_reply_fds) dri3_open_reply_fds = nullptr;
+    decltype(&xcb_dri3_get_supported_modifiers) get_modifiers = nullptr;
+    decltype(&xcb_dri3_get_supported_modifiers_reply) get_modifiers_reply = nullptr;
+    decltype(&xcb_dri3_get_supported_modifiers_window_modifiers) window_modifiers = nullptr;
+    decltype(&xcb_dri3_get_supported_modifiers_window_modifiers_length)
+        window_modifiers_length = nullptr;
+    decltype(&xcb_dri3_get_supported_modifiers_screen_modifiers) screen_modifiers = nullptr;
+    decltype(&xcb_dri3_get_supported_modifiers_screen_modifiers_length)
+        screen_modifiers_length = nullptr;
+    decltype(&xcb_dri3_pixmap_from_buffers_checked) pixmap_from_buffers = nullptr;
+    xcb_extension_t* present_id = nullptr;
+    decltype(&xcb_present_query_version) present_query_version = nullptr;
+    decltype(&xcb_present_query_version_reply) present_query_version_reply = nullptr;
+    decltype(&xcb_present_select_input_checked) select_input_checked = nullptr;
+    decltype(&xcb_present_select_input) select_input = nullptr;
+    decltype(&xcb_present_pixmap) present_pixmap = nullptr;
+    xcb_connection_t* (*xlib_connection)(void* display) = nullptr;  // XGetXCBConnection
+};
+
+const Xcb& xcb() {
+    static const Xcb x = [] {
+        Xcb x;
+        void* core = dlopen("libxcb.so.1", RTLD_NOW | RTLD_LOCAL);
+        void* dri3 = dlopen("libxcb-dri3.so.0", RTLD_NOW | RTLD_LOCAL);
+        void* present = dlopen("libxcb-present.so.0", RTLD_NOW | RTLD_LOCAL);
+        void* xlib = dlopen("libX11-xcb.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (core == nullptr || dri3 == nullptr || present == nullptr) return x;
+        bool all = true;
+        auto load = [&all](void* lib, auto& field, const char* name) {
+            field = reinterpret_cast<std::remove_reference_t<decltype(field)>>(dlsym(lib, name));
+            if (field == nullptr) all = false;
+        };
+        load(core, x.get_extension_data, "xcb_get_extension_data");
+        load(core, x.generate_id, "xcb_generate_id");
+        load(core, x.flush, "xcb_flush");
+        load(core, x.request_check, "xcb_request_check");
+        load(core, x.get_geometry, "xcb_get_geometry");
+        load(core, x.get_geometry_reply, "xcb_get_geometry_reply");
+        load(core, x.free_pixmap, "xcb_free_pixmap");
+        load(core, x.register_special, "xcb_register_for_special_xge");
+        load(core, x.unregister_special, "xcb_unregister_for_special_event");
+        load(core, x.poll_special, "xcb_poll_for_special_event");
+        load(dri3, x.dri3_id, "xcb_dri3_id");
+        load(dri3, x.dri3_query_version, "xcb_dri3_query_version");
+        load(dri3, x.dri3_query_version_reply, "xcb_dri3_query_version_reply");
+        load(dri3, x.dri3_open, "xcb_dri3_open");
+        load(dri3, x.dri3_open_reply, "xcb_dri3_open_reply");
+        load(dri3, x.dri3_open_reply_fds, "xcb_dri3_open_reply_fds");
+        load(dri3, x.get_modifiers, "xcb_dri3_get_supported_modifiers");
+        load(dri3, x.get_modifiers_reply, "xcb_dri3_get_supported_modifiers_reply");
+        load(dri3, x.window_modifiers, "xcb_dri3_get_supported_modifiers_window_modifiers");
+        load(dri3, x.window_modifiers_length,
+             "xcb_dri3_get_supported_modifiers_window_modifiers_length");
+        load(dri3, x.screen_modifiers, "xcb_dri3_get_supported_modifiers_screen_modifiers");
+        load(dri3, x.screen_modifiers_length,
+             "xcb_dri3_get_supported_modifiers_screen_modifiers_length");
+        load(dri3, x.pixmap_from_buffers, "xcb_dri3_pixmap_from_buffers_checked");
+        load(present, x.present_id, "xcb_present_id");
+        load(present, x.present_query_version, "xcb_present_query_version");
+        load(present, x.present_query_version_reply, "xcb_present_query_version_reply");
+        load(present, x.select_input_checked, "xcb_present_select_input_checked");
+        load(present, x.select_input, "xcb_present_select_input");
+        load(present, x.present_pixmap, "xcb_present_pixmap");
+        // Only an Xlib surface needs it; an XCB one names its connection.
+        if (xlib != nullptr) {
+            x.xlib_connection = reinterpret_cast<decltype(x.xlib_connection)>(
+                dlsym(xlib, "XGetXCBConnection"));
+        }
+        x.loaded = all;
+        return x;
+    }();
+    return x;
+}
+
+void open_x_server(XServer& x, xcb_connection_t* conn, uint32_t window) {
+    x.conn = conn;
+    const Xcb& f = xcb();
+    if (!f.loaded) {
+        std::printf("stud-render-host: libxcb's DRI3 and Present libraries are not installed; "
+                    "the driver presents\n");
+        std::fflush(stdout);
+        return;
+    }
+    // A request for an extension the server lacks is not an error reply
+    // but a dead connection, and this one is the driver's: asked first.
+    for (xcb_extension_t* ext : {f.dri3_id, f.present_id}) {
+        const xcb_query_extension_reply_t* have = f.get_extension_data(conn, ext);
+        if (have == nullptr || have->present == 0) {
+            std::printf("stud-render-host: the X server has no %s; the driver presents\n",
+                        ext == f.dri3_id ? "DRI3" : "Present");
+            std::fflush(stdout);
+            return;
+        }
+    }
+    // DRI3 1.2 is the first with layouts (modifiers) and multi-plane
+    // buffers. Present 1.0 already has everything used here.
+    auto* dri3 = f.dri3_query_version_reply(
+        conn, f.dri3_query_version(conn, XCB_DRI3_MAJOR_VERSION, XCB_DRI3_MINOR_VERSION),
+        nullptr);
+    const bool dri3_ok =
+        dri3 != nullptr && (dri3->major_version > 1 || dri3->minor_version >= 2);
+    std::free(dri3);
+    auto* present = f.present_query_version_reply(
+        conn, f.present_query_version(conn, XCB_PRESENT_MAJOR_VERSION, XCB_PRESENT_MINOR_VERSION),
+        nullptr);
+    const bool present_ok = present != nullptr;
+    std::free(present);
+    if (!dri3_ok || !present_ok) {
+        std::printf("stud-render-host: the X server's DRI3 is older than 1.2; the driver "
+                    "presents\n");
+        std::fflush(stdout);
+        return;
+    }
+
+    auto* geometry = f.get_geometry_reply(conn, f.get_geometry(conn, window), nullptr);
+    if (geometry == nullptr) return;
+    const xcb_window_t root = geometry->root;
+    std::free(geometry);
+    auto* opened = f.dri3_open_reply(conn, f.dri3_open(conn, root, 0), nullptr);
+    if (opened == nullptr || opened->nfd < 1) {
+        std::free(opened);
+        std::printf("stud-render-host: the X server would not name its GPU; the driver "
+                    "presents\n");
+        std::fflush(stdout);
+        return;
+    }
+    const int fd = f.dri3_open_reply_fds(conn, opened)[0];
+    std::free(opened);
+    struct stat st {};
+    const bool named = fstat(fd, &st) == 0;
+    close(fd);
+    if (!named) return;
+    x.main_device = st.st_rdev;
+    x.usable = true;
+    std::printf("stud-render-host: the X server composites on %u:%u\n", major(x.main_device),
+                minor(x.main_device));
+    std::fflush(stdout);
+}
+
+// The X11 window depth a swapchain format is shown at, and the DRM format
+// and Vulkan format of the buffer it is copied into. DRI3 has no format of
+// its own: a depth-24 pixmap is XRGB8888 and a depth-30 one XRGB2101010,
+// so an engine format in any other channel order has no bitwise match.
+bool x_format_for(VkFormat format, uint8_t* depth, uint32_t* fourcc, VkFormat* buffer_format) {
+    switch (format) {
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            *depth = 24;
+            *fourcc = DRM_FORMAT_XRGB8888;
+            *buffer_format = VK_FORMAT_B8G8R8A8_UNORM;
+            return true;
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+            *depth = 30;
+            *fourcc = DRM_FORMAT_XRGB2101010;
+            *buffer_format = format;
+            return true;
+        default:
+            return false;
+    }
+}
+
+// What the server imports for this window at this depth. The window's own
+// list is what it can show without a copy of its own; the screen's, what
+// it can show at all.
+std::set<std::pair<uint32_t, uint64_t>> x_importable(const XServer& x, uint32_t window,
+                                                     uint8_t depth, uint32_t fourcc) {
+    std::set<std::pair<uint32_t, uint64_t>> out;
+    const Xcb& f = xcb();
+    auto* geometry = f.get_geometry_reply(x.conn, f.get_geometry(x.conn, window), nullptr);
+    const bool same_depth = geometry != nullptr && geometry->depth == depth;
+    std::free(geometry);
+    if (!same_depth) return out;
+    auto* mods = f.get_modifiers_reply(x.conn, f.get_modifiers(x.conn, window, depth, 32), nullptr);
+    if (mods == nullptr) return out;
+    const uint64_t* list = f.window_modifiers(mods);
+    int n = f.window_modifiers_length(mods);
+    if (n == 0) {
+        list = f.screen_modifiers(mods);
+        n = f.screen_modifiers_length(mods);
+    }
+    for (int i = 0; i < n; ++i) out.insert({fourcc, list[i]});
+    std::free(mods);
+    return out;
+}
+
 // --- formats and memory -----------------------------------------------
 
 // The DRM format the compositor gets for an engine format, and the
@@ -267,9 +506,10 @@ bool drm_format_for(VkFormat format, uint32_t* fourcc, VkFormat* buffer_format) 
     }
 }
 
-// The layouts this GPU can export a copy target in that the compositor
-// also imports, with how many memory planes each has.
-std::map<uint64_t, uint32_t> shared_modifiers(const Device& d, const Compositor& c,
+// The layouts this GPU can export a copy target in that the compositor or
+// X server also imports, with how many memory planes each has.
+std::map<uint64_t, uint32_t> shared_modifiers(const Device& d,
+                                              const std::set<std::pair<uint32_t, uint64_t>>& importable,
                                               VkFormat format, uint32_t fourcc, VkExtent2D extent) {
     std::map<uint64_t, uint32_t> out;
     VkDrmFormatModifierPropertiesListEXT list{};
@@ -283,7 +523,7 @@ std::map<uint64_t, uint32_t> shared_modifiers(const Device& d, const Compositor&
     vkGetPhysicalDeviceFormatProperties2(d.physical_device, format, &props);
     for (const auto& m : mods) {
         if ((m.drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) == 0) continue;
-        if (c.importable.count({fourcc, m.drmFormatModifier}) == 0) continue;
+        if (importable.count({fourcc, m.drmFormatModifier}) == 0) continue;
         VkPhysicalDeviceImageDrmFormatModifierInfoEXT mi{};
         mi.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT;
         mi.drmFormatModifier = m.drmFormatModifier;
@@ -376,8 +616,17 @@ void params_failed(void* data, zwp_linux_buffer_params_v1*) {
 }
 const zwp_linux_buffer_params_v1_listener kParams = {params_created, params_failed};
 
-bool make_buffer(const Device& d, Swapchain& sc, VkFormat format,
-                 const std::map<uint64_t, uint32_t>& modifiers, Buffer& b) {
+// A buffer's image, in one of the shared layouts, exported as a dma-buf.
+struct Exported {
+    int fd = -1;
+    uint64_t modifier = 0;
+    uint32_t planes = 0;
+    VkSubresourceLayout layout[4]{};
+};
+
+bool export_buffer_image(const Device& d, const Swapchain& sc, VkFormat format,
+                         const std::map<uint64_t, uint32_t>& modifiers, Buffer& b,
+                         Exported& e) {
     std::vector<uint64_t> list;
     for (const auto& m : modifiers) list.push_back(m.first);
     VkImageDrmFormatModifierListCreateInfoEXT ml{};
@@ -412,31 +661,37 @@ bool make_buffer(const Device& d, Swapchain& sc, VkFormat format,
         return false;
     }
     const auto planes = modifiers.find(chosen.drmFormatModifier);
-    if (planes == modifiers.end()) return false;
+    if (planes == modifiers.end() || planes->second > 4) return false;
+    e.modifier = chosen.drmFormatModifier;
+    e.planes = planes->second;
+    static const VkImageAspectFlagBits kPlane[] = {
+        VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT, VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT,
+        VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT, VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT};
+    for (uint32_t p = 0; p < e.planes; ++p) {
+        VkImageSubresource sub{};
+        sub.aspectMask = kPlane[p];
+        d.vk.vkGetImageSubresourceLayout(d.device, b.image, &sub, &e.layout[p]);
+    }
 
     VkMemoryGetFdInfoKHR gi{};
     gi.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
     gi.memory = b.memory;
     gi.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-    int fd = -1;
-    if (d.vk.vkGetMemoryFdKHR(d.device, &gi, &fd) != VK_SUCCESS) return false;
+    return d.vk.vkGetMemoryFdKHR(d.device, &gi, &e.fd) == VK_SUCCESS;
+}
 
+bool make_wayland_buffer(Swapchain& sc, Buffer& b, Exported& e) {
     Compositor& c = *sc.target.compositor;
+    const int fd = e.fd;
+    e.fd = -1;
     zwp_linux_buffer_params_v1* params = zwp_linux_dmabuf_v1_create_params(c.dmabuf);
-    static const VkImageAspectFlagBits kPlane[] = {
-        VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT, VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT,
-        VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT, VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT};
-    for (uint32_t p = 0; p < planes->second && p < 4; ++p) {
-        VkImageSubresource sub{};
-        sub.aspectMask = kPlane[p];
-        VkSubresourceLayout layout{};
-        d.vk.vkGetImageSubresourceLayout(d.device, b.image, &sub, &layout);
+    for (uint32_t p = 0; p < e.planes; ++p) {
         // libwayland duplicates the fd when it marshals, so one serves
         // every plane and is closed below.
-        zwp_linux_buffer_params_v1_add(params, fd, p, static_cast<uint32_t>(layout.offset),
-                                       static_cast<uint32_t>(layout.rowPitch),
-                                       static_cast<uint32_t>(chosen.drmFormatModifier >> 32),
-                                       static_cast<uint32_t>(chosen.drmFormatModifier));
+        zwp_linux_buffer_params_v1_add(params, fd, p, static_cast<uint32_t>(e.layout[p].offset),
+                                       static_cast<uint32_t>(e.layout[p].rowPitch),
+                                       static_cast<uint32_t>(e.modifier >> 32),
+                                       static_cast<uint32_t>(e.modifier));
     }
     // create, not create_immed: a buffer the compositor rejects is then a
     // `failed` event, not a protocol error that would take the whole
@@ -452,7 +707,7 @@ bool make_buffer(const Device& d, Swapchain& sc, VkFormat format,
     if (created.buffer == nullptr) {
         std::printf("stud-render-host: the compositor refused a %ux%u buffer in layout "
                     "0x%llx\n", sc.extent.width, sc.extent.height,
-                    static_cast<unsigned long long>(chosen.drmFormatModifier));
+                    static_cast<unsigned long long>(e.modifier));
         std::fflush(stdout);
         return false;
     }
@@ -468,13 +723,97 @@ bool make_buffer(const Device& d, Swapchain& sc, VkFormat format,
     return b.timeline != nullptr;
 }
 
-// Whether the compositor is done with a buffer: never given to it, or its
-// release point has signalled. Polled, never waited for.
-bool buffer_free(const Compositor& c, Buffer& b) {
+// X11 has no explicit sync before DRI3 1.4, so a buffer's fences travel
+// in the dma-buf itself (implicit sync): the copy's completion is put into
+// it on present, and whatever the server's GPU still does with it is read
+// back out before reuse. Both are the kernel's dma-buf sync-file calls.
+// Asked once per buffer here, so a kernel without them leaves the driver
+// presenting instead of failing on the first frame.
+bool dmabuf_fences_work(int dmabuf) {
+    dma_buf_export_sync_file out{};
+    out.flags = DMA_BUF_SYNC_WRITE;
+    out.fd = -1;
+    if (ioctl(dmabuf, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &out) != 0) return false;
+    close(out.fd);
+    return true;
+}
+
+bool make_x11_buffer(Swapchain& sc, Buffer& b, Exported& e) {
+    const Xcb& f = xcb();
+    xcb_connection_t* conn = sc.target.x->conn;
+    b.dmabuf = e.fd;
+    e.fd = -1;
+    if (!dmabuf_fences_work(b.dmabuf)) {
+        std::printf("stud-render-host: this kernel cannot pass fences through a dma-buf; "
+                    "the driver presents\n");
+        std::fflush(stdout);
+        return false;
+    }
+    // xcb closes the fds it sends, so the server gets copies and the
+    // dma-buf stays open here.
+    int32_t fds[4] = {-1, -1, -1, -1};
+    uint32_t stride[4] = {};
+    uint32_t offset[4] = {};
+    for (uint32_t p = 0; p < e.planes; ++p) {
+        fds[p] = dup(b.dmabuf);
+        stride[p] = static_cast<uint32_t>(e.layout[p].rowPitch);
+        offset[p] = static_cast<uint32_t>(e.layout[p].offset);
+    }
+    b.pixmap = f.generate_id(conn);
+    xcb_generic_error_t* error = f.request_check(
+        conn, f.pixmap_from_buffers(conn, b.pixmap, sc.target.window,
+                                    static_cast<uint8_t>(e.planes),
+                                    static_cast<uint16_t>(sc.extent.width),
+                                    static_cast<uint16_t>(sc.extent.height), stride[0], offset[0],
+                                    stride[1], offset[1], stride[2], offset[2], stride[3],
+                                    offset[3], sc.depth, 32, e.modifier, fds));
+    if (error != nullptr) {
+        std::free(error);
+        b.pixmap = 0;
+        std::printf("stud-render-host: the X server refused a %ux%u buffer in layout 0x%llx\n",
+                    sc.extent.width, sc.extent.height,
+                    static_cast<unsigned long long>(e.modifier));
+        std::fflush(stdout);
+        return false;
+    }
+    return true;
+}
+
+// Every IdleNotify the server has sent: the pixmaps it no longer shows.
+void drain_x_events(Swapchain& sc) {
+    const Xcb& f = xcb();
+    while (xcb_generic_event_t* event = f.poll_special(sc.target.x->conn, sc.events)) {
+        const auto* present = reinterpret_cast<const xcb_present_generic_event_t*>(event);
+        if (present->evtype == XCB_PRESENT_EVENT_IDLE_NOTIFY) {
+            const auto* idle = reinterpret_cast<const xcb_present_idle_notify_event_t*>(event);
+            for (Buffer& b : sc.buffers) {
+                if (b.pixmap == idle->pixmap) b.held = false;
+            }
+        }
+        std::free(event);
+    }
+}
+
+// Whether the compositor or X server is done with a buffer. Polled, never
+// waited for.
+bool buffer_free(const Swapchain& sc, Buffer& b) {
+    if (sc.target.x != nullptr) {
+        if (b.held) return false;
+        // Idle, and no GPU of the server's still reading it.
+        dma_buf_export_sync_file out{};
+        out.flags = DMA_BUF_SYNC_WRITE;
+        out.fd = -1;
+        if (ioctl(b.dmabuf, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &out) != 0) return true;
+        pollfd pfd{out.fd, POLLIN, 0};
+        const bool signalled = poll(&pfd, 1, 0) == 1;
+        close(out.fd);
+        return signalled;
+    }
     if (b.point == 0) return true;
     uint32_t handle = b.syncobj;
     uint64_t point = b.point;
-    return drmSyncobjTimelineWait(c.drm_fd, &handle, &point, 1, 0, 0, nullptr) == 0;
+    return drmSyncobjTimelineWait(sc.target.compositor->drm_fd, &handle, &point, 1, 0, 0,
+                                  nullptr) == 0;
 }
 
 void destroy_swapchain_objects(Swapchain* sc) {
@@ -492,9 +831,16 @@ void destroy_swapchain_objects(Swapchain* sc) {
         if (im.done_fd >= 0) close(im.done_fd);
     }
     if (sc->pool != VK_NULL_HANDLE) d.vk.vkDestroyCommandPool(d.device, sc->pool, nullptr);
-    // The compositor holds its own references to whatever it still shows:
-    // destroying these only ends Stud's.
+    // The compositor or X server holds its own references to whatever it
+    // still shows: destroying these only ends Stud's.
+    xcb_connection_t* conn = sc->target.x != nullptr ? sc->target.x->conn : nullptr;
+    if (sc->events != nullptr) {
+        xcb().select_input(conn, sc->eid, sc->target.window, 0);
+        xcb().unregister_special(conn, sc->events);
+    }
     for (Buffer& b : sc->buffers) {
+        if (b.pixmap != 0) xcb().free_pixmap(conn, b.pixmap);
+        if (b.dmabuf >= 0) close(b.dmabuf);
         if (b.wl != nullptr) wl_buffer_destroy(b.wl);
         if (b.timeline != nullptr) wp_linux_drm_syncobj_timeline_v1_destroy(b.timeline);
         if (b.syncobj != 0) drmSyncobjDestroy(sc->target.compositor->drm_fd, b.syncobj);
@@ -502,6 +848,7 @@ void destroy_swapchain_objects(Swapchain* sc) {
         if (b.memory != VK_NULL_HANDLE) d.vk.vkFreeMemory(d.device, b.memory, nullptr);
     }
     if (sc->target.compositor != nullptr) wl_display_flush(sc->target.compositor->display);
+    if (conn != nullptr) xcb().flush(conn);
     delete sc;
 }
 
@@ -547,14 +894,23 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     Device& d = *device_of(s, device);
     const auto target = s.targets.find(ci->surface);
     uint32_t fourcc = 0;
+    uint8_t depth = 0;
     VkFormat buffer_format = VK_FORMAT_UNDEFINED;
     std::map<uint64_t, uint32_t> modifiers;
     bool same_gpu = false;
-    if (target != s.targets.end() && usable(*target->second.compositor) &&
-        drm_format_for(ci->imageFormat, &fourcc, &buffer_format)) {
-        const Compositor& c = *target->second.compositor;
-        same_gpu = on_gpu(d.physical_device, c.main_device);
-        modifiers = shared_modifiers(d, c, buffer_format, fourcc, ci->imageExtent);
+    if (target != s.targets.end()) {
+        const Target& t = target->second;
+        if (t.compositor != nullptr && usable(*t.compositor) &&
+            drm_format_for(ci->imageFormat, &fourcc, &buffer_format)) {
+            same_gpu = on_gpu(d.physical_device, t.compositor->main_device);
+            modifiers = shared_modifiers(d, t.compositor->importable, buffer_format, fourcc,
+                                         ci->imageExtent);
+        } else if (t.x != nullptr && t.x->usable &&
+                   x_format_for(ci->imageFormat, &depth, &fourcc, &buffer_format)) {
+            same_gpu = on_gpu(d.physical_device, t.x->main_device);
+            modifiers = shared_modifiers(d, x_importable(*t.x, t.window, depth, fourcc),
+                                         buffer_format, fourcc, ci->imageExtent);
+        }
     }
     if (modifiers.empty()) {
         static int said = 0;
@@ -575,6 +931,7 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     sc->extent = ci->imageExtent;
     sc->format = ci->imageFormat;
     sc->fourcc = fourcc;
+    sc->depth = depth;
     const uint32_t count = ci->minImageCount > 0 ? ci->minImageCount : 1;
     bool ok = true;
 
@@ -631,9 +988,24 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     sc->buffers.resize(count);
     for (Buffer& b : sc->buffers) {
         if (!ok) break;
-        ok = make_buffer(d, *sc, buffer_format, modifiers, b);
+        Exported e;
+        ok = export_buffer_image(d, *sc, buffer_format, modifiers, b, e);
+        if (ok) ok = sc->target.x != nullptr ? make_x11_buffer(*sc, b, e) : make_wayland_buffer(*sc, b, e);
+        if (e.fd >= 0) close(e.fd);
     }
-    if (ok && s.syncobj_surfaces.count(sc->target.surface) == 0) {
+    if (ok && sc->target.x != nullptr) {
+        // Present's events for this swapchain, on a queue of its own so
+        // neither Xlib nor the driver ever sees them.
+        const Xcb& f = xcb();
+        xcb_connection_t* conn = sc->target.x->conn;
+        sc->eid = f.generate_id(conn);
+        xcb_generic_error_t* error = f.request_check(
+            conn, f.select_input_checked(conn, sc->eid, sc->target.window,
+                                         XCB_PRESENT_EVENT_MASK_IDLE_NOTIFY));
+        ok = error == nullptr;
+        std::free(error);
+        if (ok) sc->events = f.register_special(conn, f.present_id, sc->eid, nullptr);
+    } else if (ok && s.syncobj_surfaces.count(sc->target.surface) == 0) {
         s.syncobj_surfaces[sc->target.surface] = wp_linux_drm_syncobj_manager_v1_get_surface(
             sc->target.compositor->syncobj, sc->target.surface);
     }
@@ -652,8 +1024,10 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     if (!said) {
         said = true;
         std::printf("stud-render-host: Stud presents its own frames: %u images, %s buffers on "
-                    "the compositor's GPU, explicit sync\n",
-                    count, sc->same_gpu ? "device-memory" : "system-memory (another GPU)");
+                    "the %s GPU, %s sync\n",
+                    count, sc->same_gpu ? "device-memory" : "system-memory (another GPU)",
+                    sc->target.x != nullptr ? "X server's" : "compositor's",
+                    sc->target.x != nullptr ? "implicit" : "explicit");
         std::fflush(stdout);
     }
     return VK_SUCCESS;
@@ -776,6 +1150,29 @@ void barrier(const VolkDeviceTable& vk, VkCommandBuffer cmd, VkImage image, VkIm
                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
+// X11's half of a present: the copy's completion goes into the dma-buf
+// for the server's GPU to wait on, and the pixmap is presented. No target
+// time and no flags: the server shows it at the next refresh, and a later
+// present for the same refresh replaces it, the latest frame winning as it
+// does on Wayland. Takes `done`.
+VkResult present_x11(Swapchain& sc, Buffer& buffer, int done) {
+    if (done >= 0) {
+        dma_buf_import_sync_file in{};
+        in.flags = DMA_BUF_SYNC_WRITE;
+        in.fd = done;
+        const int r = ioctl(buffer.dmabuf, DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &in);
+        close(done);
+        if (r != 0) return VK_ERROR_SURFACE_LOST_KHR;
+    }
+    const Xcb& f = xcb();
+    xcb_connection_t* conn = sc.target.x->conn;
+    buffer.held = true;
+    f.present_pixmap(conn, sc.target.window, buffer.pixmap, ++sc.serial, 0, 0, 0, 0, 0, 0, 0,
+                     XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, nullptr);
+    f.flush(conn);
+    return VK_SUCCESS;
+}
+
 // One swapchain's share of a present. Runs under render-host's queue lock,
 // which the caller holds for the whole present, so the submit and the
 // commit are serialised with every other user of the queue and the
@@ -785,14 +1182,14 @@ VkResult present_one(State& s, VkQueue queue, Swapchain* sc, uint32_t index,
     const Device& d = *sc->dev;
     if (index >= sc->images.size()) return VK_ERROR_OUT_OF_DATE_KHR;
     Image& im = sc->images[index];
-    Compositor& c = *sc->target.compositor;
     im.acquired = false;
 
+    if (sc->target.x != nullptr) drain_x_events(*sc);
     Buffer* buffer = nullptr;
     const auto nb = static_cast<uint32_t>(sc->buffers.size());
     for (uint32_t step = 0; step < nb && buffer == nullptr; ++step) {
         const uint32_t b = (sc->next_buffer + step) % nb;
-        if (buffer_free(c, sc->buffers[b])) {
+        if (buffer_free(*sc, sc->buffers[b])) {
             buffer = &sc->buffers[b];
             sc->next_buffer = (b + 1) % nb;
         }
@@ -865,14 +1262,18 @@ VkResult present_one(State& s, VkQueue queue, Swapchain* sc, uint32_t index,
     if (buffer == nullptr) {
         if (done >= 0) close(done);
         if (sc->dropped++ == 0) {
-            std::printf("stud-render-host: the compositor still holds every buffer; dropping "
-                        "the frame instead of waiting for one\n");
+            std::printf("stud-render-host: the %s still holds every buffer; dropping "
+                        "the frame instead of waiting for one\n",
+                        sc->target.x != nullptr ? "X server" : "compositor");
             std::fflush(stdout);
         }
         return VK_SUCCESS;
     }
 
+    if (sc->target.x != nullptr) return present_x11(*sc, *buffer, done);
+
     // The copy's completion, as the buffer's acquire point.
+    Compositor& c = *sc->target.compositor;
     const uint64_t acquire = buffer->point + 1;
     const uint64_t release = buffer->point + 2;
     int imported = -1;
@@ -970,13 +1371,33 @@ const char* const kDependencies[] = {
 
 }  // namespace
 
+void note_xcb_surface(VkSurfaceKHR surface, xcb_connection_t* connection, uint32_t window) {
+    if (surface == VK_NULL_HANDLE || connection == nullptr || window == 0) return;
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    auto [it, fresh] = s.x_servers.try_emplace(connection);
+    if (fresh) open_x_server(it->second, connection, window);
+    Target t;
+    t.x = &it->second;
+    t.window = window;
+    s.targets[surface] = t;
+}
+
+void note_xlib_surface(VkSurfaceKHR surface, void* display, unsigned long window) {
+    if (display == nullptr || xcb().xlib_connection == nullptr) return;
+    note_xcb_surface(surface, xcb().xlib_connection(display), static_cast<uint32_t>(window));
+}
+
 void note_wayland_surface(VkSurfaceKHR surface, wl_display* display, wl_surface* target) {
     if (surface == VK_NULL_HANDLE || display == nullptr || target == nullptr) return;
     State& s = state();
     std::lock_guard<std::mutex> lock(s.mutex);
     auto [it, fresh] = s.compositors.try_emplace(display);
     if (fresh) open_compositor(it->second, display);
-    s.targets[surface] = {&it->second, target};
+    Target t;
+    t.compositor = &it->second;
+    t.surface = target;
+    s.targets[surface] = t;
 }
 
 std::vector<std::string> device_extensions(VkPhysicalDevice physical_device) {

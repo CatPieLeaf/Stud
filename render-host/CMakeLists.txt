@@ -180,7 +180,11 @@ add_library(stud_present_layer SHARED src/present_layer.cpp src/owned_swapchain.
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c")
 set_target_properties(stud_present_layer PROPERTIES
     C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
-target_compile_definitions(stud_present_layer PRIVATE VK_USE_PLATFORM_WAYLAND_KHR)
+# Target-wide for the same reason as render-host's below: they change the
+# layout of volk's tables.
+target_compile_definitions(stud_present_layer PRIVATE VK_USE_PLATFORM_WAYLAND_KHR
+                                                      VK_USE_PLATFORM_XLIB_KHR
+                                                      VK_USE_PLATFORM_XCB_KHR)
 target_include_directories(stud_present_layer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 pkg_check_modules(StudWaylandClient REQUIRED IMPORTED_TARGET wayland-client)

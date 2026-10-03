@@ -473,10 +473,13 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
 // manifest is installed beside render-host (render-host/src/present_layer.cpp).
 // Enabled for render-host's whole process, so it is under the engine's
 // Vulkan and ANGLE's alike, and below MangoHud, which the loader always
-// places above a layer enabled this way. Wayland only: on X11 it owns
-// nothing and would only hide the driver's present timing.
+// places above a layer enabled this way. Wayland and X11 alike; with
+// neither there is no window to present to.
 void apply_present_layer_environment(QProcessEnvironment& env, const QString& render_host_dir) {
-    if (env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty()) return;
+    if (env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty() &&
+        env.value(QStringLiteral("DISPLAY")).isEmpty()) {
+        return;
+    }
     if (!QFile::exists(render_host_dir + QStringLiteral("/VK_LAYER_STUD_present.json"))) return;
     auto append = [&env](const QString& name, const QString& value) {
         const QString existing = env.value(name);

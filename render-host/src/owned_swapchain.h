@@ -7,8 +7,9 @@
 
 struct wl_display;
 struct wl_surface;
+struct xcb_connection_t;
 
-// Stud's own swapchain on Wayland, in place of the Vulkan driver's.
+// Stud's own swapchain on Wayland and X11, in place of the Vulkan driver's.
 //
 // Why it exists: on NVIDIA every measured 12s freeze sat inside the
 // driver's presentation code -- vkQueuePresentKHR, vkDestroySwapchainKHR,
@@ -28,15 +29,26 @@ struct wl_surface;
 // layout both sides list; a different one -- a PRIME laptop -- gets them
 // in system memory, the only place the other GPU can read them from.
 //
+// On X11 the same copy goes into a DRI3 pixmap and is shown with Present.
+// Its fences travel inside the dma-buf (implicit sync): the copy's is put
+// in on present, and a buffer is reused once the server has sent
+// IdleNotify for it and nothing of the server's still reads it -- both
+// polled, so X11 drops a frame where Wayland does, and waits no more.
+//
 // It runs as a Vulkan layer, VK_LAYER_STUD_present (present_layer.cpp),
 // so implicit layers such as MangoHud sit above it and see an ordinary
-// swapchain. A swapchain it cannot own -- X11, a compositor without
-// linux-dmabuf v4 or linux-drm-syncobj, a format both GPUs cannot share --
-// is passed down to the driver unchanged.
+// swapchain. A swapchain it cannot own -- a compositor without
+// linux-dmabuf v4 or linux-drm-syncobj, an X server without DRI3 1.2 and
+// Present, a format both GPUs cannot share -- is passed down to the driver
+// unchanged.
 namespace stud::render_host::owned_swapchain {
 
 // The layer's vkCreateWaylandSurfaceKHR, for every surface made.
 void note_wayland_surface(VkSurfaceKHR surface, wl_display* display, wl_surface* target);
+
+// The layer's vkCreateXcbSurfaceKHR and vkCreateXlibSurfaceKHR.
+void note_xcb_surface(VkSurfaceKHR surface, xcb_connection_t* connection, uint32_t window);
+void note_xlib_surface(VkSurfaceKHR surface, void* display, unsigned long window);
 
 // The layer's vkCreateDevice, before calling down: the extensions to add.
 // Empty when the driver cannot do what the owned swapchain needs.

@@ -10,9 +10,9 @@
 // after them -- so MangoHud keeps seeing an ordinary swapchain, and what
 // it calls down into is Stud's instead of the driver's.
 //
-// render-host enables it for its whole process on Wayland (VK_ADD_LAYER_PATH
-// and VK_INSTANCE_LAYERS, before any Vulkan call), which also covers the
-// instance ANGLE creates for itself.
+// render-host enables it for its whole process on Wayland and X11
+// (VK_ADD_LAYER_PATH and VK_INSTANCE_LAYERS, before any Vulkan call), which
+// also covers the instance ANGLE creates for itself.
 
 #include "volk.h"
 
@@ -53,6 +53,8 @@ struct Instance {
     PFN_vkGetInstanceProcAddr gipa = nullptr;
     PFN_vkDestroyInstance destroy = nullptr;
     PFN_vkCreateWaylandSurfaceKHR create_wayland = nullptr;
+    PFN_vkCreateXlibSurfaceKHR create_xlib = nullptr;
+    PFN_vkCreateXcbSurfaceKHR create_xcb = nullptr;
     PFN_vkEnumerateDeviceExtensionProperties enumerate = nullptr;
 };
 
@@ -113,6 +115,10 @@ VKAPI_ATTR VkResult VKAPI_CALL create_instance(const VkInstanceCreateInfo* ci,
     inst.destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(*out, "vkDestroyInstance"));
     inst.create_wayland = reinterpret_cast<PFN_vkCreateWaylandSurfaceKHR>(
         gipa(*out, "vkCreateWaylandSurfaceKHR"));
+    inst.create_xlib = reinterpret_cast<PFN_vkCreateXlibSurfaceKHR>(
+        gipa(*out, "vkCreateXlibSurfaceKHR"));
+    inst.create_xcb = reinterpret_cast<PFN_vkCreateXcbSurfaceKHR>(
+        gipa(*out, "vkCreateXcbSurfaceKHR"));
     inst.enumerate = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
         gipa(*out, "vkEnumerateDeviceExtensionProperties"));
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -140,6 +146,28 @@ VKAPI_ATTR VkResult VKAPI_CALL create_wayland_surface(VkInstance instance,
     if (inst.create_wayland == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
     const VkResult r = inst.create_wayland(instance, ci, alloc, out);
     if (r == VK_SUCCESS) os::note_wayland_surface(*out, ci->display, ci->surface);
+    return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL create_xlib_surface(VkInstance instance,
+                                                   const VkXlibSurfaceCreateInfoKHR* ci,
+                                                   const VkAllocationCallbacks* alloc,
+                                                   VkSurfaceKHR* out) {
+    const Instance inst = instance_of(instance);
+    if (inst.create_xlib == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkResult r = inst.create_xlib(instance, ci, alloc, out);
+    if (r == VK_SUCCESS) os::note_xlib_surface(*out, ci->dpy, ci->window);
+    return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL create_xcb_surface(VkInstance instance,
+                                                  const VkXcbSurfaceCreateInfoKHR* ci,
+                                                  const VkAllocationCallbacks* alloc,
+                                                  VkSurfaceKHR* out) {
+    const Instance inst = instance_of(instance);
+    if (inst.create_xcb == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkResult r = inst.create_xcb(instance, ci, alloc, out);
+    if (r == VK_SUCCESS) os::note_xcb_surface(*out, ci->connection, ci->window);
     return r;
 }
 
@@ -251,6 +279,8 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL get_instance_proc_addr(VkInstance insta
     STUD_INTERCEPT("vkCreateInstance", create_instance);
     STUD_INTERCEPT("vkDestroyInstance", destroy_instance);
     STUD_INTERCEPT("vkCreateWaylandSurfaceKHR", create_wayland_surface);
+    STUD_INTERCEPT("vkCreateXlibSurfaceKHR", create_xlib_surface);
+    STUD_INTERCEPT("vkCreateXcbSurfaceKHR", create_xcb_surface);
     STUD_INTERCEPT("vkEnumerateDeviceExtensionProperties", enumerate_device_extensions);
     STUD_INTERCEPT("vkCreateDevice", create_device);
     STUD_INTERCEPT("vkGetDeviceProcAddr", get_device_proc_addr);
