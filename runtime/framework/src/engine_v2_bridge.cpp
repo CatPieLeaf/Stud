@@ -3,6 +3,7 @@
 #include "stud/bionic_jvm.h"
 #include "stud/engine_thread.h"
 #include "stud/app_java_classes.h"
+#include "stud/engine_teardown.h"
 #include "stud/start_app_params.h"
 #include "stud/start_game_params.h"
 #include "stud/trap_recovery.h"
@@ -82,8 +83,8 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
         completed->store(true, std::memory_order_relaxed);
     }).detach();
 
-    constexpr int kPollIntervalMs = 50;
-    constexpr int kMaxPolls = 160;  // 8s total
+    constexpr int kPollIntervalMs = stud::engine_teardown::kBoundedCallPollMs;
+    constexpr int kMaxPolls = stud::engine_teardown::kBoundedCallMaxPolls;  // 8s total
     int polls = 0;
     while (!completed->load(std::memory_order_relaxed) && polls < kMaxPolls) {
         std::this_thread::sleep_for(std::chrono::milliseconds(kPollIntervalMs));

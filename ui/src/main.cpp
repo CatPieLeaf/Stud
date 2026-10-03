@@ -57,6 +57,7 @@
 #include <QNetworkRequest>
 #include "stud/session_log.h"
 #include "stud/stud_paths.h"
+#include "stud/engine_teardown.h"
 #include <QDateTime>
 #include <QDir>
 #include <QProcess>
@@ -121,6 +122,7 @@ void terminate_stale_processes() {
     // `connection lost on read ... call_id=120` followed by a STUD_TRAP
     // and a core dump, every restart.
     std::vector<pid_t> engine;
+    std::vector<pid_t> sandbox;
     std::vector<pid_t> hosts;
     for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
         if (!entry.is_directory()) continue;
@@ -150,12 +152,23 @@ void terminate_stale_processes() {
         std::ifstream cmdline_file(entry.path() / "cmdline", std::ios::binary);
         std::string cmdline((std::istreambuf_iterator<char>(cmdline_file)),
                              std::istreambuf_iterator<char>());
-        if (cmdline.find("stud-runtime-bionic") != std::string::npos) {
+        if (cmdline.find("stud-runtime-bionic") == std::string::npos) continue;
+        // bwrap itself, the outer process and the PID namespace's init,
+        // carries the same command line, and is left alone: a SIGTERM to
+        // the namespace's init ends it, and the kernel then kills every
+        // process in the namespace, Process B mid-teardown included. That
+        // is how a restart cut DestroyApp off. bwrap exits by itself once
+        // Process B has.
+        const std::string argv0 = cmdline.substr(0, cmdline.find('\0'));
+        if (std::filesystem::path(argv0).filename() == "bwrap") {
+            sandbox.push_back(pid);
+        } else {
             engine.push_back(pid);
         }
     }
-    if (engine.empty() && hosts.empty()) return;
+    if (engine.empty() && sandbox.empty() && hosts.empty()) return;
 
+    using stud::engine_teardown::kBoundedCallPollMs;
     auto wait_for = [](const std::vector<pid_t>& pids, int tries) {
         for (int i = 0; i < tries; ++i) {
             bool any_alive = false;
@@ -163,25 +176,21 @@ void terminate_stale_processes() {
                 if (::kill(pid, 0) == 0) any_alive = true;
             }
             if (!any_alive) return;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(kBoundedCallPollMs));
         }
     };
 
     for (pid_t pid : engine) ::kill(pid, SIGTERM);
-    // Long enough for Process B's own teardown (LeaveGame/DestroyApp are
-    // bounded waits of their own), short enough not to stall a restart.
-    //
-    // One second was not long enough, measured against a real in-game
-    // close: LeaveGame alone takes about 500ms before the engine has sent
-    // its disconnect, and DestroyApp runs after it -- so render-host was
-    // being stopped part-way through the one sequence that tells the
-    // server the player has gone. This only ever waits while something is
+    // As long as Process B's own teardown may take, LeaveGame then
+    // DestroyApp, each bounded, then its exit. A fixed 3s used to stop
+    // short of that and kill the engine inside DestroyApp, so it never
+    // once finished its shutdown. This only waits while something is
     // still alive, so a session that ends promptly still ends promptly.
-    wait_for(engine, 60);
+    wait_for(engine, stud::engine_teardown::kTeardownLimitMs / kBoundedCallPollMs);
     for (pid_t pid : hosts) ::kill(pid, SIGTERM);
     wait_for(hosts, 20);
 
-    for (const std::vector<pid_t>* group : {&engine, &hosts}) {
+    for (const std::vector<pid_t>* group : {&engine, &sandbox, &hosts}) {
         for (pid_t pid : *group) {
             if (::kill(pid, 0) == 0) {
                 ::kill(pid, SIGKILL);  // still alive after the grace period, force it
