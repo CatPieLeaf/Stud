@@ -1321,10 +1321,61 @@ void terminate_stud_session() { terminate_stale_processes(); }
 // something is genuinely running.
 bool stud_session_is_running() { return another_instance_is_running(); }
 
-// Start one, with no deep link. Roblox opens on its own home screen.
-// Used to put back a session that Settings had to stop to replace the
-// APK underneath it.
-void start_stud_session() { launch_game(std::nullopt); }
+// Start Stud again as a new process and let this one go, which is what
+// closing and reopening it does.
+//
+// A session put back from inside this process ran on everything the
+// first one left set up here: its logging, its crash notes, its threads.
+// Live-caught after importing an APK: the new session's UI died of heap
+// corruption a second in, and its crash note named the previous
+// session's log.
+//
+// The new process starts once this one's quit hooks have run, because
+// one of them removes the log collector's socket, which is the same path
+// the new process binds. It gets this process's starting environment,
+// not what this process set for its own session.
+void hold_for_relaunch();
+
+void relaunch_stud() {
+    hold_for_relaunch();
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.remove(QStringLiteral("STUD_LOG_FILE"));
+    env.remove(QStringLiteral("STUD_LOG_SOCKET"));
+    if (::getenv("MANGOHUD") != nullptr || ::getenv("MANGOHUD_CONFIG") != nullptr) {
+        // See keep_mangohud_out_of_this_process().
+        if (g_layers_disable_was_set) {
+            env.insert(QStringLiteral("VK_LOADER_LAYERS_DISABLE"), g_host_layers_disable);
+        } else {
+            env.remove(QStringLiteral("VK_LOADER_LAYERS_DISABLE"));
+        }
+    }
+    // The AppImage file itself, not the mount this process runs from,
+    // which goes away with it; see desktop_entry.cpp's launcher_command().
+    const QString appimage = qEnvironmentVariable("APPIMAGE");
+    const QString program = !appimage.isEmpty() && QFileInfo::exists(appimage)
+                                ? QFileInfo(appimage).absoluteFilePath()
+                                : QCoreApplication::applicationFilePath();
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [program, env]() {
+        QProcess next;
+        next.setProgram(program);
+        next.setProcessEnvironment(env);
+        // The real stdout, not this process's tee pipe: its only reader is
+        // this process, which is about to exit, and the new Stud's first
+        // line into a pipe nobody reads killed it with SIGPIPE before it
+        // logged anything. The same reason render-host gets it.
+        if (const int passthrough = stud::logging::passthrough_stdout_fd(); passthrough >= 0) {
+            next.setChildProcessModifier([passthrough] {
+                ::dup2(passthrough, STDOUT_FILENO);
+                ::dup2(passthrough, STDERR_FILENO);
+            });
+        }
+        if (!next.startDetached()) {
+            std::fprintf(stderr, "stud: could not start Stud again (%s)\n",
+                         program.toUtf8().constData());
+        }
+    });
+    QApplication::quit();
+}
 
 namespace {
 qint64 g_render_host_pid = 0;
@@ -1344,6 +1395,11 @@ bool g_crash_dialog_open = false;
 // remembers the answer.
 enum class SessionEnd { Running, Clean, Crashed };
 SessionEnd g_session_end = SessionEnd::Running;
+// Whether a session is being put back with relaunch_stud(). Settings
+// stops the session first and may then spend seconds importing an APK,
+// and the end of a session is otherwise the signal to quit: the tray
+// watchdog took it, quit, and the restart never came.
+bool g_relaunch_pending = false;
 // Whether the watcher is running at all. If it never started there is
 // nobody to decide, and the tray must not wait for an answer that is
 // never coming.
@@ -1351,6 +1407,10 @@ bool g_watcher_active = false;
 }
 
 void set_tray_is_holding(bool holding) { g_tray_is_holding = holding; }
+
+void hold_for_relaunch() { g_relaunch_pending = true; }
+
+bool relaunch_is_pending() { return g_relaunch_pending; }
 
 bool crash_dialog_is_open() { return g_crash_dialog_open; }
 
@@ -1528,7 +1588,7 @@ void watch_for_a_crash() {
             g_session_end = was_clean ? SessionEnd::Clean : SessionEnd::Crashed;
             if (was_clean) {
                 QFile::remove(clean);
-                if (!g_tray_is_holding) {
+                if (!g_tray_is_holding && !g_relaunch_pending) {
                     QMetaObject::invokeMethod(qApp, &QApplication::quit,
                                               Qt::QueuedConnection);
                 }

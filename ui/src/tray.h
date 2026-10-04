@@ -43,12 +43,17 @@ private slots:
     void quitStud();
     // A newer release exists: change the icon and add an entry for it.
     void showUpdateAvailable(const QString& latestVersion);
+    // The imported Roblox build is outdated: the same, pointing at Settings.
+    void showRobloxOutdated();
 
 private:
-    // The menu, kept so the update entry can join it later, and the entry
-    // itself, kept so it is only ever added once.
+    // The menu, kept so the update entries can join it later, and the
+    // entries themselves, kept so each is only ever added once.
     QMenu* menu_ = nullptr;
     QAction* updateAction_ = nullptr;
+    QAction* robloxAction_ = nullptr;
+    // Puts an update entry at the top of the menu and switches the icon.
+    void addUpdateEntry(QAction* action, const QString& toolTip);
 
     // Whether the session is still running, checked so the tray does not
     // outlive the game it belongs to.

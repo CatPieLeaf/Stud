@@ -1,5 +1,8 @@
 #include "update_check.h"
 
+#include "stud/android_glue.h"
+#include "stud/stud_paths.h"
+
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -17,9 +20,28 @@ namespace {
 // land on, a pre-release does not count as an update.
 constexpr const char* kLatestApi = "https://api.github.com/repos/CatPieLeaf/Stud/releases/latest";
 
+// Roblox publishes no Android version, but every platform ships from the
+// same weekly release, and that release is the middle number of each
+// client's version: the Windows client's "0.741.0.7411058" and the
+// Android app's "2.741.1061" are both release 741.
+constexpr const char* kRobloxVersionApi =
+    "https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer";
+
 bool g_started = false;
 bool g_update_available = false;
 QString g_latest;
+int g_roblox_release = 0;  // 0 until Roblox has answered
+
+// The release in a dotted version, its second number; 0 if there is none.
+int release_of(const QString& version) {
+    const QStringList parts = version.split('.');
+    return parts.size() >= 2 ? parts.at(1).toInt() : 0;
+}
+
+int imported_roblox_release() {
+    return release_of(QString::fromStdString(
+        stud::android_glue::apk_version_name(stud::paths::stored_apk_path())));
+}
 
 // Compares two dotted versions numerically rather than as text, because
 // "1.10.0" is newer than "1.9.0" and a string comparison says otherwise.
@@ -57,6 +79,13 @@ bool UpdateCheck::updateAvailable() { return g_update_available; }
 
 QString UpdateCheck::latestVersion() { return g_latest; }
 
+// No APK, or one whose version cannot be read, is never called outdated.
+bool UpdateCheck::robloxOutdated() {
+    if (g_roblox_release == 0) return false;
+    const int imported = imported_roblox_release();
+    return imported != 0 && imported < g_roblox_release;
+}
+
 void UpdateCheck::start() {
     if (g_started) return;
     g_started = true;
@@ -88,6 +117,22 @@ void UpdateCheck::start() {
         g_update_available = true;
         g_latest = tag;
         Q_EMIT instance()->updateFound(tag);
+    });
+
+    // Roblox's current release, under the same rules: no identity, and
+    // silence on any failure.
+    QNetworkRequest roblox((QUrl(QString::fromLatin1(kRobloxVersionApi))));
+    roblox.setRawHeader("User-Agent", "Stud/" STUD_VERSION);
+    roblox.setTransferTimeout(8000);
+    QNetworkReply* roblox_reply = manager->get(roblox);
+    QObject::connect(roblox_reply, &QNetworkReply::finished, instance(), [roblox_reply]() {
+        roblox_reply->deleteLater();
+        if (roblox_reply->error() != QNetworkReply::NoError) return;
+        const QJsonDocument doc = QJsonDocument::fromJson(roblox_reply->readAll());
+        if (!doc.isObject()) return;
+        g_roblox_release =
+            release_of(doc.object().value(QStringLiteral("version")).toString());
+        if (robloxOutdated()) Q_EMIT instance()->robloxOutdatedFound();
     });
 }
 

@@ -11,6 +11,8 @@
 #include <QStyle>
 #include <QApplication>
 #include <QCheckBox>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QPointer>
@@ -40,7 +42,8 @@
 namespace stud::ui {
 void terminate_stud_session();
 bool stud_session_is_running();
-void start_stud_session();
+void relaunch_stud();
+void hold_for_relaunch();
 }  // namespace stud::ui
 
 namespace stud::ui {
@@ -52,6 +55,8 @@ namespace {
 //
 constexpr int kRenderPathVulkan = 0;
 constexpr int kRenderPathOpenGL = 1;
+// The status line's "Roblox is outdated" link: opens the APK picker.
+constexpr const char* kBrowseApkLink = "stud:browse-apk";
 }  // namespace
 
 SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
@@ -285,16 +290,25 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     statusLabel_ = new QLabel(this);
     // The status line doubles as where an available update is announced,
-    // so it has to render a link and open it.
+    // so it has to render a link and open it. The Roblox one opens the APK
+    // picker here rather than a page, so links are handled, not opened.
     statusLabel_->setTextFormat(Qt::RichText);
-    statusLabel_->setOpenExternalLinks(true);
     statusLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    connect(statusLabel_, &QLabel::linkActivated, this, [this](const QString& link) {
+        if (link == QLatin1String(kBrowseApkLink)) {
+            onBrowseApkClicked();
+        } else {
+            QDesktopServices::openUrl(QUrl(link));
+        }
+    });
     layout->addWidget(statusLabel_);
 
-    // Ask GitHub whether there is a newer Stud. The tray may have asked
-    // already, in which case this costs nothing and the answer is
-    // remembered; see UpdateCheck.
+    // Ask GitHub whether there is a newer Stud, and Roblox whether the
+    // imported build is current. The tray may have asked already, in which
+    // case this costs nothing and the answer is remembered; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this,
+            [this] { showIdleStatus(); });
+    connect(UpdateCheck::instance(), &UpdateCheck::robloxOutdatedFound, this,
             [this] { showIdleStatus(); });
     UpdateCheck::start();
 
@@ -509,17 +523,20 @@ void SettingsWindow::setStatusMessage(const QString& text) {
 // saving, restarting, replaces it, and it comes back when that
 // message is cleared.
 void SettingsWindow::showIdleStatus() {
-    if (!UpdateCheck::updateAvailable()) {
-        statusLabel_->clear();
-        return;
-    }
     // Blue and underlined, stated rather than inherited: a link's default
     // colour comes from the palette and is not dependable across themes,
     // and this one has to read as a link in both.
-    statusLabel_->setText(
-        QStringLiteral("<a href=\"%1\" style=\"color:#2f7fd6; text-decoration:underline;\">"
-                       "Your Stud version is outdated!</a>")
-            .arg(UpdateCheck::releasesUrl()));
+    const QString link = QStringLiteral(
+        "<a href=\"%1\" style=\"color:#2f7fd6; text-decoration:underline;\">%2</a>");
+    QStringList lines;
+    if (UpdateCheck::updateAvailable()) {
+        lines << link.arg(UpdateCheck::releasesUrl(), QStringLiteral("Your Stud version is outdated!"));
+    }
+    if (UpdateCheck::robloxOutdated()) {
+        lines << link.arg(QLatin1String(kBrowseApkLink),
+                          QStringLiteral("Your Roblox version is outdated!"));
+    }
+    statusLabel_->setText(lines.join(QStringLiteral("<br>")));
 }
 
 void SettingsWindow::onRenderPathChanged(int) { updateUpscalerControls(); }
@@ -658,12 +675,13 @@ void SettingsWindow::onRestartClicked() {
         return;
     }
     statusLabel_->setText("Restarting Stud...");
-    // Let the label paint: stopping and relaunching blocks this thread for
-    // a moment.
+    // Let the label paint: stopping the session blocks this thread for a
+    // moment.
     QApplication::processEvents();
     terminate_stud_session();
-    start_stud_session();
-    statusLabel_->setText("Restarted with the saved settings.");
+    // As a new process, the way closing and reopening Stud does it; see
+    // relaunch_stud().
+    relaunch_stud();
 }
 
 void SettingsWindow::onSaveClicked() {
@@ -699,6 +717,11 @@ void SettingsWindow::onSaveClicked() {
     const QString stored = QString::fromStdString(stud::paths::stored_apk_path());
     bool imported = false;
     bool restart_session = false;
+    // A session stopped for the import comes back even when the import
+    // fails, on whichever APK is in place by then.
+    const auto put_back_session = [&restart_session] {
+        if (restart_session) relaunch_stud();
+    };
     if (!pickedApkPath_.isEmpty() &&
         QFileInfo(pickedApkPath_).absoluteFilePath() != QFileInfo(stored).absoluteFilePath()) {
         // Refuse an APK Stud cannot run before anything is replaced: the
@@ -734,12 +757,17 @@ void SettingsWindow::onSaveClicked() {
         if (stud_session_is_running()) {
             statusLabel_->setText("Stopping Stud to replace the APK...");
             QApplication::processEvents();
+            // Before the stop: the end of a session is otherwise the
+            // signal to quit, and the import below takes long enough for
+            // the tray to act on it.
+            hold_for_relaunch();
             terminate_stud_session();
             restart_session = true;
         }
         if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
             QFile::remove(QString::fromStdString(candidate_so));
             statusLabel_->setText("Could not create Stud's APK directory.");
+            put_back_session();
             return;
         }
         statusLabel_->setText("Importing the APK...");
@@ -756,6 +784,7 @@ void SettingsWindow::onSaveClicked() {
             QFile::remove(QString::fromStdString(candidate_so));
             statusLabel_->setText(QString("Could not copy the APK into %1, is there room?")
                                        .arg(QString::fromStdString(stud::paths::apk_dir())));
+            put_back_session();
             return;
         }
         // Anything else in there is not Stud's: an earlier build kept
@@ -801,6 +830,7 @@ void SettingsWindow::onSaveClicked() {
             std::ofstream(fingerprint_path, std::ios::trunc) << apk_fingerprint << "\n";
         } catch (const stud::android_glue::ExtractError& e) {
             statusLabel_->setText(QString("Failed to extract libroblox.so from the selected APK: %1").arg(e.what()));
+            put_back_session();
             return;
         }
     }
@@ -812,17 +842,20 @@ void SettingsWindow::onSaveClicked() {
         pickedApkPath_.clear();
         apkPathEdit_->setText(storedApkLabel());
         if (restart_session) {
+            // As a new process, the way closing and reopening Stud does it;
+            // see relaunch_stud().
             statusLabel_->setText("Starting Stud again...");
             QApplication::processEvents();
-            start_stud_session();
-            statusLabel_->setText("Settings saved. Stud restarted with the new APK.");
+            relaunch_stud();
         } else {
             statusLabel_->setText("Settings saved.");
         }
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(QString("Failed to save settings: %1").arg(e.what()));
+        put_back_session();
     } catch (const std::runtime_error& e) {
         statusLabel_->setText(QString("Failed to save render backend setting: %1").arg(e.what()));
+        put_back_session();
     }
 }
 

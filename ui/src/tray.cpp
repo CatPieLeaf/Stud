@@ -11,6 +11,7 @@
 namespace stud::ui { void terminate_stud_session(); }
 // Defined in main.cpp: whether a crash report is on screen right now.
 namespace stud::ui { bool crash_dialog_is_open(); }
+namespace stud::ui { bool relaunch_is_pending(); }
 // Defined in main.cpp: whether the session that just ended said it
 // meant to. See note_clean_exit().
 namespace stud::ui { bool session_ended_cleanly(); }
@@ -191,7 +192,10 @@ bool Tray::show() {
     // Ask GitHub whether there is a newer Stud, once, in the background.
     // Nothing appears unless there is; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this, &Tray::showUpdateAvailable);
+    connect(UpdateCheck::instance(), &UpdateCheck::robloxOutdatedFound, this,
+            &Tray::showRobloxOutdated);
     if (UpdateCheck::updateAvailable()) showUpdateAvailable(UpdateCheck::latestVersion());
+    if (UpdateCheck::robloxOutdated()) showRobloxOutdated();
     UpdateCheck::start();
 
     // The tray must not outlive the session it belongs to: once the game
@@ -210,19 +214,32 @@ bool Tray::show() {
 // the menu to see is not a notification. It is deliberately NOT a popup:
 // an update is not urgent enough to interrupt a game.
 void Tray::showUpdateAvailable(const QString& latestVersion) {
-    if (icon_ == nullptr || updateAction_ != nullptr) return;
+    if (icon_ == nullptr || menu_ == nullptr || updateAction_ != nullptr) return;
+    updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
+    connect(updateAction_, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl(UpdateCheck::releasesUrl()));
+    });
+    addUpdateEntry(updateAction_, QStringLiteral("Stud: version %1 is available").arg(latestVersion));
+}
+
+// There is nowhere official to download the Android app from, so the entry
+// opens Settings, where a newer APK is imported.
+void Tray::showRobloxOutdated() {
+    if (icon_ == nullptr || menu_ == nullptr || robloxAction_ != nullptr) return;
+    robloxAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Roblox"), menu_);
+    connect(robloxAction_, &QAction::triggered, this, &Tray::openSettings);
+    addUpdateEntry(robloxAction_, QStringLiteral("Stud: your Roblox version is outdated"));
+}
+
+void Tray::addUpdateEntry(QAction* action, const QString& toolTip) {
     icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
-    icon_->setToolTip(QStringLiteral("Stud: version %1 is available").arg(latestVersion));
-    if (menu_ != nullptr) {
-        updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
-        connect(updateAction_, &QAction::triggered, this, [] {
-            QDesktopServices::openUrl(QUrl(UpdateCheck::releasesUrl()));
-        });
-        // At the top, above Settings: it is the only entry here that is
-        // news rather than a thing the user came to do.
-        menu_->insertAction(menu_->actions().value(0), updateAction_);
-        menu_->insertSeparator(menu_->actions().value(1));
-    }
+    icon_->setToolTip(toolTip);
+    // At the top, above Settings: these are the only entries here that are
+    // news rather than a thing the user came to do. One separator below
+    // them, whether there is one entry or two.
+    const bool first = updateAction_ == nullptr || robloxAction_ == nullptr;
+    menu_->insertAction(menu_->actions().value(0), action);
+    if (first) menu_->insertSeparator(menu_->actions().value(1));
 }
 
 void Tray::checkSessionAlive() {
@@ -234,6 +251,8 @@ void Tray::checkSessionAlive() {
     // problem and was really this. The report owns the shutdown while it
     // is up; closing it quits.
     if (stud::ui::crash_dialog_is_open()) return;
+    // Settings stopped the session to put it back; relaunch_stud() quits.
+    if (stud::ui::relaunch_is_pending()) return;
     // And defer BEFORE it is up, too. Waiting for the dialog to exist is
     // a race between two one-second timers: this one noticing the
     // session is gone, and the crash watcher deciding to report it. The
