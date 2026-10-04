@@ -50,6 +50,9 @@ void note_wayland_surface(VkSurfaceKHR surface, wl_display* display, wl_surface*
 void note_xcb_surface(VkSurfaceKHR surface, xcb_connection_t* connection, uint32_t window);
 void note_xlib_surface(VkSurfaceKHR surface, void* display, unsigned long window);
 
+// The layer's vkDestroySurfaceKHR, before calling down.
+void forget_surface(VkSurfaceKHR surface);
+
 // The layer's vkCreateDevice, before calling down: the extensions to add.
 // Empty when the driver cannot do what the owned swapchain needs.
 std::vector<std::string> device_extensions(VkPhysicalDevice physical_device);

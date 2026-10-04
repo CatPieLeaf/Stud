@@ -36,10 +36,21 @@ constexpr const char* kLayerName = "VK_LAYER_STUD_present";
 // What the driver's swapchain offers and Stud's does not: present timing
 // and per-present fences. Hidden, so nothing above asks Stud's swapchain
 // for either.
+//
+// Both names of swapchain_maintenance1: the KHR one offers the same
+// per-present fences as the EXT one, and a fence chained to a present on
+// Stud's swapchain is never signalled, so anything that waits on it waits
+// forever. Spelled out rather than taken from the headers, since older
+// Vulkan headers lack the KHR one.
+//
+// Only what Stud's swapchain is known not to honour. present_id2 and
+// present_wait2 were hidden as well once, and the Vulkan path played worse
+// for it, measured; nothing here was found to read them.
 const char* const kHidden[] = {
-    VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
-    VK_KHR_PRESENT_ID_EXTENSION_NAME,
-    VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
+    "VK_KHR_present_wait",
+    "VK_KHR_present_id",
+    "VK_EXT_swapchain_maintenance1",
+    "VK_KHR_swapchain_maintenance1",
 };
 
 bool hidden(const char* name) {
@@ -51,11 +62,7 @@ bool hidden(const char* name) {
 
 struct Instance {
     PFN_vkGetInstanceProcAddr gipa = nullptr;
-    PFN_vkDestroyInstance destroy = nullptr;
-    PFN_vkCreateWaylandSurfaceKHR create_wayland = nullptr;
-    PFN_vkCreateXlibSurfaceKHR create_xlib = nullptr;
-    PFN_vkCreateXcbSurfaceKHR create_xcb = nullptr;
-    PFN_vkEnumerateDeviceExtensionProperties enumerate = nullptr;
+    VolkInstanceTable vk{};  // the next layer's instance commands
 };
 
 struct Device {
@@ -112,15 +119,7 @@ VKAPI_ATTR VkResult VKAPI_CALL create_instance(const VkInstanceCreateInfo* ci,
 
     Instance inst;
     inst.gipa = gipa;
-    inst.destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(*out, "vkDestroyInstance"));
-    inst.create_wayland = reinterpret_cast<PFN_vkCreateWaylandSurfaceKHR>(
-        gipa(*out, "vkCreateWaylandSurfaceKHR"));
-    inst.create_xlib = reinterpret_cast<PFN_vkCreateXlibSurfaceKHR>(
-        gipa(*out, "vkCreateXlibSurfaceKHR"));
-    inst.create_xcb = reinterpret_cast<PFN_vkCreateXcbSurfaceKHR>(
-        gipa(*out, "vkCreateXcbSurfaceKHR"));
-    inst.enumerate = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-        gipa(*out, "vkEnumerateDeviceExtensionProperties"));
+    volkLoadInstanceTable(&inst.vk, *out);
     std::lock_guard<std::mutex> lock(g_mutex);
     g_instances[key(*out)] = inst;
     return VK_SUCCESS;
@@ -132,8 +131,12 @@ VKAPI_ATTR void VKAPI_CALL destroy_instance(VkInstance instance, const VkAllocat
         std::lock_guard<std::mutex> lock(g_mutex);
         const auto it = g_instances.find(key(instance));
         if (it == g_instances.end()) return;
-        destroy = it->second.destroy;
+        destroy = it->second.vk.vkDestroyInstance;
         g_instances.erase(it);
+        // Physical device handles belong to an instance, so a later
+        // instance can hand out the same address for another GPU. Asked
+        // again rather than remembered.
+        g_capable.clear();
     }
     destroy(instance, alloc);
 }
@@ -143,8 +146,8 @@ VKAPI_ATTR VkResult VKAPI_CALL create_wayland_surface(VkInstance instance,
                                                       const VkAllocationCallbacks* alloc,
                                                       VkSurfaceKHR* out) {
     const Instance inst = instance_of(instance);
-    if (inst.create_wayland == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
-    const VkResult r = inst.create_wayland(instance, ci, alloc, out);
+    if (inst.vk.vkCreateWaylandSurfaceKHR == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkResult r = inst.vk.vkCreateWaylandSurfaceKHR(instance, ci, alloc, out);
     if (r == VK_SUCCESS) os::note_wayland_surface(*out, ci->display, ci->surface);
     return r;
 }
@@ -154,8 +157,8 @@ VKAPI_ATTR VkResult VKAPI_CALL create_xlib_surface(VkInstance instance,
                                                    const VkAllocationCallbacks* alloc,
                                                    VkSurfaceKHR* out) {
     const Instance inst = instance_of(instance);
-    if (inst.create_xlib == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
-    const VkResult r = inst.create_xlib(instance, ci, alloc, out);
+    if (inst.vk.vkCreateXlibSurfaceKHR == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkResult r = inst.vk.vkCreateXlibSurfaceKHR(instance, ci, alloc, out);
     if (r == VK_SUCCESS) os::note_xlib_surface(*out, ci->dpy, ci->window);
     return r;
 }
@@ -165,10 +168,17 @@ VKAPI_ATTR VkResult VKAPI_CALL create_xcb_surface(VkInstance instance,
                                                   const VkAllocationCallbacks* alloc,
                                                   VkSurfaceKHR* out) {
     const Instance inst = instance_of(instance);
-    if (inst.create_xcb == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
-    const VkResult r = inst.create_xcb(instance, ci, alloc, out);
+    if (inst.vk.vkCreateXcbSurfaceKHR == nullptr) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkResult r = inst.vk.vkCreateXcbSurfaceKHR(instance, ci, alloc, out);
     if (r == VK_SUCCESS) os::note_xcb_surface(*out, ci->connection, ci->window);
     return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL destroy_surface(VkInstance instance, VkSurfaceKHR surface,
+                                           const VkAllocationCallbacks* alloc) {
+    const Instance inst = instance_of(instance);
+    os::forget_surface(surface);
+    if (inst.vk.vkDestroySurfaceKHR != nullptr) inst.vk.vkDestroySurfaceKHR(instance, surface, alloc);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL enumerate_device_extensions(VkPhysicalDevice physical_device,
@@ -181,13 +191,13 @@ VKAPI_ATTR VkResult VKAPI_CALL enumerate_device_extensions(VkPhysicalDevice phys
     }
     const Instance inst = instance_of(physical_device);
     if (layer != nullptr || capable(physical_device).empty()) {
-        return inst.enumerate(physical_device, layer, count, props);
+        return inst.vk.vkEnumerateDeviceExtensionProperties(physical_device, layer, count, props);
     }
     uint32_t n = 0;
-    VkResult r = inst.enumerate(physical_device, nullptr, &n, nullptr);
+    VkResult r = inst.vk.vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &n, nullptr);
     if (r != VK_SUCCESS) return r;
     std::vector<VkExtensionProperties> all(n);
-    r = inst.enumerate(physical_device, nullptr, &n, all.data());
+    r = inst.vk.vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &n, all.data());
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) return r;
     all.resize(n);
     std::vector<VkExtensionProperties> shown;
@@ -281,6 +291,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL get_instance_proc_addr(VkInstance insta
     STUD_INTERCEPT("vkCreateWaylandSurfaceKHR", create_wayland_surface);
     STUD_INTERCEPT("vkCreateXlibSurfaceKHR", create_xlib_surface);
     STUD_INTERCEPT("vkCreateXcbSurfaceKHR", create_xcb_surface);
+    STUD_INTERCEPT("vkDestroySurfaceKHR", destroy_surface);
     STUD_INTERCEPT("vkEnumerateDeviceExtensionProperties", enumerate_device_extensions);
     STUD_INTERCEPT("vkCreateDevice", create_device);
     STUD_INTERCEPT("vkGetDeviceProcAddr", get_device_proc_addr);

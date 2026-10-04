@@ -1291,7 +1291,12 @@ VkResult present_one(State& s, VkQueue queue, Swapchain* sc, uint32_t index,
     if (imported != 0) return VK_ERROR_SURFACE_LOST_KHR;
     buffer->point = release;
 
-    wp_linux_drm_syncobj_surface_v1* sync = s.syncobj_surfaces[sc->target.surface];
+    // Made with the swapchain, and again here if forget_surface() has given
+    // it back since: a present must never reach the compositor without one.
+    wp_linux_drm_syncobj_surface_v1*& sync = s.syncobj_surfaces[sc->target.surface];
+    if (sync == nullptr) {
+        sync = wp_linux_drm_syncobj_manager_v1_get_surface(c.syncobj, sc->target.surface);
+    }
     wp_linux_drm_syncobj_surface_v1_set_acquire_point(sync, buffer->timeline,
                                                       static_cast<uint32_t>(acquire >> 32),
                                                       static_cast<uint32_t>(acquire));
@@ -1386,6 +1391,28 @@ void note_xcb_surface(VkSurfaceKHR surface, xcb_connection_t* connection, uint32
 void note_xlib_surface(VkSurfaceKHR surface, void* display, unsigned long window) {
     if (display == nullptr || xcb().xlib_connection == nullptr) return;
     note_xcb_surface(surface, xcb().xlib_connection(display), static_cast<uint32_t>(window));
+}
+
+// A wl_surface takes one syncobj surface for its whole life, and asking
+// for a second is a protocol error that ends the window's connection. So
+// it is given back with the VkSurfaceKHR it was made for, and a wl_surface
+// made later at the same address starts clean.
+void forget_surface(VkSurfaceKHR surface) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    const auto it = s.targets.find(surface);
+    if (it == s.targets.end()) return;
+    const Target gone = it->second;
+    s.targets.erase(it);
+    if (gone.surface == nullptr) return;
+    for (const auto& t : s.targets) {
+        if (t.second.surface == gone.surface) return;
+    }
+    const auto sync = s.syncobj_surfaces.find(gone.surface);
+    if (sync == s.syncobj_surfaces.end()) return;
+    wp_linux_drm_syncobj_surface_v1_destroy(sync->second);
+    s.syncobj_surfaces.erase(sync);
+    wl_display_flush(gone.compositor->display);
 }
 
 void note_wayland_surface(VkSurfaceKHR surface, wl_display* display, wl_surface* target) {
