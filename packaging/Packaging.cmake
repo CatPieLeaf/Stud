@@ -63,14 +63,15 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # that dependency on its own, hence naming it here, by SONAME rather
 # than by package: that is the dependency rpm would have generated
 # itself, it does not assume a distribution's package name, and naming
-# the package instead is what rpmlint calls explicit-lib-dependency.
+# the package instead is what rpmlint calls explicit-lib-dependency. The
+# same goes for libdrm, which Stud's present layer links.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit), libEGL.so.1()(64bit), libGLESv2.so.2()(64bit)")
+    "bubblewrap, qt6-qtbase-gui, qt6-qtwebengine, qtkeychain-qt6, vulkan-loader, libxkbcommon.so.0()(64bit), libXi.so.6()(64bit), libEGL.so.1()(64bit), libGLESv2.so.2()(64bit), libdrm.so.2()(64bit)")
 # Weak, both of them: mangohud is a Settings toggle, and wl-clipboard is
 # what the tray's "copy server link" shells out to on Wayland. Neither
 # stops Stud from running.
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard, libdecor")
-# The DesktopGL render path opens the system's libEGL and libGLESv2 at
+# The OpenGL render path opens the system's libEGL and libGLESv2 at
 # runtime, and the X11 keyboard layout is read through libxkbcommon-x11
 # and libX11-xcb, opened the same way: named above and below by SONAME
 # for the same reason libxkbcommon is. The keymap pair is weak, without
@@ -191,7 +192,7 @@ libqt6openglwidgets6 (>= 6.4) | libqt6openglwidgets6t64 (>= 6.4), \
 libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
 libqt6webenginewidgets6 (>= 6.4), \
 libqt6keychain1, libvulkan1, libfreetype6, \
-libwayland-client0, libxkbcommon0, libxi6, libegl1, libgles2")
+libwayland-client0, libxkbcommon0, libxi6, libegl1, libgles2, libdrm2")
 # wl-clipboard because the tray's "copy server link" shells out to
 # wl-copy: a Wayland compositor only accepts a clipboard offer with the
 # serial of a real input event on one of the application's own surfaces,

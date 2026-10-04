@@ -50,7 +50,7 @@ Requires:       hicolor-icon-theme
 # it Stud runs and simply offers the engine no video codecs. Either
 # Fedora's own build or RPM Fusion's full one.
 Recommends:     (libavcodec-free or ffmpeg-libs)
-# The system GLES the DesktopGL render path uses is opened at runtime, by
+# The system GLES the OpenGL render path uses is opened at runtime, by
 # SONAME, so rpm cannot see it either.
 Requires:       libEGL.so.1()(64bit)
 Requires:       libGLESv2.so.2()(64bit)

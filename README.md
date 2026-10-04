@@ -162,8 +162,8 @@ sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-deve
 <summary>Debian / Ubuntu</summary>
 
 ```bash
-sudo apt install cmake ninja-build build-essential qt6-base-dev qt6-webengine-dev \
-  qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
+sudo apt install cmake ninja-build build-essential qt6-base-dev libqt6opengl6-dev \
+  qt6-webengine-dev qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
   libdrm-dev libxkbcommon-dev libxi-dev libxcb-dri3-dev libxcb-present-dev \
   libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev libssl-dev \
   libavcodec-dev libavutil-dev libswscale-dev bubblewrap wl-clipboard

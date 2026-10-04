@@ -24,6 +24,7 @@ depends=(
   'qtkeychain-qt6'
   'vulkan-icd-loader'
   'libglvnd'
+  'libdrm'
   'libx11'
   'libxext'
   'libxi'
