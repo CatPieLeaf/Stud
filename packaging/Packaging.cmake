@@ -200,7 +200,7 @@ libwayland-client0, libxkbcommon0, libxi6, libegl1, libgles2, libdrm2")
 # (ui/src/tray.cpp explains it at the call site). Recommended rather than
 # required, without it that one menu entry says what is missing, and
 # everything else works.
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0, libxkbcommon-x11-0, libx11-xcb1")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0, libxkbcommon-x11-0, libx11-xcb1, libxcb-dri3-0, libxcb-present0")
 # The same FFmpeg major the render host was built for; see the rpm half.
 if(StudPackagedFfmpeg_FOUND)
     string(APPEND CPACK_DEBIAN_PACKAGE_RECOMMENDS

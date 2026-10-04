@@ -50,8 +50,10 @@ Requires:       hicolor-icon-theme
 # it Stud runs and simply offers the engine no video codecs. Either
 # Fedora's own build or RPM Fusion's full one.
 Recommends:     (libavcodec-free or ffmpeg-libs)
-# The system GLES the OpenGL render path uses is opened at runtime, by
-# SONAME, so rpm cannot see it either.
+# The Vulkan loader, for the default render path, is opened at runtime by
+# volk, and the system GLES the OpenGL render path uses is opened by SONAME
+# too, so rpm cannot see either.
+Requires:       libvulkan.so.1()(64bit)
 Requires:       libEGL.so.1()(64bit)
 Requires:       libGLESv2.so.2()(64bit)
 # The X11 keyboard layout is read from the server through these, opened at
