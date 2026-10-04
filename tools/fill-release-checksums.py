@@ -11,11 +11,11 @@ this fills them in from the one that does.
 The release workflow runs it after every published release and commits
 the result to main (the `checksums` job). By hand, to redo one:
 
-    tools/fill-release-checksums.py 1.1.11
+    tools/fill-release-checksums.py 1.2.0
 
 With no network (or to redo it from values already in hand):
 
-    tools/fill-release-checksums.py 1.1.11 --source-sha <hex> --archive-sha <hex>
+    tools/fill-release-checksums.py 1.2.0 --source-sha <hex> --archive-sha <hex>
 
 `--check` reports what is filled in and what is still a placeholder,
 without writing anything.

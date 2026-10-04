@@ -12,8 +12,8 @@ the same as any other build of Stud; the NDK is a large download, so
 it is not fetched inside the image build.
 
 ```sh
-podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:1.1.11 .
-podman push ghcr.io/catpieleaf/stud:1.1.11
+podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:1.2.0 .
+podman push ghcr.io/catpieleaf/stud:1.2.0
 ```
 
 ## Where the manifest lives

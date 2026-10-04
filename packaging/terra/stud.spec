@@ -21,7 +21,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.1.11
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -117,6 +117,14 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Sun Oct 04 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.0-1
+- NVIDIA Freezes are GONE!
+- Stud presents the game's frames itself, on Wayland and on X11
+- No more lag on launching stud
+- No black flashes on X11 when a game opens
+- Mouse lock and the captured pointer behave the way the game expects
+- ANGLE is gone
+
 * Fri Oct 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.1.11-1
 - Resizing, maximizing and restoring the window is smooth on Wayland and X11
 - Fixed a leak that made Stud slower the longer it ran

@@ -98,6 +98,18 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.0" date="2026-10-04">
+      <description>
+        <ul>
+          <li>NVIDIA Freezes are GONE!</li>
+          <li>Stud presents the game's frames itself, on Wayland and on X11</li>
+          <li>No more lag on launching stud</li>
+          <li>No black flashes on X11 when a game opens</li>
+          <li>Mouse lock and the captured pointer behave the way the game expects</li>
+          <li>ANGLE is gone</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.11" date="2026-10-02">
       <description>
         <ul>
