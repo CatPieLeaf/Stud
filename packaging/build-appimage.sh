@@ -162,9 +162,13 @@ for exe in stud-render-host stud-webview; do
 done
 # Stud's present layer: stud-ui points the Vulkan loader at the manifest
 # beside render-host, and the library itself was bundled above with its
-# dependencies, so the manifest's path is rewritten to that copy.
-[ -e "$appdir/lib/libstud_present_layer.so" ] || die "quick-sharun did not bundle the present layer"
-sed 's|"library_path": "[^"]*"|"library_path": "../../lib/libstud_present_layer.so"|' \
+# dependencies, so the manifest's path is rewritten to that copy. Where
+# under lib/ it lands follows the source's path (/usr/libexec/stud went to
+# lib/exec/stud), so it is looked up rather than assumed.
+layer="$(find "$appdir/lib" -name libstud_present_layer.so -print -quit)"
+[ -n "$layer" ] || die "quick-sharun did not bundle the present layer"
+layer="$(realpath --relative-to="$appdir/libexec/stud" "$layer")"
+sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"$layer\"|" \
     /usr/libexec/stud/VK_LAYER_STUD_present.json > "$appdir/libexec/stud/VK_LAYER_STUD_present.json"
 
 # Stud's own files that are not host libraries, copied as they are:
