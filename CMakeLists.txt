@@ -28,11 +28,10 @@ option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
 # This exists for the Flatpak. Copying a binary built on one distribution
 # into a runtime carrying a different Qt is what made the Flatpak crash
 # inside Qt's own startup before a line of Stud ran, so there, the Qt
-# side is compiled in the runtime and the rest (ANGLE, the bionic
-# runtime, the render host) is installed prebuilt, which needs no Qt and
-# would otherwise cost an hour of ANGLE per build.
+# side is compiled in the runtime and the rest (the bionic runtime, the
+# render host) is installed prebuilt, which needs no Qt.
 option(STUD_BUILD_QT_ONLY
-       "Build only the Qt executables; skip the render host, the bionic runtime and ANGLE" OFF)
+       "Build only the Qt executables; skip the render host and the bionic runtime" OFF)
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 # Tracy, the frame profiler, OFF and not fetched unless asked for.
 #
@@ -76,7 +75,6 @@ include(CheckPIESupported)
 check_pie_supported(LANGUAGES CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_link_options($<$<LINK_LANGUAGE:CXX>:-Wl,-z,relro,-z,now>)
-option(STUD_ENABLE_DEV_RENDER_TOGGLE "Enable the prototype-only dev render-backend config toggle" ON)
 
 # The application's identity, in one place.
 #
@@ -108,15 +106,14 @@ include(GNUInstallDirs)
 set(STUD_LIBEXEC_DIR "${CMAKE_INSTALL_LIBEXECDIR}/stud")
 set(STUD_PRIVATE_LIB_DIR "lib/stud")
 
-# Third-party dependencies Stud does not vendor and cannot redistribute:
-# the Android NDK, the from-source ANGLE build, and a real extracted
-# bionic (libc/linker64/...). tools/setup.sh puts all three here.
+# Third-party dependencies Stud does not vendor: the Android NDK and a
+# real extracted bionic (libc/linker64/...). tools/setup.sh puts both here.
 #
 # One root, overridable, defaulting INSIDE the repo, an earlier layout
 # resolved these relative to the parent directory of the checkout, which
 # only worked on the one machine the tree was developed in.
 set(STUD_THIRD_PARTY_DIR "${CMAKE_SOURCE_DIR}/third_party" CACHE PATH
-    "Where setup.sh puts the NDK, the ANGLE build and the extracted bionic")
+    "Where setup.sh puts the NDK and the extracted bionic")
 
 if(STUD_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -125,7 +122,7 @@ endif()
 
 # Real, proven, generic infra kept as-is across the 2026-09-02 reset
 # (the engineering notes' own "nuke stud, recreate sober 1:1" entry): real
-# bionic ELF loading/sandboxing, real ANGLE render-host + its IPC
+# bionic ELF loading/sandboxing, real render-host + its IPC
 # transport, real asset/APK extraction, real login/settings UI. None of
 # this is "wiring libroblox"; it's OS/rendering plumbing, proven
 # working via extensive live testing before the reset, and rebuilding
@@ -258,8 +255,8 @@ endif()
 # packaging exactly what `cmake --install` lays down, and the AppImage is
 # quick-sharun bundling the same layout (packaging/build-appimage.sh).
 #
-# The layout is deliberately relocatable; every binary finds bionic,
-# ANGLE and its sibling processes relative to its own path, because an
+# The layout is deliberately relocatable; every binary finds bionic and
+# its sibling processes relative to its own path, because an
 # AppImage is mounted somewhere different on every run, so nothing may be
 # compiled in as absolute.
 #
@@ -267,7 +264,6 @@ endif()
 #   <prefix>/libexec/stud/                 the other two processes, the
 #                                          viewer, and Process B's own
 #                                          lib64/ overlay beside it
-#   <prefix>/lib/stud/angle/               ANGLE
 #   <prefix>/lib/stud/android-bionic/      the real linker and libc
 #   <prefix>/share/...                     desktop entry, icon, AppStream
 # The desktop entry and AppStream component, named by the application id.
@@ -386,26 +382,20 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/miniaudio"
         RENAME "LICENSE-miniaudio.txt")
 
-# The dependencies setup.sh fetched. They are not Stud's own code, but a
-# package has to carry them or the application cannot start: ANGLE is the
-# GL translation layer, and the bionic set is the real linker and libc
-# that load Roblox's engine. Both are redistributable; ANGLE is BSD,
-# the bionic set is BSD and Apache-2.0 from AOSP, and both licences
-# require their text and copyright to travel with the binaries.
+# The dependency setup.sh fetched. It is not Stud's own code, but a
+# package has to carry it or the application cannot start: the bionic set
+# is the real linker and libc that load Roblox's engine. It is
+# redistributable, BSD and Apache-2.0 from AOSP, and both licences require
+# their text and copyright to travel with the binaries.
 #
-# `tools/setup.sh` puts them in a `licenses/` directory beside each set,
+# `tools/setup.sh` puts them in a `licenses/` directory beside the set,
 # so installing the directory carries them; they are ALSO installed under
 # share/licenses/stud/, which is where a distribution looks. If setup
 # could not fetch them it says so loudly, a package built from a tree
 # without them is one that cannot legally be distributed.
-set(STUD_PREBUILT_DEPS angle android-bionic)
+set(STUD_PREBUILT_DEPS android-bionic)
 if(STUD_BUILD_QT_ONLY)
     set(STUD_PREBUILT_DEPS)  # supplied prebuilt, so nothing to install here
-endif()
-if(NOT STUD_BUILD_QT_ONLY AND EXISTS "${STUD_THIRD_PARTY_DIR}/angle")
-    install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/angle/"
-            DESTINATION "${STUD_PRIVATE_LIB_DIR}/angle"
-            USE_SOURCE_PERMISSIONS)
 endif()
 if(NOT STUD_BUILD_QT_ONLY AND EXISTS "${STUD_THIRD_PARTY_DIR}/android-bionic")
     install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/android-bionic/"

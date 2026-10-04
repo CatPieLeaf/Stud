@@ -7,10 +7,6 @@
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
 
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-#include "stud/dev_backend_config.h"
-#endif
-
 #include <QStyle>
 #include <QApplication>
 #include <QCheckBox>
@@ -49,16 +45,12 @@ void start_stud_session();
 namespace stud::ui {
 
 namespace {
-// Entry order of the render-path list. Zink is last so that a build with
-// the dev toggle off simply has one fewer entry and the other two keep
-// their meaning.
+// Entry order of the render-path list.
 // How large the app draws everything. Position 0 is "follow the
 // display"; 1..kUiScaleSteps map linearly onto 0.5x..3.0x in 0.05x steps.
 //
 constexpr int kRenderPathVulkan = 0;
-constexpr int kRenderPathAngleVulkan = 1;
-constexpr int kRenderPathDesktopGL = 2;
-constexpr int kRenderPathSoftware = 3;
+constexpr int kRenderPathOpenGL = 1;
 }  // namespace
 
 SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
@@ -105,15 +97,10 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* graphics = add_tab("Graphics");
     graphics->addWidget(new QLabel("Render path"));
     renderPathCombo_ = new QComboBox(this);
-    // Ordered by how much hardware each one needs, most to least, so
-    // moving down the list is what someone does when the one above did
-    // not work.
+    // OpenGL is the system's own GLES driver, for hardware Vulkan does not
+    // run on.
     renderPathCombo_->addItem("Vulkan (recommended)");
-    renderPathCombo_->addItem("ANGLE");
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
     renderPathCombo_->addItem("OpenGL");
-    renderPathCombo_->addItem("Software rendering");
-#endif
     graphics->addWidget(renderPathCombo_);
 
     graphics->addWidget(new QLabel("GPU"));
@@ -202,14 +189,10 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         sync_upscale_controls();
     });
 
-    // Enabled or greyed out by the render path; see onRenderPathChanged,
-    // which also owns the tooltip and says why when it is unavailable.
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
+    mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Stud's own window.");
     graphics->addWidget(mangohudCheck_);
-    connect(mangohudCheck_, &QCheckBox::toggled, this, &SettingsWindow::onMangohudToggled);
-    // Connected only now that the checkbox it drives exists: the slot
-    // dereferences it, and a combo signal arriving before that would be
-    // a null dereference.
+    // Connected only once the controls the slot updates exist.
     connect(renderPathCombo_, &QComboBox::currentIndexChanged, this,
             &SettingsWindow::onRenderPathChanged);
     // Frame rate while Stud is in the background.
@@ -443,48 +426,12 @@ void SettingsWindow::loadFromDisk() {
     pickedApkPath_.clear();
     apkPathEdit_->setText(storedApkLabel());
 
-    // Vulkan wins outright: the backend key is about which GL library to
-    // load, and Vulkan mode loads none, so a saved "zink" alongside
-    // Vulkan is not a third state; it is a leftover.
-    int path_index = kRenderPathVulkan;
-    if (settings.graphics_mode != stud::config::GraphicsMode::kVulkan) {
-        path_index = kRenderPathAngleVulkan;
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-        try {
-            if (auto backend =
-                    stud::render::load_dev_render_backend_config(stud::config::default_config_path())) {
-                if (backend->mode == stud::render::DevRenderBackendMode::kDesktopGL) {
-                    path_index = kRenderPathDesktopGL;
-                } else if (backend->mode == stud::render::DevRenderBackendMode::kAngleSwiftShader) {
-                    path_index = kRenderPathSoftware;
-                }
-            }
-        } catch (const std::runtime_error&) {
-            // A malformed backend key is not worth refusing to show the
-            // window over; the plain OpenGL entry is the honest default.
-        }
-#endif
-    }
+    const int path_index =
+        settings.graphics_mode == stud::config::GraphicsMode::kVulkan ? kRenderPathVulkan : kRenderPathOpenGL;
     renderPathCombo_->setCurrentIndex(path_index);
-    // After the path, so the checkbox ends up matching it: setChecked()
-    // above recorded what the user wants, and this decides whether the
-    // chosen path can honour it.
     onRenderPathChanged(path_index);
 }
 
-// MangoHud can only overlay a render path it can actually hook, so the
-// checkbox follows the render path rather than sitting there offering
-// something that will not happen.
-//
-// Vulkan is render-host's own real driver calls, which its Vulkan layer
-// hooks. OpenGL reaches the system EGL through ANGLE's desktop-GL
-// backend, which its OpenGL hook catches once its shim is preloaded,
-// live-confirmed, libMangoHud_opengl.so really is mapped into
-// render-host there. The other two present through ANGLE's own private
-// Vulkan and touch neither: its GL hook never loads, and its Vulkan
-// layer crashes ANGLE the moment a swapchain is recreated, which is what
-// joining a game does (MangoHud#1259, #1774). Stud disables that layer on
-// those paths, so there is genuinely no overlay to offer.
 namespace {
 
 // One well-known name per user session, beside the render socket Stud
@@ -571,18 +518,7 @@ void SettingsWindow::showIdleStatus() {
             .arg(UpdateCheck::releasesUrl()));
 }
 
-void SettingsWindow::onRenderPathChanged(int index) {
-    const bool can_overlay = index != kRenderPathSoftware;
-    mangohudCheck_->setEnabled(can_overlay);
-    mangohudCheck_->setToolTip(can_overlay
-                                   ? "Shows MangoHud's performance overlay over Stud's own window."
-                                   : "Not available on the software render path.");
-    // The signal is blocked so restoring the box does not overwrite what
-    // the user actually asked for, switching away and back keeps it.
-    const QSignalBlocker block(mangohudCheck_);
-    mangohudCheck_->setChecked(can_overlay && mangohudWanted_);
-    updateUpscalerControls();
-}
+void SettingsWindow::onRenderPathChanged(int) { updateUpscalerControls(); }
 
 // The upscaler box follows the render path. RAVU is a Vulkan compute
 // shader; the GL paths scale with SGSR's own GLES shader whatever is
@@ -615,7 +551,6 @@ void SettingsWindow::updateUpscalerControls() {
     }
 }
 
-void SettingsWindow::onMangohudToggled(bool checked) { mangohudWanted_ = checked; }
 
 // What the picker shows when it is not mid-pick: which Roblox build
 // Stud has, read out of the stored APK's own manifest. Empty when there
@@ -868,21 +803,6 @@ void SettingsWindow::onSaveClicked() {
 
     try {
         stud::config::save_settings(stud::config::default_config_path(), settings);
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-        // Written on every save, including for Vulkan: leaving a stale
-        // backend behind is what made a later switch to OpenGL come up on
-        // the previous one with nothing in the window saying so.
-        //
-        // The mode is all this setting is: where ANGLE lives is looked up
-        // at startup and never written down. See dev_backend_config.h.
-        stud::render::DevRenderBackendConfig backend;
-        if (render_path == kRenderPathDesktopGL) {
-            backend.mode = stud::render::DevRenderBackendMode::kDesktopGL;
-        } else if (render_path == kRenderPathSoftware) {
-            backend.mode = stud::render::DevRenderBackendMode::kAngleSwiftShader;
-        }
-        stud::render::save_dev_render_backend_config(stud::config::default_config_path(), backend);
-#endif
         // Back to the version, now that the picked name has served its
         // purpose (saying what was about to be imported).
         pickedApkPath_.clear();

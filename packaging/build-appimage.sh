@@ -64,7 +64,7 @@ arch="$(uname -m)"
 app_id="$(grep -m1 '^set(STUD_APP_ID' "$repo_root/CMakeLists.txt" | cut -d'"' -f2)"
 [ -n "$app_id" ] || die "could not read STUD_APP_ID out of CMakeLists.txt"
 
-# Configured every time: whether Process B, ANGLE and bionic are built at
+# Configured every time: whether Process B and bionic are built at
 # all is decided at configure time from what third_party/ holds.
 # STUD_CMAKE_ARGS passes anything else through; release automation sets
 # -DSTUD_VERSION with it.
@@ -80,12 +80,11 @@ say "installing into /usr"
 cmake --install "$build_dir" >/dev/null
 
 # A build with third_party/ missing still succeeds, it just has no
-# Process B, no ANGLE and no bionic: a window that cannot run Roblox.
+# Process B and no bionic: a window that cannot run Roblox.
 for required in \
     /usr/bin/stud \
     /usr/libexec/stud/stud-render-host \
     /usr/libexec/stud/stud-runtime-bionic \
-    /usr/lib/stud/angle/libEGL.so \
     /usr/lib/stud/android-bionic/linker64 \
     /usr/lib/stud/android-bionic/libc.so
 do
@@ -116,17 +115,20 @@ rm -rf "$appdir"
 export APPDIR="$appdir"
 export DESKTOP="/usr/share/applications/$app_id.desktop"
 export ICON="/usr/share/icons/hicolor/512x512/apps/$app_id.png"
-export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_PULSE=1
+export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_OPENGL=1 DEPLOY_PULSE=1
 # Only the UI can be traced: render-host and the web view exit at once
 # without the session stud-ui hands them.
 export STRACE_BINARY=stud
 
 # Everything Stud loads by name at runtime and so no tracer would see:
-# render-host's window system and Vulkan, miniaudio's backends, and the
-# KF6 plugin Breeze asks the compositor through.
+# render-host's window system, Vulkan and GL, the present layer's DRI3
+# and Present on X11, miniaudio's backends, and the KF6 plugin Breeze asks
+# the compositor through.
 qt_plugins="$(qmake6 -query QT_INSTALL_PLUGINS)"
 dlopened=(
     /usr/lib/libvulkan.so.1
+    /usr/lib/libEGL.so.1 /usr/lib/libGLESv2.so.2
+    /usr/lib/libxcb-dri3.so.0 /usr/lib/libxcb-present.so.0
     /usr/lib/libX11-xcb.so.1 /usr/lib/libXext.so.6 /usr/lib/libXi.so.6 /usr/lib/libXrender.so.1
     /usr/lib/libxkbcommon-x11.so.0 /usr/lib/libdecor-0.so.0
     /usr/lib/libasound.so.2 /usr/lib/libpulse.so.0
@@ -166,9 +168,9 @@ sed 's|"library_path": "[^"]*"|"library_path": "../../lib/libstud_present_layer.
     /usr/libexec/stud/VK_LAYER_STUD_present.json > "$appdir/libexec/stud/VK_LAYER_STUD_present.json"
 
 # Stud's own files that are not host libraries, copied as they are:
-# ANGLE is self-contained, and bionic and Process B are Android ELF that
-# no host tool may patch, strip or resolve.
-say "adding ANGLE, bionic and Process B"
+# bionic and Process B are Android ELF that no host tool may patch, strip
+# or resolve.
+say "adding bionic and Process B"
 cp -a /usr/lib/stud "$appdir/lib/stud"
 cp -a /usr/libexec/stud/stud-runtime-bionic /usr/libexec/stud/lib64 "$appdir/libexec/stud/"
 # Stud's own share/ files: the desktop entry and icons it installs for

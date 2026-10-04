@@ -71,21 +71,6 @@ Comment:
  present layer's linux-dmabuf-v1 and linux-drm-syncobj-v1 bindings are
  generated from the host's copy at build time, under the same licence.
 
-Files: third_party/angle/*
-Copyright: 2018 The ANGLE Project Authors
-License: BSD-3-Clause
-Comment:
- Prebuilt, not built from this source tree. libEGL.so and libGLESv2.so.
- Shipped alongside it, each under its own licence:
- .
-   libvk_swiftshader.so             SwiftShader, Apache-2.0
-   libvulkan.so.1                   Vulkan-Loader, Apache-2.0
-   libVkLayer_khronos_validation.so Vulkan-ValidationLayers, Apache-2.0
-   libVkICD_mock_icd.so             Vulkan-Tools, Apache-2.0
- .
- ANGLE statically links further third-party code of its own; the full set
- of notices is in the ANGLE source tree.
-
 Files: third_party/android-bionic/*
 Copyright: 2005-2026 The Android Open Source Project
   and the many holders named in the NOTICE files

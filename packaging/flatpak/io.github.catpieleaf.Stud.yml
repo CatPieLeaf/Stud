@@ -107,10 +107,9 @@ modules:
         url: https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz
         sha256: a22c708f351431d8736a0ac5c562414f2b7bb919a6292cbca1ff7ac0849cb0a7
 
-  # ANGLE, the Android runtime libraries and the two non-Qt helper processes,
-  # from the release built by this project's CI for the tag below. ANGLE is
-  # compiled from source there because its build fetches dependencies as it
-  # runs, which a Flathub build cannot do.
+  # The Android runtime libraries and the two non-Qt helper processes, from
+  # the release built by this project's CI for the tag below. The bionic set
+  # is fetched from AOSP there, which a Flathub build cannot do.
   - name: stud-prebuilt
     buildsystem: simple
     build-commands:

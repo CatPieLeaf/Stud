@@ -73,10 +73,9 @@ export STUD_VK_MEM_STATS=1
 # Enable them by hand for a short targeted run, never for a long one.
 
 # The validation layer, which reports the offending call at the moment it
-# is made instead of leaving a freeze to be explained afterwards. It
-# ships inside Stud's own ANGLE bundle and the loader can force it on;
-# there is no entry for it in /usr/share/vulkan/explicit_layer.d, hence
-# VK_LAYER_PATH.
+# is made instead of leaving a freeze to be explained afterwards. The
+# system's own (vulkan-validation-layers), which the loader finds by its
+# manifest and can force on.
 #
 # STUD_DEBUG_NO_VALIDATION=1 leaves it off. It is the heaviest thing
 # here, and if it changes the timing enough to hide the bugs, that is the
@@ -90,8 +89,7 @@ export STUD_VK_MEM_STATS=1
 #
 # STUD_DEBUG_VALIDATION=1 enables it.
 if [ -n "$STUD_DEBUG_VALIDATION" ] && \
-   [ -f /usr/lib/stud/angle/angledata/VkLayer_khronos_validation.json ]; then
-    export VK_LAYER_PATH=/usr/lib/stud/angle/angledata
+   [ -f /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json ]; then
     export VK_LOADER_LAYERS_ENABLE=VK_LAYER_KHRONOS_validation
     # Synchronization validation finds one thing reading a resource while
     # another writes it, which is the class of bug that makes a GPU fail

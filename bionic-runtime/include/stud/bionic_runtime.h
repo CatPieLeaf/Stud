@@ -73,7 +73,7 @@ std::string default_linker64_path();
 
 // One real host path to bind into the sandbox at the same absolute path
 // it has outside the sandbox (e.g. "/dev/dri", the Wayland socket
-// directory, third_party/angle (ANGLE built from source), the extracted Roblox APK
+// directory, the extracted Roblox APK
 // directory). `writable` controls whether it's bound read-write or
 // read-only; sockets/device nodes generally need read-write, static
 // library/data trees don't.
@@ -90,8 +90,8 @@ struct ProcessBConfig {
     std::vector<std::string> args;
 
     // Extra real host paths Process B needs visible verbatim (GPU device
-    // nodes, Wayland socket dir, stud-ipc's socket dir, ANGLE's built
-    // .so set, the extracted Roblox APK / libroblox.so path, Stud's own
+    // nodes, Wayland socket dir, stud-ipc's socket dir, the extracted
+    // Roblox APK / libroblox.so path, Stud's own
     // install tree). /system/lib64, /system/bin/linker64, /proc, and
     // /dev are always provided automatically and don't need to be listed
     // here.

@@ -143,7 +143,7 @@ struct StudSettings {
     // MangoHud's performance overlay over Stud's own window. It is a
     // Vulkan implicit layer, so it belongs on render-host: that is the
     // process holding the real driver and the real swapchain, on both
-    // render paths (the OpenGL one reaches Vulkan through ANGLE).
+    // render paths (on OpenGL through its GL hook).
     bool mangohud = false;
     // Discord rich presence: what game is being played, its thumbnail,
     // and how long for. On by default: it reaches only a Discord client

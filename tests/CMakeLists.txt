@@ -70,8 +70,8 @@ add_executable(stud_locale_test locale_test.cpp)
 target_include_directories(stud_locale_test PRIVATE "${CMAKE_SOURCE_DIR}/android-glue/include")
 add_test(NAME locale_test COMMAND stud_locale_test)
 
-# M6 render dispatch test: portable fixtures standing in for a real ANGLE
-# build (see render_test.cpp for why real ANGLE isn't used here).
+# Render dispatch test: portable fixtures standing in for a real EGL/GLES
+# driver (see render_test.cpp for why a real one isn't used here).
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/toy_egl_lib.so
     COMMAND ${CMAKE_C_COMPILER} -fPIC -shared -Wl,--hash-style=sysv
@@ -146,13 +146,6 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/settings_scratch)
 add_test(NAME settings_test COMMAND stud_settings_test
          ${CMAKE_CURRENT_BINARY_DIR}/settings_scratch)
 
-if(STUD_ENABLE_DEV_RENDER_TOGGLE)
-    add_executable(stud_dev_backend_config_test dev_backend_config_test.cpp)
-    target_link_libraries(stud_dev_backend_config_test PRIVATE stud_render)
-    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dev_backend_config_scratch)
-    add_test(NAME dev_backend_config_test COMMAND stud_dev_backend_config_test
-             ${CMAKE_CURRENT_BINARY_DIR}/dev_backend_config_scratch)
-endif()
 
 # The mapped-memory write barrier's one promise: a byte written into the
 # mapping is reported by a flush. Runs the real fault handler by providing

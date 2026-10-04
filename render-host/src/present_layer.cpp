@@ -11,8 +11,7 @@
 // it calls down into is Stud's instead of the driver's.
 //
 // render-host enables it for its whole process on Wayland and X11
-// (VK_ADD_LAYER_PATH and VK_INSTANCE_LAYERS, before any Vulkan call), which
-// also covers the instance ANGLE creates for itself.
+// (VK_ADD_LAYER_PATH and VK_INSTANCE_LAYERS, before any Vulkan call).
 
 #include "volk.h"
 

@@ -34,7 +34,7 @@ __pycache__/
 .venv/
 
 # Third-party dependencies fetched by tools/setup.sh: the Android NDK,
-# the ANGLE build, and a real extracted bionic. None of them are Stud's
+# and a real extracted bionic. None of them are Stud's
 # and none of them are redistributable from here.
 third_party/*
 # AMD's FSR1 headers are the exception: a few KB, MIT licensed, and the

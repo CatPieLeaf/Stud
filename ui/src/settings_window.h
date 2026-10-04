@@ -75,7 +75,6 @@ private slots:
     void onRestartClicked();
     void onBrowseApkClicked();
     void onRenderPathChanged(int index);
-    void onMangohudToggled(bool checked);
     void updateUpscalerControls();
     void onBackgroundFpsChanged(int value);
 
@@ -115,10 +114,6 @@ private:
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;
     QCheckBox* mangohudCheck_;
-    // What the user last asked for, kept across a render path that cannot
-    // show the overlay, switching to ANGLE and back should not silently
-    // lose the setting.
-    bool mangohudWanted_ = false;
     QCheckBox* closeOnLeaveCheck_;
     QCheckBox* trayCheck_;
     QCheckBox* serverRegionCheck_;
@@ -126,17 +121,7 @@ private:
     QCheckBox* discordJoinCheck_;
     QLineEdit* apkPathEdit_;
 
-    // One control for what is really one choice. It used to be two: a
-    // Vulkan/OpenGL radio pair plus a separate ANGLE/Zink combo that only
-    // meant anything in OpenGL mode and sat there looking selected the
-    // rest of the time. Picking OpenGL while the other control still said
-    // Zink read as "I chose OpenGL and it stayed on Zink", which is a
-    // fair reading of what the window showed. The three entries are the
-    // three things Stud can actually do; they still write the same two
-    // config keys, so nothing downstream changes.
-    //
-    // The Zink entry is prototype-only (the engineering notes, render/
-    // dev_backend_config.h) and goes before any public release.
+    // Vulkan or OpenGL: the one choice, saved as graphics_mode.
     QComboBox* renderPathCombo_;
 
     QLabel* statusLabel_;

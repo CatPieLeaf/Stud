@@ -1,8 +1,8 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
 # Not for the AUR. This is what CI uses to turn an already-built install
-# tree into a pkg.tar.zst, so Arch users can install Stud without the
-# hour-long ANGLE build the source PKGBUILD needs.
+# tree into a pkg.tar.zst, so Arch users can install Stud without
+# building it from source.
 #
 # It builds nothing: `package()` copies a DESTDIR that cmake --install has
 # already produced. CI sets STUD_DESTDIR to it.
@@ -45,7 +45,7 @@ optdepends=(
 options=(!strip !debug emptydirs)
 
 package() {
-  # Stripping a bionic ELF or ANGLE is neither useful nor safe, the same
+  # Stripping a bionic ELF is neither useful nor safe, the same
   # reason the rpm turns it off.
   cp -a "${STUD_DESTDIR:?set STUD_DESTDIR to the install tree}"/. "$pkgdir"/
 

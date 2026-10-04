@@ -10,15 +10,15 @@ it to turn the cursor PNGs into a header), and the Python checkers under
 release fails without them.
 
 - **`setup.sh`**: fetches the three third-party dependencies into
-  `third_party/` (the NDK, an ANGLE build, a real extracted bionic).
+  `third_party/` (the NDK and a real extracted bionic).
   `tools/setup.sh --help` explains how to point it at copies you already
   have instead of downloading or building them.
 
 - **`try_render_window.cpp`** (`stud_try_render_window`): opens a real
-  Wayland window through ANGLE and swaps real frames, with no
-  `libroblox.so` and no JNI anywhere. When rendering breaks, this is how
-  you find out in one minute whether the machine, the driver or the
-  ANGLE build is at fault, rather than the engine.
+  Wayland window through the system's EGL and GLES and swaps real frames,
+  with no `libroblox.so` and no JNI anywhere. When rendering breaks, this
+  is how you find out in one minute whether the machine or the driver is
+  at fault, rather than the engine.
 
 - **`try_vulkan_window.cpp`** (`stud_try_vulkan_window`): the same idea
   for the native Vulkan path.

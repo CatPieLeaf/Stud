@@ -3,8 +3,8 @@
 #
 # CI produces exactly one build of Stud and wraps it as an rpm, a deb, an
 # Arch package, an AppImage and a Flatpak archive. Building the cpak image
-# from source as well would mean a second compile of ANGLE, an hour:
-# and, worse, no guarantee that the image holds the same binaries as every
+# from source as well would mean a second build, and, worse, no
+# guarantee that the image holds the same binaries as every
 # other package from that release.
 #
 # Expects install-tree/usr next to it, which is what

@@ -1,34 +1,29 @@
 #!/usr/bin/env bash
 #
-# Fetch the three third-party dependencies Stud needs and cannot ship:
+# Fetch the two third-party dependencies Stud needs and cannot ship:
 #
 #   third_party/android-ndk-r28c/  the NDK that builds Process B, which is
 #                                  a real bionic ELF, not a glibc one
-#   third_party/angle/             libEGL.so + libGLESv2.so from a real
-#                                  ANGLE build, plus the ICD files its
-#                                  Vulkan and SwiftShader backends load
 #   third_party/android-bionic/    a real linker64/libc.so/... taken from
 #                                  AOSP's own prebuilt Runtime APEX, plus
 #                                  liblog built from AOSP source
 #
-# None of these are redistributable from this repository. The NDK is a
-# Google redistributable with its own licence, ANGLE is BSD but is built
-# here rather than vendored (the build is large and machine-specific),
-# and bionic is Android's own, fetched from AOSP the way AOSP publishes
-# it rather than copied out of anyone's device.
+# Neither is redistributable from this repository. The NDK is a Google
+# redistributable with its own licence, and bionic is Android's own,
+# fetched from AOSP the way AOSP publishes it rather than copied out of
+# anyone's device.
 #
 # Everything lands under third_party/, which is gitignored, and which is
 # where CMake looks by default (STUD_THIRD_PARTY_DIR).
 #
 # Usage:
 #   tools/setup.sh                     everything that is missing
-#   tools/setup.sh ndk angle bionic    only the named ones
+#   tools/setup.sh ndk bionic          only the named ones
 #   tools/setup.sh --plan              say what it would fetch, fetch nothing
 #   tools/setup.sh --help
 #
 # Pointing it at things you already have (no download, no build):
 #   STUD_NDK_SRC=/path/to/android-ndk-r28c
-#   STUD_ANGLE_SRC=/path/to/angle/out/Release
 #   STUD_BIONIC_SRC=/path/to/dir/with/linker64+libc.so
 
 set -euo pipefail
@@ -39,9 +34,6 @@ third_party="${STUD_THIRD_PARTY_DIR:-$repo_root/third_party}"
 NDK_VERSION="r28c"
 NDK_URL="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
 NDK_DIR="$third_party/android-ndk-${NDK_VERSION}"
-ANGLE_DIR="$third_party/angle"
-ANGLE_SRC_DIR="$third_party/angle-src"
-DEPOT_TOOLS_DIR="$third_party/depot_tools"
 BIONIC_DIR="$third_party/android-bionic"
 
 # The real files Process B's sandbox needs. bionic_runtime.cpp checks for
@@ -109,236 +101,6 @@ setup_ndk() {
     [ -f "$NDK_DIR/build/cmake/android.toolchain.cmake" ] ||
         die "the NDK unpacked but $NDK_DIR/build/cmake/android.toolchain.cmake is missing"
     say "NDK ready"
-}
-
-# -------------------------------------------------------------- ANGLE
-
-# Stud loads ANGLE's own libEGL/libGLESv2 in the render host, never the
-# system ones, the whole point is that the translation layer is a known
-# quantity. These are the files it actually opens at runtime; the rest of
-# an ANGLE build tree (24 GB of source and objects) is not needed.
-ANGLE_RUNTIME_FILES=(
-    libEGL.so libGLESv2.so libvulkan.so.1 libvk_swiftshader.so
-    vk_swiftshader_icd.json libVkICD_mock_icd.so libVkLayer_khronos_validation.so
-)
-
-copy_angle_runtime() {
-    local from="$1"
-    [ -f "$from/libEGL.so" ] && [ -f "$from/libGLESv2.so" ] ||
-        die "$from has no libEGL.so/libGLESv2.so"
-    mkdir -p "$ANGLE_DIR"
-    local f
-    for f in "${ANGLE_RUNTIME_FILES[@]}"; do
-        [ -e "$from/$f" ] && cp -a "$from/$f" "$ANGLE_DIR/"
-    done
-    # ANGLE's Vulkan backend reads its own data directory next to the
-    # libraries when one is present.
-    [ -d "$from/angledata" ] && cp -a "$from/angledata" "$ANGLE_DIR/"
-    # Optional, and worth saying when it is missing rather than letting
-    # the Settings window offer a backend that cannot load.
-    [ -f "$ANGLE_DIR/libvk_swiftshader.so" ] ||
-        warn "no libvk_swiftshader.so, the Software rendering entry will not work"
-    say "ANGLE runtime in $ANGLE_DIR"
-    # $from is the build directory (out/Release); the licences live at the
-    # checkout root, two levels up.
-    copy_angle_licenses "$from/../.." ||
-        warn "no LICENSE at $from/../..; ANGLE's licences were not copied"
-}
-
-# The licences for the binaries above.
-#
-# Every one of these .so files is someone else's work, redistributed in
-# binary form by every package Stud builds, and both licences involved
-# require their text and copyright to travel with the binary. Shipping the
-# libraries without them is not a paperwork slip, it is the one thing BSD
-# and Apache-2.0 actually ask for.
-#
-# They are copied out of the ANGLE checkout, which already has all of them:
-# nothing here is downloaded and nothing is written by hand.
-copy_angle_licenses() {
-    local root="$1"
-    [ -f "$root/LICENSE" ] || return 1
-    local dest="$ANGLE_DIR/licenses"
-    mkdir -p "$dest"
-
-    cp -a "$root/LICENSE" "$dest/LICENSE-ANGLE.txt"
-    [ -f "$root/AUTHORS" ] && cp -a "$root/AUTHORS" "$dest/AUTHORS-ANGLE.txt"
-
-    # Each of these is one shipped library. A missing one is reported
-    # rather than skipped quietly, the library it belongs to is very
-    # likely being shipped anyway.
-    local pair from to
-    for pair in \
-        "third_party/SwiftShader/LICENSE.txt|LICENSE-SwiftShader.txt" \
-        "third_party/vulkan-loader/src/LICENSE.txt|LICENSE-Vulkan-Loader.txt" \
-        "third_party/vulkan-validation-layers/src/LICENSE.txt|LICENSE-Vulkan-ValidationLayers.txt" \
-        "third_party/vulkan-tools/src/LICENSES/Apache-2.0.txt|LICENSE-Vulkan-Tools.txt"
-    do
-        from="${pair%%|*}"; to="${pair##*|}"
-        if [ -f "$root/$from" ]; then
-            cp -a "$root/$from" "$dest/$to"
-        else
-            warn "no $from in $root, $to will be missing from packages"
-        fi
-    done
-
-    cat > "$dest/README.md" <<'EOF'
-# Licences for the ANGLE runtime Stud ships
-
-Stud does not build these; they come from an ANGLE checkout, and they are
-redistributed unmodified. This file says which licence covers which file.
-
-| file | project | licence |
-|------|---------|---------|
-| `libEGL.so`, `libGLESv2.so` | [ANGLE](https://chromium.googlesource.com/angle/angle) | `LICENSE-ANGLE.txt` (BSD-3-Clause) |
-| `libvulkan.so.1` | [Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader) | `LICENSE-Vulkan-Loader.txt` (Apache-2.0) |
-| `libvk_swiftshader.so`, `vk_swiftshader_icd.json` | [SwiftShader](https://swiftshader.googlesource.com/SwiftShader) | `LICENSE-SwiftShader.txt` (Apache-2.0) |
-| `libVkLayer_khronos_validation.so` | [Vulkan-ValidationLayers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) | `LICENSE-Vulkan-ValidationLayers.txt` (Apache-2.0) |
-| `libVkICD_mock_icd.so` | [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) | `LICENSE-Vulkan-Tools.txt` (Apache-2.0) |
-| `angledata/` | ANGLE | `LICENSE-ANGLE.txt` |
-
-ANGLE statically links further third-party code of its own (SPIRV-Tools,
-zlib, Abseil and others). Their licences are in the ANGLE source tree,
-under `third_party/`, and ANGLE's own build generates the full set; this
-directory carries the licence of each library actually shipped here.
-EOF
-    say "ANGLE licences in $dest"
-}
-
-# Used when ANGLE is already present but its licences are not, an
-# install from before this existed. Neither source may still be around,
-# and that has to be said out loud rather than silently producing a
-# package that cannot legally be distributed.
-copy_angle_licenses_from_any_source() {
-    local root
-    for root in "${STUD_ANGLE_SRC:+$STUD_ANGLE_SRC/../..}" "$ANGLE_SRC_DIR" "$ANGLE_SRC_DIR/angle"; do
-        [ -n "$root" ] || continue
-        copy_angle_licenses "$root" && return 0
-    done
-    warn "ANGLE is present but its licences are not, and no ANGLE source was found."
-    warn "packages built from this tree would redistribute ANGLE, SwiftShader and the"
-    warn "Vulkan loader with no licence text. Re-run with STUD_ANGLE_SRC pointing at an"
-    warn "ANGLE checkout's out/Release, or delete $ANGLE_DIR and let setup rebuild it."
-    return 1
-}
-
-setup_angle() {
-    if [ -f "$ANGLE_DIR/libEGL.so" ] && [ -f "$ANGLE_DIR/libGLESv2.so" ]; then
-        say "ANGLE already at $ANGLE_DIR"
-        [ -f "$ANGLE_DIR/licenses/LICENSE-ANGLE.txt" ] ||
-            copy_angle_licenses_from_any_source || true
-        return
-    fi
-    if [ -n "${STUD_ANGLE_SRC:-}" ]; then
-        say "copying ANGLE from $STUD_ANGLE_SRC"
-        copy_angle_runtime "$STUD_ANGLE_SRC"
-        return
-    fi
-
-    warn "no prebuilt ANGLE given (STUD_ANGLE_SRC), building from source."
-    warn "this downloads several GB and takes upwards of an hour."
-    need git; need python3
-    # xz is not used by anything here directly. ANGLE's own hooks download
-    # the Chromium sysroot as a .tar.xz and shell out to `tar mxf`, which
-    # needs the xz binary on PATH, and tar's failure for a missing one is
-    # `tar (child): xz: Cannot exec: No such file or directory`, seventeen
-    # minutes into a gclient sync. Checking it here fails in a second
-    # instead, with a name worth searching for.
-    need xz
-
-    if [ ! -d "$DEPOT_TOOLS_DIR" ]; then
-        say "fetching depot_tools"
-        git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git \
-            "$DEPOT_TOOLS_DIR"
-    fi
-
-    # depot_tools ships its own Python and CIPD packages, and unpacks them
-    # the first time one of its commands runs. DEPOT_TOOLS_UPDATE=0 below
-    # switches that off, which is what we want for the self-update, and
-    # not what we want for the very first unpack. On a machine where
-    # depot_tools had been used before, this had already happened and the
-    # difference never showed; on a clean checkout it fails outright:
-    #
-    #   python3_bin_reldir.txt not found. need to initialize depot_tools
-    #   by running gclient, update_depot_tools or ensure_bootstrap.
-    #
-    # Caught by a CI run, which is a clean checkout every time.
-    # ensure_bootstrap is depot_tools' own answer, and it is idempotent.
-    if [ ! -f "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt" ]; then
-        say "bootstrapping depot_tools"
-        (cd "$DEPOT_TOOLS_DIR" && ./ensure_bootstrap) ||
-            warn "depot_tools bootstrap reported an error, continuing, since it may still have done enough"
-        [ -f "$DEPOT_TOOLS_DIR/python3_bin_reldir.txt" ] ||
-            die "depot_tools did not bootstrap; ANGLE cannot be built from source here"
-    fi
-
-    export PATH="$DEPOT_TOOLS_DIR:$PATH"
-    export DEPOT_TOOLS_UPDATE=0
-
-    mkdir -p "$ANGLE_SRC_DIR"
-    # Where `fetch angle` actually puts the checkout is not fixed.
-    # Current depot_tools writes a gclient solution named "." and checks
-    # ANGLE out into the directory fetch was run from; older recipes used
-    # an `angle/` subdirectory. Hardcoding the second one is what broke
-    # CI, a clean machine, where this path runs for real:
-    #
-    #   tools/setup.sh: line 187: cd: angle: No such file or directory
-    #
-    # So the checkout is found rather than assumed, by looking for
-    # ANGLE's own DEPS in both places.
-    angle_checkout() {
-        if [ -f "$ANGLE_SRC_DIR/DEPS" ]; then
-            printf '%s\n' "$ANGLE_SRC_DIR"
-        elif [ -f "$ANGLE_SRC_DIR/angle/DEPS" ]; then
-            printf '%s\n' "$ANGLE_SRC_DIR/angle"
-        fi
-    }
-    if [ -z "$(angle_checkout)" ]; then
-        say "fetching ANGLE (this is the slow part)"
-        # A previous run that died partway leaves a gclient file behind,
-        # and `fetch` refuses to start where one already exists. Finish
-        # that checkout instead of failing on it.
-        if [ -f "$ANGLE_SRC_DIR/.gclient" ]; then
-            (cd "$ANGLE_SRC_DIR" && gclient sync --nohooks)
-        else
-            (cd "$ANGLE_SRC_DIR" && fetch --nohooks angle)
-        fi
-    fi
-    angle_src="$(angle_checkout)"
-    [ -n "$angle_src" ] ||
-        die "ANGLE did not check out into $ANGLE_SRC_DIR. Nothing there has a DEPS file"
-    (cd "$angle_src" && python3 scripts/bootstrap.py)
-    (
-        cd "$angle_src"
-        gclient sync -D
-        # Matches the build this project has been developed and measured
-        # against: release, Vulkan and desktop-GL backends both enabled
-        # (the Settings window offers both), no tests, static.
-        gn gen out/Release --args='is_debug = false
-angle_enable_vulkan = true
-angle_enable_gl = true
-angle_enable_null = false
-angle_build_tests = false
-is_component_build = false'
-        # The two Stud cannot run without.
-        autoninja -C out/Release libEGL libGLESv2
-        # ...and SwiftShader, which is the "Software rendering" entry in
-        # the Settings window. Its target has been renamed across ANGLE
-        # revisions, `vk_swiftshader` in the tree this project was
-        # developed against, plain `swiftshader` at tip, where asking for
-        # the old name fails the whole build:
-        #
-        #   Schedule Failure: unknown target "vk_swiftshader"
-        #   Did you mean: "libEGL" "libGLESv2" "swiftshader" ?
-        #
-        # So both names are tried, and neither working costs only the
-        # software backend rather than the build: copy_angle_runtime
-        # takes whichever files are actually there.
-        autoninja -C out/Release swiftshader ||
-            autoninja -C out/Release vk_swiftshader ||
-            warn "no SwiftShader target in this ANGLE, software rendering will be unavailable"
-    )
-    copy_angle_runtime "$angle_src/out/Release"
 }
 
 # ------------------------------------------------------------- bionic
@@ -672,7 +434,7 @@ verify_bionic() {
 
 # The licences for the bionic set.
 #
-# Unlike ANGLE, these do not arrive with the binaries: what setup extracts
+# These do not arrive with the binaries: what setup extracts
 # is a Runtime APEX image, which carries the libraries and no licence text
 # at all. AOSP publishes a NOTICE per component, and that is what a package
 # redistributing these has to carry, bionic is largely inherited BSD libc
@@ -845,10 +607,10 @@ for arg in "$@"; do
         *) steps+=("$arg") ;;
     esac
 done
-[ ${#steps[@]} -eq 0 ] && steps=(ndk angle bionic)
+[ ${#steps[@]} -eq 0 ] && steps=(ndk bionic)
 
 # Say what this will fetch, where from, and how big, before fetching any
-# of it. These are large downloads and one of them is a source build.
+# of it. These are large downloads.
 print_plan() {
     printf '\n\033[1mStud setup plan\033[0m, everything lands in %s\n\n' "$third_party"
     local step
@@ -860,19 +622,6 @@ print_plan() {
                 echo "      builds Process B, which is a real bionic ELF"
                 [ -n "${STUD_NDK_SRC:-}" ] && echo "      SKIPPED: linking your copy at $STUD_NDK_SRC"
                 [ -f "$NDK_DIR/build/cmake/android.toolchain.cmake" ] && echo "      SKIPPED: already present"
-                ;;
-            angle)
-                echo "  angle/                        55 MB of built libraries"
-                if [ -n "${STUD_ANGLE_SRC:-}" ]; then
-                    echo "      copied from $STUD_ANGLE_SRC"
-                elif [ -f "$ANGLE_DIR/libEGL.so" ]; then
-                    echo "      SKIPPED: already present"
-                else
-                    echo "      BUILT FROM SOURCE: depot_tools + an ANGLE checkout,"
-                    echo "      several GB downloaded and upwards of an hour of compiling."
-                    echo "      Set STUD_ANGLE_SRC=<dir with libEGL.so/libGLESv2.so> to skip it."
-                fi
-                echo "      the GL translation layer the render host runs on"
                 ;;
             bionic)
                 echo "  android-bionic/               ~14 MB downloaded"
@@ -908,9 +657,8 @@ failed=0
 for step in "${steps[@]}"; do
     case "$step" in
         ndk)    setup_ndk ;;
-        angle)  setup_angle ;;
         bionic) { setup_bionic && setup_icu; } || failed=1 ;;
-        *)      die "unknown step '$step' (expected: ndk, angle, bionic)" ;;
+        *)      die "unknown step '$step' (expected: ndk, bionic)" ;;
     esac
 done
 

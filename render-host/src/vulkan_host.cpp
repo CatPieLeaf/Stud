@@ -4,8 +4,8 @@
 // constraints, and vulkan_forward.h for the transport's own rationale).
 //
 // The loader is dlopen'd rather than linked, matching how this process
-// already loads ANGLE: render-host must keep starting on a machine with
-// no usable Vulkan at all, and answer "no" honestly instead of failing
+// already loads EGL and GLES: render-host must keep starting on a machine
+// with no usable Vulkan at all, and answer "no" honestly instead of failing
 // to launch.
 
 // volk first, always: it defines VK_NO_PROTOTYPES and pulls in the Vulkan
@@ -683,10 +683,10 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
 
     // The Vulkan validation layers, off unless asked for.
     //
-    // They already ship in every Stud package, bundled beside ANGLE, and
-    // until now the only way to run them was to set the loader's own
-    // environment variables by hand. This makes them reachable without
-    // knowing that.
+    // The system's own (vulkan-validation-layers, or the SDK's), when they
+    // are installed; Stud does not ship them. Until now the only way to
+    // run them was to set the loader's own environment variables by hand.
+    // This makes them reachable without knowing that.
     //
     //   STUD_VK_VALIDATION=1     the standard checks
     //   STUD_VK_VALIDATION=sync  those, plus synchronization validation

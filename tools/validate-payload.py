@@ -65,9 +65,6 @@ BIONIC_RUNTIME = [
     "liblog.so", "libm.so", "linker64",
 ]
 
-# ANGLE, which render-host loads for both GL paths.
-ANGLE = ["libEGL.so", "libGLESv2.so", "libvulkan.so.1"]
-
 ICON_SIZES = ["16x16", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512"]
 
 
@@ -180,10 +177,10 @@ def real_binary(sharun_dir: Path | None, p: Path) -> Path:
 
 
 def find_data_dir(root: Path) -> Path | None:
-    """Where ANGLE and the bionic runtime live, which is not always the same place."""
+    """Where the bionic runtime lives, which is not always beside the executables."""
     for candidate in ("usr/lib/stud", "usr/libexec/stud", "lib/stud", "libexec/stud"):
         d = root / candidate
-        if (d / "angle").is_dir() or (d / "android-bionic").is_dir():
+        if (d / "android-bionic").is_dir():
             return d
     return None
 
@@ -196,7 +193,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         return r
     data = find_data_dir(root) or private
     r.note(f"executables: {private.relative_to(root)}")
-    r.note(f"ANGLE and bionic: {data.relative_to(root)}")
+    r.note(f"bionic: {data.relative_to(root)}")
 
     # ---- the AppImage's own glibc, when it carries one -------------------
     sharun_dir = find_sharun_dir(root)
@@ -259,8 +256,6 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         r.note(f"embedded SPIR-V modules: {modules}")
 
     # ---- the libraries Stud brings with it ------------------------------
-    for name in ANGLE:
-        r.check((data / "angle" / name).exists(), f"ANGLE: {name} is missing")
     for name in BIONIC_RUNTIME:
         r.check((data / "android-bionic" / name).exists(), f"bionic: {name} is missing")
     for name in BIONIC_OVERLAY:
@@ -284,7 +279,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         # failure here that is a legal problem rather than a bug.
         licenses = share / "licenses" / "stud"
         r.check((licenses / "LICENSE").exists(), "Stud's own licence is missing")
-        for component in ("angle", "android-bionic", "fidelityfx-fsr1"):
+        for component in ("android-bionic", "fidelityfx-fsr1"):
             d = licenses / component
             r.check(d.is_dir() and any(d.iterdir()),
                     f"no licence text for {component}, which this package redistributes")

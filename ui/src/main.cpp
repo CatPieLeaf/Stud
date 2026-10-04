@@ -34,9 +34,6 @@
 #include "stud/bionic_runtime.h"
 #include "stud/ipc.h"
 #include "stud/settings.h"
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-#include "stud/dev_backend_config.h"
-#endif
 
 #include <QApplication>
 #include <QGuiApplication>
@@ -295,7 +292,7 @@ std::string render_host_socket_path() {
 // real EGL/GLES call) doesn't race a render-host that hasn't started
 // listening yet. Returns false (caller decides what to do) if it never
 // appears within a generous, real bound, render-host's own real
-// startup work (dlopen'ing ANGLE, opening a Wayland connection) is fast
+// startup work (loading EGL and GLES, opening a Wayland connection) is fast
 // in practice, so 10s is slack, not a tight guess.
 // True when a live Stud already owns the session.
 //
@@ -326,27 +323,18 @@ bool another_instance_is_running() {
 // render-host, but which API that process presents with depends on the
 // render path, and MangoHud has a separate hook for each.
 //
-// * The Vulkan path, and ANGLE on Vulkan (the GL path's normal backend):
-//   both present through Vulkan, and on Wayland onto Stud's own present
-//   layer (render-host/src/owned_swapchain.h), which MangoHud's implicit
-//   layer sits above. MANGOHUD=1 enables it and nothing else is needed.
+// * The Vulkan path presents through Vulkan, and on Wayland and X11 onto
+//   Stud's own present layer (render-host/src/owned_swapchain.h), which
+//   MangoHud's implicit layer sits above. MANGOHUD=1 enables it and
+//   nothing else is needed.
 //
-//   ANGLE used to be the exception. It recreates its swapchain whenever
-//   the engine rebuilds its EGL window surface, which it does on joining
-//   a game, and MangoHud has a long-standing crash on swapchain
-//   recreation (flightlessmango/MangoHud#1259, #1774), live-reported as
-//   "Stud crashed with MangoHud on the ANGLE path when joining a game".
-//   The layer was switched off there. It is on again now that the
-//   swapchain under it is Stud's; a crash on a game join with the overlay
-//   on would mean MangoHud's own recreation bug is still reachable.
-//
-// * ANGLE on desktop GL, a developer-only backend, presents through the
-//   system EGL, which only MangoHud's OpenGL hook sees: MANGOHUD=1 plus
-//   its shim on LD_PRELOAD, which is what the `mangohud` wrapper script
-//   itself sets up. The shim is needed rather than plain symbol
-//   interposition because render-host resolves every entry point with
-//   dlsym() against ANGLE's own handle, which ordinary LD_PRELOAD
-//   interposition never sees; the shim hooks dlopen/dlsym themselves.
+// * The OpenGL path presents through the system EGL, which only
+//   MangoHud's OpenGL hook sees: MANGOHUD=1 plus its shim on LD_PRELOAD,
+//   which is what the `mangohud` wrapper script itself sets up. The shim
+//   is needed rather than plain symbol interposition because render-host
+//   resolves every entry point with dlsym() against the libraries' own
+//   handles, which ordinary LD_PRELOAD interposition never sees; the shim
+//   hooks dlopen/dlsym themselves.
 // What VK_LOADER_LAYERS_DISABLE said before Stud touched it, so the value
 // this process needs for itself is never mistaken for the user's own.
 QString g_host_layers_disable;
@@ -394,7 +382,7 @@ void keep_mangohud_out_of_this_process() {
 // discrete GPU anyway, and the wrong claim is what kept anyone from
 // looking. GLX has no index at all: it
 // hands out the system default, which on a hybrid laptop is the
-// integrated GPU, measured here as ANGLE coming up on "Mesa Intel(R)
+// integrated GPU, measured here as the GL path coming up on "Mesa Intel(R)
 // Iris(R) Xe Graphics" while the setting said RTX 3050, at a third of
 // the frame rate. That is not a tuning problem, it is the wrong GPU.
 //
@@ -415,7 +403,7 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
     if (chosen == nullptr) return;
 
     constexpr uint32_t kVendorNvidia = 0x10de;
-    // DesktopGL mode opens the system's EGL, and glvnd's EGL asks its
+    // The OpenGL path opens the system's EGL, and glvnd's EGL asks its
     // vendor libraries in order, the first that answers winning: on a
     // laptop with both drivers that is NVIDIA's whichever GPU was chosen.
     // The chosen GPU's own driver is named instead, from the vendor files
@@ -457,9 +445,6 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
     if (chosen->vendor_id == kVendorNvidia) {
         env.insert(QStringLiteral("__NV_PRIME_RENDER_OFFLOAD"), QStringLiteral("1"));
         env.insert(QStringLiteral("__GLX_VENDOR_LIBRARY_NAME"), QStringLiteral("nvidia"));
-        // The Vulkan half of ANGLE's GL backend, where it has one.
-        env.insert(QStringLiteral("__VK_LAYER_NV_optimus"),
-                   QStringLiteral("NVIDIA_only"));
     } else {
         // Mesa's own offload, by the same rule: ask for a device that is
         // not the default one.
@@ -472,7 +457,7 @@ void apply_gpu_selection_environment(QProcessEnvironment& env,
 // Stud's own swapchain: the Vulkan layer VK_LAYER_STUD_present, whose
 // manifest is installed beside render-host (render-host/src/present_layer.cpp).
 // Enabled for render-host's whole process, so it is under the engine's
-// Vulkan and ANGLE's alike, and below MangoHud, which the loader always
+// Vulkan, and below MangoHud, which the loader always
 // places above a layer enabled this way. Wayland and X11 alike; with
 // neither there is no window to present to.
 void apply_present_layer_environment(QProcessEnvironment& env, const QString& render_host_dir) {
@@ -487,20 +472,6 @@ void apply_present_layer_environment(QProcessEnvironment& env, const QString& re
     };
     append(QStringLiteral("VK_ADD_LAYER_PATH"), render_host_dir);
     append(QStringLiteral("VK_INSTANCE_LAYERS"), QStringLiteral("VK_LAYER_STUD_present"));
-}
-
-// Whether the GL render path runs ANGLE on the host's desktop GL rather
-// than on Vulkan. Only the developer render toggle can choose that.
-bool angle_on_desktop_gl() {
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-    try {
-        const auto backend =
-            stud::render::load_dev_render_backend_config(stud::config::default_config_path());
-        return backend && backend->mode == stud::render::DevRenderBackendMode::kDesktopGL;
-    } catch (const std::runtime_error&) {
-    }
-#endif
-    return false;
 }
 
 void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vulkan_render_path) {
@@ -537,11 +508,10 @@ void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vul
     }
     if (!enabled) return;
     env.insert("MANGOHUD", "1");
-    // The Vulkan path and ANGLE on Vulkan both present through Vulkan, onto
-    // Stud's own present layer, which MangoHud's layer sits above; that is
-    // all either needs. ANGLE on desktop GL, a developer-only backend,
+    // The Vulkan path presents onto Stud's own present layer, which
+    // MangoHud's layer sits above; that is all it needs. The OpenGL path
     // presents through GL instead, which only MangoHud's GL shim sees.
-    if (vulkan_render_path || !angle_on_desktop_gl()) return;
+    if (vulkan_render_path) return;
     // $LIB is expanded by the dynamic linker itself (lib64 or lib), which
     // is exactly how MangoHud's own wrapper spells this.
     const QString shim = QStringLiteral("/usr/$LIB/mangohud/libMangoHud_shim.so");
@@ -757,7 +727,7 @@ void fetch_place_launcher_info(stud::ipc::LaunchPayload& payload) {
 
 // Real launch flow: extracts the native library + assets from the
 // user's configured APK (already done once, in Settings), launches
-// stud-render-host (Process C: real glibc, hosts ANGLE; see
+// stud-render-host (Process C: real glibc, hosts the GPU driver; see
 // render-host/src/main.cpp), waits for it to be ready, then launches
 // the real bionic Process B (stud-runtime-bionic, sandboxed via
 // bionic_runtime::launch_process_b()) and hands off the real session
@@ -980,9 +950,8 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Deliberately NOT an FFlag: flag_overrides.h's locked decision is that
     // FFlag overrides come only from the raw hand-edited file, never from a
     // UI toggle. This drives the one thing the toggle can honestly control
-    // in Stud's architecture, which backend the vendored ANGLE uses for
-    // the real render context (real native Vulkan, or GLES), matching this
-    // project's own "ANGLE for both paths" constraint.
+    // in Stud's architecture: which renderer the engine uses, its native
+    // Vulkan one or its GLES one on the system's driver.
     QStringList render_host_args;
     // STUD_GRAPHICS_MODE overrides the saved choice for one run.
     //
@@ -1058,7 +1027,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     if (!wait_for_render_host_socket()) {
         QMessageBox::critical(nullptr, "Stud",
                                "stud-render-host did not become ready in time (no real Wayland "
-                               "compositor reachable, or ANGLE failed to load, check its stderr).");
+                               "compositor reachable, or EGL failed to load, check its stderr).");
         return false;
     }
 

@@ -101,7 +101,7 @@ struct Image {
 };
 
 // One VkDevice the layer sits on, and the next layer's commands for it.
-// render-host can have several -- the engine's, ANGLE's own -- so nothing
+// render-host can have several -- one per engine device -- so nothing
 // about a device is global.
 struct Device {
     VolkDeviceTable vk{};

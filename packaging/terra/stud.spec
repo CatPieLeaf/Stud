@@ -1,10 +1,10 @@
 %global appid io.github.catpieleaf.Stud
 
-# Installs the release archive Stud's CI builds, prebuilt ANGLE and bionic
+# Installs the release archive Stud's CI builds, prebuilt bionic
 # included.
 %global debug_package %{nil}
 
-# Stripping a bionic ELF or ANGLE is neither useful nor safe, and these are
+# Stripping a bionic ELF is neither useful nor safe, and these are
 # already-built binaries: there is nothing to strip that upstream did not mean.
 %global __brp_strip %{nil}
 %global __brp_strip_comment_note %{nil}
@@ -15,10 +15,10 @@
 # demands libc.so, libdl.so, liblog.so and ld-android.so from the
 # distribution, which no package can satisfy.
 %global __requires_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/stud-runtime-bionic$
-# ...and neither ANGLE's libEGL/libGLESv2/libvulkan nor Stud's own Android libraries of the
-# same names may be advertised as system provides: they are Stud's private
-# copies, loaded by path.
-%global __provides_exclude_from ^%{_prefix}/lib/stud/(angle|android-bionic)/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
+# ...and none of Stud's own Android libraries, nor its present layer, may be
+# advertised as system provides: they are Stud's private copies, loaded by
+# path.
+%global __provides_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
 Version:        1.1.11
@@ -60,12 +60,9 @@ Requires:       libGLESv2.so.2()(64bit)
 Recommends:     libxkbcommon-x11.so.0()(64bit)
 Recommends:     libX11-xcb.so.1()(64bit)
 # Everything else Stud links is found by rpm itself from the ELFs: Qt, Wayland,
-# libxkbcommon, freetype, OpenSSL, libX11 and libXext through ANGLE.
+# libxkbcommon, freetype, OpenSSL, libX11 and libXext.
 
-Provides:       bundled(angle)
 Provides:       bundled(bionic)
-Provides:       bundled(swiftshader)
-Provides:       bundled(vulkan-loader)
 Provides:       bundled(fidelityfx-fsr1)
 Provides:       bundled(snapdragon-gsr)
 Provides:       bundled(mpv-prescalers)
@@ -98,9 +95,8 @@ not affiliated with, endorsed by or approved by Roblox Corporation.
 
 %build
 # Deliberately empty: this package installs the release archive, which CI
-# already built from the tag. ANGLE's own build fetches its dependencies
-# as it runs, and the bionic set is extracted from an Android system
-# image rather than compiled, so there is nothing to build here.
+# already built from the tag. The bionic set is extracted from an Android
+# system image rather than compiled, so there is nothing to build here.
 
 %install
 cp -a usr %{buildroot}/

@@ -108,10 +108,9 @@ issue at https://github.com/CatPieLeaf/Stud/issues.
 
 ## 9. Third-party software
 
-Stud redistributes ANGLE, SwiftShader, the Vulkan loader and validation
-layers, and Android's own libc, libm, libdl and dynamic linker from AOSP.
-Every one of those is under a permissive licence and ships with its own
-licence text and copyright notice, installed to
+Stud redistributes Android's own libc, libm, libdl and dynamic linker
+from AOSP. They are under permissive licences and ship with their own
+licence text and copyright notices, installed to
 `/usr/share/licenses/stud/` and kept beside the libraries themselves.
 
 Five more are compiled into Stud's own binaries, so their notices are

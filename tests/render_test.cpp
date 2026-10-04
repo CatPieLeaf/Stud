@@ -1,10 +1,8 @@
-// M6 test: proves stud::render's dispatch mechanism (egl*/gl* prefix
-// routing to two separately dlopen'd libraries) against portable, locally
-// built fixtures, not a real ANGLE build, since depending on one being
-// present at a fixed system path would break on any clean machine/CI. Real
-// validation against a genuine ANGLE build (e.g. a system's bundled
-// Chromium/CEF copy) is done by running Stud itself against one, not by
-// this automated suite.
+// Proves stud::render's dispatch mechanism (egl*/gl* prefix routing to two
+// separately dlopen'd libraries) against portable, locally built fixtures,
+// not a real driver, since depending on one being present would break on
+// any clean machine/CI. Real validation against a genuine driver is done
+// by running Stud itself, not by this automated suite.
 
 #include "stud/render.h"
 
@@ -30,9 +28,9 @@ int main(int argc, char** argv) {
     }
 
     check(stud::render::resolve("eglGetError") == nullptr,
-          "resolve() returns nullptr before set_angle_library_paths() is called");
+          "resolve() returns nullptr before open_gl_libraries() is called");
 
-    stud::render::set_angle_library_paths(argv[1], argv[2]);
+    stud::render::open_gl_libraries(argv[1], argv[2]);
 
     auto* egl_fn = reinterpret_cast<int (*)()>(stud::render::resolve("eglGetError"));
     check(egl_fn != nullptr, "resolve(\"eglGetError\") is non-null after opening the EGL fixture");
@@ -55,11 +53,11 @@ int main(int argc, char** argv) {
 
     bool threw = false;
     try {
-        stud::render::set_angle_library_paths("/does/not/exist.so", argv[2]);
+        stud::render::open_gl_libraries("/does/not/exist.so", argv[2]);
     } catch (const stud::render::LoadError&) {
         threw = true;
     }
-    check(threw, "set_angle_library_paths() throws LoadError for a nonexistent library, doesn't "
+    check(threw, "open_gl_libraries() throws LoadError for a nonexistent library, doesn't "
                  "silently leave stale state");
 
     std::printf("all render dispatch checks passed\n");

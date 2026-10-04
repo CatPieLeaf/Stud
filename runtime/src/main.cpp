@@ -13,7 +13,7 @@
 // GameActivity lifecycle (jni-bridge/, ported to bionic this session),
 // and renders through real bionic libEGL.so/libGLESv2.so (this
 // session's own render-client libraries, forwarding to stud-render-host:
-// a separate, real glibc process hosting ANGLE, see render-host/src/
+// a separate, real glibc process hosting the GPU driver, see render-host/src/
 // main.cpp's own doc comment for why).
 //
 // Reproduces the real, hard-won bring-up sequence and ordering already

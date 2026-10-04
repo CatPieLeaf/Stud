@@ -512,7 +512,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
                 // size: 0 >= 0`, the engine logged "Mode 6 failed: Unable
                 // to load Vulkan API", and every run fell back to the
                 // glsles3 shader pack (whose terrain and part shaders
-                // then fail to compile under ANGLE). Versioned sonames
+                // then fail to compile under GLES). Versioned sonames
                 // are ordinary for real libraries; the filter has to
                 // handle them.
                 const std::string filename = entry.path().filename().string();

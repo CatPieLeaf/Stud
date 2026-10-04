@@ -5,7 +5,7 @@
 // order). Every real exported EGL entry point Roblox's own dynamic
 // symbol table imports (confirmed via `the ELF headers --dyn-syms`) forwards,
 // over the real Unix-socket protocol proven end-to-end this session, to
-// stud-render-host (Process C)'s real ANGLE instance. Roblox never
+// stud-render-host (Process C)'s real EGL instance. Roblox never
 // knows the difference: same real EGL C ABI, same real symbol names,
 // just implemented by forwarding instead of a local dlopen.
 
@@ -63,7 +63,7 @@ EGLDisplay eglGetDisplay(EGLNativeDisplayType) {
 
 EGLBoolean eglInitialize(EGLDisplay dpy, EGLint* major, EGLint* minor) {
     // The host's own EGL version. This used to be a fixed 1.5, which was
-    // true of the ANGLE build it was written against and of nothing else.
+    // true of the EGL it was written against and of nothing else.
     uint64_t a[8] = {to_handle(dpy)};
     EGLint version[2] = {0, 0};
     uint32_t written = 0;

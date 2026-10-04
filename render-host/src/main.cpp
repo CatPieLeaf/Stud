@@ -1,24 +1,18 @@
-// stud-render-host: a real, ordinary glibc process hosting ANGLE, the
-// real Wayland window, and the real Vulkan loader, everything render/
-// vulkan-wsi/android-glue's native_window.cpp already do, unmodified,
-// just running in its own process instead of linked into the main
-// runtime.
+// stud-render-host: a real, ordinary glibc process hosting the system's
+// EGL and GLES, the real window, and the real Vulkan loader, everything
+// render/, vulkan-wsi/ and android-glue's native_window.cpp already do,
+// unmodified, just running in its own process instead of linked into the
+// main runtime.
 //
-// Why a separate process rather than hand-loading ANGLE's glibc .so
-// into bionic Process B directly (this session's original plan):
-// confirmed, while starting this work, that "load ANGLE via Stud's own
-// loader" would also require hand-loading real glibc's OWN libc.so.6/
-// libstdc++.so.6 (IFUNC resolvers selected by CPUID, GNU symbol
-// versioning, glibc's own TLS models) to satisfy ANGLE's transitive
-// imports, dramatically harder and more fragile than anything
-// hand-loaded so far in this project. A real, separate glibc process
-// for ANGLE sidesteps that entirely: ANGLE loads through an ordinary
-// glibc dlopen(), with no hand-parsing at all. Same pattern
-// Chrome's own GPU process uses in production. User-approved pivot from
-// the original single-process plan text, proven end-to-end (real
-// bionic client, inside the real sandbox, driving real ANGLE->Vulkan->
-// the real NVIDIA driver->a real Wayland window over this exact IPC
-// mechanism) before this full symbol buildout was attempted.
+// Why a separate process rather than loading the host's glibc graphics
+// libraries into bionic Process B directly: that would also require
+// hand-loading real glibc's OWN libc.so.6/libstdc++.so.6 (IFUNC resolvers
+// selected by CPUID, GNU symbol versioning, glibc's own TLS models) to
+// satisfy their transitive imports, dramatically harder and more fragile
+// than anything hand-loaded so far in this project. A real, separate
+// glibc process sidesteps that entirely: the driver loads through an
+// ordinary glibc dlopen(), with no hand-parsing at all. Same pattern
+// Chrome's own GPU process uses in production.
 //
 // Covers the full real GL/EGL symbol surface libroblox.so's own dynamic
 // symbol table imports (85 entries, confirmed via `the ELF headers --dyn-syms`,
@@ -45,10 +39,7 @@
 #include "stud/render_host_protocol.h"
 #include "stud/discord_rpc.h"
 #include "stud/vulkan_host.h"
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-#include "stud/dev_backend_config.h"
 #include "stud/settings.h"
-#endif
 
 #include <wayland-client.h>
 
@@ -395,32 +386,6 @@ using PFN_glGenVertexArrays = void (*)(GLsizei, GLuint*);
 using PFN_glBindBufferRange = void (*)(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr);
 using PFN_glBindBufferBase = void (*)(GLenum, GLuint, GLuint);
 using PFN_glClearBufferfv = void (*)(GLenum, GLint, const GLfloat*);
-// EGL_ANGLE_platform_angle's own enum values. The system eglext.h does not
-// carry them (they are ANGLE's extension, not a Khronos one), and copying
-// the numbers from ANGLE's own eglext_angle.h is the honest alternative to
-// adding its headers to this build for six defines.
-#ifndef EGL_PLATFORM_ANGLE_ANGLE
-#define EGL_PLATFORM_ANGLE_ANGLE 0x3202
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
-#endif
-#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE 0x3209
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE 0x320D
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE 0x320E
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE 0x3450
-#endif
-#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE 0x3487
-#endif
-
 using PFN_eglGetPlatformDisplayEXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
 using PFN_glDrawBuffers = void (*)(GLsizei, const GLenum*);
 using PFN_glRenderbufferStorageMultisample = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
@@ -995,14 +960,6 @@ void dispatch_input_queue(wl_display* display, bool fd_readable);
 namespace {
 uint64_t g_window_surface_handle = kNullHandle;
 bool g_prefer_vulkan = true;
-// Which backend ANGLE should translate GLES to. Empty means ANGLE's own
-// default, which is Vulkan on this platform.
-std::string g_angle_backend;
-// DesktopGL mode: the engine's GLES goes to the system's own driver, with
-// no ANGLE in between. ANGLE's desktop-GL backend on Linux reaches only the
-// driver's GLES over EGL, and offered the engine GLES 3.0 of the driver's
-// 3.2; the engine then streams its textures at a fraction of their size.
-bool g_system_gles = false;
 bool g_hidpi_enabled = true;
 // Stud's own upscaler, and how far below the screen the engine renders
 // for it, DLSS's quality presets. The output is never a setting: it is
@@ -1124,15 +1081,15 @@ void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_
     std::fflush(stdout);
 }
 
-// Makes SPIRV-Cross's array-index arithmetic compile under ANGLE.
+// Makes SPIRV-Cross's array-index arithmetic compile under a strict GLES compiler.
 //
 // Roblox's GLES shader pack contains index expressions like
 //
 //     CB12[((uint(POSITION.w) >> 8u) & 255u) * 1 + 0].xyz
 //
 // The `1` and `0` are `const int` while the left operand is `uint`.
-// ESSL 3.00 has no implicit int->uint conversion, so ANGLE, which
-// implements the spec strictly, rejects it:
+// ESSL 3.00 has no implicit int->uint conversion, so a compiler that
+// implements the spec strictly rejects it:
 //
 //     ERROR: '*' : wrong operand types ... 'highp uint' and 'const int'
 //
@@ -1147,7 +1104,7 @@ void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_
 // tried and made things far worse, 35 failures became 795, because
 // it also rewrote signed contexts where the int was correct. Matching
 // the generated shape exactly is what keeps it safe; anything that does
-// not match is left for ANGLE to judge.
+// not match is left for the driver to judge.
 std::string fix_uint_index_arithmetic(const std::string& src) {
     static const std::string kMarker = "u) * ";
     if (src.find(kMarker) == std::string::npos) return src;
@@ -1500,68 +1457,6 @@ void note_frame_pacing() {
                 spikes);
     std::fflush(stdout);
     intervals.clear();
-}
-
-
-// Turn on the ANGLE extensions that are available but not advertised.
-//
-// ANGLE keeps a set of extensions "requestable": the driver underneath
-// supports them, but glGetString(GL_EXTENSIONS) does not list them until
-// the application asks for each by name (GL_ANGLE_request_extension).
-// Nothing asked, so the engine saw no block compression at all,
-// measured from its own capability line, `Caps: Texture: DXT 0 PVR 0
-// ETC1 0 ETC2 1`.
-//
-// That costs real quality, not just memory. Opaque textures still arrive
-// as ETC2, which ANGLE emulates, but textures WITH ALPHA end up stored
-// uncompressed, four to eight times the size, against the engine's
-// compiled-in 64MB video-memory budget. Its streamer then holds some of
-// them at a low mip forever, which shows up as transparent textures
-// staying blurry while everything else is sharp.
-//
-// Requested once per context, and quietly: an extension that is not
-// requestable on this driver simply is not asked for.
-void enable_requestable_extensions(const RealFns& fns) {
-    static bool done = false;
-    if (done || fns.glGetString_ == nullptr) return;
-    done = true;
-
-    using RequestExtensionFn = void (*)(const GLchar*);
-    auto request = reinterpret_cast<RequestExtensionFn>(
-        fns.eglGetProcAddress_ != nullptr
-            ? reinterpret_cast<void*>(fns.eglGetProcAddress_("glRequestExtensionANGLE"))
-            : nullptr);
-    if (request == nullptr) return;
-
-    // GL_REQUESTABLE_EXTENSIONS_ANGLE, from ANGLE's own gl2ext_angle.h.
-    constexpr GLenum kRequestableExtensions = 0x93A8;
-    const auto* available =
-        reinterpret_cast<const char*>(fns.glGetString_(kRequestableExtensions));
-    if (available == nullptr) return;
-    const std::string requestable(available);
-
-    // Block compression, in the order the engine prefers it. BPTC is
-    // BC6H/BC7, RGTC is BC4/BC5, S3TC is BC1/BC2/BC3, between them they
-    // cover every format the engine asks about.
-    static const char* const kWanted[] = {
-        "GL_EXT_texture_compression_s3tc",     "GL_EXT_texture_compression_dxt1",
-        "GL_ANGLE_texture_compression_dxt3",   "GL_ANGLE_texture_compression_dxt5",
-        "GL_EXT_texture_compression_rgtc",     "GL_EXT_texture_compression_bptc",
-        "GL_EXT_texture_compression_s3tc_srgb",
-    };
-    std::string granted;
-    for (const char* name : kWanted) {
-        if (requestable.find(name) == std::string::npos) continue;
-        request(name);
-        if (!granted.empty()) granted += " ";
-        granted += name;
-    }
-    if (granted.empty()) {
-        std::printf("stud-render-host: no requestable texture-compression extensions\n");
-    } else {
-        std::printf("stud-render-host: enabled %s\n", granted.c_str());
-    }
-    std::fflush(stdout);
 }
 
 
@@ -2630,7 +2525,7 @@ void gl_engine_size(GLsizei* w, GLsizei* h) {
 //     returning the same texels in the same order;
 //   - three of its constructors carry a precision qualifier
 //     (`highp vec2(...)`), which GLSL ES does not allow on a constructor
-//     and ANGLE's compiler rejects; the operands are highp already;
+//     and a strict compiler rejects; the operands are highp already;
 //   - the edge-direction variant is switched on and the sharpness pinned
 //     where the Vulkan path pins it (sgsr.comp).
 std::string gl_upscaler_fragment_source() {
@@ -2976,56 +2871,11 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
     switch (hdr.call_id) {
         // ---- EGL ----
         case CallId::EglGetDisplay: {
-            // Plain eglGetDisplay is the default and the path that has
-            // rendered for this project's whole history. STUD_ANGLE_BACKEND
-            // opts into asking ANGLE for a specific backend instead, which
-            // needs eglGetPlatformDisplayEXT because the platform type is an
-            // attribute of display creation and nothing else can express it
-            // ANGLE_DEFAULT_PLATFORM was tried first and measured to have
-            // no effect here, and "gl" does not mean desktop GL to it
-            // anyway (it maps to native GLES).
-            //
-            // This was tried once before and reverted for producing a
-            // display that initialised, reported success and rendered
-            // nothing. That measurement was taken while the window-size
-            // mismatch was making the engine rebuild its surface every
-            // frame, so it is worth re-measuring, but only behind an
-            // opt-in, and only trusting a frame dump, never a log line.
-            EGLDisplay d = EGL_NO_DISPLAY;
-            if (!g_angle_backend.empty() && fns.eglGetPlatformDisplayEXT_ != nullptr) {
-                const std::string_view want(g_angle_backend);
-                EGLint type = 0;
-                EGLint device = 0;
-                if (want == "gl") {
-                    type = EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE;
-                } else if (want == "gles") {
-                    type = EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE;
-                } else if (want == "vulkan") {
-                    type = EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
-                } else if (want == "swiftshader") {
-                    type = EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
-                    device = EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE;
-                }
-                if (type != 0) {
-                    std::vector<EGLint> attribs{EGL_PLATFORM_ANGLE_TYPE_ANGLE, type};
-                    if (device != 0) {
-                        attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
-                        attribs.push_back(device);
-                    }
-                    attribs.push_back(EGL_NONE);
-                    d = fns.eglGetPlatformDisplayEXT_(EGL_PLATFORM_ANGLE_ANGLE,
-                                                       static_cast<void*>(window.display),
-                                                       attribs.data());
-                    std::printf("stud-render-host: ANGLE backend \"%s\" -> %s\n",
-                                g_angle_backend.c_str(),
-                                d == EGL_NO_DISPLAY ? "refused, falling back" : "granted");
-                    std::fflush(stdout);
-                }
-            }
             // The system's EGL is told which window system the display is
             // on. glvnd guesses from the pointer otherwise, and a guess is
             // how a Wayland session ends up on an X11 display.
-            if (d == EGL_NO_DISPLAY && g_system_gles && fns.eglGetPlatformDisplayEXT_ != nullptr) {
+            EGLDisplay d = EGL_NO_DISPLAY;
+            if (fns.eglGetPlatformDisplayEXT_ != nullptr) {
                 constexpr EGLenum kPlatformX11 = 0x31D5;
                 constexpr EGLenum kPlatformWayland = 0x31D8;
                 d = fns.eglGetPlatformDisplayEXT_(
@@ -3040,7 +2890,7 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             return d == EGL_NO_DISPLAY ? kNullHandle : store(g_displays, d);
         }
         case CallId::EglInitialize: {
-            // Reply: [major][minor], the real ANGLE's own version.
+            // Reply: [major][minor], the system EGL's own version.
             EGLint version[2] = {0, 0};
             const bool ok =
                 fns.eglInitialize_(g_displays.at(a[0]), &version[0], &version[1]) == EGL_TRUE;
@@ -3055,7 +2905,7 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             // The engine's own attribute list first. It used to be dropped
             // for a fixed RGBA8, ES2-only config with no depth or stencil,
             // and a config without EGL_OPENGL_ES3_BIT cannot back a GLES
-            // 3.1 or 3.2 context. An engine attribute ANGLE rejects falls
+            // 3.1 or 3.2 context. An engine attribute the driver rejects falls
             // back to the fixed list, now with the ES3 bit, and then to
             // the old one.
             constexpr EGLint kEs3Bit = 0x40;  // EGL_OPENGL_ES3_BIT
@@ -3141,7 +2991,7 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
                 ++g_window_surface_create_count;
             }
             if (s == EGL_NO_SURFACE) return kNullHandle;
-            // ANGLE can hand back the *same* EGLSurface for repeated creates
+            // EGL can hand back the *same* EGLSurface for repeated creates
             // against the one native window this process owns (confirmed
             // live: both calls returned 0x1). Minting a fresh handle each
             // time would alias several handles onto one surface, the engine
@@ -3203,7 +3053,6 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             EGLSurface s = a[1] == kNullHandle ? EGL_NO_SURFACE : g_surfaces.at(a[1]);
             EGLContext c = a[2] == kNullHandle ? EGL_NO_CONTEXT : g_contexts.at(a[2]);
             EGLBoolean ok = fns.eglMakeCurrent_(g_displays.at(a[0]), s, s, c);
-            if (ok == EGL_TRUE && c != EGL_NO_CONTEXT) enable_requestable_extensions(fns);
             if (ok == EGL_TRUE) gl_scale_on_make_current(fns, s, c);
             if (ok != EGL_TRUE) {
                 std::printf("stud-render-host: eglMakeCurrent failed dpy=%llu surf=%llu ctx=%llu "
@@ -3264,7 +3113,7 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
                     const int w = ANativeWindow_getWidth(nullptr);
                     const int h = ANativeWindow_getHeight(nullptr);
                     GLint fb_binding = -1, read_fb = -1, read_buf = -1;
-                    // Must go through the resolved ANGLE entry points: the
+                    // Must go through the resolved GLES entry points: the
                     // plain glXxx symbols this process links against are a
                     // different libGLESv2 with no context, so they silently
                     // do nothing (live-caught: every value stayed at its -1
@@ -3329,7 +3178,7 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
                 g_frame_cursor_draws = 0;
             }
             // Says whether the real EGL surface actually followed a window
-            // resize. Distinguishes "ANGLE never resized the swapchain" from
+            // resize. Distinguishes "EGL never resized the surface" from
             // "it did and the engine is still drawing at the old size", which
             // look identical on screen (a larger frame with the old image in
             // one corner and uncleared garbage in the rest).
@@ -3557,7 +3406,7 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
             // STUD_DUMP_BAD_SHADERS=<dir>: write the source of any shader
             // that fails to compile, plus its info log. The engine's own
             // log only reports the name and the error line, which is not
-            // enough to tell a genuinely invalid shader from one ANGLE is
+            // enough to tell a genuinely invalid shader from one the driver is
             // rejecting more strictly than the drivers Roblox ships
             // against. Off unless the env var is set; writes nothing on
             // success.
@@ -3629,7 +3478,7 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
             fns.glLinkProgram_(static_cast<GLuint>(a[0]));
             // Real diagnostic, env-gated: libroblox's own FLog reports
             // "failed to link shader program X,Y," with no reason. The
-            // real reason only exists here, in ANGLE's own info log.
+            // real reason only exists here, in the driver's own info log.
             const bool trace = render_call_trace_enabled();
             if (trace) {
                 GLint status = 0;
@@ -4225,11 +4074,10 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
             // cannot send), but this read a[2], so every single
             // glBufferData call in this project's history passed usage=0,
             // an invalid enum, and the driver allocated no storage at
-            // all. Caught by a real stud-render-host SIGSEGV inside
-            // ANGLE's own rx::vk::DescriptorSetDescBuilder::
-            // updateOneUniformBuffer during the engine's first real
-            // glDrawArrays: a uniform buffer that was never actually
-            // allocated has no BufferHelper behind it.
+            // all. Caught by a real stud-render-host SIGSEGV inside the
+            // GLES driver's uniform-buffer update during the engine's
+            // first real glDrawArrays: a uniform buffer that was never
+            // actually allocated has nothing behind it.
             fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
                                in.empty() ? nullptr : in.data(), static_cast<GLenum>(a[3]));
             return 0;
@@ -4922,9 +4770,9 @@ std::mutex& wayland_mutex() {
 // Multi-thread-safe, never-blocking Wayland pump.
 //
 // wl_display_dispatch() blocks until it can dispatch at least one event.
-// That is fine for a single-threaded client, but ANGLE's own Vulkan WSI
-// code reads the same default queue from whichever thread is inside
-// eglSwapBuffers, so poll() can report the display fd readable and, by
+// That is fine for a single-threaded client, but the EGL driver's own
+// window-system code reads the same default queue from whichever thread
+// is inside eglSwapBuffers, so poll() can report the display fd readable and, by
 // the time this thread calls dispatch, another thread has already drained
 // it. dispatch() then waits for the *next* event, which may never come.
 //
@@ -5601,7 +5449,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
 // Leaves immediately rather than returning through main().
 //
 // Static destruction here is a real hazard, not a tidiness question: the
-// audio device's destructor joins its opener thread, ANGLE tears down a
+// audio device's destructor joins its opener thread, EGL tears down a
 // context this process may no longer own, and any of it can block. While
 // it blocks the Wayland connection is still open and the surface still
 // mapped, so the compositor keeps pinging a client that has stopped
@@ -5820,64 +5668,10 @@ int main(int argc, char** argv) {
     }
     stud::render_host::vk_set_preferred_device_index(preferred_gpu);
 
-    std::string egl_path, gles_path;
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-    // Which backend ANGLE translates GLES to. Only meaningful in OpenGL
-    // mode, in Vulkan mode the engine makes no GLES call at all, so
-    // there is nothing for ANGLE to translate.
-    std::optional<stud::render::DevRenderBackendConfig> dev_backend;
+    // The system's own EGL and GLES, loaded in Vulkan mode as well: nothing
+    // calls into them there, but the engine's GL entry points still resolve.
     try {
-        dev_backend = stud::render::load_dev_render_backend_config(stud::config::default_config_path());
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud-render-host: ignoring the render backend setting: %s\n", e.what());
-    }
-    if (dev_backend && !g_prefer_vulkan) {
-        switch (dev_backend->mode) {
-            case stud::render::DevRenderBackendMode::kDesktopGL:
-                g_system_gles = true;
-                break;
-            case stud::render::DevRenderBackendMode::kAngleSwiftShader:
-                g_angle_backend = "swiftshader";
-                break;
-            case stud::render::DevRenderBackendMode::kAngleVulkan:
-                break;
-        }
-    }
-    if (egl_path.empty()) {
-        // Looked up every launch, never read out of the config: where
-        // ANGLE is depends on how Stud was started, not on what some
-        // earlier run happened to find. See dev_backend_config.h.
-        try {
-            auto paths = stud::render::shipped_angle_paths();
-            egl_path = paths.egl_path;
-            gles_path = paths.gles_path;
-        } catch (const stud::render::ShippedAngleNotFound& e) {
-            std::fprintf(stderr, "stud-render-host: %s\n", e.what());
-            return 1;
-        }
-    }
-#else
-    std::fprintf(stderr, "stud-render-host: built without STUD_ENABLE_DEV_RENDER_TOGGLE\n");
-    return 1;
-#endif
-    // STUD_ANGLE_BACKEND still overrides, so a backend can be tried
-    // without going through the Settings window.
-    if (const char* env = std::getenv("STUD_ANGLE_BACKEND"); env != nullptr) g_angle_backend = env;
-    if (g_system_gles && !g_prefer_vulkan) {
-        std::printf("stud-render-host: GL: the system's own EGL and GLES, no ANGLE\n");
-    } else {
-        std::printf("stud-render-host: ANGLE backend: %s\n",
-                    g_angle_backend.empty() ? "vulkan (default)" : g_angle_backend.c_str());
-        std::printf("stud-render-host: ANGLE build: %s / %s\n", egl_path.c_str(),
-                    gles_path.c_str());
-    }
-
-    try {
-        if (g_system_gles && !g_prefer_vulkan) {
-            stud::render::use_system_gl_libraries();
-        } else {
-            stud::render::set_angle_library_paths(egl_path, gles_path);
-        }
+        stud::render::use_system_gl_libraries();
     } catch (const stud::render::LoadError& e) {
         std::fprintf(stderr, "stud-render-host: failed to load render backend: %s\n", e.what());
         return 1;
@@ -5969,9 +5763,9 @@ int main(int argc, char** argv) {
     RESOLVE(eglDestroyContext); RESOLVE(eglDestroySurface); RESOLVE(eglGetConfigAttrib);
     RESOLVE(eglGetCurrentContext); RESOLVE(eglQuerySurface); RESOLVE(eglSwapInterval);
     RESOLVE(eglTerminate); RESOLVE(eglGetProcAddress);
-    // Optional on purpose: only ANGLE exports it, and host Mesa (the Zink
-    // path) does not, making it required is what killed render-host at
-    // startup the first time Zink was actually selected.
+    // Optional on purpose: EGL_EXT_platform_base is not on every EGL, and
+    // making it required is what killed render-host at startup the first
+    // time an EGL without it was selected.
     fns.eglGetPlatformDisplayEXT_ =
         reinterpret_cast<PFN_eglGetPlatformDisplayEXT>(stud::render::resolve("eglGetPlatformDisplayEXT"));
     RESOLVE(glActiveTexture); RESOLVE(glAttachShader); RESOLVE(glBindBuffer); RESOLVE(glBindFramebuffer);
@@ -6078,7 +5872,7 @@ int main(int argc, char** argv) {
         // what decides how often buffer releases get dispatched.
         ::poll(pfds, 2, wayland_poll_ms());
         // Never wl_display_dispatch() here; see pump_wayland's own
-        // comment: it can park this loop forever once ANGLE reads the
+        // comment: it can park this loop forever once EGL reads the
         // same queue from a render thread.
         pump_display(real_window, (pfds[1].revents & POLLIN) != 0);
         if (!(pfds[0].revents & POLLIN)) continue;

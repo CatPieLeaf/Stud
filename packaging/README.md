@@ -10,14 +10,13 @@ tree plus its dependencies.
 <prefix>/bin/stud                     the launcher, the only thing on PATH
 <prefix>/libexec/stud/                the other two processes, the web-view
                                       viewer, and Process B's lib64/ overlay
-<prefix>/lib/stud/angle/              ANGLE
 <prefix>/lib/stud/android-bionic/     the real linker64 and libc
 <prefix>/share/applications/...       desktop entry
 <prefix>/share/metainfo/...           AppStream component
 <prefix>/share/icons/hicolor/...      icon
 ```
 
-Every binary finds bionic, ANGLE and its sibling processes **relative to
+Every binary finds bionic and its sibling processes **relative to
 its own path**, which is what lets the same tree work when installed at
 `/usr` and when mounted at a random path by an AppImage.
 
@@ -43,9 +42,8 @@ included, and packs a SquashFS image behind [uruntime].
 
 ## What is bundled, and what is depended on
 
-Stud ships ANGLE and the bionic set in every format. Neither is our code.
-Nothing starts without them, and both are redistributable: ANGLE is BSD,
-bionic is Apache-2.0 from AOSP.
+Stud ships the bionic set in every format. It is not our code. Nothing
+starts without it, and it is redistributable: Apache-2.0 and BSD from AOSP.
 
 **bubblewrap is a dependency, never bundled.** Process B runs inside it
 and Stud refuses to launch without it. A distribution's own build carries

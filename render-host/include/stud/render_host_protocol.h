@@ -27,15 +27,15 @@
 
 // Wire protocol between Process B (real bionic, running Roblox's own
 // code) and stud-render-host (Process C: a real, separate, ordinary
-// glibc process hosting ANGLE, the real Vulkan loader, and the Wayland
-// window; see render-host/src/main.cpp's own doc comment for why this
-// is a separate process rather than hand-loading ANGLE's glibc runtime
-// into Process B directly).
+// glibc process hosting the system's EGL and GLES, the real Vulkan
+// loader, and the window; see render-host/src/main.cpp's own doc comment
+// for why this is a separate process rather than hand-loading the host's
+// glibc graphics libraries into Process B directly).
 //
 // Covers the full real GL/EGL symbol surface libroblox.so's own dynamic
 // symbol table imports (confirmed via `the ELF headers --dyn-syms`, not
 // guessed), 85 entries. Native Vulkan calls Roblox makes directly
-// (not through this ANGLE/GLES path) get a deliberately narrower
+// (not through this GLES path) get a deliberately narrower
 // treatment; see vulkan_wsi's own doc comment for why a full Vulkan
 // struct marshaller isn't attempted here: nothing has driven Roblox far
 // enough yet to know whether it actually goes deep into native Vulkan
@@ -196,8 +196,8 @@ enum class CallId : uint32_t {
 
     // ANativeWindow. Process C owns the real window entirely (see
     // android-glue/src/native_window.cpp, excluded from Process B's own
-    // bionic build for the same glibc-only-Wayland reason ANGLE itself
-    // is). Confirmed, live, this session: libroblox.so directly
+    // bionic build for the same glibc-only reason the GLES driver
+    // itself is). Confirmed, live, this session: libroblox.so directly
     // references these (an eager/data-bound import, same class as
     // AMediaFormat_delete), not just android-glue's own old resolver
     // table; real, not speculative.
@@ -609,7 +609,7 @@ enum class CallId : uint32_t {
     // the extension string at 511 bytes, GL_EXT_buffer_storage sits
     // past that cutoff, so it had never been offered before. Without a
     // real implementation the buffer is never allocated and the first
-    // map of it crashes ANGLE. Appended last: every existing id keeps
+    // map of it crashes the driver. Appended last: every existing id keeps
     // its value.
     GlBufferStorage,
     // GL timer queries (GLES3 core + GL_EXT_disjoint_timer_query).

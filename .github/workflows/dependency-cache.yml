@@ -1,11 +1,11 @@
-# Builds Stud's third-party dependencies and caches them. Nothing else.
+# Fetches Stud's third-party dependencies and caches them. Nothing else.
 #
 # It exists because of how GitHub scopes caches. The release workflow only
 # ever runs on a tag, and a cache created for one tag is not visible to
 # another, GitHub's own words: "a run cannot restore caches from
 # arbitrary sibling branches, child branches, or a different tag". So
-# every release was rebuilding ANGLE from source, an hour at a time, and
-# the caches it wrote could only ever help a re-run of that same release.
+# every release was fetching the NDK and bionic again, and the caches it
+# wrote could only ever help a re-run of that same release.
 #
 # A run on the DEFAULT BRANCH is the exception: those caches are visible to
 # every ref, tags included. So this workflow does one job, populate them.
@@ -14,27 +14,15 @@
 # packages. Run it after changing tools/setup.sh, or whenever a release
 # reports a cold cache.
 #
-# ONE build, shared by every release job, and that is not an assumption:
-# ANGLE ships its own sysroot and statically links its own libc++, so what
-# comes out does not depend on the container it was built in. Measured on
-# a real build of it (`objdump -p`): the libraries need GLIBC_2.16-2.18,
-# name no libstdc++ at all, and their only other dependencies are libdl,
-# libpthread, libm, libgcc_s and X11/xcb. A 2.18 floor is below every
-# distribution Stud targets, and the copy measured was built on Fedora and
-# is byte-for-byte usable on Ubuntu 24.04.
-#
-# This used to be three jobs, one per container, by analogy with Qt (where
-# a build really does pin its own version as a floor). The analogy was
-# wrong, and it cost three hours of compiling to produce three
-# interchangeable copies, with no guarantee the packages carried the same
-# one. The other two pieces were never container-specific either: the NDK
-# is downloaded and bionic is extracted from an Android system image.
+# ONE copy, shared by every release job: neither piece is
+# container-specific. The NDK is downloaded, and bionic is extracted from
+# an Android system image.
 
 name: Dependency cache
 
 on:
-  # By hand only. Nothing here should ever start itself: it is an hour of
-  # compiling, and nothing about a normal push needs it.
+  # By hand only. Nothing here should ever start itself: nothing about a
+  # normal push needs it.
   #
   # RUN IT FROM main. That is not a style preference, a run's caches are
   # scoped to the ref it ran on, and only the default branch's are visible
@@ -44,7 +32,7 @@ on:
   #
   # Deliberately NOT triggered by a release: the release workflow already
   # fetches these dependencies itself, so a release trigger here would
-  # build the same thing twice at once, and it would do it on a tag ref,
+  # fetch the same thing twice at once, and it would do it on a tag ref,
   # where the resulting caches help nothing.
   workflow_dispatch:
 
@@ -53,14 +41,12 @@ permissions:
 
 concurrency:
   # One at a time, and a newer push wins: two of these racing would just
-  # build the same thing twice.
+  # fetch the same thing twice.
   group: dependency-cache
   cancel-in-progress: true
 
 jobs:
   dependencies:
-    # ubuntu:26.04 because this is the container ANGLE is known to build
-    # in today, not because the result belongs to it; see above.
     name: Dependencies
     runs-on: ubuntu-latest
     container: ubuntu:26.04
@@ -78,11 +64,5 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Report what was cached
-        # So a run says plainly whether it built ANGLE or restored it, and
-        # what the result actually depends on.
-        run: |
-          ls -la third_party/angle | head
-          for lib in third_party/angle/lib*.so*; do
-            printf '%s needs %s\n' "$lib" \
-              "$(objdump -p "$lib" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
-          done
+        # So a run says plainly what it restored or fetched.
+        run: ls -la third_party/android-bionic | head

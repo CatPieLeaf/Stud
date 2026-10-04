@@ -2,11 +2,11 @@
 # building, and the third-party dependencies, restored from the cache or
 # fetched. Run after actions/checkout, which is what puts this file there.
 name: Stud setup
-description: Version to build, plus the NDK, ANGLE and bionic from cache or tools/setup.sh
+description: Version to build, plus the NDK and bionic from cache or tools/setup.sh
 
 inputs:
   dependencies:
-    description: Restore or fetch the NDK, ANGLE and bionic
+    description: Restore or fetch the NDK and bionic
     default: "true"
 
 runs:
@@ -22,13 +22,6 @@ runs:
         [ -n "$tag" ] || { echo "::error::no tag and no version in CMakeLists.txt"; exit 1; }
         echo "TAG=$tag" >> "$GITHUB_ENV"
         echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
-
-    - name: Free up disk space
-      # Only matters on a cache miss, when ANGLE's own checkout needs
-      # about 15 GB. Harmless otherwise.
-      if: inputs.dependencies == 'true'
-      shell: bash
-      run: rm -rf /__t/CodeQL /__t/Java_Temurin-Hotspot_jdk /__t/Ruby /__t/go /__t/node || true
 
     - name: Work out the dependency cache keys
       # Hashes what the dependencies are, not the script that fetches
@@ -47,27 +40,17 @@ runs:
         path: third_party/android-ndk-r28c
         key: ndk-${{ steps.deps.outputs.id }}
 
-    - name: Cache ANGLE and bionic
-      # One key, no container in it, shared by every job: ANGLE ships its
-      # own sysroot and libc++, so the build does not depend on the
-      # container it ran in. See dependency-cache.yml for the measurement.
+    - name: Cache bionic
+      # One key, no container in it, shared by every job: bionic is
+      # extracted from an Android system image, not built here.
       if: inputs.dependencies == 'true'
       uses: actions/cache@v6
       with:
-        path: |
-          third_party/angle
-          third_party/android-bionic
+        path: third_party/android-bionic
         key: deps-${{ steps.deps.outputs.id }}
 
     - name: Fetch dependencies
-      # tools/setup.sh skips whatever the caches restored. A cold cache
-      # builds ANGLE from source: several GB of checkout and about an hour.
-      # Only the libraries it produced are kept, so its sources go straight
-      # back to the disk the rest of the build needs.
+      # tools/setup.sh skips whatever the caches restored.
       if: inputs.dependencies == 'true'
       shell: bash
-      run: |
-        df -h "$GITHUB_WORKSPACE" | tail -1
-        tools/setup.sh
-        rm -rf third_party/angle-src third_party/depot_tools
-        df -h "$GITHUB_WORKSPACE" | tail -1
+      run: tools/setup.sh

@@ -1,7 +1,7 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
 # The mostly-prebuilt package. It installs the release archive CI built
-# from the tag, so no ANGLE build, and no network beyond the two files
+# from the tag, so no network beyond the two files
 # makepkg fetches itself before build() runs, and compiles ONLY the two
 # executables that link Qt.
 #
@@ -12,14 +12,14 @@
 # QLocalServer::staticMetaObject ... GNU_PROPERTY_1_NEEDED_INDIRECT_
 # EXTERN_ACCESS`, because Arch builds Qt with indirect external access.
 # Measured, not assumed. Nothing else in the archive has that problem:
-# render-host, Process B, ANGLE and the bionic set link no Qt at all.
+# render-host, Process B and the bionic set link no Qt at all.
 #
 # So STUD_BUILD_QT_ONLY rebuilds `stud` and `stud-webview` here, against
 # the Qt this machine has, exactly as the Flatpak and the release
 # workflow's own Arch package do.
 #
 # This is the one that belongs in the AUR. The source PKGBUILD beside it
-# fetches Google's NDK, an ANGLE checkout and a bionic image from inside
+# fetches Google's NDK and a bionic image from inside
 # prepare(), and makepkg only downloads what is in source=(): in a clean
 # chroot there is no network at that point, so it cannot build there.
 # packaging/aur/README.md has the whole of that reasoning.
@@ -62,7 +62,7 @@ optdepends=(
   'libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)'
   'ffmpeg: video playback and screen recording inside games (loaded at runtime)'
 )
-# Stripping a bionic ELF or ANGLE is neither useful nor safe, the same
+# Stripping a bionic ELF is neither useful nor safe, the same
 # reason the rpm turns it off. These are also already-built binaries, so
 # there is nothing here for makepkg to strip that upstream did not mean.
 options=(!strip !debug emptydirs)
@@ -87,8 +87,8 @@ sha256sums=('f58e63d362710a9fa3dd8a7a3f9ab3dac6fc9f18f37fb442baeb98bab6e350b8'
             '23d0cc5fef69c1ee5d01e2a9f1157d322aeab9516b79013026035be706ce75d5')
 
 build() {
-  # Just the Qt half: STUD_BUILD_QT_ONLY skips the render host, the
-  # bionic runtime and ANGLE, which the archive already supplies.
+  # Just the Qt half: STUD_BUILD_QT_ONLY skips the render host and the
+  # bionic runtime, which the archive already supplies.
   cmake -S "Stud-$pkgver" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_INSTALL_PREFIX=/usr \

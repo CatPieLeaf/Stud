@@ -305,9 +305,6 @@ if(STUD_TRACY)
     target_compile_definitions(stud-render-host PRIVATE STUD_WITH_TRACY)
     message(STATUS "Stud: the render host is built with the Tracy profiler client")
 endif()
-if(STUD_ENABLE_DEV_RENDER_TOGGLE)
-    target_compile_definitions(stud-render-host PRIVATE STUD_ENABLE_DEV_RENDER_TOGGLE)
-endif()
 
 # The window's own app id, for the KWin fallback that raises Stud when a
 # game link is clicked. android-glue already compiles this in for

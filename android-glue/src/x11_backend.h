@@ -11,7 +11,7 @@
 // is a no-op on a Wayland session.
 //
 // Xlib is loaded with dlopen rather than linked, so a machine with no
-// libX11 at all still runs Stud on Wayland, the same treatment ANGLE
+// libX11 at all still runs Stud on Wayland, the same treatment EGL
 // and the Vulkan loader already get. The headers are used for
 // types only; nothing here is resolved at link time.
 namespace stud::android_glue::x11 {

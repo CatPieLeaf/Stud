@@ -1,24 +1,15 @@
-// Real render smoke test: proves the whole ANGLE-to-Vulkan (or, as a
-// dev-only alternative, Zink) -> real Wayland window pipeline actually
-// renders a visible frame, independent of whether libroblox.so's own
-// engine ever reaches the point of driving GLES itself. Matches the
-// locked "ANGLE-to-Vulkan only" architecture (see the engineering notes,
-// "Rendering architecture") and reuses the already-real
-// stud::render::dev_backend_config machinery; no parallel backend-
-// selection logic invented here.
+// Real render smoke test: proves the system's EGL and GLES -> real Wayland
+// window pipeline actually renders a visible frame, independent of whether
+// libroblox.so's own engine ever reaches the point of driving GLES itself.
+// The same render/ and android-glue plumbing the OpenGL path uses.
 //
 // Deliberately standalone from libroblox.so/JNI entirely: this is
-// testing Stud's OWN render/android-glue plumbing, not Roblox's engine
-// (which, per task #8's own findings this session, never reaches real
-// GLES/Vulkan calls yet regardless).
+// testing Stud's OWN render/android-glue plumbing, not Roblox's engine.
 
 #include "stud/android_glue.h"
 #include "stud/ndk_types.h"
 #include "stud/render.h"
 #include "spinning_cube.h"
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-#include "stud/dev_backend_config.h"
-#endif
 
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
@@ -49,33 +40,7 @@ using PFN_eglQueryString = const char* (*)(EGLDisplay, EGLint);
 using PFN_glClearColor = void (*)(GLfloat, GLfloat, GLfloat, GLfloat);
 using PFN_glClear = void (*)(GLbitfield);
 using PFN_glGetString = const GLubyte* (*)(GLenum);
-using PFN_eglGetPlatformDisplayEXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
 
-// EGL_ANGLE_platform_angle's own enum values, copied from ANGLE's
-// eglext_angle.h for the same reason render-host copies them: the system
-// eglext.h does not carry them, and this is the only way to ask ANGLE for
-// a specific backend (ANGLE_DEFAULT_PLATFORM was measured not to work).
-#ifndef EGL_PLATFORM_ANGLE_ANGLE
-#define EGL_PLATFORM_ANGLE_ANGLE 0x3202
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
-#endif
-#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE 0x3209
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE 0x320D
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE 0x320E
-#endif
-#ifndef EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE
-#define EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE 0x3450
-#endif
-#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE 0x3487
-#endif
 
 template <typename Fn>
 Fn must_resolve(const char* name) {
@@ -89,42 +54,11 @@ Fn must_resolve(const char* name) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    std::string backend = "angle";
-    for (int i = 1; i < argc; ++i) {
-        if (std::string_view(argv[i]) == "--backend" && i + 1 < argc) {
-            backend = argv[++i];
-        }
-    }
-
-    std::string egl_path, gles_path;
-#ifdef STUD_ENABLE_DEV_RENDER_TOGGLE
-    // Zink was removed as a backend option (it needs Vulkan, so it cannot
-    // serve the hardware the option existed for). This tool always uses
-    // the configured ANGLE build, and it has to ASK for it: leaving the
-    // paths empty makes set_angle_library_paths() dlopen(""), which
-    // succeeds against the main program and silently smoke-tests the
-    // system's own EGL instead of ANGLE, i.e. tests nothing this tool
-    // exists to test.
+int main() {
     try {
-        auto config = stud::render::shipped_angle_paths();
-        egl_path = config.egl_path;
-        gles_path = config.gles_path;
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud: %s\n", e.what());
-        return 1;
-    }
-#else
-    std::fprintf(stderr,
-                  "stud: built without STUD_ENABLE_DEV_RENDER_TOGGLE, pass real ANGLE paths "
-                  "directly, this tool needs that option for now\n");
-    return 1;
-#endif
-
-    try {
-        stud::render::set_angle_library_paths(egl_path, gles_path);
+        stud::render::use_system_gl_libraries();
     } catch (const stud::render::LoadError& e) {
-        std::fprintf(stderr, "stud: failed to load render backend: %s\n", e.what());
+        std::fprintf(stderr, "stud: failed to load EGL/GLES: %s\n", e.what());
         return 1;
     }
 
@@ -170,38 +104,7 @@ int main(int argc, char** argv) {
     auto glClear_ = must_resolve<PFN_glClear>("glClear");
     auto glGetString_ = must_resolve<PFN_glGetString>("glGetString");
 
-    // --backend picks ANGLE's own backend, the same way render-host does.
-    // Without this the tool could only ever exercise whatever ANGLE picks
-    // by default, which is not the path being tested when the report is
-    // about the desktop-GL or SwiftShader entry in Settings.
     EGLDisplay egl_display = EGL_NO_DISPLAY;
-    if (backend != "angle" && backend != "default") {
-        auto eglGetPlatformDisplayEXT_ = reinterpret_cast<PFN_eglGetPlatformDisplayEXT>(
-            stud::render::resolve("eglGetPlatformDisplayEXT"));
-        EGLint type = 0;
-        EGLint device = 0;
-        if (backend == "gl") {
-            type = EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE;
-        } else if (backend == "gles") {
-            type = EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE;
-        } else if (backend == "vulkan") {
-            type = EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
-        } else if (backend == "swiftshader") {
-            type = EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE;
-            device = EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE;
-        }
-        if (eglGetPlatformDisplayEXT_ != nullptr && type != 0) {
-            EGLint attribs[5] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE, type, EGL_NONE, EGL_NONE, EGL_NONE};
-            if (device != 0) {
-                attribs[2] = EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE;
-                attribs[3] = device;
-            }
-            egl_display = eglGetPlatformDisplayEXT_(EGL_PLATFORM_ANGLE_ANGLE,
-                                                     static_cast<void*>(display), attribs);
-            std::printf("stud: ANGLE backend \"%s\" -> %s\n", backend.c_str(),
-                        egl_display == EGL_NO_DISPLAY ? "refused, falling back" : "granted");
-        }
-    }
     if (egl_display == EGL_NO_DISPLAY) {
         egl_display = eglGetDisplay_(reinterpret_cast<EGLNativeDisplayType>(display));
     }

@@ -9,11 +9,10 @@
 # is uploaded to a release and no image is pushed, so the pipeline can be
 # exercised without cutting one.
 #
-# The long pole is ANGLE, which builds from source and takes about an
-# hour. It is cached, so that happens once per container image and every
-# later release restores it in seconds. The NDK and the extracted bionic
-# are cached the same way. Caching works because tools/setup.sh skips any
-# dependency that is already present, a cache hit makes it a no-op.
+# The NDK and the extracted bionic are cached, so they are fetched once
+# and every later release restores them in seconds. Caching works because
+# tools/setup.sh skips any dependency that is already present, a cache hit
+# makes it a no-op.
 
 name: Release
 
@@ -163,7 +162,7 @@ jobs:
           cmake --build build -j"$(nproc)"
 
       # One build, several wrappers. Building each format separately would
-      # mean several builds of ANGLE and no guarantee the packages contain
+      # mean several builds and no guarantee the packages contain
       # the same binaries, so the install tree is produced once here and
       # every package is made from it.
       - name: Verify embedded shaders
@@ -424,7 +423,7 @@ jobs:
         # because Arch builds Qt with indirect external access, which
         # forbids the copy relocation a binary built against Fedora's Qt
         # carries. Nothing else in the tree has that problem: render-host,
-        # Process B, ANGLE and the bionic set all resolved there, since
+        # Process B and the bionic set all resolved there, since
         # none of them link Qt.
         #
         # So only the Qt half is rebuilt here, exactly as the Flatpak

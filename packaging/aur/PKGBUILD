@@ -4,20 +4,12 @@
 #
 # NOT THE PACKAGE PUBLISHED TO THE AUR; `stud-bin` is (PKGBUILD.stud-bin
 # beside this file). prepare() below runs tools/setup.sh, which downloads
-# Google's NDK, an ANGLE checkout and a bionic image from AOSP. makepkg
+# Google's NDK and a bionic image from AOSP. makepkg
 # only fetches what is listed in source=(), and a clean chroot has no
 # network once the build starts, so this PKGBUILD cannot build there.
 #
-# That is not an oversight that can be tidied away: ANGLE's own build runs
-# `gclient sync`, which pulls dozens of dependencies as it goes, and there
-# is no self-contained ANGLE source tarball to list in source=() instead.
-# Stud needs both its Vulkan and its SwiftShader backends, which no
-# distribution ships, so it is built rather than depended on.
-#
 # It is kept here, and kept working, for building Stud from source on your
-# own machine, `makepkg -si` in this directory does exactly that. Expect
-# around an hour, almost all of it ANGLE, and around 15 GB of scratch
-# space.
+# own machine, `makepkg -si` in this directory does exactly that.
 
 pkgname=stud
 pkgver=1.1.11
@@ -81,7 +73,7 @@ sha256sums=('23d0cc5fef69c1ee5d01e2a9f1157d322aeab9516b79013026035be706ce75d5')
 
 prepare() {
   cd "Stud-$pkgver"
-  # The NDK, ANGLE and bionic. This is the long part, and it is skipped
+  # The NDK and bionic. This is the long part, and it is skipped
   # for anything already present, so an interrupted build resumes
   # rather than starting over.
   tools/setup.sh

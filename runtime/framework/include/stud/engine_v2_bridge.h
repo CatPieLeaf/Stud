@@ -306,7 +306,7 @@ struct EngineV2BridgeResult {
 // only local sockets (logdw, render-host.sock).
 //
 // Phase-5-confirmed follow-up: run end-to-end against a real,
-// live stud-render-host (real ANGLE + real Wayland window) with a real
+// live stud-render-host (real GPU driver + real window) with a real
 // LaunchPayload session (real fetched ClientSettings, delivered over a
 // real --ipc-connect socket), StartAppWithParams still never returns
 // within the 8s bound, but this time render-client's connection to

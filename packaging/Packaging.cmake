@@ -28,7 +28,7 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_STRIP_FILES FALSE)
 
-# Stud ships prebuilt third-party libraries (ANGLE, and the bionic set)
+# Stud ships prebuilt third-party libraries (the bionic set)
 # that neither distribution's tooling should try to interpret: they are
 # not built against the host's libraries and have no business in the
 # shared-library dependency scan or the build-id/debuginfo machinery.
@@ -123,7 +123,7 @@ foreach(stud_icon_size 16 24 32 48 64 128 256 512)
         "/usr/share/icons/hicolor/${stud_icon_size}x${stud_icon_size}"
         "/usr/share/icons/hicolor/${stud_icon_size}x${stud_icon_size}/apps")
 endforeach()
-# Stripping or extracting build-ids from a bionic ELF or from ANGLE is
+# Stripping or extracting build-ids from a bionic ELF is
 # neither useful nor safe here.
 set(CPACK_RPM_SPEC_MORE_DEFINE "%global __os_install_post %{nil}
 %global debug_package %{nil}
@@ -154,7 +154,7 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
 # field"). It shipped in a green release.
 #
 # amd64 rather than derived: everything Stud redistributes, the bionic
-# runtime, ANGLE, the engine itself: is x86_64 only, which the rpm, the
+# runtime, the engine itself: is x86_64 only, which the rpm, the
 # AUR package and the Flatpak manifest all pin too.
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
@@ -205,7 +205,7 @@ if(StudPackagedFfmpeg_FOUND)
         ", libswscale${_stud_swscale_major}")
 endif()
 # The bundled libraries are private to Stud. Without this, dpkg-shlibdeps
-# reads ANGLE and the bionic set and either invents dependencies that do
+# reads the bionic set and either invents dependencies that do
 # not exist or fails outright. They are not built against the host's
 # libraries and have no business in the scan.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)

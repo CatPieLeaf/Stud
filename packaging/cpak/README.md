@@ -8,8 +8,8 @@ and the manifest that says how it may be run.
 ## Building the image
 
 The build context needs `third_party/` populated (`tools/setup.sh`),
-the same as any other build of Stud; ANGLE builds from source and
-takes hours, so it is not fetched inside the image build.
+the same as any other build of Stud; the NDK is a large download, so
+it is not fetched inside the image build.
 
 ```sh
 podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:1.1.11 .

@@ -7,12 +7,10 @@ as `packaging/aur`.
 
 ## It installs a prebuilt archive, and it has to
 
-Stud compiles ANGLE from source because it needs both the Vulkan and the
-SwiftShader backends and no distribution ships that pair. ANGLE's own
-build runs `gclient sync`, which downloads dozens of dependencies while it
-runs, and **Flathub builds have no network**. There is no self-contained
-ANGLE source tarball to pin instead, so a from-source manifest cannot be
-written today.
+Process B is a real bionic ELF, built with Google's NDK against a bionic
+set taken from AOSP. Both are fetched by `tools/setup.sh`, and **Flathub
+builds have no network**, so a from-source manifest cannot be written
+today.
 
 [Sober](https://github.com/flathub/org.vinegarhq.Sober), the same kind of
 application, resolves this the same way, shipping a prebuilt archive from
@@ -20,8 +18,8 @@ its own server with a `sha256`. Every permission in the manifest follows
 theirs, with a comment saying why.
 
 If a from-source build is ever required, the way to provide one is to
-publish a vendored ANGLE checkout (post-`gclient sync`, several GB) as a
-pinned source bundle. It is possible; it is a much larger build.
+pin the NDK and the AOSP bionic pieces as source bundles. It is possible;
+it is a much larger manifest.
 
 ## The one thing to check before submitting
 

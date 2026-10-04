@@ -79,7 +79,7 @@
 
  - Runs the **real, unmodified** Roblox Android app
  - Three separate processes in the shape of a browser's, the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
- - Vulkan by default, with OpenGL through ANGLE, OpenGL, and software-rendering in Settings
+ - Vulkan by default, and OpenGL in Settings, on the system's own driver, for hardware Vulkan does not run on
  - **Upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size. Two to pick from: **RAVU-Zoom AR**, which looks each neighbourhood up in a table trained offline, and **SGSR1 ED**, the lightweight one, which reconstructs edges from the pixels alone and is the one to pick on a laptop or an integrated GPU
  - Smooth zoom in/out, just like the Windows client
  - **Sound and voice chat with nothing to install**: the audio device is built into Stud rather than loaded from a library the machine might not have. It speaks PulseAudio (which is how it reaches PipeWire), ALSA, JACK and OSS
@@ -90,7 +90,7 @@
  - Discord Rich Presence, with a join button
  - Tells you which country the game server is in when you join
  - **Stud presents its own frames**, on Wayland and X11 alike: a Vulkan layer of its own takes each finished frame to the compositor or X server with no driver swapchain in between, so a late compositor costs a dropped frame, never a freeze. MangoHud sits above it and sees an ordinary swapchain
- - MangoHud overlay toggle, on Vulkan and ANGLE alike, HiDPI and UI scaling, GPU picker, system tray
+ - MangoHud overlay toggle, on Vulkan and OpenGL alike, HiDPI and UI scaling, GPU picker, system tray
  - Caps the frame rate while nothing can see the window: minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
  - Ships as an **rpm** (also in the [Terra](https://terra.fyralabs.com) repository), a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, a **Flatpak** and a [cpak](https://github.com/Containerpak/cpak)
@@ -130,7 +130,7 @@ Three processes, talking over a Unix socket:
 |---|---|---|
 | `stud-ui` | glibc, Qt6 | settings, deep links, starting the other two, then gets out of the way |
 | `stud-runtime-bionic` | real bionic, inside `bwrap` | the engine, the JNI bridge, the Android framework stand-in |
-| `stud-render-host` | glibc | Wayland or X11, ANGLE, the real Vulkan surface and Stud's own swapchain, audio |
+| `stud-render-host` | glibc | Wayland or X11, the system's EGL and GLES, the real Vulkan surface and Stud's own swapchain, audio |
 
 Every GL and Vulkan call the engine makes is forwarded from the bionic process to the render host over that socket. It is the only place the two worlds meet, and it is Stud's own code on both sides.
 
@@ -141,7 +141,7 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 </div>
 
 > [!NOTE]
-> The long part is ANGLE, which builds from source and takes about an hour. Everything else is minutes. You need roughly **10 GB** of free space for the dependencies.
+> The dependencies need roughly **2.5 GB** of free space, almost all of it Google's NDK. The build itself is minutes.
 
 ### 1 - Install the system packages
 
@@ -169,7 +169,7 @@ sudo apt install cmake ninja-build build-essential qt6-base-dev qt6-webengine-de
 
 ### 2 - Dependencies
 
-Three things are not in this repository and cannot be: Google's NDK, an ANGLE build, and a real bionic taken from AOSP. This gets all three into `third_party/`.
+Two things are not in this repository and cannot be: Google's NDK, and a real bionic taken from AOSP. This gets both into `third_party/`.
 
 ```bash
 tools/setup.sh --plan   # what it would fetch, and from where
@@ -177,9 +177,9 @@ tools/setup.sh          # actually fetch it
 ```
 
 > [!TIP]
-> Already have an NDK or an ANGLE build lying around? Point at them and skip the downloads:
+> Already have an NDK lying around? Point at it and skip the download:
 > ```bash
-> STUD_NDK_SRC=/path/to/android-ndk-r28c STUD_ANGLE_SRC=/path/to/angle/out/Release tools/setup.sh
+> STUD_NDK_SRC=/path/to/android-ndk-r28c tools/setup.sh
 > ```
 
 ### 3 - Build
@@ -200,7 +200,7 @@ First launch opens Settings, because Stud has no Roblox APK yet. Point it at one
 <details>
 <summary>Making packages</summary>
 
-All three ship everything Stud needs (ANGLE, the bionic set, the runtime process) on top of what they declare as dependencies. None of them contains Roblox.
+All three ship everything Stud needs (the bionic set, the runtime process) on top of what they declare as dependencies. None of them contains Roblox.
 
 ```bash
 cd build
@@ -291,8 +291,7 @@ sudo pacman -U stud-*-x86_64.pkg.tar.zst
 ```
 
 Stud is not on the AUR yet. To build from source instead, use the PKGBUILD in
-this repository at `packaging/aur/` and expect around an hour, almost all of it
-ANGLE.
+this repository at `packaging/aur/`.
 
 ## 🔶 F L A T P A K
 
@@ -357,7 +356,6 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
 </div>
 
  - Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
- - [ANGLE](https://chromium.googlesource.com/angle/angle): the GL translation layer (BSD), shipped with [SwiftShader](https://swiftshader.googlesource.com/SwiftShader), the [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader), [validation layers](https://github.com/KhronosGroup/Vulkan-ValidationLayers) and [Vulkan-Tools](https://github.com/KhronosGroup/Vulkan-Tools) (Apache-2.0)
  - [bionic](https://android.googlesource.com/platform/bionic/): Android's own C library, taken from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
  - [libjnivm](https://github.com/ChristopherHX/libjnivm): the JNI virtual machine Stud's Java layer stands on (MIT)
  - [mpv-prescalers](https://github.com/bjin/mpv-prescalers): Stud's upscaler is RAVU-Zoom, anti-ringing, generated from the vendored hook at `third_party/mpv-prescalers` (LGPL-3.0-or-later). A structure tensor over the neighbourhood's luma indexes a table of filter weights trained offline, and the result is clamped into the range that neighbourhood spans so it cannot trace a border around a hard edge
