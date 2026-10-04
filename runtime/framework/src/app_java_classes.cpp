@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "stud/android_framework.h"
+#include "stud/startup_throttle.h"
 #include "stud/trap_recovery.h"
 
 #include <nlohmann/json.hpp>
@@ -683,6 +684,10 @@ void NativeGLJavaInterfaceJava::onDataModelNotificationCallback(
                 kind.c_str());
     std::fflush(stdout);
     if (kind == "NATIVE_EXIT" && on_native_exit) on_native_exit();
+    // The engine lifts its startup render throttle right after this
+    // returns, and only a render job that already exists can be lifted;
+    // see startup_throttle.h.
+    if (kind == "HOME_PAGE_INTERACTIVE") stud::jni_bridge::wait_for_render_job();
     // The account report the app's SessionManager keeps; see
     // record_account_info().
     if (kind == "DID_LOG_IN" && data) record_account_info(data->asStdString());

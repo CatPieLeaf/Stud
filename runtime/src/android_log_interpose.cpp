@@ -23,6 +23,7 @@
 
 #include "flag_cache_guard.h"
 #include "stud/game_instance.h"
+#include "stud/startup_throttle.h"
 
 namespace {
 
@@ -46,6 +47,7 @@ const char* priority_name(int prio) {
 // Every engine line, to everything in Stud that reads them.
 void note_line(const char* text, size_t length) {
     stud::jni_bridge::note_engine_log_line(text, length);
+    stud::jni_bridge::note_startup_throttle_log_line(text, length);
     stud::flag_cache_guard::note_engine_log_line(text, length);
 }
 

@@ -195,6 +195,7 @@ add_library(stud_runtime_framework STATIC
     "${FRAMEWORK_SRC}/src/webview_cookies.cpp"
     "${FRAMEWORK_SRC}/src/server_address.cpp"
     "${FRAMEWORK_SRC}/src/game_instance.cpp"
+    "${FRAMEWORK_SRC}/src/startup_throttle.cpp"
     "${FRAMEWORK_SRC}/src/content_sharing_bridge.cpp"
     "${FRAMEWORK_SRC}/src/app_java_classes.cpp"
     "${FRAMEWORK_SRC}/src/text_editor.cpp"
