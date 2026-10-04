@@ -64,12 +64,15 @@
   <h4 id="why"><img src=".github/headers/why.png" width="800" alt="Why?"></h4>
 </div>
 
-<div align="center">
-  <p><i>Honestly? Because the existing options to play Roblox on Linux kept falling over. NVIDIA, Vulkan, mid-game, often enough that playing stopped being the point and finding out why started being the point. That is one person's experience on one set of hardware, not a verdict on anyone else's work; your mileage may genuinely vary.<br><br>
-  The first version of Stud made things worse in an interesting way: one process doing everything, Android code and desktop code taking turns on the same threads, a graphics driver spinning up worker threads nobody asked for in the middle of it. It crashed in places that made no sense until it became clear the design itself was the bug.<br><br>
-  So it got taken apart. Three processes now, each with one job, borrowing the shape a web browser has used for years, and most of the crashes stopped being possible rather than being fixed.<br><br>
-  This is a project made entirely by one person, in two months, who just wanted to have a better experience playing Roblox.</i></p>
-</div>
+I wanted to play Roblox on Linux without it falling over. Sober kept crashing on my NVIDIA machine, and I wanted more control than it gave me: picking my own APK, deciding when Roblox updates, and no OTAs I can't see or turn off.
+
+So I made Stud. It works differently:
+
+ - Split into three processes, one job each. The Android runtime (bionic) and the rendering side (glibc) don't share a process, so the graphics driver's threads stay out of the Android code. This is what fixed the NVIDIA crashes for me.
+ - The Roblox APK is used as-is. Stud doesn't patch libroblox.so, and you provide the APK yourself.
+ - Vulkan first.
+
+It's a one-person project, built because I wanted a launcher that stays out of the way. It works for me, and I hope it works for you too.
 
 <br>
 
