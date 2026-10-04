@@ -118,7 +118,12 @@ class SpinningCube {
             "  color = vertex_color;\n"
             "}\n";
         static const char* kFragment =
+            // GLES requires a default float precision and desktop GL's
+            // older GLSL rejects the statement, so it is given only where
+            // GL_ES says the compiler is a GLES one.
+            "#ifdef GL_ES\n"
             "precision mediump float;\n"
+            "#endif\n"
             "varying vec3 color;\n"
             "void main() {\n"
             "  gl_FragColor = vec4(color, 1.0);\n"
@@ -181,11 +186,18 @@ class SpinningCube {
     }
 
     // seconds drives the spin; one turn every four seconds, as in the
-    // original.
-    void draw(const CubeGl& gl, float seconds, int width, int height) {
+    // original. `distance` is how far back the camera sits, the
+    // original's 3 by default; closer fills more of the drawable. A
+    // transparent clear leaves only the cube, for drawing over a window.
+    void draw(const CubeGl& gl, float seconds, int width, int height, float distance = 3.0f,
+              bool transparent = false) {
         const float pi = 3.141593f;
         gl.Viewport(0, 0, width, height);
-        gl.ClearColor(0.1f, 0.12f, 0.2f, 1.0f);
+        if (transparent) {
+            gl.ClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        } else {
+            gl.ClearColor(0.1f, 0.12f, 0.2f, 1.0f);
+        }
         gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         gl.UseProgram(program_);
@@ -194,7 +206,7 @@ class SpinningCube {
             height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
         Mat4 transform = mat4_identity();
         transform = mat4_multiply(transform, mat4_perspective(aspect));
-        transform = mat4_multiply(transform, mat4_translation(0, 0, -3));
+        transform = mat4_multiply(transform, mat4_translation(0, 0, -distance));
         transform = mat4_multiply(transform, mat4_rotate_x(0.15f * pi));
         transform = mat4_multiply(transform, mat4_rotate_y(2 * pi * (seconds / 4.0f)));
         gl.UniformMatrix4fv(uniform_transform_, 1, GL_FALSE, transform.m);

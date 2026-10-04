@@ -186,6 +186,8 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
     "bubblewrap, \
 libqt6gui6 (>= 6.4) | libqt6gui6t64 (>= 6.4), \
 libqt6widgets6 (>= 6.4) | libqt6widgets6t64 (>= 6.4), \
+libqt6opengl6 (>= 6.4) | libqt6opengl6t64 (>= 6.4), \
+libqt6openglwidgets6 (>= 6.4) | libqt6openglwidgets6t64 (>= 6.4), \
 libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
 libqt6webenginewidgets6 (>= 6.4), \
 libqt6keychain1, libvulkan1, libfreetype6, \

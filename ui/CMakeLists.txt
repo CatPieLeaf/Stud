@@ -6,7 +6,7 @@
 # QtWebEngine is deliberately NOT required any more: Stud logs in the
 # way Sober does, inside the real Roblox app's own login screen, so
 # there is no web view to host and no session cookie to scrape.
-find_package(Qt6 REQUIRED COMPONENTS Widgets DBus Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets DBus Network)
 find_package(Vulkan REQUIRED)
 find_package(Qt6Keychain REQUIRED)
 
@@ -93,14 +93,19 @@ add_executable(stud-ui
     src/diagnose.cpp
     src/log_collector.cpp
     src/settings_window.cpp
+    src/cube_view.cpp
+    src/cube_gl.cpp
     src/update_check.cpp
     src/tray.cpp
     resources/resources.qrc
 )
-target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network Qt6::DBus stud_ui_gpu_enum stud_config stud_ui_credential_store
+target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::DBus stud_ui_gpu_enum stud_config stud_ui_credential_store
                                        stud_ui_notifications stud_ui_launch_uri stud_ui_log_archive
                                        stud_ipc stud_android_glue stud_render stud_bionic_runtime
                       stud_ui_deep_link_handoff)
+
+# The About tab's cube is the GL smoke test's own (tools/spinning_cube.h).
+target_include_directories(stud-ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../tools")
 
 set_target_properties(stud-ui PROPERTIES
     AUTOMOC ON

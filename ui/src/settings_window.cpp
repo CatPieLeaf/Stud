@@ -2,6 +2,7 @@
 
 #include "update_check.h"
 
+#include "cube_view.h"
 #include "gpu_enum.h"
 #include "stud/android_glue.h"
 #include "stud/settings.h"
@@ -233,9 +234,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     // ---- About ---------------------------------------------------------
     auto* about = add_tab("About");
+    auto* cube = new CubeView(this);
+    cube->setFixedSize(128, 128);
+    about->addWidget(cube, 0, Qt::AlignHCenter);
     auto* logo = new QLabel(this);
-    logo->setPixmap(QPixmap(":/stud-logo.png")
-                        .scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    logo->setPixmap(QPixmap(":/stud-title.png")
+                        .scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logo->setAlignment(Qt::AlignCenter);
     about->addWidget(logo);
     auto* aboutText = new QLabel(

@@ -361,9 +361,9 @@ void Tray::showAbout() {
         about->setAttribute(Qt::WA_DeleteOnClose);
         about->setTextFormat(Qt::RichText);
         about->setTextInteractionFlags(Qt::TextBrowserInteraction);
-        // The ICON, not the wordmark. A dialog's icon slot is square, and
-        // stud-logo.png is the wide 3840x2160 logo, fitting that into 96
-        // square leaves a sliver a few pixels tall. stud-logo-color.png is
+        // The ICON, not the wordmark. A dialog's icon slot is square, and a
+        // wordmark is wide: fitting one into 96 square leaves a sliver a
+        // few pixels tall. stud-logo-color.png is
         // the square one, and is already what the tray and the window use.
         const QPixmap icon(QStringLiteral(":/stud-logo-color.png"));
         if (!icon.isNull()) {
