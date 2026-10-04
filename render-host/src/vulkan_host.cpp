@@ -33,6 +33,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <condition_variable>
+#include <deque>
 #include <unordered_map>
 #include <unordered_set>
 #include <atomic>
@@ -5892,7 +5893,171 @@ void destroy_swapchain(Loader& l, uint64_t handle) {
     }
 }
 
+// Framebuffers the engine destroys while the GPU may still be using them.
+//
+// Vulkan only allows destroying a framebuffer once every submission that
+// uses it has finished. A phone driver keeps the object alive until then
+// anyway; NVIDIA frees it at once, and work still running would read its
+// attachments' description from freed memory.
+//
+// So a framebuffer whose last submission has not finished is parked, and
+// destroyed once it has. The engine's device has a single queue, so its
+// submissions finish in order: a signalled fence finishes its own
+// submission and every one before it. A fence submitted again, reset or
+// destroyed has finished its previous use, since Vulkan allows none of
+// those while that submission is pending.
+namespace framebuffer_lifetimes {
+
+struct Pending {
+    uint64_t serial = 0;
+    uint64_t fence = 0;
+};
+
+struct State {
+    std::mutex m;
+    // Framebuffers each command buffer began a render pass with since it
+    // was last begun.
+    std::unordered_map<uint64_t, std::vector<uint64_t>> cb_framebuffers;
+    // The last submission each framebuffer was used by.
+    std::unordered_map<uint64_t, uint64_t> last_use;
+    std::deque<Pending> pending;  // unfinished submissions, oldest first
+    uint64_t next_serial = 1;
+    uint64_t finished = 0;  // every submission up to this one is done
+    std::vector<std::pair<uint64_t, uint64_t>> parked;  // framebuffer, serial
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+void destroy_now(Loader& l, uint64_t fb) {
+    l.swapchain_framebuffers.erase(fb);
+    l.framebuffer_images.erase(fb);
+    if (l.vk.vkDestroyFramebuffer) {
+        l.vk.vkDestroyFramebuffer(l.device, from_u64<VkFramebuffer>(fb), nullptr);
+    }
+}
+
+void finish_through(State& st, uint64_t serial) {
+    if (serial > st.finished) st.finished = serial;
+    while (!st.pending.empty() && st.pending.front().serial <= st.finished) st.pending.pop_front();
+}
+
+// The newest submission whose fence has signalled, and everything before it.
+void poll(Loader& l, State& st) {
+    if (l.vk.vkGetFenceStatus == nullptr) return;
+    for (size_t i = st.pending.size(); i-- > 0;) {
+        const Pending& p = st.pending[i];
+        if (p.fence != 0 &&
+            l.vk.vkGetFenceStatus(l.device, from_u64<VkFence>(p.fence)) == VK_SUCCESS) {
+            finish_through(st, p.serial);
+            return;
+        }
+    }
+}
+
+void sweep(Loader& l, State& st) {
+    auto& parked = st.parked;
+    for (size_t i = 0; i < parked.size();) {
+        if (parked[i].second <= st.finished) {
+            destroy_now(l, parked[i].first);
+            parked[i] = parked.back();
+            parked.pop_back();
+        } else {
+            ++i;
+        }
+    }
+}
+
+void begin(uint64_t cb) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.m);
+    st.cb_framebuffers.erase(cb);
+}
+
+void use(uint64_t cb, uint64_t fb) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.m);
+    st.cb_framebuffers[cb].push_back(fb);
+}
+
+void submitted(Loader& l, uint64_t fence, const std::vector<uint64_t>& cbs) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.m);
+    if (fence != 0) {
+        for (size_t i = st.pending.size(); i-- > 0;) {
+            if (st.pending[i].fence == fence) {
+                finish_through(st, st.pending[i].serial);
+                break;
+            }
+        }
+    }
+    const uint64_t serial = st.next_serial++;
+    for (uint64_t cb : cbs) {
+        const auto it = st.cb_framebuffers.find(cb);
+        if (it == st.cb_framebuffers.end()) continue;
+        for (uint64_t fb : it->second) st.last_use[fb] = serial;
+    }
+    st.pending.push_back(Pending{serial, fence});
+    if (!st.parked.empty()) {
+        poll(l, st);
+        sweep(l, st);
+    }
+}
+
+// The engine waited on, reset or destroyed this fence: its submission is
+// done, and the fence must never be asked about again.
+void fence_gone(uint64_t fence) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.m);
+    for (size_t i = st.pending.size(); i-- > 0;) {
+        if (st.pending[i].fence == fence) {
+            finish_through(st, st.pending[i].serial);
+            break;
+        }
+    }
+}
+
+// The engine's vkDestroyFramebuffer. True when it was parked instead.
+bool destroy(Loader& l, uint64_t fb) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.m);
+    const auto it = st.last_use.find(fb);
+    if (it == st.last_use.end()) return false;
+    const uint64_t serial = it->second;
+    st.last_use.erase(it);
+    if (serial <= st.finished) return false;
+    poll(l, st);
+    if (serial <= st.finished) return false;
+    st.parked.emplace_back(fb, serial);
+    static bool said = false;
+    if (!said) {
+        said = true;
+        std::printf("stud-render-host: the engine destroyed a framebuffer the GPU was still "
+                    "using; Stud holds such framebuffers until the GPU has finished with them\n");
+        std::fflush(stdout);
+    }
+    return true;
+}
+
+// The device is going: everything parked goes first, and nothing is
+// remembered about a device that no longer exists.
+void flush(Loader& l) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.m);
+    for (const auto& p : st.parked) destroy_now(l, p.first);
+    st.parked.clear();
+    st.pending.clear();
+    st.last_use.clear();
+    st.cb_framebuffers.clear();
+    st.finished = st.next_serial - 1;
+}
+
+}  // namespace framebuffer_lifetimes
+
 void destroy_device(Loader& l, uint64_t handle) {
+    framebuffer_lifetimes::flush(l);
     // The real VkDevice is still deliberately NOT destroyed: the
     // engine tears its renderer down and rebuilds it repeatedly
     // (once per mode probe, and after every recovery), and
@@ -6195,6 +6360,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // crash was a submit carrying one of these, on a fence the
             // engine had already destroyed during its resize.
             forget_destroyed_fence(handle);
+            framebuffer_lifetimes::fence_gone(handle);
             if (l.vk.vkDestroyFence) l.vk.vkDestroyFence(l.device, from_u64<VkFence>(handle), nullptr);
             break;
         case K::CommandPool:
@@ -6228,10 +6394,8 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             if (g_swapchain_ci.empty()) stud::android_glue::native_window_detach_content();
             break;
         case K::Framebuffer:
-            l.swapchain_framebuffers.erase(handle);
-            l.framebuffer_images.erase(handle);
-            if (l.vk.vkDestroyFramebuffer) {
-                l.vk.vkDestroyFramebuffer(l.device, from_u64<VkFramebuffer>(handle), nullptr);
+            if (!framebuffer_lifetimes::destroy(l, handle)) {
+                framebuffer_lifetimes::destroy_now(l, handle);
             }
             break;
         case K::PipelineCache:
@@ -7076,6 +7240,7 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
 }
 
 uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags) {
+    framebuffer_lifetimes::begin(cb);
     Loader& l = loader();
     if (l.vk.vkBeginCommandBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -7725,6 +7890,13 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
                                    from_u64<VkFence>(fence));
     note_result(res, "vkQueueSubmit");
     if (res != VK_SUCCESS) fr::dump("a queue submit failed");
+    if (res == VK_SUCCESS) {
+        std::vector<uint64_t> submitted_cbs;
+        for (const auto& group : buffers) {
+            for (VkCommandBuffer c : group) submitted_cbs.push_back(to_u64(c));
+        }
+        framebuffer_lifetimes::submitted(l, fence, submitted_cbs);
+    }
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
@@ -7867,6 +8039,9 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
     // stud-render-host at the same second, and not one line in Stud's own
     // output saying the device had gone.
     note_result(res, "vkWaitForFences (the engine's own)");
+    if (res == VK_SUCCESS && (wait_all != 0 || n == 1)) {
+        for (const VkFence f : fences) framebuffer_lifetimes::fence_gone(to_u64(f));
+    }
     return static_cast<uint64_t>(static_cast<int32_t>(res));
 }
 
@@ -7877,6 +8052,7 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
         for (uint32_t i = 0; i < n; ++i) {
             const uint64_t f = probe.u64();
             note_fence_reset(f);
+            framebuffer_lifetimes::fence_gone(f);
         }
     }
     Loader& l = loader();
@@ -9610,6 +9786,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             bi.renderArea.offset.y = static_cast<int32_t>(r.u32());
             bi.renderArea.extent.width = r.u32();
             bi.renderArea.extent.height = r.u32();
+            framebuffer_lifetimes::use(cb_handle, to_u64(bi.framebuffer));
             const uint32_t nc = r.u32();
             std::vector<VkClearValue> clears(nc);
             for (auto& c : clears) {
