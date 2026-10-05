@@ -1228,6 +1228,24 @@ struct SubmitFeedback {
         bool signalled = false;    // created signalled and not reset since
     };
     std::unordered_map<uint64_t, Fence> fences;
+
+    // Timestamp pools whose results the GPU copies into a page mapped here;
+    // see render-host's query_share. A query is answered from its slot once
+    // the submit that last touched it has completed; 0 means no submit here
+    // is known to have, and the blocking call answers.
+    struct QueryPool {
+        const uint8_t* slots = nullptr;  // count slots of {value, available}, then the untrusted word
+        size_t length = 0;
+        uint32_t count = 0;
+        std::vector<uint64_t> submit;
+    };
+    std::unordered_map<uint64_t, QueryPool> query_pools;
+
+    // Presents sent, counted as the host counts the ones it receives, and
+    // the present number of the last published image taken; see
+    // render-host's preacquire.
+    uint64_t presents = 0;
+    uint64_t taken = 0;
 };
 
 SubmitFeedback& submit_feedback() {
@@ -1245,6 +1263,10 @@ void start_submit_feedback(uint64_t device) {
         f.device = device;
         f.submits = 0;
         f.fences.clear();
+        for (auto& [pool, q] : f.query_pools) {
+            ::munmap(const_cast<uint8_t*>(q.slots), q.length);
+        }
+        f.query_pools.clear();
     }
     SharedAllocation page;
     if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), page)) return;
@@ -1277,6 +1299,130 @@ bool fences_known_signalled(uint64_t device, uint32_t count, const VkFence* fenc
         if (!done && wait_all) return false;
     }
     return wait_all || any;
+}
+
+void note_present_sent() {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    ++f.presents;
+}
+
+// The image the host acquired as the engine's latest present finished, if
+// it is published for this swapchain and not taken yet.
+bool acquired_image_known(uint64_t device, uint64_t swapchain, uint32_t* index, uint64_t* seq) {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    if (f.page == nullptr || f.device != device) return false;
+    // Laid out as render-host's preacquire::Record, 64 bytes into the page.
+    const std::atomic<uint64_t>* rec = f.page + 64 / sizeof(uint64_t);
+    const uint64_t before = rec[0].load(std::memory_order_acquire);
+    if (before == 0 || before != f.presents || before == f.taken) return false;
+    const uint64_t chain = rec[1].load(std::memory_order_relaxed);
+    const uint64_t image = rec[2].load(std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (rec[0].load(std::memory_order_relaxed) != before || chain != swapchain) return false;
+    f.taken = before;
+    *index = static_cast<uint32_t>(image);
+    *seq = before;
+    return true;
+}
+
+// Asks the host to copy this timestamp pool's results into a page mapped
+// here. Without the feedback page there is nothing to tell when a slot is
+// current, so the pool is left to the blocking call.
+void share_query_results(uint64_t device, uint64_t pool, uint32_t count) {
+    SubmitFeedback& f = submit_feedback();
+    {
+        std::lock_guard<std::mutex> lock(f.m);
+        if (f.page == nullptr || f.device != device || count == 0) return;
+    }
+    SharedAllocation shared;
+    const uint64_t needed = uint64_t{count} * 2 * sizeof(uint64_t) + sizeof(uint64_t);
+    if (!create_shared_allocation(needed, shared)) return;
+    uint64_t a[8] = {device, pool, shared.id, shared.length, count};
+    const uint64_t r = stud::render_client::connection().call(CallId::VkShareQueryResults, a,
+                                                             nullptr, 0, nullptr, 0, nullptr);
+    ::close(shared.fd);
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) != VK_SUCCESS) {
+        ::munmap(shared.address, shared.length);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(f.m);
+    if (f.device != device) {
+        ::munmap(shared.address, shared.length);
+        return;
+    }
+    SubmitFeedback::QueryPool& q = f.query_pools[pool];
+    q.slots = static_cast<const uint8_t*>(shared.address);
+    q.length = shared.length;
+    q.count = count;
+    q.submit.assign(count, 0);
+}
+
+// Queries touched where this process cannot say which submit runs them:
+// the blocking call answers those until a tracked submit touches them again.
+void forget_query_submits(uint64_t pool, uint32_t first, uint32_t count) {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    const auto it = f.query_pools.find(pool);
+    if (it == f.query_pools.end()) return;
+    for (uint32_t i = first; i < it->second.count && i - first < count; ++i) {
+        it->second.submit[i] = 0;
+    }
+}
+
+// The engine's timestamps, answered from their slots. False when this
+// cannot be answered here for certain and the blocking call must.
+bool query_results_known(uint64_t pool, uint32_t first, uint32_t count, size_t data_size,
+                         void* data, VkDeviceSize stride, VkQueryResultFlags flags,
+                         VkResult* result) {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    const auto it = f.query_pools.find(pool);
+    if (f.page == nullptr || it == f.query_pools.end() || count == 0) return false;
+    SubmitFeedback::QueryPool& q = it->second;
+    if (first >= q.count || count > q.count - first) return false;
+    const bool wide = (flags & VK_QUERY_RESULT_64_BIT) != 0;
+    const bool with_availability = (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != 0;
+    const size_t element = wide ? sizeof(uint64_t) : sizeof(uint32_t);
+    const size_t per_query = element * (with_availability ? 2 : 1);
+    if ((count - 1) * stride + per_query > data_size) return false;
+    const uint64_t completed = f.page->load(std::memory_order_acquire);
+    // Set by the host, before the submit that made it so, when a command
+    // buffer touched this pool without the copy: no slot can be trusted.
+    uint64_t untrusted = 0;
+    std::memcpy(&untrusted, q.slots + uint64_t{q.count} * 2 * sizeof(uint64_t), sizeof(untrusted));
+    if (untrusted != 0) return false;
+    bool all = true;
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint64_t submit = q.submit[first + i];
+        if (submit == 0) return false;
+        uint64_t value = 0;
+        uint64_t available = 0;
+        if (completed >= submit) {
+            std::memcpy(&value, q.slots + uint64_t{first + i} * 2 * sizeof(uint64_t), sizeof(value));
+            std::memcpy(&available,
+                        q.slots + uint64_t{first + i} * 2 * sizeof(uint64_t) + sizeof(uint64_t),
+                        sizeof(available));
+        }
+        if (available == 0) {
+            if ((flags & VK_QUERY_RESULT_WAIT_BIT) != 0) return false;
+            all = false;
+        }
+        uint8_t* out = static_cast<uint8_t*>(data) + i * stride;
+        const bool write_value = available != 0 || (flags & VK_QUERY_RESULT_PARTIAL_BIT) != 0;
+        if (wide) {
+            if (write_value) std::memcpy(out, &value, sizeof(value));
+            if (with_availability) std::memcpy(out + sizeof(uint64_t), &available, sizeof(available));
+        } else {
+            const uint32_t v32 = static_cast<uint32_t>(value);
+            const uint32_t a32 = static_cast<uint32_t>(available);
+            if (write_value) std::memcpy(out, &v32, sizeof(v32));
+            if (with_availability) std::memcpy(out + sizeof(uint32_t), &a32, sizeof(a32));
+        }
+    }
+    *result = all ? VK_SUCCESS : VK_NOT_READY;
+    return true;
 }
 
 }  // namespace
@@ -1861,7 +2007,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateQueryPool(VkDevice device,
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags,
                      static_cast<uint64_t>(pCreateInfo->queryType), pCreateInfo->queryCount,
                      pCreateInfo->pipelineStatistics};
-    return simple_create<VkQueryPool, CallId::VkCreateQueryPool>(a, pQueryPool);
+    const VkResult r = simple_create<VkQueryPool, CallId::VkCreateQueryPool>(a, pQueryPool);
+    if (r == VK_SUCCESS && pCreateInfo->queryType == VK_QUERY_TYPE_TIMESTAMP) {
+        share_query_results(to_u64(device), to_u64(*pQueryPool), pCreateInfo->queryCount);
+    }
+    return r;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreatePipelineCache(
@@ -2676,7 +2826,16 @@ STUD_VK_DESTROY(stud_vkDestroyShaderModule, VkShaderModule, ShaderModule)
 STUD_VK_DESTROY(stud_vkDestroySemaphore, VkSemaphore, Semaphore)
 STUD_VK_DESTROY(stud_vkDestroyFence, VkFence, Fence)
 STUD_VK_DESTROY(stud_vkDestroyCommandPool, VkCommandPool, CommandPool)
-STUD_VK_DESTROY(stud_vkDestroyQueryPool, VkQueryPool, QueryPool)
+VKAPI_ATTR void VKAPI_CALL stud_vkDestroyQueryPool(VkDevice device, VkQueryPool handle,
+                                                    const VkAllocationCallbacks*) {
+    destroy_handle(device, vk_wire::DestroyKind::QueryPool, to_u64(handle));
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    const auto it = f.query_pools.find(to_u64(handle));
+    if (it == f.query_pools.end()) return;
+    ::munmap(const_cast<uint8_t*>(it->second.slots), it->second.length);
+    f.query_pools.erase(it);
+}
 STUD_VK_DESTROY(stud_vkDestroySwapchainKHR, VkSwapchainKHR, Swapchain)
 STUD_VK_DESTROY(stud_vkDestroyFramebuffer, VkFramebuffer, Framebuffer)
 // The pipeline family. Every one of these was resolving to a named
@@ -3315,6 +3474,8 @@ namespace {
 struct CommandBufferRecording {
     std::vector<uint8_t> bytes;  // [u64 cb][u32 kind][u32 len][payload] repeated
     bool recording = false;
+    // Timestamp queries it resets or writes: {pool, first, count}.
+    std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> queries;
 };
 
 std::mutex& recordings_mutex() {
@@ -3345,6 +3506,17 @@ CommandBufferRecording* recording_for(uint64_t cb, bool create) {
     t_recording_cb = cb;
     t_recording = it->second.get();
     return t_recording;
+}
+
+// The command buffer's submits stamp these queries with their numbers. One
+// recorded outside a tracked recording cannot be followed to a submit.
+void note_query_touch(VkCommandBuffer cb, uint64_t pool, uint32_t first, uint32_t count) {
+    CommandBufferRecording* rec = recording_for(to_u64(cb), false);
+    if (rec != nullptr && rec->recording) {
+        rec->queries.emplace_back(pool, first, count);
+    } else {
+        forget_query_submits(pool, first, count);
+    }
 }
 
 // Appends one command: to its command buffer's own recording while that
@@ -3452,6 +3624,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
     {
         CommandBufferRecording* rec = recording_for(to_u64(cb), true);
         rec->bytes.clear();
+        rec->queries.clear();
         rec->recording = true;
     }
     uint64_t a[8] = {to_u64(cb), bi != nullptr ? bi->flags : 0};
@@ -3666,6 +3839,20 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
             auto it = f.fences.find(to_u64(fence));
             if (it != f.fences.end()) it->second = SubmitFeedback::Fence{number, false};
         }
+        if (!f.query_pools.empty()) {
+            std::lock_guard<std::mutex> recordings_lock(recordings_mutex());
+            for (VkCommandBuffer cb : submitted) {
+                const auto rec = recordings().find(to_u64(cb));
+                if (rec == recordings().end()) continue;
+                for (const auto& [pool, first, count] : rec->second->queries) {
+                    const auto q = f.query_pools.find(pool);
+                    if (q == f.query_pools.end()) continue;
+                    for (uint32_t i = first; i < q->second.count && i - first < count; ++i) {
+                        q->second.submit[i] = number;
+                    }
+                }
+            }
+        }
     }
     uint64_t r = VK_SUCCESS;
     if (sync_submit()) {
@@ -3839,6 +4026,15 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAcquireNextImageKHR(VkDevice device,
     uint32_t index = 0;
     uint32_t written = 0;
     const auto t0 = std::chrono::steady_clock::now();
+    uint64_t seq = 0;
+    if (acquired_image_known(to_u64(device), to_u64(swapchain), &index, &seq)) {
+        uint64_t take[8] = {to_u64(device), to_u64(swapchain), to_u64(semaphore), seq,
+                            to_u64(fence)};
+        stud::render_client::connection().call_void(CallId::VkAcquireTake, take);
+        *pImageIndex = index;
+        if (frame_timing_enabled()) frame_timing().f_acquire = 0;
+        return VK_SUCCESS;
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkAcquireNextImageKHR, a, nullptr,
                                                          0, &index, sizeof(index), &written);
     if (frame_timing_enabled()) {
@@ -3867,6 +4063,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
     uint64_t a[8] = {to_u64(queue)};
     const auto t0 = std::chrono::steady_clock::now();
     uint64_t r = VK_SUCCESS;
+    note_present_sent();
     if (sync_submit()) {
         r = stud::render_client::connection().call(CallId::VkQueuePresentKHR, a, in.data(),
                                                     static_cast<uint32_t>(in.size()), nullptr, 0,
@@ -3925,6 +4122,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetQueryPoolResults(VkDevice device, VkQue
                                                            void* pData, VkDeviceSize stride,
                                                            VkQueryResultFlags flags) {
     if (pData == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult known = VK_SUCCESS;
+    if (query_results_known(to_u64(pool), firstQuery, queryCount, dataSize, pData, stride, flags,
+                            &known)) {
+        return known;
+    }
     uint64_t a[8] = {to_u64(device), to_u64(pool), firstQuery, queryCount,
                      static_cast<uint64_t>(stride), flags};
     std::vector<uint8_t> out(dataSize);
@@ -5308,6 +5510,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdResetQueryPool(VkCommandBuffer cb, VkQueryP
     w.u32(first);
     w.u32(count);
     record(cb, vk_wire::CmdKind::ResetQueryPool, in);
+    note_query_touch(cb, to_u64(pool), first, count);
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkCmdWriteTimestamp(VkCommandBuffer cb,
@@ -5319,6 +5522,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdWriteTimestamp(VkCommandBuffer cb,
     w.u64(to_u64(pool));
     w.u32(query);
     record(cb, vk_wire::CmdKind::WriteTimestamp, in);
+    note_query_touch(cb, to_u64(pool), query, 1);
 }
 
 // One table for both resolvers. Roblox resolves instance-level commands

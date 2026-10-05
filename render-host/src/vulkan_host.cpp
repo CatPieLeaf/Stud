@@ -1386,6 +1386,17 @@ void submitted(const std::shared_ptr<State>& s, uint64_t number) {
 
 }  // namespace submit_feedback
 
+// Timestamp results copied by the GPU into a page the client maps; defined
+// with vk_share_query_results().
+namespace query_share {
+void note_command_pool(uint64_t pool, uint32_t family);
+void note_command_buffers(uint64_t pool, uint32_t level, const std::vector<VkCommandBuffer>& cbs);
+void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count);
+void finish(VkCommandBuffer cb);
+void forget(VkQueryPool pool);
+}  // namespace query_share
+VkDeviceSize imported_host_pointer_alignment();
+
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -2173,6 +2184,7 @@ uint64_t vk_create_command_pool(uint32_t flags, uint32_t family, std::vector<uin
     VkCommandPool pool = VK_NULL_HANDLE;
     VkResult r = l.vk.vkCreateCommandPool(l.device, &ci, nullptr, &pool);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
+    query_share::note_command_pool(to_u64(pool), family);
     return write_handle(to_u64(pool), out, out_len);
 }
 
@@ -3021,6 +3033,230 @@ uint64_t vk_share_submit_feedback(uint64_t device, uint64_t id) {
         std::fflush(stdout);
     }
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
+// The engine's timestamp results, answered in its own process.
+//
+// vkGetQueryPoolResults was a blocking call down the ordered stream, like
+// vkWaitForFences before submit_feedback: the answer waited for everything
+// the client had queued ahead of it, at 1.1-1.4 ms of the engine's render
+// thread a frame in a heavy scene. The results are frames old by the time
+// the engine asks, so nothing about them needed the round trip.
+//
+// Each timestamp pool gets a page the client maps, one slot per query laid
+// out as vkCmdCopyQueryPoolResults writes it with 64_BIT|WITH_AVAILABILITY
+// (value, then availability), and one word after the slots. Every primary
+// command buffer that resets or writes a pool's queries ends with a copy of
+// those queries into their slots, so once the client sees that buffer's
+// submit complete (submit_feedback), the slots hold what the GPU wrote.
+// Where the copy is not allowed -- a secondary command buffer, or a queue
+// family that cannot copy query results -- the word after the slots is set
+// instead, before the submit that runs the buffer, and the client stops
+// trusting that pool and asks as before.
+namespace query_share {
+
+struct Pool {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    SharedMapping mapping;
+    uint32_t count = 0;
+};
+
+struct Touch {
+    VkQueryPool pool;
+    uint32_t first;
+    uint32_t count;
+};
+
+struct State {
+    std::mutex m;
+    std::unordered_map<uint64_t, uint32_t> pool_family;  // command pool -> queue family
+    std::unordered_map<uint64_t, bool> can_copy;         // command buffer -> may end with the copy
+    std::unordered_map<uint64_t, Pool> pools;            // query pool -> its shared slots
+    std::unordered_map<uint64_t, std::vector<Touch>> touched;  // command buffer -> queries it touches
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+constexpr VkDeviceSize kSlot = 2 * sizeof(uint64_t);
+
+void note_command_pool(uint64_t pool, uint32_t family) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.pool_family[pool] = family;
+}
+
+void note_command_buffers(uint64_t pool, uint32_t level, const std::vector<VkCommandBuffer>& cbs) {
+    Loader& l = loader();
+    bool family_copies = false;
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto f = s.pool_family.find(pool);
+    if (f != s.pool_family.end() && vkGetPhysicalDeviceQueueFamilyProperties != nullptr) {
+        uint32_t n = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(l.physical_device, &n, nullptr);
+        std::vector<VkQueueFamilyProperties> props(n);
+        vkGetPhysicalDeviceQueueFamilyProperties(l.physical_device, &n, props.data());
+        family_copies = f->second < n &&
+                        (props[f->second].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT));
+    }
+    const bool copies = family_copies && level == VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    for (VkCommandBuffer cb : cbs) s.can_copy[to_u64(cb)] = copies;
+}
+
+void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto p = s.pools.find(to_u64(pool));
+    if (p == s.pools.end() || first >= p->second.count) return;
+    count = std::min(count, p->second.count - first);
+    s.touched[to_u64(cb)].push_back(Touch{pool, first, count});
+}
+
+// Called as the command buffer ends: the copy goes last, after everything
+// that wrote the queries.
+void finish(VkCommandBuffer cb) {
+    Loader& l = loader();
+    std::vector<std::pair<Touch, VkBuffer>> copies;
+    {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.m);
+        const auto t = s.touched.find(to_u64(cb));
+        if (t == s.touched.end()) return;
+        const auto c = s.can_copy.find(to_u64(cb));
+        const bool may = c != s.can_copy.end() && c->second && l.vk.vkCmdCopyQueryPoolResults != nullptr;
+        for (const Touch& touch : t->second) {
+            const auto p = s.pools.find(to_u64(touch.pool));
+            if (p == s.pools.end()) continue;
+            if (may) {
+                copies.emplace_back(touch, p->second.buffer);
+            } else {
+                auto* untrusted = reinterpret_cast<std::atomic<uint64_t>*>(
+                    static_cast<uint8_t*>(p->second.mapping.address) + p->second.count * kSlot);
+                untrusted->store(1, std::memory_order_release);
+            }
+        }
+        s.touched.erase(t);
+    }
+    if (copies.empty()) return;
+    for (const auto& [touch, buffer] : copies) {
+        l.vk.vkCmdCopyQueryPoolResults(cb, touch.pool, touch.first, touch.count, buffer,
+                                        touch.first * kSlot, kSlot,
+                                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+    }
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+                              &barrier, 0, nullptr, 0, nullptr);
+}
+
+void forget(VkQueryPool pool) {
+    Loader& l = loader();
+    Pool p;
+    {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.m);
+        const auto it = s.pools.find(to_u64(pool));
+        if (it == s.pools.end()) return;
+        p = it->second;
+        s.pools.erase(it);
+    }
+    // The engine may destroy a pool only once nothing using it is pending,
+    // and the copies into this buffer ran in those same command buffers.
+    if (p.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, p.buffer, nullptr);
+    if (p.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, p.memory, nullptr);
+    unmap_shared_memory(p.mapping);
+}
+
+}  // namespace query_share
+
+uint64_t vk_share_query_results(uint64_t pool, uint64_t id, uint64_t length, uint32_t count) {
+    Loader& l = loader();
+    const auto fail = [](VkResult r) { return static_cast<uint64_t>(static_cast<int32_t>(r)); };
+    const VkDeviceSize needed = count * query_share::kSlot + sizeof(uint64_t);
+    const VkDeviceSize align = imported_host_pointer_alignment();
+    if (count == 0 || length < needed || (align > 1 && length % align != 0) ||
+        l.vk.vkGetMemoryHostPointerPropertiesEXT == nullptr || l.vk.vkCreateBuffer == nullptr) {
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
+    query_share::Pool p;
+    p.count = count;
+    if (!map_shared_memory(id, length, p.mapping)) return fail(VK_ERROR_MEMORY_MAP_FAILED);
+    const auto undo = [&](VkResult r) {
+        if (p.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, p.buffer, nullptr);
+        if (p.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, p.memory, nullptr);
+        unmap_shared_memory(p.mapping);
+        return fail(r);
+    };
+    VkMemoryHostPointerPropertiesEXT props{};
+    props.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
+    if (l.vk.vkGetMemoryHostPointerPropertiesEXT(l.device,
+                                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
+                                                 p.mapping.address, &props) != VK_SUCCESS) {
+        return undo(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
+    VkBufferCreateInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = length;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkExternalMemoryBufferCreateInfo external{};
+    external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+    external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+    bi.pNext = &external;
+    if (l.vk.vkCreateBuffer(l.device, &bi, nullptr, &p.buffer) != VK_SUCCESS) {
+        return undo(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
+    VkMemoryRequirements req{};
+    l.vk.vkGetBufferMemoryRequirements(l.device, p.buffer, &req);
+    // The CPU reads these, so a cached coherent type first: the GPU's
+    // writes then go through the CPU's caches instead of around them.
+    uint32_t type = UINT32_MAX;
+    VkPhysicalDeviceMemoryProperties mp{};
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+        if ((props.memoryTypeBits & req.memoryTypeBits & (1u << i)) == 0) continue;
+        const VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+        const VkMemoryPropertyFlags coherent =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if ((f & coherent) != coherent) continue;
+        if (type == UINT32_MAX || (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) type = i;
+        if ((f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) break;
+    }
+    if (type == UINT32_MAX) return undo(VK_ERROR_FEATURE_NOT_PRESENT);
+    VkImportMemoryHostPointerInfoEXT import{};
+    import.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT;
+    import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+    import.pHostPointer = p.mapping.address;
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.pNext = &import;
+    ai.allocationSize = length;
+    ai.memoryTypeIndex = type;
+    if (l.vk.vkAllocateMemory(l.device, &ai, nullptr, &p.memory) != VK_SUCCESS) {
+        return undo(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
+    if (l.vk.vkBindBufferMemory(l.device, p.buffer, p.memory, 0) != VK_SUCCESS) {
+        return undo(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
+    {
+        query_share::State& s = query_share::state();
+        std::lock_guard<std::mutex> lock(s.m);
+        s.pools[pool] = p;
+    }
+    static bool said = false;
+    if (!said) {
+        said = true;
+        std::printf("stud-render-host: timestamp results are copied into the engine's process; "
+                    "it reads them without a round trip\n");
+        std::fflush(stdout);
+    }
+    return fail(VK_SUCCESS);
 }
 
 // The driver's own rule for importing host pointers. Queried once: it is a
@@ -5277,6 +5513,233 @@ VkSwapchainKHR live_swapchain(uint64_t engine_handle) {
     return from_u64<VkSwapchainKHR>(it == g_swapchain_alias.end() ? engine_handle : it->second);
 }
 
+// The engine's next swapchain image, acquired as its last present finishes
+// and published to the submit-feedback page, so its vkAcquireNextImageKHR
+// is answered in its own process.
+//
+// That call was a blocking round trip down the ordered stream, 0.1-0.8 ms of
+// the engine's render thread a frame, spent mostly waiting for this process
+// to get through what the client had queued ahead of it, not for an image.
+//
+// After a present succeeds, the next image is acquired here with a timeout
+// of zero and a semaphore of Stud's own, and its index is published with
+// the number of presents seen so far. The client takes it only if that
+// number matches the presents it has sent, so it is always the image
+// acquired after the engine's latest frame, then tells this process it did
+// (vk_acquire_take): one empty submit waits on Stud's semaphore and
+// signals the engine's semaphore and fence, which is what the acquire
+// itself would have signalled. An ordinary acquire that arrives while an
+// image is held here is answered with that image, so one is never held
+// twice. No image ready, a failed acquire, a resize: nothing is published
+// and the engine's acquire takes the blocking path as before.
+//
+// STUD_VK_PREACQUIRE=0 turns it off.
+namespace preacquire {
+
+// Within the submit-feedback page, on its own cache line apart from the
+// completed count at the start.
+constexpr size_t kPageOffset = 64;
+struct Record {
+    std::atomic<uint64_t> seq;  // presents seen when published; 0 while being rewritten
+    std::atomic<uint64_t> swapchain;
+    std::atomic<uint64_t> index;
+};
+
+struct Slot {
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    bool in_flight = false;  // the fence is on a submit that waits on the semaphore
+};
+
+struct State {
+    std::mutex m;
+    VkDevice device = VK_NULL_HANDLE;
+    uint64_t presents = 0;
+    std::vector<Slot> slots;
+    size_t next = 0;
+    bool held = false;  // an image is acquired here and not yet handed over
+    uint64_t swapchain = 0;
+    uint32_t index = 0;
+    VkResult result = VK_SUCCESS;
+    size_t slot = 0;
+    uint64_t seq = 0;
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+bool enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("STUD_VK_PREACQUIRE");
+        return v == nullptr || std::strcmp(v, "0") != 0;
+    }();
+    return on;
+}
+
+Record* record() {
+    auto f = submit_feedback::current();
+    if (!f) return nullptr;
+    std::lock_guard<std::mutex> lock(f->m);
+    if (f->page == nullptr || f->page_length < kPageOffset + sizeof(Record)) return nullptr;
+    return reinterpret_cast<Record*>(reinterpret_cast<uint8_t*>(f->page) + kPageOffset);
+}
+
+// Every present the client sends is counted here, the same way it counts
+// them, whatever then happens to it.
+uint64_t count_present() {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    return ++s.presents;
+}
+
+// Waits on the held image's semaphore with nothing to signal, so the slot
+// can be used again; the image itself stays acquired until its swapchain
+// goes. Called with the lock held.
+void release_locked(State& s, Loader& l) {
+    if (!s.held) return;
+    s.held = false;
+    Slot& slot = s.slots[s.slot];
+    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount = 1;
+    si.pWaitSemaphores = &slot.semaphore;
+    si.pWaitDstStageMask = &stage;
+    std::lock_guard<std::mutex> queue_lock(queue_mutex());
+    l.vk.vkQueueSubmit(l.probe_queue, 1, &si, slot.fence);
+    slot.in_flight = true;
+}
+
+// Before a swapchain is rebuilt or destroyed.
+void drop(uint64_t swapchain) {
+    Loader& l = loader();
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    if (s.held && s.swapchain == swapchain && s.device == l.device) release_locked(s, l);
+}
+
+// After the engine's present `seq` on `swapchain` succeeded.
+void after_present(uint64_t swapchain, uint64_t seq) {
+    if (!enabled() || g_device_lost.load(std::memory_order_relaxed)) return;
+    Loader& l = loader();
+    if (l.vk.vkAcquireNextImageKHR == nullptr || l.probe_queue == VK_NULL_HANDLE) return;
+    Record* rec = record();
+    if (rec == nullptr) return;
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    if (s.device != l.device) {
+        // A new device: the old one's semaphores and fences went with it.
+        s.slots.clear();
+        s.held = false;
+        s.device = l.device;
+    }
+    if (s.held) {
+        if (s.swapchain == swapchain) return;
+        release_locked(s, l);
+    }
+    const VkSwapchainKHR live = live_swapchain(swapchain);
+    if (s.slots.empty()) {
+        // One more than the swapchain has images: a slot is reused only
+        // after the submit that last waited on its semaphore.
+        uint32_t images = 0;
+        l.vk.vkGetSwapchainImagesKHR(l.device, live, &images, nullptr);
+        if (images == 0) return;
+        s.slots.resize(images + 1);
+        for (Slot& slot : s.slots) {
+            VkSemaphoreCreateInfo sci{};
+            sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            VkFenceCreateInfo fci{};
+            fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            if (l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &slot.semaphore) != VK_SUCCESS ||
+                l.vk.vkCreateFence(l.device, &fci, nullptr, &slot.fence) != VK_SUCCESS) {
+                s.slots.clear();
+                return;
+            }
+        }
+    }
+    const size_t which = s.next;
+    Slot& slot = s.slots[which];
+    if (slot.in_flight) {
+        // Normally long finished: it was a frame ago.
+        if (l.vk.vkWaitForFences(l.device, 1, &slot.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            return;
+        }
+        l.vk.vkResetFences(l.device, 1, &slot.fence);
+        slot.in_flight = false;
+    }
+    uint32_t index = 0;
+    const VkResult r =
+        l.vk.vkAcquireNextImageKHR(l.device, live, 0, slot.semaphore, VK_NULL_HANDLE, &index);
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return;  // nothing acquired, nothing signalled
+    s.next = (which + 1) % s.slots.size();
+    s.held = true;
+    s.swapchain = swapchain;
+    s.index = index;
+    s.result = r;
+    s.slot = which;
+    s.seq = seq;
+    // Suboptimal may have to reach the engine, so only a clean acquire is
+    // answered in its process; the blocking path still hands this one over.
+    if (r != VK_SUCCESS) return;
+    rec->seq.store(0, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    rec->swapchain.store(swapchain, std::memory_order_relaxed);
+    rec->index.store(index, std::memory_order_relaxed);
+    rec->seq.store(seq, std::memory_order_release);
+    static bool said = false;
+    if (!said) {
+        said = true;
+        std::printf("stud-render-host: the next swapchain image is acquired as each present "
+                    "finishes; the engine takes it without a round trip\n");
+        std::fflush(stdout);
+    }
+}
+
+// Hands the held image to the engine: its semaphore and fence are signalled
+// once the image really is free. `seq` 0 takes whatever is held for the
+// swapchain.
+bool take(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint64_t seq, uint32_t& index,
+          VkResult& result) {
+    Loader& l = loader();
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    if (!s.held || s.swapchain != swapchain || s.device != l.device || (seq != 0 && s.seq != seq)) {
+        return false;
+    }
+    Slot& slot = s.slots[s.slot];
+    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSemaphore engine_semaphore = from_u64<VkSemaphore>(semaphore);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount = 1;
+    si.pWaitSemaphores = &slot.semaphore;
+    si.pWaitDstStageMask = &stage;
+    if (semaphore != 0) {
+        si.signalSemaphoreCount = 1;
+        si.pSignalSemaphores = &engine_semaphore;
+    }
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        if (fence != 0) {
+            // The engine's fence on its batch, and Stud's on an empty one
+            // behind it, which finishes no earlier.
+            l.vk.vkQueueSubmit(l.probe_queue, 1, &si, from_u64<VkFence>(fence));
+            l.vk.vkQueueSubmit(l.probe_queue, 0, nullptr, slot.fence);
+        } else {
+            l.vk.vkQueueSubmit(l.probe_queue, 1, &si, slot.fence);
+        }
+    }
+    slot.in_flight = true;
+    s.held = false;
+    index = s.index;
+    result = s.result;
+    return true;
+}
+
+}  // namespace preacquire
+
 void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
                          const VkSwapchainCreateInfoKHR& ci, bool reuse_offscreen) {
     Loader& l = loader();
@@ -6010,6 +6473,7 @@ std::unordered_map<uint64_t, OwnedDescriptorSet>& descriptor_sets() {
 }
 
 void destroy_swapchain(Loader& l, uint64_t handle) {
+    preacquire::drop(handle);
     // The engine's last swapchain: its last frame is copied out
     // first, so the window shows it rather than black until the
     // next device presents. See keep_last_frame().
@@ -6589,6 +7053,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             }
             break;
         case K::QueryPool:
+            query_share::forget(from_u64<VkQueryPool>(handle));
             if (l.vk.vkDestroyQueryPool) {
                 l.vk.vkDestroyQueryPool(l.device, from_u64<VkQueryPool>(handle), nullptr);
             }
@@ -7457,6 +7922,7 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
         // Its pool decides which replay queue records it; see replay.
         replay::note_pool(h, pool);
     }
+    query_share::note_command_buffers(pool, level, buffers);
     *out_len = static_cast<uint32_t>(out.size());
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
@@ -7479,6 +7945,7 @@ uint64_t vk_end_command_buffer(uint64_t cb) {
     if (l.vk.vkEndCommandBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    query_share::finish(from_u64<VkCommandBuffer>(cb));
     return static_cast<uint64_t>(
         static_cast<int32_t>(l.vk.vkEndCommandBuffer(from_u64<VkCommandBuffer>(cb))));
 }
@@ -8417,6 +8884,7 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
     }
     if (extent.width == 0 || extent.height == 0) return false;
 
+    preacquire::drop(engine_handle);
     VkSwapchainKHR old = live_swapchain(engine_handle);
     VkSwapchainCreateInfoKHR ci = saved->second.ci;
     ci.imageExtent = extent;
@@ -8544,6 +9012,16 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
     // If the last failed acquire left a signal on this semaphore that
     // nothing consumed, take it back before the driver signals it again.
     drain_stale_signal(l.probe_queue, semaphore);
+    {
+        VkResult held = VK_SUCCESS;
+        if (preacquire::take(swapchain, semaphore, fence, 0, index, held)) {
+            note_acquire_failed(swapchain, false);
+            out.resize(sizeof(index));
+            std::memcpy(out.data(), &index, sizeof(index));
+            *out_len = sizeof(index);
+            return engine_visible_result(held);
+        }
+    }
     const auto t0 = std::chrono::steady_clock::now();
     VkResult r = l.vk.vkAcquireNextImageKHR(l.device, live_swapchain(swapchain), timeout,
                                        from_u64<VkSemaphore>(semaphore), from_u64<VkFence>(fence),
@@ -8603,6 +9081,31 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
     return engine_visible_result(r);
 }
 
+
+// The engine answered its own acquire from the published image; hand it
+// over. Reply-free, so if the image is no longer held (a rebuild got there
+// first) the frame is treated like one whose acquire failed: what it waits
+// on is signalled so it retires, and its present is dropped.
+uint64_t vk_acquire_take(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint64_t seq) {
+    Loader& l = loader();
+    drain_stale_signal(l.probe_queue, semaphore);
+    uint32_t index = 0;
+    VkResult held = VK_SUCCESS;
+    if (preacquire::take(swapchain, semaphore, fence, seq, index, held)) {
+        note_acquire_failed(swapchain, false);
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
+    signal_what_the_failed_acquire_left(l.probe_queue, semaphore, fence);
+    note_acquire_failed(swapchain, true);
+    static int said = 0;
+    if (said < 8) {
+        ++said;
+        std::printf("stud-render-host: the engine took an acquired image that was no longer "
+                    "held; its frame retires and its present is dropped\n");
+        std::fflush(stdout);
+    }
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
 
 // Copies one presentable image into `out`, tightly packed, 4 bytes a
 // pixel. The image must be in PRESENT_SRC_KHR and idle, and is left that
@@ -9076,6 +9579,7 @@ void report_holdings() {
 
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     STUD_ZONE();
+    const uint64_t present_seq = preacquire::count_present();
     Loader& l = loader();
     if (l.vk.vkQueuePresentKHR == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -9561,6 +10065,9 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     if (res == VK_SUCCESS && paced_id != 0 && !live.empty()) {
         STUD_ZONE_NAMED("pace_against_display");
         pace_against_display(live[0], paced_id);
+    }
+    if (res == VK_SUCCESS && chains.size() == 1) {
+        preacquire::after_present(to_u64(chains[0]), present_seq);
     }
     // What the present itself costs THIS process, which the client's own
     // frame breakdown cannot see: it hands the present over and returns.
@@ -10493,6 +11000,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
             const uint32_t first = r.u32(), count = r.u32();
             l.vk.vkCmdResetQueryPool(cb, pool, first, count);
+            query_share::touch(cb, pool, first, count);
             break;
         }
         case K::WriteTimestamp: {
@@ -10501,6 +11009,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
             const uint32_t query = r.u32();
             l.vk.vkCmdWriteTimestamp(cb, static_cast<VkPipelineStageFlagBits>(stage), pool, query);
+            query_share::touch(cb, pool, query, 1);
             break;
         }
         default:

@@ -799,6 +799,16 @@ enum class CallId : uint32_t {
     // a[1] the id of the memfd sent over the shared-memory fd channel.
     // Result VK_SUCCESS only if the host will keep the page up to date.
     VkShareSubmitFeedback,
+    // Slots the GPU copies a timestamp pool's results into, in a memfd the
+    // client maps. a[0] the device, a[1] the query pool, a[2] the memfd id,
+    // a[3] its length, a[4] the pool's query count. Result VK_SUCCESS only
+    // if every command buffer touching the pool will keep the slots current.
+    VkShareQueryResults,
+    // Reply-free: the client answered vkAcquireNextImageKHR from the image
+    // the host published after present a[3]; hand it over. a[0] the device,
+    // a[1] the swapchain, a[2] the engine's semaphore, a[3] that present's
+    // number, a[4] the engine's fence.
+    VkAcquireTake,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1118,9 +1128,11 @@ inline const char* call_id_name(CallId id) {
         "SharedMemoryFdChannel",
         "SetKeepScreenOn",
         "VkShareSubmitFeedback",
+        "VkShareQueryResults",
+        "VkAcquireTake",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VkShareSubmitFeedback) + 1,
+                      static_cast<size_t>(CallId::VkAcquireTake) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

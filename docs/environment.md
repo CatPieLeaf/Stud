@@ -96,6 +96,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_NO_SHARED_MEMORY` | off | Stop sharing mapped memory with the host; everything crosses the socket instead. **perf** |
 | `STUD_SHARE_ALL_HOST_MEMORY` | on | Substitute an importable memory type so every host-visible allocation can be shared, with no page tracking on the engine's threads. Moves the engine's streaming buffers out of VRAM. `0` keeps the engine's type and the copying path. **perf** |
 | `STUD_VK_SERIAL_REPLAY` | off | Replay the engine's command buffers inline on the connection thread instead of on per-pool worker threads. **perf** |
+| `STUD_VK_PREACQUIRE` | on | Acquire the engine's next swapchain image as each present finishes and publish it to a page the engine's process maps, so its `vkAcquireNextImageKHR` is answered without a round trip. `0` makes every acquire a blocking call. **perf** |
 | `STUD_VK_NO_WRITE_BARRIER` | off | Use a shadow copy instead of the MMU write barrier. **perf** — `memcmp` over everything mapped, on every submit. |
 | `STUD_VK_NO_UFFD_SCAN` | off | Use the fault-handler barrier instead of kernel-side tracking. **perf** |
 | `STUD_VK_FULL_FLUSH` | off | Send every mapped byte on every submit, tracking nothing. **perf**, by a factor of ~180. |

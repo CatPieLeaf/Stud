@@ -171,6 +171,10 @@ uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t si
 uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_t n);
 // The page submit completions are published to; see submit_feedback.
 uint64_t vk_share_submit_feedback(uint64_t device, uint64_t id);
+// The slots a timestamp pool's results are copied into; see query_share.
+// The engine took the image published after a present; see preacquire.
+uint64_t vk_acquire_take(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint64_t seq);
+uint64_t vk_share_query_results(uint64_t pool, uint64_t id, uint64_t length, uint32_t count);
 
 // Command buffers replayed on worker threads, one ordered queue per pool;
 // see the definitions.
