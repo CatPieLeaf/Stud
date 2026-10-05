@@ -1253,6 +1253,142 @@ bool device_supports_extension(const char* name) {
 // the device they were built on; see flush_retired_chains().
 void flush_retired_chains(const char* why);
 
+// How many of the engine's submits have finished, published to a page the
+// client also maps.
+//
+// vkWaitForFences used to be a blocking call down the ordered stream: the
+// answer came back only after this process had replayed everything the
+// client queued ahead of it, then two socket trips and four thread wakeups
+// -- even for a fence that had signalled frames ago, which is the usual
+// case. Measured at 0.65 ms a frame of the engine's render thread doing
+// nothing.
+//
+// Every engine submit on the current device carries one extra signal, a
+// timeline semaphore set to that submit's number, and a thread waits on it
+// and writes "everything up to N has finished" into the page. The client
+// numbers its submits in the same order, so a fence whose submit is at or
+// below that number is answered there and then. Anything less certain
+// still takes the blocking call, and the count here only ever lags the
+// client's -- a submit this process did not number is one the client
+// waits a little longer for, never one it is told about early.
+namespace submit_feedback {
+
+struct State {
+    std::mutex m;
+    std::condition_variable cv;
+    VkDevice device = VK_NULL_HANDLE;
+    VkSemaphore timeline = VK_NULL_HANDLE;
+    PFN_vkWaitSemaphoresKHR wait = nullptr;
+    PFN_vkGetSemaphoreCounterValueKHR value = nullptr;
+    std::set<VkQueue> queues;          // the queues this device handed out
+    uint64_t submitted = 0;            // engine submits numbered so far
+    std::atomic<uint64_t>* page = nullptr;
+    size_t page_length = 0;
+    uint64_t completed = 0;
+    bool stop = false;
+};
+
+std::mutex& current_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::shared_ptr<State>& current_slot() {
+    static std::shared_ptr<State> s;
+    return s;
+}
+std::shared_ptr<State> current() {
+    std::lock_guard<std::mutex> lock(current_mutex());
+    return current_slot();
+}
+
+// Waits only for numbers that were really submitted, so it is never left
+// waiting on one that cannot come, and leaves when its device is replaced
+// and nothing of it is outstanding. A lost device ends it too: the client
+// then simply keeps asking.
+void watch(std::shared_ptr<State> s) {
+    uint64_t done = 0;
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(s->m);
+            s->cv.wait(lock, [&] { return s->stop || s->submitted > done; });
+            if (s->submitted <= done) return;
+        }
+        const uint64_t want = done + 1;
+        VkSemaphoreWaitInfo wi{};
+        wi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+        wi.semaphoreCount = 1;
+        wi.pSemaphores = &s->timeline;
+        wi.pValues = &want;
+        if (s->wait(s->device, &wi, UINT64_MAX) != VK_SUCCESS) return;
+        uint64_t reached = 0;
+        if (s->value(s->device, s->timeline, &reached) != VK_SUCCESS) return;
+        done = reached;
+        std::lock_guard<std::mutex> lock(s->m);
+        s->completed = reached;
+        if (s->page != nullptr) s->page->store(reached, std::memory_order_release);
+    }
+}
+
+// A new device: the one before it stops being numbered, and this one starts
+// at zero. Without timeline semaphores there is no feedback at all.
+void start(Loader& l, bool timeline_enabled) {
+    std::shared_ptr<State> old;
+    {
+        std::lock_guard<std::mutex> lock(current_mutex());
+        old = std::move(current_slot());
+    }
+    if (old) {
+        std::lock_guard<std::mutex> lock(old->m);
+        old->stop = true;
+        old->cv.notify_all();
+    }
+    if (!timeline_enabled || l.vk.vkCreateSemaphore == nullptr) return;
+    auto s = std::make_shared<State>();
+    s->device = l.device;
+    s->wait = reinterpret_cast<PFN_vkWaitSemaphoresKHR>(
+        vkGetDeviceProcAddr(l.device, "vkWaitSemaphoresKHR"));
+    s->value = reinterpret_cast<PFN_vkGetSemaphoreCounterValueKHR>(
+        vkGetDeviceProcAddr(l.device, "vkGetSemaphoreCounterValueKHR"));
+    if (s->wait == nullptr || s->value == nullptr) return;
+    VkSemaphoreTypeCreateInfo type{};
+    type.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+    type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+    type.initialValue = 0;
+    VkSemaphoreCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    sci.pNext = &type;
+    if (l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &s->timeline) != VK_SUCCESS) return;
+    {
+        std::lock_guard<std::mutex> lock(current_mutex());
+        current_slot() = s;
+    }
+    std::thread(watch, s).detach();
+}
+
+void note_queue(VkDevice device, VkQueue queue) {
+    auto s = current();
+    if (!s || s->device != device) return;
+    std::lock_guard<std::mutex> lock(s->m);
+    s->queues.insert(queue);
+}
+
+// The number the next submit on `queue` should signal, or 0 for none.
+uint64_t next_for(const std::shared_ptr<State>& s, VkQueue queue) {
+    if (!s) return 0;
+    std::lock_guard<std::mutex> lock(s->m);
+    if (s->queues.count(queue) == 0) return 0;
+    return s->submitted + 1;
+}
+
+// That submit really went to the queue: the watcher may wait for it.
+void submitted(const std::shared_ptr<State>& s, uint64_t number) {
+    std::lock_guard<std::mutex> lock(s->m);
+    if (number == s->submitted + 1) s->submitted = number;
+    s->cv.notify_all();
+}
+
+}  // namespace submit_feedback
+
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -1502,6 +1638,42 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         }
     }
 
+    // Timeline semaphores, for submit feedback (see submit_feedback). The
+    // extension's presence guarantees the feature. The engine's own chain
+    // may already carry the struct that switches it on -- its Vulkan 1.2
+    // features or the timeline one -- and then that struct says yes;
+    // naming the feature in two structs is invalid.
+    VkPhysicalDeviceTimelineSemaphoreFeatures timeline_features{};
+    bool stud_added_timeline_struct = false;
+    bool timeline_enabled = false;
+    if (device_supports_extension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+        bool already = false;
+        for (const std::string& e : extensions) {
+            if (e == VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) already = true;
+        }
+        if (!already) extensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        bool covered = false;
+        for (auto* node = reinterpret_cast<VkBaseOutStructure*>(chain); node != nullptr;
+             node = node->pNext) {
+            if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+                reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(node)->timelineSemaphore =
+                    VK_TRUE;
+                covered = true;
+            } else if (node->sType ==
+                       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES) {
+                reinterpret_cast<VkPhysicalDeviceTimelineSemaphoreFeatures*>(node)
+                    ->timelineSemaphore = VK_TRUE;
+                covered = true;
+            }
+        }
+        if (!covered) {
+            timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+            timeline_features.timelineSemaphore = VK_TRUE;
+            stud_added_timeline_struct = true;
+        }
+        timeline_enabled = true;
+    }
+
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
 
@@ -1521,6 +1693,10 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         present_id_features.pNext = chain_head;
         present_wait_features.pNext = &present_id_features;
         chain_head = &present_wait_features;
+    }
+    if (stud_added_timeline_struct) {
+        timeline_features.pNext = chain_head;
+        chain_head = &timeline_features;
     }
     ci.pNext = chain_head;
     ci.flags = hdr.flags;
@@ -1731,6 +1907,8 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
                     l.vk.vkAllocateCommandBuffers != nullptr);
         std::fflush(stdout);
     }
+    // This device's submits are numbered from here; see submit_feedback.
+    submit_feedback::start(l, timeline_enabled);
 
     uint64_t handle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(device));
     out.resize(sizeof(handle));
@@ -1961,6 +2139,7 @@ uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_
     }
     VkQueue queue = VK_NULL_HANDLE;
     l.vk.vkGetDeviceQueue(l.device, family, index, &queue);
+    submit_feedback::note_queue(l.device, queue);
     // The pixel probe needs a queue and a pool of its own; the first
     // queue the engine asks for is as good as any, and it is only used
     // when STUD_VK_PROBE_PIXELS is set.
@@ -2814,6 +2993,31 @@ void unmap_shared_memory(SharedMapping& m) {
     if (m.address != nullptr) ::munmap(m.address, m.length);
     m.address = nullptr;
     m.length = 0;
+}
+
+uint64_t vk_share_submit_feedback(uint64_t device, uint64_t id) {
+    const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
+    SharedMapping mapping;
+    if (!map_shared_memory(id, page, mapping)) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    auto s = submit_feedback::current();
+    if (!s || to_u64(s->device) != device) {
+        unmap_shared_memory(mapping);
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_FEATURE_NOT_PRESENT));
+    }
+    std::lock_guard<std::mutex> lock(s->m);
+    s->page = static_cast<std::atomic<uint64_t>*>(mapping.address);
+    s->page_length = mapping.length;
+    s->page->store(s->completed, std::memory_order_release);
+    static bool said = false;
+    if (!said) {
+        said = true;
+        std::printf("stud-render-host: fences the GPU has finished are answered in the engine's "
+                    "process, without a round trip\n");
+        std::fflush(stdout);
+    }
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
 // The driver's own rule for importing host pointers. Queried once: it is a
@@ -7891,11 +8095,66 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         // time, so they could not be told apart.
         if (fence != 0) note_fence_submit_time(fence);
     }
+    // Submit feedback: the last batch also signals this submit's number on
+    // the device's timeline, which is what lets the client answer its own
+    // fence waits; see submit_feedback. The engine's semaphores are binary,
+    // so their values are zero.
+    const auto feedback = submit_feedback::current();
+    const uint64_t feedback_number =
+        feedback && feedback->device == l.device
+            ? submit_feedback::next_for(feedback, from_u64<VkQueue>(queue))
+            : 0;
+    VkTimelineSemaphoreSubmitInfo timeline_info{};
+    std::vector<VkSemaphore> last_signals;
+    std::vector<uint64_t> signal_values;
+    if (feedback_number != 0) {
+        if (submits.empty()) {
+            submits.resize(1);
+            submits[0].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        }
+        VkSubmitInfo& last = submits.back();
+        last_signals.assign(last.pSignalSemaphores,
+                            last.pSignalSemaphores + last.signalSemaphoreCount);
+        last_signals.push_back(feedback->timeline);
+        signal_values.assign(last_signals.size(), 0);
+        signal_values.back() = feedback_number;
+        timeline_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        timeline_info.signalSemaphoreValueCount = static_cast<uint32_t>(signal_values.size());
+        timeline_info.pSignalSemaphoreValues = signal_values.data();
+        last.signalSemaphoreCount = static_cast<uint32_t>(last_signals.size());
+        last.pSignalSemaphores = last_signals.data();
+        last.pNext = &timeline_info;
+    }
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
-    VkResult res = l.vk.vkQueueSubmit(from_u64<VkQueue>(queue), n, submits.empty() ? nullptr : submits.data(),
-                                   from_u64<VkFence>(fence));
+    VkResult res = l.vk.vkQueueSubmit(from_u64<VkQueue>(queue),
+                                      static_cast<uint32_t>(submits.size()),
+                                      submits.empty() ? nullptr : submits.data(),
+                                      from_u64<VkFence>(fence));
     note_result(res, "vkQueueSubmit");
     if (res != VK_SUCCESS) fr::dump("a queue submit failed");
+    if (feedback_number != 0) {
+        if (res == VK_SUCCESS) {
+            submit_feedback::submitted(feedback, feedback_number);
+        } else {
+            // The number still has to be signalled, or the count stops
+            // there. A batch that only signals it; if even that fails the
+            // count simply stays behind, which only means slower answers.
+            const uint64_t value = feedback_number;
+            VkTimelineSemaphoreSubmitInfo only_info{};
+            only_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+            only_info.signalSemaphoreValueCount = 1;
+            only_info.pSignalSemaphoreValues = &value;
+            VkSubmitInfo only{};
+            only.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            only.pNext = &only_info;
+            only.signalSemaphoreCount = 1;
+            only.pSignalSemaphores = &feedback->timeline;
+            if (l.vk.vkQueueSubmit(from_u64<VkQueue>(queue), 1, &only, VK_NULL_HANDLE) ==
+                VK_SUCCESS) {
+                submit_feedback::submitted(feedback, feedback_number);
+            }
+        }
+    }
     if (res == VK_SUCCESS) {
         std::vector<uint64_t> submitted_cbs;
         for (const auto& group : buffers) {

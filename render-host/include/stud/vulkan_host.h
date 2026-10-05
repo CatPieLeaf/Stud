@@ -169,6 +169,8 @@ uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
 // therefore already here; see the definitions.
 uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t size);
 uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_t n);
+// The page submit completions are published to; see submit_feedback.
+uint64_t vk_share_submit_feedback(uint64_t device, uint64_t id);
 uint64_t vk_unmap_memory(uint64_t memory);
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size);
 uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint32_t capacity,

@@ -1208,6 +1208,77 @@ bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to
     return true;
 }
 
+// Fences the GPU has finished, answered here instead of by a round trip.
+//
+// The host numbers the engine's submits on the current device and publishes
+// how many have completed into a page this process maps (render-host's
+// submit_feedback). Submits are numbered here in the same order, and each
+// fence remembers the submit that last signals it, so a wait on a fence the
+// page already covers returns at once. Anything not known for certain --
+// a fence from another device, one never seen here, no page -- takes the
+// blocking call as before; the host's count can only lag this one, never
+// run ahead of it.
+struct SubmitFeedback {
+    std::mutex m;
+    const std::atomic<uint64_t>* page = nullptr;
+    uint64_t device = 0;
+    uint64_t submits = 0;
+    struct Fence {
+        uint64_t submit = 0;       // the submit that signals it, 0 for none since a reset
+        bool signalled = false;    // created signalled and not reset since
+    };
+    std::unordered_map<uint64_t, Fence> fences;
+};
+
+SubmitFeedback& submit_feedback() {
+    static SubmitFeedback f;
+    return f;
+}
+
+// A new device numbers its submits from zero, so what was known about the
+// last one's fences no longer applies.
+void start_submit_feedback(uint64_t device) {
+    SubmitFeedback& f = submit_feedback();
+    {
+        std::lock_guard<std::mutex> lock(f.m);
+        f.page = nullptr;
+        f.device = device;
+        f.submits = 0;
+        f.fences.clear();
+    }
+    SharedAllocation page;
+    if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), page)) return;
+    uint64_t a[8] = {device, page.id};
+    const uint64_t r = stud::render_client::connection().call(CallId::VkShareSubmitFeedback, a,
+                                                             nullptr, 0, nullptr, 0, nullptr);
+    ::close(page.fd);
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) != VK_SUCCESS) {
+        ::munmap(page.address, page.length);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(f.m);
+    if (f.device == device) f.page = static_cast<const std::atomic<uint64_t>*>(page.address);
+}
+
+// Whether every fence (wait_all) or any fence has certainly signalled.
+bool fences_known_signalled(uint64_t device, uint32_t count, const VkFence* fences,
+                            bool wait_all) {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    if (f.page == nullptr || f.device != device || count == 0) return false;
+    const uint64_t completed = f.page->load(std::memory_order_acquire);
+    bool any = false;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto it = f.fences.find(to_u64(fences[i]));
+        const bool done = it != f.fences.end() &&
+                          (it->second.submit != 0 ? completed >= it->second.submit
+                                                  : it->second.signalled);
+        if (done) any = true;
+        if (!done && wait_all) return false;
+    }
+    return wait_all || any;
+}
+
 }  // namespace
 
 extern "C" {
@@ -1624,6 +1695,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDevice(VkPhysicalDevice physicalDevi
     *pDevice = reinterpret_cast<VkDevice>(static_cast<uintptr_t>(handle));
     g_decode_device = *pDevice;
     g_decode_physical_device = physicalDevice;
+    start_submit_feedback(handle);
     // Emulated textures are decoded to an uncompressed format of the same
     // precision. What keeps the engine's texture budget meaningful with
     // them that size is the host's scaled memory requirements; see
@@ -1768,7 +1840,17 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateFence(VkDevice device,
                                                    const VkAllocationCallbacks*, VkFence* pFence) {
     if (pCreateInfo == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags};
-    return simple_create<VkFence, CallId::VkCreateFence>(a, pFence);
+    const VkResult r = simple_create<VkFence, CallId::VkCreateFence>(a, pFence);
+    if (r == VK_SUCCESS && pFence != nullptr) {
+        // Its state from here on, for answering waits locally.
+        SubmitFeedback& f = submit_feedback();
+        std::lock_guard<std::mutex> lock(f.m);
+        if (f.device == to_u64(device)) {
+            f.fences[to_u64(*pFence)] = SubmitFeedback::Fence{
+                0, (pCreateInfo->flags & VK_FENCE_CREATE_SIGNALED_BIT) != 0};
+        }
+    }
+    return r;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateQueryPool(VkDevice device,
@@ -2648,6 +2730,16 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyDevice(VkDevice device, const VkAllocat
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         scratch_pools().clear();
         pending_decodes().clear();
+    }
+    // Its fences can no longer be answered locally. The page stays mapped:
+    // the host may still write to it, and it is one page.
+    {
+        SubmitFeedback& f = submit_feedback();
+        std::lock_guard<std::mutex> lock(f.m);
+        if (f.device == to_u64(device)) {
+            f.page = nullptr;
+            f.fences.clear();
+        }
     }
     // Every host-visible allocation the engine never freed goes with the
     // device, and so must the memory behind it.
@@ -3564,6 +3656,17 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
         }
     }
     uint64_t a[8] = {to_u64(queue), to_u64(fence)};
+    // Numbered in the order the host will see them: the engine submits to
+    // a queue from one thread at a time, and this is queued in that order.
+    {
+        SubmitFeedback& f = submit_feedback();
+        std::lock_guard<std::mutex> lock(f.m);
+        const uint64_t number = ++f.submits;
+        if (fence != VK_NULL_HANDLE) {
+            auto it = f.fences.find(to_u64(fence));
+            if (it != f.fences.end()) it->second = SubmitFeedback::Fence{number, false};
+        }
+    }
     uint64_t r = VK_SUCCESS;
     if (sync_submit()) {
         run_pending_decodes(submitted);
@@ -3603,6 +3706,14 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fenceCount,
                                                      const VkFence* pFences, VkBool32 waitAll,
                                                      uint64_t timeout) {
+    // Already finished, as far as the host's published count shows: no round
+    // trip. The queued work is still sent on its way, as the blocking call
+    // would have, without waiting for it.
+    if (fences_known_signalled(to_u64(device), fenceCount, pFences, waitAll != VK_FALSE)) {
+        stud::render_client::connection().flush();
+        fetch_pending_readbacks();
+        return VK_SUCCESS;
+    }
     // A fence cannot signal before the submit that would signal it has
     // actually been sent.
     std::vector<uint8_t> in;
@@ -3643,6 +3754,14 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkResetFences(VkDevice device, uint32_t fenc
     // dodge it. The engine calls vkQueueSubmit before vkResetFences, so
     // the submit is ahead of this in the queue, and the queue is the only
     // route to the host.
+    {
+        SubmitFeedback& f = submit_feedback();
+        std::lock_guard<std::mutex> lock(f.m);
+        for (uint32_t i = 0; i < fenceCount; ++i) {
+            auto it = f.fences.find(to_u64(pFences[i]));
+            if (it != f.fences.end()) it->second = SubmitFeedback::Fence{};
+        }
+    }
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
     w.u32(fenceCount);

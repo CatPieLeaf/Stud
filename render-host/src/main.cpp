@@ -4484,6 +4484,8 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             return stud::render_host::vk_read_mapped_memory(a[1], a[2], a[3], out, out_len);
         case CallId::VkShareMappedMemory:
             return stud::render_host::vk_share_mapped_memory(a[1], a[2], a[3]);
+        case CallId::VkShareSubmitFeedback:
+            return stud::render_host::vk_share_submit_feedback(a[0], a[1]);
         case CallId::VkWriteSharedMappedMemory:
             return stud::render_host::vk_write_shared_mapped_memory(a[1], a[2], a[3]);
         case CallId::VkUnmapMemory:

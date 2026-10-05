@@ -793,6 +793,12 @@ enum class CallId : uint32_t {
     // a[0] non-zero: keep the screen from blanking while the window is
     // visible (Android's FLAG_KEEP_SCREEN_ON). Reply-free.
     SetKeepScreenOn,
+    // A page the host writes how many of the engine's submits on the
+    // current device have completed into, so a fence the client already
+    // knows to be done is answered without a round trip. a[0] the device,
+    // a[1] the id of the memfd sent over the shared-memory fd channel.
+    // Result VK_SUCCESS only if the host will keep the page up to date.
+    VkShareSubmitFeedback,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1111,9 +1117,10 @@ inline const char* call_id_name(CallId id) {
         "VideoEncoderDestroy",
         "SharedMemoryFdChannel",
         "SetKeepScreenOn",
+        "VkShareSubmitFeedback",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::SetKeepScreenOn) + 1,
+                      static_cast<size_t>(CallId::VkShareSubmitFeedback) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
