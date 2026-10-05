@@ -5984,6 +5984,11 @@ struct State {
     VkResult result = VK_SUCCESS;
     size_t slot = 0;
     uint64_t seq = 0;
+    // Engine swapchains handed over as oldSwapchain: retired, and acquiring
+    // from one is invalid -- NVIDIA answers it with a segfault, live-caught
+    // when the engine presented one last frame on the old swapchain after
+    // building the new one.
+    std::set<uint64_t> retired;
 };
 
 State& state() {
@@ -6041,6 +6046,24 @@ void drop(uint64_t swapchain) {
     if (s.held && s.swapchain == swapchain && s.device == l.device) release_locked(s, l);
 }
 
+// The engine handed `swapchain` over as oldSwapchain: nothing more is
+// acquired from it here.
+void retire(uint64_t swapchain) {
+    if (swapchain == 0) return;
+    drop(swapchain);
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.retired.insert(swapchain);
+}
+
+// The engine destroyed it; a later swapchain may get the same value.
+void forget(uint64_t swapchain) {
+    drop(swapchain);
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.retired.erase(swapchain);
+}
+
 // After the engine's present `seq` on `swapchain` succeeded.
 void after_present(uint64_t swapchain, uint64_t seq) {
     if (!enabled() || g_device_lost.load(std::memory_order_relaxed)) return;
@@ -6054,8 +6077,10 @@ void after_present(uint64_t swapchain, uint64_t seq) {
         // A new device: the old one's semaphores and fences went with it.
         s.slots.clear();
         s.held = false;
+        s.retired.clear();
         s.device = l.device;
     }
+    if (s.retired.count(swapchain) != 0) return;
     if (s.held) {
         if (s.swapchain == swapchain) return;
         release_locked(s, l);
@@ -6532,6 +6557,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     // Bounded, because a pass that is genuinely stuck must not become a
     // window that is stuck: at worst this is the same wait the driver was
     // going to do anyway, capped.
+    // Retired from here on; see preacquire::retire().
+    preacquire::retire(h.old_swapchain);
     if (h.old_swapchain != 0) {
         auto old_chain = g_upscale_chains.find(h.old_swapchain);
         if (old_chain != g_upscale_chains.end()) {
@@ -6905,7 +6932,7 @@ std::unordered_map<uint64_t, OwnedDescriptorSet>& descriptor_sets() {
 }
 
 void destroy_swapchain(Loader& l, uint64_t handle) {
-    preacquire::drop(handle);
+    preacquire::forget(handle);
     // The engine's last swapchain: its last frame is copied out
     // first, so the window shows it rather than black until the
     // next device presents. See keep_last_frame().
