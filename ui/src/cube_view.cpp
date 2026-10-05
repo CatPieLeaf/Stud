@@ -1,5 +1,6 @@
 #include "cube_view.h"
 
+#include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QSurfaceFormat>
 
@@ -23,6 +24,14 @@ void CubeView::initializeGL() {
                      static_cast<QOpenGLContext*>(ctx)->getProcAddress(name));
              }, context);
     clock_.start();
+}
+
+void CubeView::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && ++clicks_ == 10) {
+        clicks_ = 0;
+        if (on_tenth_click) on_tenth_click();
+    }
+    QOpenGLWidget::mousePressEvent(event);
 }
 
 void CubeView::paintGL() {

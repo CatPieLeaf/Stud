@@ -4,6 +4,7 @@
 
 #include "cube_view.h"
 #include "gpu_enum.h"
+#include "notifications.h"
 #include "stud/android_glue.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -116,6 +117,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     gpuCombo_ = new QComboBox(this);
     for (const auto& gpu : enumerate_gpus()) {
         gpuCombo_->addItem(QString::fromStdString(gpu.name), gpu.device_index);
+        gpuCombo_->setItemData(gpuCombo_->count() - 1, gpu.vendor_id, Qt::UserRole + 1);
     }
     if (gpuCombo_->count() == 0) {
         gpuCombo_->addItem("No GPUs found");
@@ -244,6 +246,15 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* about = add_tab("About");
     auto* cube = new CubeView(this);
     cube->setFixedSize(128, 128);
+    // Ten clicks on the cube, on the GPU picked above being NVIDIA's.
+    cube->on_tenth_click = [this] {
+        constexpr uint32_t kNvidia = 0x10DE;
+        if (gpuCombo_->currentData(Qt::UserRole + 1).toUInt() != kNvidia) return;
+        send_notification(QStringLiteral("Stud"),
+                          QStringLiteral("This GPU model may experience stability due to a decent "
+                                         "Vulkan memory allocator in its driver. It's recommended "
+                                         "you use Vulkan if you experience stability."));
+    };
     about->addWidget(cube, 0, Qt::AlignHCenter);
     auto* logo = new QLabel(this);
     logo->setPixmap(QPixmap(":/stud-title.png")
