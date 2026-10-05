@@ -237,6 +237,10 @@ bool g_lock_from_drag = false;
 // immediate otherwise, since the button is still held. Cleared the first
 // moment nothing is asking for the lock, so the next drag re-arms it.
 bool g_lock_suppressed = false;
+// Whether this window has keyboard focus. Unfocused, the pointer is the
+// desktop's: nothing locks it, and passing over the window does not move
+// the engine's cursor.
+bool g_window_focused = true;
 
 // The cursor stays where the engine left it when a camera drag ends.
 //
@@ -446,7 +450,7 @@ void apply_pointer_lock() {
     const bool dragging = g_lock_from_drag && !typing;
     const bool asked = g_lock_from_engine || dragging;
     if (!asked) g_lock_suppressed = false;
-    set_pointer_locked(asked && !g_lock_suppressed);
+    set_pointer_locked(asked && !g_lock_suppressed && g_window_focused);
 }
 
 
@@ -2289,9 +2293,17 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
     }
     switch (ev.type) {
         case Ev::kPointerMotion:
+            if (!g_window_focused) {
+                // Kept, so focus coming back can put the engine's cursor
+                // where the pointer is.
+                g_last_raw_px = ev.x;
+                g_last_raw_py = ev.y;
+                return;
+            }
             dispatch_pointer_motion(ev, fns, jni_env, last_x, last_y);
             return;
         case Ev::kPointerRelative:
+            if (!g_window_focused) return;
             dispatch_pointer_relative(ev, fns, jni_env, last_x, last_y);
             return;
         case Ev::kPointerButton:
@@ -2361,6 +2373,19 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         }
         case Ev::kWindowFocus: {
             const bool focused = ev.a != 0.0f;
+            g_window_focused = focused;
+            // The lock follows focus both ways: let go on the way out, and
+            // taken again on the way back if the engine still wants it.
+            apply_pointer_lock();
+            if (focused && !engine_pins_cursor() && fns.mouse_move != nullptr) {
+                // The pointer moved over the window unreported; the engine's
+                // cursor joins it with no movement, so a focusing click lands
+                // under the pointer and the camera does not turn.
+                g_resync_after_unlock.store(true);
+                last_x = to_density_independent(g_last_raw_px);
+                last_y = to_density_independent(g_last_raw_py);
+                call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, 0.0f, 0.0f);
+            }
             // Stud has already sent a release for everything it knew was
             // held (android-glue does that before this event), but the
             // engine keeps its own input state and will not drop it just
@@ -2376,10 +2401,8 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // after coming back.
                 g_meta_state = 0;
                 g_button_state = 0;
-                if (g_lock_from_drag) {
-                    g_lock_from_drag = false;
-                    apply_pointer_lock();
-                }
+                g_lock_from_drag = false;
+                apply_pointer_lock();
             }
             // Releasing the held keys above is the fix on its own; telling
             // the engine is the belt-and-braces for input it believes is
@@ -2402,6 +2425,13 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
         // redraw request above, so every time the pointer crossed into the
         // window the engine rebuilt its render targets at the same size.
         case Ev::kPointerEnter:
+            if (!g_window_focused) {
+                // Passing over an unfocused window; see kPointerMotion.
+                g_last_raw_px = ev.x;
+                g_last_raw_py = ev.y;
+                return;
+            }
+            [[fallthrough]];
         case Ev::kPointerLeave:
             dispatch_pointer_leave(ev, fns, jni_env, last_x, last_y);
             return;

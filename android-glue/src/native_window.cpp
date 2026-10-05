@@ -13,6 +13,7 @@
 #include <xdg-output-unstable-v1-client-protocol.h>
 #include <pointer-constraints-unstable-v1-client-protocol.h>
 #include <pointer-warp-v1-client-protocol.h>
+#include <cursor-shape-v1-client-protocol.h>
 #include <idle-inhibit-unstable-v1-client-protocol.h>
 #include <pointer-gestures-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
@@ -254,6 +255,10 @@ struct WaylandConnectionState {
     // older than KWin 6.4 / Mutter 49 / wlroots 0.19, in which case
     // nothing warps and every caller still behaves.
     wp_pointer_warp_v1* pointer_warp = nullptr;
+    // The compositor's own cursor images, shown while the window is not
+    // focused. Absent: Stud's stand-in arrow instead.
+    wp_cursor_shape_manager_v1* cursor_shape_manager = nullptr;
+    wp_cursor_shape_device_v1* cursor_shape_device = nullptr;
     zwp_idle_inhibit_manager_v1* idle_inhibit_manager = nullptr;
     zwp_idle_inhibitor_v1* idle_inhibitor = nullptr;
     // The pointer kept inside the window for a camera drag. Unlike a
@@ -623,6 +628,45 @@ std::atomic<bool> g_pointer_locked{false};
 // takes, and specifically not `g_last_input_serial`, which every button
 // and key event overwrites. A warp with the wrong serial is rejected.
 std::atomic<uint32_t> g_pointer_enter_serial{0};
+// Keyboard focus, and whether the pointer is over the surface right now,
+// which is when a focus change has to change the cursor too.
+std::atomic<bool> g_keyboard_focused{true};
+bool g_pointer_inside = false;
+
+// No system cursor over a focused window: Roblox draws its own in-frame,
+// and its SurfaceView asks Android for no system pointer at all. An
+// unfocused window is not taking the mouse, so the desktop's own pointer
+// shows over it.
+//
+// `STUD_STUD_CURSOR=1` shows Stud's stand-in arrow instead of none, only
+// useful if the engine's own cursor ever regresses.
+void apply_cursor(wl_pointer* pointer, uint32_t serial) {
+    auto& state = wayland_state();
+    static const bool stud_cursor = std::getenv("STUD_STUD_CURSOR") != nullptr;
+    if (g_keyboard_focused.load()) {
+        wl_pointer_set_cursor(pointer, serial, stud_cursor ? ensure_cursor_surface() : nullptr,
+                              0, 0);
+        return;
+    }
+    if (state.cursor_shape_manager != nullptr) {
+        if (state.cursor_shape_device == nullptr) {
+            state.cursor_shape_device =
+                wp_cursor_shape_manager_v1_get_pointer(state.cursor_shape_manager, pointer);
+        }
+        wp_cursor_shape_device_v1_set_shape(state.cursor_shape_device, serial,
+                                            WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+        return;
+    }
+    wl_pointer_set_cursor(pointer, serial, ensure_cursor_surface(), 0, 0);
+}
+
+void focus_changed_cursor(bool focused) {
+    g_keyboard_focused.store(focused);
+    auto& state = wayland_state();
+    if (!g_pointer_inside || state.pointer == nullptr) return;
+    apply_cursor(state.pointer, g_pointer_enter_serial.load());
+    if (state.display != nullptr) wl_display_flush(state.display);
+}
 std::atomic<bool> g_pointer_confined{false};
 // A surface may have exactly ONE pointer constraint. Asking for a second
 // is a protocol error and the compositor kills the client, live-caught
@@ -642,27 +686,10 @@ void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_
     g_pointer_enter_serial.store(serial);
     g_pointer_x = scale_pointer_coord(wl_fixed_to_double(sx));
     g_pointer_y = scale_pointer_coord(wl_fixed_to_double(sy));
-    // A Wayland client owns the pointer image over its own surface, and
-    // must set it on every enter; passing a null surface hides the
-    // compositor's cursor entirely.
-    //
     // A Wayland client owns the pointer image over its own surface and must
-    // set it on every enter. Roblox draws its own cursor in-frame, on the
-    // app shell and in-game alike, and identically on Windows, and its own
-    // SurfaceView asks Android for no system pointer at all, so hiding the
-    // compositor's is the correct behaviour, not a workaround. Pass a null
-    // surface.
-    //
-    // This was a stand-in Android arrow for several sessions, because the
-    // engine's own cursor never reached the composited frame. That is fixed
-    // (a buffer-mapping key bug corrupted the dynamic UI geometry; see
-    // the engineering notes), and drawing one here now just puts a second, wrong
-    // cursor on screen next to the real one. `STUD_STUD_CURSOR=1` brings the
-    // stand-in back, which is only useful if the engine's own cursor
-    // regresses.
-    static const bool stud_cursor = std::getenv("STUD_STUD_CURSOR") != nullptr;
-    wl_surface* cursor = stud_cursor ? ensure_cursor_surface() : nullptr;
-    wl_pointer_set_cursor(pointer, serial, cursor, 0, 0);
+    // set it on every enter.
+    g_pointer_inside = true;
+    apply_cursor(pointer, serial);
     // Real Android sends ACTION_HOVER_ENTER when a mouse enters a view and
     // ACTION_HOVER_EXIT when it leaves; a view that only ever receives
     // HOVER_MOVE has no way to know the pointer is inside it at all.
@@ -673,6 +700,7 @@ void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_
     push_input_event(ev);
 }
 void pointer_leave(void*, wl_pointer*, uint32_t, wl_surface*) {
+    g_pointer_inside = false;
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kPointerLeave;
     ev.x = g_pointer_x;
@@ -967,6 +995,7 @@ bool install_keymap(xkb_keymap* keymap, const char* source) {
 
 void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*) {
     g_last_input_serial.store(serial);
+    focus_changed_cursor(true);
     push_window_focus(true);
 }
 // Defined below, once the repeat state and the held-key set they need
@@ -974,6 +1003,7 @@ void keyboard_enter(void*, wl_keyboard*, uint32_t serial, wl_surface*, wl_array*
 void release_all_held_keys();
 
 void keyboard_leave(void*, wl_keyboard*, uint32_t, wl_surface*) {
+    focus_changed_cursor(false);
     // Abandon any half-finished dead-key sequence. Focus went elsewhere
     // mid-sequence, and a pending acute silently swallowing the first
     // key typed on the way back is worse than losing the accent.
@@ -1323,6 +1353,9 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
     } else if (std::string_view(interface) == zwp_idle_inhibit_manager_v1_interface.name) {
         state->idle_inhibit_manager = static_cast<zwp_idle_inhibit_manager_v1*>(
             wl_registry_bind(registry, name, &zwp_idle_inhibit_manager_v1_interface, 1));
+    } else if (std::string_view(interface) == wp_cursor_shape_manager_v1_interface.name) {
+        state->cursor_shape_manager = static_cast<wp_cursor_shape_manager_v1*>(
+            wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1));
     } else if (std::string_view(interface) == wp_pointer_warp_v1_interface.name) {
         state->pointer_warp = static_cast<wp_pointer_warp_v1*>(
             wl_registry_bind(registry, name, &wp_pointer_warp_v1_interface, 1));

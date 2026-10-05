@@ -1763,6 +1763,9 @@ void pump() {
                     std::printf("stud: android-glue: window focused\n");
                     std::fflush(stdout);
                 }
+                // Roblox draws its own cursor; the desktop's goes while
+                // the window has focus, and comes back without it.
+                if (g_blank_cursor != 0) xlib().DefineCursor(g_display, g_window, g_blank_cursor);
                 push_window_focus(true);
                 break;
             case FocusOut:
@@ -1773,6 +1776,7 @@ void pump() {
                 // Let go of everything held. Whatever is still down will
                 // be released somewhere this window cannot hear.
                 release_all_held_input();
+                if (g_blank_cursor != 0) xlib().DefineCursor(g_display, g_window, 0);
                 push_window_focus(false);
                 break;
             case ClientMessage:

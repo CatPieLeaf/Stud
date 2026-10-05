@@ -210,6 +210,33 @@ add_custom_command(
     DEPENDS "${PointerWarpXml}"
 )
 
+# Cursor shape: the desktop's own pointer over the window while it is not
+# focused, drawn by the compositor in the user's theme. Its generated code
+# names the tablet tool interface, so tablet-v2's code comes along.
+set(CursorShapeXml "${WaylandProtocolsDataDir}/staging/cursor-shape/cursor-shape-v1.xml")
+set(TabletXml "${WaylandProtocolsDataDir}/stable/tablet/tablet-v2.xml")
+if(NOT EXISTS "${TabletXml}")
+    set(TabletXml "${WaylandProtocolsDataDir}/unstable/tablet/tablet-unstable-v2.xml")
+endif()
+set(CursorShapeHeader "${XdgShellGeneratedDir}/cursor-shape-v1-client-protocol.h")
+set(CursorShapeSource "${XdgShellGeneratedDir}/cursor-shape-v1-protocol.c")
+set(TabletSource "${XdgShellGeneratedDir}/tablet-v2-protocol.c")
+add_custom_command(
+    OUTPUT "${CursorShapeHeader}"
+    COMMAND "${WaylandScanner}" client-header "${CursorShapeXml}" "${CursorShapeHeader}"
+    DEPENDS "${CursorShapeXml}"
+)
+add_custom_command(
+    OUTPUT "${CursorShapeSource}"
+    COMMAND "${WaylandScanner}" private-code "${CursorShapeXml}" "${CursorShapeSource}"
+    DEPENDS "${CursorShapeXml}"
+)
+add_custom_command(
+    OUTPUT "${TabletSource}"
+    COMMAND "${WaylandScanner}" private-code "${TabletXml}" "${TabletSource}"
+    DEPENDS "${TabletXml}"
+)
+
 # Idle inhibit: what Android's FLAG_KEEP_SCREEN_ON means on a desktop. The
 # engine sets that flag while a game is on screen, so the screen does not
 # blank or lock during play that uses a controller or no input at all.
@@ -325,6 +352,9 @@ add_library(stud_android_glue STATIC
     "${TextInputHeader}"
     "${PointerWarpSource}"
     "${PointerWarpHeader}"
+    "${CursorShapeSource}"
+    "${CursorShapeHeader}"
+    "${TabletSource}"
     "${IdleInhibitSource}"
     "${IdleInhibitHeader}"
     "${RelativePointerSource}"
