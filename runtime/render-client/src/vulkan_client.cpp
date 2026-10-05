@@ -2769,18 +2769,41 @@ namespace {
 //
 // vkCreateBuffer was the last blocking call on the engine's frame: about
 // ten a frame in a heavy scene, 80 us each, every one waiting behind the
-// whole queued stream. The engine makes the same few shapes over and over,
-// so a shape seen twice is stocked: when its stock is empty, one call
-// makes as many as the engine made of that shape in its previous frame,
-// so a refill lasts about a frame. A buffer is still destroyed the
-// ordinary way and never reused -- binding memory to one is permanent.
+// whole queued stream. The engine makes the same shapes over and over, so
+// a shape seen twice is stocked: when its stock is empty, one call makes
+// as many as the engine made of that shape over its last refresh-rate's
+// worth of presents -- about a second of real use, so about one wait a
+// second per shape, and never more spare buffers than a second's need.
+// Until a whole window has passed, as many as it has made so far. (Sizing
+// a refill by one frame's use made it a single buffer for a shape made
+// once a frame, used at once and never ahead -- measured: as many waits as
+// before.) Spare buffers hold no memory until bound. A buffer is still
+// destroyed the ordinary way and never reused -- binding memory to one is
+// permanent.
 struct BufferStock {
     std::vector<uint64_t> ready;
     uint64_t seen = 0;
-    uint64_t frame = 0;      // the present count its counts below belong to
-    uint64_t this_frame = 0;
-    uint64_t last_frame = 0;
+    uint64_t window_start = 0;  // the present count the current window began at
+    uint64_t in_window = 0;
+    uint64_t last_window = 0;   // made in the previous whole window, 0 before one
 };
+
+// Presents in about a second: the display's own refresh rate, asked once.
+uint64_t presents_per_window() {
+    static const uint64_t n = [] {
+        uint64_t a[8] = {};
+        const uint64_t mhz = stud::render_client::connection().call(
+            CallId::GetDisplayRefreshRate, a, nullptr, 0, nullptr, 0, nullptr);
+        return std::max<uint64_t>(1, mhz / 1000);
+    }();
+    return n;
+}
+
+uint64_t presents_so_far() {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    return f.presents;
+}
 
 std::mutex& buffer_stock_mutex() {
     static std::mutex m;
@@ -2791,35 +2814,31 @@ std::map<std::string, BufferStock>& buffer_stocks() {
     return m;
 }
 
-uint64_t presents_so_far() {
-    SubmitFeedback& f = submit_feedback();
-    std::lock_guard<std::mutex> lock(f.m);
-    return f.presents;
-}
-
 // A buffer of this shape, from stock or a refill of it; false when the
 // shape is not stocked (yet), and the ordinary call has to make it.
 bool stocked_buffer(const uint64_t (&a)[8], uint64_t* handle) {
     const std::string key(reinterpret_cast<const char*>(&a[0]), sizeof(uint64_t) * 5);
-    const uint64_t frame = presents_so_far();
+    const uint64_t now = presents_so_far();
+    const uint64_t window = presents_per_window();
     uint64_t batch = 0;
     {
         std::lock_guard<std::mutex> lock(buffer_stock_mutex());
         BufferStock& s = buffer_stocks()[key];
-        if (s.frame != frame) {
-            s.last_frame = s.frame + 1 == frame ? s.this_frame : 0;
-            s.this_frame = 0;
-            s.frame = frame;
+        if (now - s.window_start >= window) {
+            // A gap of more than one window means nothing was made in the last.
+            s.last_window = now - s.window_start < 2 * window ? s.in_window : 0;
+            s.in_window = 0;
+            s.window_start = now;
         }
         ++s.seen;
-        ++s.this_frame;
+        ++s.in_window;
         if (!s.ready.empty()) {
             *handle = s.ready.back();
             s.ready.pop_back();
             return true;
         }
         if (s.seen < 2) return false;
-        batch = std::max<uint64_t>(1, s.last_frame);
+        batch = s.last_window != 0 ? s.last_window : s.seen;
     }
     uint64_t args[8] = {a[0], a[1], a[2], a[3], a[4], batch};
     std::vector<uint64_t> made(static_cast<size_t>(batch));
