@@ -143,8 +143,13 @@ class SpinningCube {
             "uniform sampler2D face;\n"
             "uniform bool textured;\n"
             "void main() {\n"
-            "  float shade = textured ? 2.0 * texture2D(face, uv).r : 1.0;\n"
-            "  gl_FragColor = vec4(color * shade, 1.0);\n"
+            // Overlay: the stud over the colour, multiplied where the
+            // colour is dark and screened where it is light.
+            "  vec3 t = vec3(texture2D(face, uv).r);\n"
+            "  vec3 lo = 2.0 * color * t;\n"
+            "  vec3 hi = 1.0 - 2.0 * (1.0 - color) * (1.0 - t);\n"
+            "  vec3 o = mix(lo, hi, step(0.5, color));\n"
+            "  gl_FragColor = vec4(textured ? o : color, 1.0);\n"
             "}\n";
 
         const GLuint vs = compile(gl, GL_VERTEX_SHADER, kVertex);
