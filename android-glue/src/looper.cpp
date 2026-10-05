@@ -5,8 +5,12 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <sys/prctl.h>
+#include <time.h>
+
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include <algorithm>
 #include <atomic>
@@ -27,10 +31,21 @@ struct ALooper {
         int ident = 0;
     };
     std::unordered_map<int, CallbackEntry> fd_callbacks;
+
+    // When the last zero-timeout poll came back empty, and how long that
+    // poll itself took. Plain fields: a looper is polled by its own thread.
+    uint64_t last_empty_return_ns = 0;
+    uint64_t last_empty_poll_ns = 0;
 };
 
 namespace {
 thread_local ALooper* t_looper = nullptr;
+
+uint64_t monotonic_ns() {
+    timespec ts{};
+    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+}
 
 // Real registry of every ALooper ever created, independent of t_looper's
 // per-thread lifetime; see poll_orphaned_loopers_once()'s own doc
@@ -70,50 +85,49 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
                          void** outData, bool floor_zero_timeout = true) {
     if (looper == nullptr) return ALOOPER_POLL_ERROR;
 
-    // Caught in testing: issue, fixed (the engineering notes, "fix the busy-loop
-    // thread"): a real Roblox-internal worker thread calls this with
-    // timeoutMillis=0 in a tight loop expecting some OTHER call each
-    // iteration (a real vsync-paced swap, on a real device) to naturally
-    // throttle it, confirmed live via a live syscall trace pegging ~100% CPU on one
-    // core indefinitely, calling epoll_pwait(fd,[],1,0,...) back-to-back
-    // with nothing ready. A real Android device's own scheduler never
-    // guarantees true zero-latency for a 0ms poll either, so a real app
-    // requesting timeoutMillis=0 already has to tolerate *some* real
-    // delay, passing a tiny, still-effectively-"immediate" 1ms floor to
-    // the real epoll_wait() here instead of a literal 0 turns an
-    // unthrottled spin into a bounded, low-CPU poll, with no observable
-    // behavioral difference to any caller (still returns
-    // ALOOPER_POLL_TIMEOUT correctly the moment nothing is ready; every
-    // other caller of this function, e.g. poll_orphaned_loopers_once()'s
-    // own already-documented 0-timeout call, itself only run once per
-    // Stud's own ~250ms outer loop iteration, is unaffected by an extra
-    // millisecond of latency here).
+    // A Roblox thread calls this with timeoutMillis=0 in a tight loop (the
+    // Android idiom: drain events without blocking, then do the frame's
+    // work). Left alone that spins a core flat, found in a live syscall
+    // trace. It used to be given a 1 ms floor on every empty poll, which
+    // also made the engine wait whenever it polled between pieces of real
+    // work that no descriptor announces.
     //
-    // The floor is adjustable, because it is a mitigation rather than
-    // the real mechanism and the real one now exists. render-host paces
-    // presents against the display (STUD_PRESENT_PACING), which is the
-    // vsync-paced swap this thread was waiting to be throttled by; with
-    // that in place the floor may no longer be earning its keep. Whether
-    // it is cannot be settled by reading the code -- the spin was found
-    // in a live syscall trace, so it has to be measured the same way.
+    // Now a poll only waits when the thread is provably spinning: it came
+    // back no later after the previous empty poll than that poll itself
+    // took, so it did nothing in between. Then it sleeps for the thread's
+    // own timer slack, the shortest sleep the kernel will honour for it.
+    // A thread that does real work between polls never waits, and anything
+    // a poll finds ends the spin.
     //
-    // STUD_LOOPER_POLL_FLOOR_MS=0 removes it. Left at 1 by default: a
-    // thread spinning a core flat is a worse failure than a millisecond
-    // of latency, and that is the trade until someone has looked.
-    static const int poll_floor_ms = [] {
-        const char* v = std::getenv("STUD_LOOPER_POLL_FLOOR_MS");
-        if (v == nullptr) return 1;
-        const int parsed = std::atoi(v);
-        return (parsed < 0 || parsed > 100) ? 1 : parsed;
+    // STUD_LOOPER_IDLE_WAIT=0 lets the loop spin, as on a phone.
+    static const bool idle_wait = [] {
+        const char* v = std::getenv("STUD_LOOPER_IDLE_WAIT");
+        return v == nullptr || std::strcmp(v, "0") != 0;
     }();
-    const int effective_timeout =
-        (timeoutMillis == 0 && floor_zero_timeout) ? poll_floor_ms : timeoutMillis;
+    const bool watch_spin = timeoutMillis == 0 && floor_zero_timeout && idle_wait;
+    if (watch_spin && looper->last_empty_return_ns != 0 &&
+        monotonic_ns() - looper->last_empty_return_ns <= looper->last_empty_poll_ns) {
+        thread_local const long slack_ns = ::prctl(PR_GET_TIMERSLACK, 0, 0, 0, 0);
+        if (slack_ns > 0) {
+            timespec ts{0, slack_ns};
+            ::nanosleep(&ts, nullptr);
+        }
+    }
 
     while (true) {
         epoll_event ev{};
-        int n = ::epoll_wait(looper->epoll_fd, &ev, 1, effective_timeout);
-        if (n == 0) return ALOOPER_POLL_TIMEOUT;
+        const uint64_t polled_at = watch_spin ? monotonic_ns() : 0;
+        int n = ::epoll_wait(looper->epoll_fd, &ev, 1, timeoutMillis);
+        if (n == 0) {
+            if (watch_spin) {
+                const uint64_t now = monotonic_ns();
+                looper->last_empty_poll_ns = now - polled_at;
+                looper->last_empty_return_ns = now;
+            }
+            return ALOOPER_POLL_TIMEOUT;
+        }
         if (n < 0) return ALOOPER_POLL_ERROR;
+        looper->last_empty_return_ns = 0;
 
         int fd = ev.data.fd;
         auto it = looper->fd_callbacks.find(fd);
