@@ -94,7 +94,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | variable | default | what it does |
 |---|---|---|
 | `STUD_NO_SHARED_MEMORY` | off | Stop sharing mapped memory with the host; everything crosses the socket instead. **perf** |
-| `STUD_SHARE_ALL_HOST_MEMORY` | off | Substitute an importable memory type so every host-visible allocation can be shared. Moves the engine's streaming buffers out of VRAM. |
+| `STUD_SHARE_ALL_HOST_MEMORY` | on | Substitute an importable memory type so every host-visible allocation can be shared, with no page tracking on the engine's threads. Moves the engine's streaming buffers out of VRAM. `0` keeps the engine's type and the copying path. **perf** |
 | `STUD_VK_NO_WRITE_BARRIER` | off | Use a shadow copy instead of the MMU write barrier. **perf** — `memcmp` over everything mapped, on every submit. |
 | `STUD_VK_NO_UFFD_SCAN` | off | Use the fault-handler barrier instead of kernel-side tracking. **perf** |
 | `STUD_VK_FULL_FLUSH` | off | Send every mapped byte on every submit, tracking nothing. **perf**, by a factor of ~180. |

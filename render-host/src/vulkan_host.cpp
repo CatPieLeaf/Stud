@@ -2885,26 +2885,32 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             l.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, mapping.address,
             &props);
         // The driver decides which memory types can back an imported host
-        // pointer, and it need not include the one the engine picked. When
-        // it does not, this falls through to an ordinary allocation and
-        // the copying path, rather than guessing at a different type and
-        // handing the engine memory with the wrong properties.
-        // The driver decides which memory types can back an imported host
         // pointer, and on this hardware that excludes the DEVICE_LOCAL |
         // HOST_VISIBLE type (BAR memory) the engine picks for its
         // streaming buffers, which is exactly the memory it rewrites
-        // every frame, and so exactly what was still being copied.
+        // every frame. Left as it is, that memory takes the copying path:
+        // the engine writes a stand-in, Stud write-protects it to learn
+        // which pages changed, and every submit scans and re-protects them
+        // on the engine's own threads, a page fault per page written and a
+        // TLB shootdown on every core per re-protection.
         //
-        // STUD_SHARE_ALL_HOST_MEMORY=1 allocates those from an importable
-        // host-visible type instead. The trade is real and worth stating:
-        // the GPU then reads that memory across PCIe rather than from
-        // VRAM. On this workload the CPU is the constraint (17 ms against
-        // 6 ms of GPU), so paying the GPU to stop the CPU copying is the
-        // right way round: but it is a trade, not a free win, which is
-        // why it is a switch.
+        // So by default those are allocated from an importable host-visible
+        // type instead, and the engine writes memory the device reads
+        // directly. The GPU then reads it across PCIe rather than from
+        // VRAM; on these workloads the GPU has the headroom and the
+        // engine's thread does not. Measured in the same scene: 78 to 86
+        // fps, the submit-time scan gone and the engine's own frame time
+        // down by the faults it no longer takes.
+        //
+        // STUD_SHARE_ALL_HOST_MEMORY=0 keeps the engine's chosen type and
+        // the copying path, for an A/B. A type the driver will not import
+        // at all still falls through to the copying path below.
+        static const bool share_all = [] {
+            const char* v = std::getenv("STUD_SHARE_ALL_HOST_MEMORY");
+            return v == nullptr || std::strcmp(v, "0") != 0;
+        }();
         uint32_t use_type = type_index;
-        if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 &&
-            std::getenv("STUD_SHARE_ALL_HOST_MEMORY") != nullptr) {
+        if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 && share_all) {
             const uint32_t substitute = importable_host_visible_type(props.memoryTypeBits);
             if (substitute != UINT32_MAX) {
                 static std::set<uint32_t> reported;
