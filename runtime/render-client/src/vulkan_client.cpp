@@ -3459,7 +3459,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
     // Any readback recorded into these command buffers is now really
     // going to run, so it becomes something to go and collect.
     arm_pending_readbacks(submitted);
-    std::vector<uint8_t> in;
+    // Reused, not rebuilt per submit; call_void copies it into the queue.
+    thread_local std::vector<uint8_t> in;
+    in.clear();
     vk_wire::Writer w(in);
     w.u32(submitCount);
     for (uint32_t i = 0; i < submitCount; ++i) {
@@ -3649,7 +3651,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAcquireNextImageKHR(VkDevice device,
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
                                                        const VkPresentInfoKHR* pi) {
     if (pi == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
-    std::vector<uint8_t> in;
+    // Reused, not rebuilt per present; the call copies it into the queue.
+    thread_local std::vector<uint8_t> in;
+    in.clear();
     vk_wire::Writer w(in);
     w.u32(pi->waitSemaphoreCount);
     for (uint32_t i = 0; i < pi->waitSemaphoreCount; ++i) w.u64(to_u64(pi->pWaitSemaphores[i]));

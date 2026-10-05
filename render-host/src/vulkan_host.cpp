@@ -9788,7 +9788,9 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             bi.renderArea.extent.height = r.u32();
             framebuffer_lifetimes::use(cb_handle, to_u64(bi.framebuffer));
             const uint32_t nc = r.u32();
-            std::vector<VkClearValue> clears(nc);
+            // Reused across render passes rather than allocated per pass.
+            thread_local std::vector<VkClearValue> clears;
+            clears.assign(nc, VkClearValue{});
             for (auto& c : clears) {
                 for (int i = 0; i < 4; ++i) c.color.float32[i] = r.f32();
             }

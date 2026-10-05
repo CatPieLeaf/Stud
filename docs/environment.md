@@ -143,7 +143,6 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_TRACE_CLIENT_ARRAYS` | Client-side vertex array use, reported once at exit. |
 | `STUD_TRACE_CURSOR` | Which draws the engine makes for its cursor. |
 | `STUD_LOOPER_TRACE` | ALooper activity. |
-| `STUD_TLS_TRACE` | The TLS interposer. |
 | `STUD_TIME_SWAP` | Time in `eglSwapBuffers`. |
 
 ## Capturing what is on screen

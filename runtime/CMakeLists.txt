@@ -345,7 +345,7 @@ target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp
                                     src/fmod_audio_output.cpp
                                     src/pthread_create_interpose.cpp
-                                    src/android_log_interpose.cpp src/pthread_tls_interpose.cpp
+                                    src/android_log_interpose.cpp
                                     src/flag_cache_guard.cpp
                                     # The SIGILL shim, compiled in rather than linked: the
                                     # stud_cpu_compat library is built by the host compiler

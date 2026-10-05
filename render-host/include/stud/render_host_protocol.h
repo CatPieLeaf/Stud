@@ -1524,17 +1524,36 @@ public:
     // Appends one recorded command to the current batch. Same stream, same
     // order, the batch is emitted into the send queue before anything
     // else is written, so nothing can overtake it.
+    //
+    // Written straight into the send queue, under a batch header whose
+    // length is filled in when the batch closes. Accumulating in a buffer
+    // of its own first and copying that into the queue at emit time copied
+    // every command twice.
     void append_command(uint64_t cb, uint32_t kind, const void* payload, uint32_t len) {
         std::lock_guard<std::mutex> lock(call_mutex_);
         if (fd_ < 0) return;
-        const size_t at = command_batch_.size();
-        command_batch_.resize(at + 16 + len);
-        uint8_t* p = command_batch_.data() + at;
+        if (!command_batch_open_) {
+            // Reply-free calls queued before this command go first.
+            emit_gl_batch_locked();
+            reserve_queue_once();
+            command_batch_at_ = queue_.size();
+            queue_.resize(command_batch_at_ + sizeof(Header));
+            auto* hdr = reinterpret_cast<Header*>(queue_.data() + command_batch_at_);
+            std::memset(hdr, 0, sizeof(*hdr));
+            hdr->call_id = CallId::VkCmdRecordBatch;
+            hdr->flags = Header::kNoReply;
+            command_batch_open_ = true;
+        }
+        const size_t at = queue_.size();
+        queue_.resize(at + 16 + len);
+        uint8_t* p = queue_.data() + at;
         std::memcpy(p, &cb, sizeof(cb));
         std::memcpy(p + 8, &kind, sizeof(kind));
         std::memcpy(p + 12, &len, sizeof(len));
         if (len > 0 && payload != nullptr) std::memcpy(p + 16, payload, len);
-        if (command_batch_.size() >= kCommandBatchBytes) emit_command_batch_locked();
+        if (queue_.size() - command_batch_at_ - sizeof(Header) >= kCommandBatchBytes) {
+            emit_command_batch_locked();
+        }
     }
 
     void call_void(CallId id, const uint64_t (&args)[8], const void* in_buffer = nullptr,
@@ -1545,7 +1564,7 @@ public:
         std::lock_guard<std::mutex> lock(call_mutex_);
         if (fd_ < 0) return;
         reserve_queue_once();
-        if (!command_batch_.empty()) emit_command_batch_locked();
+        emit_command_batch_locked();
 
         // Built straight into the queue rather than on the stack and
         // copied in.
@@ -1644,6 +1663,8 @@ private:
     // that waits for a reply, or a flush.
     void emit_gl_batch_locked() {
         if (batch_.empty()) return;
+        // Nothing may be appended inside an open command batch.
+        emit_command_batch_locked();
         const size_t at = queue_.size();
         queue_.resize(at + sizeof(Header) + batch_.size());
         auto* hdr = reinterpret_cast<Header*>(queue_.data() + at);
@@ -1657,22 +1678,22 @@ private:
 
     std::vector<uint8_t> batch_;
 
+    // Closes the command batch being written into the queue: its header
+    // gets the length of what followed it. Anything else may be appended
+    // to the queue only after this.
     void emit_command_batch_locked() {
-        if (command_batch_.empty()) return;
-        emit_gl_batch_locked();
-        Header hdr{};
-        hdr.call_id = CallId::VkCmdRecordBatch;
-        hdr.flags = Header::kNoReply;
-        hdr.in_buffer_len = static_cast<uint32_t>(command_batch_.size());
-        hdr.out_buffer_len = 0;
-        const auto* hdr_bytes = reinterpret_cast<const uint8_t*>(&hdr);
-        queue_.insert(queue_.end(), hdr_bytes, hdr_bytes + sizeof(hdr));
-        queue_.insert(queue_.end(), command_batch_.begin(), command_batch_.end());
-        command_batch_.clear();
+        if (!command_batch_open_) return;
+        command_batch_open_ = false;
+        const auto len =
+            static_cast<uint32_t>(queue_.size() - command_batch_at_ - sizeof(Header));
+        auto* hdr = reinterpret_cast<Header*>(queue_.data() + command_batch_at_);
+        hdr->in_buffer_len = len;
         if (queue_.size() >= kQueueFlushBytes) hand_off_locked();
     }
 
-    std::vector<uint8_t> command_batch_;
+    // Where the open command batch's header sits in `queue_`.
+    bool command_batch_open_ = false;
+    size_t command_batch_at_ = 0;
 
     // ---- Single-writer mode -------------------------------------------
     //
@@ -1801,8 +1822,7 @@ private:
             {
                 std::unique_lock<std::mutex> lock(call_mutex_);
                 writer_wake_.wait(lock, [this] {
-                    return !queue_.empty() || !marks_.empty() || !batch_.empty() ||
-                           !command_batch_.empty() || fd_ < 0;
+                    return !queue_.empty() || !marks_.empty() || !batch_.empty() || fd_ < 0;
                 });
                 if (fd_ < 0) {
                     fail_all_pending_locked();
