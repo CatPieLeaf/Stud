@@ -2397,9 +2397,12 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
             shared_allocations().erase(it);
         }
     }
+    // Reply-free, like every destroy: nothing comes back, and leaving a game
+    // frees its allocations by the thousand, each of which used to wait
+    // behind everything already queued, the home screen standing still
+    // meanwhile.
     uint64_t a[8] = {to_u64(device), to_u64(memory)};
-    stud::render_client::connection().call(CallId::VkFreeMemory, a, nullptr, 0, nullptr, 0,
-                                            nullptr);
+    stud::render_client::connection().call_void(CallId::VkFreeMemory, a);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory memory,
@@ -2500,9 +2503,10 @@ VKAPI_ATTR void VKAPI_CALL stud_vkUnmapMemory(VkDevice device, VkDeviceMemory me
     std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     push_mapped_bytes(key, 0, VK_WHOLE_SIZE);
     mapped_ranges().erase(key);
+    // Reply-free; see stud_vkFreeMemory. The bytes pushed above go first,
+    // in order, on the same stream.
     uint64_t a[8] = {to_u64(device), key};
-    stud::render_client::connection().call(CallId::VkUnmapMemory, a, nullptr, 0, nullptr, 0,
-                                            nullptr);
+    stud::render_client::connection().call_void(CallId::VkUnmapMemory, a);
 }
 
 // Copies what the device holds for each range into the engine's own mapping.

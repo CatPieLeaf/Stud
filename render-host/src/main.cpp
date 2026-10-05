@@ -2210,54 +2210,70 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             // metadata lookup (name, creator, thumbnail) needs HTTPS and
             // JSON, so it runs in stud-ui one-shot, the same helper
             // shape as the keyring and the region lookup.
-            std::string body(reinterpret_cast<const char*>(in.data()), in.size());
-            // The tray offers "copy server link" and is a separate
-            // process, so the link is left where it can read it. Its
-            // absence is what "not in a game" looks like from there.
-            const std::string invite_path = []() {
-                const char* xdg = std::getenv("XDG_RUNTIME_DIR");
-                return std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/invite";
-            }();
-            if (body.empty()) {
-                std::printf("stud-render-host: Discord presence: the app shell\n");
-                std::fflush(stdout);
-                ::unlink(invite_path.c_str());
-                stud::render_host::discord_rpc_set_game({});
-                return 0;
-            }
-            std::string info;
-            if (!run_ui_secret_helper("--game-info", body, std::string(), &info) || info.empty()) {
-                return 0;
-            }
-            // One field per line, in a fixed order, so no JSON parser is
-            // needed on this side: name, creator, thumbnail, join url.
-            stud::render_host::GamePresence presence;
-            std::string* fields[] = {&presence.universe_name, &presence.creator_name,
-                                      &presence.thumbnail_url, &presence.join_url};
-            size_t start = 0;
-            for (size_t i = 0; i < 4 && start <= info.size(); ++i) {
-                const size_t nl = info.find('\n', start);
-                const size_t end = nl == std::string::npos ? info.size() : nl;
-                *fields[i] = info.substr(start, end - start);
-                if (nl == std::string::npos) break;
-                start = nl + 1;
-            }
-            // Written before the join-button setting is applied: the tray
-            // entry is the user asking for the link explicitly, which is a
-            // different question from putting it on a public presence.
-            if (!presence.join_url.empty()) {
-                if (FILE* f = std::fopen(invite_path.c_str(), "w")) {
-                    std::fputs(presence.join_url.c_str(), f);
-                    std::fclose(f);
+            //
+            // On a thread of its own: the lookup takes most of a second,
+            // and on the connection's reader it held everything the
+            // engine queued behind it right after a join. Only the newest
+            // request is applied, so a slow lookup for a game already
+            // left cannot overwrite what came after it.
+            static std::atomic<uint64_t> latest{0};
+            static std::mutex apply_mutex;
+            const uint64_t mine = latest.fetch_add(1) + 1;
+            std::thread([body = std::string(reinterpret_cast<const char*>(in.data()), in.size()),
+                         mine] {
+                const auto current = [mine] { return latest.load() == mine; };
+                // The tray offers "copy server link" and is a separate
+                // process, so the link is left where it can read it. Its
+                // absence is what "not in a game" looks like from there.
+                const std::string invite_path = []() {
+                    const char* xdg = std::getenv("XDG_RUNTIME_DIR");
+                    return std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/invite";
+                }();
+                if (body.empty()) {
+                    std::lock_guard<std::mutex> lock(apply_mutex);
+                    if (!current()) return;
+                    std::printf("stud-render-host: Discord presence: the app shell\n");
+                    std::fflush(stdout);
+                    ::unlink(invite_path.c_str());
+                    stud::render_host::discord_rpc_set_game({});
+                    return;
                 }
-            }
-            if (!g_discord_join_button) presence.join_url.clear();
-            std::printf("stud-render-host: Discord presence: %s by %s%s\n",
-                        presence.universe_name.c_str(), presence.creator_name.c_str(),
-                        presence.join_url.empty() ? "" : " (with a join button)");
-            std::fflush(stdout);
-            presence.started_at = static_cast<int64_t>(::time(nullptr));
-            stud::render_host::discord_rpc_set_game(presence);
+                std::string info;
+                if (!run_ui_secret_helper("--game-info", body, std::string(), &info) || info.empty()) {
+                    return;
+                }
+                std::lock_guard<std::mutex> lock(apply_mutex);
+                if (!current()) return;
+                // One field per line, in a fixed order, so no JSON parser is
+                // needed on this side: name, creator, thumbnail, join url.
+                stud::render_host::GamePresence presence;
+                std::string* fields[] = {&presence.universe_name, &presence.creator_name,
+                                          &presence.thumbnail_url, &presence.join_url};
+                size_t start = 0;
+                for (size_t i = 0; i < 4 && start <= info.size(); ++i) {
+                    const size_t nl = info.find('\n', start);
+                    const size_t end = nl == std::string::npos ? info.size() : nl;
+                    *fields[i] = info.substr(start, end - start);
+                    if (nl == std::string::npos) break;
+                    start = nl + 1;
+                }
+                // Written before the join-button setting is applied: the tray
+                // entry is the user asking for the link explicitly, which is a
+                // different question from putting it on a public presence.
+                if (!presence.join_url.empty()) {
+                    if (FILE* f = std::fopen(invite_path.c_str(), "w")) {
+                        std::fputs(presence.join_url.c_str(), f);
+                        std::fclose(f);
+                    }
+                }
+                if (!g_discord_join_button) presence.join_url.clear();
+                std::printf("stud-render-host: Discord presence: %s by %s%s\n",
+                            presence.universe_name.c_str(), presence.creator_name.c_str(),
+                            presence.join_url.empty() ? "" : " (with a join button)");
+                std::fflush(stdout);
+                presence.started_at = static_cast<int64_t>(::time(nullptr));
+                stud::render_host::discord_rpc_set_game(presence);
+            }).detach();
             return 0;
         }
         case CallId::NotifyServerRegion: {

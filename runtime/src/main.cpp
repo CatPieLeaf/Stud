@@ -817,11 +817,12 @@ void report_game_presence() {
             std::printf("stud: presence: no instance id yet for place %lld\n", place);
             std::fflush(stdout);
         }
+        // Reply-free: render-host looks the game up on a thread of its own,
+        // and nothing here needs the answer.
         uint64_t presence_args[8] = {};
-        stud::render_client::connection().call(
+        stud::render_client::connection().call_void(
             stud::render_host::CallId::SetGamePresence, presence_args,
-            body.empty() ? nullptr : body.data(), static_cast<uint32_t>(body.size()),
-            nullptr, 0, nullptr);
+            body.empty() ? nullptr : body.data(), static_cast<uint32_t>(body.size()));
     }
 }
 
