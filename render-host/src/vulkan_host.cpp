@@ -3933,6 +3933,34 @@ uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
+// One staging buffer in cached system memory, grown to the largest read
+// asked for, and one command buffer and fence, kept between calls of
+// vk_read_exported_memory() and released with the device.
+struct ReadbackStaging {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    void* data = nullptr;
+    VkDeviceSize size = 0;
+    bool coherent = false;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+};
+ReadbackStaging& readback_staging() {
+    static ReadbackStaging st;
+    return st;
+}
+
+void forget_readback_staging(Loader& l) {
+    ReadbackStaging& st = readback_staging();
+    if (st.fence != VK_NULL_HANDLE) l.vk.vkDestroyFence(l.device, st.fence, nullptr);
+    if (st.cb != VK_NULL_HANDLE && l.probe_pool != VK_NULL_HANDLE) {
+        l.vk.vkFreeCommandBuffers(l.device, l.probe_pool, 1, &st.cb);
+    }
+    if (st.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, st.buffer, nullptr);
+    if (st.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, st.memory, nullptr);
+    st = ReadbackStaging{};
+}
+
 // Bytes of an allocation exported to the client (design C), for its texture
 // decoder. That memory is the GPU's own, mapped write-combined, and the CPU
 // reads it at about 0.05 GB/s -- 90 ms for a 4 MB texture, measured -- so
@@ -3979,21 +4007,7 @@ uint64_t vk_read_exported_memory(uint64_t memory, uint64_t offset, uint64_t size
         source = e->second.buffer;
     }
 
-    // One staging buffer in cached system memory, grown to the largest
-    // read asked for, and one command buffer and fence, kept between calls.
-    struct Staging {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        void* data = nullptr;
-        VkDeviceSize size = 0;
-        bool coherent = false;
-        VkCommandBuffer cb = VK_NULL_HANDLE;
-        VkFence fence = VK_NULL_HANDLE;
-        VkDevice device = VK_NULL_HANDLE;
-    };
-    static Staging st;
-    if (st.device != l.device) st = Staging{};  // a new device: the old objects went with it
-    st.device = l.device;
+    ReadbackStaging& st = readback_staging();
     if (st.size < size) {
         if (st.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, st.buffer, nullptr);
         if (st.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, st.memory, nullptr);
@@ -4031,7 +4045,7 @@ uint64_t vk_read_exported_memory(uint64_t memory, uint64_t offset, uint64_t size
             l.vk.vkMapMemory(l.device, st.memory, 0, VK_WHOLE_SIZE, 0, &st.data) != VK_SUCCESS) {
             if (st.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, st.memory, nullptr);
             l.vk.vkDestroyBuffer(l.device, st.buffer, nullptr);
-            st = Staging{};
+            st = ReadbackStaging{};
             return fail(VK_ERROR_OUT_OF_HOST_MEMORY);
         }
         st.coherent = (mp.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
@@ -6056,6 +6070,25 @@ void retire(uint64_t swapchain) {
     s.retired.insert(swapchain);
 }
 
+// Everything of the device being destroyed. Explicit, because a device
+// made after it can come back at the same address, so comparing handles
+// does not notice the change -- live-caught as vkWaitForFences on a fence
+// of the destroyed device, a segfault inside the driver on the first
+// present after joining a game.
+void forget_device(Loader& l) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    for (Slot& slot : s.slots) {
+        if (slot.fence != VK_NULL_HANDLE) l.vk.vkDestroyFence(l.device, slot.fence, nullptr);
+        if (slot.semaphore != VK_NULL_HANDLE) l.vk.vkDestroySemaphore(l.device, slot.semaphore, nullptr);
+    }
+    s.slots.clear();
+    s.next = 0;
+    s.held = false;
+    s.retired.clear();
+    s.device = VK_NULL_HANDLE;
+}
+
 // The engine destroyed it; a later swapchain may get the same value.
 void forget(uint64_t swapchain) {
     drop(swapchain);
@@ -7380,6 +7413,8 @@ void destroy_device(Loader& l, uint64_t handle) {
         // Stud's own per-device bookkeeping, keyed by handle values the
         // next device will reuse; see query_share::forget_device().
         query_share::forget_device(l);
+        preacquire::forget_device(l);
+        forget_readback_staging(l);
         {
             std::lock_guard<std::mutex> lock(exported_fd_mutex());
             for (auto& [memory, e] : exported_memory()) {

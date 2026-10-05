@@ -3075,6 +3075,13 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroySurfaceKHR(VkInstance instance, VkSurfa
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkDestroyDevice(VkDevice device, const VkAllocationCallbacks*) {
+    // Stocked buffers die with the device, and the next device can come
+    // back at the same address, so keying the stock by device is not
+    // enough: they would be handed out on the new one.
+    {
+        std::lock_guard<std::mutex> lock(buffer_stock_mutex());
+        buffer_stocks().clear();
+    }
     // FORGET THE DECODE SCRATCH FIRST. It belongs to the device that is
     // about to die.
     //
