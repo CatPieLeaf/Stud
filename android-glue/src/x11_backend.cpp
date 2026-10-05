@@ -755,7 +755,8 @@ void set_pointer_confined(bool confined) {
         // confine_to = this window, and nothing else: the pointer keeps
         // its own position and its ordinary motion, it simply cannot
         // cross the frame. No warping, unlike the mouse-look grab.
-        x11.GrabPointer(g_display, g_window, True,
+        // Not owner-events; see set_pointer_locked().
+        x11.GrabPointer(g_display, g_window, False,
                         ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
                         GrabModeAsync, g_window, 0, 0);
         g_pointer_confined.store(true);
@@ -772,12 +773,17 @@ void set_pointer_locked(bool locked) {
     Xlib& x = xlib();
     if (locked) {
         if (x.GrabPointer == nullptr || x.WarpPointer == nullptr) return;
-        // Owner-events so the window keeps receiving its own events
-        // normally; confined to the window so nothing outside sees the
-        // drag. Async modes: a synchronous grab would require replaying
-        // every event by hand.
+        // Not owner-events. With them the server hands each grabbed raw
+        // event to this client's root-window selection once through the
+        // grab and once more on its own (XI 2.1 skips the second only for
+        // a grab on the root window itself), so every movement arrived
+        // twice and mouse look turned twice as far as on Wayland. Without
+        // them every pointer event is reported to this window, which is
+        // where they are wanted anyway. Confined to the window so nothing
+        // outside sees the drag. Async modes: a synchronous grab would
+        // require replaying every event by hand.
         const int result =
-            x.GrabPointer(g_display, g_window, True,
+            x.GrabPointer(g_display, g_window, False,
                           ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
                           GrabModeAsync, g_window, None, CurrentTime);
         if (result != GrabSuccess) return;
@@ -1974,13 +1980,68 @@ int32_t display_scale_120() {
     return scale > 0 ? scale : 120;
 }
 
+// RandR's monitor list, declared here rather than pulling in
+// <X11/extensions/Xrandr.h> for one struct and two calls.
+struct RandrMonitor {
+    Atom name;
+    Bool primary;
+    Bool automatic;
+    int noutput;
+    int x, y, width, height;
+    int mwidth, mheight;
+    unsigned long* outputs;
+};
+
 bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h) {
     if (g_display == nullptr) return false;
     const int screen = DefaultScreen(g_display);
+    const Window root = RootWindow(g_display, screen);
     px_w = DisplayWidth(g_display, screen);
     px_h = DisplayHeight(g_display, screen);
+    // The screen's millimetres are the X server's own invention from its
+    // DPI (96 under XWayland), not the panel's, so the monitor the window
+    // is on answers instead, from its EDID, as wl_output does on Wayland.
     mm_w = DisplayWidthMM(g_display, screen);
     mm_h = DisplayHeightMM(g_display, screen);
+    static void* xrandr = ::dlopen("libXrandr.so.2", RTLD_NOW | RTLD_LOCAL);
+    if (xrandr == nullptr) return px_w > 0 && px_h > 0;
+    using GetMonitorsFn = RandrMonitor* (*)(Display*, Window, Bool, int*);
+    using FreeMonitorsFn = void (*)(RandrMonitor*);
+    static auto get_monitors = reinterpret_cast<GetMonitorsFn>(::dlsym(xrandr, "XRRGetMonitors"));
+    static auto free_monitors =
+        reinterpret_cast<FreeMonitorsFn>(::dlsym(xrandr, "XRRFreeMonitors"));
+    if (get_monitors == nullptr || free_monitors == nullptr) return px_w > 0 && px_h > 0;
+    int count = 0;
+    RandrMonitor* monitors = get_monitors(g_display, root, True, &count);
+    if (monitors == nullptr) return px_w > 0 && px_h > 0;
+    int centre_x = -1;
+    int centre_y = -1;
+    Xlib& x = xlib();
+    if (g_window != 0 && x.TranslateCoordinates != nullptr) {
+        Window child = 0;
+        x.TranslateCoordinates(g_display, g_window, root, g_width.load() / 2,
+                               g_height.load() / 2, &centre_x, &centre_y, &child);
+    }
+    const RandrMonitor* pick = nullptr;
+    for (int i = 0; i < count && pick == nullptr; ++i) {
+        const RandrMonitor& m = monitors[i];
+        if (centre_x >= m.x && centre_x < m.x + m.width && centre_y >= m.y &&
+            centre_y < m.y + m.height) {
+            pick = &m;
+        }
+    }
+    for (int i = 0; i < count && pick == nullptr; ++i) {
+        if (monitors[i].primary) pick = &monitors[i];
+    }
+    if (pick == nullptr && count > 0) pick = &monitors[0];
+    if (pick != nullptr && pick->width > 0 && pick->height > 0 && pick->mwidth > 0 &&
+        pick->mheight > 0) {
+        px_w = pick->width;
+        px_h = pick->height;
+        mm_w = pick->mwidth;
+        mm_h = pick->mheight;
+    }
+    free_monitors(monitors);
     return px_w > 0 && px_h > 0;
 }
 
