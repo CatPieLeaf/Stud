@@ -1532,18 +1532,7 @@ public:
     void append_command(uint64_t cb, uint32_t kind, const void* payload, uint32_t len) {
         std::lock_guard<std::mutex> lock(call_mutex_);
         if (fd_ < 0) return;
-        if (!command_batch_open_) {
-            // Reply-free calls queued before this command go first.
-            emit_gl_batch_locked();
-            reserve_queue_once();
-            command_batch_at_ = queue_.size();
-            queue_.resize(command_batch_at_ + sizeof(Header));
-            auto* hdr = reinterpret_cast<Header*>(queue_.data() + command_batch_at_);
-            std::memset(hdr, 0, sizeof(*hdr));
-            hdr->call_id = CallId::VkCmdRecordBatch;
-            hdr->flags = Header::kNoReply;
-            command_batch_open_ = true;
-        }
+        open_command_batch_locked();
         const size_t at = queue_.size();
         queue_.resize(at + 16 + len);
         uint8_t* p = queue_.data() + at;
@@ -1551,6 +1540,23 @@ public:
         std::memcpy(p + 8, &kind, sizeof(kind));
         std::memcpy(p + 12, &len, sizeof(len));
         if (len > 0 && payload != nullptr) std::memcpy(p + 16, payload, len);
+        if (queue_.size() - command_batch_at_ - sizeof(Header) >= kCommandBatchBytes) {
+            emit_command_batch_locked();
+        }
+    }
+
+    // A run of commands already encoded the way append_command() writes
+    // them, [u64 cb][u32 kind][u32 len][payload] repeated: a whole command
+    // buffer, recorded without the connection's lock and handed over at
+    // vkEndCommandBuffer in one piece.
+    void append_commands(const void* records, size_t len) {
+        if (len == 0 || records == nullptr) return;
+        std::lock_guard<std::mutex> lock(call_mutex_);
+        if (fd_ < 0) return;
+        open_command_batch_locked();
+        const size_t at = queue_.size();
+        queue_.resize(at + len);
+        std::memcpy(queue_.data() + at, records, len);
         if (queue_.size() - command_batch_at_ - sizeof(Header) >= kCommandBatchBytes) {
             emit_command_batch_locked();
         }
@@ -1677,6 +1683,22 @@ private:
     }
 
     std::vector<uint8_t> batch_;
+
+    // Opens a command batch in the queue, if one is not open already: a
+    // header whose length is filled in when the batch closes.
+    void open_command_batch_locked() {
+        if (command_batch_open_) return;
+        // Reply-free calls queued before these commands go first.
+        emit_gl_batch_locked();
+        reserve_queue_once();
+        command_batch_at_ = queue_.size();
+        queue_.resize(command_batch_at_ + sizeof(Header));
+        auto* hdr = reinterpret_cast<Header*>(queue_.data() + command_batch_at_);
+        std::memset(hdr, 0, sizeof(*hdr));
+        hdr->call_id = CallId::VkCmdRecordBatch;
+        hdr->flags = Header::kNoReply;
+        command_batch_open_ = true;
+    }
 
     // Closes the command batch being written into the queue: its header
     // gets the length of what followed it. Anything else may be appended

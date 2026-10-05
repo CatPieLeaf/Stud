@@ -3206,6 +3206,76 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateComputePipelines(
     return VK_SUCCESS;
 }
 
+}  // extern "C"
+
+namespace {
+
+// A command buffer's commands, collected without the connection's lock.
+//
+// Every recorded command used to take the one mutex the whole process
+// shares with the connection -- thousands a frame -- while the engine
+// records on several threads at once, so its recording threads queued
+// behind each other and behind every IPC call. Vulkan already guarantees
+// a command buffer is recorded by one thread at a time, so its commands
+// can collect in a buffer of its own with no lock at all, and join the
+// stream in one piece at vkEndCommandBuffer, ahead of the End itself and
+// so ahead of any submit that names it.
+struct CommandBufferRecording {
+    std::vector<uint8_t> bytes;  // [u64 cb][u32 kind][u32 len][payload] repeated
+    bool recording = false;
+};
+
+std::mutex& recordings_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+// Entries are never erased, so a pointer to one stays valid for the life
+// of the process; the engine reuses its command buffers frame after frame.
+std::unordered_map<uint64_t, std::unique_ptr<CommandBufferRecording>>& recordings() {
+    static std::unordered_map<uint64_t, std::unique_ptr<CommandBufferRecording>> m;
+    return m;
+}
+
+// The command buffer this thread recorded into last, so the lookup costs
+// nothing on the path every command takes.
+thread_local uint64_t t_recording_cb = 0;
+thread_local CommandBufferRecording* t_recording = nullptr;
+
+CommandBufferRecording* recording_for(uint64_t cb, bool create) {
+    if (cb != 0 && cb == t_recording_cb) return t_recording;
+    std::lock_guard<std::mutex> lock(recordings_mutex());
+    auto it = recordings().find(cb);
+    if (it == recordings().end()) {
+        if (!create) return nullptr;
+        it = recordings().emplace(cb, std::make_unique<CommandBufferRecording>()).first;
+    }
+    t_recording_cb = cb;
+    t_recording = it->second.get();
+    return t_recording;
+}
+
+// Appends one command: to its command buffer's own recording while that
+// is open, and straight to the connection otherwise.
+void append_recorded(uint64_t cb, uint32_t kind, const void* payload, uint32_t len) {
+    CommandBufferRecording* rec = recording_for(cb, false);
+    if (rec == nullptr || !rec->recording) {
+        stud::render_client::connection().append_command(cb, kind, payload, len);
+        return;
+    }
+    const size_t at = rec->bytes.size();
+    rec->bytes.resize(at + 16 + len);
+    uint8_t* p = rec->bytes.data() + at;
+    std::memcpy(p, &cb, sizeof(cb));
+    std::memcpy(p + 8, &kind, sizeof(kind));
+    std::memcpy(p + 12, &len, sizeof(len));
+    if (len > 0 && payload != nullptr) std::memcpy(p + 16, payload, len);
+}
+
+}  // namespace
+
+extern "C" {
+
 // ---- command buffers and submission ----------------------------------
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateCommandBuffers(
@@ -3285,6 +3355,13 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
                                       [cb](const PendingReadback& rb) { return rb.cb == cb; }),
                        recorded.end());
     }
+    // A fresh recording: anything collected for an earlier, unended one
+    // is dropped with it, as a re-begin resets the buffer.
+    {
+        CommandBufferRecording* rec = recording_for(to_u64(cb), true);
+        rec->bytes.clear();
+        rec->recording = true;
+    }
     uint64_t a[8] = {to_u64(cb), bi != nullptr ? bi->flags : 0};
     if (!sync_command_buffer_calls()) {
         stud::render_client::connection().call_void(CallId::VkBeginCommandBuffer, a);
@@ -3296,6 +3373,14 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkBeginCommandBuffer(VkCommandBuffer cb,
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkEndCommandBuffer(VkCommandBuffer cb) {
+    // The whole recording joins the stream here, ahead of the End below,
+    // under one acquisition of the connection's lock.
+    if (CommandBufferRecording* rec = recording_for(to_u64(cb), false);
+        rec != nullptr && rec->recording) {
+        stud::render_client::connection().append_commands(rec->bytes.data(), rec->bytes.size());
+        rec->bytes.clear();
+        rec->recording = false;
+    }
     uint64_t a[8] = {to_u64(cb)};
     if (!sync_command_buffer_calls()) {
         stud::render_client::connection().call_void(CallId::VkEndCommandBuffer, a);
@@ -3815,9 +3900,8 @@ void record(VkCommandBuffer cb, vk_wire::CmdKind kind, const std::vector<uint8_t
         ++frame_timing().cmds;
         frame_timing().cmd_bytes += in.size();
     }
-    stud::render_client::connection().append_command(to_u64(cb), static_cast<uint32_t>(kind),
-                                                      in.data(),
-                                                      static_cast<uint32_t>(in.size()));
+    append_recorded(to_u64(cb), static_cast<uint32_t>(kind), in.data(),
+                    static_cast<uint32_t>(in.size()));
     if (frame_timing_enabled()) {
         const double ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rec_t0)
@@ -3839,8 +3923,7 @@ void record_bytes(VkCommandBuffer cb, vk_wire::CmdKind kind, const void* in, siz
         frame_timing().cmd_bytes += len;
         frame_timing().f_bytes += len;
     }
-    stud::render_client::connection().append_command(to_u64(cb), static_cast<uint32_t>(kind), in,
-                                                      static_cast<uint32_t>(len));
+    append_recorded(to_u64(cb), static_cast<uint32_t>(kind), in, static_cast<uint32_t>(len));
     if (frame_timing_enabled()) {
         frame_timing().record_ms +=
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rec_t0)
