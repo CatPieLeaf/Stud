@@ -7,7 +7,13 @@
 # way Sober does, inside the real Roblox app's own login screen, so
 # there is no web view to host and no session cookie to scrape.
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets DBus Network)
-find_package(Vulkan REQUIRED)
+# Headers only (see stud_ui_gpu_enum below). The headers' own package is
+# enough; FindVulkan, the fallback where that is not installed, also
+# insists on the loader's development library.
+find_package(VulkanHeaders CONFIG QUIET)
+if(NOT TARGET Vulkan::Headers)
+    find_package(Vulkan REQUIRED)
+endif()
 find_package(Qt6Keychain REQUIRED)
 
 # Real freedesktop.org Notifications via QtDBus; its own small

@@ -1364,10 +1364,10 @@ void start(Loader& l, bool timeline_enabled) {
     if (!timeline_enabled || l.vk.vkCreateSemaphore == nullptr) return;
     auto s = std::make_shared<State>();
     s->device = l.device;
-    s->wait = reinterpret_cast<PFN_vkWaitSemaphoresKHR>(
-        vkGetDeviceProcAddr(l.device, "vkWaitSemaphoresKHR"));
-    s->value = reinterpret_cast<PFN_vkGetSemaphoreCounterValueKHR>(
-        vkGetDeviceProcAddr(l.device, "vkGetSemaphoreCounterValueKHR"));
+    // The extension's own names: Stud enables VK_KHR_timeline_semaphore
+    // itself, whatever API version the engine asked the device for.
+    s->wait = l.vk.vkWaitSemaphoresKHR;
+    s->value = l.vk.vkGetSemaphoreCounterValueKHR;
     if (s->wait == nullptr || s->value == nullptr) return;
     VkSemaphoreTypeCreateInfo type{};
     type.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
