@@ -5370,6 +5370,33 @@ void serve_shared_fd_channel(int conn_fd) {
             if (fd >= 0) ::close(fd);
             return;
         }
+        // No fd attached: the client is fetching one exported for it
+        // (design C), answered the same way with the fd riding the byte.
+        if (fd < 0 && id != 0) {
+            const int out_fd = stud::render_host::take_exported_fd(id);
+            uint8_t found = out_fd >= 0 ? 1 : 0;
+            char out_control[CMSG_SPACE(sizeof(int))] = {};
+            iovec out_iov{&found, sizeof(found)};
+            msghdr out{};
+            out.msg_iov = &out_iov;
+            out.msg_iovlen = 1;
+            if (out_fd >= 0) {
+                out.msg_control = out_control;
+                out.msg_controllen = sizeof(out_control);
+                cmsghdr* c = CMSG_FIRSTHDR(&out);
+                c->cmsg_level = SOL_SOCKET;
+                c->cmsg_type = SCM_RIGHTS;
+                c->cmsg_len = CMSG_LEN(sizeof(int));
+                std::memcpy(CMSG_DATA(c), &out_fd, sizeof(out_fd));
+            }
+            ssize_t sent;
+            do {
+                sent = ::sendmsg(conn_fd, &out, MSG_NOSIGNAL);
+            } while (sent < 0 && errno == EINTR);
+            if (out_fd >= 0) ::close(out_fd);
+            if (sent != 1) return;
+            continue;
+        }
         const uint8_t kept = (fd >= 0 && id != 0) ? 1 : 0;
         if (kept) {
             stud::render_host::register_shared_fd(id, fd);

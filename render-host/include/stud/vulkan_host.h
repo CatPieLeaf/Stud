@@ -154,6 +154,9 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
 // whichever call names that id, exactly once, and -1 if there is none.
 // forget_shared_fds() closes whatever was sent and never claimed.
 void register_shared_fd(uint64_t id, int fd);
+// A dma-buf exported for the client under its allocation id (design C,
+// STUD_VK_BAR_EXPORT), handed over once; -1 if there is none.
+int take_exported_fd(uint64_t id);
 int take_shared_fd(uint64_t id);
 void forget_shared_fds();
 uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset);

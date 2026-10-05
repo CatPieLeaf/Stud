@@ -1080,6 +1080,49 @@ public:
         return kept == 1;
     }
 
+    // The dma-buf the host exported for allocation `id` (design C,
+    // STUD_VK_BAR_EXPORT): the id goes over with no fd attached, and the
+    // answer byte comes back carrying one. -1 if the host has none.
+    int fetch(uint64_t id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensure_open_locked()) return -1;
+        ssize_t n;
+        do {
+            n = ::send(fd_, &id, sizeof(id), MSG_NOSIGNAL);
+        } while (n < 0 && errno == EINTR);
+        if (n != static_cast<ssize_t>(sizeof(id))) {
+            fail_locked();
+            return -1;
+        }
+        uint8_t found = 0;
+        char control[CMSG_SPACE(sizeof(int))] = {};
+        iovec iov{&found, sizeof(found)};
+        msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof(control);
+        do {
+            n = ::recvmsg(fd_, &msg, MSG_CMSG_CLOEXEC);
+        } while (n < 0 && errno == EINTR);
+        if (n != 1) {
+            fail_locked();
+            return -1;
+        }
+        int received = -1;
+        for (cmsghdr* c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c)) {
+            if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS &&
+                c->cmsg_len >= CMSG_LEN(sizeof(int))) {
+                std::memcpy(&received, CMSG_DATA(c), sizeof(received));
+            }
+        }
+        if (found != 1 && received >= 0) {
+            ::close(received);
+            received = -1;
+        }
+        return received;
+    }
+
 private:
     bool ensure_open_locked() {
         if (fd_ >= 0) return true;
@@ -2245,6 +2288,35 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     // instead, and handing the engine the shared pointer anyway would mean
     // it writes where nothing reads, a black screen, live-caught.
     const bool host_shared = written >= sizeof(reply) && reply[1] != 0;
+    // Design C: the host exported the device's own memory as a dma-buf
+    // instead of importing our pages. Map that in place of the memfd, so
+    // the engine writes straight into it.
+    if (want_shared && written >= sizeof(reply) && reply[1] == 2) {
+        const int dmabuf = shared_fd_channel().fetch(shared.id);
+        void* p = dmabuf >= 0 ? ::mmap(nullptr, shared.length, PROT_READ | PROT_WRITE, MAP_SHARED,
+                                       dmabuf, 0)
+                              : MAP_FAILED;
+        if (dmabuf >= 0) ::close(dmabuf);
+        if (p == MAP_FAILED) {
+            // Nothing the engine writes would reach the device; it cannot
+            // be used at all, and saying so is all that is left.
+            std::fprintf(stderr, "stud: vulkan-client: could not map the dma-buf the host exported "
+                                 "for memory %llx (%s)\n",
+                         static_cast<unsigned long long>(handle), std::strerror(errno));
+            std::fflush(stderr);
+            release_shared_allocation(shared);
+            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        }
+        ::munmap(shared.address, shared.length);
+        shared.address = p;
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud: vulkan-client: the engine writes its BAR memory directly, through "
+                        "a dma-buf the host exported\n");
+            std::fflush(stdout);
+        }
+    }
     if (want_shared && host_shared) {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
         shared_allocations()[handle] = shared;

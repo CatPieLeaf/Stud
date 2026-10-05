@@ -115,6 +115,22 @@ bool g_swapchain_maintenance1_enabled = false;
 // present with a number, present_wait blocks until a given number has
 // been displayed. One is useless without the other.
 bool g_present_wait_enabled = false;
+
+// Design C, a test, off unless STUD_VK_BAR_EXPORT=1: memory the engine asks
+// for as DEVICE_LOCAL|HOST_VISIBLE (the GPU's BAR, which a host pointer
+// cannot be imported into) is allocated here as exportable, exported as a
+// dma-buf and mapped in the engine's process, so the engine writes straight
+// into VRAM instead of into system memory the GPU then reads across PCIe
+// (design B, the default) or a stand-in that is copied (design A).
+bool bar_export_requested() {
+    static const bool on = [] {
+        const char* v = std::getenv("STUD_VK_BAR_EXPORT");
+        return v != nullptr && std::strcmp(v, "1") == 0;
+    }();
+    return on;
+}
+// Whether the current device was created able to export dma-bufs.
+bool g_bar_export = false;
 }  // namespace
 
 // Bumped every time the window changes size, so tracing that is capped
@@ -1682,6 +1698,19 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         timeline_enabled = true;
     }
 
+    g_bar_export = false;
+    if (bar_export_requested() &&
+        device_supports_extension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
+        device_supports_extension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
+        for (const char* name :
+             {VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME}) {
+            if (std::find(extensions.begin(), extensions.end(), name) == extensions.end()) {
+                extensions.push_back(name);
+            }
+        }
+        g_bar_export = true;
+    }
+
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
 
@@ -2963,6 +2992,26 @@ std::unordered_map<uint64_t, int>& shared_fds() {
     return m;
 }
 
+// Dma-bufs exported for the client, by the allocation id it chose, until
+// it fetches them over the shared-memory fd channel.
+std::mutex& exported_fd_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<uint64_t, int>& exported_fds() {
+    static std::unordered_map<uint64_t, int> m;
+    return m;
+}
+
+int take_exported_fd(uint64_t id) {
+    std::lock_guard<std::mutex> lock(exported_fd_mutex());
+    auto it = exported_fds().find(id);
+    if (it == exported_fds().end()) return -1;
+    const int fd = it->second;
+    exported_fds().erase(it);
+    return fd;
+}
+
 void register_shared_fd(uint64_t id, int fd) {
     std::lock_guard<std::mutex> lock(shared_fd_mutex());
     auto [it, inserted] = shared_fds().emplace(id, fd);
@@ -3345,6 +3394,8 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     // is copied, and the whole dirty-page tracking and flush path stops
     // being needed for this allocation.
     VkImportMemoryHostPointerInfoEXT import{};
+    VkExportMemoryAllocateInfo export_info{};
+    bool export_bar = false;
     SharedMapping mapping;
     if (shared_id != 0 && map_shared_memory(shared_id, size, mapping) &&
         l.vk.vkGetMemoryHostPointerPropertiesEXT != nullptr) {
@@ -3378,8 +3429,23 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             const char* v = std::getenv("STUD_SHARE_ALL_HOST_MEMORY");
             return v == nullptr || std::strcmp(v, "0") != 0;
         }();
+        // Design C: the BAR itself, exported to the engine's process.
+        if (g_bar_export && pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 &&
+            vkGetPhysicalDeviceMemoryProperties != nullptr) {
+            VkPhysicalDeviceMemoryProperties mp{};
+            vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
+            const VkMemoryPropertyFlags bar =
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+            if (type_index < mp.memoryTypeCount &&
+                (mp.memoryTypes[type_index].propertyFlags & bar) == bar) {
+                export_bar = true;
+            }
+        }
         uint32_t use_type = type_index;
-        if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 && share_all) {
+        if (export_bar) {
+            // Nothing of the client's memfd is used; the dma-buf replaces it.
+            unmap_shared_memory(mapping);
+        } else if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 && share_all) {
             const uint32_t substitute = importable_host_visible_type(props.memoryTypeBits);
             if (substitute != UINT32_MAX) {
                 static std::set<uint32_t> reported;
@@ -3393,7 +3459,12 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
                 ai.memoryTypeIndex = substitute;
             }
         }
-        if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << use_type)) != 0) {
+        if (export_bar) {
+            export_info.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+            export_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+            export_info.pNext = ai.pNext;
+            ai.pNext = &export_info;
+        } else if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << use_type)) != 0) {
             // An imported host pointer carries its own size rule: the
             // allocation must be a whole number of the driver's import
             // alignment, and the engine's size is whatever it asked for.
@@ -3426,6 +3497,37 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
 
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkResult r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
+    if (r != VK_SUCCESS && export_bar) {
+        // Not exportable after all: an ordinary allocation, copied as in A.
+        export_bar = false;
+        ai.pNext = chain;
+        r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
+    }
+    int exported_fd = -1;
+    if (r == VK_SUCCESS && export_bar && l.vk.vkGetMemoryFdKHR != nullptr) {
+        VkMemoryGetFdInfoKHR gi{};
+        gi.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+        gi.memory = memory;
+        gi.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+        if (l.vk.vkGetMemoryFdKHR(l.device, &gi, &exported_fd) != VK_SUCCESS) exported_fd = -1;
+    }
+    if (exported_fd >= 0) {
+        {
+            std::lock_guard<std::mutex> lock(exported_fd_mutex());
+            auto [it, inserted] = exported_fds().emplace(shared_id, exported_fd);
+            if (!inserted) {
+                ::close(it->second);
+                it->second = exported_fd;
+            }
+        }
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud-render-host: BAR memory is exported to the engine as a dma-buf "
+                        "(STUD_VK_BAR_EXPORT); it writes straight into VRAM\n");
+            std::fflush(stdout);
+        }
+    }
     if (r != VK_SUCCESS && import.pHostPointer != nullptr) {
         // The driver said this memory type can back an imported host
         // pointer and then refused the import anyway, live-caught on
@@ -3482,7 +3584,8 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     const uint64_t handle_value = to_u64(memory);
     l.live_memory.insert(handle_value);
     if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
-    const uint64_t shared_flag = imported ? 1u : 0u;
+    // 2: exported as a dma-buf the client fetches under its id.
+    const uint64_t shared_flag = exported_fd >= 0 ? 2u : imported ? 1u : 0u;
     std::memcpy(out.data(), &handle_value, sizeof(handle_value));
     std::memcpy(out.data() + sizeof(handle_value), &shared_flag, sizeof(shared_flag));
     *out_len = static_cast<uint32_t>(out.size());
@@ -6362,6 +6465,11 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
         imported_host_pointer_alignment() > 0) {
         external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
         external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+        ci.pNext = &external;
+    }
+    if (g_bar_export) {
+        external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+        external.handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
         ci.pNext = &external;
     }
     VkBuffer buffer = VK_NULL_HANDLE;
