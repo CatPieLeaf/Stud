@@ -2760,14 +2760,100 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateAndroidSurfaceKHR(
     return VK_SUCCESS;
 }
 
+}  // extern "C"
+
+namespace {
+
+// Buffers render-host has already created, by shape, handed out without a
+// round trip.
+//
+// vkCreateBuffer was the last blocking call on the engine's frame: about
+// ten a frame in a heavy scene, 80 us each, every one waiting behind the
+// whole queued stream. The engine makes the same few shapes over and over,
+// so a shape seen twice is stocked: when its stock is empty, one call
+// makes as many as the engine made of that shape in its previous frame,
+// so a refill lasts about a frame. A buffer is still destroyed the
+// ordinary way and never reused -- binding memory to one is permanent.
+struct BufferStock {
+    std::vector<uint64_t> ready;
+    uint64_t seen = 0;
+    uint64_t frame = 0;      // the present count its counts below belong to
+    uint64_t this_frame = 0;
+    uint64_t last_frame = 0;
+};
+
+std::mutex& buffer_stock_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::map<std::string, BufferStock>& buffer_stocks() {
+    static std::map<std::string, BufferStock> m;
+    return m;
+}
+
+uint64_t presents_so_far() {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    return f.presents;
+}
+
+// A buffer of this shape, from stock or a refill of it; false when the
+// shape is not stocked (yet), and the ordinary call has to make it.
+bool stocked_buffer(const uint64_t (&a)[8], uint64_t* handle) {
+    const std::string key(reinterpret_cast<const char*>(&a[0]), sizeof(uint64_t) * 5);
+    const uint64_t frame = presents_so_far();
+    uint64_t batch = 0;
+    {
+        std::lock_guard<std::mutex> lock(buffer_stock_mutex());
+        BufferStock& s = buffer_stocks()[key];
+        if (s.frame != frame) {
+            s.last_frame = s.frame + 1 == frame ? s.this_frame : 0;
+            s.this_frame = 0;
+            s.frame = frame;
+        }
+        ++s.seen;
+        ++s.this_frame;
+        if (!s.ready.empty()) {
+            *handle = s.ready.back();
+            s.ready.pop_back();
+            return true;
+        }
+        if (s.seen < 2) return false;
+        batch = std::max<uint64_t>(1, s.last_frame);
+    }
+    uint64_t args[8] = {a[0], a[1], a[2], a[3], a[4], batch};
+    std::vector<uint64_t> made(static_cast<size_t>(batch));
+    uint32_t written = 0;
+    const uint64_t r = stud::render_client::connection().call(
+        CallId::VkCreateBuffers, args, nullptr, 0, made.data(),
+        static_cast<uint32_t>(made.size() * sizeof(uint64_t)), &written);
+    const size_t got = written / sizeof(uint64_t);
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) != VK_SUCCESS || got == 0) return false;
+    *handle = made[0];
+    std::lock_guard<std::mutex> lock(buffer_stock_mutex());
+    BufferStock& s = buffer_stocks()[key];
+    s.ready.insert(s.ready.end(), made.begin() + 1, made.begin() + static_cast<long>(got));
+    return true;
+}
+
+}  // namespace
+
+extern "C" {
+
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateBuffer(VkDevice device,
                                                     const VkBufferCreateInfo* pCreateInfo,
                                                     const VkAllocationCallbacks*,
                                                     VkBuffer* pBuffer) {
-    if (pCreateInfo == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    if (pCreateInfo == nullptr || pBuffer == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags, pCreateInfo->size, pCreateInfo->usage,
                      static_cast<uint64_t>(pCreateInfo->sharingMode)};
-    const VkResult r = simple_create<VkBuffer, CallId::VkCreateBuffer>(a, pBuffer);
+    uint64_t stocked = 0;
+    VkResult r = VK_SUCCESS;
+    if (stocked_buffer(a, &stocked)) {
+        *pBuffer = from_u64<VkBuffer>(stocked);
+    } else {
+        r = simple_create<VkBuffer, CallId::VkCreateBuffer>(a, pBuffer);
+    }
     if (r == VK_SUCCESS) {
         // Everything the host is given to create this buffer with, minus
         // the device -- so two buffers of the same shape on the same

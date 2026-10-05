@@ -4345,6 +4345,24 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             return stud::render_host::vk_create_buffer(
                 static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
                 static_cast<uint32_t>(a[4]), out, out_len);
+        case CallId::VkCreateBuffers: {
+            // Each one exactly as VkCreateBuffer makes it, so render-host's
+            // own records for a stocked buffer match an ordinary one.
+            std::vector<uint8_t> one;
+            std::vector<uint8_t> all;
+            uint64_t result = 0;
+            for (uint64_t i = 0; i < a[5]; ++i) {
+                uint32_t one_len = 0;
+                result = stud::render_host::vk_create_buffer(
+                    static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
+                    static_cast<uint32_t>(a[4]), one, &one_len);
+                if (static_cast<int32_t>(result) != 0 || one_len < sizeof(uint64_t)) break;
+                all.insert(all.end(), one.begin(), one.begin() + sizeof(uint64_t));
+            }
+            out = std::move(all);
+            *out_len = static_cast<uint32_t>(out.size());
+            return out.empty() ? result : 0;
+        }
         case CallId::VkGetBufferMemoryRequirements:
             return stud::render_host::vk_get_buffer_memory_requirements(a[1], out, out_len);
         // Sent reply-free by the Vulkan client, so this is the only place
