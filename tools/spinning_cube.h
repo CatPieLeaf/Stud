@@ -56,6 +56,14 @@ struct CubeGl {
     void (*EnableVertexAttribArray)(GLuint);
     void (*UniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
     void (*DrawElements)(GLenum, GLsizei, GLenum, const void*);
+    // Only for a textured cube; a caller that leaves them null gets the
+    // original's plain colours.
+    void (*GenTextures)(GLsizei, GLuint*);
+    void (*BindTexture)(GLenum, GLuint);
+    void (*TexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum,
+                       const void*);
+    void (*TexParameteri)(GLenum, GLenum, GLint);
+    void (*Uniform1i)(GLint, GLint);
 };
 
 // Column-major, so it is handed to glUniformMatrix4fv as-is.
@@ -107,15 +115,21 @@ inline Mat4 mat4_perspective(float aspect) {
 
 class SpinningCube {
   public:
-    bool init(const CubeGl& gl) {
+    // `face`, when given, is a `face_size` x `face_size` luminance image put
+    // on every side: a shading map, mid-grey where it leaves the colour as
+    // it is, which is how the stud texture Roblox ships works.
+    bool init(const CubeGl& gl, const unsigned char* face = nullptr, int face_size = 0) {
         static const char* kVertex =
             "attribute vec3 pos;\n"
             "attribute vec3 vertex_color;\n"
+            "attribute vec2 vertex_uv;\n"
             "uniform mat4 transform;\n"
             "varying vec3 color;\n"
+            "varying vec2 uv;\n"
             "void main() {\n"
             "  gl_Position = transform * vec4(pos, 1.0);\n"
             "  color = vertex_color;\n"
+            "  uv = vertex_uv;\n"
             "}\n";
         static const char* kFragment =
             // GLES requires a default float precision and desktop GL's
@@ -125,8 +139,12 @@ class SpinningCube {
             "precision mediump float;\n"
             "#endif\n"
             "varying vec3 color;\n"
+            "varying vec2 uv;\n"
+            "uniform sampler2D face;\n"
+            "uniform bool textured;\n"
             "void main() {\n"
-            "  gl_FragColor = vec4(color, 1.0);\n"
+            "  float shade = textured ? 2.0 * texture2D(face, uv).r : 1.0;\n"
+            "  gl_FragColor = vec4(color * shade, 1.0);\n"
             "}\n";
 
         const GLuint vs = compile(gl, GL_VERTEX_SHADER, kVertex);
@@ -148,11 +166,13 @@ class SpinningCube {
 
         attr_pos_ = gl.GetAttribLocation(program_, "pos");
         attr_color_ = gl.GetAttribLocation(program_, "vertex_color");
+        attr_uv_ = gl.GetAttribLocation(program_, "vertex_uv");
         uniform_transform_ = gl.GetUniformLocation(program_, "transform");
+        uniform_textured_ = gl.GetUniformLocation(program_, "textured");
 
         // The original's own cube: eight corners, one colour each, and
         // twelve triangles indexing them.
-        static const float kVertices[] = {
+        static const float kCorners[] = {
             0.5f,  0.5f,  0.5f,  -0.5f, 0.5f,  0.5f,  -0.5f, -0.5f, 0.5f,  0.5f,  -0.5f, 0.5f,
             0.5f,  0.5f,  -0.5f, -0.5f, 0.5f,  -0.5f, -0.5f, -0.5f, -0.5f, 0.5f,  -0.5f, -0.5f,
         };
@@ -160,26 +180,69 @@ class SpinningCube {
             1.0f, 0.4f, 0.6f, 1.0f, 0.9f, 0.2f, 0.7f, 0.3f, 0.8f, 0.5f, 0.3f, 1.0f,
             0.2f, 0.6f, 1.0f, 0.6f, 1.0f, 0.4f, 0.6f, 0.8f, 0.8f, 0.4f, 0.8f, 0.8f,
         };
-        static const GLushort kIndices[] = {
-            0, 1, 2, 2, 3, 0,  // front
-            0, 3, 7, 7, 4, 0,  // right
-            2, 6, 7, 7, 3, 2,  // bottom
-            1, 5, 6, 6, 2, 1,  // left
-            4, 7, 6, 6, 5, 4,  // back
-            5, 1, 0, 0, 4, 5,  // top
+        // The same twelve triangles, as six quads of corner indices. A face
+        // needs corners of its own to carry its own texture coordinates,
+        // so each quad becomes four vertices, keeping the corners' colours.
+        static const int kFaces[6][4] = {
+            {0, 1, 2, 3},  // front
+            {0, 3, 7, 4},  // right
+            {2, 6, 7, 3},  // bottom
+            {1, 5, 6, 2},  // left
+            {4, 7, 6, 5},  // back
+            {5, 1, 0, 4},  // top
         };
+        // Image row 0 is the top of the stud, and GL puts it at t = 0.
+        static const float kUv[4][2] = {{1, 0}, {0, 0}, {0, 1}, {1, 1}};
+        float vertices[24 * 3];
+        float colors[24 * 3];
+        float uvs[24 * 2];
+        GLushort indices[36];
+        for (int f = 0; f < 6; ++f) {
+            for (int c = 0; c < 4; ++c) {
+                const int v = f * 4 + c;
+                for (int k = 0; k < 3; ++k) {
+                    vertices[v * 3 + k] = kCorners[kFaces[f][c] * 3 + k];
+                    colors[v * 3 + k] = kColors[kFaces[f][c] * 3 + k];
+                }
+                uvs[v * 2] = kUv[c][0];
+                uvs[v * 2 + 1] = kUv[c][1];
+            }
+            static const int kQuad[6] = {0, 1, 2, 2, 3, 0};
+            for (int i = 0; i < 6; ++i) indices[f * 6 + i] = static_cast<GLushort>(f * 4 + kQuad[i]);
+        }
 
         gl.GenBuffers(1, &vbo_);
         gl.BindBuffer(GL_ARRAY_BUFFER, vbo_);
-        gl.BufferData(GL_ARRAY_BUFFER, sizeof kVertices, kVertices, GL_STATIC_DRAW);
+        gl.BufferData(GL_ARRAY_BUFFER, sizeof vertices, vertices, GL_STATIC_DRAW);
 
         gl.GenBuffers(1, &colors_);
         gl.BindBuffer(GL_ARRAY_BUFFER, colors_);
-        gl.BufferData(GL_ARRAY_BUFFER, sizeof kColors, kColors, GL_STATIC_DRAW);
+        gl.BufferData(GL_ARRAY_BUFFER, sizeof colors, colors, GL_STATIC_DRAW);
+
+        gl.GenBuffers(1, &uvs_);
+        gl.BindBuffer(GL_ARRAY_BUFFER, uvs_);
+        gl.BufferData(GL_ARRAY_BUFFER, sizeof uvs, uvs, GL_STATIC_DRAW);
 
         gl.GenBuffers(1, &ebo_);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
-        gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof kIndices, kIndices, GL_STATIC_DRAW);
+        gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof indices, indices, GL_STATIC_DRAW);
+
+        textured_ = face != nullptr && face_size > 0 && gl.GenTextures != nullptr &&
+                    gl.BindTexture != nullptr && gl.TexImage2D != nullptr &&
+                    gl.TexParameteri != nullptr && gl.Uniform1i != nullptr;
+        if (textured_) {
+            gl.GenTextures(1, &texture_);
+            gl.BindTexture(GL_TEXTURE_2D, texture_);
+            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, face_size, face_size, 0, GL_LUMINANCE,
+                          GL_UNSIGNED_BYTE, face);
+            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            gl.UseProgram(program_);
+            gl.Uniform1i(gl.GetUniformLocation(program_, "face"), 0);
+            gl.Uniform1i(uniform_textured_, 1);
+        }
 
         gl.Enable(GL_DEPTH_TEST);
         return true;
@@ -217,6 +280,13 @@ class SpinningCube {
         gl.BindBuffer(GL_ARRAY_BUFFER, colors_);
         gl.VertexAttribPointer(static_cast<GLuint>(attr_color_), 3, GL_FLOAT, GL_FALSE, 0, nullptr);
         gl.EnableVertexAttribArray(static_cast<GLuint>(attr_color_));
+        if (attr_uv_ >= 0) {
+            gl.BindBuffer(GL_ARRAY_BUFFER, uvs_);
+            gl.VertexAttribPointer(static_cast<GLuint>(attr_uv_), 2, GL_FLOAT, GL_FALSE, 0,
+                                   nullptr);
+            gl.EnableVertexAttribArray(static_cast<GLuint>(attr_uv_));
+        }
+        if (textured_) gl.BindTexture(GL_TEXTURE_2D, texture_);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
         gl.DrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, nullptr);
     }
@@ -240,10 +310,15 @@ class SpinningCube {
     GLuint program_ = 0;
     GLuint vbo_ = 0;
     GLuint colors_ = 0;
+    GLuint uvs_ = 0;
     GLuint ebo_ = 0;
+    GLuint texture_ = 0;
+    bool textured_ = false;
     GLint attr_pos_ = 0;
     GLint attr_color_ = 0;
+    GLint attr_uv_ = -1;
     GLint uniform_transform_ = -1;
+    GLint uniform_textured_ = -1;
 };
 
 }  // namespace stud::tools
