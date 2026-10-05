@@ -4334,8 +4334,13 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
                 a[1], static_cast<uint32_t>(a[2]), out, out_len);
         case CallId::VkDestroyPipelineCache:
             return stud::render_host::vk_destroy_pipeline_cache(a[1]);
-        case CallId::VkCreateImage:
-            return stud::render_host::vk_create_image(in, out, out_len);
+        // a[1], when set, is the handle the client chose; the call is then
+        // reply-free, and this is the only place a failure can be seen.
+        case CallId::VkCreateImage: {
+            const uint64_t r = stud::render_host::vk_create_image(in, out, out_len, a[1]);
+            if (a[1] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkGetImageMemoryRequirements:
             return stud::render_host::vk_get_image_memory_requirements(a[1], out, out_len);
         case CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
@@ -4372,8 +4377,11 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             report_reply_free_failure(hdr.call_id, r);
             return r;
         }
-        case CallId::VkCreateImageView:
-            return stud::render_host::vk_create_image_view(in, out, out_len);
+        case CallId::VkCreateImageView: {
+            const uint64_t r = stud::render_host::vk_create_image_view(in, out, out_len, a[1]);
+            if (a[1] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkCreateShaderModule:
             return stud::render_host::vk_create_shader_module(in, out, out_len);
         case CallId::VkDestroyHandle:
@@ -4489,8 +4497,12 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             return stud::render_host::vk_allocate_memory(a[1], static_cast<uint32_t>(a[2]), in,
                                                           static_cast<uint32_t>(a[3]), out, out_len,
                                                           a[4]);
-        case CallId::VkBindImageMemory:
-            return stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
+        // Reply-free from the client, like VkBindBufferMemory.
+        case CallId::VkBindImageMemory: {
+            const uint64_t r = stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkFreeMemory:
             return stud::render_host::vk_free_memory(a[1]);
         case CallId::VkMapMemory:

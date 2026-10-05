@@ -2111,6 +2111,24 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyPipelineCache(VkDevice device,
                                             0, nullptr);
 }
 
+}  // extern "C"
+
+namespace {
+
+// A handle for an object this process creates without waiting for render-
+// host (an image or an image view). Numbered here, in the range render-host
+// recognises as the client's own, and translated there to the real handle
+// on every use; see render-host's real_handle().
+uint64_t client_handle() {
+    static std::atomic<uint64_t> next{1};
+    constexpr uint64_t kClientHandleTag = 0xFFFD000000000000ull;
+    return kClientHandleTag | next.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
+extern "C" {
+
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImage(VkDevice device,
                                                    const VkImageCreateInfo* pCreateInfo,
                                                    const VkAllocationCallbacks*, VkImage* pImage) {
@@ -2160,16 +2178,12 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImage(VkDevice device,
     }
     in.insert(in.end(), chain.begin(), chain.end());
 
-    uint64_t a[8] = {to_u64(device)};
-    uint64_t handle = 0;
-    uint32_t written = 0;
-    uint64_t r = stud::render_client::connection().call(CallId::VkCreateImage, a, in.data(),
-                                                         static_cast<uint32_t>(in.size()), &handle,
-                                                         sizeof(handle), &written);
-    VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
-    if (result != VK_SUCCESS || written < sizeof(handle)) {
-        return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
-    }
+    // Reply-free, under a handle of our own: render-host creates it in
+    // stream order and reports a failure in its own log.
+    const uint64_t handle = client_handle();
+    uint64_t a[8] = {to_u64(device), handle};
+    stud::render_client::connection().call_void(CallId::VkCreateImage, a, in.data(),
+                                                 static_cast<uint32_t>(in.size()));
     *pImage = from_u64<VkImage>(handle);
     // `in` IS the create parameters, already serialised for the host and
     // carrying the substituted format rather than the requested one, which
@@ -2358,10 +2372,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindImageMemory(VkDevice device, VkImage image,
                                                        VkDeviceMemory memory,
                                                        VkDeviceSize memoryOffset) {
+    // Reply-free, as vkBindBufferMemory: its only failures are out of
+    // memory, which render-host reports in its own log.
     uint64_t a[8] = {to_u64(device), to_u64(image), to_u64(memory), memoryOffset};
-    uint64_t r = stud::render_client::connection().call(CallId::VkBindImageMemory, a, nullptr, 0,
-                                                         nullptr, 0, nullptr);
-    return static_cast<VkResult>(static_cast<int32_t>(r));
+    stud::render_client::connection().call_void(CallId::VkBindImageMemory, a);
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory memory,
@@ -2948,16 +2963,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateImageView(VkDevice device,
     std::memcpy(in.data(), &image, sizeof(image));
     std::memcpy(in.data() + sizeof(image), q, sizeof(q));
 
-    uint64_t a[8] = {to_u64(device)};
-    uint64_t handle = 0;
-    uint32_t written = 0;
-    uint64_t r = stud::render_client::connection().call(CallId::VkCreateImageView, a, in.data(),
-                                                         static_cast<uint32_t>(in.size()), &handle,
-                                                         sizeof(handle), &written);
-    VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
-    if (result != VK_SUCCESS || written < sizeof(handle)) {
-        return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
-    }
+    // Reply-free, under a handle of our own, as vkCreateImage.
+    const uint64_t handle = client_handle();
+    uint64_t a[8] = {to_u64(device), handle};
+    stud::render_client::connection().call_void(CallId::VkCreateImageView, a, in.data(),
+                                                 static_cast<uint32_t>(in.size()));
     *pView = from_u64<VkImageView>(handle);
     return VK_SUCCESS;
 }

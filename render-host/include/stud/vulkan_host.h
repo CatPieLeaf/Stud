@@ -131,7 +131,7 @@ uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vect
                                      uint32_t* out_len);
 uint64_t vk_destroy_pipeline_cache(uint64_t cache);
 uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                          uint32_t* out_len);
+                          uint32_t* out_len, uint64_t client_handle = 0);
 uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& out,
                                            uint32_t* out_len);
 uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, uint64_t surface,
@@ -215,7 +215,7 @@ uint64_t vk_get_buffer_memory_requirements(uint64_t buffer, std::vector<uint8_t>
                                             uint32_t* out_len);
 uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset);
 uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                               uint32_t* out_len);
+                               uint32_t* out_len, uint64_t client_handle = 0);
 uint64_t vk_create_shader_module(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                   uint32_t* out_len);
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle);

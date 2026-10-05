@@ -2630,8 +2630,56 @@ bool is_budgeted_texture(const VkImageCreateInfo& ci) {
            ci.tiling == VK_IMAGE_TILING_OPTIMAL && ci.samples == VK_SAMPLE_COUNT_1_BIT;
 }
 
+// Handles the client chose itself, for objects it creates without waiting
+// for this process (vkCreateImage, vkCreateImageView), and the real handle
+// each one stands for.
+//
+// Those two were the blocking calls left on the engine's frame while a
+// place streams textures in: each waited behind the whole queued stream
+// for a handle the engine needed at once. The client now numbers them in a
+// range of its own, tagged in the top bits as kLazyTag is, and every place
+// that takes an image or view off the wire passes it through real_handle().
+// An untagged value -- a swapchain image, anything created the ordinary
+// way -- passes through unchanged.
+constexpr uint64_t kClientHandleTag = 0xFFFD000000000000ull;
+constexpr uint64_t kHandleTagMask = 0xFFFF000000000000ull;
+std::mutex& client_handle_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<uint64_t, uint64_t>& client_handles() {
+    static std::unordered_map<uint64_t, uint64_t> m;
+    return m;
+}
+std::atomic<bool> g_any_client_handles{false};
+
+uint64_t real_handle(uint64_t v) {
+    if ((v & kHandleTagMask) != kClientHandleTag) return v;
+    std::lock_guard<std::mutex> lock(client_handle_mutex());
+    const auto it = client_handles().find(v);
+    // Its creation failed (reported then); null is all there is to give.
+    return it != client_handles().end() ? it->second : 0;
+}
+
+void bind_client_handle(uint64_t client, uint64_t real) {
+    std::lock_guard<std::mutex> lock(client_handle_mutex());
+    client_handles()[client] = real;
+    g_any_client_handles.store(true, std::memory_order_relaxed);
+}
+
+// The real handle, as the object is destroyed; the client's number with it.
+uint64_t forget_client_handle(uint64_t v) {
+    if ((v & kHandleTagMask) != kClientHandleTag) return v;
+    std::lock_guard<std::mutex> lock(client_handle_mutex());
+    const auto it = client_handles().find(v);
+    if (it == client_handles().end()) return 0;
+    const uint64_t real = it->second;
+    client_handles().erase(it);
+    return real;
+}
+
 uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                          uint32_t* out_len) {
+                          uint32_t* out_len, uint64_t client_handle) {
     Loader& l = loader();
     if (l.vk.vkCreateImage == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -2708,6 +2756,7 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
             to_u64(image),
             Loader::UntransitionedImage{h.format, h.extent_width, h.extent_height, h.usage});
     }
+    if (client_handle != 0) bind_client_handle(client_handle, to_u64(image));
     fr::record(fr::Event::Note, to_u64(image), h.format, h.usage);
     // The handle, named, so a validation message about an image can be
     // tied back to what that image IS. A report says only
@@ -2719,11 +2768,16 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
                     h.extent_height, h.usage);
         std::fflush(stdout);
     }
+    if (client_handle != 0) {
+        *out_len = 0;
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
     return write_handle(to_u64(image), out, out_len);
 }
 
 uint64_t vk_get_image_memory_requirements(uint64_t image, std::vector<uint8_t>& out,
                                            uint32_t* out_len) {
+    image = real_handle(image);
     Loader& l = loader();
     if (l.vk.vkGetImageMemoryRequirements == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -3643,6 +3697,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
 }
 
 uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) {
+    image = real_handle(image);
     Loader& l = loader();
     if (l.vk.vkBindImageMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -6738,13 +6793,14 @@ uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset
 }
 
 uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                               uint32_t* out_len) {
+                               uint32_t* out_len, uint64_t client_handle) {
     Loader& l = loader();
     if (l.vk.vkCreateImageView == nullptr || in.size() < sizeof(uint32_t) * 12 + sizeof(uint64_t)) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     uint64_t image = 0;
     std::memcpy(&image, in.data(), sizeof(image));
+    image = real_handle(image);
     uint32_t q[12] = {};
     std::memcpy(q, in.data() + sizeof(image), sizeof(q));
 
@@ -6763,6 +6819,11 @@ uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     if (l.swapchain_images.count(image) != 0) l.swapchain_views.insert(to_u64(view));
     l.view_image[to_u64(view)] = image;
+    if (client_handle != 0) {
+        bind_client_handle(client_handle, to_u64(view));
+        *out_len = 0;
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
     return write_handle(to_u64(view), out, out_len);
 }
 
@@ -7326,6 +7387,11 @@ void destroy_device(Loader& l, uint64_t handle) {
 }
 
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
+    if (kind == static_cast<uint32_t>(vk_wire::DestroyKind::Image) ||
+        kind == static_cast<uint32_t>(vk_wire::DestroyKind::ImageView)) {
+        handle = forget_client_handle(handle);
+        if (handle == 0) return 0;
+    }
     Loader& l = loader();
     using K = vk_wire::DestroyKind;
     switch (static_cast<K>(kind)) {
@@ -7695,7 +7761,7 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
     ci.renderPass = from_u64<VkRenderPass>(r.u64());
     const uint32_t n = r.u32();
     std::vector<VkImageView> views(n);
-    for (auto& v : views) v = from_u64<VkImageView>(r.u64());
+    for (auto& v : views) v = from_u64<VkImageView>(real_handle(r.u64()));
     ci.attachmentCount = n;
     ci.pAttachments = views.empty() ? nullptr : views.data();
     ci.width = r.u32();
@@ -8026,6 +8092,29 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
     const VkDescriptorSet resolved = resolve_descriptor_set(set);
     if (resolved == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     std::vector<uint8_t> data(in.begin(), in.end());
+    // Views the client numbered itself, inside the blob: a VkDescriptorImageInfo
+    // is {sampler, imageView, layout}, so the view is 8 bytes in.
+    if (g_any_client_handles.load(std::memory_order_relaxed)) {
+        auto it = l.template_entries.find(tmpl);
+        if (it != l.template_entries.end()) {
+            for (const auto& e : it->second) {
+                const VkDescriptorType t = e.descriptorType;
+                if (t != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER &&
+                    t != VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE && t != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE &&
+                    t != VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT) {
+                    continue;
+                }
+                for (uint32_t k = 0; k < e.descriptorCount; ++k) {
+                    const size_t at = e.offset + static_cast<size_t>(e.stride) * k + sizeof(uint64_t);
+                    if (at + sizeof(uint64_t) > data.size()) break;
+                    uint64_t v = 0;
+                    std::memcpy(&v, data.data() + at, sizeof(v));
+                    v = real_handle(v);
+                    std::memcpy(data.data() + at, &v, sizeof(v));
+                }
+            }
+        }
+    }
     l.update_descriptor_set_with_template(l.device, resolved,
                                            from_u64<VkDescriptorUpdateTemplate>(tmpl),
                                            data.data());
@@ -10609,7 +10698,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
         case K::CopyBufferToImage: {
             if (l.vk.vkCmdCopyBufferToImage == nullptr) break;
             VkBuffer src = from_u64<VkBuffer>(r.u64());
-            VkImage dst = from_u64<VkImage>(r.u64());
+            VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t layout = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkBufferImageCopy> regions(n);
@@ -10634,7 +10723,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
         }
         case K::CopyImageToBuffer: {
             if (l.vk.vkCmdCopyImageToBuffer == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
+            VkImage src = from_u64<VkImage>(real_handle(r.u64()));
             const uint64_t dst_handle = r.u64();
             VkBuffer dst = from_u64<VkBuffer>(dst_handle);
             const uint32_t layout = r.u32();
@@ -10689,9 +10778,9 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
         }
         case K::CopyImage: {
             if (l.vk.vkCmdCopyImage == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
+            VkImage src = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t sl = r.u32();
-            VkImage dst = from_u64<VkImage>(r.u64());
+            VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t dl = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkImageCopy> regions(n);
@@ -10721,9 +10810,9 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
         }
         case K::BlitImage: {
             if (l.vk.vkCmdBlitImage == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
+            VkImage src = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t sl = r.u32();
-            VkImage dst = from_u64<VkImage>(r.u64());
+            VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t dl = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkImageBlit> regions(n);
@@ -10766,9 +10855,9 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             // Same wire shape as CopyImage: VkImageResolve and VkImageCopy
             // are laid out identically.
             if (l.vk.vkCmdResolveImage == nullptr) break;
-            VkImage src = from_u64<VkImage>(r.u64());
+            VkImage src = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t sl = r.u32();
-            VkImage dst = from_u64<VkImage>(r.u64());
+            VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t dl = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkImageResolve> regions(n);
@@ -11180,7 +11269,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 i.newLayout = static_cast<VkImageLayout>(r.u32());
                 i.srcQueueFamilyIndex = r.u32();
                 i.dstQueueFamilyIndex = r.u32();
-                i.image = from_u64<VkImage>(r.u64());
+                i.image = from_u64<VkImage>(real_handle(r.u64()));
                 i.subresourceRange.aspectMask = r.u32();
                 i.subresourceRange.baseMipLevel = r.u32();
                 i.subresourceRange.levelCount = r.u32();
