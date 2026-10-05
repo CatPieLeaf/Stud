@@ -1002,6 +1002,15 @@ void recentre_after_engine_lock(float& last_x, float& last_y) {
     begin_warp(centre_px, centre_py);
     last_x = to_density_independent(centre_px);
     last_y = to_density_independent(centre_py);
+    // A button held through first person is a drag that began somewhere
+    // else. Its anchor is where the release puts the pointer back, and the
+    // engine's cursor is now in the middle, not there.
+    if (g_drag_anchored) {
+        g_drag_anchor_x = g_pin_x = last_x;
+        g_drag_anchor_y = g_pin_y = last_y;
+        g_drag_anchor_px = g_pin_px = centre_px;
+        g_drag_anchor_py = g_pin_py = centre_py;
+    }
     if (input_trace_enabled()) {
         std::printf("stud: first person ended, the cursor carries on from the middle "
                     "(%.1f,%.1f)\n",
