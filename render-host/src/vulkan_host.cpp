@@ -1391,7 +1391,7 @@ void submitted(const std::shared_ptr<State>& s, uint64_t number) {
 namespace query_share {
 void note_command_pool(uint64_t pool, uint32_t family);
 void note_command_buffers(uint64_t pool, uint32_t level, const std::vector<VkCommandBuffer>& cbs);
-void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count);
+void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count, bool written);
 void finish(VkCommandBuffer cb);
 void forget(VkQueryPool pool);
 }  // namespace query_share
@@ -3066,6 +3066,7 @@ struct Touch {
     VkQueryPool pool;
     uint32_t first;
     uint32_t count;
+    bool written;  // a timestamp written, rather than a reset
 };
 
 struct State {
@@ -3107,13 +3108,13 @@ void note_command_buffers(uint64_t pool, uint32_t level, const std::vector<VkCom
     for (VkCommandBuffer cb : cbs) s.can_copy[to_u64(cb)] = copies;
 }
 
-void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count) {
+void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count, bool written) {
     State& s = state();
     std::lock_guard<std::mutex> lock(s.m);
     const auto p = s.pools.find(to_u64(pool));
     if (p == s.pools.end() || first >= p->second.count) return;
     count = std::min(count, p->second.count - first);
-    s.touched[to_u64(cb)].push_back(Touch{pool, first, count});
+    s.touched[to_u64(cb)].push_back(Touch{pool, first, count, written});
 }
 
 // Called as the command buffer ends: the copy goes last, after everything
@@ -3128,7 +3129,25 @@ void finish(VkCommandBuffer cb) {
         if (t == s.touched.end()) return;
         const auto c = s.can_copy.find(to_u64(cb));
         const bool may = c != s.can_copy.end() && c->second && l.vk.vkCmdCopyQueryPoolResults != nullptr;
+        // What each query was last, in this buffer: written or reset.
+        std::map<std::pair<uint64_t, uint32_t>, bool> last;
         for (const Touch& touch : t->second) {
+            for (uint32_t i = 0; i < touch.count; ++i) {
+                last[{to_u64(touch.pool), touch.first + i}] = touch.written;
+            }
+        }
+        // Runs of neighbouring queries in the same state, one copy each.
+        std::vector<Touch> runs;
+        for (const auto& [key, written] : last) {
+            Touch* run = runs.empty() ? nullptr : &runs.back();
+            if (run != nullptr && to_u64(run->pool) == key.first && run->written == written &&
+                run->first + run->count == key.second) {
+                ++run->count;
+            } else {
+                runs.push_back(Touch{from_u64<VkQueryPool>(key.first), key.second, 1, written});
+            }
+        }
+        for (const Touch& touch : runs) {
             const auto p = s.pools.find(to_u64(touch.pool));
             if (p == s.pools.end()) continue;
             if (may) {
@@ -3142,10 +3161,17 @@ void finish(VkCommandBuffer cb) {
         s.touched.erase(t);
     }
     if (copies.empty()) return;
+    // A timestamp written in this buffer is waited for: without the wait the
+    // copy can run before the GPU has written it and records it as not
+    // available, which the engine then never gets past -- live-caught as
+    // GPU time reading 0.0 ms. One only reset here is never waited for,
+    // since nothing in this buffer will make it available.
     for (const auto& [touch, buffer] : copies) {
+        const VkQueryResultFlags flags = VK_QUERY_RESULT_64_BIT |
+                                         VK_QUERY_RESULT_WITH_AVAILABILITY_BIT |
+                                         (touch.written ? VK_QUERY_RESULT_WAIT_BIT : 0);
         l.vk.vkCmdCopyQueryPoolResults(cb, touch.pool, touch.first, touch.count, buffer,
-                                        touch.first * kSlot, kSlot,
-                                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+                                        touch.first * kSlot, kSlot, flags);
     }
     VkMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -11000,7 +11026,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
             const uint32_t first = r.u32(), count = r.u32();
             l.vk.vkCmdResetQueryPool(cb, pool, first, count);
-            query_share::touch(cb, pool, first, count);
+            query_share::touch(cb, pool, first, count, false);
             break;
         }
         case K::WriteTimestamp: {
@@ -11009,7 +11035,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             VkQueryPool pool = from_u64<VkQueryPool>(r.u64());
             const uint32_t query = r.u32();
             l.vk.vkCmdWriteTimestamp(cb, static_cast<VkPipelineStageFlagBits>(stage), pool, query);
-            query_share::touch(cb, pool, query, 1);
+            query_share::touch(cb, pool, query, 1, true);
             break;
         }
         default:
