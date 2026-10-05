@@ -171,6 +171,17 @@ uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t si
 uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_t n);
 // The page submit completions are published to; see submit_feedback.
 uint64_t vk_share_submit_feedback(uint64_t device, uint64_t id);
+
+// Command buffers replayed on worker threads, one ordered queue per pool;
+// see the definitions.
+namespace replay {
+bool enabled();
+void note_pool(uint64_t cb, uint64_t pool);
+void enqueue_begin(uint64_t cb, uint32_t flags);
+void enqueue_end(uint64_t cb);
+void enqueue_records(const uint8_t* data, size_t size);
+void wait_all();
+}  // namespace replay
 uint64_t vk_unmap_memory(uint64_t memory);
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size);
 uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint32_t capacity,

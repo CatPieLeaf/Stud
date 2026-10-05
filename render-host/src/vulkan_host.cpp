@@ -438,18 +438,15 @@ struct Loader {
     std::set<uint64_t> swapchain_views;
     std::set<uint64_t> swapchain_framebuffers;
 
-    // Whether the command buffer currently being recorded is inside a
-    // render pass that targets the screen, and what happens in there.
-    bool in_screen_pass = false;
-    uint64_t screen_draws = 0;
-    // Draws in the render pass currently being recorded, whichever pass
-    // that is. The screen counters only ever described the final
-    // composite; a scene that goes black while the UI still works needs
-    // the count for the pass that renders the scene.
-    uint64_t pass_draws = 0;
-    int traced_pass = -1;
-    uint64_t screen_binds = 0;
 };
+
+// Guards Loader::untransitioned_images: command buffers are replayed on
+// several threads at once (see replay), and both the barrier fix-up and the
+// render-pass bookkeeping erase from it while they record.
+std::mutex& untransitioned_mutex() {
+    static std::mutex m;
+    return m;
+}
 
 Loader& loader() {
     static Loader l;
@@ -1839,7 +1836,10 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         l.swapchain_images.clear();
         l.swapchain_views.clear();
         l.swapchain_image_list.clear();
-        l.untransitioned_images.clear();
+        {
+            std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
+            l.untransitioned_images.clear();
+        }
         l.view_image.clear();
         l.framebuffer_images.clear();
     }
@@ -2638,9 +2638,12 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     }
     // Brand new, so it is in UNDEFINED until a barrier says otherwise.
     // See Loader::untransitioned_images.
-    l.untransitioned_images.insert_or_assign(
-        to_u64(image),
-        Loader::UntransitionedImage{h.format, h.extent_width, h.extent_height, h.usage});
+    {
+        std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
+        l.untransitioned_images.insert_or_assign(
+            to_u64(image),
+            Loader::UntransitionedImage{h.format, h.extent_width, h.extent_height, h.usage});
+    }
     fr::record(fr::Event::Note, to_u64(image), h.format, h.usage);
     // The handle, named, so a validation message about an image can be
     // tied back to what that image IS. A report says only
@@ -3925,6 +3928,7 @@ void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* d
     // undefined -- so the corrected barrier throws away nothing the
     // engine could legally have relied on, and it is what the engine
     // would have written if its own tracking had been right.
+    std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
     for (auto& b : img) {
         if (b.image == VK_NULL_HANDLE) continue;
         if (b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
@@ -6497,7 +6501,10 @@ void destroy_device(Loader& l, uint64_t handle) {
         l.mapped_size.clear();
         g_swapchain_extents.clear();
         l.retired_images.clear();
-        l.untransitioned_images.clear();
+        {
+            std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
+            l.untransitioned_images.clear();
+        }
         // The loss, if there was one, belonged to the device that
         // has just gone.
         g_device_lost.store(false, std::memory_order_relaxed);
@@ -6533,7 +6540,10 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             // Same reasoning, and the same handle recycling: a stale
             // entry here would let a NEW image inherit the old one's
             // "never transitioned" state, or lose its own.
-            l.untransitioned_images.erase(handle);
+            {
+                std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
+                l.untransitioned_images.erase(handle);
+            }
             if (l.vk.vkDestroyImage) l.vk.vkDestroyImage(l.device, from_u64<VkImage>(handle), nullptr);
             // A redirected image's own memory goes with it.
             if (auto em = redirected_images().find(handle); em != redirected_images().end()) {
@@ -7444,6 +7454,8 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t h = to_u64(buffers[i]);
         std::memcpy(out.data() + i * sizeof(h), &h, sizeof(h));
+        // Its pool decides which replay queue records it; see replay.
+        replay::note_pool(h, pool);
     }
     *out_len = static_cast<uint32_t>(out.size());
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
@@ -8997,6 +9009,8 @@ void report_holdings() {
             // cannot. The first fix was verified on a short single-device
             // run and the error came back during real play on different
             // images, so the difference matters.
+            {
+            std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
             if (!l.untransitioned_images.empty()) {
                 // Grouped by what they are, because "74 handles" is not a
                 // finding and "74 of one 1024x1024 sampled image" is.
@@ -9026,6 +9040,7 @@ void report_holdings() {
                 }
                 std::printf("\n");
                 std::fflush(stdout);
+            }
             }
             std::printf("stud-render-host: still held after %llu presents: %zu shared mappings, "
                         "%zu buffer bindings, %zu upscale chains, %zu retired chains, "
@@ -9953,6 +9968,23 @@ const char* engine_command_marker(uint32_t kind) {
 // One entry point for the whole vkCmd* family. Every member takes a
 // command buffer, returns nothing, and differs only in payload, so
 // they share a call id and, on the client side, the reply-free path.
+// Whether the command buffer currently being recorded is inside a render
+// pass that targets the screen, and what happens in there. Per thread,
+// because command buffers are replayed on several threads at once (see
+// replay) and each thread records its own buffers start to end.
+struct PassState {
+    bool in_screen_pass = false;
+    uint64_t screen_draws = 0;
+    // Draws in the render pass currently being recorded, whichever pass
+    // that is. The screen counters only ever described the final
+    // composite; a scene that goes black while the UI still works needs
+    // the count for the pass that renders the scene.
+    uint64_t pass_draws = 0;
+    int traced_pass = -1;
+    uint64_t screen_binds = 0;
+};
+thread_local PassState pass_state;
+
 uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
     STUD_ZONE();
     Loader& l = loader();
@@ -10011,8 +10043,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     // window is black.
     static const bool cmd_stats = std::getenv("STUD_VK_CMD_STATS") != nullptr;
     if (cmd_stats) {
-        static std::map<uint32_t, uint64_t> counts;
-        static int since_report = 0;
+        thread_local std::map<uint32_t, uint64_t> counts;
+        thread_local int since_report = 0;
         ++counts[kind];
         if (++since_report >= 2000) {
             since_report = 0;
@@ -10033,11 +10065,11 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // into a 1x1 or zero-sized area looks exactly like a black
             // screen from the outside.
             const bool trace_passes = vk_trace_passes_enabled();
-            static int pass_no = 0;
+            thread_local int pass_no = 0;
             // Re-arm on every resize: the interesting passes are the ones
             // recorded just after the window changed, not the first 40 of
             // the process's life.
-            static uint32_t traced_generation = 0;
+            thread_local uint32_t traced_generation = 0;
             const uint32_t gen = g_resize_generation.load(std::memory_order_relaxed);
             if (gen != traced_generation) {
                 traced_generation = gen;
@@ -10064,6 +10096,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             const uint32_t contents = r.u32();
             // The pass gives its attachments a layout; see
             // Loader::framebuffer_images.
+            {
+            std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
             if (!l.untransitioned_images.empty()) {
                 const auto attached = l.framebuffer_images.find(to_u64(bi.framebuffer));
                 if (attached != l.framebuffer_images.end()) {
@@ -10071,6 +10105,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                         l.untransitioned_images.erase(image);
                     }
                 }
+            }
             }
             // STUD_VK_FORCE_CLEAR=1 paints every screen-targeting render
             // pass bright magenta. If the window turns magenta, buffers
@@ -10093,7 +10128,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 bi.pClearValues = clears.data();
             }
             if (l.swapchain_framebuffers.count(to_u64(bi.framebuffer)) != 0) {
-                static int to_screen = 0;
+                thread_local int to_screen = 0;
                 // Three at the start prove the engine is drawing to the
                 // screen at all. After that it is one line per 200
                 // render passes forever, which in a real game is 183 of
@@ -10116,32 +10151,32 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 std::fflush(stdout);
             }
             ++pass_no;
-            l.pass_draws = 0;
-            l.traced_pass = trace_passes && pass_no <= 40 ? pass_no : -1;
-            l.in_screen_pass = l.swapchain_framebuffers.count(to_u64(bi.framebuffer)) != 0;
+            pass_state.pass_draws = 0;
+            pass_state.traced_pass = trace_passes && pass_no <= 40 ? pass_no : -1;
+            pass_state.in_screen_pass = l.swapchain_framebuffers.count(to_u64(bi.framebuffer)) != 0;
             l.vk.vkCmdBeginRenderPass(cb, &bi, static_cast<VkSubpassContents>(contents));
             break;
         }
         case K::EndRenderPass:
-            if (l.traced_pass >= 0) {
-                std::printf("stud-render-host: PASS#%d ended: %llu draw(s)\n", l.traced_pass - 1,
-                            static_cast<unsigned long long>(l.pass_draws));
+            if (pass_state.traced_pass >= 0) {
+                std::printf("stud-render-host: PASS#%d ended: %llu draw(s)\n", pass_state.traced_pass - 1,
+                            static_cast<unsigned long long>(pass_state.pass_draws));
                 std::fflush(stdout);
-                l.traced_pass = -1;
+                pass_state.traced_pass = -1;
             }
-            if (l.in_screen_pass) {
+            if (pass_state.in_screen_pass) {
                 const bool trace = vk_trace_passes_enabled();
                 static int reported = 0;
                 if (trace && reported < 12) {
                     std::printf("stud-render-host: SCREEN PASS ended: %llu draw(s), %llu bind(s)\n",
-                                static_cast<unsigned long long>(l.screen_draws),
-                                static_cast<unsigned long long>(l.screen_binds));
+                                static_cast<unsigned long long>(pass_state.screen_draws),
+                                static_cast<unsigned long long>(pass_state.screen_binds));
                     std::fflush(stdout);
                     ++reported;
                 }
-                l.in_screen_pass = false;
-                l.screen_draws = 0;
-                l.screen_binds = 0;
+                pass_state.in_screen_pass = false;
+                pass_state.screen_draws = 0;
+                pass_state.screen_binds = 0;
             }
             if (l.vk.vkCmdEndRenderPass) l.vk.vkCmdEndRenderPass(cb);
             break;
@@ -10153,7 +10188,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             break;
         }
         case K::BindDescriptorSets: {
-            if (l.in_screen_pass) ++l.screen_binds;
+            if (pass_state.in_screen_pass) ++pass_state.screen_binds;
             if (l.vk.vkCmdBindDescriptorSets == nullptr) break;
             const uint32_t bp = r.u32();
             VkPipelineLayout layout = from_u64<VkPipelineLayout>(r.u64());
@@ -10193,16 +10228,16 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             break;
         }
         case K::Draw: {
-            ++l.pass_draws;
-            if (l.in_screen_pass) ++l.screen_draws;
+            ++pass_state.pass_draws;
+            if (pass_state.in_screen_pass) ++pass_state.screen_draws;
             if (l.vk.vkCmdDraw == nullptr) break;
             const uint32_t vc = r.u32(), ic = r.u32(), fv = r.u32(), fi = r.u32();
             l.vk.vkCmdDraw(cb, vc, ic, fv, fi);
             break;
         }
         case K::DrawIndexed: {
-            ++l.pass_draws;
-            if (l.in_screen_pass) ++l.screen_draws;
+            ++pass_state.pass_draws;
+            if (pass_state.in_screen_pass) ++pass_state.screen_draws;
             if (l.vk.vkCmdDrawIndexed == nullptr) break;
             const uint32_t xc = r.u32(), ic = r.u32(), fx = r.u32();
             const int32_t vo = static_cast<int32_t>(r.u32());
@@ -10339,8 +10374,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 // decided that image was dead while the engine still
                 // thought otherwise, and then a real layout transition
                 // is being silently thrown away, which is Stud's bug.
-                static uint64_t dropped_null = 0;
-                static uint64_t dropped_retired = 0;
+                static std::atomic<uint64_t> dropped_null = 0;
+                static std::atomic<uint64_t> dropped_retired = 0;
                 for (const VkImageMemoryBarrier& b : img) {
                     if (b.image == VK_NULL_HANDLE) {
                         ++dropped_null;
@@ -10383,20 +10418,20 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                                          }),
                           img.end());
                 if (img.size() != before) {
-                    static uint64_t dropped = 0;
+                    static std::atomic<uint64_t> dropped = 0;
                     dropped += before - img.size();
                     // Armed by default this wrote a line every 64 drops
                     // 2.1 million of them in one real session. It is
                     // investigation output; it says so now.
                     static const bool trace = std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr;
                     static uint64_t announced = 0;
-                    if (trace && (dropped >= announced + 256 || announced == 0)) {
-                        announced = dropped;
+                    if (trace && (dropped.load() >= announced + 256 || announced == 0)) {
+                        announced = dropped.load();
                         std::printf("stud-render-host: dropped %llu image barrier(s): %llu with "
                                     "no image, %llu against a retired one\n",
-                                    static_cast<unsigned long long>(dropped),
-                                    static_cast<unsigned long long>(dropped_null),
-                                    static_cast<unsigned long long>(dropped_retired));
+                                    static_cast<unsigned long long>(dropped.load()),
+                                    static_cast<unsigned long long>(dropped_null.load()),
+                                    static_cast<unsigned long long>(dropped_retired.load()));
                         std::fflush(stdout);
                     }
                 }
@@ -10473,5 +10508,209 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     }
     return 0;
 }
+
+// Command buffers recorded on several threads at once.
+//
+// The engine records its command buffers on several threads, and this
+// process used to replay every one of them on the one thread that reads
+// the engine's connection, in arrival order. Each command buffer now
+// arrives whole (the client sends it at vkEndCommandBuffer), so its
+// replay -- Begin, the commands, End -- runs on a worker, while the
+// connection thread goes on reading.
+//
+// Vulkan's rule decides the grain: two command buffers from the same pool
+// may not be recorded at the same time, so each pool has one ordered queue,
+// and different pools run in parallel. Everything else is ordered by
+// waiting: any Vulkan request other than the few that cannot touch what a
+// worker touches (descriptor updates and allocations, mapped-memory
+// writes) first waits until every queue is empty, so a submit, a reset, a
+// destroy or a query sees exactly the state it always did.
+//
+// STUD_VK_SERIAL_REPLAY=1 replays inline on the connection thread as
+// before, for an A/B.
+namespace replay {
+
+namespace {
+
+struct Task {
+    enum class Kind { Begin, Records, End } kind = Kind::Records;
+    uint64_t cb = 0;
+    uint32_t flags = 0;
+    std::vector<uint8_t> bytes;
+};
+
+struct PoolQueue {
+    std::deque<Task> tasks;
+    bool owned = false;  // a worker is draining it
+};
+
+struct State {
+    std::mutex m;
+    std::condition_variable work;
+    std::condition_variable idle;
+    std::unordered_map<uint64_t, PoolQueue> queues;  // by pool
+    std::deque<uint64_t> ready;                      // pools waiting for a worker
+    std::unordered_map<uint64_t, uint64_t> pool_of;  // command buffer -> pool
+    size_t outstanding = 0;                          // tasks not yet finished
+    unsigned workers = 0;
+    unsigned busy = 0;
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+void report_failure(const char* what, uint64_t r) {
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) return;
+    static std::atomic<bool> said{false};
+    if (said.exchange(true)) return;
+    std::printf("stud-render-host: %s failed (%d) on a replay worker\n", what,
+                static_cast<int>(static_cast<int32_t>(r)));
+    std::fflush(stdout);
+}
+
+void run(const Task& t) {
+    switch (t.kind) {
+        case Task::Kind::Begin:
+            report_failure("vkBeginCommandBuffer", vk_begin_command_buffer(t.cb, t.flags));
+            break;
+        case Task::Kind::End:
+            report_failure("vkEndCommandBuffer", vk_end_command_buffer(t.cb));
+            break;
+        case Task::Kind::Records: {
+            size_t off = 0;
+            const size_t n = t.bytes.size();
+            while (off + 16 <= n) {
+                uint64_t cb = 0;
+                uint32_t kind = 0;
+                uint32_t len = 0;
+                std::memcpy(&cb, t.bytes.data() + off, sizeof(cb));
+                std::memcpy(&kind, t.bytes.data() + off + 8, sizeof(kind));
+                std::memcpy(&len, t.bytes.data() + off + 12, sizeof(len));
+                off += 16;
+                if (off + len > n) break;
+                vk_cmd_record(cb, kind, t.bytes.data() + off, len);
+                off += len;
+            }
+            break;
+        }
+    }
+}
+
+void worker() {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    for (;;) {
+        s.work.wait(lock, [&s] { return !s.ready.empty(); });
+        const uint64_t pool = s.ready.front();
+        s.ready.pop_front();
+        ++s.busy;
+        PoolQueue& q = s.queues[pool];
+        while (!q.tasks.empty()) {
+            Task t = std::move(q.tasks.front());
+            q.tasks.pop_front();
+            lock.unlock();
+            run(t);
+            lock.lock();
+            --s.outstanding;
+        }
+        q.owned = false;
+        --s.busy;
+        if (s.outstanding == 0) s.idle.notify_all();
+    }
+}
+
+uint64_t pool_for(State& s, uint64_t cb) {
+    const auto it = s.pool_of.find(cb);
+    // Not one this process allocated: on its own, which is still ordered.
+    return it != s.pool_of.end() ? it->second : cb;
+}
+
+// Called with the lock held.
+void enqueue_locked(State& s, Task t) {
+    const uint64_t pool = pool_for(s, t.cb);
+    PoolQueue& q = s.queues[pool];
+    q.tasks.push_back(std::move(t));
+    ++s.outstanding;
+    if (q.owned) return;
+    q.owned = true;
+    s.ready.push_back(pool);
+    // As many workers as pools that are ready at once, never more than the
+    // machine has threads to run them on.
+    const unsigned limit = std::max(1u, std::thread::hardware_concurrency());
+    if (s.busy + s.ready.size() > s.workers && s.workers < limit) {
+        ++s.workers;
+        std::thread(worker).detach();
+    }
+    s.work.notify_one();
+}
+
+}  // namespace
+
+bool enabled() {
+    static const bool on = std::getenv("STUD_VK_SERIAL_REPLAY") == nullptr;
+    return on;
+}
+
+void note_pool(uint64_t cb, uint64_t pool) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.pool_of[cb] = pool;
+}
+
+void enqueue_begin(uint64_t cb, uint32_t flags) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    Task t;
+    t.kind = Task::Kind::Begin;
+    t.cb = cb;
+    t.flags = flags;
+    enqueue_locked(s, std::move(t));
+}
+
+void enqueue_end(uint64_t cb) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    Task t;
+    t.kind = Task::Kind::End;
+    t.cb = cb;
+    enqueue_locked(s, std::move(t));
+}
+
+// A batch may hold more than one command buffer's commands (those recorded
+// outside a Begin/End the client tracked); each run goes to its own queue.
+void enqueue_records(const uint8_t* data, size_t size) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    size_t off = 0;
+    while (off + 16 <= size) {
+        const size_t run_start = off;
+        uint64_t run_cb = 0;
+        std::memcpy(&run_cb, data + off, sizeof(run_cb));
+        while (off + 16 <= size) {
+            uint64_t cb = 0;
+            uint32_t len = 0;
+            std::memcpy(&cb, data + off, sizeof(cb));
+            std::memcpy(&len, data + off + 12, sizeof(len));
+            if (cb != run_cb || off + 16 + len > size) break;
+            off += 16 + len;
+        }
+        if (off == run_start) break;  // a malformed record: stop, as the serial path does
+        Task t;
+        t.kind = Task::Kind::Records;
+        t.cb = run_cb;
+        t.bytes.assign(data + run_start, data + off);
+        enqueue_locked(s, std::move(t));
+    }
+}
+
+void wait_all() {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    s.idle.wait(lock, [&s] { return s.outstanding == 0; });
+}
+
+}  // namespace replay
 
 }  // namespace stud::render_host

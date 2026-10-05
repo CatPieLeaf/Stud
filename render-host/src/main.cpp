@@ -4596,6 +4596,44 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                    const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len) {
     const uint64_t* a = hdr.args;
     *out_len = 0;
+    // Command buffers are replayed on workers; see replay in vulkan_host.cpp.
+    // Recorded commands and the reply-free Begin/End that bracket them go
+    // to their pool's queue. The few Vulkan calls that cannot touch what a
+    // worker touches run as they are; every other Vulkan call waits for the
+    // workers first, so it sees what it always saw. Calls that are not
+    // Vulkan -- audio, input, GL -- never wait.
+    if (stud::render_host::replay::enabled()) {
+        const bool reply_free = (hdr.flags & Header::kNoReply) != 0;
+        switch (hdr.call_id) {
+            case CallId::VkCmdRecordBatch:
+                stud::render_host::replay::enqueue_records(in.data(), in.size());
+                return 0;
+            case CallId::VkBeginCommandBuffer:
+                if (reply_free) {
+                    stud::render_host::replay::enqueue_begin(a[0], static_cast<uint32_t>(a[1]));
+                    return 0;
+                }
+                stud::render_host::replay::wait_all();
+                break;
+            case CallId::VkEndCommandBuffer:
+                if (reply_free) {
+                    stud::render_host::replay::enqueue_end(a[0]);
+                    return 0;
+                }
+                stud::render_host::replay::wait_all();
+                break;
+            case CallId::VkAllocateDescriptorSets:
+            case CallId::VkUpdateDescriptorSetWithTemplate:
+            case CallId::VkWriteSharedMappedMemory:
+            case CallId::VkWriteMappedMemory:
+                break;
+            default:
+                if (std::strncmp(stud::render_host::call_id_name(hdr.call_id), "Vk", 2) == 0) {
+                    stud::render_host::replay::wait_all();
+                }
+                break;
+        }
+    }
     // Temporary diagnostic answering a real, concrete question: does
     // the engine ever issue a single real draw/clear call, or does it only
     // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
