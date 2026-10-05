@@ -96,6 +96,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     general->addWidget(serverRegionCheck_);
     smoothZoomCheck_ = new QCheckBox("Smooth zoom", this);
     general->addWidget(smoothZoomCheck_);
+    gamemodeCheck_ = new QCheckBox("GameMode", this);
+    gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
+    general->addWidget(gamemodeCheck_);
 
     general->addStretch();
 
@@ -354,6 +357,7 @@ void SettingsWindow::installResets() {
         upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
     add(smoothZoomCheck_, [this, d] { smoothZoomCheck_->setChecked(d.smooth_zoom); });
+    add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
     add(backgroundFpsSlider_, [this, d] {
         // Unlimited is stored as 0 and lives at the far end of the slider,
         // the same conversion loadFromDisk does.
@@ -429,6 +433,7 @@ void SettingsWindow::loadFromDisk() {
     backgroundFpsSlider_->setValue(fps_position);
     onBackgroundFpsChanged(fps_position);
     mangohudCheck_->setChecked(settings.mangohud);
+    gamemodeCheck_->setChecked(settings.gamemode);
     closeOnLeaveCheck_->setChecked(settings.close_on_leave);
     trayCheck_->setChecked(settings.system_tray);
     serverRegionCheck_->setChecked(settings.server_region_notification);
@@ -698,6 +703,7 @@ void SettingsWindow::onSaveClicked() {
                                   ? stud::config::kBackgroundFpsNoLimit
                                   : backgroundFpsSlider_->value();
     settings.mangohud = mangohudCheck_->isChecked();
+    settings.gamemode = gamemodeCheck_->isChecked();
     settings.close_on_leave = closeOnLeaveCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
     settings.server_region_notification = serverRegionCheck_->isChecked();

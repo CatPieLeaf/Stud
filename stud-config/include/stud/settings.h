@@ -145,6 +145,9 @@ struct StudSettings {
     // process holding the real driver and the real swapchain, on both
     // render paths (on OpenGL through its GL hook).
     bool mangohud = false;
+    // Register the session with Feral GameMode, which switches the system
+    // into its performance settings while it runs. Off unless chosen.
+    bool gamemode = false;
     // Discord rich presence: what game is being played, its thumbnail,
     // and how long for. On by default: it reaches only a Discord client
     // already running on this machine, shows what a Roblox client on any

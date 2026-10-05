@@ -313,6 +313,7 @@ void write_diagnostics() {
         line("hidpi", yes_no(settings.hidpi));
         line("background fps", std::to_string(settings.background_fps));
         line("mangohud", yes_no(settings.mangohud));
+        line("gamemode", yes_no(settings.gamemode));
         line("system tray", yes_no(settings.system_tray));
         line("discord presence", yes_no(settings.discord_rich_presence));
         const std::string apk = stud::paths::stored_apk_path();

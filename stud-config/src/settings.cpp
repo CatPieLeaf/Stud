@@ -142,6 +142,12 @@ StudSettings load_settings(const std::string& path) {
         }
         result.mangohud = doc.at("mangohud").get<bool>();
     }
+    if (doc.contains("gamemode")) {
+        if (!doc.at("gamemode").is_boolean()) {
+            throw SettingsError("stud: config '" + path + "' has a non-boolean \"gamemode\"");
+        }
+        result.gamemode = doc.at("gamemode").get<bool>();
+    }
     if (doc.contains("discordRichPresence")) {
         if (!doc.at("discordRichPresence").is_boolean()) {
             throw SettingsError("stud: config '" + path +
@@ -247,6 +253,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
+    doc["gamemode"] = settings.gamemode;
     doc["discordRichPresence"] = settings.discord_rich_presence;
     doc["discordJoinButton"] = settings.discord_join_button;
     doc["systemTray"] = settings.system_tray;

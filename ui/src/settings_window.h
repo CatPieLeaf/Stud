@@ -111,6 +111,7 @@ private:
     // called on a palette change, hence keeping it around.
     void paintRestartIcon();
     QCheckBox* smoothZoomCheck_;
+    QCheckBox* gamemodeCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;
     QCheckBox* mangohudCheck_;

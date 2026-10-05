@@ -36,6 +36,9 @@
 #include "stud/settings.h"
 
 #include <QApplication>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
 #include <QGuiApplication>
 #include <QPalette>
 #include <QStyleHints>
@@ -472,6 +475,25 @@ void apply_present_layer_environment(QProcessEnvironment& env, const QString& re
     };
     append(QStringLiteral("VK_ADD_LAYER_PATH"), render_host_dir);
     append(QStringLiteral("VK_INSTANCE_LAYERS"), QStringLiteral("VK_LAYER_STUD_present"));
+}
+
+// Registers the session's render-host with Feral GameMode, over its own
+// D-Bus interface rather than through gamemoderun, which would preload a
+// library into this process instead of the one that lives for the session.
+// GameMode watches the pid and lets go by itself when the session ends.
+void register_with_gamemode(qint64 pid) {
+    QDBusInterface gamemode("com.feralinteractive.GameMode", "/com/feralinteractive/GameMode",
+                            "com.feralinteractive.GameMode", QDBusConnection::sessionBus());
+    const QDBusReply<int> reply = gamemode.call("RegisterGame", static_cast<int>(pid));
+    if (!reply.isValid()) {
+        std::printf("stud: GameMode is not available: %s\n",
+                    reply.error().message().toLocal8Bit().constData());
+    } else if (reply.value() != 0) {
+        std::printf("stud: GameMode refused the session (%d)\n", reply.value());
+    } else {
+        std::printf("stud: GameMode is on for this session\n");
+    }
+    std::fflush(stdout);
 }
 
 void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vulkan_render_path) {
@@ -1024,6 +1046,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         return false;
     }
     stud::ui::set_render_host_pid(render_host_pid);
+    if (settings.gamemode) register_with_gamemode(render_host_pid);
     if (!wait_for_render_host_socket()) {
         QMessageBox::critical(nullptr, "Stud",
                                "stud-render-host did not become ready in time (no real Wayland "
