@@ -287,13 +287,18 @@ void vk_set_upscale_output_size(uint32_t width, uint32_t height) {
     g_upscale_output_h.store(height, std::memory_order_relaxed);
 }
 
+// Defined with submit_feedback, whose page it writes.
+void publish_surface_generation();
+
 void vk_set_window_size(uint32_t width, uint32_t height) {
-    if (width != g_window_width.load(std::memory_order_relaxed) ||
-        height != g_window_height.load(std::memory_order_relaxed)) {
-        g_resize_generation.fetch_add(1, std::memory_order_relaxed);
-    }
+    const bool changed = width != g_window_width.load(std::memory_order_relaxed) ||
+                         height != g_window_height.load(std::memory_order_relaxed);
     g_window_width.store(width, std::memory_order_relaxed);
     g_window_height.store(height, std::memory_order_relaxed);
+    if (changed) {
+        g_resize_generation.fetch_add(1, std::memory_order_release);
+        publish_surface_generation();
+    }
 }
 
 namespace {
@@ -1402,6 +1407,23 @@ void submitted(const std::shared_ptr<State>& s, uint64_t number) {
 }
 
 }  // namespace submit_feedback
+
+// The engine asks for the surface's capabilities once a frame, to notice a
+// resize, and as a blocking call that waited behind everything queued
+// ahead of it: 1.5 ms a time, measured. The answer only changes when the
+// window does, so the window's resize count is published here, 128 bytes
+// into the submit-feedback page, as count + 1 (0 means none yet), and the
+// client answers from its last reply until it moves; see
+// vk_get_physical_device_surface_capabilities().
+void publish_surface_generation() {
+    auto s = submit_feedback::current();
+    if (!s) return;
+    std::lock_guard<std::mutex> lock(s->m);
+    if (s->page == nullptr || s->page_length < 136) return;
+    reinterpret_cast<std::atomic<uint64_t>*>(reinterpret_cast<uint8_t*>(s->page) + 128)
+        ->store(uint64_t{g_resize_generation.load(std::memory_order_acquire)} + 1,
+                std::memory_order_release);
+}
 
 // Timestamp results copied by the GPU into a page the client maps; defined
 // with vk_share_query_results().
@@ -2774,6 +2796,10 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkSurfaceCapabilitiesKHR caps{};
+    // Read before the answer is built, so a resize that lands in between
+    // makes the client's copy stale rather than wrongly current.
+    const uint64_t generation =
+        uint64_t{g_resize_generation.load(std::memory_order_acquire)} + 1;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)),
@@ -2849,6 +2875,14 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         g_engine_surface_h.store(caps.currentExtent.height, std::memory_order_relaxed);
     }
     write_pod(caps, out, out_len);
+    // The resize count this answer belongs to, for the client's copy. Only
+    // when the extent is the window's, which changes only with that count;
+    // the driver's own extent can move without it, so that one is never
+    // kept (0).
+    const uint64_t keep_for = (r == VK_SUCCESS && substitute_extent) ? generation : 0;
+    out.resize(*out_len + sizeof(keep_for));
+    std::memcpy(out.data() + *out_len, &keep_for, sizeof(keep_for));
+    *out_len += sizeof(keep_for);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
@@ -3082,10 +3116,13 @@ uint64_t vk_share_submit_feedback(uint64_t device, uint64_t id) {
         unmap_shared_memory(mapping);
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_FEATURE_NOT_PRESENT));
     }
-    std::lock_guard<std::mutex> lock(s->m);
-    s->page = static_cast<std::atomic<uint64_t>*>(mapping.address);
-    s->page_length = mapping.length;
-    s->page->store(s->completed, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(s->m);
+        s->page = static_cast<std::atomic<uint64_t>*>(mapping.address);
+        s->page_length = mapping.length;
+        s->page->store(s->completed, std::memory_order_release);
+    }
+    publish_surface_generation();
     static bool said = false;
     if (!said) {
         said = true;

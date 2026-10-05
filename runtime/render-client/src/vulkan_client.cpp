@@ -2202,24 +2202,49 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
     VkPhysicalDevice physicalDevice, VkSurfaceKHR surface,
     VkSurfaceCapabilitiesKHR* pSurfaceCapabilities) {
     if (pSurfaceCapabilities == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
-    // NOT cached, and that is deliberate. Asking costs a blocking round
-    // trip on the render thread once a frame (1839 calls against 1838
-    // frames, 0.42ms each, measured), which is real -- but the engine is
-    // polling this to NOTICE that the window resized, and render-host owns
-    // the real swapchain and absorbs a compositor resize itself, so the
-    // engine's own acquire keeps returning VK_SUCCESS straight through
-    // one. There is therefore no event on this side that reliably says
-    // "the extent moved". Cached against those hooks it went stale and the
-    // whole image rendered horizontally stretched, live-caught. If this is
-    // ever worth removing, the invalidation has to come from render-host,
-    // which is the only place that knows.
+    // Cached, with render-host saying when it is stale. Asking costs a
+    // blocking round trip on the render thread once a frame -- the engine
+    // polls this to notice a resize -- measured at 1.5 ms a time behind the
+    // queued stream. It used to be uncached because the client has no event
+    // that reliably says the extent moved (a cache against its own hooks went
+    // stale and stretched the picture, live-caught); render-host does, and
+    // publishes its resize count in the submit-feedback page. A reply comes
+    // with the count it was built for, or 0 when it must not be kept.
+    struct CachedCaps {
+        uint64_t physical_device = 0;
+        uint64_t surface = 0;
+        uint64_t generation = 0;
+        VkSurfaceCapabilitiesKHR caps{};
+    };
+    static std::mutex cache_mutex;
+    static CachedCaps cached;
+    {
+        SubmitFeedback& f = submit_feedback();
+        std::lock_guard<std::mutex> feedback_lock(f.m);
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        if (f.page != nullptr && cached.generation != 0 &&
+            cached.physical_device == to_u64(physicalDevice) && cached.surface == to_u64(surface) &&
+            f.page[16].load(std::memory_order_acquire) == cached.generation) {
+            *pSurfaceCapabilities = cached.caps;
+            return VK_SUCCESS;
+        }
+    }
     uint64_t a[8] = {to_u64(physicalDevice), to_u64(surface)};
-    std::vector<uint8_t> out(sizeof(uint32_t) + sizeof(VkSurfaceCapabilitiesKHR));
+    std::vector<uint8_t> out(sizeof(uint32_t) + sizeof(VkSurfaceCapabilitiesKHR) +
+                             sizeof(uint64_t));
     uint32_t written = 0;
     uint64_t r = stud::render_client::connection().call(
         CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR, a, nullptr, 0, out.data(),
         static_cast<uint32_t>(out.size()), &written);
-    read_pod(out.data(), written, *pSurfaceCapabilities, "VkSurfaceCapabilitiesKHR");
+    const uint32_t caps_bytes = written >= out.size() ? written - sizeof(uint64_t) : written;
+    read_pod(out.data(), caps_bytes, *pSurfaceCapabilities, "VkSurfaceCapabilitiesKHR");
+    if (written >= out.size() && static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) {
+        uint64_t generation = 0;
+        std::memcpy(&generation, out.data() + caps_bytes, sizeof(generation));
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        cached = CachedCaps{to_u64(physicalDevice), to_u64(surface), generation,
+                            *pSurfaceCapabilities};
+    }
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
 
