@@ -116,16 +116,17 @@ bool g_swapchain_maintenance1_enabled = false;
 // been displayed. One is useless without the other.
 bool g_present_wait_enabled = false;
 
-// Design C, a test, off unless STUD_VK_BAR_EXPORT=1: memory the engine asks
-// for as DEVICE_LOCAL|HOST_VISIBLE (the GPU's BAR, which a host pointer
-// cannot be imported into) is allocated here as exportable, exported as a
-// dma-buf and mapped in the engine's process, so the engine writes straight
-// into VRAM instead of into system memory the GPU then reads across PCIe
-// (design B, the default) or a stand-in that is copied (design A).
+// Design C, the default where the driver can export dma-bufs: memory the
+// engine asks for as DEVICE_LOCAL|HOST_VISIBLE (the GPU's BAR, which a host
+// pointer cannot be imported into) is allocated here as exportable,
+// exported as a dma-buf and mapped in the engine's process, so the engine
+// writes straight into VRAM instead of into system memory the GPU then
+// reads across PCIe (design B, where C is unavailable) or a stand-in that
+// is copied (design A). STUD_VK_BAR_EXPORT=0 keeps B.
 bool bar_export_requested() {
     static const bool on = [] {
         const char* v = std::getenv("STUD_VK_BAR_EXPORT");
-        return v != nullptr && std::strcmp(v, "1") == 0;
+        return v == nullptr || std::strcmp(v, "0") != 0;
     }();
     return on;
 }
