@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/version-1.2.0-white?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iYmxhY2siPjxwYXRoIGQ9Ik0xMiAxLjYgMi44IDYuOHYxMC40TDEyIDIyLjRsOS4yLTUuMlY2LjhMMTIgMS42em0wIDIuMyA3IDQtNyA0LTctNCA3LTR6TTQuOCA4LjVsNi4yIDMuNnY3LjJsLTYuMi0zLjVWOC41em0xNC40IDB2Ny4zTDEzIDE5LjN2LTcuMmw2LjItMy42eiIvPjwvc3ZnPg==&style=for-the-badge&color=9a3fbd&labelColor=EBD6F5" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-white?logo=gnu&logoColor=000000&style=for-the-badge&color=4c8bf5&labelColor=D6E3FC" alt="License">
   <img src="https://img.shields.io/badge/platform-linux-white?logo=linux&logoColor=000000&style=for-the-badge&color=f5bd20&labelColor=FDEFC7" alt="Platform">
+  <img src="https://img.shields.io/github/downloads/CatPieLeaf/Stud/total?label=Downloads&logo=github&logoColor=000000&style=for-the-badge&color=179299&labelColor=D3F6F8" alt="Downloads">
 </p>
 
   <p align="center">Play Roblox on Linux: the real Android app, running on your desktop.</p>
@@ -94,6 +95,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Tells you which country the game server is in when you join
  - **Stud presents its own frames**, on Wayland and X11 alike: a Vulkan layer of its own takes each finished frame to the compositor or X server with no driver swapchain in between, so a late compositor costs a dropped frame, never a freeze. MangoHud sits above it and sees an ordinary swapchain
  - MangoHud overlay toggle, on Vulkan and OpenGL alike, HiDPI and UI scaling, GPU picker, system tray
+ - [GameMode](https://github.com/FeralInteractive/gamemode) switch in Settings: the game registers with it while it runs, and GameMode applies whatever your own configuration asks for
  - Caps the frame rate while nothing can see the window: minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
  - Ships as an **rpm** (also in the [Terra](https://terra.fyralabs.com) repository), a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, a **Flatpak** and a [cpak](https://github.com/Containerpak/cpak)
