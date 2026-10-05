@@ -2631,7 +2631,8 @@ bool is_budgeted_texture(const VkImageCreateInfo& ci) {
 }
 
 // Handles the client chose itself, for objects it creates without waiting
-// for this process (vkCreateImage, vkCreateImageView), and the real handle
+// for this process (vkCreateImage, vkCreateImageView, vkCreateFramebuffer),
+// and the real handle
 // each one stands for.
 //
 // Those two were the blocking calls left on the engine's frame while a
@@ -7388,7 +7389,8 @@ void destroy_device(Loader& l, uint64_t handle) {
 
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
     if (kind == static_cast<uint32_t>(vk_wire::DestroyKind::Image) ||
-        kind == static_cast<uint32_t>(vk_wire::DestroyKind::ImageView)) {
+        kind == static_cast<uint32_t>(vk_wire::DestroyKind::ImageView) ||
+        kind == static_cast<uint32_t>(vk_wire::DestroyKind::Framebuffer)) {
         handle = forget_client_handle(handle);
         if (handle == 0) return 0;
     }
@@ -7749,7 +7751,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
 }
 
 uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                uint32_t* out_len) {
+                                uint32_t* out_len, uint64_t client_handle) {
     Loader& l = loader();
     if (l.vk.vkCreateFramebuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -7786,6 +7788,11 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
                         static_cast<unsigned long long>(to_u64(fb)), ci.width, ci.height);
             std::fflush(stdout);
         }
+    }
+    if (client_handle != 0) {
+        bind_client_handle(client_handle, to_u64(fb));
+        *out_len = 0;
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     }
     return write_handle(to_u64(fb), out, out_len);
 }
@@ -11024,7 +11031,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             VkRenderPassBeginInfo bi{};
             bi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             bi.renderPass = from_u64<VkRenderPass>(r.u64());
-            bi.framebuffer = from_u64<VkFramebuffer>(r.u64());
+            bi.framebuffer = from_u64<VkFramebuffer>(real_handle(r.u64()));
             bi.renderArea.offset.x = static_cast<int32_t>(r.u32());
             bi.renderArea.offset.y = static_cast<int32_t>(r.u32());
             bi.renderArea.extent.width = r.u32();

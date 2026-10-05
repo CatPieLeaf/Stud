@@ -3234,8 +3234,13 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateFramebuffer(VkDevice device,
     w.u32(ci->width);
     w.u32(ci->height);
     w.u32(ci->layers);
-    uint64_t a[8] = {to_u64(device)};
-    return create_from_payload<VkFramebuffer, CallId::VkCreateFramebuffer>(a, in, pFramebuffer);
+    // Reply-free, under a handle of our own, as vkCreateImage.
+    const uint64_t handle = client_handle();
+    uint64_t a[8] = {to_u64(device), handle};
+    stud::render_client::connection().call_void(CallId::VkCreateFramebuffer, a, in.data(),
+                                                 static_cast<uint32_t>(in.size()));
+    *pFramebuffer = from_u64<VkFramebuffer>(handle);
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateSampler(VkDevice device,

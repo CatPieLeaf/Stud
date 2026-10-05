@@ -4388,8 +4388,11 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             return stud::render_host::vk_destroy_handle(static_cast<uint32_t>(a[1]), a[2]);
         case CallId::VkCreateRenderPass:
             return stud::render_host::vk_create_render_pass(in, out, out_len);
-        case CallId::VkCreateFramebuffer:
-            return stud::render_host::vk_create_framebuffer(in, out, out_len);
+        case CallId::VkCreateFramebuffer: {
+            const uint64_t r = stud::render_host::vk_create_framebuffer(in, out, out_len, a[1]);
+            if (a[1] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkCreateSampler:
             return stud::render_host::vk_create_sampler(in, out, out_len);
         case CallId::VkCreatePipelineLayout:

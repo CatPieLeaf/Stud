@@ -225,7 +225,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle);
 uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                 uint32_t* out_len);
 uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                uint32_t* out_len);
+                                uint32_t* out_len, uint64_t client_handle = 0);
 uint64_t vk_create_sampler(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                             uint32_t* out_len);
 uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
