@@ -3352,6 +3352,26 @@ void forget(VkQueryPool pool) {
     unmap_shared_memory(p.mapping);
 }
 
+// Everything kept by raw handle value for one device, dropped as it is
+// destroyed. NVIDIA hands the same values out again on the next device, so
+// an entry that outlived its device matched a new object: a command
+// buffer's leftover touches, or a query pool's slots, recorded a copy into
+// a buffer of the destroyed device -- live-caught as VK_ERROR_DEVICE_LOST
+// on the first submit of the device made after leaving a game.
+void forget_device(Loader& l) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    for (auto& [pool, p] : s.pools) {
+        if (p.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, p.buffer, nullptr);
+        if (p.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, p.memory, nullptr);
+        unmap_shared_memory(p.mapping);
+    }
+    s.pools.clear();
+    s.touched.clear();
+    s.can_copy.clear();
+    s.pool_family.clear();
+}
+
 }  // namespace query_share
 
 uint64_t vk_share_query_results(uint64_t pool, uint64_t id, uint64_t length, uint32_t count) {
@@ -7330,6 +7350,22 @@ void destroy_device(Loader& l, uint64_t handle) {
         // is asked to free the memory behind it. A no-op when
         // K::Surface already did it.
         if (g_swapchain_ci.empty()) stud::android_glue::native_window_detach_content();
+        // Stud's own per-device bookkeeping, keyed by handle values the
+        // next device will reuse; see query_share::forget_device().
+        query_share::forget_device(l);
+        {
+            std::lock_guard<std::mutex> lock(exported_fd_mutex());
+            for (auto& [memory, e] : exported_memory()) {
+                if (e.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, e.buffer, nullptr);
+            }
+            exported_memory().clear();
+            for (auto& [id, fd] : exported_fds()) ::close(fd);
+            exported_fds().clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(client_handle_mutex());
+            client_handles().clear();
+        }
         if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
         const auto after_destroy = std::chrono::steady_clock::now();
         {
