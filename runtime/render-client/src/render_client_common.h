@@ -28,6 +28,11 @@ stud::render_host::Client& connection();
 // client connection.
 stud::render_host::Client& audio_connection();
 
+// A fourth connection, for reading exported memory back (design C): the
+// texture decoder asks for those bytes from the render connection's own
+// writer thread, which would wait on itself if it asked down that one.
+stud::render_host::Client& readback_connection();
+
 // A third connection, for input, for the same reason audio has one and
 // with a sharper deadline still.
 //

@@ -985,6 +985,9 @@ struct SharedAllocation {
     uint64_t id = 0;
     // The memfd, while the caller still needs it; -1 once closed.
     int fd = -1;
+    // Mapped from a dma-buf of the GPU's own memory (design C): fast to
+    // write, and about 600x slower than RAM for the CPU to read.
+    bool vram = false;
 };
 std::map<uint64_t, SharedAllocation>& shared_allocations() {
     static std::map<uint64_t, SharedAllocation> m;
@@ -2309,6 +2312,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
         }
         ::munmap(shared.address, shared.length);
         shared.address = p;
+        shared.vram = true;
         static bool said = false;
         if (!said) {
             said = true;
@@ -4637,37 +4641,72 @@ bool acquire_scratch(VkCommandBuffer cb, VkDeviceSize size, ScratchSlice& out) {
 // mapping. Null if the buffer is not backed by memory this process has
 // mapped, in which case the copy cannot be decoded and is passed through
 // untouched rather than guessed at.
-const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t length) {
-    // buffer_bindings() is written under emulation_mutex (vkBindBufferMemory,
-    // vkDestroyBuffer) and mapped_ranges() under mapped_mutex, and this reads
-    // both. Taken in that order everywhere they are held together: the decode
-    // path already holds emulation_mutex when it goes back through
-    // vkMapMemory, which takes mapped_mutex.
-    std::lock_guard<std::recursive_mutex> emu_lock(emulation_mutex());
-    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
-    auto bit = buffer_bindings().find(to_u64(buffer));
-    if (bit == buffer_bindings().end()) return nullptr;
-    // Shared with the host: the engine wrote straight into the file both
-    // processes map, so the bytes are simply there. This has to be checked
-    // before the staged mappings, a shared allocation deliberately has
-    // no MappedRange, and missing that made every compressed texture
-    // decode fail and blank itself.
+// The bytes of an allocation in the GPU's own memory (design C), copied
+// out by the GPU into `keep`, which holds them for as long as the caller
+// needs them. Null without somewhere to keep them, or if the copy fails.
+const uint8_t* read_vram(uint64_t memory, uint64_t start, uint64_t length,
+                         std::deque<std::vector<uint8_t>>* keep) {
+    if (keep == nullptr || length == 0) return nullptr;
+    // The engine's last writes to that memory went through a write-combined
+    // mapping; they must have left this CPU before the GPU reads.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    keep->emplace_back(static_cast<size_t>(length));
+    uint64_t a[8] = {0, memory, start, length};
+    uint32_t written = 0;
+    const uint64_t r = stud::render_client::readback_connection().call(
+        CallId::VkReadExportedMemory, a, nullptr, 0, keep->back().data(),
+        static_cast<uint32_t>(length), &written);
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) != VK_SUCCESS || written != length) {
+        keep->pop_back();
+        return nullptr;
+    }
+    return keep->back().data();
+}
+
+// `keep` is where bytes read back from the GPU's own memory are held; see
+// read_vram(). Without it such a source answers null, as an unmapped one
+// does.
+const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t length,
+                                std::deque<std::vector<uint8_t>>* keep) {
+    uint64_t vram_memory = 0;
+    uint64_t vram_start = 0;
     {
+        // buffer_bindings() is written under emulation_mutex (vkBindBufferMemory,
+        // vkDestroyBuffer) and mapped_ranges() under mapped_mutex, and this reads
+        // both. Taken in that order everywhere they are held together: the decode
+        // path already holds emulation_mutex when it goes back through
+        // vkMapMemory, which takes mapped_mutex.
+        std::lock_guard<std::recursive_mutex> emu_lock(emulation_mutex());
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+        auto bit = buffer_bindings().find(to_u64(buffer));
+        if (bit == buffer_bindings().end()) return nullptr;
+        const uint64_t start = bit->second.offset + offset;
+        // Shared with the host: the engine wrote straight into the file both
+        // processes map, so the bytes are simply there. This has to be checked
+        // before the staged mappings, a shared allocation deliberately has
+        // no MappedRange, and missing that made every compressed texture
+        // decode fail and blank itself.
         auto shared = shared_allocations().find(bit->second.memory);
         if (shared != shared_allocations().end() && shared->second.address != nullptr) {
-            const uint64_t start = bit->second.offset + offset;
             if (start + length > shared->second.length) return nullptr;
-            return static_cast<const uint8_t*>(shared->second.address) + start;
+            if (!shared->second.vram) {
+                return static_cast<const uint8_t*>(shared->second.address) + start;
+            }
+            // The GPU's own memory: read back below, outside the locks,
+            // because it waits on the GPU.
+            vram_memory = bit->second.memory;
+            vram_start = start;
+        } else {
+            auto mit = mapped_ranges().find(bit->second.memory);
+            if (mit == mapped_ranges().end()) return nullptr;
+            MappedRange& range = mit->second;
+            if (start < range.offset) return nullptr;
+            const uint64_t local = start - range.offset;
+            if (local + length > range.length()) return nullptr;
+            return range.bytes() + local;
         }
     }
-    auto mit = mapped_ranges().find(bit->second.memory);
-    if (mit == mapped_ranges().end()) return nullptr;
-    MappedRange& range = mit->second;
-    const uint64_t start = bit->second.offset + offset;
-    if (start < range.offset) return nullptr;
-    const uint64_t local = start - range.offset;
-    if (local + length > range.length()) return nullptr;
-    return range.bytes() + local;
+    return read_vram(vram_memory, vram_start, length, keep);
 }
 
 void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted) {
@@ -5078,6 +5117,9 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
     std::vector<uint64_t> scratch_memories;
     std::vector<PendingDecode> keep;
     std::vector<DecodeBand> bands;
+    // Sources copied out of the GPU's own memory, alive until the bands
+    // that point into them have been decoded.
+    std::deque<std::vector<uint8_t>> vram_copies;
     for (const PendingDecode& pd : pending) {
         // Only the buffers in this submit. Decoding another command
         // buffer's copies here would read its staging data before its own
@@ -5086,8 +5128,8 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted) {
             keep.push_back(pd);
             continue;
         }
-        const uint8_t* bytes =
-            mapped_bytes_for(pd.src, pd.src_offset, pd.src_layer_bytes * pd.layers);
+        const uint8_t* bytes = mapped_bytes_for(pd.src, pd.src_offset,
+                                                pd.src_layer_bytes * pd.layers, &vram_copies);
         const bool ok = bytes != nullptr && stud::texture_decode::is_emulated(pd.format);
         // Decoded already, when the copy was recorded. Kept apart from
         // `ok`, which means "this could be decoded at all" and whose
@@ -5344,8 +5386,10 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
                     // hash recorded here is what lets that submit trust
                     // the result. See EarlyDecoder.
                     if (early_decode_enabled()) {
+                        // No keep: a source in the GPU's own memory is not
+                        // read speculatively, only at the submit.
                         const uint8_t* early = mapped_bytes_for(
-                            pd.src, pd.src_offset, pd.src_layer_bytes * pd.layers);
+                            pd.src, pd.src_offset, pd.src_layer_bytes * pd.layers, nullptr);
                         if (early != nullptr && stud::texture_decode::is_emulated(pd.format)) {
                             pd.speculated = true;
                             EarlyDecoder::instance().submit(pd, early);

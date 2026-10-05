@@ -86,6 +86,22 @@ stud::render_host::Client& audio_connection() {
     return client;
 }
 
+stud::render_host::Client& readback_connection() {
+    static stud::render_host::Client client;
+    static const bool tried = [&] {
+        std::string path = stud::render_host::default_socket_path();
+        if (!client.connect_to(path)) {
+            std::fprintf(stderr,
+                         "stud: render-client: readback could not open its own connection to %s\n",
+                         path.c_str());
+        }
+        announce("readback", client);
+        return true;
+    }();
+    (void)tried;
+    return client;
+}
+
 stud::render_host::Client& input_connection() {
     static stud::render_host::Client client;
     // The connect has to finish before any other thread is handed this

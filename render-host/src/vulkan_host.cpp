@@ -3003,6 +3003,17 @@ std::unordered_map<uint64_t, int>& exported_fds() {
     return m;
 }
 
+// Allocations exported to the client (design C), and the buffer this
+// process copies out of each one with; see vk_read_exported_memory().
+struct ExportedMemory {
+    VkDeviceSize size = 0;
+    VkBuffer buffer = VK_NULL_HANDLE;
+};
+std::unordered_map<uint64_t, ExportedMemory>& exported_memory() {
+    static std::unordered_map<uint64_t, ExportedMemory> m;
+    return m;
+}
+
 int take_exported_fd(uint64_t id) {
     std::lock_guard<std::mutex> lock(exported_fd_mutex());
     auto it = exported_fds().find(id);
@@ -3514,6 +3525,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     if (exported_fd >= 0) {
         {
             std::lock_guard<std::mutex> lock(exported_fd_mutex());
+            exported_memory()[to_u64(memory)] = ExportedMemory{ai.allocationSize, VK_NULL_HANDLE};
             auto [it, inserted] = exported_fds().emplace(shared_id, exported_fd);
             if (!inserted) {
                 ::close(it->second);
@@ -3666,6 +3678,16 @@ uint64_t vk_free_memory(uint64_t memory) {
         lazy_memory().erase(lz);
         return 0;
     }
+    {
+        std::lock_guard<std::mutex> lock(exported_fd_mutex());
+        auto e = exported_memory().find(memory);
+        if (e != exported_memory().end()) {
+            if (e->second.buffer != VK_NULL_HANDLE) {
+                l.vk.vkDestroyBuffer(l.device, e->second.buffer, nullptr);
+            }
+            exported_memory().erase(e);
+        }
+    }
     l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(memory), nullptr);
     // The import keeps the pages alive as long as the memory object does,
     // so the mapping is dropped only now.
@@ -3795,6 +3817,162 @@ uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
                 static_cast<size_t>(size));
     *out_len = static_cast<uint32_t>(size);
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
+// Bytes of an allocation exported to the client (design C), for its texture
+// decoder. That memory is the GPU's own, mapped write-combined, and the CPU
+// reads it at about 0.05 GB/s -- 90 ms for a 4 MB texture, measured -- so
+// the GPU copies the range into cached system memory instead, about 1 ms
+// for the same 4 MB including the wait.
+uint64_t vk_read_exported_memory(uint64_t memory, uint64_t offset, uint64_t size,
+                                 std::vector<uint8_t>& out, uint32_t* out_len) {
+    Loader& l = loader();
+    const auto fail = [](VkResult r) { return static_cast<uint64_t>(static_cast<int32_t>(r)); };
+    if (size == 0 || l.probe_pool == VK_NULL_HANDLE || l.probe_queue == VK_NULL_HANDLE) {
+        return fail(VK_ERROR_MEMORY_MAP_FAILED);
+    }
+    static std::mutex m;
+    std::lock_guard<std::mutex> lock(m);
+    VkBuffer source = VK_NULL_HANDLE;
+    {
+        std::lock_guard<std::mutex> exported_lock(exported_fd_mutex());
+        auto e = exported_memory().find(memory);
+        if (e == exported_memory().end() || offset + size > e->second.size) {
+            return fail(VK_ERROR_MEMORY_MAP_FAILED);
+        }
+        if (e->second.buffer == VK_NULL_HANDLE) {
+            VkExternalMemoryBufferCreateInfo external{};
+            external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+            external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+            VkBufferCreateInfo bi{};
+            bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bi.pNext = &external;
+            bi.size = e->second.size;
+            bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            VkBuffer b = VK_NULL_HANDLE;
+            if (l.vk.vkCreateBuffer(l.device, &bi, nullptr, &b) != VK_SUCCESS) {
+                return fail(VK_ERROR_MEMORY_MAP_FAILED);
+            }
+            VkMemoryRequirements req{};
+            l.vk.vkGetBufferMemoryRequirements(l.device, b, &req);
+            if (req.size > e->second.size ||
+                l.vk.vkBindBufferMemory(l.device, b, from_u64<VkDeviceMemory>(memory), 0) != VK_SUCCESS) {
+                l.vk.vkDestroyBuffer(l.device, b, nullptr);
+                return fail(VK_ERROR_MEMORY_MAP_FAILED);
+            }
+            e->second.buffer = b;
+        }
+        source = e->second.buffer;
+    }
+
+    // One staging buffer in cached system memory, grown to the largest
+    // read asked for, and one command buffer and fence, kept between calls.
+    struct Staging {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        void* data = nullptr;
+        VkDeviceSize size = 0;
+        bool coherent = false;
+        VkCommandBuffer cb = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        VkDevice device = VK_NULL_HANDLE;
+    };
+    static Staging st;
+    if (st.device != l.device) st = Staging{};  // a new device: the old objects went with it
+    st.device = l.device;
+    if (st.size < size) {
+        if (st.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, st.buffer, nullptr);
+        if (st.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, st.memory, nullptr);
+        st.buffer = VK_NULL_HANDLE;
+        st.memory = VK_NULL_HANDLE;
+        st.size = 0;
+        VkBufferCreateInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bi.size = size;
+        bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        if (l.vk.vkCreateBuffer(l.device, &bi, nullptr, &st.buffer) != VK_SUCCESS) {
+            st.buffer = VK_NULL_HANDLE;
+            return fail(VK_ERROR_OUT_OF_HOST_MEMORY);
+        }
+        VkMemoryRequirements req{};
+        l.vk.vkGetBufferMemoryRequirements(l.device, st.buffer, &req);
+        VkPhysicalDeviceMemoryProperties mp{};
+        vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
+        uint32_t type = UINT32_MAX;
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+            const VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+            if ((req.memoryTypeBits & (1u << i)) == 0 || (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 ||
+                (f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+                continue;
+            }
+            if (type == UINT32_MAX || (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) type = i;
+            if ((f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) break;
+        }
+        VkMemoryAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = type;
+        if (type == UINT32_MAX || l.vk.vkAllocateMemory(l.device, &ai, nullptr, &st.memory) != VK_SUCCESS ||
+            l.vk.vkBindBufferMemory(l.device, st.buffer, st.memory, 0) != VK_SUCCESS ||
+            l.vk.vkMapMemory(l.device, st.memory, 0, VK_WHOLE_SIZE, 0, &st.data) != VK_SUCCESS) {
+            if (st.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, st.memory, nullptr);
+            l.vk.vkDestroyBuffer(l.device, st.buffer, nullptr);
+            st = Staging{};
+            return fail(VK_ERROR_OUT_OF_HOST_MEMORY);
+        }
+        st.coherent = (mp.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+        st.size = size;
+    }
+    if (st.cb == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo cai{};
+        cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cai.commandPool = l.probe_pool;
+        cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cai.commandBufferCount = 1;
+        VkFenceCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (l.vk.vkAllocateCommandBuffers(l.device, &cai, &st.cb) != VK_SUCCESS ||
+            l.vk.vkCreateFence(l.device, &fci, nullptr, &st.fence) != VK_SUCCESS) {
+            st.cb = VK_NULL_HANDLE;
+            return fail(VK_ERROR_OUT_OF_HOST_MEMORY);
+        }
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    l.vk.vkBeginCommandBuffer(st.cb, &begin);
+    VkBufferCopy region{offset, 0, size};
+    l.vk.vkCmdCopyBuffer(st.cb, source, st.buffer, 1, &region);
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    l.vk.vkCmdPipelineBarrier(st.cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+                              &barrier, 0, nullptr, 0, nullptr);
+    l.vk.vkEndCommandBuffer(st.cb);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &st.cb;
+    VkResult r;
+    {
+        std::lock_guard<std::mutex> queue_lock(queue_mutex());
+        r = l.vk.vkQueueSubmit(l.probe_queue, 1, &si, st.fence);
+    }
+    if (r == VK_SUCCESS) r = l.vk.vkWaitForFences(l.device, 1, &st.fence, VK_TRUE, UINT64_MAX);
+    l.vk.vkResetFences(l.device, 1, &st.fence);
+    if (r != VK_SUCCESS) return fail(r);
+    if (!st.coherent && l.vk.vkInvalidateMappedMemoryRanges != nullptr) {
+        VkMappedMemoryRange range{};
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = st.memory;
+        range.size = VK_WHOLE_SIZE;
+        l.vk.vkInvalidateMappedMemoryRanges(l.device, 1, &range);
+    }
+    out.resize(static_cast<size_t>(size));
+    std::memcpy(out.data(), st.data, static_cast<size_t>(size));
+    *out_len = static_cast<uint32_t>(size);
+    return fail(VK_SUCCESS);
 }
 
 uint64_t vk_unmap_memory(uint64_t memory) {

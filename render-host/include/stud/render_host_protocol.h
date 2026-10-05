@@ -809,6 +809,10 @@ enum class CallId : uint32_t {
     // a[1] the swapchain, a[2] the engine's semaphore, a[3] that present's
     // number, a[4] the engine's fence.
     VkAcquireTake,
+    // Bytes of an allocation exported to the client as a dma-buf (design C,
+    // STUD_VK_BAR_EXPORT), copied out by the GPU. a[0] the device, a[1] the
+    // memory, a[2] the offset, a[3] the length; the bytes come back.
+    VkReadExportedMemory,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1130,9 +1134,10 @@ inline const char* call_id_name(CallId id) {
         "VkShareSubmitFeedback",
         "VkShareQueryResults",
         "VkAcquireTake",
+        "VkReadExportedMemory",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VkAcquireTake) + 1,
+                      static_cast<size_t>(CallId::VkReadExportedMemory) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

@@ -157,6 +157,10 @@ void register_shared_fd(uint64_t id, int fd);
 // A dma-buf exported for the client under its allocation id (design C,
 // STUD_VK_BAR_EXPORT), handed over once; -1 if there is none.
 int take_exported_fd(uint64_t id);
+// A range of an exported allocation, copied out by the GPU (reading it
+// with the CPU is about 600x slower than RAM).
+uint64_t vk_read_exported_memory(uint64_t memory, uint64_t offset, uint64_t size,
+                                 std::vector<uint8_t>& out, uint32_t* out_len);
 int take_shared_fd(uint64_t id);
 void forget_shared_fds();
 uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset);
