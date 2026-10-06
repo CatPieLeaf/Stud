@@ -120,6 +120,12 @@ modules:
       - cp -a usr/libexec/stud/lib64 /app/libexec/stud/lib64
       - install -Dm755 usr/libexec/stud/stud-render-host -t /app/libexec/stud/
       - install -Dm755 usr/libexec/stud/stud-runtime-bionic -t /app/libexec/stud/
+      # Stud's own swapchain: the layer and its manifest sit beside
+      # render-host, which is where Stud looks for them. Without them the
+      # game presents through the driver's swapchain, a black window on
+      # some compositors (niri).
+      - install -Dm755 usr/libexec/stud/libstud_present_layer.so -t /app/libexec/stud/
+      - install -Dm644 usr/libexec/stud/VK_LAYER_STUD_present.json -t /app/libexec/stud/
       # A distribution package looks in share/licenses/<package>; Flathub
       # asks for share/licenses/<app id>. The archive is built for the
       # former, so the licences move on the way in.
