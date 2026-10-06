@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <dirent.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
@@ -207,6 +208,17 @@ float normalise(const Axis& axis, uint16_t code, int32_t raw) {
 
 int g_unreadable_nodes = 0;
 
+// Nodes already looked at that are not a pad, by the inode of their device
+// node. The rescan runs on the input path, and opening an evdev node is not
+// free (a USB device wakes from autosuspend): re-opening every mouse and
+// keyboard each second held mouse motion back for ~190 ms at a time, on any
+// system whose user can read /dev/input. A device plugged in later gets a new
+// node, so it is still looked at once.
+std::map<std::string, ino_t>& not_pads() {
+    static std::map<std::string, ino_t> m;
+    return m;
+}
+
 void open_device(const std::string& path, std::vector<Event>& out) {
     // Read-write first: rumble is an ioctl plus a write on the SAME fd,
     // so a read-only open silently costs force feedback. Falls back to
@@ -226,9 +238,13 @@ void open_device(const std::string& path, std::vector<Event>& out) {
         // saying if no controller turned up at all. Counted here,
         // reported (once) by init().
         if (errno == EACCES) ++g_unreadable_nodes;
+        struct stat st {};
+        if (::stat(path.c_str(), &st) == 0) not_pads()[path] = st.st_ino;
         return;
     }
     if (!looks_like_a_gamepad(fd)) {
+        struct stat st {};
+        if (::fstat(fd, &st) == 0) not_pads()[path] = st.st_ino;
         ::close(fd);
         return;
     }
@@ -457,6 +473,12 @@ void scan(std::vector<Event>& out) {
         if (std::strncmp(entry->d_name, "event", 5) != 0) continue;
         const std::string path = std::string("/dev/input/") + entry->d_name;
         if (devices().count(path) != 0) continue;
+        auto known = not_pads().find(path);
+        if (known != not_pads().end()) {
+            struct stat st {};
+            if (::stat(path.c_str(), &st) == 0 && st.st_ino == known->second) continue;
+            not_pads().erase(known);
+        }
         open_device(path, out);
     }
     ::closedir(dir);
