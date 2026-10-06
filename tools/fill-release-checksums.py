@@ -35,6 +35,7 @@ REPO = "CatPieLeaf/Stud"
 ROOT = Path(__file__).resolve().parent.parent
 
 MANIFEST = ROOT / "packaging/flatpak/io.github.catpieleaf.Stud.yml"
+FLAKE = ROOT / "flake.nix"
 CPAK = ROOT / "cpak.json"
 PKGBUILD = ROOT / "packaging/aur/PKGBUILD"
 PKGBUILD_BIN = ROOT / "packaging/aur/PKGBUILD.stud-bin"
@@ -207,6 +208,21 @@ def main() -> int:
         report_change(MANIFEST.name, url_marker, match.group(2), value)
         text = pattern.sub(lambda m: m.group(1) + value, text, count=1)
     MANIFEST.write_text(text)
+
+    # The flake: the same two urls, as Nix writes them.
+    text = FLAKE.read_text()
+    for url_marker, value in (
+            (f"/releases/download/{args.tag}/stud-{args.tag}-x86_64.tar.zst", archive_sha),
+            (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha)):
+        pattern = re.compile(
+            r'(url = "\S*' + re.escape(url_marker) + r'";\s*\n\s*sha256 = ")([0-9a-f]+)')
+        match = pattern.search(text)
+        if match is None:
+            print(f"{FLAKE.name}: no source found for {url_marker}", file=sys.stderr)
+            return 1
+        report_change(FLAKE.name, url_marker, match.group(2), value)
+        text = pattern.sub(lambda m: m.group(1) + value, text, count=1)
+    FLAKE.write_text(text)
 
     # The source PKGBUILD has one source: the tag's tarball.
     text = PKGBUILD.read_text()

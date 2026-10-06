@@ -38,6 +38,7 @@ FILES = (
     "README.md",
     "cpak.json",
     "cpak.lock.json",
+    "flake.nix",
     "packaging/aur/.SRCINFO",
     "packaging/aur/.SRCINFO.stud-bin",
     "packaging/aur/PKGBUILD",
