@@ -319,6 +319,27 @@ cpak install github.com/catpieleaf/stud
 rootless. The image is published to `ghcr.io/catpieleaf/stud` with each release, and
 Stud is listed in the [cpak store](https://cpak.it/store/apps/stud).
 
+## ❄️ N I X
+
+```bash
+nix run github:CatPieLeaf/Stud
+```
+
+Or on NixOS, add the flake as an input and install it system-wide:
+
+```nix
+# flake.nix
+inputs.stud.url = "github:CatPieLeaf/Stud";
+
+# configuration.nix
+environment.systemPackages = [ inputs.stud.packages.x86_64-linux.default ];
+hardware.graphics.enable = true;
+```
+
+The Qt half is built against nixpkgs, and the rest comes from the release it pins.
+On Nix outside NixOS, run it through [nixGL](https://github.com/nix-community/nixGL)
+so it can find your graphics driver.
+
 ## 🟠 A P P I M A G E  ( A N Y _ D I S T R O )
 
 ```bash

@@ -1,5 +1,5 @@
 {
-  description = "Stud: play Roblox on Linux, the real Android app running on your desktop";
+  description = "An Unofficial Roblox Launcher for Linux";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -137,7 +137,7 @@
           ];
 
           meta = {
-            description = "Play Roblox on Linux: the real Android app, running on your desktop";
+            description = "An Unofficial Roblox Launcher for Linux";
             homepage = "https://github.com/CatPieLeaf/Stud";
             license = lib.licenses.agpl3Only;
             sourceProvenance = with lib.sourceTypes; [
