@@ -98,6 +98,18 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.1" date="2026-10-06">
+      <description>
+        <ul>
+          <li>Big performance improvements: the game waits on Stud's renderer far less every frame</li>
+          <li>GameMode switch in Settings</li>
+          <li>Leaving first person while holding a mouse button no longer teleports the cursor</li>
+          <li>An unfocused Stud window no longer grabs or moves your mouse</li>
+          <li>X11 mouse look is no longer twice as sensitive as on Wayland</li>
+          <li>Stud warns you when the imported Roblox build is out of date</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-10-04">
       <description>
         <ul>
