@@ -5403,6 +5403,48 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
     }
 }
 
+// A batch made only of calls exempt above is exempt too.
+//
+// Reply-free calls travel packed into a GlCommandBatch, and the dispatch
+// loop sees only the batch's id. The audio feeder sends its bursts
+// reply-free, so without this each one waited for the dispatch lock behind
+// the engine's graphics -- pipeline builds, submits -- and arrived late
+// enough to empty the ring: silence padded mid-waveform, heard as pops.
+// Stops at the first call that is not exempt, which in a graphics batch is
+// the first one.
+bool batch_is_lock_free(const std::vector<uint8_t>& in) {
+    const uint8_t* p = in.data();
+    const uint8_t* end = in.data() + in.size();
+    while (end - p >= 4) {
+        const uint8_t argc = *p++;
+        const uint8_t bits = *p++;
+        uint16_t id16 = 0;
+        std::memcpy(&id16, p, sizeof(id16));
+        p += sizeof(id16);
+        if (!blocks_in_the_driver(static_cast<stud::render_host::CallId>(id16))) return false;
+        if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) return false;
+        p += static_cast<size_t>(argc) * sizeof(uint64_t);
+        if ((bits & 1u) != 0) {
+            if (end - p < 4) return false;
+            uint32_t len = 0;
+            std::memcpy(&len, p, sizeof(len));
+            p += sizeof(len);
+            if (end - p < static_cast<ptrdiff_t>(len)) return false;
+            p += len;
+        }
+        if ((bits & 2u) != 0) {
+            if (end - p < 8) return false;
+            p += sizeof(uint64_t);
+        }
+    }
+    return p == end;
+}
+
+bool dispatches_without_lock(stud::render_host::CallId id, const std::vector<uint8_t>& in) {
+    return blocks_in_the_driver(id) ||
+           (id == stud::render_host::CallId::GlCommandBatch && batch_is_lock_free(in));
+}
+
 // STUD_GL_TRACE_ERRORS=1: ask the real GL for its error after every
 // forwarded GL call and name the first call that produced each one.
 //
@@ -5584,7 +5626,8 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         uint32_t out_len = 0;
         uint64_t result = 0;
         throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id), in_scratch);
-        if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
+        if (dispatches_without_lock(static_cast<stud::render_host::CallId>(hdr.call_id),
+                                    in_scratch)) {
             result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
         } else {
             std::lock_guard<std::mutex> lock(dispatch_mutex());
@@ -6200,7 +6243,8 @@ int main(int argc, char** argv) {
             // wait on each other.
             throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id),
                                      g_in_scratch);
-            if (blocks_in_the_driver(static_cast<stud::render_host::CallId>(hdr.call_id))) {
+            if (dispatches_without_lock(static_cast<stud::render_host::CallId>(hdr.call_id),
+                                        g_in_scratch)) {
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             } else {
                 std::lock_guard<std::mutex> lock(dispatch_mutex());
