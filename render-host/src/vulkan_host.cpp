@@ -3467,6 +3467,26 @@ uint64_t vk_share_query_results(uint64_t pool, uint64_t id, uint64_t length, uin
 // The driver's own rule for importing host pointers. Queried once: it is a
 // physical-device property, and the import path hits it on every shared
 // allocation.
+// The external handle type an allocation was made with, by the handle the
+// engine holds: HOST_ALLOCATION for its imported pages, DMA_BUF for memory
+// exported to it. Anything absent is ordinary memory. A buffer bound to it
+// is created declaring exactly this; see BufferSlot.
+std::mutex& memory_handle_types_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::unordered_map<uint64_t, VkExternalMemoryHandleTypeFlags>& memory_handle_types() {
+    static std::unordered_map<uint64_t, VkExternalMemoryHandleTypeFlags> m;
+    return m;
+}
+
+VkExternalMemoryHandleTypeFlags memory_handle_type(uint64_t memory) {
+    std::lock_guard<std::mutex> lock(memory_handle_types_mutex());
+    const auto it = memory_handle_types().find(memory);
+    return it != memory_handle_types().end() ? it->second : 0;
+}
+
 VkDeviceSize imported_host_pointer_alignment() {
     Loader& l = loader();
     static VkDeviceSize cached = [&]() -> VkDeviceSize {
@@ -3714,6 +3734,12 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     out.resize(sizeof(uint64_t) * 2);
     const uint64_t handle_value = to_u64(memory);
     l.live_memory.insert(handle_value);
+    if (export_bar || imported) {
+        std::lock_guard<std::mutex> lock(memory_handle_types_mutex());
+        memory_handle_types()[handle_value] = export_bar
+                                                  ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
+                                                  : VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+    }
     if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
     // 2: exported as a dma-buf the client fetches under its id.
     const uint64_t shared_flag = exported_fd >= 0 ? 2u : imported ? 1u : 0u;
@@ -3788,6 +3814,10 @@ uint64_t vk_free_memory(uint64_t memory) {
     Loader& l = loader();
     if (l.vk.vkFreeMemory == nullptr) return 0;
     l.live_memory.erase(memory);
+    {
+        std::lock_guard<std::mutex> lock(memory_handle_types_mutex());
+        memory_handle_types().erase(memory);
+    }
     if (redirect_stats_enabled()) allocation_use().erase(memory);
     l.mapped.erase(memory);
     l.mapped_size.erase(memory);
@@ -6794,6 +6824,116 @@ uint64_t vk_get_image_format_properties2(uint64_t physical_device, const std::ve
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
+// Engine buffers, numbered by Stud and made for real at their bind.
+//
+// A buffer bound to shared memory must have declared that memory's handle
+// type when it was created: HOST_ALLOCATION for an imported host pointer,
+// DMA_BUF for exported memory (VUID-vkBindBufferMemory-memory-02726/02985).
+// Every driver reports the two as incompatible, so declaring both is
+// invalid too (VUID-VkBufferCreateInfo-pNext-00920, on every buffer while
+// BAR export was on). Which memory a buffer gets is the engine's choice,
+// made after the buffer exists and by its own pools rather than by the
+// memory types the buffer is offered, so no rule at create time holds. The
+// driver's buffer is therefore made at vkBindBufferMemory, when the memory
+// is known, declaring exactly its kind. Until then the engine holds Stud's
+// number for it, and its requirements come from an ordinary buffer of the
+// same shape: drivers answer them identically whatever is declared
+// (checked on NVIDIA and Intel, 132 usages and sizes each).
+//
+// Every buffer the engine names passes through real_buffer(): a tag test
+// and one load, measured at under a nanosecond, against the lock and hash
+// lookup client-numbered images take. The table only grows; a grown index
+// array replaces the old one, which stays allocated because a reader may
+// still hold it, so reads never take a lock.
+constexpr uint64_t kBufferTag = 0xFFFC000000000000ull;
+constexpr uint64_t kBufferChunk = 4096;  // slots per allocation of the table
+
+struct BufferSlot {
+    std::atomic<uint64_t> real{0};
+    VkBufferCreateFlags flags = 0;
+    VkDeviceSize size = 0;
+    VkBufferUsageFlags usage = 0;
+    VkSharingMode sharing = VK_SHARING_MODE_EXCLUSIVE;
+};
+
+struct BufferTable {
+    std::mutex mutex;  // everything but BufferSlot::real
+    std::atomic<BufferSlot**> chunks{nullptr};
+    uint64_t chunk_count = 0;
+    uint64_t next = 0;
+    std::vector<uint64_t> free;
+};
+
+BufferTable& buffer_table() {
+    static BufferTable t;
+    return t;
+}
+
+BufferSlot& buffer_slot(uint64_t index) {
+    BufferSlot** chunks = buffer_table().chunks.load(std::memory_order_acquire);
+    return chunks[index / kBufferChunk][index % kBufferChunk];
+}
+
+// The driver's buffer behind a handle the engine holds; anything that is
+// not one of Stud's numbers passes through unchanged.
+inline uint64_t real_buffer(uint64_t v) {
+    if ((v & kHandleTagMask) != kBufferTag) return v;
+    return buffer_slot(v & ~kHandleTagMask).real.load(std::memory_order_acquire);
+}
+
+uint64_t new_buffer_number(const VkBufferCreateInfo& ci) {
+    BufferTable& t = buffer_table();
+    std::lock_guard<std::mutex> lock(t.mutex);
+    uint64_t index = 0;
+    if (!t.free.empty()) {
+        index = t.free.back();
+        t.free.pop_back();
+    } else {
+        index = t.next++;
+        if (index / kBufferChunk >= t.chunk_count) {
+            const uint64_t grown = t.chunk_count == 0 ? 1 : t.chunk_count * 2;
+            auto** chunks = new BufferSlot*[grown]();
+            BufferSlot** old = t.chunks.load(std::memory_order_relaxed);
+            for (uint64_t c = 0; c < t.chunk_count; ++c) chunks[c] = old[c];
+            for (uint64_t c = t.chunk_count; c < grown; ++c) chunks[c] = new BufferSlot[kBufferChunk];
+            t.chunks.store(chunks, std::memory_order_release);
+            t.chunk_count = grown;
+        }
+    }
+    BufferSlot& slot = buffer_slot(index);
+    slot.real.store(0, std::memory_order_relaxed);
+    slot.flags = ci.flags;
+    slot.size = ci.size;
+    slot.usage = ci.usage;
+    slot.sharing = ci.sharingMode;
+    return kBufferTag | index;
+}
+
+// The create info a numbered buffer was given; false for any other handle.
+bool buffer_create_info(uint64_t v, VkBufferCreateInfo& ci) {
+    if ((v & kHandleTagMask) != kBufferTag) return false;
+    std::lock_guard<std::mutex> lock(buffer_table().mutex);
+    const BufferSlot& slot = buffer_slot(v & ~kHandleTagMask);
+    ci = VkBufferCreateInfo{};
+    ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    ci.flags = slot.flags;
+    ci.size = slot.size;
+    ci.usage = slot.usage;
+    ci.sharingMode = slot.sharing;
+    return true;
+}
+
+// The driver's buffer, as the engine destroys its number.
+uint64_t forget_buffer_number(uint64_t v) {
+    if ((v & kHandleTagMask) != kBufferTag) return v;
+    BufferTable& t = buffer_table();
+    std::lock_guard<std::mutex> lock(t.mutex);
+    const uint64_t index = v & ~kHandleTagMask;
+    const uint64_t real = buffer_slot(index).real.exchange(0, std::memory_order_acq_rel);
+    t.free.push_back(index);
+    return real;
+}
+
 uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_t sharing_mode,
                            std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
@@ -6806,73 +6946,82 @@ uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_
     ci.size = size;
     ci.usage = usage;
     ci.sharingMode = static_cast<VkSharingMode>(sharing_mode);
-    // A buffer that may later be bound to imported host memory has to say
-    // so when it is created: the handle type must appear here as well as
-    // on the allocation, or binding the two is undefined behaviour.
-    // Live-caught by validation (VUID-vkBindBufferMemory-memory-02985),
-    // and the host cannot know at create time which buffers will be bound
-    // to a shared allocation, so every buffer declares it while sharing
-    // is available at all.
-    VkExternalMemoryBufferCreateInfo external{};
-    // Gated on the extension's own entry point, not on the alignment:
-    // vkGetPhysicalDeviceProperties2 answers the host-pointer chain even
-    // when VK_EXT_external_memory_host was never enabled on the device,
-    // and naming a handle type the device does not have is itself
-    // invalid (live-caught, VUID-...-handleTypes-parameter).
-    if (l.vk.vkGetMemoryHostPointerPropertiesEXT != nullptr &&
-        imported_host_pointer_alignment() > 0) {
-        external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
-        external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-        ci.pNext = &external;
-    }
-    if (g_bar_export) {
-        external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
-        external.handleTypes |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-        ci.pNext = &external;
-    }
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VkResult r = l.vk.vkCreateBuffer(l.device, &ci, nullptr, &buffer);
-    // Deliberately no per-call print here. The engine creates buffers
-    // sixteen times a frame, so a line each, with a flush, is a write
-    // syscall per creation and a log that grows without bound. Failures
-    // still say so, below. (Fourth time in this project that a diagnostic
-    // was found still armed in a normal run; the others are recorded in
-    // the engineering notes.)
-    if (r != VK_SUCCESS) {
-        std::printf("stud-render-host: vkCreateBuffer -> %d (%llu bytes usage=0x%x)\n",
-                    static_cast<int>(r), static_cast<unsigned long long>(size), usage);
-        std::fflush(stdout);
-        return static_cast<uint64_t>(static_cast<int32_t>(r));
-    }
-    return write_handle(to_u64(buffer), out, out_len);
+    return write_handle(new_buffer_number(ci), out, out_len);
 }
 
 uint64_t vk_get_buffer_memory_requirements(uint64_t buffer, std::vector<uint8_t>& out,
                                             uint32_t* out_len) {
     Loader& l = loader();
-    if (l.vk.vkGetBufferMemoryRequirements == nullptr) {
+    if (l.vk.vkGetBufferMemoryRequirements == nullptr || l.vk.vkCreateBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkMemoryRequirements req{};
-    l.vk.vkGetBufferMemoryRequirements(l.device, from_u64<VkBuffer>(buffer), &req);
+    const uint64_t real = real_buffer(buffer);
+    VkBufferCreateInfo ci{};
+    if (real == 0 && buffer_create_info(buffer, ci)) {
+        // Not made yet: an ordinary buffer of the same shape answers.
+        VkBuffer probe = VK_NULL_HANDLE;
+        const VkResult r = l.vk.vkCreateBuffer(l.device, &ci, nullptr, &probe);
+        if (r != VK_SUCCESS) {
+            std::printf("stud-render-host: vkCreateBuffer -> %d (%llu bytes usage=0x%x)\n",
+                        static_cast<int>(r), static_cast<unsigned long long>(ci.size), ci.usage);
+            std::fflush(stdout);
+            return static_cast<uint64_t>(static_cast<int32_t>(r));
+        }
+        l.vk.vkGetBufferMemoryRequirements(l.device, probe, &req);
+        l.vk.vkDestroyBuffer(l.device, probe, nullptr);
+    } else {
+        l.vk.vkGetBufferMemoryRequirements(l.device, from_u64<VkBuffer>(real), &req);
+    }
     return write_pod(req, out, out_len);
 }
 
 uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset) {
     Loader& l = loader();
-    if (l.vk.vkBindBufferMemory == nullptr) {
+    if (l.vk.vkBindBufferMemory == nullptr || l.vk.vkCreateBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
+    }
+    // The driver's buffer, declaring the kind of memory it is bound to.
+    VkBufferCreateInfo ci{};
+    VkBuffer real = from_u64<VkBuffer>(real_buffer(buffer));
+    const bool numbered = buffer_create_info(buffer, ci);
+    if (numbered) {
+        VkExternalMemoryBufferCreateInfo external{};
+        const VkExternalMemoryHandleTypeFlags kind = memory_handle_type(memory);
+        if (kind != 0) {
+            external.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+            external.handleTypes = kind;
+            ci.pNext = &external;
+        }
+        // Deliberately no per-call print here. The engine creates buffers
+        // sixteen times a frame, so a line each, with a flush, is a write
+        // syscall per creation and a log that grows without bound.
+        const VkResult cr = l.vk.vkCreateBuffer(l.device, &ci, nullptr, &real);
+        if (cr != VK_SUCCESS) {
+            std::printf("stud-render-host: vkCreateBuffer -> %d (%llu bytes usage=0x%x)\n",
+                        static_cast<int>(cr), static_cast<unsigned long long>(ci.size), ci.usage);
+            std::fflush(stdout);
+            return static_cast<uint64_t>(static_cast<int32_t>(cr));
+        }
     }
     VkResult alloc = VK_SUCCESS;
     VkMemoryRequirements buffer_req{};
     if (l.vk.vkGetBufferMemoryRequirements != nullptr) {
-        l.vk.vkGetBufferMemoryRequirements(l.device, from_u64<VkBuffer>(buffer), &buffer_req);
+        l.vk.vkGetBufferMemoryRequirements(l.device, real, &buffer_req);
     }
     const VkDeviceMemory target = real_memory(memory, &alloc, buffer_req.memoryTypeBits);
-    if (target == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(alloc));
-    VkResult r = l.vk.vkBindBufferMemory(l.device, from_u64<VkBuffer>(buffer), target, offset);
+    VkResult r = target != VK_NULL_HANDLE
+                     ? l.vk.vkBindBufferMemory(l.device, real, target, offset)
+                     : alloc;
+    if (r != VK_SUCCESS) {
+        if (numbered) l.vk.vkDestroyBuffer(l.device, real, nullptr);
+        return static_cast<uint64_t>(static_cast<int32_t>(r));
+    }
+    if (numbered) {
+        buffer_slot(buffer & ~kHandleTagMask).real.store(to_u64(real), std::memory_order_release);
+    }
     note_bind(memory, false, offset, 0);
-    if (r == VK_SUCCESS) {
+    {
         std::lock_guard<std::mutex> lock(buffer_memory_mutex());
         buffer_memory()[buffer] = memory;
     }
@@ -7509,7 +7658,11 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 std::lock_guard<std::mutex> lock(buffer_memory_mutex());
                 buffer_memory().erase(handle);
             }
-            if (l.vk.vkDestroyBuffer) l.vk.vkDestroyBuffer(l.device, from_u64<VkBuffer>(handle), nullptr);
+            // Never bound: no driver buffer was ever made for it.
+            const uint64_t real = forget_buffer_number(handle);
+            if (real != 0 && l.vk.vkDestroyBuffer) {
+                l.vk.vkDestroyBuffer(l.device, from_u64<VkBuffer>(real), nullptr);
+            }
             break;
         }
         case K::Image:
@@ -8203,6 +8356,28 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
     const VkDescriptorSet resolved = resolve_descriptor_set(set);
     if (resolved == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     std::vector<uint8_t> data(in.begin(), in.end());
+    // Buffers inside the blob, by Stud's number: see BufferSlot.
+    {
+        auto it = l.template_entries.find(tmpl);
+        if (it != l.template_entries.end()) {
+            for (const auto& e : it->second) {
+                const VkDescriptorType t = e.descriptorType;
+                if (t != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER && t != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER &&
+                    t != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC &&
+                    t != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC) {
+                    continue;
+                }
+                for (uint32_t k = 0; k < e.descriptorCount; ++k) {
+                    const size_t at = e.offset + static_cast<size_t>(e.stride) * k;
+                    if (at + sizeof(uint64_t) > data.size()) break;
+                    uint64_t v = 0;
+                    std::memcpy(&v, data.data() + at, sizeof(v));
+                    v = real_buffer(v);
+                    std::memcpy(data.data() + at, &v, sizeof(v));
+                }
+            }
+        }
+    }
     // Views the client numbered itself, inside the blob: a VkDescriptorImageInfo
     // is {sampler, imageView, layout}, so the view is 8 bytes in.
     if (g_any_client_handles.load(std::memory_order_relaxed)) {
@@ -10794,8 +10969,8 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
     switch (kind) {
         case K::CopyBuffer: {
             if (l.vk.vkCmdCopyBuffer == nullptr) break;
-            VkBuffer src = from_u64<VkBuffer>(r.u64());
-            VkBuffer dst = from_u64<VkBuffer>(r.u64());
+            VkBuffer src = from_u64<VkBuffer>(real_buffer(r.u64()));
+            VkBuffer dst = from_u64<VkBuffer>(real_buffer(r.u64()));
             const uint32_t n = r.u32();
             std::vector<VkBufferCopy> regions(n);
             for (auto& c : regions) {
@@ -10808,7 +10983,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
         }
         case K::CopyBufferToImage: {
             if (l.vk.vkCmdCopyBufferToImage == nullptr) break;
-            VkBuffer src = from_u64<VkBuffer>(r.u64());
+            VkBuffer src = from_u64<VkBuffer>(real_buffer(r.u64()));
             VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t layout = r.u32();
             const uint32_t n = r.u32();
@@ -10836,7 +11011,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             if (l.vk.vkCmdCopyImageToBuffer == nullptr) break;
             VkImage src = from_u64<VkImage>(real_handle(r.u64()));
             const uint64_t dst_handle = r.u64();
-            VkBuffer dst = from_u64<VkBuffer>(dst_handle);
+            VkBuffer dst = from_u64<VkBuffer>(real_buffer(dst_handle));
             const uint32_t layout = r.u32();
             const uint32_t n = r.u32();
             std::vector<VkBufferImageCopy> regions(n);
@@ -11271,7 +11446,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             const uint32_t n = r.u32();
             std::vector<VkBuffer> buffers(n);
             std::vector<VkDeviceSize> offsets(n);
-            for (auto& b : buffers) b = from_u64<VkBuffer>(r.u64());
+            for (auto& b : buffers) b = from_u64<VkBuffer>(real_buffer(r.u64()));
             for (auto& o : offsets) o = r.u64();
             l.vk.vkCmdBindVertexBuffers(cb, first, n, buffers.empty() ? nullptr : buffers.data(),
                                        offsets.empty() ? nullptr : offsets.data());
@@ -11279,7 +11454,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         }
         case K::BindIndexBuffer: {
             if (l.vk.vkCmdBindIndexBuffer == nullptr) break;
-            VkBuffer buffer = from_u64<VkBuffer>(r.u64());
+            VkBuffer buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
             const uint64_t offset = r.u64();
             l.vk.vkCmdBindIndexBuffer(cb, buffer, offset, static_cast<VkIndexType>(r.u32()));
             break;
@@ -11358,7 +11533,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                 b.dstAccessMask = r.u32();
                 b.srcQueueFamilyIndex = r.u32();
                 b.dstQueueFamilyIndex = r.u32();
-                b.buffer = from_u64<VkBuffer>(r.u64());
+                b.buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
                 b.offset = r.u64();
                 b.size = r.u64();
             }
