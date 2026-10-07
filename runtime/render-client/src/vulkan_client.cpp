@@ -1752,13 +1752,27 @@ VkFormatProperties real_format_properties(VkPhysicalDevice physicalDevice, VkFor
 
 bool driver_supports_format(VkPhysicalDevice physicalDevice, VkFormat format) {
     if (physicalDevice == VK_NULL_HANDLE) return false;
+    // A lock of its own, and never held across the question.
+    //
+    // This used to hold emulation_mutex() while asking render-host, and
+    // the answer comes back through the render connection's writer
+    // thread -- which runs the texture decodes, and they take that same
+    // mutex. A decode queued just as a format was first asked about left
+    // each waiting on the other: live-caught as a window that never
+    // showed anything, the engine stopped before its first present. Two
+    // threads asking about one format at once both ask, and store the
+    // same answer.
+    static std::mutex cache_mutex;
     static std::map<uint32_t, bool> cache;
-    std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
-    auto it = cache.find(static_cast<uint32_t>(format));
-    if (it != cache.end()) return it->second;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        auto it = cache.find(static_cast<uint32_t>(format));
+        if (it != cache.end()) return it->second;
+    }
     const VkFormatProperties props = real_format_properties(physicalDevice, format);
     const bool ok =
         (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+    std::lock_guard<std::mutex> lock(cache_mutex);
     cache.emplace(static_cast<uint32_t>(format), ok);
     return ok;
 }
