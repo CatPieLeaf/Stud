@@ -3734,11 +3734,17 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     out.resize(sizeof(uint64_t) * 2);
     const uint64_t handle_value = to_u64(memory);
     l.live_memory.insert(handle_value);
-    if (export_bar || imported) {
+    {
+        // Set or cleared every time: the driver reuses handle values, and
+        // an ordinary allocation must not inherit an earlier one's kind.
         std::lock_guard<std::mutex> lock(memory_handle_types_mutex());
-        memory_handle_types()[handle_value] = export_bar
-                                                  ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
-                                                  : VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+        if (export_bar || imported) {
+            memory_handle_types()[handle_value] =
+                export_bar ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
+                           : VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+        } else {
+            memory_handle_types().erase(handle_value);
+        }
     }
     if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
     // 2: exported as a dma-buf the client fetches under its id.
@@ -7582,6 +7588,10 @@ void destroy_device(Loader& l, uint64_t handle) {
         {
             std::lock_guard<std::mutex> lock(client_handle_mutex());
             client_handles().clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(memory_handle_types_mutex());
+            memory_handle_types().clear();
         }
         if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
         const auto after_destroy = std::chrono::steady_clock::now();
