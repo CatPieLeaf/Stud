@@ -372,11 +372,10 @@ void playback_callback(ma_device* dev, void* output, const void* /*input*/, ma_u
     if (available < wanted) {
         // Not a whole period yet: one period of silence, and what is there
         // stays for the next one. Playing the part and padding the rest
-        // cut a hole into the waveform every period while the ring ran
-        // near empty, a 100 Hz chop over the music, heard as a loud
-        // ringing tone; this way an underrun is one clean gap and the
-        // sound resumes where it stopped. Counted rather than logged; this
-        // runs on the realtime thread.
+        // cut a hole into the waveform in every period while the ring ran
+        // near empty; this way an underrun is one clean gap and the sound
+        // resumes where it stopped. Counted rather than logged; this runs
+        // on the realtime thread.
         std::memset(out, 0, wanted);
         publish(kUnderruns, s->underruns.fetch_add(1, std::memory_order_relaxed) + 1);
         return;
