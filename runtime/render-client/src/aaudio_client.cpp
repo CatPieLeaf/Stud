@@ -289,8 +289,10 @@ void feed(Stream* s) {
         // the target: that is how AAudio's own latency tuning trades
         // latency for fewer underruns, and it used to be stored and
         // ignored. Never lower than the measured floor above.
+        // In the bytes the ring holds, which are float: counted as 16-bit
+        // samples, as they once were, this target was half the 80ms above.
         constexpr uint64_t kMinTargetFill =
-            static_cast<uint64_t>(kFramesPerBurst) * kChannels * 2 * 8;
+            static_cast<uint64_t>(kFramesPerBurst) * kChannels * sizeof(float) * 8;
         const uint64_t requested_fill =
             static_cast<uint64_t>(std::max(0, s->buffer_size.load(std::memory_order_relaxed))) *
             static_cast<uint64_t>(s->channels) * sizeof(float);
@@ -309,7 +311,8 @@ void feed(Stream* s) {
         // a fraction of a burst per burst, which cannot recover from one
         // long scheduling gap before the ring runs out, so a burst that
         // arrives late is followed by a second one straight away.
-        constexpr uint64_t kLowWater = static_cast<uint64_t>(kFramesPerBurst) * kChannels * 2 * 2;
+        constexpr uint64_t kLowWater =
+            static_cast<uint64_t>(kFramesPerBurst) * kChannels * sizeof(float) * 2;
         if (fill > 0 && fill < kLowWater) {
             next_deadline = std::chrono::steady_clock::now();
             continue;

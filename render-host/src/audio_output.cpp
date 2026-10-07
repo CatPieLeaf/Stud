@@ -369,17 +369,21 @@ void playback_callback(ma_device* dev, void* output, const void* /*input*/, ma_u
     const size_t write = s->ring_write.load(std::memory_order_acquire);
     size_t available = write - read;
     if (available > capacity) available = capacity;  // producer overran; take what is valid
-    const size_t take = available < wanted ? available : wanted;
+    if (available < wanted) {
+        // Not a whole period yet: one period of silence, and what is there
+        // stays for the next one. Playing the part and padding the rest
+        // cut a hole into the waveform every period while the ring ran
+        // near empty, a 100 Hz chop over the music, heard as a loud
+        // ringing tone; this way an underrun is one clean gap and the
+        // sound resumes where it stopped. Counted rather than logged; this
+        // runs on the realtime thread.
+        std::memset(out, 0, wanted);
+        publish(kUnderruns, s->underruns.fetch_add(1, std::memory_order_relaxed) + 1);
+        return;
+    }
+    const size_t take = wanted;
     for (size_t i = 0; i < take; ++i) {
         out[i] = s->ring[(read + i) % capacity];
-    }
-    if (take < wanted) {
-        std::memset(out + take, 0, wanted - take);
-        // Silence padded because the producer had not published enough.
-        // Counted rather than logged here; this runs on the realtime
-        // thread. A steady trickle of these is what an open-loop feeder
-        // clock sounds like: small, regular gaps in the waveform.
-        publish(kUnderruns, s->underruns.fetch_add(1, std::memory_order_relaxed) + 1);
     }
     s->ring_read.store(read + take, std::memory_order_release);
     // An atomic store: safe on the realtime thread, and what keeps the
