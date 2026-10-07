@@ -3163,8 +3163,13 @@ std::mutex& shared_fd_mutex() {
     static std::mutex m;
     return m;
 }
-std::unordered_map<uint64_t, int>& shared_fds() {
-    static std::unordered_map<uint64_t, int> m;
+struct SharedFd {
+    int fd = -1;
+    // Unclaimed through one device teardown already; see forget_shared_fds().
+    bool survived_teardown = false;
+};
+std::unordered_map<uint64_t, SharedFd>& shared_fds() {
+    static std::unordered_map<uint64_t, SharedFd> m;
     return m;
 }
 
@@ -3201,11 +3206,11 @@ int take_exported_fd(uint64_t id) {
 
 void register_shared_fd(uint64_t id, int fd) {
     std::lock_guard<std::mutex> lock(shared_fd_mutex());
-    auto [it, inserted] = shared_fds().emplace(id, fd);
+    auto [it, inserted] = shared_fds().emplace(id, SharedFd{fd, false});
     if (!inserted) {
         // An id is never reused by the client; a duplicate is stale.
-        ::close(it->second);
-        it->second = fd;
+        ::close(it->second.fd);
+        it->second = SharedFd{fd, false};
     }
 }
 
@@ -3213,15 +3218,33 @@ int take_shared_fd(uint64_t id) {
     std::lock_guard<std::mutex> lock(shared_fd_mutex());
     auto it = shared_fds().find(id);
     if (it == shared_fds().end()) return -1;
-    const int fd = it->second;
+    const int fd = it->second.fd;
     shared_fds().erase(it);
     return fd;
 }
 
+// At a device teardown: what was sent and never claimed goes, but only
+// once it has been through a whole device's life unclaimed.
+//
+// The channel is its own socket, so an fd arrives as soon as it is sent,
+// while the call that claims it may still be queued behind a teardown on
+// another connection. Dropping everything here could take an fd that was
+// about to be claimed: the audio and window-state pages are sent at
+// startup, around the first device's teardown, and a lost one leaves its
+// user on a round trip for the rest of the session. An fd still unclaimed
+// at the next teardown belongs to nobody.
 void forget_shared_fds() {
     std::lock_guard<std::mutex> lock(shared_fd_mutex());
-    for (auto& kv : shared_fds()) ::close(kv.second);
-    shared_fds().clear();
+    auto& fds = shared_fds();
+    for (auto it = fds.begin(); it != fds.end();) {
+        if (it->second.survived_teardown) {
+            ::close(it->second.fd);
+            it = fds.erase(it);
+        } else {
+            it->second.survived_teardown = true;
+            ++it;
+        }
+    }
 }
 
 // Maps the memfd the client sent under `id`. The fd is closed either
