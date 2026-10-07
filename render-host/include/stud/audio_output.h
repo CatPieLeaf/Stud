@@ -32,6 +32,9 @@ uint64_t audio_write_frames(uint64_t stream, const void* data, size_t bytes);
 // Output underruns since the device opened: periods the device asked for
 // and had to pad with silence.
 uint64_t audio_underruns();
+// Maps the page the client sent under `id` and keeps the ring's counters in
+// it from then on; see CallId::AudioShareState. 1 on success.
+uint64_t audio_share_state(uint64_t id);
 
 void audio_close_stream(uint64_t stream);
 

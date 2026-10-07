@@ -31,6 +31,9 @@
 
 #include "stud/audio_output.h"
 #include "stud/session_log.h"
+#include "stud/vulkan_host.h"
+
+#include <sys/mman.h>
 
 #include <atomic>
 #include <dlfcn.h>
@@ -335,6 +338,20 @@ Device& device() {
     return d;
 }
 
+// The client's copy of the ring's counters (CallId::AudioShareState):
+// bytes received, write position, read position, underruns, then a flag
+// once they are all written. The feeder reads them instead of waiting for
+// each write's answer. Null until the client has sent a page.
+enum AudioSlot { kReceived, kWritten, kRead, kUnderruns, kValid, kSlots };
+std::atomic<std::atomic<uint64_t>*> g_audio_page{nullptr};
+std::atomic<uint64_t> g_audio_received{0};
+
+void publish(AudioSlot slot, uint64_t value) {
+    if (std::atomic<uint64_t>* page = g_audio_page.load(std::memory_order_acquire)) {
+        page[slot].store(value, std::memory_order_release);
+    }
+}
+
 // miniaudio's realtime thread pulls from here. It must not block or
 // allocate, so it only moves whole bursts out of the queue and pads with
 // silence when the client has not fed one yet.
@@ -362,9 +379,12 @@ void playback_callback(ma_device* dev, void* output, const void* /*input*/, ma_u
         // Counted rather than logged here; this runs on the realtime
         // thread. A steady trickle of these is what an open-loop feeder
         // clock sounds like: small, regular gaps in the waveform.
-        s->underruns.fetch_add(1, std::memory_order_relaxed);
+        publish(kUnderruns, s->underruns.fetch_add(1, std::memory_order_relaxed) + 1);
     }
     s->ring_read.store(read + take, std::memory_order_release);
+    // An atomic store: safe on the realtime thread, and what keeps the
+    // feeder's view of the fill current between its writes.
+    publish(kRead, read + take);
 }
 
 void open_device(Device* s) {
@@ -518,9 +538,35 @@ uint64_t audio_open_stream(int sample_rate, int channels, int bytes_per_frame) {
 
 uint64_t audio_underruns() { return device().underruns.load(std::memory_order_relaxed); }
 
+uint64_t audio_share_state(uint64_t id) {
+    const int fd = take_shared_fd(id);
+    if (fd < 0) return 0;
+    const auto length = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
+    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (p == MAP_FAILED) return 0;
+    auto* page = static_cast<std::atomic<uint64_t>*>(p);
+    Device& d = device();
+    page[kReceived].store(g_audio_received.load(std::memory_order_acquire));
+    page[kWritten].store(d.ring_write.load(std::memory_order_acquire));
+    page[kRead].store(d.ring_read.load(std::memory_order_acquire));
+    page[kUnderruns].store(d.underruns.load(std::memory_order_relaxed));
+    // A page an earlier client was given stays mapped: the realtime thread
+    // may still be writing to it, and it is one page.
+    g_audio_page.store(page, std::memory_order_release);
+    page[kValid].store(1, std::memory_order_release);
+    return 1;
+}
+
 uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes) {
     if (data == nullptr || bytes == 0) return 0;
     Device& d = device();
+    // Counted whatever becomes of the burst below, so the client can tell
+    // what is still on its way here from what has arrived.
+    struct Received {
+        size_t bytes;
+        ~Received() { publish(kReceived, g_audio_received.fetch_add(bytes) + bytes); }
+    } received{bytes};
     // Hands off and returns immediately: the caller is the shared render
     // dispatch loop, and blocking it on the audio device stalls every GL
     // call behind it.
@@ -545,6 +591,7 @@ uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes)
         d.ring[(write + i) % capacity] = first[i];
     }
     d.ring_write.store(write + bytes, std::memory_order_release);
+    publish(kWritten, write + bytes);
     // Report how much is now buffered. The feeder on the other side runs
     // on its own wall clock, which drifts against the device's real
     // sample clock; handing it the true fill lets it track the device
@@ -570,8 +617,9 @@ void audio_close_stream(uint64_t stream) {
     Device& d = device();
     {
         std::lock_guard<std::mutex> lock(d.mutex);
-        d.ring_read.store(d.ring_write.load(std::memory_order_acquire),
-                          std::memory_order_release);
+        const size_t written = d.ring_write.load(std::memory_order_acquire);
+        d.ring_read.store(written, std::memory_order_release);
+        publish(kRead, written);
     }
     std::printf("stud-render-host: audio: engine closed stream %llu (device stays open)\n",
                 static_cast<unsigned long long>(stream));

@@ -49,4 +49,54 @@ stud::render_host::Client& readback_connection();
 // event actually arrives, and hand it over the instant it does.
 stud::render_host::Client& input_connection();
 
+// A host-visible allocation backed by a file both processes map.
+//
+// The engine writes vertices, uniforms and staging data through the
+// pointer vkMapMemory hands back. Stud used to give it a private buffer
+// and copy whatever changed to the host on every submit, measured at
+// 197 MB/s through the socket in a real game, which was most of what the
+// render thread was doing. Backing the allocation with memory the host
+// imports as device memory (VK_EXT_external_memory_host) makes those
+// writes land in the device's memory directly, and the copy stops
+// existing. It is a memfd handed to the host over a channel of its own
+// (see create_shared_allocation), so these are ordinary shared pages with
+// no name and no mount behind them; nothing reaches a disk.
+struct SharedAllocation {
+    void* address = nullptr;
+    size_t length = 0;
+    uint64_t id = 0;
+    // The memfd, while the caller still needs it; -1 once closed.
+    int fd = -1;
+    // Mapped from a dma-buf of the GPU's own memory (design C): fast to
+    // write, and about 600x slower than RAM for the CPU to read.
+    bool vram = false;
+};
+
+// Hands `fd` to render-host under `id` over the shared-memory fd channel
+// (CallId::SharedMemoryFdChannel), and waits until it has it.
+bool send_shared_fd(uint64_t id, int fd);
+
+// The dma-buf render-host exported under `id`, or -1.
+int fetch_shared_fd(uint64_t id);
+
+void release_shared_allocation(SharedAllocation& a);
+
+// Backs a shared page range with a memfd and hands it to the host.
+//
+// A memfd, not a file in the runtime directory. These used to be files
+// in $XDG_RUNTIME_DIR, a tmpfs usually sized at a tenth of RAM that also
+// holds the Wayland socket, D-Bus and PipeWire's; a heavy game's
+// host-visible memory alone was measured at 1.3 GB of its 3.1 GB, and
+// when it filled the whole desktop went with it. A memfd is the same
+// kind of page (shmem, same huge-page policy), mapped and imported
+// exactly the same way, but it is charged to no mount's size limit, has
+// no name that can be left behind, and dies with its last reference.
+//
+// `out.fd` stays open for the caller, which may need it once more (the
+// write barrier maps the same pages); release_shared_allocation() or the
+// caller closes it. `hand_to_host` false leaves the handover to the
+// caller, for one that must set something else up first and would
+// otherwise leave the host holding an fd nothing ever claims.
+bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to_host = true);
+
 }  // namespace stud::render_client

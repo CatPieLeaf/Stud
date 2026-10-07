@@ -31,6 +31,9 @@
 #include <thread>
 #include <vector>
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 using stud::render_host::CallId;
 using stud::render_client::connection;
 using stud::render_client::audio_connection;
@@ -103,6 +106,39 @@ struct Stream {
     int32_t channels = kChannels;
 };
 
+// render-host's output ring counters, in a page it keeps current (see
+// CallId::AudioShareState): bytes received, write position, read
+// position, underruns, and a flag once written. With it the feeder sends
+// its frames reply-free -- it used to wait for each burst's answer, 100 a
+// second, which is how a busy render-host became a gap in the sound -- and
+// still knows the fill to pace by. Null where it could not be had; the
+// feeder then asks as before.
+enum AudioSlot { kReceived, kWritten, kRead, kUnderruns, kValid };
+
+const std::atomic<uint64_t>* audio_state_page() {
+    static const std::atomic<uint64_t>* page = []() -> const std::atomic<uint64_t>* {
+        stud::render_client::SharedAllocation shared;
+        if (!stud::render_client::create_shared_allocation(
+                static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), shared)) {
+            return nullptr;
+        }
+        uint64_t a[8] = {shared.id};
+        const uint64_t r = audio_connection().call(CallId::AudioShareState, a, nullptr, 0,
+                                                   nullptr, 0, nullptr);
+        ::close(shared.fd);
+        if (r != 1) {
+            ::munmap(shared.address, shared.length);
+            return nullptr;
+        }
+        return static_cast<const std::atomic<uint64_t>*>(shared.address);
+    }();
+    return page != nullptr && page[kValid].load(std::memory_order_acquire) != 0 ? page : nullptr;
+}
+
+// Bytes sent to the ring by every stream, matched against what the host
+// says it has received.
+std::atomic<uint64_t> g_audio_sent{0};
+
 // The engine converts to whatever the stream reports, so 16-bit is the
 // one format that has to be produced here, float is converted on this
 // side rather than asking the host to handle two layouts.
@@ -122,6 +158,9 @@ void feed(Stream* s) {
         std::chrono::microseconds(1000000LL * kFramesPerBurst / kSampleRate);
     auto next_deadline = std::chrono::steady_clock::now();
     auto host_underruns = [] {
+        if (const std::atomic<uint64_t>* page = audio_state_page()) {
+            return page[kUnderruns].load(std::memory_order_acquire);
+        }
         uint64_t none[8] = {};
         return audio_connection().call(CallId::AudioGetUnderruns, none, nullptr, 0, nullptr, 0,
                                        nullptr);
@@ -203,9 +242,26 @@ void feed(Stream* s) {
                            std::memory_order_relaxed);
         }
         uint64_t args[8] = {s->host_handle};
-        const uint64_t fill = audio_connection().call(
-            CallId::AudioWriteFrames, args, reinterpret_cast<const uint8_t*>(float_scratch.data()),
-            static_cast<uint32_t>(float_scratch.size() * sizeof(float)), nullptr, 0, nullptr);
+        const auto burst_bytes = static_cast<uint32_t>(float_scratch.size() * sizeof(float));
+        uint64_t fill = 0;
+        if (const std::atomic<uint64_t>* page = audio_state_page()) {
+            const uint64_t sent = g_audio_sent.fetch_add(burst_bytes) + burst_bytes;
+            audio_connection().call_void(CallId::AudioWriteFrames, args,
+                                         reinterpret_cast<const uint8_t*>(float_scratch.data()),
+                                         burst_bytes);
+            // Sent now, not when the queue fills: a burst waiting here is a
+            // gap in the waveform.
+            audio_connection().flush();
+            // What is in the ring, plus what is still on its way to it.
+            const uint64_t received = page[kReceived].load(std::memory_order_acquire);
+            const uint64_t written = page[kWritten].load(std::memory_order_acquire);
+            const uint64_t read = page[kRead].load(std::memory_order_acquire);
+            fill = (written > read ? written - read : 0) + (sent > received ? sent - received : 0);
+        } else {
+            fill = audio_connection().call(CallId::AudioWriteFrames, args,
+                                           reinterpret_cast<const uint8_t*>(float_scratch.data()),
+                                           burst_bytes, nullptr, 0, nullptr);
+        }
 
         // Track the device's clock instead of free-running against it.
         //

@@ -819,6 +819,13 @@ enum class CallId : uint32_t {
     // host will keep it current. Slot 0 is GetWindowSize's answer, slot 1
     // PollWindowCloseRequested's, slot 2 non-zero once both are written.
     ShareWindowState,
+    // A page the host keeps the output ring's counters in, so the audio
+    // feeder sends its frames reply-free and still knows how full the ring
+    // is. a[0] the id of the memfd sent over the shared-memory fd channel.
+    // Result 1 if the host will keep it current. Slots: bytes received,
+    // the ring's write position, its read position (the device's), the
+    // underrun count, and non-zero once all are written.
+    AudioShareState,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1142,9 +1149,10 @@ inline const char* call_id_name(CallId id) {
         "VkAcquireTake",
         "VkReadExportedMemory",
         "ShareWindowState",
+        "AudioShareState",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::ShareWindowState) + 1,
+                      static_cast<size_t>(CallId::AudioShareState) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

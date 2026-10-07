@@ -1002,28 +1002,10 @@ std::map<uint64_t, uint64_t>& template_blob_size() {
 }  // namespace
 
 namespace {
-// A host-visible allocation backed by a file both processes map.
-//
-// The engine writes vertices, uniforms and staging data through the
-// pointer vkMapMemory hands back. Stud used to give it a private buffer
-// and copy whatever changed to the host on every submit, measured at
-// 197 MB/s through the socket in a real game, which was most of what the
-// render thread was doing. Backing the allocation with memory the host
-// imports as device memory (VK_EXT_external_memory_host) makes those
-// writes land in the device's memory directly, and the copy stops
-// existing. It is a memfd handed to the host over a channel of its own
-// (see create_shared_allocation), so these are ordinary shared pages with
-// no name and no mount behind them; nothing reaches a disk.
-struct SharedAllocation {
-    void* address = nullptr;
-    size_t length = 0;
-    uint64_t id = 0;
-    // The memfd, while the caller still needs it; -1 once closed.
-    int fd = -1;
-    // Mapped from a dma-buf of the GPU's own memory (design C): fast to
-    // write, and about 600x slower than RAM for the CPU to read.
-    bool vram = false;
-};
+using stud::render_client::SharedAllocation;
+using stud::render_client::create_shared_allocation;
+using stud::render_client::release_shared_allocation;
+
 std::map<uint64_t, SharedAllocation>& shared_allocations() {
     static std::map<uint64_t, SharedAllocation> m;
     return m;
@@ -1073,221 +1055,8 @@ bool shared_memory_enabled() {
     return on;
 }
 
-// The shared-memory fd channel: a connection of the render host's own
-// that carries nothing but memfds (see CallId::SharedMemoryFdChannel).
-//
-// A memfd has no name the host could open, so the descriptor itself is
-// handed over, attached to the allocation id as SCM_RIGHTS. It needs a
-// connection to itself: ancillary data rides one particular byte of the
-// stream, and the render connection is written by a writer thread and
-// several engine threads at once.
-//
-// Opened after the render connection, deliberately. The host serves its
-// FIRST connection on the main loop, which knows nothing of this channel;
-// every later one gets a thread of its own, and that is where the
-// channel is recognised.
-class SharedFdChannel {
-public:
-    // Hands `fd` to the host under `id`, and waits until the host has it,
-    // so the call that names the id next cannot arrive first.
-    bool send(uint64_t id, int fd) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!ensure_open_locked()) return false;
-        char control[CMSG_SPACE(sizeof(int))] = {};
-        iovec iov{&id, sizeof(id)};
-        msghdr msg{};
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = control;
-        msg.msg_controllen = sizeof(control);
-        cmsghdr* c = CMSG_FIRSTHDR(&msg);
-        c->cmsg_level = SOL_SOCKET;
-        c->cmsg_type = SCM_RIGHTS;
-        c->cmsg_len = CMSG_LEN(sizeof(int));
-        std::memcpy(CMSG_DATA(c), &fd, sizeof(fd));
-        ssize_t n;
-        do {
-            n = ::sendmsg(fd_, &msg, MSG_NOSIGNAL);
-        } while (n < 0 && errno == EINTR);
-        if (n != static_cast<ssize_t>(sizeof(id))) return fail_locked();
-        uint8_t kept = 0;
-        do {
-            n = ::recv(fd_, &kept, sizeof(kept), 0);
-        } while (n < 0 && errno == EINTR);
-        if (n != 1) return fail_locked();
-        return kept == 1;
-    }
 
-    // The dma-buf the host exported for allocation `id` (design C,
-    // STUD_VK_BAR_EXPORT): the id goes over with no fd attached, and the
-    // answer byte comes back carrying one. -1 if the host has none.
-    int fetch(uint64_t id) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!ensure_open_locked()) return -1;
-        ssize_t n;
-        do {
-            n = ::send(fd_, &id, sizeof(id), MSG_NOSIGNAL);
-        } while (n < 0 && errno == EINTR);
-        if (n != static_cast<ssize_t>(sizeof(id))) {
-            fail_locked();
-            return -1;
-        }
-        uint8_t found = 0;
-        char control[CMSG_SPACE(sizeof(int))] = {};
-        iovec iov{&found, sizeof(found)};
-        msghdr msg{};
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = control;
-        msg.msg_controllen = sizeof(control);
-        do {
-            n = ::recvmsg(fd_, &msg, MSG_CMSG_CLOEXEC);
-        } while (n < 0 && errno == EINTR);
-        if (n != 1) {
-            fail_locked();
-            return -1;
-        }
-        int received = -1;
-        for (cmsghdr* c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c)) {
-            if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS &&
-                c->cmsg_len >= CMSG_LEN(sizeof(int))) {
-                std::memcpy(&received, CMSG_DATA(c), sizeof(received));
-            }
-        }
-        if (found != 1 && received >= 0) {
-            ::close(received);
-            received = -1;
-        }
-        return received;
-    }
 
-private:
-    bool ensure_open_locked() {
-        if (fd_ >= 0) return true;
-        if (broken_) return false;
-        // The render connection first, so this one is never the host's
-        // first connection.
-        (void)stud::render_client::connection();
-        const std::string path = stud::render_host::default_socket_path();
-        const int s = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        if (s < 0) return fail_locked();
-        sockaddr_un addr{};
-        addr.sun_family = AF_UNIX;
-        std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-        if (::connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-            ::close(s);
-            return fail_locked();
-        }
-        stud::render_host::Header hdr{};
-        hdr.call_id = CallId::SharedMemoryFdChannel;
-        const char* p = reinterpret_cast<const char*>(&hdr);
-        size_t left = sizeof(hdr);
-        while (left > 0) {
-            const ssize_t n = ::send(s, p, left, MSG_NOSIGNAL);
-            if (n < 0 && errno == EINTR) continue;
-            if (n <= 0) {
-                ::close(s);
-                return fail_locked();
-            }
-            p += n;
-            left -= static_cast<size_t>(n);
-        }
-        fd_ = s;
-        return true;
-    }
-
-    // A broken channel stays broken: every allocation from then on takes
-    // the copying path, which is slower and correct.
-    bool fail_locked() {
-        if (fd_ >= 0) ::close(fd_);
-        fd_ = -1;
-        if (!broken_) {
-            broken_ = true;
-            std::fprintf(stderr,
-                         "stud: vulkan-client: the shared-memory channel to the render host "
-                         "failed (%s); the engine's mapped writes will be copied instead\n",
-                         std::strerror(errno));
-            std::fflush(stderr);
-        }
-        return false;
-    }
-
-    std::mutex mutex_;
-    int fd_ = -1;
-    bool broken_ = false;
-};
-
-SharedFdChannel& shared_fd_channel() {
-    static SharedFdChannel c;
-    return c;
-}
-
-void release_shared_allocation(SharedAllocation& a) {
-    if (a.address != nullptr) ::munmap(a.address, a.length);
-    if (a.fd >= 0) ::close(a.fd);
-    a = SharedAllocation{};
-}
-
-// Backs a host-visible allocation with a memfd and hands it to the host.
-//
-// A memfd, not a file in the runtime directory. These used to be files
-// in $XDG_RUNTIME_DIR, a tmpfs usually sized at a tenth of RAM that also
-// holds the Wayland socket, D-Bus and PipeWire's; a heavy game's
-// host-visible memory alone was measured at 1.3 GB of its 3.1 GB, and
-// when it filled the whole desktop went with it. A memfd is the same
-// kind of page (shmem, same huge-page policy), mapped and imported
-// exactly the same way, but it is charged to no mount's size limit, has
-// no name that can be left behind, and dies with its last reference.
-//
-// `out.fd` stays open for the caller, which may need it once more (the
-// write barrier maps the same pages); release_shared_allocation() or the
-// caller closes it. `hand_to_host` false leaves the handover to the
-// caller, for one that must set something else up first and would
-// otherwise leave the host holding an fd nothing ever claims.
-bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to_host = true) {
-    static std::atomic<uint64_t> next_id{1};
-    const uint64_t id = next_id.fetch_add(1, std::memory_order_relaxed);
-    // Through syscall(): bionic only declares memfd_create() from API 30.
-    const int fd = static_cast<int>(::syscall(SYS_memfd_create, "stud-vk-memory", MFD_CLOEXEC));
-    if (fd < 0) return false;
-    // Whole pages: the import on the other side needs a page-aligned
-    // mapping of a whole number of pages.
-    const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
-    const size_t length = (static_cast<size_t>(size) + page - 1) & ~(page - 1);
-    // Reserve the pages now, rather than letting them be filled in on
-    // first touch: running out of memory is then an ordinary error here,
-    // where the caller can fall back to copying, instead of a SIGBUS on
-    // whichever process touches the page first. posix_fallocate returns
-    // the error and does not set errno.
-    const int reserved = ::posix_fallocate(fd, 0, static_cast<off_t>(length));
-    if (reserved != 0) {
-        static bool said = false;
-        if (!said) {
-            said = true;
-            std::printf("stud: could not reserve a %zu KB shared mapping (%s); the engine's "
-                        "writes will be copied instead of shared\n",
-                        length / 1024, std::strerror(reserved));
-            std::fflush(stdout);
-        }
-        ::close(fd);
-        return false;
-    }
-    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (p == MAP_FAILED) {
-        ::close(fd);
-        return false;
-    }
-    if (hand_to_host && !shared_fd_channel().send(id, fd)) {
-        ::munmap(p, length);
-        ::close(fd);
-        return false;
-    }
-    out.address = p;
-    out.length = length;
-    out.id = id;
-    out.fd = fd;
-    return true;
-}
 
 // Fences the GPU has finished, answered here instead of by a round trip.
 //
@@ -2380,6 +2149,20 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     if (pAllocateInfo == nullptr || pMemory == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     std::vector<uint8_t> chain;
     const uint32_t nodes = flatten_chain(pAllocateInfo->pNext, chain);
+    // Memory no CPU can see is never mapped, so nothing about it needs an
+    // answer: numbered here and sent reply-free, like the objects bound
+    // into it. During a join or a streaming burst these come by the
+    // hundred, each one a wait behind the whole queued stream.
+    if (host_visible_memory_types().count(pAllocateInfo->memoryTypeIndex) == 0) {
+        uint64_t a[8] = {to_u64(device), pAllocateInfo->allocationSize,
+                         pAllocateInfo->memoryTypeIndex, nodes, 0};
+        a[7] = client_handle();
+        stud::render_client::connection().call_void(CallId::VkAllocateMemory, a,
+                                                     chain.empty() ? nullptr : chain.data(),
+                                                     static_cast<uint32_t>(chain.size()));
+        *pMemory = from_u64<VkDeviceMemory>(a[7]);
+        return VK_SUCCESS;
+    }
     // Worth sharing only for memory the engine will map. The host refuses
     // the import when the driver cannot back this memory type with a host
     // pointer, and then this falls back to copying.
@@ -2425,7 +2208,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     // instead of importing our pages. Map that in place of the memfd, so
     // the engine writes straight into it.
     if (want_shared && written >= sizeof(reply) && reply[1] == 2) {
-        const int dmabuf = shared_fd_channel().fetch(shared.id);
+        const int dmabuf = stud::render_client::fetch_shared_fd(shared.id);
         void* p = dmabuf >= 0 ? ::mmap(nullptr, shared.length, PROT_READ | PROT_WRITE, MAP_SHARED,
                                        dmabuf, 0)
                               : MAP_FAILED;
@@ -2494,6 +2277,9 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
     // meanwhile.
     uint64_t a[8] = {to_u64(device), to_u64(memory)};
     stud::render_client::connection().call_void(CallId::VkFreeMemory, a);
+    // After the free is queued, so memory given this number next reaches
+    // render-host behind it.
+    free_client_handle(to_u64(memory));
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory memory,
@@ -2554,7 +2340,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
             // The barrier maps the same memfd itself, and only once it has
             // does the host get its descriptor, claimed by the call below.
             if (slot.barrier.allocate_backed_by(static_cast<size_t>(size), bounce.fd) &&
-                shared_fd_channel().send(bounce.id, bounce.fd)) {
+                stud::render_client::send_shared_fd(bounce.id, bounce.fd)) {
                 uint64_t sa[8] = {to_u64(device), to_u64(memory), bounce.id, size};
                 const uint64_t sr = stud::render_client::connection().call(
                     CallId::VkShareMappedMemory, sa, nullptr, 0, nullptr, 0, nullptr);

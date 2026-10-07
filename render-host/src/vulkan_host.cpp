@@ -3585,7 +3585,7 @@ VkDeviceSize imported_host_pointer_alignment() {
 
 uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vector<uint8_t>& in,
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
-                             uint64_t shared_id) {
+                             uint64_t shared_id, uint64_t client) {
     Loader& l = loader();
     if (l.vk.vkAllocateMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -3603,6 +3603,13 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             lazy_memory()[handle_value] = LazyMemory{size, type_index, VK_NULL_HANDLE};
             l.live_memory.insert(handle_value);
             if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
+            // Numbered by the client and reply-free: GPU-only memory, never
+            // mapped, so nothing else needs saying.
+            if (client != 0) {
+                bind_client_handle(client, handle_value);
+                *out_len = 0;
+                return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+            }
             out.resize(sizeof(uint64_t) * 2);
             const uint64_t shared_flag = 0;
             std::memcpy(out.data(), &handle_value, sizeof(handle_value));
@@ -3830,6 +3837,11 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
     // 2: exported as a dma-buf the client fetches under its id.
     const uint64_t shared_flag = exported_fd >= 0 ? 2u : imported ? 1u : 0u;
+    if (client != 0) {
+        bind_client_handle(client, handle_value);
+        *out_len = 0;
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
     std::memcpy(out.data(), &handle_value, sizeof(handle_value));
     std::memcpy(out.data() + sizeof(handle_value), &shared_flag, sizeof(shared_flag));
     *out_len = static_cast<uint32_t>(out.size());
@@ -3838,6 +3850,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
 
 uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) {
     image = real_handle(image);
+    memory = real_handle(memory);
     Loader& l = loader();
     if (l.vk.vkBindImageMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -3898,6 +3911,10 @@ uint64_t vk_free_memory_shared_cleanup(uint64_t memory) {
 std::map<uint64_t, std::pair<void*, size_t>>& shared_writes();
 
 uint64_t vk_free_memory(uint64_t memory) {
+    if ((memory & kHandleTagMask) == kClientHandleTag) {
+        memory = forget_client_handle(memory);
+        if (memory == 0) return 0;
+    }
     Loader& l = loader();
     if (l.vk.vkFreeMemory == nullptr) return 0;
     l.live_memory.erase(memory);
@@ -7058,6 +7075,7 @@ uint64_t vk_get_buffer_memory_requirements(uint64_t buffer, std::vector<uint8_t>
 }
 
 uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset) {
+    memory = real_handle(memory);
     Loader& l = loader();
     if (l.vk.vkBindBufferMemory == nullptr || l.vk.vkCreateBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));

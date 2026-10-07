@@ -4592,9 +4592,15 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             // sent it over the fd channel under this id, and wants it
             // shared rather than copied. The buffer still carries the
             // pNext chain.
-            return stud::render_host::vk_allocate_memory(a[1], static_cast<uint32_t>(a[2]), in,
-                                                          static_cast<uint32_t>(a[3]), out, out_len,
-                                                          a[4]);
+        // a[7], when set, is the client's number for GPU-only memory; the
+        // call is then reply-free.
+        {
+            const uint64_t r = stud::render_host::vk_allocate_memory(
+                a[1], static_cast<uint32_t>(a[2]), in, static_cast<uint32_t>(a[3]), out, out_len,
+                a[4], a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         // Reply-free from the client, like VkBindBufferMemory.
         case CallId::VkBindImageMemory: {
             const uint64_t r = stud::render_host::vk_bind_image_memory(a[1], a[2], a[3]);
@@ -4805,6 +4811,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                                                         static_cast<int>(a[2]));
         case CallId::AudioWriteFrames:
             return stud::render_host::audio_write_frames(a[0], in.data(), in.size());
+        case CallId::AudioShareState:
+            return stud::render_host::audio_share_state(a[0]);
         case CallId::AudioGetUnderruns:
             return stud::render_host::audio_underruns();
 
@@ -5345,6 +5353,8 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         // what paces the engine's mixer, so holding the dispatch lock
         // across it makes every other connection wait on the sound card.
         case stud::render_host::CallId::AudioWriteFrames:
+        case stud::render_host::CallId::AudioShareState:
+        case stud::render_host::CallId::AudioGetUnderruns:
         case stud::render_host::CallId::AudioReadFrames:
         // Input may WAIT for an event to arrive (see PollInputEvents in
         // the protocol header). It holds no driver state at all, and
