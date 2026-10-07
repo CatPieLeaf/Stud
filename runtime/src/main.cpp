@@ -345,6 +345,25 @@ std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
     }
     return {};  // nothing asked for: leave the engine's own default alone
 }
+
+// render-host's window-state page (CallId::ShareWindowState), handed over by
+// libvulkan.so once it has made one; null until then, and the polls below
+// ask render-host as before.
+std::atomic<const std::atomic<uint64_t>*> g_window_state_page{nullptr};
+
+extern "C" __attribute__((visibility("default"))) void stud_set_window_state_page(const void* page) {
+    g_window_state_page.store(static_cast<const std::atomic<uint64_t>*>(page),
+                              std::memory_order_release);
+}
+
+// Slot `slot` of that page, if there is one and render-host has filled it.
+bool window_state_from_page(int slot, uint64_t* value) {
+    const std::atomic<uint64_t>* page = g_window_state_page.load(std::memory_order_acquire);
+    if (page == nullptr || page[2].load(std::memory_order_acquire) == 0) return false;
+    *value = page[slot].load(std::memory_order_acquire);
+    return true;
+}
+
 // The window changed size, so everyone who lays out against it is told.
 //
 // Lifted whole out of main()'s poll loop. The debounce state below is
@@ -367,10 +386,13 @@ void poll_window_resize(stud::jni_bridge::BionicAwareJvm& jvm,
         // which showed up as the old, smaller image sitting in a larger frame
         // with the desktop visible through the rest of it.
         {
-            uint64_t size_args[8] = {};
-            uint64_t packed = stud::render_client::connection().call(
-                stud::render_host::CallId::GetWindowSize, size_args, nullptr, 0, nullptr, 0,
-                nullptr);
+            uint64_t packed = 0;
+            if (!window_state_from_page(0, &packed)) {
+                uint64_t size_args[8] = {};
+                packed = stud::render_client::connection().call(
+                    stud::render_host::CallId::GetWindowSize, size_args, nullptr, 0, nullptr, 0,
+                    nullptr);
+            }
             if (packed != 0) {
                 const int32_t w = static_cast<int32_t>(packed >> 32);
                 const int32_t h = static_cast<int32_t>(packed & 0xffffffffu);
@@ -2901,10 +2923,14 @@ int main(int argc, char** argv) {
         // below actually runs. render-host stays up and keeps answering
         // until this process has gone through it.
         {
-            uint64_t close_args[8] = {};
-            if (stud::render_client::connection().call(
+            uint64_t close_requested = 0;
+            if (!window_state_from_page(1, &close_requested)) {
+                uint64_t close_args[8] = {};
+                close_requested = stud::render_client::connection().call(
                     stud::render_host::CallId::PollWindowCloseRequested, close_args, nullptr, 0,
-                    nullptr, 0, nullptr) != 0) {
+                    nullptr, 0, nullptr);
+            }
+            if (close_requested != 0) {
                 std::printf("stud: the window was closed, leaving the experience\n");
                 std::fflush(stdout);
                 g_should_keep_running.store(false, std::memory_order_relaxed);

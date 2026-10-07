@@ -36,10 +36,17 @@
 #include <set>
 #include <thread>
 #include <cerrno>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
+#include <dirent.h>
+#include <sched.h>
+#include <signal.h>
+#include <ucontext.h>
+#include <ctime>
 #include <sys/un.h>
 #include <linux/memfd.h>
 #include <mutex>
@@ -298,6 +305,34 @@ VkResult simple_create(const uint64_t (&a)[8], H* outHandle) {
     }
     *outHandle = from_u64<H>(handle);
     return VK_SUCCESS;
+}
+
+uint64_t client_handle();
+
+// A create whose only answer is the handle: numbered here, sent reply-free
+// with the number in a[7], and bound to what render-host makes (see
+// answer_handle there). Everything that later names the object reaches
+// render-host after it, in the same stream.
+template <typename H, CallId kId>
+VkResult numbered_create(uint64_t (&a)[8], H* outHandle, const void* in = nullptr,
+                         uint32_t in_len = 0) {
+    if (outHandle == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    a[7] = client_handle();
+    stud::render_client::connection().call_void(kId, a, in, in_len);
+    *outHandle = from_u64<H>(a[7]);
+    return VK_SUCCESS;
+}
+
+// A pool's command buffers die with it: the engine never frees them one at
+// a time. Their numbers are given back when the pool goes.
+std::mutex& pool_command_buffer_numbers_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::unordered_map<uint64_t, std::vector<uint64_t>>& pool_command_buffer_numbers() {
+    static std::unordered_map<uint64_t, std::vector<uint64_t>> m;
+    return m;
 }
 
 // What the driver will ask for, remembered by the SHAPE of the object
@@ -941,21 +976,18 @@ void push_mapped_bytes(uint64_t memory, uint64_t rel_offset, uint64_t size) {
 }
 
 // Shared shape for a create that carries a payload: send the encoded
-// struct, get one handle back.
+// struct, reply-free, under a number of the client's own (see
+// numbered_create).
 template <typename H, CallId kId>
 VkResult create_from_payload(const uint64_t (&a)[8], const std::vector<uint8_t>& in,
                              H* outHandle) {
     if (outHandle == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
-    uint64_t handle = 0;
-    uint32_t written = 0;
-    uint64_t r = stud::render_client::connection().call(kId, a, in.data(),
-                                                         static_cast<uint32_t>(in.size()), &handle,
-                                                         sizeof(handle), &written);
-    VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
-    if (result != VK_SUCCESS || written < sizeof(handle)) {
-        return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
-    }
-    *outHandle = from_u64<H>(handle);
+    uint64_t args[8];
+    std::memcpy(args, a, sizeof(args));
+    args[7] = client_handle();
+    stud::render_client::connection().call_void(kId, args, in.data(),
+                                                 static_cast<uint32_t>(in.size()));
+    *outHandle = from_u64<H>(args[7]);
     return VK_SUCCESS;
 }
 
@@ -1329,6 +1361,33 @@ void start_submit_feedback(uint64_t device) {
     }
     std::lock_guard<std::mutex> lock(f.m);
     if (f.device == device) f.page = static_cast<const std::atomic<uint64_t>*>(page.address);
+}
+
+// The page render-host keeps the window's size and close request in (see
+// CallId::ShareWindowState), made once and handed to the runtime, whose
+// main loop reads it instead of asking every 250ms. This library has the
+// shared-memory channel; the runtime does not, so it is made here.
+void share_window_state_once() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        using SetPage = void (*)(const void*);
+        auto set_page =
+            reinterpret_cast<SetPage>(::dlsym(RTLD_DEFAULT, "stud_set_window_state_page"));
+        if (set_page == nullptr) return;
+        SharedAllocation page;
+        if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), page)) {
+            return;
+        }
+        uint64_t a[8] = {page.id};
+        const uint64_t r = stud::render_client::connection().call(CallId::ShareWindowState, a,
+                                                                 nullptr, 0, nullptr, 0, nullptr);
+        ::close(page.fd);
+        if (r != 1) {
+            ::munmap(page.address, page.length);
+            return;
+        }
+        set_page(page.address);
+    });
 }
 
 // Whether every fence (wait_all) or any fence has certainly signalled.
@@ -1891,6 +1950,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDevice(VkPhysicalDevice physicalDevi
     g_decode_device = *pDevice;
     g_decode_physical_device = physicalDevice;
     start_submit_feedback(handle);
+    share_window_state_once();
     // Emulated textures are decoded to an uncompressed format of the same
     // precision. What keeps the engine's texture budget meaningful with
     // them that size is the host's scaled memory requirements; see
@@ -2018,7 +2078,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateCommandPool(VkDevice device,
                                                          VkCommandPool* pCommandPool) {
     if (pCreateInfo == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags, pCreateInfo->queueFamilyIndex};
-    return simple_create<VkCommandPool, CallId::VkCreateCommandPool>(a, pCommandPool);
+    return numbered_create<VkCommandPool, CallId::VkCreateCommandPool>(a, pCommandPool);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateSemaphore(VkDevice device,
@@ -2027,7 +2087,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateSemaphore(VkDevice device,
                                                        VkSemaphore* pSemaphore) {
     if (pCreateInfo == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags};
-    return simple_create<VkSemaphore, CallId::VkCreateSemaphore>(a, pSemaphore);
+    return numbered_create<VkSemaphore, CallId::VkCreateSemaphore>(a, pSemaphore);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateFence(VkDevice device,
@@ -2035,7 +2095,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateFence(VkDevice device,
                                                    const VkAllocationCallbacks*, VkFence* pFence) {
     if (pCreateInfo == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags};
-    const VkResult r = simple_create<VkFence, CallId::VkCreateFence>(a, pFence);
+    const VkResult r = numbered_create<VkFence, CallId::VkCreateFence>(a, pFence);
     if (r == VK_SUCCESS && pFence != nullptr) {
         // Its state from here on, for answering waits locally.
         SubmitFeedback& f = submit_feedback();
@@ -2056,7 +2116,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateQueryPool(VkDevice device,
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags,
                      static_cast<uint64_t>(pCreateInfo->queryType), pCreateInfo->queryCount,
                      pCreateInfo->pipelineStatistics};
-    const VkResult r = simple_create<VkQueryPool, CallId::VkCreateQueryPool>(a, pQueryPool);
+    const VkResult r = numbered_create<VkQueryPool, CallId::VkCreateQueryPool>(a, pQueryPool);
     if (r == VK_SUCCESS && pCreateInfo->queryType == VK_QUERY_TYPE_TIMESTAMP) {
         share_query_results(to_u64(device), to_u64(*pQueryPool), pCreateInfo->queryCount);
     }
@@ -2122,11 +2182,39 @@ namespace {
 // host (an image or an image view). Numbered here, in the range render-host
 // recognises as the client's own, and translated there to the real handle
 // on every use; see render-host's real_handle().
-uint64_t client_handle() {
-    static std::atomic<uint64_t> next{1};
-    constexpr uint64_t kClientHandleTag = 0xFFFD000000000000ull;
-    return kClientHandleTag | next.fetch_add(1, std::memory_order_relaxed);
+constexpr uint64_t kClientHandleTag = 0xFFFD000000000000ull;
+
+std::mutex& client_handle_mutex() {
+    static std::mutex m;
+    return m;
 }
+
+std::vector<uint64_t>& free_client_handles() {
+    static std::vector<uint64_t> v;
+    return v;
+}
+
+// Reused once its object is destroyed, so render-host's table of them only
+// grows to the most objects alive at once. The destroy and the next create
+// travel the same ordered stream, so the destroy always arrives first.
+uint64_t client_handle() {
+    static uint64_t next = 1;
+    std::lock_guard<std::mutex> lock(client_handle_mutex());
+    auto& free = free_client_handles();
+    if (!free.empty()) {
+        const uint64_t h = free.back();
+        free.pop_back();
+        return h;
+    }
+    return kClientHandleTag | next++;
+}
+
+void free_client_handle(uint64_t h) {
+    if ((h & 0xFFFF000000000000ull) != kClientHandleTag) return;
+    std::lock_guard<std::mutex> lock(client_handle_mutex());
+    free_client_handles().push_back(h);
+}
+
 
 }  // namespace
 
@@ -2792,95 +2880,37 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateAndroidSurfaceKHR(
 
 namespace {
 
-// Buffers render-host has already created, by shape, handed out without a
-// round trip.
-//
-// vkCreateBuffer was the last blocking call on the engine's frame: about
-// ten a frame in a heavy scene, 80 us each, every one waiting behind the
-// whole queued stream. The engine makes the same shapes over and over, so
-// a shape seen twice is stocked: when its stock is empty, one call makes
-// as many as the engine made of that shape over its last refresh-rate's
-// worth of presents -- about a second of real use, so about one wait a
-// second per shape, and never more spare buffers than a second's need.
-// Until a whole window has passed, as many as it has made so far. (Sizing
-// a refill by one frame's use made it a single buffer for a shape made
-// once a frame, used at once and never ahead -- measured: as many waits as
-// before.) Spare buffers hold no memory until bound. A buffer is still
-// destroyed the ordinary way and never reused -- binding memory to one is
-// permanent.
-struct BufferStock {
-    std::vector<uint64_t> ready;
-    uint64_t seen = 0;
-    uint64_t window_start = 0;  // the present count the current window began at
-    uint64_t in_window = 0;
-    uint64_t last_window = 0;   // made in the previous whole window, 0 before one
-};
-
-// Presents in about a second: the display's own refresh rate, asked once.
-uint64_t presents_per_window() {
-    static const uint64_t n = [] {
-        uint64_t a[8] = {};
-        const uint64_t mhz = stud::render_client::connection().call(
-            CallId::GetDisplayRefreshRate, a, nullptr, 0, nullptr, 0, nullptr);
-        return std::max<uint64_t>(1, mhz / 1000);
-    }();
-    return n;
-}
-
-uint64_t presents_so_far() {
-    SubmitFeedback& f = submit_feedback();
-    std::lock_guard<std::mutex> lock(f.m);
-    return f.presents;
-}
-
-std::mutex& buffer_stock_mutex() {
+// Buffer handles, numbered here; see kBufferHandleTag. vkCreateBuffer was
+// the last blocking call on the engine's frame -- about ten a frame in a
+// heavy scene, each waiting behind the whole queued stream -- and render-host
+// makes no driver call until the buffer is bound, so nothing about it needs
+// an answer.
+std::mutex& buffer_number_mutex() {
     static std::mutex m;
     return m;
 }
-std::map<std::string, BufferStock>& buffer_stocks() {
-    static std::map<std::string, BufferStock> m;
-    return m;
+
+std::vector<uint64_t>& free_buffer_numbers() {
+    static std::vector<uint64_t> v;
+    return v;
 }
 
-// A buffer of this shape, from stock or a refill of it; false when the
-// shape is not stocked (yet), and the ordinary call has to make it.
-bool stocked_buffer(const uint64_t (&a)[8], uint64_t* handle) {
-    const std::string key(reinterpret_cast<const char*>(&a[0]), sizeof(uint64_t) * 5);
-    const uint64_t now = presents_so_far();
-    const uint64_t window = presents_per_window();
-    uint64_t batch = 0;
-    {
-        std::lock_guard<std::mutex> lock(buffer_stock_mutex());
-        BufferStock& s = buffer_stocks()[key];
-        if (now - s.window_start >= window) {
-            // A gap of more than one window means nothing was made in the last.
-            s.last_window = now - s.window_start < 2 * window ? s.in_window : 0;
-            s.in_window = 0;
-            s.window_start = now;
-        }
-        ++s.seen;
-        ++s.in_window;
-        if (!s.ready.empty()) {
-            *handle = s.ready.back();
-            s.ready.pop_back();
-            return true;
-        }
-        if (s.seen < 2) return false;
-        batch = s.last_window != 0 ? s.last_window : s.seen;
+uint64_t new_buffer_number() {
+    static uint64_t next = 0;
+    std::lock_guard<std::mutex> lock(buffer_number_mutex());
+    auto& free = free_buffer_numbers();
+    if (!free.empty()) {
+        const uint64_t n = free.back();
+        free.pop_back();
+        return n;
     }
-    uint64_t args[8] = {a[0], a[1], a[2], a[3], a[4], batch};
-    std::vector<uint64_t> made(static_cast<size_t>(batch));
-    uint32_t written = 0;
-    const uint64_t r = stud::render_client::connection().call(
-        CallId::VkCreateBuffers, args, nullptr, 0, made.data(),
-        static_cast<uint32_t>(made.size() * sizeof(uint64_t)), &written);
-    const size_t got = written / sizeof(uint64_t);
-    if (static_cast<VkResult>(static_cast<int32_t>(r)) != VK_SUCCESS || got == 0) return false;
-    *handle = made[0];
-    std::lock_guard<std::mutex> lock(buffer_stock_mutex());
-    BufferStock& s = buffer_stocks()[key];
-    s.ready.insert(s.ready.end(), made.begin() + 1, made.begin() + static_cast<long>(got));
-    return true;
+    return stud::render_host::kBufferHandleTag | next++;
+}
+
+void free_buffer_number(uint64_t n) {
+    if ((n & 0xFFFF000000000000ull) != stud::render_host::kBufferHandleTag) return;
+    std::lock_guard<std::mutex> lock(buffer_number_mutex());
+    free_buffer_numbers().push_back(n);
 }
 
 }  // namespace
@@ -2893,15 +2923,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateBuffer(VkDevice device,
                                                     VkBuffer* pBuffer) {
     if (pCreateInfo == nullptr || pBuffer == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device), pCreateInfo->flags, pCreateInfo->size, pCreateInfo->usage,
-                     static_cast<uint64_t>(pCreateInfo->sharingMode)};
-    uint64_t stocked = 0;
-    VkResult r = VK_SUCCESS;
-    if (stocked_buffer(a, &stocked)) {
-        *pBuffer = from_u64<VkBuffer>(stocked);
-    } else {
-        r = simple_create<VkBuffer, CallId::VkCreateBuffer>(a, pBuffer);
-    }
-    if (r == VK_SUCCESS) {
+                     static_cast<uint64_t>(pCreateInfo->sharingMode), new_buffer_number()};
+    stud::render_client::connection().call_void(CallId::VkCreateBuffer, a);
+    *pBuffer = from_u64<VkBuffer>(a[5]);
+    const VkResult r = VK_SUCCESS;
+    {
         // Everything the host is given to create this buffer with, minus
         // the device -- so two buffers of the same shape on the same
         // device share a key. See MemoryRequirementsCache.
@@ -2990,17 +3016,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateShaderModule(
     VkShaderModule* pShaderModule) {
     if (pCreateInfo == nullptr || pShaderModule == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
     uint64_t a[8] = {to_u64(device)};
-    uint64_t handle = 0;
-    uint32_t written = 0;
-    uint64_t r = stud::render_client::connection().call(
-        CallId::VkCreateShaderModule, a, pCreateInfo->pCode,
-        static_cast<uint32_t>(pCreateInfo->codeSize), &handle, sizeof(handle), &written);
-    VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
-    if (result != VK_SUCCESS || written < sizeof(handle)) {
-        return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
-    }
-    *pShaderModule = from_u64<VkShaderModule>(handle);
-    return VK_SUCCESS;
+    return numbered_create<VkShaderModule, CallId::VkCreateShaderModule>(
+        a, pShaderModule, pCreateInfo->pCode, static_cast<uint32_t>(pCreateInfo->codeSize));
 }
 
 // Every vkDestroyX has the same shape and returns nothing, so they share
@@ -3008,6 +3025,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateShaderModule(
 void destroy_handle(VkDevice device, vk_wire::DestroyKind kind, uint64_t handle) {
     uint64_t a[8] = {to_u64(device), static_cast<uint64_t>(kind), handle};
     stud::render_client::connection().call_void(CallId::VkDestroyHandle, a);
+    // After the destroy is queued, so an object given this number next
+    // reaches render-host behind it.
+    free_client_handle(handle);
 }
 
 #define STUD_VK_DESTROY(fn, type, kind)                                                      \
@@ -3039,6 +3059,9 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyBuffer(VkDevice device, VkBuffer handle
                       pending.end());
     }
     destroy_handle(device, vk_wire::DestroyKind::Buffer, to_u64(handle));
+    // After the destroy is queued, so a buffer given this number next
+    // reaches render-host behind it.
+    free_buffer_number(to_u64(handle));
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkDestroyImage(VkDevice device, VkImage handle,
@@ -3054,7 +3077,20 @@ STUD_VK_DESTROY(stud_vkDestroyImageView, VkImageView, ImageView)
 STUD_VK_DESTROY(stud_vkDestroyShaderModule, VkShaderModule, ShaderModule)
 STUD_VK_DESTROY(stud_vkDestroySemaphore, VkSemaphore, Semaphore)
 STUD_VK_DESTROY(stud_vkDestroyFence, VkFence, Fence)
-STUD_VK_DESTROY(stud_vkDestroyCommandPool, VkCommandPool, CommandPool)
+VKAPI_ATTR void VKAPI_CALL stud_vkDestroyCommandPool(VkDevice device, VkCommandPool handle,
+                                                      const VkAllocationCallbacks*) {
+    destroy_handle(device, vk_wire::DestroyKind::CommandPool, to_u64(handle));
+    std::vector<uint64_t> numbers;
+    {
+        std::lock_guard<std::mutex> lock(pool_command_buffer_numbers_mutex());
+        auto it = pool_command_buffer_numbers().find(to_u64(handle));
+        if (it != pool_command_buffer_numbers().end()) {
+            numbers.swap(it->second);
+            pool_command_buffer_numbers().erase(it);
+        }
+    }
+    for (uint64_t n : numbers) free_client_handle(n);
+}
 VKAPI_ATTR void VKAPI_CALL stud_vkDestroyQueryPool(VkDevice device, VkQueryPool handle,
                                                     const VkAllocationCallbacks*) {
     destroy_handle(device, vk_wire::DestroyKind::QueryPool, to_u64(handle));
@@ -3088,13 +3124,6 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroySurfaceKHR(VkInstance instance, VkSurfa
 }
 
 VKAPI_ATTR void VKAPI_CALL stud_vkDestroyDevice(VkDevice device, const VkAllocationCallbacks*) {
-    // Stocked buffers die with the device, and the next device can come
-    // back at the same address, so keying the stock by device is not
-    // enough: they would be handed out on the new one.
-    {
-        std::lock_guard<std::mutex> lock(buffer_stock_mutex());
-        buffer_stocks().clear();
-    }
     // FORGET THE DECODE SCRATCH FIRST. It belongs to the device that is
     // about to die.
     //
@@ -3786,22 +3815,24 @@ extern "C" {
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateCommandBuffers(
     VkDevice device, const VkCommandBufferAllocateInfo* ai, VkCommandBuffer* pBuffers) {
     if (ai == nullptr || pBuffers == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    // Numbered here and sent reply-free, like every other object the engine
+    // only names afterwards; render-host binds each number to a real
+    // command buffer. Blocking, this waited behind the whole queued stream.
     uint64_t a[8] = {to_u64(device), to_u64(ai->commandPool),
                      static_cast<uint64_t>(ai->level), ai->commandBufferCount};
-    std::vector<uint8_t> out(sizeof(uint64_t) * ai->commandBufferCount);
-    uint32_t written = 0;
-    uint64_t r = stud::render_client::connection().call(CallId::VkAllocateCommandBuffers, a,
-                                                         nullptr, 0, out.data(),
-                                                         static_cast<uint32_t>(out.size()),
-                                                         &written);
-    VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
-    if (result != VK_SUCCESS) return result;
-    const uint32_t n = written / sizeof(uint64_t);
-    for (uint32_t i = 0; i < n && i < ai->commandBufferCount; ++i) {
-        uint64_t h = 0;
-        std::memcpy(&h, out.data() + i * sizeof(h), sizeof(h));
-        pBuffers[i] = from_u64<VkCommandBuffer>(h);
+    std::vector<uint64_t> numbers(ai->commandBufferCount);
+    for (uint32_t i = 0; i < ai->commandBufferCount; ++i) {
+        numbers[i] = client_handle();
+        pBuffers[i] = from_u64<VkCommandBuffer>(numbers[i]);
     }
+    {
+        std::lock_guard<std::mutex> lock(pool_command_buffer_numbers_mutex());
+        auto& owned = pool_command_buffer_numbers()[to_u64(ai->commandPool)];
+        owned.insert(owned.end(), numbers.begin(), numbers.end());
+    }
+    stud::render_client::connection().call_void(
+        CallId::VkAllocateCommandBuffers, a, numbers.data(),
+        static_cast<uint32_t>(numbers.size() * sizeof(uint64_t)));
     return VK_SUCCESS;
 }
 

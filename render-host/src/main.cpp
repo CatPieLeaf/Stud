@@ -75,6 +75,7 @@
 
 #include <dlfcn.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -958,6 +959,7 @@ void pump_display(const RealWindow& window, bool fd_readable);
 void dispatch_input_queue(wl_display* display, bool fd_readable);
 
 namespace {
+uint64_t share_window_state(uint64_t id);
 uint64_t g_window_surface_handle = kNullHandle;
 bool g_prefer_vulkan = true;
 bool g_hidpi_enabled = true;
@@ -2097,6 +2099,8 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
         }
         case CallId::PollWindowCloseRequested:
             return stud::android_glue::window_close_requested() ? 1u : 0u;
+        case CallId::ShareWindowState:
+            return share_window_state(a[0]);
         case CallId::PollWebViewClosed: {
             uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
             return pending;
@@ -2871,6 +2875,46 @@ void gl_scale_present(const RealFns& fns, GlScaleTarget& t) {
 // differ mid-drag: the engine was told every raw size while its
 // swapchain stayed at the last settled one. Zero until the first size.
 std::atomic<uint64_t> g_settled_window_size{0};
+
+// What GetWindowSize answers: the settled size once there is one, the
+// window's own until then.
+uint64_t current_window_size() {
+    if (const uint64_t settled = g_settled_window_size.load()) return settled;
+    const auto w = static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
+    const auto h = static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
+    return (w << 32) | (h & 0xffffffffu);
+}
+
+// Process B's copy of both answers; see CallId::ShareWindowState. Written
+// whenever either changes, so its main loop never waits on this process
+// to learn them -- it used to, every 250ms, behind whatever held the
+// dispatch lock: 958ms at worst in one session's stall trace.
+std::atomic<std::atomic<uint64_t>*> g_window_state_page{nullptr};
+
+void publish_window_state() {
+    std::atomic<uint64_t>* page = g_window_state_page.load(std::memory_order_acquire);
+    if (page == nullptr) return;
+    page[0].store(current_window_size(), std::memory_order_release);
+    page[1].store(stud::android_glue::window_close_requested() ? 1u : 0u,
+                  std::memory_order_release);
+}
+
+uint64_t share_window_state(uint64_t id) {
+    const int fd = stud::render_host::take_shared_fd(id);
+    if (fd < 0) return 0;
+    const auto length = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
+    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (p == MAP_FAILED) return 0;
+    auto* page = static_cast<std::atomic<uint64_t>*>(p);
+    // A page an earlier client was given stays mapped: a publish may still
+    // be writing to it, and it is one page.
+    g_window_state_page.store(page, std::memory_order_release);
+    stud::android_glue::set_window_state_listener(&publish_window_state);
+    publish_window_state();
+    page[2].store(1, std::memory_order_release);
+    return 1;
+}
 
 // Defined below the per-domain dispatchers it hands to; a command batch
 // (GlCommandBatch) calls back into it for each call it carries.
@@ -4330,18 +4374,33 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
         case CallId::VkGetDeviceQueue:
             return stud::render_host::vk_get_device_queue(
                 static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
-        case CallId::VkCreateCommandPool:
-            return stud::render_host::vk_create_command_pool(
-                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len);
-        case CallId::VkCreateSemaphore:
-            return stud::render_host::vk_create_semaphore(static_cast<uint32_t>(a[1]), out,
-                                                           out_len);
-        case CallId::VkCreateFence:
-            return stud::render_host::vk_create_fence(static_cast<uint32_t>(a[1]), out, out_len);
-        case CallId::VkCreateQueryPool:
-            return stud::render_host::vk_create_query_pool(
+        // a[7], when set, is the number the client gave the new object; the
+        // call is then reply-free (see answer_handle in vulkan_host.cpp).
+        case CallId::VkCreateCommandPool: {
+            const uint64_t r = stud::render_host::vk_create_command_pool(
+                static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]), out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateSemaphore: {
+            const uint64_t r = stud::render_host::vk_create_semaphore(static_cast<uint32_t>(a[1]), out,
+                                                                    out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateFence: {
+            const uint64_t r = stud::render_host::vk_create_fence(static_cast<uint32_t>(a[1]), out, out_len,
+                                                                a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateQueryPool: {
+            const uint64_t r = stud::render_host::vk_create_query_pool(
                 static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
-                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]), out, out_len);
+                static_cast<uint32_t>(a[3]), static_cast<uint32_t>(a[4]), out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkCreatePipelineCache:
             return stud::render_host::vk_create_pipeline_cache(static_cast<uint32_t>(a[1]), in,
                                                                 out, out_len);
@@ -4362,27 +4421,13 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
         case CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
             return stud::render_host::vk_get_physical_device_surface_capabilities(a[0], a[1], out,
                                                                                    out_len);
-        case CallId::VkCreateBuffer:
-            return stud::render_host::vk_create_buffer(
+        // Reply-free: the client numbered it; see kBufferHandleTag.
+        case CallId::VkCreateBuffer: {
+            const uint64_t r = stud::render_host::vk_create_buffer(
                 static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
-                static_cast<uint32_t>(a[4]), out, out_len);
-        case CallId::VkCreateBuffers: {
-            // Each one exactly as VkCreateBuffer makes it, so render-host's
-            // own records for a stocked buffer match an ordinary one.
-            std::vector<uint8_t> one;
-            std::vector<uint8_t> all;
-            uint64_t result = 0;
-            for (uint64_t i = 0; i < a[5]; ++i) {
-                uint32_t one_len = 0;
-                result = stud::render_host::vk_create_buffer(
-                    static_cast<uint32_t>(a[1]), a[2], static_cast<uint32_t>(a[3]),
-                    static_cast<uint32_t>(a[4]), one, &one_len);
-                if (static_cast<int32_t>(result) != 0 || one_len < sizeof(uint64_t)) break;
-                all.insert(all.end(), one.begin(), one.begin() + sizeof(uint64_t));
-            }
-            out = std::move(all);
-            *out_len = static_cast<uint32_t>(out.size());
-            return out.empty() ? result : 0;
+                static_cast<uint32_t>(a[4]), a[5]);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
         }
         case CallId::VkGetBufferMemoryRequirements:
             return stud::render_host::vk_get_buffer_memory_requirements(a[1], out, out_len);
@@ -4398,41 +4443,75 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             if (a[1] != 0) report_reply_free_failure(hdr.call_id, r);
             return r;
         }
-        case CallId::VkCreateShaderModule:
-            return stud::render_host::vk_create_shader_module(in, out, out_len);
+        case CallId::VkCreateShaderModule: {
+            const uint64_t r = stud::render_host::vk_create_shader_module(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkDestroyHandle:
             return stud::render_host::vk_destroy_handle(static_cast<uint32_t>(a[1]), a[2]);
-        case CallId::VkCreateRenderPass:
-            return stud::render_host::vk_create_render_pass(in, out, out_len);
+        case CallId::VkCreateRenderPass: {
+            const uint64_t r = stud::render_host::vk_create_render_pass(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkCreateFramebuffer: {
             const uint64_t r = stud::render_host::vk_create_framebuffer(in, out, out_len, a[1]);
             if (a[1] != 0) report_reply_free_failure(hdr.call_id, r);
             return r;
         }
-        case CallId::VkCreateSampler:
-            return stud::render_host::vk_create_sampler(in, out, out_len);
-        case CallId::VkCreatePipelineLayout:
-            return stud::render_host::vk_create_pipeline_layout(in, out, out_len);
-        case CallId::VkCreateDescriptorSetLayout:
-            return stud::render_host::vk_create_descriptor_set_layout(in, out, out_len);
-        case CallId::VkCreateDescriptorPool:
-            return stud::render_host::vk_create_descriptor_pool(in, out, out_len);
+        case CallId::VkCreateSampler: {
+            const uint64_t r = stud::render_host::vk_create_sampler(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreatePipelineLayout: {
+            const uint64_t r = stud::render_host::vk_create_pipeline_layout(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateDescriptorSetLayout: {
+            const uint64_t r = stud::render_host::vk_create_descriptor_set_layout(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateDescriptorPool: {
+            const uint64_t r = stud::render_host::vk_create_descriptor_pool(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkAllocateDescriptorSets:
             return stud::render_host::vk_allocate_descriptor_sets(in, out, out_len);
         case CallId::VkResetDescriptorPool:
             return stud::render_host::vk_reset_descriptor_pool(a[1],
                                                                 static_cast<uint32_t>(a[2]));
-        case CallId::VkCreateDescriptorUpdateTemplate:
-            return stud::render_host::vk_create_descriptor_update_template(in, out, out_len);
+        case CallId::VkCreateDescriptorUpdateTemplate: {
+            const uint64_t r = stud::render_host::vk_create_descriptor_update_template(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkUpdateDescriptorSetWithTemplate:
             return stud::render_host::vk_update_descriptor_set_with_template(a[1], a[2], in);
-        case CallId::VkCreateGraphicsPipelines:
-            return stud::render_host::vk_create_graphics_pipelines(in, out, out_len);
-        case CallId::VkCreateComputePipelines:
-            return stud::render_host::vk_create_compute_pipelines(in, out, out_len);
+        case CallId::VkCreateGraphicsPipelines: {
+            const uint64_t r = stud::render_host::vk_create_graphics_pipelines(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateComputePipelines: {
+            const uint64_t r = stud::render_host::vk_create_compute_pipelines(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkAllocateCommandBuffers:
-            return stud::render_host::vk_allocate_command_buffers(
-                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]), out, out_len);
+        {
+            // Reply-free when the client numbered them: `in` carries one
+            // number per buffer.
+            const uint64_t r = stud::render_host::vk_allocate_command_buffers(
+                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]), in, out,
+                out_len);
+            if (!in.empty()) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         // Both are normally sent reply-free (see sync_command_buffer_calls()
         // in the Vulkan client), so the client cannot see these results and
         // this is the only place a failure can be noticed at all. Said once
@@ -4718,10 +4797,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
     if (auto handled = dispatch_vk_call(hdr, window, in, out, out_len)) return *handled;
     switch (hdr.call_id) {
         case CallId::GetWindowSize: {
-            if (const uint64_t settled = g_settled_window_size.load()) return settled;
-            uint64_t w = static_cast<uint64_t>(ANativeWindow_getWidth(nullptr));
-            uint64_t h = static_cast<uint64_t>(ANativeWindow_getHeight(nullptr));
-            return (w << 32) | (h & 0xffffffffu);
+            return current_window_size();
         }
         case CallId::AudioOpenStream:
             return stud::render_host::audio_open_stream(static_cast<int>(a[0]),
@@ -4979,6 +5055,7 @@ void sync_vk_window_size() {
     last_h = h;
     last_applied_at = std::chrono::steady_clock::now();
     g_settled_window_size.store((static_cast<uint64_t>(w) << 32) | h);
+    publish_window_state();
     stud::render_host::vk_set_window_size(w, h);
     // What the upscaler writes: the window in the display's own pixels,
     // which is a different number from the one above whenever the engine
@@ -5274,6 +5351,11 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         // holding the dispatch lock across that wait would stall every
         // other connection for the length of it.
         case stud::render_host::CallId::PollInputEvents:
+        // Read nothing the lock guards; waiting for it is what put the
+        // window-size poll behind every driver call.
+        case stud::render_host::CallId::GetWindowSize:
+        case stud::render_host::CallId::PollWindowCloseRequested:
+        case stud::render_host::CallId::ShareWindowState:
         // Waits for the GPU; client_wait_sync() takes the lock per poll.
         case stud::render_host::CallId::GlClientWaitSync:
         // Video decoding touches no GL state and can take milliseconds a

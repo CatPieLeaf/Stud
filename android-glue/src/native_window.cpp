@@ -1620,6 +1620,19 @@ void push_host_input_event(const HostInputEvent& ev) { push_input_event(ev); }
 void set_native_window_size(int32_t width, int32_t height) {
     g_window_width = width;
     g_window_height = height;
+    window_state_changed();
+}
+
+namespace {
+std::atomic<void (*)()> g_window_state_listener{nullptr};
+}  // namespace
+
+void set_window_state_listener(void (*listener)()) {
+    g_window_state_listener.store(listener, std::memory_order_release);
+}
+
+void window_state_changed() {
+    if (void (*listener)() = g_window_state_listener.load(std::memory_order_acquire)) listener();
 }
 }  // namespace stud::android_glue
 
@@ -2083,7 +2096,10 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
 void xdg_toplevel_configure_bounds(void*, xdg_toplevel*, int32_t, int32_t) {}
 void xdg_toplevel_wm_capabilities(void*, xdg_toplevel*, wl_array*) {}
 std::atomic<bool> g_window_close_requested{false};
-void xdg_toplevel_close(void*, xdg_toplevel*) { g_window_close_requested.store(true); }
+void xdg_toplevel_close(void*, xdg_toplevel*) {
+    g_window_close_requested.store(true);
+    stud::android_glue::window_state_changed();
+}
 
 const xdg_toplevel_listener kToplevelListener = {
     .configure = xdg_toplevel_configure,
@@ -2135,7 +2151,10 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
     window->configured = true;
 }
 
-void decor_frame_close(libdecor_frame*, void*) { g_window_close_requested.store(true); }
+void decor_frame_close(libdecor_frame*, void*) {
+    g_window_close_requested.store(true);
+    stud::android_glue::window_state_changed();
+}
 
 // libdecor draws into subsurfaces of this window's surface, and a
 // synchronous subsurface only becomes visible when its parent commits.
@@ -2300,6 +2319,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
         // covers the difference.
         g_window_width.store(buffer_px_from_logical(w));
         g_window_height.store(buffer_px_from_logical(h));
+        stud::android_glue::window_state_changed();
         std::printf("stud: android-glue: X11 window %dx%d device px, %dx%d logical, engine "
                     "renders %dx%d\n",
                     device_w, device_h, w, h, g_window_width.load(), g_window_height.load());
@@ -2572,6 +2592,7 @@ void set_render_scale_120(int32_t requested_scale_120) {
     g_default_logical_height.store(logical_h);
     g_window_width.store(buffer_px_from_logical(logical_w));
     g_window_height.store(buffer_px_from_logical(logical_h));
+    stud::android_glue::window_state_changed();
     std::printf("stud: android-glue: default window %dx%d logical (output %dx%d px)\n", logical_w,
                 logical_h, st.output_mode_px_w, st.output_mode_px_h);
     std::printf("stud: android-glue: display scale %d/120, render scale %d/120 (%s)\n",
@@ -3532,6 +3553,7 @@ void native_window_pump_x11() {
     if (buffer_w != g_window_width.load() || buffer_h != g_window_height.load()) {
         g_window_width.store(buffer_w);
         g_window_height.store(buffer_h);
+        stud::android_glue::window_state_changed();
         std::printf("stud: android-glue: X11 window %dx%d device px, %dx%d logical, engine "
                     "renders %dx%d\n",
                     device_w, device_h, logical_w, logical_h, buffer_w, buffer_h);

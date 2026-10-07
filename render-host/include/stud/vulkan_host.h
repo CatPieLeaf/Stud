@@ -119,12 +119,16 @@ uint64_t vk_get_physical_device_image_format_properties(uint64_t device, uint32_
 uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_t>& out,
                               uint32_t* out_len);
 uint64_t vk_create_command_pool(uint32_t flags, uint32_t family, std::vector<uint8_t>& out,
-                                 uint32_t* out_len);
-uint64_t vk_create_semaphore(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len);
-uint64_t vk_create_fence(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len);
+                                 uint32_t* out_len,
+        uint64_t client = 0);
+uint64_t vk_create_semaphore(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len,
+        uint64_t client = 0);
+uint64_t vk_create_fence(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_query_pool(uint32_t flags, uint32_t query_type, uint32_t query_count,
                                uint32_t pipeline_statistics, std::vector<uint8_t>& out,
-                               uint32_t* out_len);
+                               uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_pipeline_cache(uint32_t flags, const std::vector<uint8_t>& in,
                                    std::vector<uint8_t>& out, uint32_t* out_len);
 uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vector<uint8_t>& out,
@@ -210,44 +214,54 @@ uint64_t vk_get_image_format_properties2(uint64_t physical_device, const std::ve
                                           uint32_t* out_len);
 
 uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_t sharing_mode,
-                           std::vector<uint8_t>& out, uint32_t* out_len);
+                           uint64_t number);
 uint64_t vk_get_buffer_memory_requirements(uint64_t buffer, std::vector<uint8_t>& out,
                                             uint32_t* out_len);
 uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset);
 uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                uint32_t* out_len, uint64_t client_handle = 0);
 uint64_t vk_create_shader_module(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                  uint32_t* out_len);
+                                  uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle);
 
 // Draw pipeline. Payloads are read with the shared Reader in
 // vulkan_forward.h; see the implementations for each layout.
 uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                uint32_t* out_len);
+                                uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                 uint32_t* out_len, uint64_t client_handle = 0);
 uint64_t vk_create_sampler(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                            uint32_t* out_len);
+                            uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
-                                          std::vector<uint8_t>& out, uint32_t* out_len);
+                                          std::vector<uint8_t>& out, uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_pipeline_layout(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                    uint32_t* out_len);
+                                    uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_descriptor_pool(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                    uint32_t* out_len);
+                                    uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_allocate_descriptor_sets(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                       uint32_t* out_len);
 uint64_t vk_reset_descriptor_pool(uint64_t pool, uint32_t flags);
 uint64_t vk_create_descriptor_update_template(const std::vector<uint8_t>& in,
-                                               std::vector<uint8_t>& out, uint32_t* out_len);
+                                               std::vector<uint8_t>& out, uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
                                                  const std::vector<uint8_t>& in);
 uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                       uint32_t* out_len);
+                                       uint32_t* out_len,
+        uint64_t client = 0);
 uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                      uint32_t* out_len);
+                                      uint32_t* out_len,
+        uint64_t client = 0);
 
 uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t count,
-                                      std::vector<uint8_t>& out, uint32_t* out_len);
+                                      const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                                      uint32_t* out_len);
 uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags);
 uint64_t vk_end_command_buffer(uint64_t cb);
 uint64_t vk_reset_command_pool(uint64_t pool, uint32_t flags);

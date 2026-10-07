@@ -1788,6 +1788,7 @@ void pump() {
             case ClientMessage:
                 if (static_cast<Atom>(event.xclient.data.l[0]) == g_wm_delete) {
                     g_close_requested.store(true);
+                    stud::android_glue::window_state_changed();
                 }
                 break;
             default:

@@ -203,6 +203,12 @@ bool native_window_is_foreground();
 // semantics here, just an honest, checkable request flag).
 bool window_close_requested();
 
+// Called after the window's size or its close request changes, so a
+// reader that publishes them (render-host's window-state page) can do so
+// at once instead of being polled. Does nothing until a listener is set.
+void set_window_state_listener(void (*listener)());
+void window_state_changed();
+
 // Pumps libdecor, and does nothing at all unless this process is drawing
 // its own window decorations (no compositor-side xdg-decoration; see
 // native_window.cpp). libdecor keeps its objects on the DEFAULT Wayland
