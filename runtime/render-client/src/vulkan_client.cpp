@@ -781,9 +781,12 @@ void send_mapped_run(uint64_t memory, MappedRange& m, uint64_t rel_offset, uint6
         a[3] = n;
         stud::render_client::connection().call_void(CallId::VkWriteSharedMappedMemory, a);
     } else {
-        stud::render_client::connection().call(CallId::VkWriteMappedMemory, a,
-                                                m.bytes() + rel_offset,
-                                                static_cast<uint32_t>(n), nullptr, 0, nullptr);
+        // Reply-free for the same reason: the bytes are copied into the
+        // queue here, in order ahead of the submit that reads them, and
+        // the answer was never read.
+        stud::render_client::connection().call_void(CallId::VkWriteMappedMemory, a,
+                                                     m.bytes() + rel_offset,
+                                                     static_cast<uint32_t>(n));
     }
     g_mapped_bytes_sent += n;
     // The host now holds these bytes, so the shadow can speak for them --
@@ -2410,6 +2413,20 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
                                                  VkMemoryMapFlags flags, void** ppData) {
     if (ppData == nullptr) return VK_ERROR_MEMORY_MAP_FAILED;
     uint64_t a[8] = {to_u64(device), to_u64(memory), offset, size, flags};
+    {
+        // Shared with the host: the engine writes straight into the
+        // device's own memory, so there is nothing to stage, nothing to
+        // track as dirty and nothing to send at submit -- and nothing in
+        // the host's answer to wait for either. Its map only keeps its own
+        // records, so it goes reply-free, in order.
+        std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+        auto shared = shared_allocations().find(to_u64(memory));
+        if (shared != shared_allocations().end() && shared->second.address != nullptr) {
+            stud::render_client::connection().call_void(CallId::VkMapMemory, a);
+            *ppData = static_cast<uint8_t*>(shared->second.address) + offset;
+            return VK_SUCCESS;
+        }
+    }
     uint64_t r = stud::render_client::connection().call(CallId::VkMapMemory, a, nullptr, 0, nullptr,
                                                          0, nullptr);
     VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
@@ -2420,17 +2437,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
         std::fprintf(stderr, "stud: vulkan-client: vkMapMemory(VK_WHOLE_SIZE) is not supported\n");
         std::fflush(stderr);
         return VK_ERROR_MEMORY_MAP_FAILED;
-    }
-    {
-        // Shared with the host: the engine writes straight into the
-        // device's own memory, so there is nothing to stage, nothing to
-        // track as dirty and nothing to send at submit.
-        std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
-        auto shared = shared_allocations().find(to_u64(memory));
-        if (shared != shared_allocations().end() && shared->second.address != nullptr) {
-            *ppData = static_cast<uint8_t*>(shared->second.address) + offset;
-            return VK_SUCCESS;
-        }
     }
     std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     auto& slot = mapped_ranges()[to_u64(memory)];
@@ -2574,9 +2580,12 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkFlushMappedMemoryRanges(
                                  ? r.offset - it->second.offset
                                  : 0;
         push_mapped_bytes(key, rel, r.size);
+        // Reply-free: the bytes it covers are already queued ahead of it,
+        // in order, and nothing but a VkResult would come back -- which
+        // this function never returned anyway. Waiting for it held
+        // mapped_mutex across a full round trip behind everything queued.
         uint64_t a[8] = {to_u64(device), key, r.offset, r.size};
-        stud::render_client::connection().call(CallId::VkFlushMappedMemoryRanges, a, nullptr, 0,
-                                                nullptr, 0, nullptr);
+        stud::render_client::connection().call_void(CallId::VkFlushMappedMemoryRanges, a);
     }
     return VK_SUCCESS;
 }

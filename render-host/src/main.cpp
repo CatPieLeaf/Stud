@@ -4524,11 +4524,19 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
         }
         case CallId::VkFreeMemory:
             return stud::render_host::vk_free_memory(a[1]);
-        case CallId::VkMapMemory:
-            return stud::render_host::vk_map_memory(a[1], a[2], a[3],
-                                                     static_cast<uint32_t>(a[4]));
-        case CallId::VkWriteMappedMemory:
-            return stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
+        // Reply-free whenever the memory is shared with the client, and the
+        // write and flush always; see stud_vkMapMemory.
+        case CallId::VkMapMemory: {
+            const uint64_t r = stud::render_host::vk_map_memory(a[1], a[2], a[3],
+                                                                static_cast<uint32_t>(a[4]));
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkWriteMappedMemory: {
+            const uint64_t r = stud::render_host::vk_write_mapped_memory(a[1], a[2], in);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkReadMappedMemory:
             return stud::render_host::vk_read_mapped_memory(a[1], a[2], a[3], out, out_len);
         case CallId::VkShareMappedMemory:
@@ -4546,8 +4554,11 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             return stud::render_host::vk_write_shared_mapped_memory(a[1], a[2], a[3]);
         case CallId::VkUnmapMemory:
             return stud::render_host::vk_unmap_memory(a[1]);
-        case CallId::VkFlushMappedMemoryRanges:
-            return stud::render_host::vk_flush_mapped_memory_ranges(a[1], a[2], a[3]);
+        case CallId::VkFlushMappedMemoryRanges: {
+            const uint64_t r = stud::render_host::vk_flush_mapped_memory_ranges(a[1], a[2], a[3]);
+            report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
         case CallId::VkGetPhysicalDeviceSurfaceFormatsKHR:
             return stud::render_host::vk_get_surface_formats(a[0], a[1],
                                                               static_cast<uint32_t>(a[2]), out,
