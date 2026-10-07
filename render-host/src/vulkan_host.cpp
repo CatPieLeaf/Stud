@@ -2609,12 +2609,18 @@ double texture_size_scale(Loader& l) {
         const double v = std::atof(env);
         if (v > 0.0) budget_mb = v;
     }
-    const double budget = budget_mb * 1024.0 * 1024.0;
+    const double mib = 1024.0 * 1024.0;
+    const double budget = budget_mb * mib;
     const double vram = static_cast<double>(device_local_heap_size(l));
-    scale = vram > 0.0 ? budget / vram : 0.0;
+    // Left aside for everything that is not a scaled texture: the engine's
+    // buffers and render targets, Stud's swapchain and upscale images.
+    // Measured at 701 MB at most on a 4 GiB GPU, plus room on top of that.
+    const double margin = 768.0 * mib;
+    const double room = vram > margin ? vram - margin : vram;
+    scale = room > 0.0 ? budget / room : 0.0;
     std::printf("stud-render-host: textures report %.3f of their size (engine budget %.0f MB, "
-                "device-local budget %.0f MB)\n",
-                scale == 0.0 ? 1.0 : scale, budget_mb, vram / (1024.0 * 1024.0));
+                "device-local budget %.0f MB, %.0f MB of it left aside)\n",
+                scale == 0.0 ? 1.0 : scale, budget_mb, vram / mib, (vram - room) / mib);
     std::fflush(stdout);
     return scale;
 }
