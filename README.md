@@ -330,9 +330,20 @@ Or on NixOS, add the flake as an input and install it system-wide:
 ```nix
 # flake.nix
 inputs.stud.url = "github:CatPieLeaf/Stud";
-
+utputs = inputs@{ self, nixpkgs, nixpkgs-unstable, nixpkgs-prerelease,stud, ... }: {
+    # NOTE: 'nixos' is the default hostname
+    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
+       modules = [
+            nixpkgs.overlays = [
+               # Stud has no default.nix, only a flake — use its flake outputs:
+               stud = inputs.stud.packages.${final.stdenv.hostPlatform.system};
+            ];
+          ./configuration.nix
+        ];
+    };
+  };
 # configuration.nix
-environment.systemPackages = [ inputs.stud.packages.x86_64-linux.default ];
+environment.systemPackages = [ pkgs.stud.stud ];
 hardware.graphics.enable = true;
 ```
 
