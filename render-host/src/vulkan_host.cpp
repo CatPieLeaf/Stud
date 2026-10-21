@@ -2981,8 +2981,17 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         // loop spawned over a hundred real windows (live-caught, by the
         // user, on their own desktop). The window this process already
         // owns is handed in once at startup instead.
-        const uint32_t w = g_window_width.load(std::memory_order_relaxed);
-        const uint32_t h = g_window_height.load(std::memory_order_relaxed);
+        uint32_t w = g_window_width.load(std::memory_order_relaxed);
+        uint32_t h = g_window_height.load(std::memory_order_relaxed);
+        // Never past what the driver can build. The maximum used to be
+        // raised to fit the window instead, so a window the compositor
+        // had grown to 33666 pixels wide (an overlay too big for it) was
+        // reported as a size the GPU could make a swapchain at, and
+        // NVIDIA crashed inside vkCreateSwapchainKHR trying to. The
+        // driver's maximum is its own answer; the engine renders at most
+        // that, and the window shows it scaled.
+        if (caps.maxImageExtent.width > 0) w = std::min(w, caps.maxImageExtent.width);
+        if (caps.maxImageExtent.height > 0) h = std::min(h, caps.maxImageExtent.height);
         if (w > 0 && h > 0) {
             caps.currentExtent = {w, h};
             // Keep the reported range consistent with the size just
@@ -2990,8 +2999,6 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
             // answer than the one it was told to use.
             if (caps.minImageExtent.width > w) caps.minImageExtent.width = w;
             if (caps.minImageExtent.height > h) caps.minImageExtent.height = h;
-            if (caps.maxImageExtent.width < w) caps.maxImageExtent.width = w;
-            if (caps.maxImageExtent.height < h) caps.maxImageExtent.height = h;
             // Once per size, not once per query. The engine asks for
             // surface capabilities constantly, measured at 5100 lines
             // of one 9700-line session log, so half the log was this

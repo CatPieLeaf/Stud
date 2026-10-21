@@ -17,6 +17,7 @@
 #include "wayland_overlay_deps.h"
 
 #include "stud/android_glue.h"
+#include "stud/ndk_types.h"
 #include "text_input.h"
 #include "x11_backend.h"
 
@@ -165,6 +166,35 @@ TextOverlaySpec with_preedit(const TextOverlaySpec& spec) {
     const int32_t inside = p.cursor < 0 || p.cursor > length ? length : p.cursor;
     drawn.caret = static_cast<int32_t>(caret) + inside;
     return drawn;
+}
+
+// The box, cut to the window.
+//
+// The engine reports a TextBox's size, and a box that grows with its text
+// (a long line pasted into the command bar) grew past the window: 33666
+// pixels wide for 4164 characters. Drawn at that size the overlay is a
+// subsurface wider than the window, a Wayland compositor sizes a window
+// to take in its subsurfaces, and KDE made the whole window 33666 wide --
+// past what the GPU can build a swapchain for, which NVIDIA crashed on.
+// Nothing outside the window is visible anyway, and a box narrower than
+// its text already scrolls to keep the caret in view.
+TextOverlaySpec clipped_to_window(TextOverlaySpec spec) {
+    const auto window_w = static_cast<float>(ANativeWindow_getWidth(nullptr));
+    const auto window_h = static_cast<float>(ANativeWindow_getHeight(nullptr));
+    if (window_w <= 0.0f || window_h <= 0.0f) return spec;
+    const float left = std::max(spec.x, 0.0f);
+    const float top = std::max(spec.y, 0.0f);
+    const float right = std::min(spec.x + spec.width, window_w);
+    const float bottom = std::min(spec.y + spec.height, window_h);
+    if (right <= left || bottom <= top) {
+        spec.visible = false;
+        return spec;
+    }
+    spec.x = left;
+    spec.y = top;
+    spec.width = right - left;
+    spec.height = bottom - top;
+    return spec;
 }
 
 // Where the caret was last drawn, in the drawing's own space: its x from
@@ -594,7 +624,7 @@ void apply_locked(const TextOverlaySpec& spec) {
 // TextBox has focus, and at the caret, so its candidate window opens next
 // to the text rather than at a corner of the window.
 void apply_and_report(const TextOverlaySpec& spec) {
-    const TextOverlaySpec drawn = with_preedit(spec);
+    const TextOverlaySpec drawn = clipped_to_window(with_preedit(spec));
     apply_locked(drawn);
     const bool active = drawn.visible && drawn.width > 0.0f && drawn.height > 0.0f;
     float x = 0.0f;

@@ -1183,10 +1183,8 @@ void dispatch_text_input_event(const stud::android_glue::HostInputEvent& ev,
     bool changed = false;
     if (ev.type == Ev::kTextCommit) {
         const size_t n = ::strnlen(ev.composed_utf8, sizeof(ev.composed_utf8));
-        const std::string text(ev.composed_utf8, n);
-        // One line, as with a paste: a newline would smuggle a control
-        // character into a single-line box.
-        if (text.find_first_of("\r\n") == std::string::npos) changed = ed.insert(text);
+        // As a paste is: whole, line breaks included; see Ctrl+V.
+        changed = ed.insert(std::string(ev.composed_utf8, n));
     } else {
         // Byte counts, in the protocol's own UTF-8 units; the editor
         // removes whole characters, so it stops at the first one that
@@ -1412,12 +1410,11 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
             if (ev.code == 45) changed = ed.delete_selection();  // cut
             moved = true;
         } else if (ctrl && ev.code == 47) {  // Ctrl+V
-            std::string pasted = get_clipboard();
-            // A text box takes one line: a pasted newline ends the
-            // paste rather than smuggling a control character in.
-            const size_t newline = pasted.find_first_of("\r\n");
-            if (newline != std::string::npos) pasted.resize(newline);
-            changed = ed.insert(pasted);
+            // All of it, line breaks included. This used to keep only the
+            // first line, which turned a pasted script into one line of
+            // it; what a TextBox does with a line break is the engine's
+            // own decision, the same one it makes on desktop.
+            changed = ed.insert(get_clipboard());
         } else if (ev.code == 14) {  // BACKSPACE
             changed = ed.backspace();
         } else if (ev.code == 111) {  // DELETE
