@@ -1564,8 +1564,39 @@ void load_server_keymap() {
                                                      fields[4]);
 }
 
+// F11's fullscreen, through the window manager: the EWMH request to
+// toggle _NET_WM_STATE_FULLSCREEN, sent to the root window as the spec
+// says. The window manager decides, and the window's next ConfigureNotify
+// carries the new size like any other resize.
+void toggle_fullscreen() {
+    Xlib& x = xlib();
+    if (g_display == nullptr || g_window == 0 || x.InternAtom == nullptr || x.SendEvent == nullptr) {
+        return;
+    }
+    XEvent ev{};
+    ev.xclient.type = ClientMessage;
+    ev.xclient.window = g_window;
+    ev.xclient.message_type = x.InternAtom(g_display, "_NET_WM_STATE", False);
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = 2;  // _NET_WM_STATE_TOGGLE
+    ev.xclient.data.l[1] = static_cast<long>(x.InternAtom(g_display, "_NET_WM_STATE_FULLSCREEN", False));
+    ev.xclient.data.l[2] = 0;
+    ev.xclient.data.l[3] = 1;  // a normal application
+    x.SendEvent(g_display, DefaultRootWindow(g_display), False,
+                SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+    x.Flush(g_display);
+}
+
 void on_key(unsigned int keycode, unsigned int state, bool pressed) {
     if (keycode < 8) return;  // no evdev code below this exists
+    // F11 (evdev 87) is the window's, as on Wayland; the engine never sees
+    // it.
+    constexpr unsigned int kKeyF11 = 87;
+    if (keycode - 8 == kKeyF11) {
+        if (pressed && keys_down().insert(kKeyF11).second) toggle_fullscreen();
+        if (!pressed) keys_down().erase(kKeyF11);
+        return;
+    }
     // Already down and pressed again is an auto-repeat, not a new press.
     // Only true once the server stops sending a release between them,
     // which is what detectable auto-repeat above buys.

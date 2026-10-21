@@ -110,6 +110,9 @@ struct Libdecor {
                                            int*) = nullptr;
     bool (*configuration_get_window_state)(libdecor_configuration*,
                                            libdecor_window_state*) = nullptr;
+    // Optional: without them F11 does nothing on this path.
+    void (*frame_set_fullscreen)(libdecor_frame*, wl_output*) = nullptr;
+    void (*frame_unset_fullscreen)(libdecor_frame*) = nullptr;
 };
 
 Libdecor& libdecor_api() {
@@ -138,6 +141,10 @@ Libdecor& libdecor_api() {
     d.configuration_get_window_state =
         reinterpret_cast<decltype(d.configuration_get_window_state)>(
             sym("libdecor_configuration_get_window_state"));
+    d.frame_set_fullscreen = reinterpret_cast<decltype(d.frame_set_fullscreen)>(
+        sym("libdecor_frame_set_fullscreen"));
+    d.frame_unset_fullscreen = reinterpret_cast<decltype(d.frame_unset_fullscreen)>(
+        sym("libdecor_frame_unset_fullscreen"));
     // All or nothing: a partial table would fail at the first null call,
     // somewhere far from here.
     if (d.create == nullptr || d.unref == nullptr || d.dispatch == nullptr ||
@@ -1104,9 +1111,20 @@ void push_window_focus(bool focused) {
     push_input_event(ev);
 }
 
+// Defined with the toplevel's configure, which knows the current state.
+void toggle_fullscreen();
+
 void keyboard_key(void*, wl_keyboard*, uint32_t serial, uint32_t, uint32_t key, uint32_t state) {
     g_last_input_serial.store(serial);
     const bool pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
+    // F11 (evdev 87) puts the window in and out of fullscreen, as every
+    // desktop program and Roblox's own desktop client do. It is the
+    // window's key, so the engine never sees it.
+    constexpr uint32_t kKeyF11 = 87;
+    if (key == kKeyF11) {
+        if (pressed) toggle_fullscreen();
+        return;
+    }
     if (pressed) {
         keys_down().insert(key);
     } else {
@@ -2040,17 +2058,26 @@ std::atomic<bool> g_window_visible{true};
 // really for, alt-tabbing away.
 std::atomic<bool> g_window_activated{true};
 
+// The toplevel F11 toggles, and whether the compositor has it fullscreen
+// now. Read from every configure rather than remembered from the last
+// request, because the compositor's own keys change it too.
+std::atomic<ANativeWindow*> g_toplevel_window{nullptr};
+std::atomic<bool> g_window_fullscreen{false};
+
 void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t height,
                              wl_array* states) {
     if (states != nullptr) {
         bool suspended = false;
         bool activated = false;
+        bool fullscreen = false;
         const auto* first = static_cast<const uint32_t*>(states->data);
         const size_t count = states->size / sizeof(uint32_t);
         for (size_t i = 0; i < count; ++i) {
             if (first[i] == XDG_TOPLEVEL_STATE_SUSPENDED) suspended = true;
             if (first[i] == XDG_TOPLEVEL_STATE_ACTIVATED) activated = true;
+            if (first[i] == XDG_TOPLEVEL_STATE_FULLSCREEN) fullscreen = true;
         }
+        g_window_fullscreen.store(fullscreen);
         const bool visible = !suspended;
         if (visible != g_window_visible.exchange(visible)) {
             std::printf("stud: android-glue: window %s\n",
@@ -2140,7 +2167,9 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
     // the content size, which already accounts for whatever the
     // decoration takes.
     libdecor_window_state window_state = LIBDECOR_WINDOW_STATE_NONE;
-    decor.configuration_get_window_state(configuration, &window_state);
+    if (decor.configuration_get_window_state(configuration, &window_state)) {
+        g_window_fullscreen.store((window_state & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0);
+    }
 
     window->logical_width.store(width);
     window->logical_height.store(height);
@@ -2154,6 +2183,34 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
 void decor_frame_close(libdecor_frame*, void*) {
     g_window_close_requested.store(true);
     stud::android_glue::window_state_changed();
+}
+
+// Asks for the state the window is not in; the compositor decides, and
+// its configure says what it did. On the Wayland pump's own thread, where
+// key events are dispatched.
+void toggle_fullscreen() {
+    ANativeWindow* window = g_toplevel_window.load();
+    if (window == nullptr) return;
+    const bool want = !g_window_fullscreen.load();
+    if (window->decor_frame != nullptr) {
+        const Libdecor& decor = libdecor_api();
+        if (want && decor.frame_set_fullscreen != nullptr) {
+            decor.frame_set_fullscreen(window->decor_frame, nullptr);
+        } else if (!want && decor.frame_unset_fullscreen != nullptr) {
+            decor.frame_unset_fullscreen(window->decor_frame);
+        } else {
+            return;
+        }
+    } else if (window->toplevel != nullptr) {
+        if (want) {
+            xdg_toplevel_set_fullscreen(window->toplevel, nullptr);
+        } else {
+            xdg_toplevel_unset_fullscreen(window->toplevel);
+        }
+    } else {
+        return;
+    }
+    if (wl_display* display = wayland_state().display) wl_display_flush(display);
 }
 
 // libdecor draws into subsurfaces of this window's surface, and a
@@ -2363,6 +2420,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
                                                      &kDecorFrameInterface, window);
             }
             if (window->decor_frame != nullptr) {
+                g_toplevel_window.store(window);
                 decor.frame_set_title(window->decor_frame, "Stud");
                 decor.frame_set_app_id(window->decor_frame, STUD_APP_ID);
                 decor.frame_map(window->decor_frame);
@@ -2390,6 +2448,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
             xdg_surface_add_listener(window->shell_surface, &kShellSurfaceListener, window);
             window->toplevel = xdg_surface_get_toplevel(window->shell_surface);
             xdg_toplevel_add_listener(window->toplevel, &kToplevelListener, window);
+            g_toplevel_window.store(window);
             xdg_toplevel_set_title(window->toplevel, "Stud");
             // Must match StartupWMClass in packaging/stud.desktop: on Wayland
             // this app_id is the only thing a compositor can use to tie this
@@ -2437,6 +2496,8 @@ void ANativeWindow_acquire(ANativeWindow* window) { window->ref_count.fetch_add(
 
 void ANativeWindow_release(ANativeWindow* window) {
     if (window->ref_count.fetch_sub(1) == 1) {
+        ANativeWindow* was_toplevel = window;
+        g_toplevel_window.compare_exchange_strong(was_toplevel, nullptr);
         if (window->surface_key != nullptr) {
             window_cache().erase(window->surface_key);
         }
