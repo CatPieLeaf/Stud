@@ -129,6 +129,49 @@ std::string cache_subdir(const char* leaf) {
     return stud::paths::cache_dir() + "/" + leaf;
 }
 
+// The engine's CA bundle, from the APK's assets to `<exe_dir>/cacert.pem`,
+// where its HTTP client looks for it. Every HTTPS request it makes fails
+// without it, so a failure is returned for the caller to report.
+//
+// Read and written rather than std::filesystem::copy_file, which copies
+// through the kernel's copy_file_range/sendfile and gives up on a file
+// system that refuses them: live-reported from a Flatpak as "Invalid
+// argument", and since it had already created the destination, what it
+// left was an empty file the engine then rejected ("error adding trust
+// anchors"), a total network blackout behind an error prompt. Written
+// beside the destination and renamed over it, so the engine never finds a
+// partial bundle.
+std::error_code provision_ca_bundle(const std::string& asset_dir, const std::string& exe_dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(exe_dir, ec);
+    if (ec) return ec;
+    const std::string source = asset_dir + "/ssl/cacert.pem";
+    const std::string target = exe_dir + "/cacert.pem";
+    const std::string temp = target + ".tmp." + std::to_string(::getpid());
+    std::ifstream in(source, std::ios::binary);
+    if (!in.is_open()) return std::make_error_code(std::errc::no_such_file_or_directory);
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) return std::make_error_code(std::errc::permission_denied);
+        out << in.rdbuf();
+        if (!in.good() && !in.eof()) ec = std::make_error_code(std::errc::io_error);
+        out.flush();
+        if (!out.good()) ec = std::make_error_code(std::errc::io_error);
+    }
+    if (!ec) {
+        std::error_code size_ec;
+        const auto written = std::filesystem::file_size(temp, size_ec);
+        const auto expected = size_ec ? 0 : std::filesystem::file_size(source, size_ec);
+        if (size_ec || written != expected) ec = std::make_error_code(std::errc::io_error);
+    }
+    if (!ec) std::filesystem::rename(temp, target, ec);
+    if (ec) {
+        std::error_code ignored;
+        std::filesystem::remove(temp, ignored);
+    }
+    return ec;
+}
+
 // The engine's files directory is Android's getFilesDir(): what an app is
 // expected to KEEP. Its own user settings and local storage live there,
 // so it belongs in Stud's data directory, not the cache; it used to sit
@@ -1215,15 +1258,8 @@ int main(int argc, char** argv) {
             // there stays. It is the one that runs when the engine is
             // driven without an APK path, and both are idempotent.
             {
-                std::error_code cert_ec;
                 const std::string early_exe_dir = stud::paths::engine_files_dir() + "/exe";
-                std::filesystem::create_directories(early_exe_dir, cert_ec);
-                if (!cert_ec) {
-                    std::filesystem::copy_file(asset_dir + "/ssl/cacert.pem",
-                                                early_exe_dir + "/cacert.pem",
-                                                std::filesystem::copy_options::overwrite_existing,
-                                                cert_ec);
-                }
+                const std::error_code cert_ec = provision_ca_bundle(asset_dir, early_exe_dir);
                 if (cert_ec) {
                     std::fprintf(stderr, "stud: warning: failed to pre-provision %s/cacert.pem: %s\n",
                                  early_exe_dir.c_str(), cert_ec.message().c_str());
@@ -1681,15 +1717,10 @@ int main(int argc, char** argv) {
         // asset (`assets/ssl/cacert.pem`) `run_preload_bootstrap()`'s own
         // `asset_dir` already points at, just copied to the second real
         // path the engine separately expects it at.
-        std::string exe_dir = files_dir + "/exe";
-        std::filesystem::create_directories(exe_dir, ec);
-        if (!ec) {
-            std::filesystem::copy_file(asset_dir + "/ssl/cacert.pem", exe_dir + "/cacert.pem",
-                                        std::filesystem::copy_options::overwrite_existing, ec);
-            if (ec) {
-                std::fprintf(stderr, "stud: warning: failed to provision %s/cacert.pem: %s\n",
-                             exe_dir.c_str(), ec.message().c_str());
-            }
+        const std::string exe_dir = files_dir + "/exe";
+        if (const std::error_code cert_ec = provision_ca_bundle(asset_dir, exe_dir)) {
+            std::fprintf(stderr, "stud: warning: failed to provision %s/cacert.pem: %s\n",
+                         exe_dir.c_str(), cert_ec.message().c_str());
         }
     }
     // Real ordering fix (live-caught via the engine's own FLog, now
