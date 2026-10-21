@@ -150,5 +150,11 @@
         };
         default = stud;
       };
+
+      # pkgs.stud, for a NixOS configuration that wants it in nixpkgs:
+      # nixpkgs.overlays = [ inputs.stud.overlays.default ];
+      overlays.default = final: prev: {
+        stud = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
     };
 }

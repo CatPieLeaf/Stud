@@ -329,12 +329,28 @@ Or on NixOS, add the flake as an input and install it system-wide:
 
 ```nix
 # flake.nix
-inputs.stud.url = "github:CatPieLeaf/Stud";
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.stud.url = "github:CatPieLeaf/Stud";
+
+  outputs = { nixpkgs, stud, ... }: {
+    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
+      modules = [
+        { nixpkgs.overlays = [ stud.overlays.default ]; }
+        ./configuration.nix
+      ];
+    };
+  };
+}
 
 # configuration.nix
-environment.systemPackages = [ inputs.stud.packages.x86_64-linux.default ];
+environment.systemPackages = [ pkgs.stud ];
 hardware.graphics.enable = true;
 ```
+
+Use your own host name in place of `nixos`. Stud's repository is a flake
+with no `default.nix`, so it can't be brought in with `import`; the overlay
+above is what puts it in `pkgs`.
 
 The Qt half is built against nixpkgs, and the rest comes from the release it pins.
 On Nix outside NixOS, run it through [nixGL](https://github.com/nix-community/nixGL)
