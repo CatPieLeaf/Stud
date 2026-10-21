@@ -210,6 +210,26 @@ case "${XDG_CURRENT_DESKTOP:-}" in
 esac
 HOOK
 
+# QtWebEngine, for the login page: its helper process, its resources and
+# its locales are all bundled, but Qt looks for them under share/qt6 and
+# beside the executable, finds none of them, and aborts the web view at
+# start -- live-reported as stud-webview dumping core on login. The
+# Flatpak sets the same three for the same reason. Looked up, since where
+# quick-sharun puts each follows the source's layout.
+webengine_process="$(find "$appdir/bin" -maxdepth 1 -name QtWebEngineProcess -print -quit)"
+webengine_resources="$(find "$appdir" -name qtwebengine_resources.pak -printf '%h\n' -quit)"
+webengine_locales="$(find "$appdir" -type d -name qtwebengine_locales -print -quit)"
+[ -n "$webengine_process" ] || die "quick-sharun did not bundle QtWebEngineProcess"
+[ -n "$webengine_resources" ] || die "quick-sharun did not bundle QtWebEngine's resources"
+[ -n "$webengine_locales" ] || die "quick-sharun did not bundle QtWebEngine's locales"
+cat >> "$appdir/bin/stud.hook" <<HOOK
+
+# QtWebEngine's own files; see build-appimage.sh.
+export QTWEBENGINEPROCESS_PATH="\$APPDIR/${webengine_process#"$appdir"/}"
+export QTWEBENGINE_RESOURCES_PATH="\$APPDIR/${webengine_resources#"$appdir"/}"
+export QTWEBENGINE_LOCALES_PATH="\$APPDIR/${webengine_locales#"$appdir"/}"
+HOOK
+
 for plugin in \
     platforms/libqwayland.so \
     wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
