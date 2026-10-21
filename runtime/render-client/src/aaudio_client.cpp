@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -41,17 +42,24 @@ using stud::render_client::audio_connection;
 namespace {
 
 // Real AAudio constants (aaudio/AAudio.h). Only the values that actually
-// travel across this boundary are declared.
+// travel across this boundary are declared. Copied by value because this
+// file defines the AAudio functions with its own parameter types, which
+// that header's declarations would conflict with -- so they are checked
+// against the header by hand, and every one matters: the stream states
+// were off (OPEN 1, STOPPED 8 -- in the header those are UNKNOWN and
+// FLUSHED), and an engine that stops its stream and waits for STOPPED
+// waited for ever, which is what froze leaving a game.
 constexpr int32_t AAUDIO_OK = 0;
-constexpr int32_t AAUDIO_ERROR_NULL = -898;
 constexpr int32_t AAUDIO_ERROR_INVALID_STATE = -895;
+constexpr int32_t AAUDIO_ERROR_NULL = -886;
+constexpr int32_t AAUDIO_ERROR_TIMEOUT = -885;
 constexpr int32_t AAUDIO_FORMAT_PCM_I16 = 1;
 constexpr int32_t AAUDIO_FORMAT_PCM_FLOAT = 2;
 constexpr int32_t AAUDIO_DIRECTION_OUTPUT = 0;
-constexpr int32_t AAUDIO_STREAM_STATE_OPEN = 1;
+constexpr int32_t AAUDIO_STREAM_STATE_OPEN = 2;
 constexpr int32_t AAUDIO_STREAM_STATE_STARTED = 4;
 constexpr int32_t AAUDIO_STREAM_STATE_PAUSED = 6;
-constexpr int32_t AAUDIO_STREAM_STATE_STOPPED = 8;
+constexpr int32_t AAUDIO_STREAM_STATE_STOPPED = 10;
 constexpr int32_t AAUDIO_CALLBACK_RESULT_CONTINUE = 0;
 
 // Stud always runs the device at 48 kHz stereo: it is what every host
@@ -99,12 +107,23 @@ struct Stream {
     AAudioStreamCallback data_callback = nullptr;
     void* data_callback_user = nullptr;
     std::atomic<int32_t> state{AAUDIO_STREAM_STATE_OPEN};
+    // Rung on every state change, for AAudioStream_waitForStateChange.
+    std::mutex state_mutex;
+    std::condition_variable state_changed;
     std::atomic<bool> running{false};
     std::thread feeder;
     // Capture streams have no feeder: the engine reads from them.
     bool is_input = false;
     int32_t channels = kChannels;
 };
+
+void set_state(Stream* s, int32_t state) {
+    {
+        std::lock_guard<std::mutex> lock(s->state_mutex);
+        s->state.store(state, std::memory_order_relaxed);
+    }
+    s->state_changed.notify_all();
+}
 
 // render-host's output ring counters, in a page it keeps current (see
 // CallId::AudioShareState): bytes received, write position, read
@@ -329,7 +348,7 @@ void feed(Stream* s) {
         }
         if (result != AAUDIO_CALLBACK_RESULT_CONTINUE) {
             s->running.store(false, std::memory_order_relaxed);
-            s->state.store(AAUDIO_STREAM_STATE_STOPPED, std::memory_order_relaxed);
+            set_state(s, AAUDIO_STREAM_STATE_STOPPED);
         }
     }
 }
@@ -435,7 +454,7 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
 int32_t AAudioStream_requestStart(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
-    s->state.store(AAUDIO_STREAM_STATE_STARTED, std::memory_order_relaxed);
+    set_state(s, AAUDIO_STREAM_STATE_STARTED);
     // A capture stream has nothing to feed, the engine reads from it,
     // and the host is already capturing from the moment it opened.
     if (!s->is_input && !s->running.exchange(true)) {
@@ -447,14 +466,14 @@ int32_t AAudioStream_requestStart(void* stream) {
 int32_t AAudioStream_requestPause(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
-    s->state.store(AAUDIO_STREAM_STATE_PAUSED, std::memory_order_relaxed);
+    set_state(s, AAUDIO_STREAM_STATE_PAUSED);
     return AAUDIO_OK;
 }
 
 int32_t AAudioStream_requestStop(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
-    s->state.store(AAUDIO_STREAM_STATE_STOPPED, std::memory_order_relaxed);
+    set_state(s, AAUDIO_STREAM_STATE_STOPPED);
     return AAUDIO_OK;
 }
 
@@ -541,16 +560,31 @@ int32_t AAudioStream_getXRunCount(void* stream) {
     return s != nullptr ? s->xruns.load(std::memory_order_relaxed) : 0;
 }
 
-// Real state-change wait. Stud's own state transitions are immediate,
-// there is no device handshake to wait on, since the host side owns the
-// real stream, so the current state is reported straight back rather
-// than sleeping out the timeout.
-int32_t AAudioStream_waitForStateChange(void* stream, int32_t /*inputState*/, int32_t* nextState,
-                                         int64_t /*timeoutNanoseconds*/) {
+// AAudio's own contract: back at once if the stream is no longer in
+// `inputState`, otherwise wait for it to leave that state, for at most the
+// caller's timeout.
+//
+// This used to report the current state straight back without waiting.
+// The engine's audio waits with it in a loop until its stream reaches the
+// state it asked for, so with a STOPPED that was never the header's (see
+// the constants above) that loop spun for ever, and leaving a game --
+// from the menu or by closing the window -- waited on that audio: live-
+// caught as the engine's audio thread running flat out in here and
+// getXRunCount for the whole freeze, with every other thread waiting.
+int32_t AAudioStream_waitForStateChange(void* stream, int32_t inputState, int32_t* nextState,
+                                         int64_t timeoutNanoseconds) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
+    std::unique_lock<std::mutex> lock(s->state_mutex);
+    const auto changed = [s, inputState] {
+        return s->state.load(std::memory_order_relaxed) != inputState;
+    };
+    const bool left = changed() ||
+                      (timeoutNanoseconds > 0 &&
+                       s->state_changed.wait_for(lock, std::chrono::nanoseconds(timeoutNanoseconds),
+                                                 changed));
     if (nextState != nullptr) *nextState = s->state.load(std::memory_order_relaxed);
-    return AAUDIO_OK;
+    return left ? AAUDIO_OK : AAUDIO_ERROR_TIMEOUT;
 }
 
 }  // extern "C"
