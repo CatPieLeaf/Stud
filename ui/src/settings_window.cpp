@@ -760,6 +760,27 @@ void SettingsWindow::onSaveClicked() {
                 "Nothing was changed.");
             return;
         }
+        // The engine alone is not enough. Its x86_64 split of a Google Play
+        // bundle carries the engine and nothing else: no manifest version,
+        // no assets, no CA bundle. Imported on its own it starts, makes no
+        // network connection at all and draws nothing -- live-reported as
+        // a window the desktop showed through.
+        bool complete = false;
+        try {
+            complete = !stud::android_glue::apk_version_name(pickedApkPath_.toStdString()).empty() &&
+                       stud::android_glue::apk_has_asset(pickedApkPath_.toStdString(),
+                                                         "ssl/cacert.pem");
+        } catch (const stud::android_glue::ExtractError&) {
+            complete = false;
+        }
+        if (!complete) {
+            QFile::remove(QString::fromStdString(candidate_so));
+            statusLabel_->setText(
+                "That file is only part of Roblox: it has the engine but not the base APK "
+                "(it is probably one split out of a bundle). Pick the whole bundle (.apkm, "
+                ".apks, .xapk) or a full APK. Nothing was changed.");
+            return;
+        }
         // Stop the session BEFORE replacing anything underneath it.
         //
         // A running Stud has the extracted libroblox.so mapped and the

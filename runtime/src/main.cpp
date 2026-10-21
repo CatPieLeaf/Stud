@@ -1193,6 +1193,19 @@ int main(int argc, char** argv) {
         try {
             stud::android_glue::extract_apk_assets(apk_path, asset_dir);
             std::printf("stud: extracted assets from %s into %s\n", apk_path.c_str(), asset_dir.c_str());
+            // An APK with no assets is one split of a bundle, the x86_64
+            // one, imported on its own: the engine loads from it and then
+            // cannot make a single network connection or draw a frame.
+            // Settings now refuses one at import; this is for one that was
+            // imported before it did.
+            if (!std::filesystem::exists(asset_dir + "/ssl/cacert.pem")) {
+                std::fprintf(stderr,
+                             "stud: %s is only part of Roblox: it has the engine but none of the "
+                             "base APK's files (it is probably one split out of a bundle). Import "
+                             "the whole bundle (.apkm, .apks, .xapk) or a full APK in Settings.\n",
+                             apk_path.c_str());
+                return 1;
+            }
             // Provision the engine's CA bundle here, before dlopen(), not
             // only in the settings bootstrap further down. The engine
             // issues its first HTTPS request within ~100ms of loading,

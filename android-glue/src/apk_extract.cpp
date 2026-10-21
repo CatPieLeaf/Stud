@@ -243,6 +243,18 @@ void extract_apk_native_library(const std::string& apk_path, const std::string& 
                         " APK(s); a bundle with no x86_64 split cannot run here)");
 }
 
+bool apk_has_asset(const std::string& apk_path, const std::string& asset) {
+    const std::string entry = "assets/" + asset;
+    for (const std::string& source : resolve_apk_sources_impl(apk_path)) {
+        mz_zip_archive zip{};
+        if (!mz_zip_reader_init_file(&zip, source.c_str(), 0)) continue;
+        const bool found = zip_contains(zip, entry.c_str());
+        mz_zip_reader_end(&zip);
+        if (found) return true;
+    }
+    return false;
+}
+
 namespace {
 
 void extract_assets_from_single_apk(const std::string& apk_path, const std::string& dest_dir) {
