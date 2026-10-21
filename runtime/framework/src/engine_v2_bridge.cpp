@@ -801,6 +801,33 @@ EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::lin
     // Process B's own shutdown path doesn't wait further on, not a
     // guess.
 
+    // Paused first, as an Android activity is before it is destroyed.
+    //
+    // Pausing is what drains the game's rendering jobs and lets go of its
+    // render view. LeaveGame stops the game BLOCKING, waiting for it to
+    // finalize, and a game finalizes only once its rendering is drained:
+    // closing the window from inside a game left LeaveGame waiting out the
+    // whole bound, and the DestroyApp after it never returned, with the
+    // window frozen until the process was killed. Leaving through the
+    // engine's own menu was never affected; it does not wait.
+    if (void* addr =
+            lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2PauseGame");
+        addr != nullptr) {
+        auto* fn = reinterpret_cast<V2VoidNoArgFn>(addr);
+        run_bounded_v2_call("nativeAppBridgeV2PauseGame", [&jvm, fn] {
+            static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+            FakeJni::LocalFrame inner_frame(jvm);
+            auto& inner_env = inner_frame.getJniEnv();
+            auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
+            jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
+            bool ok = call_trapping_abort(fn, inner_jni_env, inner_class);
+            clear_pending_jni_exception(inner_jni_env, "engine_v2_bridge");
+            return ok;
+        });
+    } else {
+        std::fprintf(stderr, "stud: engine_v2_bridge: nativeAppBridgeV2PauseGame not found, skipping\n");
+    }
+
     // Real order (see engine_v2_bridge.h's own UPDATE 2 doc comment):
     // LeaveGame always first, even if no game was ever joined; real,
     // confirmed harmless no-op in that case ("leaveUGCGame: ... no-op,
