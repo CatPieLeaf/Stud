@@ -28,6 +28,7 @@
 #include "stud/keymap_chars.h"
 
 #include <dlfcn.h>
+#include <time.h>
 
 #include <algorithm>
 #include <chrono>
@@ -463,6 +464,12 @@ std::deque<stud::android_glue::HostInputEvent>& input_queue() {
 void push_input_event(stud::android_glue::HostInputEvent ev) {
     ev.surface_width = static_cast<uint32_t>(g_window_width.load());
     ev.surface_height = static_cast<uint32_t>(g_window_height.load());
+    if (ev.queued_ns == 0) {
+        timespec now{};
+        ::clock_gettime(CLOCK_MONOTONIC, &now);
+        ev.queued_ns = static_cast<uint64_t>(now.tv_sec) * 1000000000ull +
+                       static_cast<uint64_t>(now.tv_nsec);
+    }
     std::lock_guard<std::mutex> lock(input_queue_mutex());
     auto& q = input_queue();
     // Coalesce motion, exactly as a compositor and real Android both
@@ -479,7 +486,11 @@ void push_input_event(stud::android_glue::HostInputEvent ev) {
         if (ev.type == stud::android_glue::HostInputEvent::kPointerMotion) {
             // Absolute: the newest position is the whole truth, and the
             // delta is recomputed downstream from the previous position.
+            // The age stays the oldest's: that is how long the merged
+            // motion has been waiting.
+            const uint64_t queued = back.queued_ns;
             back = ev;
+            back.queued_ns = queued;
             return;
         }
         if (ev.type == stud::android_glue::HostInputEvent::kPointerRelative) {

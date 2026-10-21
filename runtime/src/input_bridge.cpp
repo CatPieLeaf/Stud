@@ -14,6 +14,8 @@
 #include <thread>
 #include <vector>
 
+#include <time.h>
+
 #include "render_client_common.h"
 #include "stud/android_glue.h"
 #include "stud/android_framework.h"
@@ -951,6 +953,82 @@ float wheel_scale() {
 bool input_trace_enabled() {
     static const bool on = std::getenv("STUD_INPUT_TRACE") != nullptr;
     return on;
+}
+
+// STUD_INPUT_TIMING: where input waits on its way into the engine.
+//
+// The compositor's events reach render-host on time -- that much a
+// WAYLAND_DEBUG trace already shows -- so what is left is the rest of the
+// way: render-host's queue, the socket to this process, this thread
+// handing a batch to the engine, and the calls into the engine this thread
+// makes between batches, any of which can block on the engine's own
+// locks. Once a second, one line: the events that arrived and how old
+// they were, and the longest each of those steps took. Wall-clock time
+// on each line, so it lines up with a WAYLAND_DEBUG trace beside it.
+//
+// Only this bridge's thread touches it, so it needs no lock.
+bool input_timing_enabled() {
+    static const bool on = std::getenv("STUD_INPUT_TIMING") != nullptr;
+    return on;
+}
+
+int64_t monotonic_ns() {
+    timespec ts{};
+    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+}
+
+struct InputTiming {
+    int64_t window_start = 0;
+    uint64_t events = 0;
+    uint64_t batches = 0;
+    std::vector<int64_t> ages;  // ns, render-host's queue to this thread
+    int64_t handover_max = 0;   // one batch into the engine
+    int64_t text_box_max = 0;   // one nativeGetTextBoxInfo
+    int64_t lock_max = 0;       // one nativeGetMainWindowIsMouseLockedCenter
+    int64_t round_max = 0;      // this thread's own work between two polls
+};
+
+InputTiming& input_timing() {
+    static InputTiming t;
+    return t;
+}
+
+void note_input_time(int64_t& slot, int64_t started) {
+    const int64_t took = monotonic_ns() - started;
+    if (took > slot) slot = took;
+}
+
+void report_input_timing(int64_t now) {
+    InputTiming& t = input_timing();
+    if (t.window_start == 0) {
+        t.window_start = now;
+        return;
+    }
+    if (now - t.window_start < 1000000000) return;
+    double median = 0.0;
+    double worst = 0.0;
+    if (!t.ages.empty()) {
+        std::sort(t.ages.begin(), t.ages.end());
+        median = static_cast<double>(t.ages[t.ages.size() / 2]) / 1e6;
+        worst = static_cast<double>(t.ages.back()) / 1e6;
+    }
+    timespec wall{};
+    ::clock_gettime(CLOCK_REALTIME, &wall);
+    tm local{};
+    ::localtime_r(&wall.tv_sec, &local);
+    std::printf("stud: input timing %02d:%02d:%02d.%03ld: %llu event(s) in %llu batch(es); "
+                "age on arrival median %.2f ms, worst %.2f ms; worst batch handover %.2f ms; "
+                "worst engine query: text box %.2f ms, mouse lock %.2f ms; worst round of "
+                "the bridge's own work %.2f ms\n",
+                local.tm_hour, local.tm_min, local.tm_sec, wall.tv_nsec / 1000000,
+                static_cast<unsigned long long>(t.events),
+                static_cast<unsigned long long>(t.batches), median, worst,
+                static_cast<double>(t.handover_max) / 1e6, static_cast<double>(t.text_box_max) / 1e6,
+                static_cast<double>(t.lock_max) / 1e6, static_cast<double>(t.round_max) / 1e6);
+    std::fflush(stdout);
+    t = InputTiming{};
+    t.window_start = now;
 }
 
 float to_density_independent(float pixels) {
@@ -2567,7 +2645,11 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         float last_x = 0.0f;
         float last_y = 0.0f;
         std::vector<stud::android_glue::HostInputEvent> batch(64);
+        int64_t round_started = 0;
         while (g_running.load(std::memory_order_relaxed)) {
+            if (input_timing_enabled() && round_started != 0) {
+                note_input_time(input_timing().round_max, round_started);
+            }
             // Input's own connection, so asking for events never queues
             // behind a frame's worth of GL calls and never makes one wait
             // and so the host can simply hold the request until an
@@ -2603,6 +2685,19 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             }
             size_t count = written / sizeof(batch[0]);
             if (count > batch.size()) count = batch.size();
+            if (input_timing_enabled()) {
+                const int64_t now = monotonic_ns();
+                round_started = now;
+                InputTiming& t = input_timing();
+                if (count > 0) ++t.batches;
+                for (size_t i = 0; i < count; ++i) {
+                    ++t.events;
+                    if (batch[i].queued_ns != 0) {
+                        t.ages.push_back(now - static_cast<int64_t>(batch[i].queued_ns));
+                    }
+                }
+                report_input_timing(now);
+            }
 
             // A Lua TextBox taking focus ends every held key, the same way
             // losing the window does.
@@ -2733,8 +2828,12 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 }
 
 
+                const int64_t handover_started = input_timing_enabled() ? monotonic_ns() : 0;
                 for (size_t i = 0; i < count; ++i) {
                     dispatch_event(batch[i], fns, jni_env, last_x, last_y);
+                }
+                if (input_timing_enabled()) {
+                    note_input_time(input_timing().handover_max, handover_started);
                 }
                 g_agdk_env = nullptr;
                 g_agdk_activity_ref = nullptr;
@@ -2843,9 +2942,13 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                     FakeJni::LocalFrame info_frame(jvm);
                     auto* info_env = static_cast<JNIEnv*>(&info_frame.getJniEnv());
                     jobject info = nullptr;
-                    if (call_trapping_abort_with_result(fns.get_text_box_info, info, info_env,
-                                                        nullptr) &&
-                        info != nullptr) {
+                    const int64_t query_started = input_timing_enabled() ? monotonic_ns() : 0;
+                    const bool got_info = call_trapping_abort_with_result(fns.get_text_box_info,
+                                                                          info, info_env, nullptr);
+                    if (input_timing_enabled()) {
+                        note_input_time(input_timing().text_box_max, query_started);
+                    }
+                    if (got_info && info != nullptr) {
                         NativeGLJavaInterfaceJava::TextBoxStyle live;
                         if (read_text_box_info(info_env, info, live)) {
                             NativeGLJavaInterfaceJava::set_active_text_box_style(live);
@@ -2898,8 +3001,12 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 // Shift-lock and first-person: the one mode the engine will
                 // actually admit to. Or-ed with the button hold above, which
                 // covers the rotation drag it says nothing about.
+                const int64_t query_started = input_timing_enabled() ? monotonic_ns() : 0;
                 bool asked = call_trapping_abort_with_result(fns.is_mouse_locked, locked,
                                                              lock_env, nullptr);
+                if (input_timing_enabled()) {
+                    note_input_time(input_timing().lock_max, query_started);
+                }
                 if (!asked) {
                     // A trapped call leaves `locked` untouched, so a
                     // failing query is indistinguishable from a steady

@@ -629,6 +629,11 @@ struct HostInputEvent {
     // All ones when unknown (no keymap yet, or the X11 backend), which is
     // the behaviour every consumer had before this existed.
     uint64_t layout_chars[2] = {~0ull, ~0ull};
+    // CLOCK_MONOTONIC, in nanoseconds, when render-host queued it; for
+    // merged motion, when the oldest part of it was queued. Both processes
+    // read the same kernel clock, so Process B can tell how long an event
+    // took to reach it (STUD_INPUT_TIMING).
+    uint64_t queued_ns = 0;
 };
 
 // Copies up to `max` queued real input events into `out` and removes them

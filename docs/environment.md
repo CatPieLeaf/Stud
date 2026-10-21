@@ -75,6 +75,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_STUD_CURSOR` | off | Draw Stud's stand-in cursor. Normally this just puts a second, wrong cursor on screen. |
 | `STUD_PAD_FIRST_ID` | `1` | First gamepad id. |
 | `STUD_INPUT_TRACE` | off | Traces pointer, key, text and gamepad events. **perf** — one line per event. |
+| `STUD_INPUT_TIMING` | off | Once a second, how long input took on its way into the engine: events' age on arrival, the slowest batch handover, the slowest engine queries and the slowest round of the input bridge's own work. For input that stutters or stops. |
 
 ## Textures
 
