@@ -98,6 +98,19 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.2" date="2026-10-22">
+      <description>
+        <ul>
+          <li>Leaving a game, from the menu or by closing the window, no longer freezes Stud</li>
+          <li>The camera and cursor no longer stop for a moment every second</li>
+          <li>Audio no longer waits for the renderer, so a busy frame is no longer a gap in the sound</li>
+          <li>Pasting a script keeps every line, and a very long line no longer crashes Stud</li>
+          <li>F11 toggles fullscreen</li>
+          <li>The AppImage's login page no longer crashes</li>
+          <li>Stud is now a Nix flake</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.1" date="2026-10-06">
       <description>
         <ul>

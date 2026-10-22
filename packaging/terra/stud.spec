@@ -21,7 +21,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.1
+Version:        1.2.2
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -119,6 +119,15 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Thu Oct 22 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.2-1
+- Leaving a game, from the menu or by closing the window, no longer freezes Stud
+- The camera and cursor no longer stop for a moment every second
+- Audio no longer waits for the renderer, so a busy frame is no longer a gap in the sound
+- Pasting a script keeps every line, and a very long line no longer crashes Stud
+- F11 toggles fullscreen
+- The AppImage's login page no longer crashes
+- Stud is now a Nix flake
+
 * Tue Oct 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.1-1
 - Big performance improvements: the game waits on Stud's renderer far less every frame
 - GameMode switch in Settings
