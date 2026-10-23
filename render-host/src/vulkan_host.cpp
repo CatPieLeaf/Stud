@@ -9949,6 +9949,9 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
         // The engine is about to abandon this frame, having already waited
         // on and reset its fence. Signal it, or its next wait never ends.
         signal_fences_the_engine_reset(l.probe_queue);
+        // On X11 the window may be hidden for a resize, waiting on a
+        // present that cannot happen until it is shown.
+        stud::android_glue::native_window_x11_acquire_out_of_date();
     }
     note_acquire_failed(swapchain, r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR);
     if (r == VK_ERROR_OUT_OF_DATE_KHR && recreate_real_swapchain(swapchain)) {

@@ -661,6 +661,9 @@ void native_window_pump_x11();
 void native_window_x11_resize_settled();
 // X11: a frame was presented, so a window hidden for a resize can be shown.
 void native_window_x11_frame_presented();
+// X11: an acquire came back OUT_OF_DATE, so a window hidden for a resize
+// is shown without waiting for a present that cannot happen.
+void native_window_x11_acquire_out_of_date();
 // X11: whether the minimised window wants a frame to show on its restore,
 // and that frame (XRGB8888, as native_window_keep_frame takes).
 bool native_window_x11_wants_restore_frame();

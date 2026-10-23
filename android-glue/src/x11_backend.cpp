@@ -1101,6 +1101,25 @@ void frame_presented() {
     x.Sync(g_display, False);
 }
 
+// The driver refused an acquire on the hidden child window, so the frame
+// frame_presented() waits for can never come: show the child now.
+//
+// Live-reported on X11 with NVIDIA: after a resize, a swapchain built at
+// exactly the window's size answered every acquire with OUT_OF_DATE while
+// its window was unmapped, so no present ever succeeded, the child was
+// never shown, and the stretched copy stayed up over a running game for
+// as long as Stud did. Only once the child is due to be shown, so the
+// stretch still covers a drag; the cost is a frame of black, which is what
+// waiting for a present was avoiding.
+void show_content_now() {
+    std::lock_guard<std::mutex> lock(g_stretch_mutex);
+    if (!g_stretch.active || !g_show_child_on_present.exchange(false)) return;
+    Xlib& x = xlib();
+    x.MapWindow(g_display, g_content_window);
+    end_stretch_locked();
+    x.Sync(g_display, False);
+}
+
 void resize_settled_at_engine_size() {
     {
         std::lock_guard<std::mutex> lock(g_stretch_mutex);

@@ -3377,6 +3377,10 @@ void native_window_x11_frame_presented() {
     if (display_backend() == DisplayBackend::X11) x11::frame_presented();
 }
 
+void native_window_x11_acquire_out_of_date() {
+    if (display_backend() == DisplayBackend::X11) x11::show_content_now();
+}
+
 bool native_window_x11_wants_restore_frame() {
     return display_backend() == DisplayBackend::X11 && x11::wants_restore_frame();
 }
