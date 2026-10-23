@@ -387,7 +387,54 @@ set_target_properties(stud-runtime-bionic PROPERTIES ENABLE_EXPORTS ON)
 add_dependencies(stud-runtime-bionic
     stud_runtime_libmediandk
     stud_runtime_libOpenSLES
-    stud_runtime_libOpenMAXAL
     stud_runtime_libnativewindow
     stud_runtime_libvulkan
 )
+
+# Every NDK symbol nothing above defines, as a logged "returns 0" fallback,
+# so an engine update that imports one more NDK function still loads (see
+# tools/gen_ndk_fallback.py). Generated after everything it must not
+# duplicate is linked.
+if(NOT STUD_BIONIC_DIR)
+    message(FATAL_ERROR "runtime requires -DSTUD_BIONIC_DIR (third_party/android-bionic)")
+endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# The sysroot names its library directories x86_64-linux-android, not
+# the LLVM triple x86_64-none-linux-android26.
+string(REGEX REPLACE "-none-(.*[a-z])[0-9]*$" "-\\1" STUD_NDK_LIB_TRIPLE "${ANDROID_LLVM_TRIPLE}")
+set(STUD_NDK_FALLBACK_C "${CMAKE_CURRENT_BINARY_DIR}/ndk_fallback.c")
+set(STUD_NDK_FALLBACK_LIBS
+    stud_runtime_libandroid stud_runtime_libmediandk stud_runtime_libaaudio
+    stud_runtime_libOpenSLES stud_runtime_libnativewindow
+    stud_runtime_libEGL stud_runtime_libGLESv2 stud_runtime_libvulkan)
+add_custom_command(
+    OUTPUT "${STUD_NDK_FALLBACK_C}"
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ndk_fallback.py"
+            --nm "${CMAKE_NM}"
+            --stubs "${CMAKE_SYSROOT}/usr/lib/${STUD_NDK_LIB_TRIPLE}"
+            --have-dir "${CMAKE_CURRENT_BINARY_DIR}/lib64"
+            --have-dir "${STUD_BIONIC_DIR}"
+            --have "$<TARGET_FILE:stud-runtime-bionic>"
+            --skip-lib libc.so --skip-lib libm.so --skip-lib libdl.so
+            --skip-lib libc++.so --skip-lib libstdc++.so
+            --fallback-name libstud_ndk_fallback.so
+            --out "${STUD_NDK_FALLBACK_C}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ndk_fallback.py"
+            stud-runtime-bionic ${STUD_NDK_FALLBACK_LIBS}
+    VERBATIM)
+add_library(stud_runtime_ndk_fallback SHARED "${STUD_NDK_FALLBACK_C}")
+# Every function is declared void* f(void); keep the compiler from
+# treating the libc-looking ones (there are none today) as builtins.
+target_compile_options(stud_runtime_ndk_fallback PRIVATE -fno-builtin -w)
+set_target_properties(stud_runtime_ndk_fallback PROPERTIES
+    OUTPUT_NAME "stud_ndk_fallback"
+    SUFFIX ".so"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib64"
+)
+# Reached as libOpenMAXAL's dependency: the engine links libOpenMAXAL and
+# Process B does not, so the fallback is loaded with the engine, after
+# every real library in its search order, and never globally, so a
+# dlsym(RTLD_DEFAULT, ...) probe for something Stud lacks still gets null.
+# (libOpenMAXAL is empty, which is also why it is not in the list above.)
+target_link_options(stud_runtime_libOpenMAXAL PRIVATE -Wl,--no-as-needed)
+target_link_libraries(stud_runtime_libOpenMAXAL PRIVATE stud_runtime_ndk_fallback)

@@ -223,6 +223,7 @@ elseif(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
             "-DANDROID_PLATFORM=26"
             "-DMINIZ_SRC_DIR=${miniz_SOURCE_DIR}"
             "-DMINIZ_BIN_DIR=${miniz_BINARY_DIR}"
+            "-DSTUD_BIONIC_DIR=${STUD_THIRD_PARTY_DIR}/android-bionic"
             "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
         BUILD_ALWAYS ON
         INSTALL_COMMAND ""
