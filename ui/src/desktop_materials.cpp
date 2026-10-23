@@ -1,5 +1,6 @@
 #include "desktop_materials.h"
 
+#include "cube_view.h"
 #include "stud/android_glue.h"
 #include "stud/shader_pack.h"
 #include "stud/stud_paths.h"
@@ -7,16 +8,20 @@
 #include <miniz.h>
 #include <miniz_zip.h>
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QString>
 #include <QUrl>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include <cstdio>
 #include <exception>
@@ -59,6 +64,41 @@ void say(const QString& line) {
     std::printf("stud: Windows Graphical Parity: %s\n", line.toUtf8().constData());
     std::fflush(stdout);
 }
+
+// What the user sees while the Windows files are fetched and built: the
+// spinning stud and a line saying what is happening. Only made once there
+// is something to wait for, so a launch with everything already prepared
+// shows nothing; gone when it goes out of scope, however preparing ended.
+// The downloads wait in an event loop of their own, so the stud keeps
+// spinning through them.
+class LoadingScreen {
+public:
+    void show(const QString& text) {
+        if (window_ == nullptr) {
+            window_ = std::make_unique<QWidget>();
+            window_->setWindowTitle(QStringLiteral("Stud"));
+            auto* layout = new QVBoxLayout(window_.get());
+            auto* stud = new CubeView(window_.get());
+            stud->setFixedSize(128, 128);
+            layout->addWidget(stud, 0, Qt::AlignHCenter);
+            label_ = new QLabel(window_.get());
+            label_->setAlignment(Qt::AlignCenter);
+            label_->setWordWrap(true);
+            layout->addWidget(label_);
+            window_->setFixedWidth(360);
+        }
+        label_->setText(text);
+        window_->show();
+        window_->raise();
+        // Painted now: the next step may be one that does not return to an
+        // event loop for a moment (unpacking, building).
+        QCoreApplication::processEvents();
+    }
+
+private:
+    std::unique_ptr<QWidget> window_;
+    QLabel* label_ = nullptr;
+};
 
 std::optional<QByteArray> fetch(const QString& url) {
     QNetworkAccessManager manager;
@@ -155,6 +195,7 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
         if (complete(dir)) return dir.string();
     }
 
+    LoadingScreen loading;
     try {
         const QString apk_version = QString::fromStdString(stud::android_glue::apk_version_name(apk_path));
         const auto version_json = fetch(kWindowsVersionUrl);
@@ -179,6 +220,7 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
         }
 
         say(QStringLiteral("downloading the Windows client's %1 files from Roblox").arg(windows_version));
+        loading.show(QStringLiteral("Downloading the Windows graphics files from Roblox…"));
         const auto manifest = fetch(kSetupUrl + upload + QStringLiteral("-rbxPkgManifest.txt"));
         if (!manifest) return {};
         const auto checksums = package_checksums(*manifest);
@@ -221,6 +263,7 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
             return {};
         }
 
+        loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
         const std::vector<uint8_t> mobile = stud::android_glue::read_apk_asset(apk_path, kMobilePackAsset);
         stud::shader_pack::BuildReport report;
         const std::vector<uint8_t> combined = stud::shader_pack::build_desktop_materials(
