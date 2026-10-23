@@ -81,6 +81,7 @@ set_target_properties(stud_runtime_libandroid PROPERTIES
 add_library(stud_runtime_libmediandk SHARED
     "${ANDROID_GLUE_SRC}/src/media_format.cpp"
     render-client/src/media_codec_forward.cpp
+    render-client/src/image_reader.cpp
     render-client/src/render_client_common.cpp
 )
 target_include_directories(stud_runtime_libmediandk PUBLIC "${ANDROID_GLUE_SRC}/include"

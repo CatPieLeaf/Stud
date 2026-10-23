@@ -18,9 +18,13 @@ extern "C" {
 struct AMediaCodec;
 struct AMediaFormat;
 
+// NdkMediaError.h's values. UNSUPPORTED was -10004 here, which in the
+// header is INVALID_PARAMETER: an unsupported codec read to the engine as
+// a bad argument.
 using media_status_t = int;
 constexpr media_status_t AMEDIA_OK = 0;
-constexpr media_status_t AMEDIA_ERROR_UNSUPPORTED = -10004;
+constexpr media_status_t AMEDIA_ERROR_UNSUPPORTED = -10002;
+constexpr media_status_t AMEDIA_ERROR_INVALID_PARAMETER = -10004;
 
 // --- NdkMediaCodec.h (see media_codec_forward.cpp) --------------------
 
