@@ -21,7 +21,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.2
+Version:        1.2.3
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -119,6 +119,10 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Oct 23 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.3-1
+- Roblox 2.744.1081 opens and plays again
+- A Roblox update that needs an Android function Stud doesn't have yet no longer stops the game from opening
+
 * Thu Oct 22 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.2-1
 - Leaving a game, from the menu or by closing the window, no longer freezes Stud
 - The camera and cursor no longer stop for a moment every second
