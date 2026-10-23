@@ -35,6 +35,7 @@ int main(int argc, char** argv) {
           "missing config file defaults to Vulkan (locked default-on-first-launch decision)");
     check(defaults.gpu.device_index == 0, "missing config file defaults gpu.deviceIndex to 0");
     check(defaults.background_fps == 30, "missing config file defaults the background frame rate to 30");
+    check(defaults.windows_materials, "missing config file defaults Windows-quality materials to on");
 
     std::string path = dir + "/config.json";
 

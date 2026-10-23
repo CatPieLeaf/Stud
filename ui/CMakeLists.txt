@@ -103,9 +103,11 @@ add_executable(stud-ui
     src/cube_gl.cpp
     src/update_check.cpp
     src/tray.cpp
+    src/desktop_materials.cpp
     resources/resources.qrc
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::DBus stud_ui_gpu_enum stud_config stud_ui_credential_store
+                                       stud_shader_pack
                                        stud_ui_notifications stud_ui_launch_uri stud_ui_log_archive
                                        stud_ipc stud_android_glue stud_render stud_bionic_runtime
                       stud_ui_deep_link_handoff)

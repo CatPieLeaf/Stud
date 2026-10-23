@@ -336,8 +336,8 @@ std::string client_settings_key(const std::string& name, const std::string& valu
 // Stud's own engine defaults, as already-serialised ClientSettings
 // values. Merged BEFORE the user's hand-edited file, so anything they
 // set by hand still wins, the same rule as the renderer flags below.
-std::map<std::string, std::string> stud_default_flags() {
-    return {
+std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
+    std::map<std::string, std::string> flags = {
         // Highest texture quality, always. The engine's own quality
         // control is tuned for a phone's memory budget, and Stud is not
         // running on one, a desktop GPU has no reason to be served
@@ -371,6 +371,11 @@ std::map<std::string, std::string> stud_default_flags() {
         // time about whether this path reaches live state at all.
         {"FFlagImprovedCursors", "True"},
     };
+    // Windows-quality materials bring the desktop builds of the highlight
+    // outline passes into the shader pack; the engine only draws them
+    // with this on, which the Android settings leave off.
+    if (desktop_materials) flags["FFlagHighlightOutlinesOnMobile"] = "True";
+    return flags;
 }
 
 std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
@@ -791,7 +796,7 @@ void restore_local_storage() {
 // defaults, the render path's flags and the user's overrides merged in, or
 // the body unchanged if it cannot be parsed.
 std::string merge_client_settings(const std::string& body, const std::string& graphics_mode,
-                                  const stud::jni_bridge::FlagOverrides& overrides) {
+                                  const stud::jni_bridge::FlagOverrides& overrides, bool desktop_materials) {
     std::string client_settings_body = body;
     const std::map<std::string, bool> renderer_flags =
         renderer_flags_for_mode(graphics_mode);
@@ -803,7 +808,7 @@ std::string merge_client_settings(const std::string& body, const std::string& gr
             // Stud's own defaults first, so a hand-edited override
             // of the same flag below replaces any of them.
             std::string defaults_named;
-            for (const auto& [name, value] : stud_default_flags()) {
+            for (const auto& [name, value] : stud_default_flags(desktop_materials)) {
                 const std::string key = client_settings_key(name, value);
                 app[key] = value;
                 // Named, because up to now nothing said whether this
@@ -1042,6 +1047,9 @@ int main(int argc, char** argv) {
     std::string apk_path = find_named_arg(argc, argv, "--apk");
     std::string ipc_socket_path = find_named_arg(argc, argv, "--ipc-connect");
     std::string flag_overrides_path = find_named_arg(argc, argv, "--flag-overrides");
+    // Windows-quality materials the UI prepared, or empty for the Android
+    // look (see ui/src/desktop_materials.h).
+    const std::string desktop_materials = find_named_arg(argc, argv, "--desktop-materials");
     // How large the app draws everything, in 120ths (120 = 1.0). Absent or
     // 0 means "follow the display": which, with HiDPI off, means 1.0
     // rather than the desktop's scale: the buffer is then the window's
@@ -1236,6 +1244,20 @@ int main(int argc, char** argv) {
         try {
             stud::android_glue::extract_apk_assets(apk_path, asset_dir);
             std::printf("stud: extracted assets from %s into %s\n", apk_path.c_str(), asset_dir.c_str());
+            // Windows-quality materials over what was just extracted: the
+            // combined shader pack in place of the APK's own. Extraction
+            // rewrites every asset on every launch, so with the setting
+            // off the APK's own files are simply what stays.
+            if (!desktop_materials.empty()) {
+                std::error_code materials_ec;
+                std::filesystem::copy(desktop_materials + "/assets", asset_dir,
+                                      std::filesystem::copy_options::recursive |
+                                          std::filesystem::copy_options::overwrite_existing,
+                                      materials_ec);
+                std::printf("stud: Windows-quality materials %s\n",
+                            materials_ec ? ("not applied: " + materials_ec.message()).c_str()
+                                         : "applied");
+            }
             // An APK with no assets is one split of a bundle, the x86_64
             // one, imported on its own: the engine loads from it and then
             // cannot make a single network connection or draw a frame.
@@ -1813,7 +1835,8 @@ int main(int argc, char** argv) {
         // from the raw, hand-edited file, never from a Settings toggle,
         // only how they reach the engine changes.
         std::string client_settings_body =
-            merge_client_settings(launch_payload->client_settings_body, graphics_mode, overrides);
+            merge_client_settings(launch_payload->client_settings_body, graphics_mode, overrides,
+                                  !desktop_materials.empty());
         try {
             auto client_settings_result = stud::jni_bridge::run_client_settings_bridge(
                 jvm, lib, client_settings_body,

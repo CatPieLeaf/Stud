@@ -183,3 +183,8 @@ add_test(NAME mapped_write_barrier_test COMMAND stud_mapped_write_barrier_test)
 add_executable(stud_env_documented_test env_documented_test.cpp)
 add_test(NAME env_documented_test
          COMMAND stud_env_documented_test "${CMAKE_SOURCE_DIR}")
+
+# Windows-quality materials: the SPIR-V rewrites of the shader-pack builder.
+add_executable(stud_shader_pack_test shader_pack_test.cpp)
+target_link_libraries(stud_shader_pack_test PRIVATE stud_shader_pack)
+add_test(NAME shader_pack_test COMMAND stud_shader_pack_test)

@@ -114,6 +114,12 @@ StudSettings load_settings(const std::string& path) {
         const double clamped = ratio < 0.5 ? 0.5 : (ratio > 1.5 ? 1.5 : ratio);
         result.text_overlay_font_ratio = static_cast<float>(clamped);
     }
+    if (doc.contains("windowsMaterials")) {
+        if (!doc.at("windowsMaterials").is_boolean()) {
+            throw SettingsError("stud: config '" + path + "' has a non-boolean \"windowsMaterials\"");
+        }
+        result.windows_materials = doc.at("windowsMaterials").get<bool>();
+    }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
@@ -251,6 +257,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["upscalerChoice"] = settings.upscaler_choice;
     doc["textOverlayFontRatio"] = settings.text_overlay_font_ratio;
     doc["smoothZoom"] = settings.smooth_zoom;
+    doc["windowsMaterials"] = settings.windows_materials;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
     doc["gamemode"] = settings.gamemode;

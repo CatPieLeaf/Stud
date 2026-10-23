@@ -26,6 +26,7 @@
 #include "log_collector.h"
 #include "diagnose.h"
 #include "deep_link_handoff.h"
+#include "desktop_materials.h"
 #include "launch_uri.h"
 #include "notifications.h"
 #include "settings_window.h"
@@ -894,6 +895,12 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         return false;
     }
 
+    // Windows-quality materials, prepared before either process starts:
+    // render-host and Process B both read them. Empty means the Android
+    // look, for whatever reason desktop_materials.cpp has logged.
+    const std::string desktop_materials =
+        settings.windows_materials ? stud::ui::prepare_desktop_materials(apk_path) : std::string();
+
     QString render_host_binary = find_render_host_binary();
     QString process_b_binary = find_process_b_binary();
     if (render_host_binary.isEmpty() || process_b_binary.isEmpty()) {
@@ -1013,6 +1020,9 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // draw it in. Process B is sandboxed and sees a different path, so
     // the host-side one has to come from here.
     render_host_args << "--assets-dir" << QString::fromStdString(stud::android_glue::default_assets_cache_dir());
+    if (!desktop_materials.empty()) {
+        render_host_args << "--desktop-materials" << QString::fromStdString(desktop_materials);
+    }
     // Spawned through a QProcess rather than the static helper so it can
     // carry an environment: MangoHud hooks whichever process talks to the
     // driver, which is this one.
@@ -1227,6 +1237,11 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back(pictures_dir);
     config.args.push_back("--videos-dir");
     config.args.push_back(videos_dir);
+    // Inside Stud's cache directory, which the sandbox already binds.
+    if (!desktop_materials.empty()) {
+        config.args.push_back("--desktop-materials");
+        config.args.push_back(desktop_materials);
+    }
 
     // Previously-missing wiring: process-b/src/main.cpp already
     // reads a "--flag-overrides <path>" arg and threads it all the way

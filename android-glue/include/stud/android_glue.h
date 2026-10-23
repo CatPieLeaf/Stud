@@ -110,6 +110,11 @@ void extract_apk_native_library(const std::string& apk_path, const std::string& 
 // (e.g. "ssl/cacert.pem"). Throws ExtractError if it cannot be opened.
 bool apk_has_asset(const std::string& apk_path, const std::string& asset);
 
+// The bytes of `assets/<asset>` as the engine will see it: from a bundle,
+// the last split that carries it, the same one extraction leaves in place.
+// Throws ExtractError if no source has it.
+std::vector<uint8_t> read_apk_asset(const std::string& apk_path, const std::string& asset);
+
 // The real versionName the chosen APK (or bundle) declares in its own
 // compiled AndroidManifest.xml, e.g. "2.737.1584". Empty when it
 // cannot be read, which callers must treat as "unknown" rather than

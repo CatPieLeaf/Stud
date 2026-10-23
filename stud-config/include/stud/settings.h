@@ -191,6 +191,13 @@ struct StudSettings {
     bool texture_cache = true;
     int texture_cache_mb = 500;
     GraphicsMode graphics_mode = GraphicsMode::kVulkan;
+    // Windows-quality materials: the Windows client's builds of the
+    // material shaders, in place of the Android ones, so parts get the
+    // Windows client's reflections, shine and normal maps. Nothing of
+    // Roblox's ships with Stud: the Windows files are downloaded from
+    // Roblox's own servers, only while this is on, and only for a Windows
+    // version that matches the APK (see ui/src/desktop_materials.cpp).
+    bool windows_materials = true;
     // The APK is deliberately NOT here.
     //
     // Stud keeps its own copy at one fixed path (stud_paths.h's

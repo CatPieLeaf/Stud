@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -41,6 +42,7 @@
 #include <set>
 #include <string>
 #include <algorithm>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -7511,6 +7513,292 @@ void flush(Loader& l) {
 
 }  // namespace framebuffer_lifetimes
 
+// Windows-quality materials: what the desktop material shaders read that
+// the Android engine never binds (see ui/src/desktop_materials.h). Their
+// set-1 layout asks for three images more than the mobile builds:
+//
+//   2   a second environment cube, blended with the one at 14. The Android
+//       engine binds a 1x1 placeholder there, never a reflection map, so
+//       the cube at 14 is put in its place, always.
+//   8   the detail normal map, null where the engine has nothing
+//   11  the BRDF lookup table, always null
+//
+// 8 and 11 are filled only where the engine left them null, from the two
+// Windows client files the UI prepared. A null image there is a draw that
+// faults on the GPU.
+namespace desktop_fill {
+
+struct Texture {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkSampler sampler = VK_NULL_HANDLE;
+};
+
+struct State {
+    std::mutex m;
+    std::string dir;  // empty: the feature is off
+    bool uploaded = false;
+    Texture brdf;
+    Texture detail;
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+// One DDS file, mips and all, into a device-local image: the two layouts
+// these files use, BC3 (the detail normal, DXT5nm) and R16G16_SFLOAT (the
+// lookup table).
+bool upload(Loader& l, const std::string& path, Texture& t, bool repeat) {
+    std::ifstream f(path, std::ios::binary);
+    std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (b.size() < 128 || std::memcmp(b.data(), "DDS ", 4) != 0) return false;
+    uint32_t h = 0, w = 0, mips = 0;
+    std::memcpy(&h, b.data() + 12, 4);
+    std::memcpy(&w, b.data() + 16, 4);
+    std::memcpy(&mips, b.data() + 28, 4);
+    if (mips == 0) mips = 1;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    size_t data_at = 128;
+    bool block = false;
+    if (std::memcmp(b.data() + 84, "DXT5", 4) == 0) {
+        format = VK_FORMAT_BC3_UNORM_BLOCK;
+        block = true;
+    } else if (std::memcmp(b.data() + 84, "DX10", 4) == 0 && b.size() >= 148) {
+        uint32_t dxgi = 0;
+        std::memcpy(&dxgi, b.data() + 128, 4);
+        if (dxgi == 34) format = VK_FORMAT_R16G16_SFLOAT;  // DXGI_FORMAT_R16G16_FLOAT
+        data_at = 148;
+    }
+    if (format == VK_FORMAT_UNDEFINED) return false;
+    std::vector<VkBufferImageCopy> regions;
+    size_t at = 0;
+    for (uint32_t i = 0; i < mips; ++i) {
+        const uint32_t mw = std::max(1u, w >> i), mh = std::max(1u, h >> i);
+        const size_t bytes = block ? size_t{(mw + 3) / 4} * ((mh + 3) / 4) * 16 : size_t{mw} * mh * 4;
+        if (data_at + at + bytes > b.size()) return false;
+        VkBufferImageCopy r{};
+        r.bufferOffset = at;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+        r.imageExtent = {mw, mh, 1};
+        regions.push_back(r);
+        at += bytes;
+    }
+
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = format;
+    ici.extent = {w, h, 1};
+    ici.mipLevels = mips;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (l.vk.vkCreateImage(l.device, &ici, nullptr, &t.image) != VK_SUCCESS) return false;
+    if (!allocate_offscreen_memory(t.image, t.memory)) return false;
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = t.image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = format;
+    // A DXT5nm normal keeps x in alpha; the material shaders, rewritten to
+    // read RGB normal maps, take x from red.
+    if (block) {
+        vci.components = {VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B,
+                          VK_COMPONENT_SWIZZLE_R};
+    }
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+    if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &t.view) != VK_SUCCESS) return false;
+    VkSamplerCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sci.addressModeU = sci.addressModeV = sci.addressModeW =
+        repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.maxLod = static_cast<float>(mips);
+    if (l.vk.vkCreateSampler(l.device, &sci, nullptr, &t.sampler) != VK_SUCCESS) return false;
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = at;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    if (l.vk.vkCreateBuffer(l.device, &bci, nullptr, &staging) != VK_SUCCESS) return false;
+    VkMemoryRequirements req{};
+    l.vk.vkGetBufferMemoryRequirements(l.device, staging, &req);
+    VkPhysicalDeviceMemoryProperties props{};
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &props);
+    uint32_t chosen = UINT32_MAX;
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if ((req.memoryTypeBits & (1u << i)) != 0 && (props.memoryTypes[i].propertyFlags & want) == want) {
+            chosen = i;
+            break;
+        }
+    }
+    VkMemoryAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = chosen;
+    bool ok = chosen != UINT32_MAX && l.vk.vkAllocateMemory(l.device, &mai, nullptr, &staging_memory) == VK_SUCCESS;
+    void* mapped = nullptr;
+    if (ok) {
+        l.vk.vkBindBufferMemory(l.device, staging, staging_memory, 0);
+        ok = l.vk.vkMapMemory(l.device, staging_memory, 0, VK_WHOLE_SIZE, 0, &mapped) == VK_SUCCESS;
+    }
+    if (ok) {
+        std::memcpy(mapped, b.data() + data_at, at);
+        l.vk.vkUnmapMemory(l.device, staging_memory);
+    }
+
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    if (ok) {
+        VkCommandPoolCreateInfo pci{};
+        pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        pci.queueFamilyIndex = l.first_queue_family;
+        ok = l.vk.vkCreateCommandPool(l.device, &pci, nullptr, &pool) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkCommandBufferAllocateInfo cbai{};
+        cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbai.commandPool = pool;
+        cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbai.commandBufferCount = 1;
+        ok = l.vk.vkAllocateCommandBuffers(l.device, &cbai, &cb) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkCommandBufferBeginInfo cbbi{};
+        cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        ok = l.vk.vkBeginCommandBuffer(cb, &cbbi) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = t.image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+        l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                                  nullptr, 0, nullptr, 1, &barrier);
+        l.vk.vkCmdCopyBufferToImage(cb, staging, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    static_cast<uint32_t>(regions.size()), regions.data());
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        l.vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                  nullptr, 0, nullptr, 1, &barrier);
+        ok = l.vk.vkEndCommandBuffer(cb) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkFenceCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        ok = l.vk.vkCreateFence(l.device, &fci, nullptr, &fence) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkQueue queue = VK_NULL_HANDLE;
+        l.vk.vkGetDeviceQueue(l.device, l.first_queue_family, 0, &queue);
+        VkSubmitInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cb;
+        {
+            std::lock_guard<std::mutex> queue_lock(queue_mutex());
+            ok = l.vk.vkQueueSubmit(queue, 1, &si, fence) == VK_SUCCESS;
+        }
+        if (ok) ok = l.vk.vkWaitForFences(l.device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    }
+    if (fence != VK_NULL_HANDLE) l.vk.vkDestroyFence(l.device, fence, nullptr);
+    if (pool != VK_NULL_HANDLE) l.vk.vkDestroyCommandPool(l.device, pool, nullptr);
+    l.vk.vkDestroyBuffer(l.device, staging, nullptr);
+    if (staging_memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, staging_memory, nullptr);
+    return ok;
+}
+
+void destroy(Loader& l, Texture& t) {
+    if (t.sampler != VK_NULL_HANDLE) l.vk.vkDestroySampler(l.device, t.sampler, nullptr);
+    if (t.view != VK_NULL_HANDLE) l.vk.vkDestroyImageView(l.device, t.view, nullptr);
+    if (t.image != VK_NULL_HANDLE) l.vk.vkDestroyImage(l.device, t.image, nullptr);
+    if (t.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, t.memory, nullptr);
+    t = Texture{};
+}
+
+// The device is about to go: the textures go with it, and the next device
+// uploads its own. Done here rather than by noticing a different VkDevice
+// later, because a new device can be handed the old one's handle value,
+// and textures bound from a destroyed device read freed memory: black
+// materials, and GPU hangs (NVIDIA Xid 109) when a draw stalls on it.
+void forget(Loader& l) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    destroy(l, s.brdf);
+    destroy(l, s.detail);
+    s.uploaded = false;
+}
+
+// Fills, in place, the material set's entries the desktop shaders need.
+// `data` already holds real handles.
+void fill(Loader& l, const std::vector<VkDescriptorUpdateTemplateEntry>& entries, std::vector<uint8_t>& data) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    if (s.dir.empty()) return;
+    const VkDescriptorUpdateTemplateEntry* by_binding[16] = {};
+    for (const auto& e : entries) {
+        if (e.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && e.dstBinding < 16 &&
+            e.descriptorCount >= 1 && e.offset + sizeof(VkDescriptorImageInfo) <= data.size()) {
+            by_binding[e.dstBinding] = &e;
+        }
+    }
+    // Only the material set has 14 beside one of these.
+    if (by_binding[14] == nullptr ||
+        (by_binding[2] == nullptr && by_binding[8] == nullptr && by_binding[11] == nullptr)) {
+        return;
+    }
+    if (!s.uploaded) {
+        s.uploaded = true;
+        for (auto [name, texture, repeat] : {std::tuple{"brdfLUT.dds", &s.brdf, false},
+                                             std::tuple{"normaldetail.dds", &s.detail, true}}) {
+            if (!upload(l, s.dir + "/" + name, *texture, repeat)) {
+                std::fprintf(stderr, "stud-render-host: Windows-quality materials: could not upload %s\n", name);
+            }
+        }
+    }
+    auto is_null = [&](const VkDescriptorUpdateTemplateEntry* e) {
+        VkDescriptorImageInfo info{};
+        std::memcpy(&info, data.data() + e->offset, sizeof(info));
+        return info.sampler == VK_NULL_HANDLE || info.imageView == VK_NULL_HANDLE;
+    };
+    auto put = [&](const VkDescriptorUpdateTemplateEntry* e, const Texture& t) {
+        if (t.view == VK_NULL_HANDLE) return;
+        const VkDescriptorImageInfo info{t.sampler, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        std::memcpy(data.data() + e->offset, &info, sizeof(info));
+    };
+    if (by_binding[2] != nullptr && !is_null(by_binding[14])) {
+        std::memcpy(data.data() + by_binding[2]->offset, data.data() + by_binding[14]->offset,
+                    sizeof(VkDescriptorImageInfo));
+    }
+    if (by_binding[8] != nullptr && is_null(by_binding[8])) put(by_binding[8], s.detail);
+    if (by_binding[11] != nullptr && is_null(by_binding[11])) put(by_binding[11], s.brdf);
+}
+
+}  // namespace desktop_fill
+
+void vk_set_desktop_materials_dir(const std::string& dir) {
+    desktop_fill::State& s = desktop_fill::state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.dir = dir;
+}
+
 void destroy_device(Loader& l, uint64_t handle) {
     framebuffer_lifetimes::flush(l);
     // The real VkDevice is still deliberately NOT destroyed: the
@@ -7718,6 +8006,7 @@ void destroy_device(Loader& l, uint64_t handle) {
             std::lock_guard<std::mutex> lock(memory_handle_types_mutex());
             memory_handle_types().clear();
         }
+        desktop_fill::forget(l);
         if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
         const auto after_destroy = std::chrono::steady_clock::now();
         {
@@ -8573,6 +8862,9 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
                 }
             }
         }
+    }
+    if (auto it = l.template_entries.find(tmpl); it != l.template_entries.end()) {
+        desktop_fill::fill(l, it->second, data);
     }
     l.update_descriptor_set_with_template(l.device, resolved,
                                            from_u64<VkDescriptorUpdateTemplate>(tmpl),

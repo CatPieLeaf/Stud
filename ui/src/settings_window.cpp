@@ -150,6 +150,13 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // so the control would claim to do something it cannot.
     connect(hidpiCheck_, &QCheckBox::toggled, followDpiCheck_, &QWidget::setEnabled);
 
+    windowsMaterialsCheck_ = new QCheckBox("Windows-quality materials", this);
+    windowsMaterialsCheck_->setToolTip(
+        "Use the Windows client's material shaders: its reflections, shine and normal maps. "
+        "Stud downloads them from Roblox's own servers, for the Windows version that matches "
+        "your APK; until there is one, materials look as they do on Android.");
+    graphics->addWidget(windowsMaterialsCheck_);
+
     // Stud's own upscaler. The engine renders at the window's logical size
     // what HiDPI off already does, at scale 1.0, so its UI size,
     // rounded corners and SSAO are all untouched, and Stud builds the
@@ -361,6 +368,7 @@ void SettingsWindow::installResets() {
     });
     add(hidpiCheck_, [this, d] { hidpiCheck_->setChecked(d.hidpi); });
     add(followDpiCheck_, [this, d] { followDpiCheck_->setChecked(d.follow_dpi); });
+    add(windowsMaterialsCheck_, [this, d] { windowsMaterialsCheck_->setChecked(d.windows_materials); });
     add(upscalingCheck_, [this, d] { upscalingCheck_->setChecked(d.upscaling); });
     // TEMPORARY, with the rest of the filter comparison.
     add(upscalerCombo_, [this, d] {
@@ -427,6 +435,7 @@ void SettingsWindow::loadFromDisk() {
     hidpiCheck_->setChecked(settings.hidpi);
     followDpiCheck_->setChecked(settings.follow_dpi);
     followDpiCheck_->setEnabled(settings.hidpi);
+    windowsMaterialsCheck_->setChecked(settings.windows_materials);
     upscalingCheck_->setChecked(settings.upscaling);
     upscalingCheck_->setEnabled(!settings.hidpi);
     {
@@ -706,6 +715,7 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
+    settings.windows_materials = windowsMaterialsCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
     // TEMPORARY, with the rest of the filter comparison.
     settings.upscaler_choice = upscalerWanted_.toStdString();

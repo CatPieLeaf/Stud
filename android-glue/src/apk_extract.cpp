@@ -255,6 +255,31 @@ bool apk_has_asset(const std::string& apk_path, const std::string& asset) {
     return false;
 }
 
+std::vector<uint8_t> read_apk_asset(const std::string& apk_path, const std::string& asset) {
+    const std::string entry = "assets/" + asset;
+    std::vector<uint8_t> out;
+    bool found = false;
+    // Every source, as extraction walks them: a later split's copy is the
+    // one the engine ends up reading.
+    for (const std::string& source : resolve_apk_sources_impl(apk_path)) {
+        mz_zip_archive zip{};
+        if (!mz_zip_reader_init_file(&zip, source.c_str(), 0)) continue;
+        const int index = mz_zip_reader_locate_file(&zip, entry.c_str(), nullptr, 0);
+        size_t size = 0;
+        void* data = index < 0 ? nullptr
+                               : mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(index), &size, 0);
+        if (data != nullptr) {
+            const auto* bytes = static_cast<const uint8_t*>(data);
+            out.assign(bytes, bytes + size);
+            found = true;
+            mz_free(data);
+        }
+        mz_zip_reader_end(&zip);
+    }
+    if (!found) throw ExtractError("stud: '" + apk_path + "' has no " + entry);
+    return out;
+}
+
 namespace {
 
 void extract_assets_from_single_apk(const std::string& apk_path, const std::string& dest_dir) {

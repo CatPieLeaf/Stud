@@ -5812,6 +5812,8 @@ int main(int argc, char** argv) {
             // Roblox's own extracted assets: where the text overlay finds
             // the engine's real fonts and their mapping table.
             assets_dir() = argv[i + 1];
+        } else if (std::string_view(argv[i]) == "--desktop-materials") {
+            stud::render_host::vk_set_desktop_materials_dir(argv[i + 1]);
         } else if (std::string_view(argv[i]) == "--discord-presence") {
             g_discord_enabled = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--discord-join-button") {
