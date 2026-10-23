@@ -150,11 +150,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // so the control would claim to do something it cannot.
     connect(hidpiCheck_, &QCheckBox::toggled, followDpiCheck_, &QWidget::setEnabled);
 
-    windowsMaterialsCheck_ = new QCheckBox("Windows-quality materials", this);
+    windowsMaterialsCheck_ = new QCheckBox("Windows Graphical Parity (Beta)", this);
     windowsMaterialsCheck_->setToolTip(
-        "Use the Windows client's material shaders: its reflections, shine and normal maps. "
-        "Stud downloads them from Roblox's own servers, for the Windows version that matches "
-        "your APK; until there is one, materials look as they do on Android.");
+        "Render with the Windows client's material shaders: its reflections, shine and normal "
+        "maps. The Windows files this needs come from Roblox's own servers, for the Windows "
+        "version that matches your APK; without one, or with this off, Stud renders as the "
+        "Android client does.");
     graphics->addWidget(windowsMaterialsCheck_);
 
     // Stud's own upscaler. The engine renders at the window's logical size

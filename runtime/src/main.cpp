@@ -371,7 +371,7 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
         // time about whether this path reaches live state at all.
         {"FFlagImprovedCursors", "True"},
     };
-    // Windows-quality materials bring the desktop builds of the highlight
+    // Windows Graphical Parity brings the desktop builds of the highlight
     // outline passes into the shader pack; the engine only draws them
     // with this on, which the Android settings leave off.
     if (desktop_materials) flags["FFlagHighlightOutlinesOnMobile"] = "True";
@@ -1047,8 +1047,8 @@ int main(int argc, char** argv) {
     std::string apk_path = find_named_arg(argc, argv, "--apk");
     std::string ipc_socket_path = find_named_arg(argc, argv, "--ipc-connect");
     std::string flag_overrides_path = find_named_arg(argc, argv, "--flag-overrides");
-    // Windows-quality materials the UI prepared, or empty for the Android
-    // look (see ui/src/desktop_materials.h).
+    // The Windows Graphical Parity files the UI prepared, or empty for the
+    // Android look (see ui/src/desktop_materials.h).
     const std::string desktop_materials = find_named_arg(argc, argv, "--desktop-materials");
     // How large the app draws everything, in 120ths (120 = 1.0). Absent or
     // 0 means "follow the display": which, with HiDPI off, means 1.0
@@ -1244,8 +1244,8 @@ int main(int argc, char** argv) {
         try {
             stud::android_glue::extract_apk_assets(apk_path, asset_dir);
             std::printf("stud: extracted assets from %s into %s\n", apk_path.c_str(), asset_dir.c_str());
-            // Windows-quality materials over what was just extracted: the
-            // combined shader pack in place of the APK's own. Extraction
+            // Windows Graphical Parity's assets over what was just extracted:
+            // the combined shader pack in place of the APK's own. Extraction
             // rewrites every asset on every launch, so with the setting
             // off the APK's own files are simply what stays.
             if (!desktop_materials.empty()) {
@@ -1254,7 +1254,7 @@ int main(int argc, char** argv) {
                                       std::filesystem::copy_options::recursive |
                                           std::filesystem::copy_options::overwrite_existing,
                                       materials_ec);
-                std::printf("stud: Windows-quality materials %s\n",
+                std::printf("stud: Windows Graphical Parity %s\n",
                             materials_ec ? ("not applied: " + materials_ec.message()).c_str()
                                          : "applied");
             }

@@ -895,7 +895,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         return false;
     }
 
-    // Windows-quality materials, prepared before either process starts:
+    // Windows Graphical Parity, prepared before either process starts:
     // render-host and Process B both read them. Empty means the Android
     // look, for whatever reason desktop_materials.cpp has logged.
     const std::string desktop_materials =

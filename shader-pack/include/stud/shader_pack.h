@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-// Windows-quality materials: the APK's own shader pack, with the Windows
+// Windows Graphical Parity: the APK's own shader pack, with the Windows
 // client's builds of the material shaders put in where they fit the
 // Android engine.
 //

@@ -56,7 +56,7 @@ const Kept kKept[] = {
 const char* const kCombinedPack = "assets/shaders/shaders_vulkan_mobile.pack";
 
 void say(const QString& line) {
-    std::printf("stud: Windows-quality materials: %s\n", line.toUtf8().constData());
+    std::printf("stud: Windows Graphical Parity: %s\n", line.toUtf8().constData());
     std::fflush(stdout);
 }
 

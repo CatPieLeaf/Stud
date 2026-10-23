@@ -71,7 +71,7 @@ void vk_set_vulkan_enabled(bool enabled);
 // should do.
 void vk_set_preferred_device_index(uint32_t index);
 
-// Windows-quality materials: the directory the UI prepared (see
+// Windows Graphical Parity: the directory the UI prepared (see
 // ui/src/desktop_materials.h), whose two textures fill what the desktop
 // material shaders read and the Android engine never binds. Empty, the
 // default, leaves every descriptor as the engine wrote it.

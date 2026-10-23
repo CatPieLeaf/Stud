@@ -4,7 +4,7 @@
 
 namespace stud::ui {
 
-// Windows-quality materials for this launch (see settings.h's
+// Windows Graphical Parity for this launch (see settings.h's
 // windows_materials). Returns a directory holding:
 //
 //   assets/        laid over the APK's extracted assets by Process B: the

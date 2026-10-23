@@ -7513,7 +7513,7 @@ void flush(Loader& l) {
 
 }  // namespace framebuffer_lifetimes
 
-// Windows-quality materials: what the desktop material shaders read that
+// Windows Graphical Parity: what the desktop material shaders read that
 // the Android engine never binds (see ui/src/desktop_materials.h). Their
 // set-1 layout asks for three images more than the mobile builds:
 //
@@ -7769,7 +7769,7 @@ void fill(Loader& l, const std::vector<VkDescriptorUpdateTemplateEntry>& entries
         for (auto [name, texture, repeat] : {std::tuple{"brdfLUT.dds", &s.brdf, false},
                                              std::tuple{"normaldetail.dds", &s.detail, true}}) {
             if (!upload(l, s.dir + "/" + name, *texture, repeat)) {
-                std::fprintf(stderr, "stud-render-host: Windows-quality materials: could not upload %s\n", name);
+                std::fprintf(stderr, "stud-render-host: Windows Graphical Parity: could not upload %s\n", name);
             }
         }
     }
