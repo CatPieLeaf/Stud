@@ -42,7 +42,8 @@ void set_content_mapped(bool mapped);
 void resize_settled_at_engine_size();
 // A frame was presented into content_window(); shows it if a resize hid it.
 void frame_presented();
-// An acquire on content_window() failed while a resize had it hidden; see
+// The driver refuses a swapchain that already matches the settled window:
+// content_window() is sized and shown whatever the stretch is doing; see
 // the definition.
 void show_content_now();
 // The minimised window wants a frame for its restore; consumed when read.

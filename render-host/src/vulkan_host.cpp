@@ -10056,25 +10056,13 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
 }
 
 // Builds the real swapchain again, at whatever size the window is now,
-// without telling the engine.
+// without telling the engine. The engine keeps the handle it was given and
+// the images it renders into; only the window side is replaced.
 //
-// Called when the driver reports the current one stale -- which on X11 is
-// every resize. The engine keeps the handle it was given and the images
-// it renders into; only the window side is replaced.
-bool recreate_real_swapchain(uint64_t engine_handle) {
-    // OFF, and kept for the record rather than deleted.
-    //
-    // Rebuilding the window side under the engine works right up until
-    // the new swapchain comes back with a different image count than the
-    // images the engine is already holding, at which point the chain
-    // indexes past them and render-host dies. Making that safe means
-    // owning the image mapping as well, which is a much larger change
-    // than the problem needs: the engine's actual fault is one fence (see
-    // signal_fences_the_engine_reset), and that is addressed directly.
-    //
-    // STUD_VK_REBUILD_SWAPCHAIN=1 turns it back on for anyone measuring.
-    static const bool enabled = std::getenv("STUD_VK_REBUILD_SWAPCHAIN") != nullptr;
-    if (!enabled) return false;
+// A new swapchain with a different image count than the old is refused:
+// the engine holds one image per old index, and the chain would index past
+// them, which is how render-host died when this ran on every resize.
+bool rebuild_real_swapchain(uint64_t engine_handle) {
     Loader& l = loader();
     auto saved = g_swapchain_ci.find(engine_handle);
     if (saved == g_swapchain_ci.end() || l.vk.vkCreateSwapchainKHR == nullptr) return false;
@@ -10106,6 +10094,16 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
         std::fflush(stdout);
         return false;
     }
+    uint32_t old_count = 0, fresh_count = 0;
+    l.vk.vkGetSwapchainImagesKHR(l.device, old, &old_count, nullptr);
+    l.vk.vkGetSwapchainImagesKHR(l.device, fresh, &fresh_count, nullptr);
+    if (old_count != fresh_count) {
+        std::printf("stud-render-host: not rebuilding the swapchain: the driver offers %u images "
+                    "where the engine holds %u\n", fresh_count, old_count);
+        std::fflush(stdout);
+        l.vk.vkDestroySwapchainKHR(l.device, fresh, nullptr);
+        return false;
+    }
 
     if (chain != g_upscale_chains.end()) {
         destroy_upscale_chain_keeping_offscreen(chain->second);
@@ -10126,6 +10124,61 @@ bool recreate_real_swapchain(uint64_t engine_handle) {
                     "%ux%u without disturbing the engine\n", extent.width, extent.height);
         std::fflush(stdout);
     }
+    return true;
+}
+
+// On every OUT_OF_DATE: OFF, and kept for the record rather than deleted.
+// The engine's actual fault there is one fence (see
+// signal_fences_the_engine_reset), and that is addressed directly; the
+// one case a rebuild is still needed for is recover_settled_x11_swapchain.
+//
+// STUD_VK_REBUILD_SWAPCHAIN=1 turns it back on for anyone measuring.
+bool recreate_real_swapchain(uint64_t engine_handle) {
+    static const bool enabled = std::getenv("STUD_VK_REBUILD_SWAPCHAIN") != nullptr;
+    return enabled && rebuild_real_swapchain(engine_handle);
+}
+
+// X11: the driver refusing a swapchain the window already matches.
+//
+// Live-reported on X11 with NVIDIA: after a resize had settled, every
+// acquire on a swapchain built at exactly the window's size came back
+// OUT_OF_DATE, for as long as Stud ran. The engine never rebuilds then --
+// the size it is told already matches its swapchain -- so nothing else
+// would ever end it, and the picture stayed frozen over a running game.
+//
+// Only once the size has settled: mid-drag the window is still moving
+// away from the swapchain, the engine's own rebuild is coming, and the
+// stretch covers the wait. Then, once per size, so a driver that still
+// refuses cannot turn this into work on every frame: the driver's window
+// is sized and shown, whatever the stretch was doing, and the acquire is
+// asked again. With Stud's own presentation pass in between, the window
+// side is rebuilt for it first; without the pass the engine owns the real
+// swapchain's images, and they cannot be replaced under it.
+//
+// True when the acquire is worth asking again.
+bool recover_settled_x11_swapchain(uint64_t engine_handle) {
+    if (stud::android_glue::display_backend() != stud::android_glue::DisplayBackend::X11) return false;
+    const auto extent = g_swapchain_extents.find(engine_handle);
+    if (extent == g_swapchain_extents.end()) return false;
+    int32_t w = 0, h = 0;
+    stud::android_glue::native_window_display_pixel_size(&w, &h);
+    if (w <= 0 || h <= 0 || extent->second.width != static_cast<uint32_t>(w) ||
+        extent->second.height != static_cast<uint32_t>(h)) {
+        return false;
+    }
+    static std::map<uint64_t, std::pair<int32_t, int32_t>> recovered;
+    const auto size = std::make_pair(w, h);
+    if (auto done = recovered.find(engine_handle); done != recovered.end() && done->second == size) {
+        return false;
+    }
+    recovered[engine_handle] = size;
+    stud::android_glue::native_window_x11_acquire_out_of_date();
+    const bool owns_images = g_upscale_chains.find(engine_handle) != g_upscale_chains.end();
+    const bool rebuilt = owns_images && rebuild_real_swapchain(engine_handle);
+    std::printf("stud-render-host: X11: the driver refused the %dx%d swapchain after the resize "
+                "settled; showed the window%s\n",
+                w, h, rebuilt ? " and rebuilt the swapchain for it" : "");
+    std::fflush(stdout);
     return true;
 }
 
@@ -10241,12 +10294,10 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
         // The engine is about to abandon this frame, having already waited
         // on and reset its fence. Signal it, or its next wait never ends.
         signal_fences_the_engine_reset(l.probe_queue);
-        // On X11 the window may be hidden for a resize, waiting on a
-        // present that cannot happen until it is shown.
-        stud::android_glue::native_window_x11_acquire_out_of_date();
     }
     note_acquire_failed(swapchain, r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR && recreate_real_swapchain(swapchain)) {
+    if (r == VK_ERROR_OUT_OF_DATE_KHR &&
+        (recreate_real_swapchain(swapchain) || recover_settled_x11_swapchain(swapchain))) {
         // The engine has no recovery for this; every other platform it
         // runs on never produces it. Rebuilt above, so ask again -- and
         // note the semaphore it passed was NOT signalled by the failed

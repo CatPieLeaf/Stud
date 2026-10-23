@@ -1101,21 +1101,31 @@ void frame_presented() {
     x.Sync(g_display, False);
 }
 
-// The driver refused an acquire on the hidden child window, so the frame
-// frame_presented() waits for can never come: show the child now.
+// The driver refuses every acquire on a swapchain that already matches the
+// window, so the frame frame_presented() waits for can never come: the
+// child is sized to the window and shown now, whatever state the stretch
+// is in.
 //
 // Live-reported on X11 with NVIDIA: after a resize, a swapchain built at
-// exactly the window's size answered every acquire with OUT_OF_DATE while
-// its window was unmapped, so no present ever succeeded, the child was
-// never shown, and the stretched copy stayed up over a running game for
-// as long as Stud did. Only once the child is due to be shown, so the
-// stretch still covers a drag; the cost is a frame of black, which is what
-// waiting for a present was avoiding.
+// exactly the window's size answered every acquire with OUT_OF_DATE, no
+// present ever succeeded, and the stretched copy stayed up over a running
+// game for as long as Stud did. Showing the child only when a stretch was
+// waiting for it was not enough: the same report came back with that in
+// place. The render host calls this only once the size has settled (see
+// recover_settled_x11_swapchain), so a drag is still covered by the
+// stretch; the cost is a frame of black.
 void show_content_now() {
+    if (g_display == nullptr || g_content_window == 0) return;
     std::lock_guard<std::mutex> lock(g_stretch_mutex);
-    if (!g_stretch.active || !g_show_child_on_present.exchange(false)) return;
     Xlib& x = xlib();
+    const int32_t w = g_width.load();
+    const int32_t h = g_height.load();
+    if (w > 0 && h > 0 && x.MoveResizeWindow != nullptr) {
+        x.MoveResizeWindow(g_display, g_content_window, 0, 0, static_cast<unsigned int>(w),
+                           static_cast<unsigned int>(h));
+    }
     x.MapWindow(g_display, g_content_window);
+    g_show_child_on_present.store(false);
     end_stretch_locked();
     x.Sync(g_display, False);
 }
