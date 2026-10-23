@@ -597,6 +597,10 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Build the AppImage
+        env:
+          # get-debloated-pkgs.sh asks api.github.com for its package list;
+          # anonymous, a shared runner hits the rate limit and the job fails.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           export STUD_CMAKE_ARGS="-DSTUD_VERSION=${VERSION}"
           packaging/build-appimage.sh
