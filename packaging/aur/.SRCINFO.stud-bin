@@ -1,6 +1,6 @@
 pkgbase = stud-bin
 	pkgdesc = An Unofficial Open-Source Roblox Launcher for Linux
-	pkgver = 1.2.4
+	pkgver = 1.2.5
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
 	arch = x86_64
@@ -32,13 +32,13 @@ pkgbase = stud-bin
 	optdepends = libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME
 	optdepends = libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)
 	optdepends = ffmpeg: video playback and screen recording inside games (loaded at runtime)
-	provides = stud=1.2.4
+	provides = stud=1.2.5
 	conflicts = stud
 	options = !strip
 	options = !debug
 	options = emptydirs
-	source = stud-bin-1.2.4.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.2.4/stud-1.2.4-x86_64.tar.zst
-	source = stud-1.2.4.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.4.tar.gz
+	source = stud-bin-1.2.5.tar.zst::https://github.com/CatPieLeaf/Stud/releases/download/1.2.5/stud-1.2.5-x86_64.tar.zst
+	source = stud-1.2.5.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.5.tar.gz
 	sha256sums = 60850274de6bfbd903a6df1e646d51ee2042e9777fb3f25271cff233069b0728
 	sha256sums = e3d044e0360ec30925542e242233c6192c444414d46e20cb633f82e9d728daf8
 
