@@ -4779,6 +4779,12 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             case CallId::VkWriteSharedMappedMemory:
             case CallId::VkWriteMappedMemory:
                 break;
+            // Numbered by the client, it only reads objects this thread
+            // already made and is compiled on a worker; see
+            // pipeline_compiles in vulkan_host.cpp.
+            case CallId::VkCreateGraphicsPipelines:
+                if (hdr.args[7] == 0) stud::render_host::replay::wait_all();
+                break;
             default:
                 if (std::strncmp(stud::render_host::call_id_name(hdr.call_id), "Vk", 2) == 0) {
                     stud::render_host::replay::wait_all();

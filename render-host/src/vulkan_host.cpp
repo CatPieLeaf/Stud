@@ -35,6 +35,7 @@
 #include <shared_mutex>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <atomic>
@@ -1445,6 +1446,10 @@ void begin(Loader& l, uint64_t cb);
 void end(Loader& l, uint64_t cb);
 void reset_pool(Loader& l, uint64_t pool);
 }  // namespace etc_decode
+// Graphics pipelines compiled on workers; defined before vk_destroy_handle().
+namespace pipeline_compiles {
+void wait_all();
+}  // namespace pipeline_compiles
 VkDeviceSize imported_host_pointer_alignment();
 
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
@@ -2333,7 +2338,10 @@ uint64_t vk_create_pipeline_cache(uint32_t flags, const std::vector<uint8_t>& in
     }
     VkPipelineCacheCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    ci.flags = flags;
+    // Pipelines compile on several threads at once here (see
+    // pipeline_compiles), so a cache the engine promised to use from one
+    // thread only is made an ordinary, internally synchronized one.
+    ci.flags = flags & ~static_cast<uint32_t>(VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT);
     ci.initialDataSize = in.size();
     ci.pInitialData = in.empty() ? nullptr : in.data();
     VkPipelineCache cache = VK_NULL_HANDLE;
@@ -8335,6 +8343,8 @@ void vk_set_desktop_materials_dir(const std::string& dir) {
 }
 
 void destroy_device(Loader& l, uint64_t handle) {
+    // Nothing of this device's may still be compiling when it goes.
+    pipeline_compiles::wait_all();
     framebuffer_lifetimes::flush(l);
     // The real VkDevice is still deliberately NOT destroyed: the
     // engine tears its renderer down and rebuilds it repeatedly
@@ -8600,7 +8610,127 @@ void destroy_device(Loader& l, uint64_t handle) {
     }
 }
 
+// Graphics pipelines compiled on workers.
+//
+// The engine names its pipelines itself and never waits for one, but this
+// process used to compile each where it arrived: on the connection thread,
+// where every call queued behind it waited out the driver's compile. A
+// pipeline the driver has not seen before takes it a while, and Windows
+// Graphical Parity's shaders are larger, so that was a stall on the frame
+// whenever a new material came into view.
+//
+// Now the compile runs on a worker, and only what actually needs the
+// pipeline waits for it: a command buffer binding it, on that command
+// buffer's own replay worker, and its destruction. The objects a compile
+// reads -- shader modules, the layout, the render pass, the cache -- are
+// the engine's to destroy the moment the create returns, so their
+// destruction waits until no compile is running.
+namespace pipeline_compiles {
+
+struct State {
+    std::mutex m;
+    std::condition_variable done;
+    std::condition_variable work;
+    std::deque<std::pair<uint64_t, std::function<uint64_t()>>> jobs;
+    std::unordered_set<uint64_t> pending;  // client numbers not yet compiled
+    size_t in_flight = 0;                  // queued or compiling
+    std::vector<std::function<void()>> deferred;
+    unsigned workers = 0;
+    unsigned idle = 0;
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+void worker() {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    for (;;) {
+        ++s.idle;
+        s.work.wait(lock, [&s] { return !s.jobs.empty(); });
+        --s.idle;
+        auto job = std::move(s.jobs.front());
+        s.jobs.pop_front();
+        lock.unlock();
+        const uint64_t pipeline = job.second();
+        // Bound before the number stops being pending, so a waiter that
+        // wakes finds it.
+        if (pipeline != 0) bind_client_handle(job.first, pipeline);
+        lock.lock();
+        s.pending.erase(job.first);
+        // The last compile out runs the destructions that waited for it.
+        while (s.in_flight == 1 && !s.deferred.empty()) {
+            std::vector<std::function<void()>> run;
+            run.swap(s.deferred);
+            lock.unlock();
+            for (auto& f : run) f();
+            lock.lock();
+        }
+        --s.in_flight;
+        s.done.notify_all();
+    }
+}
+
+// Queues one compile; `compile` returns the driver's pipeline, or 0.
+void start(uint64_t client, std::function<uint64_t()> compile) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.pending.insert(client);
+    ++s.in_flight;
+    s.jobs.emplace_back(client, std::move(compile));
+    // As many workers as compiles waiting at once, never more than the
+    // machine has threads to run them on.
+    if (s.idle == 0 && s.workers < std::max(1u, std::thread::hardware_concurrency())) {
+        ++s.workers;
+        std::thread(worker).detach();
+    }
+    s.work.notify_one();
+}
+
+void wait(uint64_t client) {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    s.done.wait(lock, [&] { return s.pending.count(client) == 0; });
+}
+
+// A pipeline's real handle, once its compile has finished.
+uint64_t real(uint64_t v) {
+    const uint64_t r = real_handle(v);
+    if (r != 0 || (v & kHandleTagMask) != kClientHandleTag) return r;
+    wait(v);
+    return real_handle(v);
+}
+
+// Runs `destroy` now, or after the compiles in flight if there are any.
+void destroy_after_compiles(std::function<void()> destroy) {
+    State& s = state();
+    {
+        std::lock_guard<std::mutex> lock(s.m);
+        if (s.in_flight != 0) {
+            s.deferred.push_back(std::move(destroy));
+            return;
+        }
+    }
+    destroy();
+}
+
+// Every compile, and every destruction waiting for one, finished.
+void wait_all() {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    s.done.wait(lock, [&s] { return s.in_flight == 0; });
+}
+
+}  // namespace pipeline_compiles
+
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
+    // Its compile may still be running, and would bind the number after
+    // it had been forgotten and handed to something else.
+    if (static_cast<vk_wire::DestroyKind>(kind) == vk_wire::DestroyKind::Pipeline) {
+        pipeline_compiles::wait(handle);
+    }
     if ((handle & kHandleTagMask) == kClientHandleTag) {
         handle = forget_client_handle(handle);
         if (handle == 0) return 0;
@@ -8657,9 +8787,13 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 l.vk.vkDestroyImageView(l.device, from_u64<VkImageView>(handle), nullptr);
             }
             break;
+        // These four are read by pipeline compiles, which may still be
+        // running; see pipeline_compiles.
         case K::ShaderModule:
             if (l.vk.vkDestroyShaderModule) {
-                l.vk.vkDestroyShaderModule(l.device, from_u64<VkShaderModule>(handle), nullptr);
+                pipeline_compiles::destroy_after_compiles([&l, handle] {
+                    l.vk.vkDestroyShaderModule(l.device, from_u64<VkShaderModule>(handle), nullptr);
+                });
             }
             break;
         case K::Semaphore:
@@ -8730,7 +8864,9 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::PipelineCache:
             if (l.vk.vkDestroyPipelineCache) {
-                l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(handle), nullptr);
+                pipeline_compiles::destroy_after_compiles([&l, handle] {
+                    l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(handle), nullptr);
+                });
             }
             break;
         case K::Device:
@@ -8746,7 +8882,9 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::RenderPass:
             if (l.vk.vkDestroyRenderPass) {
-                l.vk.vkDestroyRenderPass(l.device, from_u64<VkRenderPass>(handle), nullptr);
+                pipeline_compiles::destroy_after_compiles([&l, handle] {
+                    l.vk.vkDestroyRenderPass(l.device, from_u64<VkRenderPass>(handle), nullptr);
+                });
             }
             break;
         case K::Pipeline:
@@ -8756,7 +8894,10 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             break;
         case K::PipelineLayout:
             if (l.vk.vkDestroyPipelineLayout) {
-                l.vk.vkDestroyPipelineLayout(l.device, from_u64<VkPipelineLayout>(handle), nullptr);
+                pipeline_compiles::destroy_after_compiles([&l, handle] {
+                    l.vk.vkDestroyPipelineLayout(l.device, from_u64<VkPipelineLayout>(handle),
+                                                 nullptr);
+                });
             }
             break;
         case K::DescriptorSetLayout:
@@ -9409,26 +9550,52 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
-uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                       uint32_t* out_len,
-        uint64_t client) {
-    Loader& l = loader();
-    if (l.vk.vkCreateGraphicsPipelines == nullptr) {
-        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
-    }
+// A graphics pipeline's create info and everything it points at, owned,
+// so the compile can run after the wire bytes are gone; see
+// pipeline_compiles. Built in place on the heap and never moved, because
+// the create info points into the rest of it.
+struct GraphicsPipelineInfo {
+    uint64_t cache = 0;
+    VkGraphicsPipelineCreateInfo ci{};
+    std::vector<VkPipelineShaderStageCreateInfo> stages;
+    std::vector<std::string> stage_names;
+    VkPipelineVertexInputStateCreateInfo vi{};
+    std::vector<VkVertexInputBindingDescription> binds;
+    std::vector<VkVertexInputAttributeDescription> attrs;
+    VkPipelineInputAssemblyStateCreateInfo ia{};
+    VkPipelineViewportStateCreateInfo vp{};
+    std::vector<VkViewport> viewports;
+    std::vector<VkRect2D> scissors;
+    VkPipelineRasterizationStateCreateInfo rs{};
+    VkPipelineMultisampleStateCreateInfo ms{};
+    VkSampleMask sample_mask = 0;
+    VkPipelineDepthStencilStateCreateInfo ds{};
+    VkPipelineColorBlendStateCreateInfo cb{};
+    std::vector<VkPipelineColorBlendAttachmentState> blends;
+    VkPipelineDynamicStateCreateInfo dyn{};
+    std::vector<VkDynamicState> dyns;
+};
+
+// Reads one off the wire, with every handle in it resolved now: the client
+// recycles a number the moment its object is destroyed, so resolving later
+// could name a different object.
+std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<uint8_t>& in) {
+    auto info = std::make_unique<GraphicsPipelineInfo>();
     vk_wire::Reader r(in.data(), in.size());
-    const uint64_t cache = r.u64();
+    info->cache = real_handle(r.u64());
 
     // One pipeline per call. The engine batches rarely and a batch would
     // multiply the storage juggling below for no measured benefit; if a
     // real capture ever shows batching, this is where it goes.
-    VkGraphicsPipelineCreateInfo ci{};
+    VkGraphicsPipelineCreateInfo& ci = info->ci;
     ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     ci.flags = r.u32();
 
     const uint32_t stage_count = r.u32();
-    std::vector<VkPipelineShaderStageCreateInfo> stages(stage_count);
-    std::vector<std::string> stage_names(stage_count);
+    auto& stages = info->stages;
+    auto& stage_names = info->stage_names;
+    stages.resize(stage_count);
+    stage_names.resize(stage_count);
     for (uint32_t i = 0; i < stage_count; ++i) {
         stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[i].flags = r.u32();
@@ -9440,17 +9607,19 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     }
     for (uint32_t i = 0; i < stage_count; ++i) stages[i].pName = stage_names[i].c_str();
 
-    VkPipelineVertexInputStateCreateInfo vi{};
+    auto& vi = info->vi;
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     const uint32_t nbind = r.u32();
-    std::vector<VkVertexInputBindingDescription> binds(nbind);
+    auto& binds = info->binds;
+    binds.resize(nbind);
     for (auto& b : binds) {
         b.binding = r.u32();
         b.stride = r.u32();
         b.inputRate = static_cast<VkVertexInputRate>(r.u32());
     }
     const uint32_t nattr = r.u32();
-    std::vector<VkVertexInputAttributeDescription> attrs(nattr);
+    auto& attrs = info->attrs;
+    attrs.resize(nattr);
     for (auto& a : attrs) {
         a.location = r.u32();
         a.binding = r.u32();
@@ -9462,16 +9631,17 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     vi.vertexAttributeDescriptionCount = nattr;
     vi.pVertexAttributeDescriptions = attrs.empty() ? nullptr : attrs.data();
 
-    VkPipelineInputAssemblyStateCreateInfo ia{};
+    auto& ia = info->ia;
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     ia.topology = static_cast<VkPrimitiveTopology>(r.u32());
     ia.primitiveRestartEnable = r.u32();
 
-    VkPipelineViewportStateCreateInfo vp{};
+    auto& vp = info->vp;
     vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     vp.viewportCount = r.u32();
     const uint32_t sent_viewports = r.u32();
-    std::vector<VkViewport> viewports(sent_viewports);
+    auto& viewports = info->viewports;
+    viewports.resize(sent_viewports);
     for (auto& v : viewports) {
         v.x = r.f32();
         v.y = r.f32();
@@ -9482,7 +9652,8 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     }
     vp.scissorCount = r.u32();
     const uint32_t sent_scissors = r.u32();
-    std::vector<VkRect2D> scissors(sent_scissors);
+    auto& scissors = info->scissors;
+    scissors.resize(sent_scissors);
     for (auto& sc : scissors) {
         sc.offset.x = static_cast<int32_t>(r.u32());
         sc.offset.y = static_cast<int32_t>(r.u32());
@@ -9494,7 +9665,7 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     vp.pViewports = viewports.empty() ? nullptr : viewports.data();
     vp.pScissors = scissors.empty() ? nullptr : scissors.data();
 
-    VkPipelineRasterizationStateCreateInfo rs{};
+    auto& rs = info->rs;
     rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rs.depthClampEnable = r.u32();
     rs.rasterizerDiscardEnable = r.u32();
@@ -9507,18 +9678,18 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     rs.depthBiasSlopeFactor = r.f32();
     rs.lineWidth = r.f32();
 
-    VkPipelineMultisampleStateCreateInfo ms{};
+    auto& ms = info->ms;
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     ms.rasterizationSamples = static_cast<VkSampleCountFlagBits>(r.u32());
     ms.sampleShadingEnable = r.u32();
     ms.minSampleShading = r.f32();
     const uint32_t has_mask = r.u32();
-    VkSampleMask sample_mask = r.u32();
-    ms.pSampleMask = has_mask != 0 ? &sample_mask : nullptr;
+    info->sample_mask = r.u32();
+    ms.pSampleMask = has_mask != 0 ? &info->sample_mask : nullptr;
     ms.alphaToCoverageEnable = r.u32();
     ms.alphaToOneEnable = r.u32();
 
-    VkPipelineDepthStencilStateCreateInfo ds{};
+    auto& ds = info->ds;
     ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     const uint32_t has_ds = r.u32();
     if (has_ds != 0) {
@@ -9542,10 +9713,10 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
         ds.maxDepthBounds = r.f32();
     }
 
-    VkPipelineColorBlendStateCreateInfo cb{};
+    auto& cb = info->cb;
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     const uint32_t has_cb = r.u32();
-    std::vector<VkPipelineColorBlendAttachmentState> blends;
+    auto& blends = info->blends;
     if (has_cb != 0) {
         cb.logicOpEnable = r.u32();
         cb.logicOp = static_cast<VkLogicOp>(r.u32());
@@ -9566,10 +9737,11 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
         for (int i = 0; i < 4; ++i) cb.blendConstants[i] = r.f32();
     }
 
-    VkPipelineDynamicStateCreateInfo dyn{};
+    auto& dyn = info->dyn;
     dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     const uint32_t ndyn = r.u32();
-    std::vector<VkDynamicState> dyns(ndyn);
+    auto& dyns = info->dyns;
+    dyns.resize(ndyn);
     for (auto& d : dyns) d = static_cast<VkDynamicState>(r.u32());
     dyn.dynamicStateCount = ndyn;
     dyn.pDynamicStates = dyns.empty() ? nullptr : dyns.data();
@@ -9587,15 +9759,42 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     ci.layout = from_u64<VkPipelineLayout>(real_handle(r.u64()));
     ci.renderPass = from_u64<VkRenderPass>(real_handle(r.u64()));
     ci.subpass = r.u32();
+    return info;
+}
 
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VkResult res = l.vk.vkCreateGraphicsPipelines(l.device, from_u64<VkPipelineCache>(cache), 1, &ci,
-                                                nullptr, &pipeline);
+VkResult compile_graphics_pipeline(const GraphicsPipelineInfo& info, VkPipeline* pipeline) {
+    Loader& l = loader();
+    const VkResult res = l.vk.vkCreateGraphicsPipelines(
+        l.device, from_u64<VkPipelineCache>(info.cache), 1, &info.ci, nullptr, pipeline);
     if (res != VK_SUCCESS) {
         std::printf("stud-render-host: vkCreateGraphicsPipelines -> %d\n", static_cast<int>(res));
         std::fflush(stdout);
-        return static_cast<uint64_t>(static_cast<int32_t>(res));
     }
+    return res;
+}
+
+uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                                       uint32_t* out_len,
+        uint64_t client) {
+    Loader& l = loader();
+    if (l.vk.vkCreateGraphicsPipelines == nullptr) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
+    }
+    std::shared_ptr<GraphicsPipelineInfo> info = read_graphics_pipeline(in);
+    // Numbered by the client, so nothing waits for the answer: compiled on
+    // a worker, and only a command buffer that binds it before it is ready
+    // waits for it. See pipeline_compiles.
+    if (client != 0) {
+        pipeline_compiles::start(client, [info] {
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            compile_graphics_pipeline(*info, &pipeline);
+            return to_u64(pipeline);
+        });
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    const VkResult res = compile_graphics_pipeline(*info, &pipeline);
+    if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return answer_handle(to_u64(pipeline), client, out, out_len);
 }
 
@@ -12508,7 +12707,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             if (l.vk.vkCmdBindPipeline == nullptr) break;
             const uint32_t bp = r.u32();
             l.vk.vkCmdBindPipeline(cb, static_cast<VkPipelineBindPoint>(bp),
-                                 from_u64<VkPipeline>(real_handle(r.u64())));
+                                 from_u64<VkPipeline>(pipeline_compiles::real(r.u64())));
             break;
         }
         case K::BindDescriptorSets: {
