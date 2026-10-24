@@ -98,6 +98,21 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.6" date="2026-10-24">
+      <description>
+        <p>&lt;table align="center"&gt;</p>
+        <p>&lt;/table&gt;</p>
+        <p>&lt;table align="center"&gt;</p>
+        <p>&lt;/table&gt;</p>
+        <p>&lt;table align="center"&gt;</p>
+        <p>&lt;/table&gt;</p>
+        <ul>
+          <li>New setting, on by default: Windows Graphical Parity (Beta), in Settings &gt; Graphics</li>
+          <li>Parts get the Windows client's materials: reflections, the shine of sunlight on them, and their normal maps</li>
+          <li>Highlight outlines are drawn with High quality MSAA, as they are on Windows &lt;tr&gt; &lt;td&gt;&lt;a href="1"&gt;&lt;img src="https://github.com/user-attachments/assets/a73be2ce-b215-4102-b1a6-0970ee673ce3" width="260"&gt;&lt;/a&gt;&lt;/td&gt; &lt;td&gt;&lt;a href="2"&gt;&lt;img src="https://github.com/user-attachments/assets/5163e1a1-f815-467d-b58c-d40e34b0ba7a" width="260"&gt;&lt;/a&gt;&lt;/td&gt; &lt;/tr&gt; &lt;tr&gt; &lt;td&gt;&lt;a href="1"&gt;&lt;img src="https://github.com/user-attachments/assets/202da4d0-a6cf-4a4c-b41a-1ffae8aeae6e" width="260"&gt;&lt;/a&gt;&lt;/td&gt; &lt;td&gt;&lt;a href="2"&gt;&lt;img src="https://github.com/user-attachments/assets/f0ae93bf-f3de-4534-9256-c77818ab25c2" width="260"&gt;&lt;/a&gt;&lt;/td&gt; &lt;/tr&gt; &lt;tr&gt; &lt;td&gt;&lt;a href="1"&gt;&lt;img src="https://github.com/user-attachments/assets/dc2d82cf-8588-4751-903e-8740477c6857" width="260"&gt;&lt;/a&gt;&lt;/td&gt; &lt;td&gt;&lt;a href="2"&gt;&lt;img src="https://github.com/user-attachments/assets/7ed7f751-380d-484e-a097-3aba5ead554c" width="260"&gt;&lt;/a&gt;&lt;/td&gt; &lt;/tr&gt;</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.5" date="2026-10-24">
       <description>
         <p>&lt;table align="center"&gt;</p>

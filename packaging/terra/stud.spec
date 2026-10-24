@@ -21,7 +21,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.5
+Version:        1.2.6
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -119,6 +119,17 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Sat Oct 24 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.6-1
+- <table align="center">
+- </table>
+- <table align="center">
+- </table>
+- <table align="center">
+- </table>
+- New setting, on by default: Windows Graphical Parity (Beta), in Settings > Graphics
+- Parts get the Windows client's materials: reflections, the shine of sunlight on them, and their normal maps
+- Highlight outlines are drawn with High quality MSAA, as they are on Windows <tr> <td><a href="1"><img src="https://github.com/user-attachments/assets/a73be2ce-b215-4102-b1a6-0970ee673ce3" width="260"></a></td> <td><a href="2"><img src="https://github.com/user-attachments/assets/5163e1a1-f815-467d-b58c-d40e34b0ba7a" width="260"></a></td> </tr> <tr> <td><a href="1"><img src="https://github.com/user-attachments/assets/202da4d0-a6cf-4a4c-b41a-1ffae8aeae6e" width="260"></a></td> <td><a href="2"><img src="https://github.com/user-attachments/assets/f0ae93bf-f3de-4534-9256-c77818ab25c2" width="260"></a></td> </tr> <tr> <td><a href="1"><img src="https://github.com/user-attachments/assets/dc2d82cf-8588-4751-903e-8740477c6857" width="260"></a></td> <td><a href="2"><img src="https://github.com/user-attachments/assets/7ed7f751-380d-484e-a097-3aba5ead554c" width="260"></a></td> </tr>
+
 * Sat Oct 24 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.5-1
 - <table align="center">
 - </table>
