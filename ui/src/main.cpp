@@ -207,19 +207,37 @@ void terminate_stale_processes() {
 // keychain key name).
 constexpr auto kSessionCookieKey = "roblosecurity";
 
+// The AppImage's copy of a Stud binary: $APPDIR/libexec/stud/<name>, or
+// empty outside an AppImage.
+//
+// Not found relative to this executable there. The bundle runs the real
+// binary from $APPDIR/shared/bin, which is what Qt reports as the
+// application's directory, so every "../libexec/stud" below pointed into
+// shared/ and missed: Process B was never found (live-reported as "Could
+// not find the stud-render-host and/or stud-runtime-bionic binaries"), and
+// render-host only by luck, through PATH. The launcher sets APPDIR to the
+// image's root, which the bundle already relies on for QtWebEngine.
+QString appimage_binary(const char* name) {
+    const QByteArray appdir = qgetenv("APPDIR");
+    if (appdir.isEmpty()) return {};
+    const QString path = QString::fromLocal8Bit(appdir) + "/libexec/stud/" + QLatin1String(name);
+    return QFile::exists(path) ? path : QString();
+}
+
 // Best-effort search for a sibling binary: first where this dev
 // build's own layout puts it, then PATH, matching however a real
 // install eventually lays these out. No formal install step exists yet
 // (M11/packaging): this is the honest, current state, not a permanent
 // design.
 QString find_render_host_binary() {
+    if (QString bundled = appimage_binary("stud-render-host"); !bundled.isEmpty()) return bundled;
     QString sibling = QCoreApplication::applicationDirPath() + "/../render-host/stud-render-host";
     if (QFile::exists(sibling)) {
         return sibling;
     }
     // An install tree: <prefix>/bin/stud alongside
-    // <prefix>/libexec/stud/stud-render-host. Relative, because an
-    // AppImage is mounted at a different path every run.
+    // <prefix>/libexec/stud/stud-render-host. Relative, so a tree that is
+    // moved, or mounted at a different path every run, still finds it.
     QString libexec =
         QCoreApplication::applicationDirPath() + "/../libexec/stud/stud-render-host";
     if (QFile::exists(libexec)) {
@@ -242,6 +260,7 @@ QString find_render_host_binary() {
 // host/glibc one). Its dev-build output lives under runtime-prefix/,
 // not a plain sibling directory the way every other Stud binary does.
 QString find_process_b_binary() {
+    if (QString bundled = appimage_binary("stud-runtime-bionic"); !bundled.isEmpty()) return bundled;
     QString nested = QCoreApplication::applicationDirPath() +
                       "/../runtime-prefix/src/runtime-build/stud-runtime-bionic";
     if (QFile::exists(nested)) {
