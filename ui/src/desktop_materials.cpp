@@ -165,15 +165,18 @@ bool complete(const fs::path& dir) {
     return true;
 }
 
-// What was prepared, and for which APK: {"apk", "windows", "ready"}.
+// What was prepared, and for which APK: {"apk" (the file), "apkVersion",
+// "windows", "ready"}.
 QJsonObject read_state(const fs::path& path) {
     QFile file(QString::fromStdString(path.string()));
     if (!file.open(QIODevice::ReadOnly)) return {};
     return QJsonDocument::fromJson(file.readAll()).object();
 }
 
-void write_state(const fs::path& path, const std::string& apk, const QString& windows, bool ready) {
+void write_state(const fs::path& path, const std::string& apk, const QString& apk_version,
+                 const QString& windows, bool ready) {
     const QByteArray json = QJsonDocument(QJsonObject{{"apk", QString::fromStdString(apk)},
+                                                      {"apkVersion", apk_version},
                                                       {"windows", windows},
                                                       {"ready", ready}})
                                 .toJson();
@@ -187,17 +190,31 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
     const fs::path state_path = root / "state.json";
     const std::string fingerprint = stud::android_glue::apk_source_fingerprint(apk_path);
 
+    const QString apk_version = QString::fromStdString(stud::android_glue::apk_version_name(apk_path));
+
     // Already decided for this APK: prepared, or no Windows build to match.
+    // Kept for as long as the APK is: Roblox moving the Windows client to a
+    // newer release changes nothing until a different APK is imported.
     const QJsonObject state = read_state(state_path);
+    const fs::path prepared = root / state.value("windows").toString().toStdString();
     if (!fingerprint.empty() && state.value("apk").toString().toStdString() == fingerprint) {
-        const fs::path dir = root / state.value("windows").toString().toStdString();
         if (!state.value("ready").toBool()) return {};
-        if (complete(dir)) return dir.string();
+        if (complete(prepared)) return prepared.string();
+    }
+    // Another file of the same Roblox version, the same APK imported again
+    // or from elsewhere: its shaders are the ones the pack was built from,
+    // so the pack is reused as it is. Asking Roblox again could only make
+    // it worse, once Windows has moved on to a release whose files no
+    // longer fit this APK.
+    if (state.value("ready").toBool() && !apk_version.isEmpty() &&
+        state.value("apkVersion").toString() == apk_version && complete(prepared)) {
+        write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
+        say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
+        return prepared.string();
     }
 
     LoadingScreen loading;
     try {
-        const QString apk_version = QString::fromStdString(stud::android_glue::apk_version_name(apk_path));
         const auto version_json = fetch(kWindowsVersionUrl);
         if (!version_json) return {};
         const QJsonObject version = QJsonDocument::fromJson(*version_json).object();
@@ -215,7 +232,7 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
             say(QStringLiteral("the Windows client is on %1 and the APK is %2, a different release: "
                                "materials look as on Android until an APK of the same release")
                     .arg(windows_version, apk_version));
-            write_state(state_path, fingerprint, upload, false);
+            write_state(state_path, fingerprint, apk_version, upload, false);
             return {};
         }
 
@@ -284,7 +301,7 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
         for (const auto& entry : fs::directory_iterator(root, ec)) {
             if (entry.is_directory() && entry.path() != dir) fs::remove_all(entry.path(), ec);
         }
-        write_state(state_path, fingerprint, upload, true);
+        write_state(state_path, fingerprint, apk_version, upload, true);
         say(QStringLiteral("ready (%1 shaders from Windows, %2 added, %3 normal-map reads adapted)")
                 .arg(report.substituted)
                 .arg(report.grafted)
