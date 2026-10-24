@@ -1,10 +1,13 @@
 #include "render_client_common.h"
 
+#include "stud/transport_ring.h"
+
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -299,11 +302,53 @@ uint64_t random_id_start() {
     return v != 0 ? v : 1;
 }
 
+// An id for an fd handed over the shared-memory fd channel. From a random
+// start: each library linking this file has its own counter, and
+// render-host keeps every fd it is handed by id.
+uint64_t next_shared_id() {
+    static std::atomic<uint64_t> next_id{random_id_start()};
+    return next_id.fetch_add(1, std::memory_order_relaxed);
+}
+
 }  // namespace
 
 bool send_shared_fd(uint64_t id, int fd) { return shared_fd_channel().send(id, fd); }
 
 int fetch_shared_fd(uint64_t id) { return shared_fd_channel().fetch(id); }
+
+void move_requests_into_ring() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        stud::render_host::Client& client = connection();
+        // As much in flight as the socket itself held.
+        int sndbuf = 0;
+        socklen_t len = sizeof(sndbuf);
+        if (!client.connected() ||
+            ::getsockopt(client.fd(), SOL_SOCKET, SO_SNDBUF, &sndbuf, &len) != 0 || sndbuf <= 0) {
+            return;
+        }
+        auto ring = std::make_shared<stud::render_host::TransportRing>();
+        const uint64_t memory_id = next_shared_id();
+        const uint64_t consumer_id = next_shared_id();
+        const uint64_t producer_id = next_shared_id();
+        const bool ready = ring->create(static_cast<size_t>(sndbuf)) &&
+                           send_shared_fd(memory_id, ring->memory_fd()) &&
+                           send_shared_fd(consumer_id, ring->wake_consumer_fd()) &&
+                           send_shared_fd(producer_id, ring->wake_producer_fd());
+        const size_t bytes = ring->data_bytes();
+        const uint64_t a[8] = {memory_id, consumer_id, producer_id, bytes};
+        stud::render_host::TransportRing* r = ring.get();
+        const bool moved =
+            ready && client.switch_to_ring(
+                         ring, [r](const void* data, uint32_t n, int peer) {
+                             return r->write(data, n, peer);
+                         },
+                         a);
+        std::printf("stud: render-client (%s): requests travel %s\n", STUD_CLIENT_OWNER,
+                    moved ? "through a shared-memory ring" : "over the socket");
+        std::fflush(stdout);
+    });
+}
 
 void release_shared_allocation(SharedAllocation& a) {
     if (a.address != nullptr) ::munmap(a.address, a.length);
@@ -328,10 +373,7 @@ void release_shared_allocation(SharedAllocation& a) {
 // caller, for one that must set something else up first and would
 // otherwise leave the host holding an fd nothing ever claims.
 bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to_host) {
-    // From a random start: each library linking this file has its own
-    // counter, and render-host keeps every fd it is handed by id.
-    static std::atomic<uint64_t> next_id{random_id_start()};
-    const uint64_t id = next_id.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t id = next_shared_id();
     // Through syscall(): bionic only declares memfd_create() from API 30.
     const int fd = static_cast<int>(::syscall(SYS_memfd_create, "stud-vk-memory", MFD_CLOEXEC));
     if (fd < 0) return false;

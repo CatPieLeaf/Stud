@@ -21,6 +21,7 @@
 
 #include "flight_recorder.h"
 #include "socket_reader.h"
+#include "stud/transport_ring.h"
 #include "stud/session_log.h"
 #include "stud/android_glue.h"
 #include "stud/text_overlay.h"
@@ -5622,18 +5623,41 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         serving = false;
     }
     stud::render_host::SocketReader reader(conn_fd);
+    // Once the client asks for it, requests come out of shared memory
+    // instead of the socket (see stud/transport_ring.h); replies still go
+    // back on the socket.
+    std::unique_ptr<stud::render_host::TransportRing> ring;
+    const auto read_request = [&](void* dst, uint32_t len) {
+        return ring ? ring->read(dst, len, conn_fd) : reader.read(dst, len);
+    };
     for (bool first = true; serving; first = false) {
-        if (!first && !reader.read(&hdr, sizeof(hdr))) break;
+        if (!first && !read_request(&hdr, sizeof(hdr))) break;
         in_scratch.resize(hdr.in_buffer_len);
-        if (hdr.in_buffer_len > 0 && !reader.read(in_scratch.data(), hdr.in_buffer_len)) {
+        if (hdr.in_buffer_len > 0 && !read_request(in_scratch.data(), hdr.in_buffer_len)) {
             break;
         }
         out_scratch.clear();
         uint32_t out_len = 0;
         uint64_t result = 0;
         throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id), in_scratch);
-        if (dispatches_without_lock(static_cast<stud::render_host::CallId>(hdr.call_id),
-                                    in_scratch)) {
+        if (hdr.call_id == CallId::TransportRing && !ring) {
+            // The last request this socket carries: the client writes
+            // nothing more to it until it has this answer, and nothing
+            // at all once the answer is 1.
+            const int memory_fd = stud::render_host::take_shared_fd(hdr.args[0]);
+            const int consumer_fd = stud::render_host::take_shared_fd(hdr.args[1]);
+            const int producer_fd = stud::render_host::take_shared_fd(hdr.args[2]);
+            auto attached = std::make_unique<stud::render_host::TransportRing>();
+            if (attached->attach(memory_fd, consumer_fd, producer_fd,
+                                 static_cast<size_t>(hdr.args[3]))) {
+                ring = std::move(attached);
+                result = 1;
+            }
+            std::printf("stud-render-host: a client's requests now travel %s\n",
+                        ring ? "through a shared-memory ring" : "over the socket");
+            std::fflush(stdout);
+        } else if (dispatches_without_lock(static_cast<stud::render_host::CallId>(hdr.call_id),
+                                           in_scratch)) {
             result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
         } else {
             std::lock_guard<std::mutex> lock(dispatch_mutex());

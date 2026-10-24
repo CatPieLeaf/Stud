@@ -1382,6 +1382,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateInstance(const VkInstanceCreateInfo*
                                                       const VkAllocationCallbacks* /*pAllocator*/,
                                                       VkInstance* pInstance) {
     if (pCreateInfo == nullptr || pInstance == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    // Every command the engine records from here on crosses through shared
+    // memory rather than the socket; see stud/transport_ring.h.
+    stud::render_client::move_requests_into_ring();
 
     // Flatten the pointer graph; see vulkan_forward.h for why none of
     // it can travel as-is.

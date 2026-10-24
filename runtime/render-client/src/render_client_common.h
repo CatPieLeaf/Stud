@@ -79,6 +79,10 @@ bool send_shared_fd(uint64_t id, int fd);
 // The dma-buf render-host exported under `id`, or -1.
 int fetch_shared_fd(uint64_t id);
 
+// Moves the render connection's requests into a shared-memory ring, once;
+// see stud/transport_ring.h. Left on the socket if anything refuses.
+void move_requests_into_ring();
+
 void release_shared_allocation(SharedAllocation& a);
 
 // Backs a shared page range with a memfd and hands it to the host.

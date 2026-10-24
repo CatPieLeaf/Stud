@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cerrno>
 #include <map>
+#include <memory>
 #include <vector>
 #include <chrono>
 #include <cstdlib>
@@ -826,6 +827,13 @@ enum class CallId : uint32_t {
     // the ring's write position, its read position (the device's), the
     // underrun count, and non-zero once all are written.
     AudioShareState,
+    // Moves the request direction of the connection it arrives on into a
+    // shared-memory ring (see transport_ring.h). a[0] the id of the ring's
+    // memfd, a[1] and a[2] the ids of the eventfds that wake the host and
+    // the client, all sent over the shared-memory fd channel; a[3] the
+    // ring's size. Result 1 if every request after this one is read from
+    // the ring; replies stay on the socket either way.
+    TransportRing,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1150,9 +1158,10 @@ inline const char* call_id_name(CallId id) {
         "VkReadExportedMemory",
         "ShareWindowState",
         "AudioShareState",
+        "TransportRing",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::AudioShareState) + 1,
+                      static_cast<size_t>(CallId::TransportRing) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";
@@ -1498,6 +1507,14 @@ private:
     // stopped receiving any traffic at all. EINTR is not a connection
     // error; retry it.
     bool write_all(const void* data, uint32_t len) {
+        // Only ever true on the writer thread, the one that writes; see
+        // switch_to_ring().
+        if (ring_active_) {
+            if (ring_write_(data, len, fd_)) return true;
+            report_death("ring write");
+            mark_dead();
+            return false;
+        }
         const char* p = static_cast<const char*>(data);
         uint32_t remaining = len;
         while (remaining > 0) {
@@ -1799,6 +1816,9 @@ private:
         void* out = nullptr;
         uint32_t cap = 0;
         uint32_t written = 0;
+        // The TransportRing request: a reply of 1 moves every later
+        // request into ring_pending_.
+        bool switches_to_ring = false;
     };
 
     struct Mark {
@@ -1820,6 +1840,41 @@ public:
             writer_thread_ = std::this_thread::get_id();
             writer_loop();
         }).detach();
+    }
+
+    // Moves this connection's requests into a shared-memory ring (see
+    // stud/transport_ring.h): `write` writes into it like write_all() and
+    // `owner` keeps it alive. The caller has already handed its
+    // descriptors to the host; `args` are TransportRing's. Type-erased so
+    // this header, which many targets compile without the protocol
+    // library, does not need the ring's code. Needs the writer thread, because the switch has
+    // to happen between two writes: the host answers this request on the
+    // socket and reads every later one from the ring, so the writer turns
+    // to the ring the moment it has read that answer, before it writes
+    // anything that follows. False leaves the connection on the socket.
+    using RingWrite = std::function<bool(const void* data, uint32_t len, int peer)>;
+    bool switch_to_ring(std::shared_ptr<void> owner, RingWrite write, const uint64_t (&args)[8]) {
+        Completion c;
+        c.switches_to_ring = true;
+        {
+            std::unique_lock<std::mutex> lock(call_mutex_);
+            if (!writer_started_ || fd_ < 0) return false;
+            emit_command_batch_locked();
+            emit_gl_batch_locked();
+            Header hdr{};
+            hdr.call_id = CallId::TransportRing;
+            for (int i = 0; i < 8; ++i) hdr.args[i] = args[i];
+            const size_t at = queue_.size();
+            queue_.resize(at + sizeof(hdr));
+            std::memcpy(queue_.data() + at, &hdr, sizeof(hdr));
+            ring_pending_ = std::move(owner);
+            ring_pending_write_ = std::move(write);
+            marks_.push_back(Mark{queue_.size(), nullptr, &c});
+        }
+        writer_wake_.notify_one();
+        std::unique_lock<std::mutex> wait_lock(c.m);
+        c.cv.wait(wait_lock, [&c] { return c.done; });
+        return !c.failed && c.result == 1;
     }
 
     // True on the thread that owns the socket, i.e. inside an action.
@@ -1918,8 +1973,22 @@ private:
                     m.action();
                 }
                 if (m.completion != nullptr) {
+                    // Read before the completion is signalled: its waiter
+                    // may return and destroy it.
+                    const bool switches = m.completion->switches_to_ring;
                     if (ok) {
                         ok = read_reply_into(*m.completion);
+                    }
+                    if (switches) {
+                        // Taken from the reply read just now, before a
+                        // single later byte is written.
+                        if (ok && last_reply_result_ == 1) {
+                            ring_ = std::move(ring_pending_);
+                            ring_write_ = std::move(ring_pending_write_);
+                            ring_active_ = true;
+                        }
+                        ring_pending_.reset();
+                        ring_pending_write_ = nullptr;
                     }
                     if (!ok) {
                         signal_failed(*m.completion);
@@ -1951,6 +2020,7 @@ private:
                 drain(resp.out_buffer_len);
             }
         }
+        last_reply_result_ = resp.result;
         {
             std::lock_guard<std::mutex> lock(c.m);
             c.result = resp.result;
@@ -2021,6 +2091,14 @@ private:
     // Which thread runs writer_loop(), so an action can tell that it is
     // on it; see write_inline().
     std::thread::id writer_thread_{};
+    // The shared-memory ring requests go through once switch_to_ring() has
+    // succeeded. Touched only by the writer thread from then on.
+    std::shared_ptr<void> ring_;
+    RingWrite ring_write_;
+    std::shared_ptr<void> ring_pending_;
+    RingWrite ring_pending_write_;
+    bool ring_active_ = false;
+    uint64_t last_reply_result_ = 0;
     std::map<uint32_t, uint64_t> stats_by_id_;
     uint64_t stats_void_calls_ = 0;
     uint64_t stats_void_ns_ = 0;

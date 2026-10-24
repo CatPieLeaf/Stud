@@ -210,3 +210,8 @@ if(StudEtcVulkan_FOUND AND TARGET stud_etc_decode_spv AND EXISTS "${StudEtcDetex
     add_test(NAME etc_decode_test COMMAND stud_etc_decode_test)
     set_tests_properties(etc_decode_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
+
+# The shared-memory ring the engine's Vulkan requests travel through.
+add_executable(stud_transport_ring_test transport_ring_test.cpp)
+target_link_libraries(stud_transport_ring_test PRIVATE stud_render_host_protocol)
+add_test(NAME transport_ring_test COMMAND stud_transport_ring_test)

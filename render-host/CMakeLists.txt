@@ -1,7 +1,11 @@
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/StudGfxstreamRing.cmake")
 add_library(stud_render_host_protocol STATIC
     src/render_host_protocol.cpp
+    src/transport_ring.cpp
+    ${StudRingSources}
 )
 target_include_directories(stud_render_host_protocol PUBLIC include)
+target_include_directories(stud_render_host_protocol PRIVATE ${StudRingIncludes})
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)

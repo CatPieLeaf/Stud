@@ -29,10 +29,14 @@ set(ANDROID_GLUE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue")
 
 set(RENDER_HOST_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../render-host")
 set(CPU_COMPAT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../cpu-compat")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/StudGfxstreamRing.cmake")
 add_library(stud_runtime_render_host_protocol STATIC
     "${RENDER_HOST_SRC}/src/render_host_protocol.cpp"
+    "${RENDER_HOST_SRC}/src/transport_ring.cpp"
+    ${StudRingSources}
 )
 target_include_directories(stud_runtime_render_host_protocol PUBLIC "${RENDER_HOST_SRC}/include")
+target_include_directories(stud_runtime_render_host_protocol PRIVATE ${StudRingIncludes})
 
 # Link-time only: clang warns 'argument unused during compilation' for
 # every translation unit if it is a compile option too.
