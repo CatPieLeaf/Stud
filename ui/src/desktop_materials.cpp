@@ -166,7 +166,8 @@ bool complete(const fs::path& dir) {
 }
 
 // What was prepared, and for which APK: {"apk" (the file), "apkVersion",
-// "windows", "ready"}.
+// "windows", "ready"}, plus "refused": the last APK file found to have no
+// Windows build to match, kept beside the pack rather than over it.
 QJsonObject read_state(const fs::path& path) {
     QFile file(QString::fromStdString(path.string()));
     if (!file.open(QIODevice::ReadOnly)) return {};
@@ -192,25 +193,28 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
 
     const QString apk_version = QString::fromStdString(stud::android_glue::apk_version_name(apk_path));
 
-    // Already decided for this APK: prepared, or no Windows build to match.
-    // Kept for as long as the APK is: Roblox moving the Windows client to a
-    // newer release changes nothing until a different APK is imported.
+    // What was prepared is only ever used for the exact Roblox version it
+    // was built from: a pack built against 2.733's shaders does not fit
+    // 2.722's, so a downgrade (or any other version) never gets it. For
+    // that version it is kept for as long as the APK is: Roblox moving the
+    // Windows client to a newer release changes nothing, and another file
+    // of the same version (the same APK imported again, or from elsewhere)
+    // reuses it as it is. Asking Roblox again could only make it worse,
+    // once Windows has moved on to a release whose files no longer fit.
     const QJsonObject state = read_state(state_path);
     const fs::path prepared = root / state.value("windows").toString().toStdString();
-    if (!fingerprint.empty() && state.value("apk").toString().toStdString() == fingerprint) {
-        if (!state.value("ready").toBool()) return {};
-        if (complete(prepared)) return prepared.string();
-    }
-    // Another file of the same Roblox version, the same APK imported again
-    // or from elsewhere: its shaders are the ones the pack was built from,
-    // so the pack is reused as it is. Asking Roblox again could only make
-    // it worse, once Windows has moved on to a release whose files no
-    // longer fit this APK.
-    if (state.value("ready").toBool() && !apk_version.isEmpty() &&
-        state.value("apkVersion").toString() == apk_version && complete(prepared)) {
-        write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
-        say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
+    const bool same_version =
+        !apk_version.isEmpty() && state.value("apkVersion").toString() == apk_version;
+    if (same_version && state.value("ready").toBool() && complete(prepared)) {
+        if (state.value("apk").toString().toStdString() != fingerprint) {
+            write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
+            say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
+        }
         return prepared.string();
+    }
+    // This exact file was already found to have no Windows build to match.
+    if (!fingerprint.empty() && state.value("refused").toString().toStdString() == fingerprint) {
+        return {};
     }
 
     LoadingScreen loading;
@@ -232,7 +236,12 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
             say(QStringLiteral("the Windows client is on %1 and the APK is %2, a different release: "
                                "materials look as on Android until an APK of the same release")
                     .arg(windows_version, apk_version));
-            write_state(state_path, fingerprint, apk_version, upload, false);
+            // Noted beside what was prepared, not over it: going back to
+            // the version it was built for finds it still there.
+            QJsonObject refused = state;
+            refused["refused"] = QString::fromStdString(fingerprint);
+            const QByteArray json = QJsonDocument(refused).toJson();
+            write_file(state_path, json.constData(), static_cast<size_t>(json.size()));
             return {};
         }
 
