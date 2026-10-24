@@ -1436,6 +1436,15 @@ void touch(VkCommandBuffer cb, VkQueryPool pool, uint32_t first, uint32_t count,
 void finish(VkCommandBuffer cb);
 void forget(VkQueryPool pool);
 }  // namespace query_share
+// Compressed textures decoded by the GPU; defined after desktop_fill.
+namespace etc_decode {
+bool init(Loader& l, bool every_queue_computes);
+void note_pool(uint64_t pool, uint32_t family);
+void note_command_buffers(uint64_t pool, const std::vector<VkCommandBuffer>& cbs);
+void begin(Loader& l, uint64_t cb);
+void end(Loader& l, uint64_t cb);
+void reset_pool(Loader& l, uint64_t pool);
+}  // namespace etc_decode
 VkDeviceSize imported_host_pointer_alignment();
 
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
@@ -1975,10 +1984,28 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // This device's submits are numbered from here; see submit_feedback.
     submit_feedback::start(l, timeline_enabled);
 
+    // The decoder's prologues run on the queue the engine uploads on, so
+    // every family it asked for a queue on has to run compute.
+    bool every_queue_computes = !queues.empty();
+    {
+        uint32_t n = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(l.physical_device, &n, nullptr);
+        std::vector<VkQueueFamilyProperties> families(n);
+        vkGetPhysicalDeviceQueueFamilyProperties(l.physical_device, &n, families.data());
+        for (const VkDeviceQueueCreateInfo& q : queues) {
+            every_queue_computes = every_queue_computes && q.queueFamilyIndex < n &&
+                                   (families[q.queueFamilyIndex].queueFlags & VK_QUEUE_COMPUTE_BIT);
+        }
+    }
+    // After the handle, what the client may rely on: bit 0, compressed
+    // texture uploads may be sent compressed (see etc_decode).
+    const uint64_t caps = etc_decode::init(l, every_queue_computes) ? 1u : 0u;
+
     uint64_t handle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(device));
-    out.resize(sizeof(handle));
+    out.resize(sizeof(handle) + sizeof(caps));
     std::memcpy(out.data(), &handle, sizeof(handle));
-    *out_len = sizeof(handle);
+    std::memcpy(out.data() + sizeof(handle), &caps, sizeof(caps));
+    *out_len = static_cast<uint32_t>(out.size());
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
@@ -2244,6 +2271,7 @@ uint64_t vk_create_command_pool(uint32_t flags, uint32_t family, std::vector<uin
     VkResult r = l.vk.vkCreateCommandPool(l.device, &ci, nullptr, &pool);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
     query_share::note_command_pool(to_u64(pool), family);
+    etc_decode::note_pool(to_u64(pool), family);
     return answer_handle(to_u64(pool), client, out, out_len);
 }
 
@@ -7793,6 +7821,513 @@ void fill(Loader& l, const std::vector<VkDescriptorUpdateTemplateEntry>& entries
 
 }  // namespace desktop_fill
 
+// ETC2 and EAC textures decoded by the GPU.
+//
+// The engine's textures are ETC2/EAC, which NVIDIA cannot sample, so the
+// client hands it an uncompressed image in their place (see the client's
+// texture_decode.h). Decoding every upload on the engine's side cost the
+// frame it landed in: measured at 38.3 ms for one 8.33 MB burst, all of it
+// ahead of the submit that needed the pixels. Here the client sends the
+// compressed upload unchanged and the GPU decodes it, in milliseconds.
+//
+// Each engine command buffer that uploads one gets a command buffer of
+// Stud's own, its prologue, which goes to the queue just ahead of it in the
+// same submit: it copies the compressed bytes into a scratch buffer in
+// VRAM and runs the decoder over them, and the engine's own command buffer
+// then copies the result into the image. The bytes are read at the submit,
+// exactly as the engine-side decode read them.
+//
+// The block decoders are gfxstream's, the Android emulator's own answer to
+// this same problem, compiled from the pinned upstream source (see
+// render-host/CMakeLists.txt); shaders/etc_decode.comp only reads and writes
+// the buffers around them. Their output is byte-identical to detex's, which
+// tests/etc_decode_test.cpp checks.
+namespace etc_decode {
+
+// Mirrors shaders/etc_decode.comp's push constants. Offsets and pitches
+// are in 32-bit words.
+struct Push {
+    uint32_t codec;
+    uint32_t blocks_x;
+    uint32_t blocks_y;
+    uint32_t src;
+    uint32_t src_row;
+    uint32_t src_layer;
+    uint32_t dst;
+    uint32_t dst_row;
+    uint32_t dst_layer;
+};
+
+struct Codec {
+    uint32_t id = 0;           // the shader's codec number
+    uint32_t block_bytes = 0;  // one compressed 4x4 block
+    uint32_t texel_bytes = 0;  // one decoded texel, as the client's substitute format has it
+};
+
+bool codec_for(uint32_t format, Codec& c) {
+    switch (static_cast<VkFormat>(format)) {
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK:
+            c = {0, 8, 4};
+            return true;
+        case VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK:
+            c = {1, 8, 4};
+            return true;
+        case VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK:
+            c = {2, 16, 4};
+            return true;
+        case VK_FORMAT_EAC_R11_UNORM_BLOCK:
+            c = {3, 8, 2};
+            return true;
+        case VK_FORMAT_EAC_R11G11_UNORM_BLOCK:
+            c = {4, 16, 4};
+            return true;
+        default:
+            return false;
+    }
+}
+
+struct Scratch {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDeviceSize size = 0;
+};
+
+// One per engine command buffer that has uploaded a compressed texture.
+// Its scratch is bump-allocated and rewound when the engine begins that
+// command buffer again, by which point the engine has waited for its last
+// submit, and so for this prologue's, which went in the same one.
+struct Prologue {
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    bool open = false;   // being recorded
+    bool ready = false;  // ended, and goes ahead of its command buffer
+    Scratch current;
+    VkDeviceSize used = 0;
+    // Outgrown while recording, and still named by what was recorded.
+    std::vector<Scratch> retired;
+};
+
+// Stud's own command pool beside each of the engine's, on the same queue
+// family. The engine's pools are each replayed on one worker at a time
+// (see replay), so this one is only ever touched by that worker or by a
+// call that waited for every worker first.
+struct Pool {
+    VkCommandPool pool = VK_NULL_HANDLE;
+    std::unordered_map<uint64_t, Prologue> prologues;  // by engine command buffer
+};
+
+struct State {
+    std::mutex m;
+    bool available = false;
+    VkShaderModule shader = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkDeviceSize max_range = 0;  // maxStorageBufferRange
+    std::unordered_map<uint64_t, uint32_t> family;   // engine pool -> queue family
+    std::unordered_map<uint64_t, uint64_t> pool_of;  // engine command buffer -> engine pool
+    std::unordered_map<uint64_t, Pool> pools;        // by engine pool
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+void destroy_scratch(Loader& l, Scratch& s) {
+    if (s.pool != VK_NULL_HANDLE) l.vk.vkDestroyDescriptorPool(l.device, s.pool, nullptr);
+    if (s.buffer != VK_NULL_HANDLE) l.vk.vkDestroyBuffer(l.device, s.buffer, nullptr);
+    if (s.memory != VK_NULL_HANDLE) l.vk.vkFreeMemory(l.device, s.memory, nullptr);
+    s = Scratch{};
+}
+
+void destroy_pool(Loader& l, Pool& p) {
+    for (auto& [cb, pr] : p.prologues) {
+        destroy_scratch(l, pr.current);
+        for (Scratch& r : pr.retired) destroy_scratch(l, r);
+    }
+    if (p.pool != VK_NULL_HANDLE) l.vk.vkDestroyCommandPool(l.device, p.pool, nullptr);
+    p = Pool{};
+}
+
+// Device-local, the GPU being the only thing that ever touches it.
+bool create_scratch(Loader& l, State& s, VkDeviceSize size, Scratch& out) {
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = size;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if (l.vk.vkCreateBuffer(l.device, &bci, nullptr, &out.buffer) != VK_SUCCESS) return false;
+    VkMemoryRequirements req{};
+    l.vk.vkGetBufferMemoryRequirements(l.device, out.buffer, &req);
+    VkPhysicalDeviceMemoryProperties props{};
+    vkGetPhysicalDeviceMemoryProperties(l.physical_device, &props);
+    VkMemoryAllocateInfo mai{};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = UINT32_MAX;
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        if ((req.memoryTypeBits & (1u << i)) != 0 &&
+            (props.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+            mai.memoryTypeIndex = i;
+            break;
+        }
+    }
+    bool ok = mai.memoryTypeIndex != UINT32_MAX &&
+              l.vk.vkAllocateMemory(l.device, &mai, nullptr, &out.memory) == VK_SUCCESS &&
+              l.vk.vkBindBufferMemory(l.device, out.buffer, out.memory, 0) == VK_SUCCESS;
+    VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+    VkDescriptorPoolCreateInfo dpci{};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &ps;
+    ok = ok && l.vk.vkCreateDescriptorPool(l.device, &dpci, nullptr, &out.pool) == VK_SUCCESS;
+    VkDescriptorSetAllocateInfo dsai{};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = out.pool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &s.set_layout;
+    ok = ok && l.vk.vkAllocateDescriptorSets(l.device, &dsai, &out.set) == VK_SUCCESS;
+    if (!ok) {
+        destroy_scratch(l, out);
+        return false;
+    }
+    VkDescriptorBufferInfo dbi{out.buffer, 0, std::min(size, s.max_range)};
+    VkWriteDescriptorSet w{};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = out.set;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w.pBufferInfo = &dbi;
+    l.vk.vkUpdateDescriptorSets(l.device, 1, &w, 0, nullptr);
+    out.size = size;
+    return true;
+}
+
+// The pipeline, built once per device. False leaves the client decoding
+// on its own side, as before: a build without glslc, or any step failing.
+bool init(Loader& l, bool every_queue_computes) {
+    static const uint32_t kSpv[] =
+#include "etc_decode_spv.h"
+        ;
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.available = false;
+    if (!every_queue_computes || sizeof(kSpv) < 32 || l.vk.vkCreateComputePipelines == nullptr ||
+        l.vk.vkCmdDispatch == nullptr || l.vk.vkCmdCopyBuffer == nullptr) {
+        return false;
+    }
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(l.physical_device, &props);
+    s.max_range = props.limits.maxStorageBufferRange;
+
+    VkShaderModuleCreateInfo smci{};
+    smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smci.codeSize = sizeof(kSpv);
+    smci.pCode = kSpv;
+    VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                   VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    VkDescriptorSetLayoutCreateInfo dslci{};
+    dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslci.bindingCount = 1;
+    dslci.pBindings = &b;
+    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &s.set_layout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &range;
+    if (l.vk.vkCreateShaderModule(l.device, &smci, nullptr, &s.shader) == VK_SUCCESS &&
+        l.vk.vkCreateDescriptorSetLayout(l.device, &dslci, nullptr, &s.set_layout) == VK_SUCCESS &&
+        l.vk.vkCreatePipelineLayout(l.device, &plci, nullptr, &s.layout) == VK_SUCCESS) {
+        VkComputePipelineCreateInfo cpci{};
+        cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        cpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        cpci.stage.module = s.shader;
+        cpci.stage.pName = "main";
+        cpci.layout = s.layout;
+        s.available = l.vk.vkCreateComputePipelines(l.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                                    &s.pipeline) == VK_SUCCESS;
+    }
+    std::printf("stud-render-host: compressed textures are decoded %s\n",
+                s.available ? "by the GPU" : "by the engine's process (no GPU decoder)");
+    std::fflush(stdout);
+    return s.available;
+}
+
+void note_pool(uint64_t pool, uint32_t family) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.family[pool] = family;
+}
+
+void note_command_buffers(uint64_t pool, const std::vector<VkCommandBuffer>& cbs) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    for (VkCommandBuffer cb : cbs) s.pool_of[to_u64(cb)] = pool;
+}
+
+// The engine begins a command buffer again: its prologue starts over.
+void begin(Loader& l, uint64_t cb) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto pool = s.pool_of.find(cb);
+    if (pool == s.pool_of.end()) return;
+    const auto p = s.pools.find(pool->second);
+    if (p == s.pools.end()) return;
+    const auto it = p->second.prologues.find(cb);
+    if (it == p->second.prologues.end()) return;
+    Prologue& pr = it->second;
+    if (pr.open) l.vk.vkEndCommandBuffer(pr.cb);
+    pr.open = false;
+    pr.ready = false;
+    pr.used = 0;
+    for (Scratch& r : pr.retired) destroy_scratch(l, r);
+    pr.retired.clear();
+}
+
+// The engine ends it: so does its prologue, with the barrier that makes
+// the decoded texels visible to the engine's copies.
+void end(Loader& l, uint64_t cb) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto pool = s.pool_of.find(cb);
+    if (pool == s.pool_of.end()) return;
+    const auto p = s.pools.find(pool->second);
+    if (p == s.pools.end()) return;
+    const auto it = p->second.prologues.find(cb);
+    if (it == p->second.prologues.end() || !it->second.open) return;
+    Prologue& pr = it->second;
+    VkMemoryBarrier mb{};
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    l.vk.vkCmdPipelineBarrier(pr.cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    pr.open = false;
+    pr.ready = l.vk.vkEndCommandBuffer(pr.cb) == VK_SUCCESS;
+}
+
+// The engine's vkCmdCopyBufferToImage of compressed bytes into an image the
+// client created uncompressed. Wire shape: the compressed format, then
+// exactly CopyBufferToImage's.
+void record(Loader& l, VkCommandBuffer cb, vk_wire::Reader& r) {
+    const uint32_t format = r.u32();
+    VkBuffer src = from_u64<VkBuffer>(real_buffer(r.u64()));
+    VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
+    const uint32_t layout = r.u32();
+    const uint32_t n = r.u32();
+    std::vector<VkBufferImageCopy> regions(n);
+    for (auto& c : regions) {
+        c.bufferOffset = r.u64();
+        c.bufferRowLength = r.u32();
+        c.bufferImageHeight = r.u32();
+        c.imageSubresource.aspectMask = r.u32();
+        c.imageSubresource.mipLevel = r.u32();
+        c.imageSubresource.baseArrayLayer = r.u32();
+        c.imageSubresource.layerCount = r.u32();
+        c.imageOffset.x = static_cast<int32_t>(r.u32());
+        c.imageOffset.y = static_cast<int32_t>(r.u32());
+        c.imageOffset.z = static_cast<int32_t>(r.u32());
+        c.imageExtent.width = r.u32();
+        c.imageExtent.height = r.u32();
+        c.imageExtent.depth = r.u32();
+    }
+    Codec codec;
+    if (n == 0 || !codec_for(format, codec)) return;
+
+    // Where each region's compressed bytes and decoded texels go in the
+    // scratch. The output is padded to whole blocks, so every invocation
+    // writes a whole 4x4 tile and the copy below reads only the extent.
+    auto align16 = [](VkDeviceSize v) { return (v + 15u) & ~VkDeviceSize{15u}; };
+    struct Place {
+        VkDeviceSize in = 0, in_bytes = 0, out = 0;
+        Push push{};
+        uint32_t layers = 1;
+    };
+    std::vector<Place> places(n);
+    VkDeviceSize total = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+        const VkBufferImageCopy& c = regions[i];
+        Place& p = places[i];
+        p.layers = std::max(c.imageSubresource.layerCount, 1u) * std::max(c.imageExtent.depth, 1u);
+        const uint32_t bw = (c.imageExtent.width + 3) / 4;
+        const uint32_t bh = (c.imageExtent.height + 3) / 4;
+        const uint32_t row_blocks = ((c.bufferRowLength != 0 ? c.bufferRowLength : c.imageExtent.width) + 3) / 4;
+        const uint32_t image_blocks = ((c.bufferImageHeight != 0 ? c.bufferImageHeight : c.imageExtent.height) + 3) / 4;
+        const VkDeviceSize src_row = VkDeviceSize{row_blocks} * codec.block_bytes;
+        const VkDeviceSize src_layer = src_row * image_blocks;
+        // Exactly what the copy reads, which may end short of a padded row.
+        p.in_bytes = src_layer * (p.layers - 1) + src_row * (bh - 1) + VkDeviceSize{bw} * codec.block_bytes;
+        const VkDeviceSize dst_row = VkDeviceSize{bw} * 4 * codec.texel_bytes;
+        const VkDeviceSize dst_layer = dst_row * bh * 4;
+        p.in = total;
+        total = align16(total + p.in_bytes);
+        p.out = total;
+        total = align16(total + dst_layer * p.layers);
+        p.push = {codec.id, bw, bh, 0, static_cast<uint32_t>(src_row / 4),
+                  static_cast<uint32_t>(src_layer / 4), 0, static_cast<uint32_t>(dst_row / 4),
+                  static_cast<uint32_t>(dst_layer / 4)};
+    }
+
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto pool_it = s.pool_of.find(to_u64(cb));
+    const auto family = pool_it != s.pool_of.end() ? s.family.find(pool_it->second) : s.family.end();
+    if (!s.available || family == s.family.end() || total > s.max_range) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud-render-host: a compressed texture upload could not be decoded "
+                        "(format=%u, %llu bytes); dropping it\n",
+                        format, static_cast<unsigned long long>(total));
+            std::fflush(stdout);
+        }
+        return;
+    }
+    Pool& pool = s.pools[pool_it->second];
+    if (pool.pool == VK_NULL_HANDLE) {
+        VkCommandPoolCreateInfo ci{};
+        ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        ci.queueFamilyIndex = family->second;
+        if (l.vk.vkCreateCommandPool(l.device, &ci, nullptr, &pool.pool) != VK_SUCCESS) return;
+    }
+    Prologue& pr = pool.prologues[to_u64(cb)];
+    if (pr.cb == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        ai.commandPool = pool.pool;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        if (l.vk.vkAllocateCommandBuffers(l.device, &ai, &pr.cb) != VK_SUCCESS) return;
+    }
+    if (pr.used + total > pr.current.size) {
+        // Doubling, so a burst settles on a handful of sizes.
+        Scratch grown;
+        if (!create_scratch(l, s, std::min(std::max(total, pr.current.size * 2), s.max_range), grown)) {
+            return;
+        }
+        if (pr.current.buffer != VK_NULL_HANDLE) pr.retired.push_back(pr.current);
+        pr.current = grown;
+        pr.used = 0;
+    }
+    if (!pr.open) {
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        if (l.vk.vkBeginCommandBuffer(pr.cb, &bi) != VK_SUCCESS) return;
+        pr.open = true;
+        pr.ready = false;
+    }
+    const VkDeviceSize base = pr.used;
+    pr.used += total;
+    const VkBuffer scratch = pr.current.buffer;
+
+    std::vector<VkBufferCopy> copies(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        copies[i] = {regions[i].bufferOffset, base + places[i].in, places[i].in_bytes};
+    }
+    l.vk.vkCmdCopyBuffer(pr.cb, src, scratch, n, copies.data());
+    VkMemoryBarrier mb{};
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    l.vk.vkCmdPipelineBarrier(pr.cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    l.vk.vkCmdBindPipeline(pr.cb, VK_PIPELINE_BIND_POINT_COMPUTE, s.pipeline);
+    l.vk.vkCmdBindDescriptorSets(pr.cb, VK_PIPELINE_BIND_POINT_COMPUTE, s.layout, 0, 1,
+                                 &pr.current.set, 0, nullptr);
+    for (uint32_t i = 0; i < n; ++i) {
+        Push push = places[i].push;
+        push.src = static_cast<uint32_t>((base + places[i].in) / 4);
+        push.dst = static_cast<uint32_t>((base + places[i].out) / 4);
+        l.vk.vkCmdPushConstants(pr.cb, s.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+        l.vk.vkCmdDispatch(pr.cb, (push.blocks_x + 7) / 8, (push.blocks_y + 7) / 8, places[i].layers);
+        regions[i].bufferOffset = base + places[i].out;
+        regions[i].bufferRowLength = push.blocks_x * 4;
+        regions[i].bufferImageHeight = push.blocks_y * 4;
+    }
+    l.vk.vkCmdCopyBufferToImage(cb, scratch, dst, static_cast<VkImageLayout>(layout), n,
+                                regions.data());
+}
+
+// A submit's command buffers, each preceded by its prologue if it has one.
+std::vector<VkCommandBuffer> with_prologues(const std::vector<VkCommandBuffer>& cbs) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    if (s.pools.empty()) return cbs;
+    std::vector<VkCommandBuffer> out;
+    out.reserve(cbs.size() * 2);
+    for (VkCommandBuffer cb : cbs) {
+        const auto pool = s.pool_of.find(to_u64(cb));
+        if (pool != s.pool_of.end()) {
+            const auto p = s.pools.find(pool->second);
+            if (p != s.pools.end()) {
+                const auto it = p->second.prologues.find(to_u64(cb));
+                if (it != p->second.prologues.end() && it->second.ready) out.push_back(it->second.cb);
+            }
+        }
+        out.push_back(cb);
+    }
+    return out;
+}
+
+// vkResetCommandPool on the engine's pool: every prologue in it starts over.
+void reset_pool(Loader& l, uint64_t pool) {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    const auto p = s.pools.find(pool);
+    if (p == s.pools.end()) return;
+    std::vector<uint64_t> cbs;
+    for (const auto& [cb, pr] : p->second.prologues) cbs.push_back(cb);
+    lock.unlock();
+    for (uint64_t cb : cbs) begin(l, cb);
+}
+
+void destroy_engine_pool(Loader& l, uint64_t pool) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto p = s.pools.find(pool);
+    if (p != s.pools.end()) {
+        destroy_pool(l, p->second);
+        s.pools.erase(p);
+    }
+    s.family.erase(pool);
+    for (auto it = s.pool_of.begin(); it != s.pool_of.end();) {
+        it = it->second == pool ? s.pool_of.erase(it) : std::next(it);
+    }
+}
+
+// The device is going away; called once it is idle.
+void forget(Loader& l) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    for (auto& [pool, p] : s.pools) destroy_pool(l, p);
+    s.pools.clear();
+    s.family.clear();
+    s.pool_of.clear();
+    if (s.pipeline != VK_NULL_HANDLE) l.vk.vkDestroyPipeline(l.device, s.pipeline, nullptr);
+    if (s.layout != VK_NULL_HANDLE) l.vk.vkDestroyPipelineLayout(l.device, s.layout, nullptr);
+    if (s.set_layout != VK_NULL_HANDLE) {
+        l.vk.vkDestroyDescriptorSetLayout(l.device, s.set_layout, nullptr);
+    }
+    if (s.shader != VK_NULL_HANDLE) l.vk.vkDestroyShaderModule(l.device, s.shader, nullptr);
+    s.pipeline = VK_NULL_HANDLE;
+    s.layout = VK_NULL_HANDLE;
+    s.set_layout = VK_NULL_HANDLE;
+    s.shader = VK_NULL_HANDLE;
+    s.available = false;
+}
+
+}  // namespace etc_decode
+
 void vk_set_desktop_materials_dir(const std::string& dir) {
     desktop_fill::State& s = desktop_fill::state();
     std::lock_guard<std::mutex> lock(s.m);
@@ -8007,6 +8542,7 @@ void destroy_device(Loader& l, uint64_t handle) {
             memory_handle_types().clear();
         }
         desktop_fill::forget(l);
+        etc_decode::forget(l);
         if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
         const auto after_destroy = std::chrono::steady_clock::now();
         {
@@ -8155,6 +8691,7 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
                 }
             }
             for (uint64_t n : numbers) forget_client_handle(n);
+            etc_decode::destroy_engine_pool(l, handle);
             if (l.vk.vkDestroyCommandPool) {
                 l.vk.vkDestroyCommandPool(l.device, from_u64<VkCommandPool>(handle), nullptr);
             }
@@ -9128,6 +9665,7 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
         replay::note_pool(h, pool);
     }
     query_share::note_command_buffers(pool, level, buffers);
+    etc_decode::note_command_buffers(pool, buffers);
     *out_len = static_cast<uint32_t>(out.size());
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
@@ -9139,6 +9677,7 @@ uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags) {
     if (l.vk.vkBeginCommandBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    etc_decode::begin(l, cb);
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = flags;
@@ -9153,6 +9692,7 @@ uint64_t vk_end_command_buffer(uint64_t cb) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     query_share::finish(from_u64<VkCommandBuffer>(cb));
+    etc_decode::end(l, cb);
     return static_cast<uint64_t>(
         static_cast<int32_t>(l.vk.vkEndCommandBuffer(from_u64<VkCommandBuffer>(cb))));
 }
@@ -9163,6 +9703,7 @@ uint64_t vk_reset_command_pool(uint64_t pool, uint32_t flags) {
     if (l.vk.vkResetCommandPool == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    etc_decode::reset_pool(l, pool);
     return static_cast<uint64_t>(static_cast<int32_t>(
         l.vk.vkResetCommandPool(l.device, from_u64<VkCommandPool>(pool), flags)));
 }
@@ -9740,13 +10281,17 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
             for (VkSemaphore w : waits[i]) note_semaphore_waited(to_u64(w));
         }
     }
+    // What actually goes to the queue: each command buffer behind the
+    // prologue that decodes its compressed uploads, if it has one.
+    std::vector<std::vector<VkCommandBuffer>> queued(n);
+    for (uint32_t i = 0; i < n; ++i) queued[i] = etc_decode::with_prologues(buffers[i]);
     for (uint32_t i = 0; i < n; ++i) {
         submits[i].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submits[i].waitSemaphoreCount = static_cast<uint32_t>(waits[i].size());
         submits[i].pWaitSemaphores = waits[i].empty() ? nullptr : waits[i].data();
         submits[i].pWaitDstStageMask = stages[i].empty() ? nullptr : stages[i].data();
-        submits[i].commandBufferCount = static_cast<uint32_t>(buffers[i].size());
-        submits[i].pCommandBuffers = buffers[i].empty() ? nullptr : buffers[i].data();
+        submits[i].commandBufferCount = static_cast<uint32_t>(queued[i].size());
+        submits[i].pCommandBuffers = queued[i].empty() ? nullptr : queued[i].data();
         submits[i].signalSemaphoreCount = static_cast<uint32_t>(signals[i].size());
         submits[i].pSignalSemaphores = signals[i].empty() ? nullptr : signals[i].data();
     }
@@ -11550,6 +12095,9 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
                                         regions.empty() ? nullptr : regions.data());
             break;
         }
+        case K::DecodeCopyBufferToImage:
+            etc_decode::record(l, cb, r);
+            break;
         case K::CopyImageToBuffer: {
             if (l.vk.vkCmdCopyImageToBuffer == nullptr) break;
             VkImage src = from_u64<VkImage>(real_handle(r.u64()));
@@ -12258,6 +12806,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         }
         case K::CopyBuffer:
         case K::CopyBufferToImage:
+        case K::DecodeCopyBufferToImage:
         case K::CopyImageToBuffer:
         case K::CopyImage:
         case K::BlitImage:

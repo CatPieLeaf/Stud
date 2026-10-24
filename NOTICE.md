@@ -141,6 +141,9 @@ The three upscale shaders are built from vendored references: RAVU-Zoom
 from mpv-prescalers (LGPL-3.0-or-later), SGSR (BSD-3-Clause) and FSR1's
 RCAS (MIT).
 
+The texture decode shader is built around gfxstream's ETC2 and EAC block
+decoders (Apache-2.0), fetched at build time from a pinned commit.
+
 RAVU-Zoom is the one copyleft item, so it is worth setting out why it is
 allowed here. LGPLv3 incorporates the terms of GPLv3, and its section
 2(b) permits conveying a copy under the GPL with none of the LGPL's

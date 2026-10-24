@@ -55,6 +55,7 @@
 #include <string_view>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -517,6 +518,19 @@ std::unordered_map<uint64_t, uint64_t>& buffer_sizes() {
 // its own uploads on that device.
 VkDevice g_decode_device = VK_NULL_HANDLE;
 VkPhysicalDevice g_decode_physical_device = VK_NULL_HANDLE;
+// render-host decodes ETC2/EAC on its GPU, so those uploads are sent as
+// they are; see stud_vkCmdCopyBufferToImage. Said at vkCreateDevice.
+bool g_gpu_decode = false;
+// Secondary command buffers, which render-host cannot put a decode ahead
+// of: an upload recorded into one is decoded here, as before.
+std::mutex& secondary_command_buffers_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_set<uint64_t>& secondary_command_buffers() {
+    static std::unordered_set<uint64_t> s;
+    return s;
+}
 
 // Scratch upload buffers for decoded texture data, one pool per command
 // buffer. A pool is rewound when its command buffer begins recording
@@ -1706,15 +1720,18 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDevice(VkPhysicalDevice physicalDevi
     in.insert(in.end(), body.begin(), body.end());
 
     uint64_t a[8] = {static_cast<uint64_t>(reinterpret_cast<uintptr_t>(physicalDevice))};
-    uint64_t handle = 0;
+    // The handle, then what render-host can do for this device.
+    uint64_t reply[2] = {};
     uint32_t written = 0;
     uint64_t r = stud::render_client::connection().call(
-        CallId::VkCreateDevice, a, in.data(), static_cast<uint32_t>(in.size()), &handle,
-        sizeof(handle), &written);
+        CallId::VkCreateDevice, a, in.data(), static_cast<uint32_t>(in.size()), reply,
+        sizeof(reply), &written);
     VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
-    if (result != VK_SUCCESS || written < sizeof(handle)) {
+    if (result != VK_SUCCESS || written < sizeof(reply[0])) {
         return result != VK_SUCCESS ? result : VK_ERROR_INITIALIZATION_FAILED;
     }
+    const uint64_t handle = reply[0];
+    g_gpu_decode = written >= sizeof(reply) && (reply[1] & 1u) != 0;
     *pDevice = reinterpret_cast<VkDevice>(static_cast<uintptr_t>(handle));
     g_decode_device = *pDevice;
     g_decode_physical_device = physicalDevice;
@@ -2889,6 +2906,10 @@ VKAPI_ATTR void VKAPI_CALL stud_vkDestroyCommandPool(VkDevice device, VkCommandP
             pool_command_buffer_numbers().erase(it);
         }
     }
+    {
+        std::lock_guard<std::mutex> lock(secondary_command_buffers_mutex());
+        for (uint64_t n : numbers) secondary_command_buffers().erase(n);
+    }
     for (uint64_t n : numbers) free_client_handle(n);
 }
 VKAPI_ATTR void VKAPI_CALL stud_vkDestroyQueryPool(VkDevice device, VkQueryPool handle,
@@ -3629,6 +3650,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateCommandBuffers(
         std::lock_guard<std::mutex> lock(pool_command_buffer_numbers_mutex());
         auto& owned = pool_command_buffer_numbers()[to_u64(ai->commandPool)];
         owned.insert(owned.end(), numbers.begin(), numbers.end());
+    }
+    if (ai->level == VK_COMMAND_BUFFER_LEVEL_SECONDARY) {
+        std::lock_guard<std::mutex> lock(secondary_command_buffers_mutex());
+        secondary_command_buffers().insert(numbers.begin(), numbers.end());
     }
     stud::render_client::connection().call_void(
         CallId::VkAllocateCommandBuffers, a, numbers.data(),
@@ -5279,6 +5304,54 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
                                                         VkImage dst, VkImageLayout layout,
                                                         uint32_t count,
                                                         const VkBufferImageCopy* pRegions) {
+    // ETC2/EAC into an emulated image: sent as it is, and render-host's
+    // GPU decodes it ahead of the submit that carries it (etc_decode in
+    // vulkan_host.cpp). Milliseconds there against tens of them here, on
+    // the frame the burst lands in, and the compressed bytes are all that
+    // ever travel. PVRTC, which that decoder does not have, and a
+    // secondary command buffer, which it cannot put a decode ahead of,
+    // still decode below.
+    if (g_gpu_decode && count > 0 && pRegions != nullptr) {
+        VkFormat compressed = VK_FORMAT_UNDEFINED;
+        {
+            std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
+            auto it = emulated_images().find(to_u64(dst));
+            if (it != emulated_images().end()) compressed = it->second.compressed;
+        }
+        bool secondary = false;
+        if (compressed != VK_FORMAT_UNDEFINED) {
+            std::lock_guard<std::mutex> lock(secondary_command_buffers_mutex());
+            secondary = secondary_command_buffers().count(to_u64(cb)) != 0;
+        }
+        if (compressed != VK_FORMAT_UNDEFINED && !secondary &&
+            !stud::texture_decode::is_pvrtc(compressed)) {
+            std::vector<uint8_t>& in = wire_scratch();
+            vk_wire::Writer w(in);
+            w.u32(static_cast<uint32_t>(compressed));
+            w.u64(to_u64(src));
+            w.u64(to_u64(dst));
+            w.u32(layout);
+            w.u32(count);
+            for (uint32_t i = 0; i < count; ++i) {
+                const auto& c = pRegions[i];
+                w.u64(c.bufferOffset);
+                w.u32(c.bufferRowLength);
+                w.u32(c.bufferImageHeight);
+                w.u32(c.imageSubresource.aspectMask);
+                w.u32(c.imageSubresource.mipLevel);
+                w.u32(c.imageSubresource.baseArrayLayer);
+                w.u32(c.imageSubresource.layerCount);
+                w.u32(static_cast<uint32_t>(c.imageOffset.x));
+                w.u32(static_cast<uint32_t>(c.imageOffset.y));
+                w.u32(static_cast<uint32_t>(c.imageOffset.z));
+                w.u32(c.imageExtent.width);
+                w.u32(c.imageExtent.height);
+                w.u32(c.imageExtent.depth);
+            }
+            record(cb, vk_wire::CmdKind::DecodeCopyBufferToImage, in);
+            return;
+        }
+    }
     // An emulated image really exists as an uncompressed one, so the
     // compressed bytes the engine staged have to be decoded before the
     // device ever sees them. The decode happens here, at record time,

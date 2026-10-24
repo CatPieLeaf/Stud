@@ -214,6 +214,10 @@ enum class CmdKind : uint32_t {
     ResolveImage,
     // Appended, so every kind above keeps its value.
     CopyImageToBuffer,
+    // A CopyBufferToImage of ETC2/EAC bytes into the uncompressed image the
+    // client created in its place, decoded by render-host's GPU. Payload:
+    // the compressed VkFormat, then CopyBufferToImage's.
+    DecodeCopyBufferToImage,
 
 };
 

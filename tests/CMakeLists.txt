@@ -188,3 +188,25 @@ add_test(NAME env_documented_test
 add_executable(stud_shader_pack_test shader_pack_test.cpp)
 target_link_libraries(stud_shader_pack_test PRIVATE stud_shader_pack)
 add_test(NAME shader_pack_test COMMAND stud_shader_pack_test)
+
+# render-host's GPU ETC2/EAC decoder against detex, the decoder the engine's
+# process uses, byte for byte, on every Vulkan device present. detex comes
+# out of the bionic runtime sub-build's own checkout, as in
+# tools/CMakeLists.txt, so on a fresh configure this test is skipped until
+# that sub-build has run once and cmake is re-run.
+pkg_check_modules(StudEtcVulkan IMPORTED_TARGET vulkan)
+set(StudEtcDetexDir "${CMAKE_BINARY_DIR}/runtime-prefix/src/runtime-build/texdec/detex")
+if(StudEtcVulkan_FOUND AND TARGET stud_etc_decode_spv AND EXISTS "${StudEtcDetexDir}/decompress-etc.c")
+    add_executable(stud_etc_decode_test etc_decode_test.cpp
+        "${StudEtcDetexDir}/bits.c"
+        "${StudEtcDetexDir}/clamp.c"
+        "${StudEtcDetexDir}/division-tables.c"
+        "${StudEtcDetexDir}/decompress-etc.c"
+        "${StudEtcDetexDir}/decompress-eac.c")
+    target_include_directories(stud_etc_decode_test PRIVATE
+        "${StudEtcDetexDir}" "${CMAKE_BINARY_DIR}/render-host/generated")
+    target_link_libraries(stud_etc_decode_test PRIVATE PkgConfig::StudEtcVulkan)
+    add_dependencies(stud_etc_decode_test stud_etc_decode_spv)
+    add_test(NAME etc_decode_test COMMAND stud_etc_decode_test)
+    set_tests_properties(etc_decode_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()

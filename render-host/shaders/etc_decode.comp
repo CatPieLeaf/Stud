@@ -1,0 +1,83 @@
+#version 450
+
+// ETC2 and EAC decoded on the GPU; see etc_decode in vulkan_host.cpp.
+//
+// The block decoders are gfxstream's (Etc2ShaderLib.comp, Apache-2.0),
+// fetched unchanged at build time; this file only reads the compressed
+// blocks from a buffer and writes the texels to one. Its output has to be
+// byte-identical to the engine-side decoder's (detex), because a decoder
+// that is subtly wrong gives textures that look plausible and are quietly
+// corrupt; tests/etc_decode_test.cpp holds it to that.
+//
+// One invocation decodes one 4x4 block into a whole 4x4 tile of the
+// output, so the output rows are padded to whole blocks and no two
+// invocations share a word. The texels are laid out as the client's
+// substitute formats have them: RGBA8 for colour, 16-bit for EAC.
+#include "Etc2ShaderLib.comp"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std430, binding = 0) buffer Scratch { uint words[]; };
+
+// Offsets and pitches in 32-bit words.
+layout(push_constant) uniform Params {
+    uint codec;      // 0 RGB8, 1 RGB8A1, 2 RGBA8, 3 R11, 4 RG11
+    uint blocks_x;
+    uint blocks_y;
+    uint src;        // first block of layer 0
+    uint src_row;    // between rows of blocks
+    uint src_layer;  // between layers
+    uint dst;        // first texel of layer 0
+    uint dst_row;    // between rows of texels
+    uint dst_layer;  // between layers
+} p;
+
+uint pack_rgba(ivec4 c) {
+    return uint(c.r) | (uint(c.g) << 8) | (uint(c.b) << 16) | (uint(c.a) << 24);
+}
+
+// detex widens EAC's 11 bits to 16 by replicating the top bits.
+uint widen11(float v) {
+    uint u = uint(round(v * 2047.0));
+    return (u << 5) | (u >> 6);
+}
+
+void main() {
+    uvec3 id = gl_GlobalInvocationID;
+    if (id.x >= p.blocks_x || id.y >= p.blocks_y) return;
+    uint block_words = (p.codec == 2u || p.codec == 4u) ? 4u : 2u;
+    uint s = p.src + id.z * p.src_layer + id.y * p.src_row + id.x * block_words;
+    uint o = p.dst + id.z * p.dst_layer + id.y * 4u * p.dst_row;
+    if (p.codec <= 2) {
+        uint c0 = s + (p.codec == 2 ? 2u : 0u);
+        ivec4 rgb[16] = etc2_decode_rgb_block(flip32(words[c0]), flip32(words[c0 + 1]), p.codec == 1);
+        uint alpha[16];
+        if (p.codec == 2) {
+            alpha = eac_decode_single_channel_block(flip32(words[s]), flip32(words[s + 1]), false);
+        }
+        for (uint y = 0; y < 4; ++y) {
+            for (uint x = 0; x < 4; ++x) {
+                ivec4 c = rgb[y * 4 + x];
+                if (p.codec == 2) c.a = int(alpha[y * 4 + x]);
+                words[o + y * p.dst_row + id.x * 4u + x] = pack_rgba(c);
+            }
+        }
+    } else if (p.codec == 3) {
+        float r[16] = eac_decode_single_channel_block_float(flip32(words[s]), flip32(words[s + 1]), false);
+        // Two 16-bit texels to a word.
+        for (uint y = 0; y < 4; ++y) {
+            for (uint x = 0; x < 4; x += 2) {
+                words[o + y * p.dst_row + id.x * 2u + x / 2] =
+                    widen11(r[y * 4 + x]) | (widen11(r[y * 4 + x + 1]) << 16);
+            }
+        }
+    } else {
+        float r[16] = eac_decode_single_channel_block_float(flip32(words[s]), flip32(words[s + 1]), false);
+        float g[16] = eac_decode_single_channel_block_float(flip32(words[s + 2]), flip32(words[s + 3]), false);
+        for (uint y = 0; y < 4; ++y) {
+            for (uint x = 0; x < 4; ++x) {
+                words[o + y * p.dst_row + id.x * 4u + x] = widen11(r[y * 4 + x]) | (widen11(g[y * 4 + x]) << 16);
+            }
+        }
+    }
+}

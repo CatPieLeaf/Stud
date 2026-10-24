@@ -96,10 +96,44 @@ add_custom_command(
     COMMENT "Generating the RAVU-Zoom anti-ringing table"
 )
 endif()
+# The ETC2/EAC decoder: gfxstream's block decoders (Apache-2.0, the Android
+# emulator's own GPU decode of these formats), fetched at configure time
+# with a pinned hash, same "vendor it, do not hand-roll it" reasoning as
+# detex in runtime/CMakeLists.txt, inside shaders/etc_decode.comp. The
+# library includes "Common.comp"; upstream spells the file in lower case.
+set(EtcDecodeShaderSrc "${CMAKE_CURRENT_SOURCE_DIR}/shaders/etc_decode.comp")
+set(EtcDecodeShaderHeader "${CMAKE_CURRENT_BINARY_DIR}/generated/etc_decode_spv.h")
+set(GfxstreamShaderDir "${CMAKE_CURRENT_BINARY_DIR}/gfxstream")
+set(GfxstreamCommit "0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9")
+set(GfxstreamShaders
+    "https://raw.githubusercontent.com/google/gfxstream/${GfxstreamCommit}/host/vulkan/emulated_textures/shaders")
+file(DOWNLOAD "${GfxstreamShaders}/etc2_shader_lib.comp" "${GfxstreamShaderDir}/Etc2ShaderLib.comp"
+    EXPECTED_HASH SHA256=691fa8d3fb0e9be6ec250f3ee31c59b9f44c80980ec0664824462830eb0ff99f
+    TLS_VERIFY ON)
+file(DOWNLOAD "${GfxstreamShaders}/common.comp" "${GfxstreamShaderDir}/Common.comp"
+    EXPECTED_HASH SHA256=621cbb18083647641a536fbb9bba0e25964bddd6f0d3b12d1d81cf18a312bd8f
+    TLS_VERIFY ON)
+# Apache-2.0 asks for its text to travel with the binary.
+file(DOWNLOAD "https://raw.githubusercontent.com/google/gfxstream/${GfxstreamCommit}/LICENSE"
+    "${GfxstreamShaderDir}/LICENSE"
+    EXPECTED_HASH SHA256=58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd
+    TLS_VERIFY ON)
+install(FILES "${GfxstreamShaderDir}/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/gfxstream"
+        RENAME "LICENSE-gfxstream.txt")
 find_program(StudGlslc glslc
     HINTS "${STUD_ANDROID_NDK_ROOT}/shader-tools/linux-x86_64"
     NO_CMAKE_FIND_ROOT_PATH)
 if(StudGlslc)
+    add_custom_command(
+        OUTPUT "${EtcDecodeShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${StudGlslc}" --target-env=vulkan1.1 -O -mfmt=c -DDIM=2
+                -I "${GfxstreamShaderDir}"
+                -o "${EtcDecodeShaderHeader}" "${EtcDecodeShaderSrc}"
+        DEPENDS "${EtcDecodeShaderSrc}" "${GfxstreamShaderDir}/Etc2ShaderLib.comp"
+        COMMENT "Compiling the ETC2/EAC decode shader to SPIR-V"
+    )
     add_custom_command(
         OUTPUT "${SharpenShaderHeader}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -163,9 +197,18 @@ else()
         COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${RavuArShaderHeader}"
         COMMENT "glslc not found, building without the RAVU-Zoom anti-ringing shader"
     )
+    # Without it the engine's process decodes compressed textures itself.
+    add_custom_command(
+        OUTPUT "${EtcDecodeShaderHeader}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND "${CMAKE_COMMAND}" -E echo "{}" > "${EtcDecodeShaderHeader}"
+        COMMENT "glslc not found, building without the ETC2/EAC decode shader"
+    )
 endif()
+# The decode test compiles the same shader; see tests/CMakeLists.txt.
+add_custom_target(stud_etc_decode_spv DEPENDS "${EtcDecodeShaderHeader}")
 
-add_executable(stud-render-host "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
+add_executable(stud-render-host "${EtcDecodeShaderHeader}" "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_codec.cpp)
 
