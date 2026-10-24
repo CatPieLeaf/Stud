@@ -604,7 +604,7 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         const Contract& mi = contract(mobile, k, mobile_contracts);
         const Contract& di = contract(desktop, d->second, desktop_contracts);
         const std::string& name = key.first;
-        bool vs_pair = false;
+        bool vs_pair = false, drop_in = false;
         if (name.rfind("DefaultUnified", 0) == 0 && name.size() >= 2 && name.compare(name.size() - 2, 2, "VS") == 0) {
             const auto mb = spirv_words(mobile.blob(k)), db = spirv_words(desktop.blob(d->second));
             if (mb != db) {
@@ -612,7 +612,28 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
                 if (!vs_pair) ++r.refused_vertex_io;
             }
         }
-        if (mi.bindings == di.bindings && !vs_pair) continue;
+        if (mi.bindings == di.bindings && !vs_pair) {
+            // Drop-in: the same bindings, so the engine sets this one up
+            // exactly as it does the mobile build. Taken when the whole
+            // stage interface matches too, so it pairs with whichever
+            // build of the other stage the engine links it to. Terrain
+            // stays mobile: its fragment shader cannot be swapped (the
+            // engine binds a 2D atlas where the desktop one samples an
+            // array), and its vertex shader's outputs belong to that one.
+            // Texture arrays are not an option on Android: the engine
+            // copies each downloaded texture into the array as it is,
+            // and Roblox serves some terrain textures (LeafyGrass's) in
+            // RGB rather than the YCoCg every terrain shader decodes, which
+            // only the atlas path converts.
+            if (name.rfind("SmoothCluster", 0) == 0) continue;
+            const auto mb = spirv_words(mobile.blob(k)), db = spirv_words(desktop.blob(d->second));
+            if (mb == db) continue;
+            if (stage_interface(mb) != stage_interface(db)) {
+                ++r.refused_interface;
+                continue;
+            }
+            drop_in = true;
+        }
         if (!only_known_capabilities(di)) {
             ++r.refused_capability;
             continue;
@@ -634,6 +655,10 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         if (name.rfind("DefaultUnifiedPlastic", 0) == 0) r.detail_dropped += drop_detail_normal(words);
         blobs[k] = with_words(blob, words);
         ++r.substituted;
+        if (drop_in) {
+            ++r.drop_in;
+            ++r.drop_in_by_shader[name];
+        }
     }
 
     std::vector<std::vector<uint8_t>> perms;

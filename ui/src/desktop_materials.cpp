@@ -59,6 +59,10 @@ const Kept kKept[] = {
     {"content-terrain.zip", "materialTransitions.json", "assets/android/terrain/materialTransitions.json"},
 };
 const char* const kCombinedPack = "assets/shaders/shaders_vulkan_mobile.pack";
+// The Windows pack itself, kept so a newer Stud can combine it again
+// without asking Roblox (outside assets/, which Process B lays over the
+// APK's).
+const char* const kKeptDesktopPack = "shaders_vulkan_desktop.pack";
 
 void say(const QString& line) {
     std::printf("stud: Windows Graphical Parity: %s\n", line.toUtf8().constData());
@@ -166,8 +170,9 @@ bool complete(const fs::path& dir) {
 }
 
 // What was prepared, and for which APK: {"apk" (the file), "apkVersion",
-// "windows", "ready"}, plus "refused": the last APK file found to have no
-// Windows build to match, kept beside the pack rather than over it.
+// "windows", "ready", "stud" (the version that combined the pack)}, plus
+// "refused": the last APK file found to have no Windows build to match,
+// kept beside the pack rather than over it.
 QJsonObject read_state(const fs::path& path) {
     QFile file(QString::fromStdString(path.string()));
     if (!file.open(QIODevice::ReadOnly)) return {};
@@ -179,10 +184,58 @@ void write_state(const fs::path& path, const std::string& apk, const QString& ap
     const QByteArray json = QJsonDocument(QJsonObject{{"apk", QString::fromStdString(apk)},
                                                       {"apkVersion", apk_version},
                                                       {"windows", windows},
-                                                      {"ready", ready}})
+                                                      {"ready", ready},
+                                                      {"stud", QStringLiteral(STUD_VERSION)}})
                                 .toJson();
     write_file(path, json.constData(), static_cast<size_t>(json.size()));
 }
+
+// Combines the APK's pack with the Windows one into `dest`, and logs what
+// it did.
+bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack, const fs::path& dest) {
+    const std::vector<uint8_t> mobile = stud::android_glue::read_apk_asset(apk_path, kMobilePackAsset);
+    stud::shader_pack::BuildReport report;
+    const std::vector<uint8_t> combined = stud::shader_pack::build_desktop_materials(
+        mobile, std::vector<uint8_t>(desktop_pack.begin(), desktop_pack.end()), &report);
+    if (!write_file(dest, reinterpret_cast<const char*>(combined.data()), combined.size())) {
+        say(QStringLiteral("could not write the combined shader pack"));
+        return false;
+    }
+    say(QStringLiteral("%1 shaders from Windows, %2 of them drop-in, %3 added, %4 normal-map reads adapted")
+            .arg(report.substituted)
+            .arg(report.drop_in)
+            .arg(report.grafted)
+            .arg(report.normal_reads));
+    for (const auto& [name, count] : report.drop_in_by_shader) {
+        say(QStringLiteral("drop-in %1: %2").arg(QString::fromStdString(name)).arg(count));
+    }
+    return true;
+}
+
+// What an earlier Stud prepared, combined again by this one from the
+// Windows pack it kept. False when there is none kept (prepared before
+// it was) or combining fails; what was there is then left as it was.
+bool rebuild(const std::string& apk_path, const fs::path& prepared) {
+    QFile file(QString::fromStdString((prepared / kKeptDesktopPack).string()));
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    try {
+        LoadingScreen loading;
+        loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
+        const fs::path partial = prepared / (std::string(kCombinedPack) + ".partial");
+        if (!build_combined(apk_path, file.readAll(), partial)) return false;
+        std::error_code ec;
+        fs::rename(partial, prepared / kCombinedPack, ec);
+        return !ec;
+    } catch (const std::exception& e) {
+        say(QStringLiteral("could not combine the kept Windows pack again: %1").arg(QString::fromUtf8(e.what())));
+        return false;
+    }
+}
+
+// The first preparing, or a fresh one, from what Roblox publishes for Windows.
+std::string prepare_from_windows(const std::string& apk_path, const fs::path& root, const fs::path& state_path,
+                                 const std::string& fingerprint, const QString& apk_version,
+                                 const QJsonObject& state);
 
 }  // namespace
 
@@ -205,13 +258,34 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
     const fs::path prepared = root / state.value("windows").toString().toStdString();
     const bool same_version =
         !apk_version.isEmpty() && state.value("apkVersion").toString() == apk_version;
-    if (same_version && state.value("ready").toBool() && complete(prepared)) {
-        if (state.value("apk").toString().toStdString() != fingerprint) {
-            write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
-            say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
+    const bool reusable = same_version && state.value("ready").toBool() && complete(prepared);
+    if (reusable) {
+        // Another Stud combined it, and how packs are combined changes
+        // between versions: combined again from the Windows pack it kept.
+        const bool current = state.value("stud").toString() == QStringLiteral(STUD_VERSION);
+        if (current || rebuild(apk_path, prepared)) {
+            if (!current || state.value("apk").toString().toStdString() != fingerprint) {
+                write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
+                say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
+            }
+            return prepared.string();
         }
+    }
+    // Prepared by a Stud that kept no Windows pack: fetched again, and
+    // what it prepared still used if that does not work out.
+    const std::string fresh = prepare_from_windows(apk_path, root, state_path, fingerprint, apk_version, state);
+    if (fresh.empty() && reusable) {
+        say(QStringLiteral("using what an earlier Stud prepared for %1").arg(apk_version));
         return prepared.string();
     }
+    return fresh;
+}
+
+namespace {
+
+std::string prepare_from_windows(const std::string& apk_path, const fs::path& root, const fs::path& state_path,
+                                 const std::string& fingerprint, const QString& apk_version,
+                                 const QJsonObject& state) {
     // This exact file was already found to have no Windows build to match.
     if (!fingerprint.empty() && state.value("refused").toString().toStdString() == fingerprint) {
         return {};
@@ -290,12 +364,9 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
         }
 
         loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
-        const std::vector<uint8_t> mobile = stud::android_glue::read_apk_asset(apk_path, kMobilePackAsset);
-        stud::shader_pack::BuildReport report;
-        const std::vector<uint8_t> combined = stud::shader_pack::build_desktop_materials(
-            mobile, std::vector<uint8_t>(desktop_pack->begin(), desktop_pack->end()), &report);
-        if (!write_file(partial / kCombinedPack, reinterpret_cast<const char*>(combined.data()), combined.size())) {
-            say(QStringLiteral("could not write the combined shader pack"));
+        if (!build_combined(apk_path, *desktop_pack, partial / kCombinedPack) ||
+            !write_file(partial / kKeptDesktopPack, desktop_pack->constData(),
+                        static_cast<size_t>(desktop_pack->size()))) {
             return {};
         }
 
@@ -311,15 +382,14 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
             if (entry.is_directory() && entry.path() != dir) fs::remove_all(entry.path(), ec);
         }
         write_state(state_path, fingerprint, apk_version, upload, true);
-        say(QStringLiteral("ready (%1 shaders from Windows, %2 added, %3 normal-map reads adapted)")
-                .arg(report.substituted)
-                .arg(report.grafted)
-                .arg(report.normal_reads));
+        say(QStringLiteral("ready"));
         return dir.string();
     } catch (const std::exception& e) {
         say(QStringLiteral("not used this launch: %1").arg(QString::fromUtf8(e.what())));
         return {};
     }
 }
+
+}  // namespace
 
 }  // namespace stud::ui

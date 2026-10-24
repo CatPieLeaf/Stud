@@ -11,6 +11,8 @@ namespace stud::ui {
 //                  combined shader pack and the terrain material file
 //   brdfLUT.dds    the two textures the desktop material shaders read
 //   normaldetail.dds  that the Android engine never binds (render-host)
+//   shaders_vulkan_desktop.pack  the Windows pack, combined again by a
+//                  newer Stud without fetching it
 //
 // or an empty string, for the Android look. Nothing is fetched while the
 // APK is one it has already prepared for; a new or updated APK is looked

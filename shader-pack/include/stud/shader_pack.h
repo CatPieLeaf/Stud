@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 // Windows Graphical Parity: the APK's own shader pack, with the Windows
@@ -40,6 +42,12 @@ struct BuildReport {
     size_t normal_reads = 0;      // .wy normal-map reads rewritten to .xy
     size_t normal_z = 0;          // normal z taken from the map
     size_t detail_dropped = 0;    // Plastic detail-normal terms removed
+    // Of `substituted`: those with the very same bindings as the mobile
+    // build, taken because their stage interface matches as well, by
+    // shader name.
+    size_t drop_in = 0;
+    std::map<std::string, size_t> drop_in_by_shader;
+    size_t refused_interface = 0;  // same bindings, different stage interface
 };
 
 // The combined pack. Throws PackError when either input is not a pack this
