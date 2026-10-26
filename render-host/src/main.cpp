@@ -423,6 +423,9 @@ using PFN_glGetQueryiv = void (*)(GLenum, GLenum, GLint*);
 using PFN_glGetQueryObjectivEXT = void (*)(GLuint, GLenum, GLint*);
 using PFN_glProgramBinary = void (*)(GLuint, GLenum, const void*, GLsizei);
 using PFN_glGetProgramBinary = void (*)(GLuint, GLsizei, GLsizei*, GLenum*, void*);
+using PFN_glFramebufferTexture2DMultisampleEXT = void (*)(GLenum, GLenum, GLenum, GLuint, GLint,
+                                                         GLsizei);
+using PFN_glRenderbufferStorageMultisampleEXT = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
 using PFN_glClearBufferiv = void (*)(GLenum, GLint, const GLint*);
 using PFN_glClearBufferuiv = void (*)(GLenum, GLint, const GLuint*);
 using PFN_glClearBufferfi = void (*)(GLenum, GLint, GLfloat, GLint);
@@ -616,6 +619,8 @@ struct RealFns {
     FN(glGetQueryObjectivEXT);
     FN(glProgramBinary);
     FN(glGetProgramBinary);
+    FN(glFramebufferTexture2DMultisampleEXT);
+    FN(glRenderbufferStorageMultisampleEXT);
     FN(glClearBufferiv);
     FN(glClearBufferuiv);
     FN(glClearBufferfi);
@@ -3606,7 +3611,7 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
             }
             return 0;
         }
-        case CallId::GlCopyTexSubImage2D: fns.glCopyTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]), static_cast<GLint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLint>(a[5]), 0, 0); return 0;
+        case CallId::GlCopyTexSubImage2D: fns.glCopyTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]), static_cast<GLint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLint>(a[5]), static_cast<GLsizei>(a[6]), static_cast<GLsizei>(a[7])); return 0;
         case CallId::GlCreateProgram: return fns.glCreateProgram_();
         case CallId::GlCreateShader: return fns.glCreateShader_(static_cast<GLenum>(a[0]));
         case CallId::GlCullFace: fns.glCullFace_(static_cast<GLenum>(a[0])); return 0;
@@ -3875,6 +3880,18 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
                 static_cast<GLenum>(extra[0]), static_cast<GLsizei>(extra[1]), data);
             return 0;
         }
+        case CallId::GlFramebufferTexture2DMultisampleEXT:
+            if (fns.glFramebufferTexture2DMultisampleEXT_ == nullptr) return 0;
+            fns.glFramebufferTexture2DMultisampleEXT_(
+                static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]),
+                static_cast<GLuint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLsizei>(a[5]));
+            return 0;
+        case CallId::GlRenderbufferStorageMultisampleEXT:
+            if (fns.glRenderbufferStorageMultisampleEXT_ == nullptr) return 0;
+            fns.glRenderbufferStorageMultisampleEXT_(
+                static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
+                static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]));
+            return 0;
         case CallId::GlFramebufferTextureLayer:
             if (fns.glFramebufferTextureLayer_ == nullptr) return 0;
             fns.glFramebufferTextureLayer_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
@@ -4211,7 +4228,10 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
             return 1;
         }
         case CallId::GlTexParameterfv: {
+            // The client sends every value the pname takes (four for
+            // GL_TEXTURE_BORDER_COLOR, one otherwise).
             GLfloat values[4] = {unpack_float(a[2]), 0, 0, 0};
+            std::memcpy(values, in.data(), std::min(in.size(), sizeof(values)));
             fns.glTexParameterfv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), values);
             return 0;
         }
@@ -6216,6 +6236,8 @@ int main(int argc, char** argv) {
     RESOLVE_OPTIONAL(glGetInteger64v); RESOLVE_OPTIONAL(glQueryCounterEXT);
     RESOLVE_OPTIONAL(glGetQueryiv); RESOLVE_OPTIONAL(glGetQueryObjectivEXT);
     RESOLVE_OPTIONAL(glProgramBinary); RESOLVE_OPTIONAL(glGetProgramBinary);
+    RESOLVE_OPTIONAL(glFramebufferTexture2DMultisampleEXT);
+    RESOLVE_OPTIONAL(glRenderbufferStorageMultisampleEXT);
     RESOLVE_OPTIONAL(glClearBufferiv); RESOLVE_OPTIONAL(glClearBufferuiv);
     RESOLVE_OPTIONAL(glClearBufferfi); RESOLVE_OPTIONAL(glPushGroupMarkerEXT);
     RESOLVE_OPTIONAL(glPopGroupMarkerEXT); RESOLVE_OPTIONAL(glObjectLabelKHR);

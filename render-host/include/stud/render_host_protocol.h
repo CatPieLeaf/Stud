@@ -834,6 +834,13 @@ enum class CallId : uint32_t {
     // ring's size. Result 1 if every request after this one is read from
     // the ring; replies stay on the socket either way.
     TransportRing,
+    // GL_EXT_multisampled_render_to_texture's own entry points, forwarded to
+    // the driver's EXT functions rather than the core ones: an EXT
+    // renderbuffer is the kind that may share a framebuffer with a texture
+    // attached through glFramebufferTexture2DMultisampleEXT. Same arguments
+    // as the GL functions, in order.
+    GlFramebufferTexture2DMultisampleEXT,
+    GlRenderbufferStorageMultisampleEXT,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1159,9 +1166,11 @@ inline const char* call_id_name(CallId id) {
         "ShareWindowState",
         "AudioShareState",
         "TransportRing",
+        "GlFramebufferTexture2DMultisampleEXT",
+        "GlRenderbufferStorageMultisampleEXT",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::TransportRing) + 1,
+                      static_cast<size_t>(CallId::GlRenderbufferStorageMultisampleEXT) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

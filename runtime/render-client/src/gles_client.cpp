@@ -14,6 +14,7 @@
 #include <cstring>
 #include <string>
 #include <map>
+#include <mutex>
 #include <vector>
 
 using stud::render_host::CallId;
@@ -239,8 +240,7 @@ void glClearStencil(GLint s) { call0(CallId::GlClearStencil, static_cast<uint64_
 void glColorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a) { call0(CallId::GlColorMask, r, g, b, a); }
 void glCompileShader(GLuint s) { call0(CallId::GlCompileShader, s); }
 void glCopyTexSubImage2D(GLenum t, GLint l, GLint xo, GLint yo, GLint x, GLint y, GLsizei w, GLsizei h) {
-    (void)w; (void)h;
-    call0(CallId::GlCopyTexSubImage2D, t, static_cast<uint64_t>(l), static_cast<uint64_t>(xo), static_cast<uint64_t>(yo), static_cast<uint64_t>(x), static_cast<uint64_t>(y));
+    call0(CallId::GlCopyTexSubImage2D, t, static_cast<uint64_t>(l), static_cast<uint64_t>(xo), static_cast<uint64_t>(yo), static_cast<uint64_t>(x), static_cast<uint64_t>(y), static_cast<uint64_t>(w), static_cast<uint64_t>(h));
 }
 GLuint glCreateProgram() { return static_cast<GLuint>(call1(CallId::GlCreateProgram)); }
 GLuint glCreateShader(GLenum t) { return static_cast<GLuint>(call1(CallId::GlCreateShader, t)); }
@@ -406,7 +406,15 @@ const GLubyte* glGetString(GLenum name) {
         }
         std::memcpy(buf.data(), kept.c_str(), kept.size() + 1);
     }
-    return reinterpret_cast<const GLubyte*>(buf.data());
+    // GL's strings stay valid for as long as the context does, and callers
+    // keep the pointer. Each name's answer is stored once and never changed,
+    // so a later query, or this buffer growing, cannot rewrite one already
+    // handed out.
+    static std::mutex m;
+    static std::map<GLenum, std::string> stored;
+    std::lock_guard<std::mutex> lock(m);
+    const std::string& s = stored.emplace(name, std::string(buf.data())).first->second;
+    return reinterpret_cast<const GLubyte*>(s.c_str());
 }
 GLint glGetUniformLocation(GLuint program, const GLchar* name) {
     uint64_t a[8] = {program};
@@ -816,8 +824,11 @@ void glGetIntegerv(GLenum pname, GLint* params) {
     std::memcpy(params, values, static_cast<size_t>(count) * sizeof(GLint));
 }
 void glTexParameterfv(GLenum target, GLenum pname, const GLfloat* params) {
+    // Every value the pname takes: GL_TEXTURE_BORDER_COLOR has four.
+    constexpr GLenum kBorderColor = 0x1004;  // GL_TEXTURE_BORDER_COLOR
+    const uint32_t n = pname == kBorderColor ? 4u : 1u;
     uint64_t a[8] = {target, pname, pack_float(params[0])};
-    connection().call(CallId::GlTexParameterfv, a, nullptr, 0, nullptr, 0, nullptr);
+    connection().call(CallId::GlTexParameterfv, a, params, n * sizeof(GLfloat), nullptr, 0, nullptr);
 }
 void glGetProgramiv(GLuint program, GLenum pname, GLint* params) {
     uint64_t a[8] = {program, pname};
@@ -1460,8 +1471,17 @@ void glObjectLabelKHRKHR(GLenum i, GLuint n, GLsizei l, const GLchar* s) {
     glObjectLabelKHR(i, n, l, s);
 }
 void glProgramParameteriOES(GLuint p, GLenum n, GLint v) { glProgramParameteri(p, n, v); }
+// GL_EXT_multisampled_render_to_texture's own functions, not the core ones:
+// the driver's EXT renderbuffer is the kind that may share a framebuffer
+// with a texture attached through glFramebufferTexture2DMultisampleEXT.
 void glRenderbufferStorageMultisampleEXT(GLenum t, GLsizei s, GLenum f, GLsizei w, GLsizei h) {
-    glRenderbufferStorageMultisample(t, s, f, w, h);
+    call0(CallId::GlRenderbufferStorageMultisampleEXT, t, static_cast<uint64_t>(s), f,
+          static_cast<uint64_t>(w), static_cast<uint64_t>(h));
+}
+void glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment, GLenum textarget,
+                                          GLuint texture, GLint level, GLsizei samples) {
+    call0(CallId::GlFramebufferTexture2DMultisampleEXT, target, attachment, textarget, texture,
+          static_cast<uint64_t>(level), static_cast<uint64_t>(samples));
 }
 void glTexImage3DOES(GLenum t, GLint l, GLint f, GLsizei w, GLsizei h, GLsizei d, GLint b,
                      GLenum fmt, GLenum type, const void* p) {
