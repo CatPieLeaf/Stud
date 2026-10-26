@@ -841,6 +841,13 @@ enum class CallId : uint32_t {
     // as the GL functions, in order.
     GlFramebufferTexture2DMultisampleEXT,
     GlRenderbufferStorageMultisampleEXT,
+    // A page the host writes at every EglSwapBuffers, so the client sends
+    // swaps reply-free and still knows how far behind the host is. a[0] the
+    // id of the memfd sent over the shared-memory fd channel. Result 1 if
+    // the host will keep it current. 32-bit slots: 0 the number of swaps
+    // done (a futex word, woken on every change), 1 the GL error read at
+    // the latest swap and not yet taken by the client (0 for none).
+    GlShareFramePage,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1168,9 +1175,10 @@ inline const char* call_id_name(CallId id) {
         "TransportRing",
         "GlFramebufferTexture2DMultisampleEXT",
         "GlRenderbufferStorageMultisampleEXT",
+        "GlShareFramePage",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlRenderbufferStorageMultisampleEXT) + 1,
+                      static_cast<size_t>(CallId::GlShareFramePage) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

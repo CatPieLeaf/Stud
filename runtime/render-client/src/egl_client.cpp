@@ -15,7 +15,13 @@
 
 #include <dlfcn.h>
 
+#include <linux/futex.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -49,6 +55,24 @@ std::vector<EGLint> attrib_pairs(const EGLint* attribs) {
         list.push_back(p[1]);
     }
     return list;
+}
+
+// The page render-host writes at every swap (CallId::GlShareFramePage),
+// made once; null if it could not be, and swaps then wait for their answer.
+std::atomic<uint32_t>* frame_page() {
+    stud::render_client::SharedAllocation page;
+    if (!stud::render_client::create_shared_allocation(
+            static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), page)) {
+        return nullptr;
+    }
+    uint64_t a[8] = {page.id};
+    const uint64_t r = connection().call(CallId::GlShareFramePage, a, nullptr, 0, nullptr, 0, nullptr);
+    ::close(page.fd);
+    if (r != 1) {
+        ::munmap(page.address, page.length);
+        return nullptr;
+    }
+    return static_cast<std::atomic<uint32_t>*>(page.address);
 }
 
 }  // namespace
@@ -157,6 +181,35 @@ EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface, EGLContex
 }
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
+    // The engine builds the next frame while render-host presents this one,
+    // as it would with a driver that queues the swap: the swap goes out
+    // reply-free, and this returns once the swap before it is done, so one
+    // frame is in flight. Asking render-host and waiting for the answer
+    // instead made the engine wait for every one of the frame's calls to be
+    // executed, and then for the present, before starting the next frame.
+    static std::atomic<uint32_t>* page = frame_page();
+    if (page != nullptr) {
+        using NoteFn = void (*)(uint32_t);
+        static NoteFn note =
+            reinterpret_cast<NoteFn>(::dlsym(RTLD_DEFAULT, "stud_note_gl_error"));
+        if (const uint32_t error = page[1].exchange(0, std::memory_order_acq_rel);
+            error != 0 && note != nullptr) {
+            note(error);
+        }
+        static uint32_t sent = 0;
+        uint64_t a[8] = {to_handle(dpy), to_handle(surface)};
+        connection().call_void(CallId::EglSwapBuffers, a);
+        connection().flush();
+        ++sent;
+        const uint32_t previous = sent - 1;
+        for (;;) {
+            const uint32_t done = page[0].load(std::memory_order_acquire);
+            if (static_cast<int32_t>(done - previous) >= 0) break;
+            ::syscall(SYS_futex, reinterpret_cast<uint32_t*>(&page[0]), FUTEX_WAIT, done,
+                      nullptr, nullptr, 0);
+        }
+        return EGL_TRUE;
+    }
     // One real glGetError for the frame that just ended. Every check the
     // engine made during it was answered from the cache this refreshes;
     // see glGetError() in gles_client.cpp.

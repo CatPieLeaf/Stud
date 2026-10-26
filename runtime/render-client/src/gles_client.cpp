@@ -320,6 +320,13 @@ GLenum glGetError() {
 // Not a GL entry point. Stud's own, called by the swap path. Inside
 // the extern "C" block so it keeps a plain, unmangled name, the same way
 // the rest of this file's symbols are resolved.
+// Stud's own too: the swap path hands over the error render-host read at
+// the last swap, instead of this side asking for it.
+void stud_note_gl_error(GLenum error) {
+    if (sync_gl_errors()) return;
+    if (g_cached_gl_error == GL_NO_ERROR) g_cached_gl_error = error;
+}
+
 void stud_refresh_gl_error_cache() {
     if (sync_gl_errors()) return;
     // Only when nothing is already pending, so a cached error is not lost
@@ -579,7 +586,7 @@ void glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint
                      static_cast<uint64_t>(static_cast<int64_t>(dstX1)),
                      static_cast<uint64_t>(static_cast<int64_t>(dstY1))};
     const uint32_t tail[2] = {static_cast<uint32_t>(mask), static_cast<uint32_t>(filter)};
-    connection().call(CallId::GlBlitFramebuffer, a, tail, sizeof(tail), nullptr, 0, nullptr);
+    connection().call_void(CallId::GlBlitFramebuffer, a, tail, sizeof(tail));
 }
 void glInvalidateFramebuffer(GLenum target, GLsizei numAttachments, const GLenum* attachments) {
     uint64_t a[8] = {target, static_cast<uint64_t>(numAttachments)};

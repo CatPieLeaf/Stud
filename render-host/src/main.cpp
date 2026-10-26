@@ -75,7 +75,10 @@
 #include <vector>
 
 #include <dlfcn.h>
+#include <climits>
+#include <linux/futex.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <sys/mman.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -966,6 +969,7 @@ void dispatch_input_queue(wl_display* display, bool fd_readable);
 
 namespace {
 uint64_t share_window_state(uint64_t id);
+uint64_t share_gl_frame_page(uint64_t id);
 uint64_t g_window_surface_handle = kNullHandle;
 bool g_prefer_vulkan = true;
 bool g_hidpi_enabled = true;
@@ -2197,6 +2201,8 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             return stud::android_glue::window_close_requested() ? 1u : 0u;
         case CallId::ShareWindowState:
             return share_window_state(a[0]);
+        case CallId::GlShareFramePage:
+            return share_gl_frame_page(a[0]);
         case CallId::PollWebViewClosed: {
             uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
             return pending;
@@ -3012,6 +3018,20 @@ uint64_t share_window_state(uint64_t id) {
     return 1;
 }
 
+// The GL client's frame page; see CallId::GlShareFramePage.
+std::atomic<std::atomic<uint32_t>*> g_gl_frame_page{nullptr};
+
+uint64_t share_gl_frame_page(uint64_t id) {
+    const int fd = stud::render_host::take_shared_fd(id);
+    if (fd < 0) return 0;
+    const auto length = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
+    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (p == MAP_FAILED) return 0;
+    g_gl_frame_page.store(static_cast<std::atomic<uint32_t>*>(p), std::memory_order_release);
+    return 1;
+}
+
 // Defined below the per-domain dispatchers it hands to; a command batch
 // (GlCommandBatch) calls back into it for each call it carries.
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
@@ -3359,6 +3379,14 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             static const bool time_swap = std::getenv("STUD_TIME_SWAP") != nullptr;
             const auto t_swap_start = time_swap ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};
+            // The frame's GL error, read where the client used to ask for
+            // it, before Stud's own scaling pass.
+            std::atomic<uint32_t>* frame_page = g_gl_frame_page.load(std::memory_order_acquire);
+            if (frame_page != nullptr) {
+                const GLenum error = fns.glGetError_();
+                uint32_t none = 0;
+                if (error != GL_NO_ERROR) frame_page[1].compare_exchange_strong(none, error);
+            }
             const bool scaled_swap =
                 t_gl_scale != nullptr && g_surfaces.at(a[1]) == g_window_egl_surface;
             if (scaled_swap) gl_scale_present(fns, *t_gl_scale);
@@ -3386,6 +3414,12 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             {
                 std::lock_guard<std::mutex> wl_lock(wayland_mutex());
                 wl_display_roundtrip(window.display);
+            }
+            // This swap is done: the client may start the frame after next.
+            if (frame_page != nullptr) {
+                frame_page[0].fetch_add(1, std::memory_order_release);
+                ::syscall(SYS_futex, reinterpret_cast<uint32_t*>(&frame_page[0]), FUTEX_WAKE,
+                          INT_MAX, nullptr, nullptr, 0);
             }
             if (time_swap) {
                 static auto last_frame = std::chrono::steady_clock::now();
@@ -3490,11 +3524,11 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             return ok == EGL_TRUE;
         }
         case CallId::EglSwapInterval:
-            // Always 1: one frame per refresh, the GL paths' FIFO, whatever
-            // interval the engine asks for. An interval of 0 presents
-            // uncapped, which is MAILBOX or IMMEDIATE underneath.
-            (void)a[1];
-            return fns.eglSwapInterval_(g_displays.at(a[0]), 1) == EGL_TRUE;
+            // The interval the engine asks for. Forcing 1 here made every
+            // frame that missed a refresh wait for the next one, on top of
+            // the engine already waiting for this process.
+            return fns.eglSwapInterval_(g_displays.at(a[0]), static_cast<EGLint>(a[1])) ==
+                   EGL_TRUE;
         case CallId::EglTerminate:
             return fns.eglTerminate_(g_displays.at(a[0])) == EGL_TRUE;
         case CallId::EglGetProcAddress: {
