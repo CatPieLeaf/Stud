@@ -276,6 +276,9 @@ std::atomic<uint32_t> g_engine_surface_h{0};
 std::atomic<uint32_t> g_engine_swapchain_w{0};
 std::atomic<uint32_t> g_engine_swapchain_h{0};
 
+// Whether the device was created with VK_KHR_swapchain_mutable_format,
+// which lets the upscale write the swapchain image through an RGBA view.
+std::atomic<bool> g_swapchain_mutable_format{false};
 std::atomic<uint32_t> g_upscale_output_w{0};
 std::atomic<uint32_t> g_upscale_output_h{0};
 // Whether the pass may use its shaders. See the header.
@@ -1562,6 +1565,29 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // vulkaninfo lists as present kept resolving to null entry points.
     l.physical_device =
         reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
+
+    // VK_KHR_swapchain_mutable_format, so the upscale's last pass can write
+    // the swapchain image itself instead of a copy of its output landing
+    // there; see build_upscale_chain(). It needs image_format_list and
+    // maintenance2, added alongside where they are extensions at all.
+    {
+        bool all = true;
+        for (const char* name : {VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME,
+                                 VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,
+                                 VK_KHR_MAINTENANCE_2_EXTENSION_NAME}) {
+            all = all && device_supports_extension(name);
+        }
+        if (all) {
+            for (const char* name : {VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME,
+                                     VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,
+                                     VK_KHR_MAINTENANCE_2_EXTENSION_NAME}) {
+                if (std::find(extensions.begin(), extensions.end(), name) == extensions.end()) {
+                    extensions.push_back(name);
+                }
+            }
+        }
+        g_swapchain_mutable_format.store(all, std::memory_order_relaxed);
+    }
 
     // Checkpoints, so a hung GPU can say where it stopped.
     //
@@ -4626,6 +4652,10 @@ struct UpscaleChain {
     // What the recorded hand-over actually is, so the log reports it
     // rather than recomputing it.
     bool copies_hand_over = false;
+    // The last pass writes the swapchain image itself, through swap_views
+    // (R8G8B8A8 views of real_images), so there is no hand-over at all.
+    bool direct = false;
+    std::vector<VkImageView> swap_views;
     // One pair of timestamps per image, written either side of that
     // image's recorded pass. See upscale_timing_enabled().
     VkQueryPool timing_pool = VK_NULL_HANDLE;
@@ -5083,6 +5113,7 @@ void destroy_upscale_chain(UpscaleChain& c, bool force) {
 
     destroy_all(l.vk.vkDestroyImageView, c.src_views);
     destroy_all(l.vk.vkDestroyImageView, c.dst_views);
+    destroy_all(l.vk.vkDestroyImageView, c.swap_views);
     destroy(l.vk.vkDestroyDescriptorPool, c.descriptor_pool);
     destroy(l.vk.vkDestroyDescriptorPool, c.sharpen_pool);
     destroy(l.vk.vkDestroyPipeline, c.pipeline);
@@ -5835,7 +5866,7 @@ bool record_upscale_blits(UpscaleChain& c) {
         to_write.newLayout = write_layout;
         // Under compute the shader writes the staging image; the swapchain
         // image is prepared as a blit destination further down.
-        to_write.image = c.compute ? c.staging[i] : c.real_images[i];
+        to_write.image = (c.compute && !(c.direct && !c.sharpen)) ? c.staging[i] : c.real_images[i];
 
         VkImageMemoryBarrier before[2] = {to_read, to_write};
         l.vk.vkCmdPipelineBarrier(c.cmd[i], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, pass_stage,
@@ -5860,7 +5891,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                 l.vk.vkCmdCopyImage != nullptr && hand_over_can_be_a_copy(c.format);
             c.copies_hand_over = copy_hand_over;
             const int32_t swap_rb =
-                (copy_hand_over && swapchain_wants_bgra(c.format)) ? 1 : 0;
+                ((copy_hand_over || c.direct) && swapchain_wants_bgra(c.format)) ? 1 : 0;
             l.vk.vkCmdBindPipeline(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE, c.pipeline);
             l.vk.vkCmdBindDescriptorSets(c.cmd[i], VK_PIPELINE_BIND_POINT_COMPUTE,
                                        c.pipeline_layout, 0, 1, &c.sets[i], 0, nullptr);
@@ -5920,7 +5951,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                 to_sharpen[1].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
                 to_sharpen[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 to_sharpen[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-                to_sharpen[1].image = c.sharpened[i];
+                to_sharpen[1].image = c.direct ? c.real_images[i] : c.sharpened[i];
                 l.vk.vkCmdPipelineBarrier(c.cmd[i], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
                                        nullptr, 2, to_sharpen);
@@ -5952,6 +5983,10 @@ bool record_upscale_blits(UpscaleChain& c) {
             // Hand the result to the swapchain: same size, so this is a
             // copy that also converts RGBA to the swapchain's BGRA.
             VkImage finished = c.sharpen ? c.sharpened[i] : c.staging[i];
+            if (c.direct) {
+                // Already in the swapchain image; nothing to hand over.
+                c.copies_hand_over = false;
+            } else {
             VkImageMemoryBarrier hand_over[2]{};
             hand_over[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             hand_over[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -5997,6 +6032,7 @@ bool record_upscale_blits(UpscaleChain& c) {
                                  c.real_images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &same,
                                  VK_FILTER_NEAREST);
             }
+            }
         } else {
         VkImageBlit region{};
         region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -6026,6 +6062,11 @@ bool record_upscale_blits(UpscaleChain& c) {
         after_dst.dstAccessMask = 0;
         after_dst.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         after_dst.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        if (c.direct) {
+            // Written by the last compute pass, in GENERAL.
+            after_dst.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            after_dst.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
         // Always the swapchain image here: both paths end with it as a
         // transfer destination, the compute one via the hand-over blit.
         after_dst.image = c.real_images[i];
@@ -6152,6 +6193,9 @@ std::map<uint64_t, uint64_t> g_swapchain_alias;
 struct SavedSwapchainCI {
     VkSwapchainCreateInfoKHR ci{};
     std::vector<uint32_t> families;
+    // The view formats a mutable-format swapchain was created with.
+    VkImageFormatListCreateInfo list{};
+    VkFormat formats[2]{};
 };
 std::map<uint64_t, SavedSwapchainCI> g_swapchain_ci;
 
@@ -6560,6 +6604,38 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         std::fflush(stdout);
         pending.compute = false;
     }
+    if (ok && pending.compute && (ci.flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0 &&
+        (ci.imageUsage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) {
+        bool views_ok = true;
+        pending.swap_views.resize(count, VK_NULL_HANDLE);
+        for (uint32_t i = 0; views_ok && i < count; ++i) {
+            VkImageViewCreateInfo vci{};
+            vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            vci.image = pending.real_images[i];
+            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+            vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            views_ok = l.vk.vkCreateImageView(l.device, &vci, nullptr, &pending.swap_views[i]) ==
+                       VK_SUCCESS;
+        }
+        // The last pass's storage binding now names the swapchain image.
+        for (uint32_t i = 0; views_ok && i < count; ++i) {
+            VkDescriptorImageInfo dst{};
+            dst.imageView = pending.swap_views[i];
+            dst.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkWriteDescriptorSet w{};
+            w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w.dstSet = pending.sharpen ? pending.sharpen_sets[i] : pending.sets[i];
+            w.dstBinding = 1;
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            w.pImageInfo = &dst;
+            l.vk.vkUpdateDescriptorSets(l.device, 1, &w, 0, nullptr);
+        }
+        pending.direct = views_ok;
+        // ponytail: the last pass's own output image (staging or sharpened)
+        // is still allocated though unused here; skip it if the memory matters.
+    }
     if (ok) ok = record_upscale_blits(pending);
     if (!ok) {
         // An honest degrade: tear the half-built chain down and let
@@ -6593,6 +6669,7 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
                     : built.sharpen           ? "with an RCAS pass after it"
                                               : "NO sharpening pass",
                     !built.compute            ? "blitting"
+                    : built.direct            ? "written straight into the swapchain image"
                     : built.copies_hand_over  ? "handed over by copy"
                                               : "handed over by a CONVERTING BLIT");
         std::fflush(stdout);
@@ -6782,6 +6859,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         }
     }
     UpscaleChain pending;
+    VkFormat direct_formats[2] = {VK_FORMAT_UNDEFINED, VK_FORMAT_R8G8B8A8_UNORM};
+    VkImageFormatListCreateInfo direct_list{};
     // Only when the output really is bigger than what the engine asked
     // for. Equal sizes mean there is nothing to upscale, and a blit of an
     // image onto itself would be pure cost.
@@ -6799,6 +6878,27 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         // otherwise.
         ci.imageExtent = pending.present;
         ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        // Writable by the upscale's last pass through an R8G8B8A8 view,
+        // which is what its shaders store to, so its output needs no copy
+        // into the swapchain image. Only where the device, the surface and
+        // the format all allow it; otherwise the copy stays.
+        VkSurfaceCapabilitiesKHR caps{};
+        if (g_swapchain_mutable_format.load(std::memory_order_relaxed) &&
+            g_upscale_use_compute.load(std::memory_order_relaxed) &&
+            hand_over_can_be_a_copy(ci.imageFormat) &&
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR != nullptr &&
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                l.physical_device, from_u64<VkSurfaceKHR>(h.surface), &caps) == VK_SUCCESS &&
+            (caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT) != 0) {
+            direct_formats[0] = ci.imageFormat;
+            direct_list.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+            direct_list.pNext = ci.pNext;
+            direct_list.viewFormatCount = ci.imageFormat == VK_FORMAT_R8G8B8A8_UNORM ? 1 : 2;
+            direct_list.pViewFormats = direct_formats;
+            ci.pNext = &direct_list;
+            ci.flags |= VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
+            ci.imageUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        }
     }
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -6884,7 +6984,15 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
         saved.ci.pQueueFamilyIndices =
             saved.families.empty() ? nullptr : saved.families.data();
         saved.ci.oldSwapchain = VK_NULL_HANDLE;
-        g_swapchain_ci[to_u64(swapchain)] = std::move(saved);
+        SavedSwapchainCI& kept = g_swapchain_ci[to_u64(swapchain)] = std::move(saved);
+        // Pointing into this entry, not at the stack list it was built with.
+        if (ci.pNext == &direct_list) {
+            kept.formats[0] = direct_formats[0];
+            kept.formats[1] = direct_formats[1];
+            kept.list = direct_list;
+            kept.list.pViewFormats = kept.formats;
+            kept.ci.pNext = &kept.list;
+        }
     }
     const auto chain_t0 = std::chrono::steady_clock::now();
     if (want_upscale) {

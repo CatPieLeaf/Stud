@@ -947,7 +947,10 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
         VkImageCreateInfo ii{};
         ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         if ((ci->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0) {
-            ii.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+            // Usage checked per view format: Stud's upscale writes these
+            // as storage through an R8G8B8A8 view, which a BGRA format
+            // need not support itself.
+            ii.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
         }
         ii.imageType = VK_IMAGE_TYPE_2D;
         ii.format = ci->imageFormat;
