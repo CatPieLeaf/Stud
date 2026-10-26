@@ -57,6 +57,29 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile,
                                              const std::vector<uint8_t>& desktop,
                                              BuildReport* report = nullptr);
 
+// The same for the GL path: the APK's GLSL ES pack (shaders_glsles3.pack)
+// with every shader the Windows GLSL 150 pack (shaders_glsl3.pack) builds
+// converted to GLSL ES 3.00 and put in its place, Windows-only variants
+// added. The APK's build stays only for terrain (the Windows one samples
+// texture arrays where the Android engine binds atlases), for permutations
+// that read a multisampled depth texture the Android engine never makes,
+// and where Windows has no build at all.
+struct GlBuildReport {
+    size_t substituted = 0;
+    size_t grafted = 0;
+    size_t kept_terrain = 0;
+    size_t kept_unconvertible = 0;
+    size_t normal_reads = 0;  // normal-map decodes taken as RGB, z from the map
+};
+std::vector<uint8_t> build_desktop_materials_gl(const std::vector<uint8_t>& mobile,
+                                                const std::vector<uint8_t>& desktop,
+                                                GlBuildReport* report = nullptr);
+
+// One Windows GLSL 150 shader as GLSL ES 3.00, adapted to what the Android
+// engine binds. Empty when it needs something the engine never provides.
+// Exposed for tests.
+std::string convert_glsl(const std::string& desktop, size_t* normal_reads = nullptr);
+
 // The SPIR-V rewrites, on one module (no blob header), exposed for tests.
 // Each returns how many sites it changed; a module with none comes back
 // unchanged.

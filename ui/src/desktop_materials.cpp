@@ -45,6 +45,10 @@ const QString kSetupUrl = QStringLiteral("https://setup.rbxcdn.com/");
 const char* const kShaderPackage = "shaders.zip";
 const char* const kDesktopPack = "shaders_vulkan_desktop.pack";
 const char* const kMobilePackAsset = "shaders/shaders_vulkan_mobile.pack";
+// The GL path's pair: the Windows client's GLSL 150 pack and the APK's
+// GLSL ES one it replaces.
+const char* const kDesktopGlPack = "shaders_glsl3.pack";
+const char* const kMobileGlPackAsset = "shaders/shaders_glsles3.pack";
 
 // The files kept, each from a package and under its name there.
 struct Kept {
@@ -63,6 +67,8 @@ const char* const kCombinedPack = "assets/shaders/shaders_vulkan_mobile.pack";
 // without asking Roblox (outside assets/, which Process B lays over the
 // APK's).
 const char* const kKeptDesktopPack = "shaders_vulkan_desktop.pack";
+const char* const kCombinedGlPack = "assets/shaders/shaders_glsles3.pack";
+const char* const kKeptDesktopGlPack = "shaders_glsl3.pack";
 
 void say(const QString& line) {
     std::printf("stud: Windows Graphical Parity: %s\n", line.toUtf8().constData());
@@ -190,9 +196,12 @@ void write_state(const fs::path& path, const std::string& apk, const QString& ap
     write_file(path, json.constData(), static_cast<size_t>(json.size()));
 }
 
-// Combines the APK's pack with the Windows one into `dest`, and logs what
-// it did.
-bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack, const fs::path& dest) {
+// Combines the APK's packs with the Windows ones under `dir` (each file
+// name with `suffix`), and logs what it did: the Vulkan pack, then the GL
+// one.
+bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack, const QByteArray& desktop_gl_pack,
+                    const fs::path& dir, const std::string& suffix) {
+    const fs::path dest = dir / (std::string(kCombinedPack) + suffix);
     const std::vector<uint8_t> mobile = stud::android_glue::read_apk_asset(apk_path, kMobilePackAsset);
     stud::shader_pack::BuildReport report;
     const std::vector<uint8_t> combined = stud::shader_pack::build_desktop_materials(
@@ -209,6 +218,23 @@ bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack,
     for (const auto& [name, count] : report.drop_in_by_shader) {
         say(QStringLiteral("drop-in %1: %2").arg(QString::fromStdString(name)).arg(count));
     }
+
+    stud::shader_pack::GlBuildReport gl;
+    const std::vector<uint8_t> combined_gl = stud::shader_pack::build_desktop_materials_gl(
+        stud::android_glue::read_apk_asset(apk_path, kMobileGlPackAsset),
+        std::vector<uint8_t>(desktop_gl_pack.begin(), desktop_gl_pack.end()), &gl);
+    if (!write_file(dir / (std::string(kCombinedGlPack) + suffix), reinterpret_cast<const char*>(combined_gl.data()),
+                    combined_gl.size())) {
+        say(QStringLiteral("could not write the combined GL shader pack"));
+        return false;
+    }
+    say(QStringLiteral("GL: %1 shaders from Windows, %2 added, %3 normal-map reads adapted; "
+                       "the APK's kept for terrain (%4) and what needs a texture the engine never makes (%5)")
+            .arg(gl.substituted)
+            .arg(gl.grafted)
+            .arg(gl.normal_reads)
+            .arg(gl.kept_terrain)
+            .arg(gl.kept_unconvertible));
     return true;
 }
 
@@ -217,15 +243,18 @@ bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack,
 // it was) or combining fails; what was there is then left as it was.
 bool rebuild(const std::string& apk_path, const fs::path& prepared) {
     QFile file(QString::fromStdString((prepared / kKeptDesktopPack).string()));
-    if (!file.open(QIODevice::ReadOnly)) return false;
+    QFile gl_file(QString::fromStdString((prepared / kKeptDesktopGlPack).string()));
+    if (!file.open(QIODevice::ReadOnly) || !gl_file.open(QIODevice::ReadOnly)) return false;
     try {
         LoadingScreen loading;
         loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
-        const fs::path partial = prepared / (std::string(kCombinedPack) + ".partial");
-        if (!build_combined(apk_path, file.readAll(), partial)) return false;
+        if (!build_combined(apk_path, file.readAll(), gl_file.readAll(), prepared, ".partial")) return false;
         std::error_code ec;
-        fs::rename(partial, prepared / kCombinedPack, ec);
-        return !ec;
+        for (const char* pack : {kCombinedPack, kCombinedGlPack}) {
+            fs::rename(prepared / (std::string(pack) + ".partial"), prepared / pack, ec);
+            if (ec) return false;
+        }
+        return true;
     } catch (const std::exception& e) {
         say(QStringLiteral("could not combine the kept Windows pack again: %1").arg(QString::fromUtf8(e.what())));
         return false;
@@ -262,7 +291,8 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
     if (reusable) {
         // Another Stud combined it, and how packs are combined changes
         // between versions: combined again from the Windows pack it kept.
-        const bool current = state.value("stud").toString() == QStringLiteral(STUD_VERSION);
+        const bool current = state.value("stud").toString() == QStringLiteral(STUD_VERSION) &&
+                             fs::exists(prepared / kCombinedGlPack);
         if (current || rebuild(apk_path, prepared)) {
             if (!current || state.value("apk").toString().toStdString() != fingerprint) {
                 write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
@@ -358,15 +388,18 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
         const QByteArray* shaders = package(kShaderPackage);
         if (shaders == nullptr) return {};
         const auto desktop_pack = unzip(*shaders, kDesktopPack);
-        if (!desktop_pack) {
-            say(QStringLiteral("%1 has no %2").arg(kShaderPackage, kDesktopPack));
+        const auto desktop_gl_pack = unzip(*shaders, kDesktopGlPack);
+        if (!desktop_pack || !desktop_gl_pack) {
+            say(QStringLiteral("%1 has no %2 or %3").arg(kShaderPackage, kDesktopPack, kDesktopGlPack));
             return {};
         }
 
         loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
-        if (!build_combined(apk_path, *desktop_pack, partial / kCombinedPack) ||
+        if (!build_combined(apk_path, *desktop_pack, *desktop_gl_pack, partial, "") ||
             !write_file(partial / kKeptDesktopPack, desktop_pack->constData(),
-                        static_cast<size_t>(desktop_pack->size()))) {
+                        static_cast<size_t>(desktop_pack->size())) ||
+            !write_file(partial / kKeptDesktopGlPack, desktop_gl_pack->constData(),
+                        static_cast<size_t>(desktop_gl_pack->size()))) {
             return {};
         }
 

@@ -1,6 +1,7 @@
 #include "stud/shader_pack.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <map>
 #include <optional>
@@ -740,6 +741,240 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
     out.insert(out.end(), body.begin(), body.end());
     // Read back: every permutation must point at a SPIR-V module.
     (void)Pack(out, "combined");
+    if (report != nullptr) *report = r;
+    return out;
+}
+
+// ---- The GL path -----------------------------------------------------------
+
+namespace {
+
+bool starts_with(const std::string& s, const char* prefix) { return s.rfind(prefix, 0) == 0; }
+
+// The `_123` ids in an expression.
+std::set<std::string> ids_in(const std::string& s) {
+    std::set<std::string> out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != '_' || (i > 0 && (std::isalnum(static_cast<unsigned char>(s[i - 1])) || s[i - 1] == '_'))) continue;
+        size_t j = i + 1;
+        while (j < s.size() && std::isdigit(static_cast<unsigned char>(s[j]))) ++j;
+        if (j > i + 1) out.insert(s.substr(i, j - i));
+        i = j;
+    }
+    return out;
+}
+
+void replace_all(std::string& s, const std::string& from, const std::string& to) {
+    for (size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) s.replace(at, from.size(), to);
+}
+
+// A GL pack: the same container, GLSL text in place of SPIR-V. Its
+// permutation table is found as the one position where every record
+// points inside the file.
+struct GlPack {
+    GlPack(const std::vector<uint8_t>& data, const char* what) : d(data) {
+        if (d.size() < kHeader || std::memcmp(d.data(), "RBXS", 4) != 0) {
+            throw PackError(std::string(what) + " GL shader pack: not a shader pack");
+        }
+        n1 = read16(d.data() + 12);
+        n2 = read16(d.data() + 14);
+        const size_t names_end = kHeader + size_t{n1} * kNameRecord;
+        if (names_end > d.size()) throw PackError(std::string(what) + " GL shader pack: truncated");
+        for (size_t i = 0; i < n1; ++i) {
+            const char* at = reinterpret_cast<const char*>(d.data() + kHeader + i * kNameRecord);
+            names.emplace_back(at, strnlen(at, kNameLength));
+        }
+        for (base = names_end; base + size_t{n2} * kPermRecord <= d.size(); ++base) {
+            bool all = true;
+            for (size_t k = 0; k < n2 && all; ++k) {
+                const uint8_t* r = d.data() + base + k * kPermRecord;
+                const size_t off = read32(r + kPermOffset), size = read32(r + kPermSize);
+                all = off >= base + size_t{n2} * kPermRecord && size > 0 && off + size <= d.size() &&
+                      read16(r + kPermName) < n1;
+            }
+            if (all) return;
+        }
+        throw PackError(std::string(what) + " GL shader pack: no permutation table");
+    }
+    const uint8_t* perm(size_t k) const { return d.data() + base + k * kPermRecord; }
+    std::string name(size_t k) const { return names[read16(perm(k) + kPermName)]; }
+    uint32_t key(size_t k) const { return read32(perm(k) + kPermKey); }
+    std::string blob(size_t k) const {
+        return std::string(reinterpret_cast<const char*>(d.data()) + read32(perm(k) + kPermOffset),
+                           read32(perm(k) + kPermSize));
+    }
+    const std::vector<uint8_t>& d;
+    uint16_t n1 = 0, n2 = 0;
+    size_t base = 0;
+    std::vector<std::string> names;
+};
+
+// Vertex attribute locations, as every Android vertex shader declares them.
+int attribute_location(const std::string& name) {
+    if (name == "POSITION") return 0;
+    if (name == "NORMAL") return 1;
+    if (name == "COLOR0") return 2;
+    if (name == "COLOR1") return 3;
+    if (starts_with(name, "TEXCOORD") && name.size() == 9 && std::isdigit(static_cast<unsigned char>(name[8]))) {
+        return 4 + (name[8] - '0');
+    }
+    return -1;
+}
+
+}  // namespace
+
+std::string convert_glsl(const std::string& src, size_t* normal_reads) {
+    // A multisampled depth texture the Android engine never makes.
+    if (src.find("sampler2DMS") != std::string::npos || src.find("DepthAATexture") != std::string::npos) return {};
+    const bool vertex = src.find("gl_Position") != std::string::npos;
+    std::vector<std::string> lines;
+    for (size_t at = 0; at <= src.size();) {
+        const size_t nl = std::min(src.find('\n', at), src.size());
+        lines.push_back(src.substr(at, nl - at));
+        at = nl + 1;
+    }
+    const std::string tail = ".wy * 2.0;";
+    std::string out;
+    int next_output = 0;
+    std::set<std::string> samples;               // vec4s sampled from the normal map
+    std::map<std::string, std::string> decoded;  // vec2 decode -> the expression it read
+    for (std::string l : lines) {
+        if (l == "#version 150") {
+            out += "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+            continue;
+        }
+        // What it enables is core in GLSL ES 3.00.
+        if (l == "#extension GL_ARB_shader_bit_encoding : require") continue;
+        // The second environment cube: the engine binds the first one only,
+        // which the Vulkan path puts in its place too.
+        if (l == "uniform samplerCube PrefilteredEnvBlendTargetTexture;" ||
+            starts_with(l, "//$$PrefilteredEnvBlendTargetTexture=")) {
+            continue;
+        }
+        replace_all(l, "PrefilteredEnvBlendTargetTexture", "PrefilteredEnvTexture");
+        if (starts_with(l, "uniform ") && l.find("sampler") != std::string::npos) l.insert(8, "highp ");
+        // GLSL ES 3.00 takes a location only on vertex inputs and fragment
+        // outputs; the stages are matched by name.
+        if (starts_with(l, "layout(location = ")) {
+            const std::string rest = l.substr(l.find(") ") + 2);
+            if (rest.find("in ") != std::string::npos || rest.find("out ") != std::string::npos) l = rest;
+        }
+        if (vertex && starts_with(l, "in ")) {
+            const size_t sp = l.rfind(' ');
+            const int loc = attribute_location(l.substr(sp + 1, l.size() - sp - 2));
+            if (loc < 0) return {};
+            l = "layout(location = " + std::to_string(loc) + ") " + l;
+        } else if (!vertex && starts_with(l, "out ")) {
+            l = "layout(location = " + std::to_string(next_output++) + ") " + l;
+        }
+        // Normal maps: the Android engine binds RGB ones, so the decode
+        // reads .xy and takes z from the map, as rewrite_normal_reads and
+        // take_normal_z_from_map do on the Vulkan path.
+        const size_t eq = l.find(" = ");
+        if (starts_with(l, "    vec4 _") && l.find(" = texture(NormalMapTexture,") == eq) {
+            samples.insert(l.substr(9, eq - 9));
+        }
+        if (starts_with(l, "    vec2 _") && eq != std::string::npos && l.size() > tail.size() &&
+            l.compare(l.size() - tail.size(), tail.size(), tail) == 0) {
+            const std::string expr = l.substr(eq + 3, l.size() - tail.size() - eq - 3);
+            const auto used = ids_in(expr);
+            if (std::any_of(used.begin(), used.end(), [&](const std::string& id) { return samples.count(id) != 0; })) {
+                decoded[l.substr(9, eq - 9)] = expr;
+                l = l.substr(0, eq + 3) + expr + ".xy * 2.0;";
+            }
+        }
+        for (const auto& [a, expr] : decoded) {
+            const std::string head = "sqrt(clamp(1.0 + dot(vec2(1.0) - " + a + ", ";
+            for (size_t at = l.find(head); at != std::string::npos; at = l.find(head, at)) {
+                const size_t end = l.find("), 0.0, 1.0))", at + head.size());
+                if (end == std::string::npos) break;
+                const std::string b = l.substr(at + head.size(), end - at - head.size());
+                if (ids_in(b).size() != 1 || b.find(' ') != std::string::npos) break;
+                const std::string z = "((" + expr + ").z * 2.0 - 1.0)";
+                l.replace(at, end + 13 - at, z);
+                at += z.size();
+                if (normal_reads != nullptr) ++*normal_reads;
+            }
+        }
+        out += l;
+        out += '\n';
+    }
+    if (!out.empty()) out.pop_back();  // the source's own last line had none
+    return out;
+}
+
+std::vector<uint8_t> build_desktop_materials_gl(const std::vector<uint8_t>& mobile_bytes,
+                                                const std::vector<uint8_t>& desktop_bytes,
+                                                GlBuildReport* report) {
+    const GlPack mobile(mobile_bytes, "mobile");
+    const GlPack desktop(desktop_bytes, "desktop");
+    GlBuildReport r;
+    std::map<std::pair<std::string, uint32_t>, size_t> dk;
+    for (size_t k = 0; k < desktop.n2; ++k) dk[{desktop.name(k), desktop.key(k)}] = k;
+    // Terrain: the Windows build samples texture arrays where the Android
+    // engine binds atlases.
+    auto terrain = [](const std::string& name) { return starts_with(name, "SmoothCluster"); };
+
+    std::vector<std::vector<uint8_t>> perms;
+    std::vector<std::string> blobs;
+    std::set<std::pair<std::string, uint32_t>> have;
+    for (size_t k = 0; k < mobile.n2; ++k) {
+        const std::pair<std::string, uint32_t> key{mobile.name(k), mobile.key(k)};
+        have.insert(key);
+        std::string blob;
+        const auto d = dk.find(key);
+        if (d != dk.end()) {
+            if (terrain(key.first)) {
+                ++r.kept_terrain;
+            } else {
+                blob = convert_glsl(desktop.blob(d->second), &r.normal_reads);
+                ++(blob.empty() ? r.kept_unconvertible : r.substituted);
+            }
+        }
+        perms.emplace_back(mobile.perm(k), mobile.perm(k) + kPermRecord);
+        blobs.push_back(blob.empty() ? mobile.blob(k) : std::move(blob));
+    }
+    // Windows-only variants of shaders the APK's pack builds. One it only
+    // names (a heightmap debug view) is a shader the Android engine never
+    // uses and cannot parse the uniforms of.
+    std::set<std::string> built;
+    for (const auto& key : have) built.insert(key.first);
+    for (size_t k = 0; k < desktop.n2; ++k) {
+        const std::string name = desktop.name(k);
+        if (have.count({name, desktop.key(k)}) || terrain(name) || !built.count(name)) continue;
+        const auto at = std::find(mobile.names.begin(), mobile.names.end(), name);
+        if (at == mobile.names.end()) continue;
+        std::string blob = convert_glsl(desktop.blob(k), &r.normal_reads);
+        if (blob.empty()) continue;
+        std::vector<uint8_t> rec(desktop.perm(k), desktop.perm(k) + kPermRecord);
+        write16(rec.data() + kPermName, static_cast<uint16_t>(at - mobile.names.begin()));
+        perms.push_back(std::move(rec));
+        blobs.push_back(std::move(blob));
+        ++r.grafted;
+    }
+
+    // Laid out as the APK's pack: its header, names and middle tables, the
+    // records, then each distinct text once.
+    if (perms.size() > UINT16_MAX) throw PackError("combined GL shader pack: too many permutations");
+    const size_t blob_start = mobile.base + perms.size() * kPermRecord;
+    std::vector<uint8_t> out(mobile_bytes.begin(), mobile_bytes.begin() + static_cast<ptrdiff_t>(mobile.base));
+    write16(out.data() + 14, static_cast<uint16_t>(perms.size()));
+    std::string body;
+    std::unordered_map<std::string, uint32_t> placed;
+    for (size_t k = 0; k < perms.size(); ++k) {
+        auto at = placed.find(blobs[k]);
+        if (at == placed.end()) {
+            const size_t offset = blob_start + body.size();
+            if (offset + blobs[k].size() > UINT32_MAX) throw PackError("combined GL shader pack: too large");
+            at = placed.emplace(blobs[k], static_cast<uint32_t>(offset)).first;
+            body += blobs[k];
+        }
+        write32(perms[k].data() + kPermOffset, at->second);
+        write32(perms[k].data() + kPermSize, static_cast<uint32_t>(blobs[k].size()));
+        out.insert(out.end(), perms[k].begin(), perms[k].end());
+    }
+    out.insert(out.end(), body.begin(), body.end());
+    (void)GlPack(out, "combined");
     if (report != nullptr) *report = r;
     return out;
 }

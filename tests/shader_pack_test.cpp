@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -99,9 +100,56 @@ void test_not_a_pack() {
 
 }  // namespace
 
+// A hand-written GLSL 150 fragment shader shaped like the desktop
+// material ones, and a vertex shader.
+void test_glsl_conversion() {
+    const std::string fs =
+        "#version 150\n"
+        "uniform vec4 CB0[61];\n"
+        "uniform samplerCube PrefilteredEnvBlendTargetTexture;\n"
+        "uniform sampler2D NormalMapTexture;\n"
+        "layout(location = 2) in vec4 VARYING2;\n"
+        "out vec4 _entryPointOutput;\n"
+        "void main()\n"
+        "{\n"
+        "    vec4 _10 = texture(NormalMapTexture, VARYING2.xy);\n"
+        "    vec2 _11 = _10.wy * 2.0;\n"
+        "    vec2 _12 = _11 - vec2(1.0);\n"
+        "    float _13 = sqrt(clamp(1.0 + dot(vec2(1.0) - _11, _12), 0.0, 1.0));\n"
+        "    _entryPointOutput = vec4(_12, _13, 1.0) + texture(PrefilteredEnvBlendTargetTexture, VARYING2.xyz);\n"
+        "}\n"
+        "//$$PrefilteredEnvBlendTargetTexture=s2\n"
+        "//$$NormalMapTexture=s4\n";
+    size_t reads = 0;
+    const std::string out = stud::shader_pack::convert_glsl(fs, &reads);
+    auto has = [&](const char* s) { return out.find(s) != std::string::npos; };
+    check(has("#version 300 es\nprecision highp float;\nprecision highp int;\n"), "GLSL ES 3.00 header");
+    check(has("uniform highp sampler2D NormalMapTexture;"), "samplers get a precision");
+    check(has("\nin vec4 VARYING2;"), "a varying loses its location");
+    check(has("layout(location = 0) out vec4 _entryPointOutput;"), "the output gets location 0");
+    check(has("vec2 _11 = _10.xy * 2.0;"), "the normal map is read as .xy");
+    check(has("float _13 = ((_10).z * 2.0 - 1.0);") && reads == 1, "z comes from the map");
+    check(!has("BlendTarget") && has("texture(PrefilteredEnvTexture,"), "the second cube becomes the first");
+
+    const std::string vs =
+        "#version 150\n"
+        "in vec4 POSITION;\n"
+        "in vec2 TEXCOORD1;\n"
+        "layout(location = 0) out vec2 VARYING0;\n"
+        "void main() { gl_Position = POSITION; VARYING0 = TEXCOORD1; }\n";
+    const std::string vout = stud::shader_pack::convert_glsl(vs);
+    check(vout.find("layout(location = 0) in vec4 POSITION;") != std::string::npos &&
+              vout.find("layout(location = 5) in vec2 TEXCOORD1;") != std::string::npos,
+          "attributes get the Android engine's locations");
+    check(vout.find("\nout vec2 VARYING0;") != std::string::npos, "a vertex output loses its location");
+    check(stud::shader_pack::convert_glsl("#version 150\nuniform sampler2DMS DepthAATexture;\n").empty(),
+          "a shader needing a multisampled depth texture is refused");
+}
+
 int main() {
     test_normal_reads_and_z();
     test_detail_dropped();
     test_not_a_pack();
+    test_glsl_conversion();
     return 0;
 }

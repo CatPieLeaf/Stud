@@ -988,6 +988,96 @@ bool cursor_trace_enabled() {
 }
 std::unordered_map<GLuint, std::pair<int, int>> g_tex_dims;
 GLuint g_bound_texture_2d = 0;
+
+// Windows Graphical Parity on the GL path: what the desktop material
+// shaders sample that the Android engine never binds. Their annotations
+// put the detail normal map at unit 8 and the BRDF lookup table at unit
+// 11, units no Android shader uses; wherever the engine leaves one of
+// those empty, the Windows client file goes there instead, the same rule
+// as desktop_fill on the Vulkan path.
+namespace gl_desktop_fill {
+
+std::string g_dir;                // empty: the feature is off
+GLenum g_active_unit = 0;         // index, not GL_TEXTUREi
+GLuint g_unit_2d[2] = {0, 0};     // what the engine has bound at 8 and 11
+GLuint g_texture[2] = {0, 0};     // the files, once uploaded
+bool g_tried = false;
+constexpr GLenum kUnit[2] = {8, 11};
+constexpr const char* kFile[2] = {"normaldetail.dds", "brdfLUT.dds"};
+
+// One DDS file, mips and all: BC3 (the detail normal, DXT5nm) or
+// R16G16_FLOAT (the lookup table), the two layouts these files use.
+GLuint upload(const RealFns& fns, const std::string& path, bool repeat) {
+    std::ifstream f(path, std::ios::binary);
+    std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (b.size() < 128 || std::memcmp(b.data(), "DDS ", 4) != 0) return 0;
+    uint32_t h = 0, w = 0, mips = 0;
+    std::memcpy(&h, b.data() + 12, 4);
+    std::memcpy(&w, b.data() + 16, 4);
+    std::memcpy(&mips, b.data() + 28, 4);
+    if (mips == 0) mips = 1;
+    const bool block = std::memcmp(b.data() + 84, "DXT5", 4) == 0;
+    uint32_t dxgi = 0;
+    if (!block && std::memcmp(b.data() + 84, "DX10", 4) == 0 && b.size() >= 148) {
+        std::memcpy(&dxgi, b.data() + 128, 4);
+    }
+    if (!block && dxgi != 34) return 0;  // DXGI_FORMAT_R16G16_FLOAT
+    size_t at = block ? 128 : 148;
+    GLuint tex = 0;
+    fns.glGenTextures_(1, &tex);
+    fns.glBindTexture_(GL_TEXTURE_2D, tex);
+    for (uint32_t i = 0; i < mips; ++i) {
+        const uint32_t mw = std::max(1u, w >> i), mh = std::max(1u, h >> i);
+        const size_t bytes = block ? size_t{(mw + 3) / 4} * ((mh + 3) / 4) * 16 : size_t{mw} * mh * 4;
+        if (at + bytes > b.size()) break;
+        if (block) {
+            fns.glCompressedTexImage2D_(GL_TEXTURE_2D, static_cast<GLint>(i), 0x83F3 /* DXT5 */,
+                                        static_cast<GLsizei>(mw), static_cast<GLsizei>(mh), 0,
+                                        static_cast<GLsizei>(bytes), b.data() + at);
+        } else {
+            fns.glTexImage2D_(GL_TEXTURE_2D, static_cast<GLint>(i), GL_RG16F, static_cast<GLsizei>(mw),
+                              static_cast<GLsizei>(mh), 0, GL_RG, GL_HALF_FLOAT, b.data() + at);
+        }
+        at += bytes;
+        mips = i + 1;
+    }
+    const GLint wrap = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(mips - 1));
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                         mips > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    return tex;
+}
+
+// Puts the files on whichever of the two units is empty. Called where the
+// engine's own binding there may have changed; leaves the active unit and
+// the engine's binding on it as they were.
+void fill(const RealFns& fns) {
+    if (g_dir.empty()) return;
+    if (!g_tried) {
+        g_tried = true;
+        // Uploaded through unit 8, whose binding this code tracks, so no
+        // unit the engine relies on is disturbed.
+        fns.glActiveTexture_(GL_TEXTURE0 + kUnit[0]);
+        for (int i = 0; i < 2; ++i) g_texture[i] = upload(fns, g_dir + "/" + kFile[i], i == 0);
+        fns.glBindTexture_(GL_TEXTURE_2D, g_unit_2d[0]);
+        fns.glActiveTexture_(GL_TEXTURE0 + g_active_unit);
+        std::printf("stud-render-host: Windows Graphical Parity (GL): detail normal %s, BRDF table %s\n",
+                    g_texture[0] != 0 ? "loaded" : "missing", g_texture[1] != 0 ? "loaded" : "missing");
+        std::fflush(stdout);
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (g_unit_2d[i] != 0 || g_texture[i] == 0) continue;
+        fns.glActiveTexture_(GL_TEXTURE0 + kUnit[i]);
+        fns.glBindTexture_(GL_TEXTURE_2D, g_texture[i]);
+        fns.glActiveTexture_(GL_TEXTURE0 + g_active_unit);
+    }
+}
+
+}  // namespace gl_desktop_fill
+
 uint64_t g_frame_draws = 0;
 uint64_t g_frame_cursor_draws = 0;
 GLuint g_last_cursor_tex = 0;
@@ -3439,7 +3529,10 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
     };
     switch (hdr.call_id) {
         // ---- GLES2: scalar state ----
-        case CallId::GlActiveTexture: fns.glActiveTexture_(static_cast<GLenum>(a[0])); return 0;
+        case CallId::GlActiveTexture:
+            gl_desktop_fill::g_active_unit = static_cast<GLenum>(a[0]) - GL_TEXTURE0;
+            fns.glActiveTexture_(static_cast<GLenum>(a[0]));
+            return 0;
         case CallId::GlAttachShader: fns.glAttachShader_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1])); return 0;
         case CallId::GlBindBuffer: fns.glBindBuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
         case CallId::GlBindFramebuffer: {
@@ -3452,6 +3545,14 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
         case CallId::GlBindTexture:
             if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D) g_bound_texture_2d = static_cast<GLuint>(a[1]);
             fns.glBindTexture_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]));
+            if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D) {
+                using namespace gl_desktop_fill;
+                for (int i = 0; i < 2; ++i) {
+                    if (g_active_unit != kUnit[i]) continue;
+                    g_unit_2d[i] = static_cast<GLuint>(a[1]);
+                    if (a[1] == 0) fill(fns);
+                }
+            }
             return 0;
         case CallId::GlBlendFunc: fns.glBlendFunc_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1])); return 0;
         case CallId::GlBlendFuncSeparate: fns.glBlendFuncSeparate_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLenum>(a[3])); return 0;
@@ -3569,7 +3670,10 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
                                     static_cast<GLint>(a[2]));
             fns.glTexParameteri_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLint>(a[2])); return 0;
         case CallId::GlUniform1i: fns.glUniform1i_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1])); return 0;
-        case CallId::GlUseProgram: fns.glUseProgram_(static_cast<GLuint>(a[0])); return 0;
+        case CallId::GlUseProgram:
+            fns.glUseProgram_(static_cast<GLuint>(a[0]));
+            gl_desktop_fill::fill(fns);
+            return 0;
         case CallId::GlViewport: fns.glViewport_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
         case CallId::GlVertexAttribPointer:
             // `pointer` (a[5]) is a VBO-relative byte offset, correct
@@ -5844,6 +5948,7 @@ int main(int argc, char** argv) {
             assets_dir() = argv[i + 1];
         } else if (std::string_view(argv[i]) == "--desktop-materials") {
             stud::render_host::vk_set_desktop_materials_dir(argv[i + 1]);
+            gl_desktop_fill::g_dir = argv[i + 1];
         } else if (std::string_view(argv[i]) == "--discord-presence") {
             g_discord_enabled = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--discord-join-button") {
