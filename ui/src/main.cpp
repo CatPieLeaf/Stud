@@ -1309,6 +1309,14 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.extra_env.emplace_back(
         "STUD_TEXTURE_CACHE_MB",
         std::to_string(settings.texture_cache ? settings.texture_cache_mb : 0));
+    // The chosen GPU's video memory, which Process B hands the engine as
+    // a flag: left alone, the engine assumes every GPU has 64MB.
+    for (const auto& gpu : stud::ui::enumerate_gpus()) {
+        if (gpu.device_index == settings.gpu.device_index && gpu.device_local_bytes > 0) {
+            config.extra_env.emplace_back("STUD_VIDEO_MEMORY_BYTES",
+                                          std::to_string(gpu.device_local_bytes));
+        }
+    }
     if (const QByteArray log_file = qgetenv("STUD_LOG_FILE"); !log_file.isEmpty()) {
         config.extra_env.emplace_back("STUD_LOG_FILE", log_file.toStdString());
     }

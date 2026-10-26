@@ -83,6 +83,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | variable | default | what it does |
 |---|---|---|
 | `STUD_TEXTURE_CACHE_MB` | from settings | Transcoded-texture cache size. `0` disables it. |
+| `STUD_VIDEO_MEMORY_BYTES` | from the chosen GPU | Video memory reported to the engine (`FIntRenderForceVideoMemorySize`, capped at 2 GiB). Set by the launcher. |
 | `STUD_TEX_NO_CACHE` | off | Disable the cache regardless of the setting. |
 | `STUD_TEX_CACHE_FORCE` | off | Use the cache even on a rotational disk, where it is normally skipped. |
 | `STUD_TEX_ENGINE_BUDGET_MB` | 1024 | The engine's own texture budget, which Stud scales every texture's reported size against so the engine reaches it only as real GPU memory fills. Measured at 1024 from the engine's log; set this if a newer engine uses a different one. |

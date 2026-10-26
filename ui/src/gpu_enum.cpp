@@ -120,9 +120,17 @@ std::vector<GpuInfo> enumerate_gpus() {
             // out of its own vkEnumeratePhysicalDevices (see
             // vk_set_preferred_device_index). Renumbering here would point
             // a saved choice at a different card.
+            VkPhysicalDeviceMemoryProperties mem{};
+            vk.vkGetPhysicalDeviceMemoryProperties(devices[i], &mem);
+            uint64_t device_local = 0;
+            for (uint32_t h = 0; h < mem.memoryHeapCount; ++h) {
+                if (mem.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                    device_local = std::max<uint64_t>(device_local, mem.memoryHeaps[h].size);
+                }
+            }
             result.push_back(GpuInfo{i, std::string(props.deviceName), props.vendorID,
-                                     props.deviceType ==
-                                         VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU});
+                                     props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
+                                     device_local});
         }
     }
 

@@ -88,6 +88,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <optional>
@@ -444,6 +445,18 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
     flags["FIntTaskSchedulerAsyncTasksMinimumThreadCount"] = std::to_string(cores);
     flags["FIntSmoothClusterTaskQueueMaxParallelTasks"] = std::to_string(cores);
     flags["FIntOcclusionWorkerThreadCount"] = std::to_string(std::max(1, cores / 2));
+    // The GPU's real video memory (its largest device-local heap, read by
+    // the UI from Vulkan). The engine's own detection settles on 64MB for
+    // every GPU and sizes its texture and resource budgets from that;
+    // this flag replaces the figure it uses ("Video memory size" in its
+    // log). An FInt, so it holds at most INT32_MAX.
+    if (const char* bytes = std::getenv("STUD_VIDEO_MEMORY_BYTES")) {
+        const unsigned long long value = std::strtoull(bytes, nullptr, 10);
+        if (value > 0) {
+            flags["FIntRenderForceVideoMemorySize"] = std::to_string(
+                std::min<unsigned long long>(value, std::numeric_limits<int32_t>::max()));
+        }
+    }
     // Windows Graphical Parity brings the desktop builds of the highlight
     // outline passes into the shader pack; the engine only draws them
     // with this on, which the Android settings leave off.

@@ -26,6 +26,9 @@ struct GpuInfo {
     uint32_t vendor_id = 0;
     // Whether it is a discrete GPU (VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU).
     bool discrete = false;
+    // Its largest DEVICE_LOCAL heap, in bytes: the video memory the
+    // engine is told it has (see FIntRenderForceVideoMemorySize).
+    uint64_t device_local_bytes = 0;
 };
 
 // Not stubbed: creates a throwaway VkInstance, enumerates real
