@@ -1450,6 +1450,23 @@ void reset_pool(Loader& l, uint64_t pool);
 namespace pipeline_compiles {
 void wait_all();
 }  // namespace pipeline_compiles
+// Stud's own depth prepass; defined before vk_create_graphics_pipelines().
+namespace depth_prepass {
+// One recorded command, as the replay stream carries it.
+struct Record {
+    const uint8_t* payload;
+    uint32_t kind;
+    uint32_t len;
+};
+bool enabled();
+void note_module(uint64_t module, const std::vector<uint8_t>& code);
+void note_render_pass(Loader& l, uint64_t pass, const VkRenderPassCreateInfo& ci);
+void forget_render_pass(Loader& l, uint64_t pass);
+void forget_pipeline(Loader& l, uint64_t pipeline);
+void forget_device(Loader& l);
+void begin(uint64_t cb);
+void replay(uint64_t cb, const std::vector<Record>& recs);
+}  // namespace depth_prepass
 VkDeviceSize imported_host_pointer_alignment();
 
 uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& in,
@@ -7261,6 +7278,7 @@ uint64_t vk_create_shader_module(const std::vector<uint8_t>& in, std::vector<uin
 
     VkShaderModule module = VK_NULL_HANDLE;
     VkResult r = l.vk.vkCreateShaderModule(l.device, &ci, nullptr, &module);
+    if (r == VK_SUCCESS) depth_prepass::note_module(to_u64(module), in);
     if (r != VK_SUCCESS) {
         std::printf("stud-render-host: vkCreateShaderModule -> %d (%zu bytes)\n",
                     static_cast<int>(r), in.size());
@@ -8553,6 +8571,7 @@ void destroy_device(Loader& l, uint64_t handle) {
         }
         desktop_fill::forget(l);
         etc_decode::forget(l);
+        depth_prepass::forget_device(l);
         if (l.vk.vkDestroyDevice != nullptr) l.vk.vkDestroyDevice(l.device, nullptr);
         const auto after_destroy = std::chrono::steady_clock::now();
         {
@@ -8883,11 +8902,13 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
         case K::RenderPass:
             if (l.vk.vkDestroyRenderPass) {
                 pipeline_compiles::destroy_after_compiles([&l, handle] {
+                    depth_prepass::forget_render_pass(l, handle);
                     l.vk.vkDestroyRenderPass(l.device, from_u64<VkRenderPass>(handle), nullptr);
                 });
             }
             break;
         case K::Pipeline:
+            depth_prepass::forget_pipeline(l, handle);
             if (l.vk.vkDestroyPipeline) {
                 l.vk.vkDestroyPipeline(l.device, from_u64<VkPipeline>(handle), nullptr);
             }
@@ -9093,6 +9114,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
 
     VkRenderPass pass = VK_NULL_HANDLE;
     VkResult res = l.vk.vkCreateRenderPass(l.device, &ci, nullptr, &pass);
+    if (res == VK_SUCCESS) depth_prepass::note_render_pass(l, to_u64(pass), ci);
     if (vk_object_trace_enabled()) {
         std::printf("stud-render-host: vkCreateRenderPass att=%u sub=%u dep=%u -> %d\n",
                     attachment_count, subpass_count, dep_count, static_cast<int>(res));
@@ -9773,6 +9795,547 @@ VkResult compile_graphics_pipeline(const GraphicsPipelineInfo& info, VkPipeline*
     return res;
 }
 
+// A depth prepass, which the Android build of the engine does not have.
+//
+// The Windows client fills the depth buffer with the scene's opaque
+// geometry first (its "zpre" stage: 252 draws and 1.29 M triangles per
+// frame in Realistic Landscape) and then shades. The Android build has the
+// stage compiled out: its draw counters show Depth 0, and its pass shades
+// every surface it draws, hidden or not, because the phone GPUs it is
+// written for discard hidden pixels in hardware. A desktop GPU does not;
+// it relies on the depth test, so behind every visible pixel of the main
+// scene the material shaders ran again for each surface it covered:
+// measured at 15 times the screen's pixels in a heavy place.
+//
+// So Stud adds the prepass where the engine's command buffers are
+// replayed. Before a scene render pass, its opaque draws are replayed into
+// the same depth buffer with no fragment shader and no colour writes, and
+// the pass itself then runs with that depth already in place, so the GPU
+// rejects hidden pixels before shading them. What reaches the screen does
+// not change: the same geometry and the same shaders draw it, only pixels
+// that would have been overwritten are skipped.
+//
+// What makes it safe:
+//  - Only "opaque" draws take part: depth test and write on, no blending,
+//    no alpha-to-coverage, and a fragment shader that neither discards nor
+//    writes depth. Anything else draws only in the real pass, as before.
+//  - Each such pipeline gets a prepass variant, compiled on the pipeline
+//    workers: no fragment shader, colour writes off, and its depth pushed
+//    one minimum resolvable step farther away (a depth bias of one unit,
+//    the smallest difference the depth buffer can represent). The real
+//    pass keeps the engine's own pipelines and depth test untouched, so
+//    the nearest surface still passes it, anything behind is rejected,
+//    and surfaces at exactly the same depth resolve as they always did:
+//    the first one drawn wins. Relaxing the real pass's test to
+//    LESS_OR_EQUAL instead was tried first and is wrong: it lets the LAST
+//    of two coplanar surfaces win, and the engine draws coplanar layers,
+//    so detailed materials lost their normal maps to plainer layers.
+//  - Two variants of the render pass, compatible with the engine's own
+//    framebuffer: the prepass clears depth as the engine's would and leaves
+//    colour alone; the real pass then loads depth instead of clearing it.
+//  - The state the real pass inherits (pipeline, descriptor sets, vertex
+//    and index buffers, viewport, scissor) is put back to what it was when
+//    the pass began.
+//
+// STUD_DEPTH_PREPASS=0 turns it off.
+namespace depth_prepass {
+
+bool enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("STUD_DEPTH_PREPASS");
+        return v == nullptr || std::strcmp(v, "0") != 0;
+    }();
+    return on;
+}
+
+struct PassVariants {
+    VkRenderPass prepass = VK_NULL_HANDLE;
+    VkRenderPass main = VK_NULL_HANDLE;
+};
+
+// A pipeline's two variants. Shared with the compile job, which may still
+// be running when the engine destroys the pipeline.
+struct PipelineVariants {
+    std::atomic<uint64_t> prepass{0};
+    std::atomic<bool> dead{false};
+};
+
+struct State {
+    std::mutex m;
+    std::unordered_map<uint64_t, bool> unsafe_modules;  // shader module -> discards or writes depth
+    std::unordered_map<uint64_t, PassVariants> passes;  // engine render pass -> variants
+    std::unordered_map<uint64_t, std::shared_ptr<PipelineVariants>> pipelines;
+};
+
+State& state() {
+    static State s;
+    return s;
+}
+
+// Whether a fragment shader can do something the prepass cannot copy:
+// discard (OpKill, OpTerminateInvocation, OpDemoteToHelperInvocation) or
+// write depth, a sample mask or stencil.
+void note_module(uint64_t module, const std::vector<uint8_t>& code) {
+    if (!enabled() || code.size() < 20 || code.size() % 4 != 0) return;
+    const auto* w = reinterpret_cast<const uint32_t*>(code.data());
+    const size_t n = code.size() / 4;
+    bool unsafe = false;
+    for (size_t i = 5; i < n && !unsafe;) {
+        const uint32_t count = w[i] >> 16;
+        const uint32_t op = w[i] & 0xffffu;
+        if (count == 0) break;
+        if (op == 252 || op == 4416 || op == 5380) unsafe = true;
+        // OpDecorate <id> BuiltIn FragDepth | SampleMask | FragStencilRefEXT
+        if (op == 71 && count >= 4 && i + 3 < n && w[i + 2] == 11 &&
+            (w[i + 3] == 22 || w[i + 3] == 20 || w[i + 3] == 5014)) {
+            unsafe = true;
+        }
+        i += count;
+    }
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.unsafe_modules[module] = unsafe;
+}
+
+// A render pass the prepass can serve: one subpass, a depth attachment and
+// at least one colour one, and every attachment used by that subpass.
+void note_render_pass(Loader& l, uint64_t pass, const VkRenderPassCreateInfo& ci) {
+    if (!enabled() || ci.flags != 0 || ci.pNext != nullptr || ci.subpassCount != 1) return;
+    const VkSubpassDescription& sp = ci.pSubpasses[0];
+    if (sp.pDepthStencilAttachment == nullptr ||
+        sp.pDepthStencilAttachment->attachment == VK_ATTACHMENT_UNUSED ||
+        sp.colorAttachmentCount == 0 || sp.inputAttachmentCount != 0 ||
+        sp.preserveAttachmentCount != 0 || sp.flags != 0) {
+        return;
+    }
+    // The layout each attachment has inside the subpass.
+    std::vector<VkImageLayout> inside(ci.attachmentCount, VK_IMAGE_LAYOUT_UNDEFINED);
+    auto mark = [&](const VkAttachmentReference& r) {
+        if (r.attachment != VK_ATTACHMENT_UNUSED && r.attachment < ci.attachmentCount) {
+            inside[r.attachment] = r.layout;
+        }
+    };
+    for (uint32_t i = 0; i < sp.colorAttachmentCount; ++i) mark(sp.pColorAttachments[i]);
+    if (sp.pResolveAttachments != nullptr) {
+        for (uint32_t i = 0; i < sp.colorAttachmentCount; ++i) mark(sp.pResolveAttachments[i]);
+    }
+    mark(*sp.pDepthStencilAttachment);
+    for (VkImageLayout layout : inside) {
+        if (layout == VK_IMAGE_LAYOUT_UNDEFINED) return;  // an attachment the subpass does not use
+    }
+    const uint32_t depth = sp.pDepthStencilAttachment->attachment;
+
+    std::vector<VkAttachmentDescription> pre(ci.pAttachments, ci.pAttachments + ci.attachmentCount);
+    std::vector<VkAttachmentDescription> main = pre;
+    for (uint32_t i = 0; i < ci.attachmentCount; ++i) {
+        // Prepass: everything ends in the subpass's own layout, which is
+        // where the real pass picks it up.
+        pre[i].finalLayout = inside[i];
+        if (i == depth) {
+            pre[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            pre[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+        } else {
+            // Colour is not written here; keep what is there, unless there
+            // is nothing to keep.
+            pre[i].loadOp = pre[i].initialLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                                ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                : VK_ATTACHMENT_LOAD_OP_LOAD;
+            pre[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        }
+        // Real pass: starts where the prepass left everything, and loads
+        // the depth the prepass wrote instead of clearing it.
+        main[i].initialLayout = inside[i];
+        if (i == depth) {
+            main[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            main[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        }
+    }
+    VkRenderPassCreateInfo vci = ci;
+    PassVariants v;
+    vci.pAttachments = pre.data();
+    if (l.vk.vkCreateRenderPass(l.device, &vci, nullptr, &v.prepass) != VK_SUCCESS) return;
+    vci.pAttachments = main.data();
+    if (l.vk.vkCreateRenderPass(l.device, &vci, nullptr, &v.main) != VK_SUCCESS) {
+        l.vk.vkDestroyRenderPass(l.device, v.prepass, nullptr);
+        return;
+    }
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    s.passes[pass] = v;
+}
+
+void forget_render_pass(Loader& l, uint64_t pass) {
+    PassVariants v;
+    {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.m);
+        const auto it = s.passes.find(pass);
+        if (it == s.passes.end()) return;
+        v = it->second;
+        s.passes.erase(it);
+    }
+    l.vk.vkDestroyRenderPass(l.device, v.prepass, nullptr);
+    l.vk.vkDestroyRenderPass(l.device, v.main, nullptr);
+}
+
+// Which way "farther" is for a depth test: +1 when nearer is smaller,
+// -1 when nearer is larger (reversed depth). 0 for a test the prepass
+// cannot serve.
+float farther(VkCompareOp op) {
+    switch (op) {
+        case VK_COMPARE_OP_LESS:
+        case VK_COMPARE_OP_LESS_OR_EQUAL: return 1.0f;
+        case VK_COMPARE_OP_GREATER:
+        case VK_COMPARE_OP_GREATER_OR_EQUAL: return -1.0f;
+        default: return 0.0f;
+    }
+}
+
+// Called once the engine's pipeline exists. Compiles its two variants on a
+// pipeline worker if it is one the prepass can serve. `info` stays alive
+// for the job: the variants are the same create info with three parts
+// swapped.
+void schedule_variants(uint64_t pipeline, std::shared_ptr<GraphicsPipelineInfo> info) {
+    if (!enabled() || pipeline == 0) return;
+    const VkGraphicsPipelineCreateInfo& ci = info->ci;
+    if (ci.pDepthStencilState == nullptr || ci.pRasterizationState == nullptr ||
+        ci.pMultisampleState == nullptr || ci.pInputAssemblyState == nullptr) {
+        return;
+    }
+    const VkPipelineDepthStencilStateCreateInfo& ds = *ci.pDepthStencilState;
+    const float away = farther(ds.depthCompareOp);
+    if (!ds.depthTestEnable || !ds.depthWriteEnable || ds.stencilTestEnable || away == 0.0f) {
+        return;
+    }
+    if (ci.pRasterizationState->rasterizerDiscardEnable ||
+        ci.pRasterizationState->polygonMode != VK_POLYGON_MODE_FILL ||
+        ci.pMultisampleState->alphaToCoverageEnable) {
+        return;
+    }
+    const VkPrimitiveTopology topo = ci.pInputAssemblyState->topology;
+    if (topo != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && topo != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP &&
+        topo != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
+        return;
+    }
+    if (ci.pColorBlendState != nullptr) {
+        for (uint32_t i = 0; i < ci.pColorBlendState->attachmentCount; ++i) {
+            if (ci.pColorBlendState->pAttachments[i].blendEnable) return;
+        }
+    }
+    if (ci.pDynamicState != nullptr) {
+        for (uint32_t i = 0; i < ci.pDynamicState->dynamicStateCount; ++i) {
+            const VkDynamicState d = ci.pDynamicState->pDynamicStates[i];
+            if (d != VK_DYNAMIC_STATE_VIEWPORT && d != VK_DYNAMIC_STATE_SCISSOR &&
+                d != VK_DYNAMIC_STATE_BLEND_CONSTANTS && d != VK_DYNAMIC_STATE_LINE_WIDTH) {
+                return;
+            }
+        }
+    }
+    State& s = state();
+    {
+        std::lock_guard<std::mutex> lock(s.m);
+        for (uint32_t i = 0; i < ci.stageCount; ++i) {
+            if (ci.pStages[i].stage != VK_SHADER_STAGE_FRAGMENT_BIT) continue;
+            const auto it = s.unsafe_modules.find(to_u64(ci.pStages[i].module));
+            if (it == s.unsafe_modules.end() || it->second) return;
+        }
+    }
+    auto v = std::make_shared<PipelineVariants>();
+    {
+        std::lock_guard<std::mutex> lock(s.m);
+        s.pipelines[pipeline] = v;
+    }
+    pipeline_compiles::start(0, [info, v, away] {
+        Loader& l = loader();
+        const VkGraphicsPipelineCreateInfo& base = info->ci;
+        // Prepass: vertex stages only, colour writes off.
+        std::vector<VkPipelineShaderStageCreateInfo> stages;
+        for (uint32_t i = 0; i < base.stageCount; ++i) {
+            if (base.pStages[i].stage != VK_SHADER_STAGE_FRAGMENT_BIT) stages.push_back(base.pStages[i]);
+        }
+        VkPipelineColorBlendStateCreateInfo cb{};
+        std::vector<VkPipelineColorBlendAttachmentState> masked;
+        if (base.pColorBlendState != nullptr) {
+            cb = *base.pColorBlendState;
+            masked.assign(cb.pAttachments, cb.pAttachments + cb.attachmentCount);
+            for (auto& a : masked) a.colorWriteMask = 0;
+            cb.pAttachments = masked.empty() ? nullptr : masked.data();
+        }
+        // One depth unit farther than the real pass will draw, on top of any
+        // bias the engine's pipeline already has.
+        VkPipelineRasterizationStateCreateInfo rs = *base.pRasterizationState;
+        if (!rs.depthBiasEnable) {
+            rs.depthBiasConstantFactor = 0.0f;
+            rs.depthBiasClamp = 0.0f;
+            rs.depthBiasSlopeFactor = 0.0f;
+        }
+        rs.depthBiasEnable = VK_TRUE;
+        rs.depthBiasConstantFactor += away;
+        VkGraphicsPipelineCreateInfo pre = base;
+        pre.stageCount = static_cast<uint32_t>(stages.size());
+        pre.pStages = stages.data();
+        pre.pRasterizationState = &rs;
+        if (base.pColorBlendState != nullptr) pre.pColorBlendState = &cb;
+        VkPipeline p = VK_NULL_HANDLE;
+        const bool ok = l.vk.vkCreateGraphicsPipelines(l.device,
+                                                       from_u64<VkPipelineCache>(info->cache), 1,
+                                                       &pre, nullptr, &p) == VK_SUCCESS;
+        if (!ok || v->dead.load()) {
+            if (p != VK_NULL_HANDLE) l.vk.vkDestroyPipeline(l.device, p, nullptr);
+            return uint64_t{0};
+        }
+        v->prepass.store(to_u64(p));
+        return uint64_t{0};
+    });
+}
+
+void forget_pipeline(Loader& l, uint64_t pipeline) {
+    std::shared_ptr<PipelineVariants> v;
+    {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.m);
+        const auto it = s.pipelines.find(pipeline);
+        if (it == s.pipelines.end()) return;
+        v = it->second;
+        s.pipelines.erase(it);
+    }
+    v->dead.store(true);
+    const uint64_t p = v->prepass.exchange(0);
+    if (p != 0) l.vk.vkDestroyPipeline(l.device, from_u64<VkPipeline>(p), nullptr);
+}
+
+// A pipeline's prepass variant, once it exists.
+bool variant_of(uint64_t pipeline, uint64_t* prepass) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto it = s.pipelines.find(pipeline);
+    if (it == s.pipelines.end()) return false;
+    *prepass = it->second->prepass.load();
+    return *prepass != 0;
+}
+
+bool pass_variants(uint64_t pass, PassVariants* out) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.m);
+    const auto it = s.passes.find(pass);
+    if (it == s.passes.end()) return false;
+    *out = it->second;
+    return true;
+}
+
+void forget_device(Loader& l) {
+    State& s = state();
+    std::vector<uint64_t> passes, pipelines;
+    {
+        std::lock_guard<std::mutex> lock(s.m);
+        for (const auto& [k, v] : s.passes) passes.push_back(k);
+        for (const auto& [k, v] : s.pipelines) pipelines.push_back(k);
+    }
+    for (uint64_t p : passes) forget_render_pass(l, p);
+    for (uint64_t p : pipelines) forget_pipeline(l, p);
+    std::lock_guard<std::mutex> lock(s.m);
+    s.unsafe_modules.clear();
+}
+
+// The state a render pass inherits, as the records that last set each part
+// of it. Kept per command buffer, which only its pool's replay worker
+// touches.
+struct Shadow {
+    uint64_t seq = 0;
+    std::map<std::string, std::pair<uint64_t, std::vector<uint8_t>>> by_key;  // key -> (seq, record)
+
+    void note(uint32_t kind, const uint8_t* p, uint32_t len) {
+        using K = vk_wire::CmdKind;
+        auto put = [&](const std::string& key) {
+            by_key[key] = {++seq, std::vector<uint8_t>(p, p + len)};
+            by_key[key].second.insert(by_key[key].second.begin(),
+                                      reinterpret_cast<const uint8_t*>(&kind),
+                                      reinterpret_cast<const uint8_t*>(&kind) + sizeof(kind));
+        };
+        auto u32 = [&](size_t at) {
+            uint32_t v = 0;
+            if (at + 4 <= len) std::memcpy(&v, p + at, 4);
+            return v;
+        };
+        switch (static_cast<K>(kind)) {
+            case K::BindPipeline: put("p" + std::to_string(u32(0))); break;
+            case K::BindDescriptorSets: {
+                // bp, layout, first, count: each set index is its own key.
+                const uint32_t bp = u32(0), first = u32(12), n = u32(16);
+                for (uint32_t i = 0; i < n; ++i) {
+                    put("d" + std::to_string(bp) + ":" + std::to_string(first + i));
+                }
+                break;
+            }
+            case K::BindVertexBuffers: {
+                const uint32_t first = u32(0), n = u32(4);
+                for (uint32_t i = 0; i < n; ++i) put("v" + std::to_string(first + i));
+                break;
+            }
+            case K::BindIndexBuffer: put("i"); break;
+            case K::SetViewport: put("vp" + std::to_string(u32(0))); break;
+            case K::SetScissor: put("sc" + std::to_string(u32(0))); break;
+            default: break;
+        }
+    }
+
+    // The records that rebuild this state, oldest first, each once.
+    std::vector<std::vector<uint8_t>> rebuild() const {
+        std::map<uint64_t, const std::vector<uint8_t>*> order;
+        for (const auto& [key, e] : by_key) order[e.first] = &e.second;
+        std::vector<std::vector<uint8_t>> out;
+        const std::vector<uint8_t>* last = nullptr;
+        for (const auto& [seq, rec] : order) {
+            if (last != nullptr && *last == *rec) continue;
+            out.push_back(*rec);
+            last = rec;
+        }
+        return out;
+    }
+};
+
+std::mutex& shadows_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<uint64_t, Shadow>& shadows() {
+    static std::unordered_map<uint64_t, Shadow> m;
+    return m;
+}
+
+Shadow& shadow_for(uint64_t cb) {
+    std::lock_guard<std::mutex> lock(shadows_mutex());
+    return shadows()[cb];
+}
+
+void begin(uint64_t cb) {
+    if (!enabled()) return;
+    Shadow& sh = shadow_for(cb);
+    sh.seq = 0;
+    sh.by_key.clear();
+}
+
+uint64_t u64_at(const uint8_t* p, size_t at) {
+    uint64_t v = 0;
+    std::memcpy(&v, p + at, sizeof(v));
+    return v;
+}
+
+void emit(uint64_t cb, uint32_t kind, const std::vector<uint8_t>& payload) {
+    vk_cmd_record(cb, kind, payload.data(), payload.size());
+}
+
+// Replays one batch of a command buffer's records, putting a prepass ahead
+// of every render pass that can have one.
+void replay(uint64_t cb, const std::vector<Record>& recs) {
+    using K = vk_wire::CmdKind;
+    Shadow& sh = shadow_for(cb);
+    for (size_t i = 0; i < recs.size(); ++i) {
+        const Record& rec = recs[i];
+        const auto kind = static_cast<K>(rec.kind);
+        if (kind == K::BeginRenderPass && rec.len >= 16) {
+            PassVariants pv;
+            size_t end = i + 1;
+            while (end < recs.size() && static_cast<K>(recs[end].kind) != K::EndRenderPass) ++end;
+            const uint64_t pass = real_handle(u64_at(rec.payload, 0));
+            // Contents inline: the pass's draws are here to be copied.
+            uint32_t contents = 1;
+            std::memcpy(&contents, rec.payload + rec.len - 4, sizeof(contents));
+            if (end < recs.size() && contents == VK_SUBPASS_CONTENTS_INLINE &&
+                pass_variants(pass, &pv)) {
+                // Which draws can go first: those under an opaque pipeline
+                // bound inside this pass whose variants exist.
+                std::vector<uint8_t> eligible(end - i, 0);
+                std::vector<uint64_t> variant(end - i, 0);  // per BindPipeline record
+                size_t count = 0;
+                uint64_t pre = 0;
+                bool ok = false;
+                for (size_t j = i + 1; j < end; ++j) {
+                    const auto k = static_cast<K>(recs[j].kind);
+                    if (k == K::BindPipeline && recs[j].len >= 12) {
+                        uint32_t bp = 0;
+                        std::memcpy(&bp, recs[j].payload, 4);
+                        if (bp != VK_PIPELINE_BIND_POINT_GRAPHICS) continue;
+                        ok = variant_of(pipeline_compiles::real(u64_at(recs[j].payload, 4)), &pre);
+                        if (ok) variant[j - i] = pre;
+                    } else if ((k == K::Draw || k == K::DrawIndexed) && ok) {
+                        eligible[j - i] = 1;
+                        ++count;
+                    }
+                }
+                if (count > 0) {
+                    const auto saved = sh.rebuild();
+                    // The prepass.
+                    std::vector<uint8_t> begin(rec.payload, rec.payload + rec.len);
+                    const uint64_t pre_pass = to_u64(pv.prepass);
+                    std::memcpy(begin.data(), &pre_pass, sizeof(pre_pass));
+                    emit(cb, rec.kind, begin);
+                    bool drawing = false;
+                    for (size_t j = i + 1; j < end; ++j) {
+                        const auto k = static_cast<K>(recs[j].kind);
+                        const std::vector<uint8_t> payload(recs[j].payload,
+                                                           recs[j].payload + recs[j].len);
+                        if (k == K::BindPipeline && recs[j].len >= 12) {
+                            uint32_t bp = 0;
+                            std::memcpy(&bp, recs[j].payload, 4);
+                            if (bp != VK_PIPELINE_BIND_POINT_GRAPHICS) continue;
+                            // The variant found by the scan above, so the
+                            // two agree on which draws take part.
+                            drawing = variant[j - i] != 0;
+                            if (!drawing) continue;
+                            std::vector<uint8_t> bind = payload;
+                            std::memcpy(bind.data() + 4, &variant[j - i], sizeof(uint64_t));
+                            emit(cb, recs[j].kind, bind);
+                        } else if (k == K::Draw || k == K::DrawIndexed) {
+                            if (drawing && eligible[j - i]) emit(cb, recs[j].kind, payload);
+                        } else if (k == K::BindDescriptorSets || k == K::BindVertexBuffers ||
+                                   k == K::BindIndexBuffer || k == K::SetViewport ||
+                                   k == K::SetScissor) {
+                            emit(cb, recs[j].kind, payload);
+                        }
+                    }
+                    emit(cb, static_cast<uint32_t>(K::EndRenderPass), {});
+                    // Its depth, ready for the real pass's tests.
+                    Loader& l = loader();
+                    VkMemoryBarrier mb{};
+                    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                    mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                    mb.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                       VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                                       VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                    l.vk.vkCmdPipelineBarrier(
+                        from_u64<VkCommandBuffer>(real_handle(cb)),
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        0, 1, &mb, 0, nullptr, 0, nullptr);
+                    // The state the real pass began with.
+                    for (const auto& r : saved) {
+                        uint32_t k = 0;
+                        std::memcpy(&k, r.data(), sizeof(k));
+                        vk_cmd_record(cb, k, r.data() + sizeof(k), r.size() - sizeof(k));
+                    }
+                    // The real pass, loading the prepass's depth.
+                    std::vector<uint8_t> real_begin(rec.payload, rec.payload + rec.len);
+                    const uint64_t main_pass = to_u64(pv.main);
+                    std::memcpy(real_begin.data(), &main_pass, sizeof(main_pass));
+                    vk_cmd_record(cb, rec.kind, real_begin.data(), real_begin.size());
+                    continue;
+                }
+            }
+        }
+        sh.note(rec.kind, rec.payload, rec.len);
+        vk_cmd_record(cb, rec.kind, rec.payload, rec.len);
+    }
+}
+
+}  // namespace depth_prepass
+
 uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                        uint32_t* out_len,
         uint64_t client) {
@@ -9788,6 +10351,7 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
         pipeline_compiles::start(client, [info] {
             VkPipeline pipeline = VK_NULL_HANDLE;
             compile_graphics_pipeline(*info, &pipeline);
+            depth_prepass::schedule_variants(to_u64(pipeline), info);
             return to_u64(pipeline);
         });
         return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
@@ -9795,6 +10359,7 @@ uint64_t vk_create_graphics_pipelines(const std::vector<uint8_t>& in, std::vecto
     VkPipeline pipeline = VK_NULL_HANDLE;
     const VkResult res = compile_graphics_pipeline(*info, &pipeline);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
+    depth_prepass::schedule_variants(to_u64(pipeline), info);
     return answer_handle(to_u64(pipeline), client, out, out_len);
 }
 
@@ -12706,8 +13271,9 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         case K::BindPipeline: {
             if (l.vk.vkCmdBindPipeline == nullptr) break;
             const uint32_t bp = r.u32();
+            const uint64_t bound = pipeline_compiles::real(r.u64());
             l.vk.vkCmdBindPipeline(cb, static_cast<VkPipelineBindPoint>(bp),
-                                 from_u64<VkPipeline>(pipeline_compiles::real(r.u64())));
+                                 from_u64<VkPipeline>(bound));
             break;
         }
         case K::BindDescriptorSets: {
@@ -13100,11 +13666,27 @@ void run(const Task& t) {
     switch (t.kind) {
         case Task::Kind::Begin:
             report_failure("vkBeginCommandBuffer", vk_begin_command_buffer(t.cb, t.flags));
+            depth_prepass::begin(t.cb);
             break;
         case Task::Kind::End:
             report_failure("vkEndCommandBuffer", vk_end_command_buffer(t.cb));
             break;
         case Task::Kind::Records: {
+            if (depth_prepass::enabled()) {
+                // A whole pass at a time, so a prepass can go ahead of it.
+                std::vector<depth_prepass::Record> recs;
+                size_t at = 0;
+                while (at + 16 <= t.bytes.size()) {
+                    uint32_t kind = 0, len = 0;
+                    std::memcpy(&kind, t.bytes.data() + at + 8, sizeof(kind));
+                    std::memcpy(&len, t.bytes.data() + at + 12, sizeof(len));
+                    if (at + 16 + len > t.bytes.size()) break;
+                    recs.push_back({t.bytes.data() + at + 16, kind, len});
+                    at += 16 + len;
+                }
+                depth_prepass::replay(t.cb, recs);
+                break;
+            }
             size_t off = 0;
             const size_t n = t.bytes.size();
             while (off + 16 <= n) {
