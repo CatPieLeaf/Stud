@@ -370,6 +370,42 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
         // which settles a question the notes had left open for a long
         // time about whether this path reaches live state at all.
         {"FFlagImprovedCursors", "True"},
+        // Loading, memory and background work, chosen from the public flag
+        // lists and Mocktail's set, each read back from the engine as
+        // taking effect. None of them changes what is drawn.
+        //
+        // Assets fetched ahead of use, so joins and teleports wait less.
+        {"DFFlagEnableSoundPreloading", "True"},
+        {"DFFlagEnableTexturePreloading", "True"},
+        {"FFlagPreloadTextureItemsOption4", "True"},
+        {"DFFlagAssetPreloadingUrlVersionEnabled2", "True"},
+        {"FFlagAssetPreloadingIXP", "True"},
+        {"FFlagLuaAppGamesPagePreloadingDisabled", "False"},
+        // Mesh data laid out for the vertex cache, and streaming that
+        // keeps less in memory and frees what it drops in larger steps.
+        {"FFlagMeshLodApplyGeomMeshOptimizer", "True"},
+        {"FFlagStreamingObserverMemoryOptimization", "True"},
+        {"DFIntNetworkStreamingGCMaxMicroSecondLimit", "5000"},
+        // Larger physics contact batches: fewer hand-offs between threads.
+        {"DFIntSimMidPhaseContactPipelineBatchSize", "128"},
+        {"FFlagMovePrerenderV2", "True"},
+        // Light culling on the engine's CPU threads, leaving the GPU, which
+        // the heavy scenes keep fully busy, to rendering.
+        {"FFlagDebugForceFSMCPULightCulling", "True"},
+        // Crash and telemetry reporting off: work and uploads nobody
+        // reads. Android's exit-log lookup in particular has nothing to
+        // find under Stud.
+        {"DFFlagCrashMetricStorageEnableBufferConstantReporting", "False"},
+        {"DFFlagInferredCrashReportToBacktraceRegister", "False"},
+        {"DFFlagObtainAndroidInferredCrashExitLog", "False"},
+        {"FFlagLuaAppInferredCrashReportOnStateChange", "False"},
+        {"DFIntContentProviderPreloadHangTelemetryHundredthsPercentage", "0"},
+        {"DFIntCrashMetricStorageHundredthPercentageSent", "0"},
+        {"DFIntSessionReportCrashErrorEventIngestThrottleHundredthsPercent", "0"},
+        {"DFIntSessionReportCrashErrorPointsThrottleHundredthsPercent", "0"},
+        // Positional audio for mesh and part sounds.
+        {"DFFlagAudioEnableVolumetricPanningForMeshes", "True"},
+        {"DFFlagAudioEnableVolumetricPanningForPolys", "True"},
     };
     // Windows Graphical Parity brings the desktop builds of the highlight
     // outline passes into the shader pack; the engine only draws them
@@ -2118,7 +2154,27 @@ int main(int argc, char** argv) {
     orphaned_looper_poller.detach();
 
     try {
-        auto preload_result = stud::jni_bridge::run_preload_bootstrap(jvm, lib, asset_dir, overrides);
+        // Stud's own defaults are preloaded as well as sent in ClientSettings.
+        // While it boots, the engine sets many flags back to its own values,
+        // after ClientSettings is applied (read back: the crash and telemetry
+        // switches, the physics batch size and others were right after
+        // ClientSettings and back at the engine's value once it had booted);
+        // what is preloaded is applied after that. The user's file still
+        // wins: a flag it sets is left as it set it.
+        stud::jni_bridge::FlagOverrides preload = overrides;
+        for (const auto& [name, value] : stud_default_flags(!desktop_materials.empty())) {
+            if (preload.has(name)) continue;
+            const bool numeric =
+                !value.empty() && value.find_first_not_of("-0123456789") == std::string::npos;
+            if (value == "True" || value == "False") {
+                preload.set(name, value == "True");
+            } else if (numeric) {
+                preload.set(name, std::stoi(value));
+            } else {
+                preload.set(name, value);
+            }
+        }
+        auto preload_result = stud::jni_bridge::run_preload_bootstrap(jvm, lib, asset_dir, preload);
         std::printf(
             "stud: run_preload_bootstrap() complete: set_asset_path=%d preload_flag_overrides=%d\n",
             preload_result.set_asset_path_called, preload_result.preload_flag_overrides_called);
