@@ -87,13 +87,16 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <map>
+#include <set>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 
 #include <cerrno>
+#include <sched.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -333,6 +336,29 @@ std::string client_settings_key(const std::string& name, const std::string& valu
     return "FString" + name;
 }
 
+// Physical cores this process may run on: the CPUs in its affinity
+// mask, with SMT siblings (same package and core id) counted once.
+// Falls back to the logical count when the topology is not readable.
+int available_physical_cores() {
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) {
+        return static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
+    }
+    std::set<std::pair<int, int>> cores;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (!CPU_ISSET(cpu, &allowed)) continue;
+        const std::string dir = "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/";
+        int package = 0, core = 0;
+        if (!(std::ifstream(dir + "physical_package_id") >> package) ||
+            !(std::ifstream(dir + "core_id") >> core)) {
+            return CPU_COUNT(&allowed);
+        }
+        cores.emplace(package, core);
+    }
+    return cores.empty() ? 1 : static_cast<int>(cores.size());
+}
+
 // Stud's own engine defaults, as already-serialised ClientSettings
 // values. Merged BEFORE the user's hand-edited file, so anything they
 // set by hand still wins, the same rule as the renderer flags below.
@@ -407,6 +433,17 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
         {"DFFlagAudioEnableVolumetricPanningForMeshes", "True"},
         {"DFFlagAudioEnableVolumetricPanningForPolys", "True"},
     };
+    // The engine's worker pools sized to this machine instead of the
+    // phone-sized compiled-in counts (no minimum, two occlusion workers,
+    // three terrain-meshing tasks), so more of each frame's jobs leave
+    // the main thread. Counted from the cores this process is allowed to
+    // use, as Mocktail does; occlusion gets half of them, its share there
+    // too.
+    const int cores = available_physical_cores();
+    flags["FIntTaskSchedulerThreadMin"] = std::to_string(cores);
+    flags["FIntTaskSchedulerAsyncTasksMinimumThreadCount"] = std::to_string(cores);
+    flags["FIntSmoothClusterTaskQueueMaxParallelTasks"] = std::to_string(cores);
+    flags["FIntOcclusionWorkerThreadCount"] = std::to_string(std::max(1, cores / 2));
     // Windows Graphical Parity brings the desktop builds of the highlight
     // outline passes into the shader pack; the engine only draws them
     // with this on, which the Android settings leave off.
