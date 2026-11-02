@@ -12831,6 +12831,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // so it never sits empty through the engine's bring-up. No-op on
     // Wayland and after the first call.
     stud::android_glue::x11_ensure_mapped();
+    stud::logging::note_window_shown();
     // Cached per thread, not asked per present. gettid() has no vDSO
     // entry, so this was a real syscall on every frame to answer a
     // question whose answer cannot change for a given thread -- and the

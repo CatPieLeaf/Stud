@@ -1,6 +1,6 @@
 #include "desktop_materials.h"
 
-#include "cube_view.h"
+#include "loading_screen.h"
 #include "stud/android_glue.h"
 #include "stud/shader_pack.h"
 #include "stud/stud_paths.h"
@@ -14,14 +14,11 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QLabel>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QString>
 #include <QUrl>
-#include <QVBoxLayout>
-#include <QWidget>
 
 #include <cstdio>
 #include <exception>
@@ -76,38 +73,18 @@ void say(const QString& line) {
 }
 
 // What the user sees while the Windows files are fetched and built: the
-// spinning stud and a line saying what is happening. Only made once there
-// is something to wait for, so a launch with everything already prepared
-// shows nothing; gone when it goes out of scope, however preparing ended.
-// The downloads wait in an event loop of their own, so the stud keeps
-// spinning through them.
+// loading screen, saying what is happening. Only shown once there is
+// something to wait for, so a launch with everything already prepared
+// says nothing of it; the line goes when this goes out of scope, however
+// preparing ended. The downloads wait in an event loop of their own, so
+// the stud keeps spinning through them.
 class LoadingScreen {
 public:
-    void show(const QString& text) {
-        if (window_ == nullptr) {
-            window_ = std::make_unique<QWidget>();
-            window_->setWindowTitle(QStringLiteral("Stud"));
-            auto* layout = new QVBoxLayout(window_.get());
-            auto* stud = new CubeView(window_.get());
-            stud->setFixedSize(128, 128);
-            layout->addWidget(stud, 0, Qt::AlignHCenter);
-            label_ = new QLabel(window_.get());
-            label_->setAlignment(Qt::AlignCenter);
-            label_->setWordWrap(true);
-            layout->addWidget(label_);
-            window_->setFixedWidth(360);
-        }
-        label_->setText(text);
-        window_->show();
-        window_->raise();
-        // Painted now: the next step may be one that does not return to an
-        // event loop for a moment (unpacking, building).
-        QCoreApplication::processEvents();
-    }
-
-private:
-    std::unique_ptr<QWidget> window_;
-    QLabel* label_ = nullptr;
+    LoadingScreen() = default;
+    LoadingScreen(const LoadingScreen&) = delete;
+    LoadingScreen& operator=(const LoadingScreen&) = delete;
+    ~LoadingScreen() { clear_loading_text(); }
+    void show(const QString& text) { show_loading_text(text); }
 };
 
 std::optional<QByteArray> fetch(const QString& url) {

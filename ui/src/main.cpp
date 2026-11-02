@@ -27,6 +27,7 @@
 #include "diagnose.h"
 #include "deep_link_handoff.h"
 #include "desktop_materials.h"
+#include "loading_screen.h"
 #include "launch_uri.h"
 #include "notifications.h"
 #include "settings_window.h"
@@ -91,6 +92,7 @@ void set_tray_is_holding(bool holding);
 bool crash_dialog_is_open();
 bool session_ended_cleanly();
 void watch_for_a_crash();
+void terminate_stud_session();
 void show_crash_dialog(const QString& which_process);
 }  // namespace stud::ui
 
@@ -875,8 +877,11 @@ void start_session_log() {
                 QString::fromStdString(stud::logging::clean_exit_marker_path());
             const QString crash =
                 QString::fromStdString(stud::logging::crash_marker_path());
+            const QString shown =
+                QString::fromStdString(stud::logging::window_shown_marker_path());
             if (!clean.isEmpty()) QFile::remove(clean);
             if (!crash.isEmpty()) QFile::remove(crash);
+            if (!shown.isEmpty()) QFile::remove(shown);
             // The collector's socket, too: it is named per session
             // directory and nothing outlives this process that could use
             // it.
@@ -932,11 +937,23 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         return false;
     }
 
+    // Up until the game's window has its first frame (watch_for_a_crash()
+    // takes it down then); preparing Graphical Parity says so over it.
+    // Cancel stops opening Stud: whatever has started is stopped, as the
+    // tray's Exit does, and Stud closes.
+    stud::ui::show_loading_lines([]() {
+        stud::ui::terminate_stud_session();
+        QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
+    });
+
     // Windows Graphical Parity, prepared before either process starts:
     // render-host and Process B both read them. Empty means the Android
     // look, for whatever reason desktop_materials.cpp has logged.
     const std::string desktop_materials =
         settings.windows_materials ? stud::ui::prepare_desktop_materials(apk_path) : std::string();
+
+    // Cancelled while Graphical Parity was being prepared: start nothing.
+    if (stud::ui::loading_cancelled()) return false;
 
     QString render_host_binary = find_render_host_binary();
     QString process_b_binary = find_process_b_binary();
@@ -1642,7 +1659,11 @@ void show_crash_dialog(const QString& which_process) {
 void watch_for_a_crash() {
     const QString marker = QString::fromStdString(stud::logging::crash_marker_path());
     const QString clean = QString::fromStdString(stud::logging::clean_exit_marker_path());
-    if (marker.isEmpty()) return;
+    const QString shown = QString::fromStdString(stud::logging::window_shown_marker_path());
+    if (marker.isEmpty()) {
+        stud::ui::close_loading_screen();
+        return;
+    }
     g_watcher_active = true;
     // Markers left by an earlier session are not this session's news.
     QFile::remove(marker);
@@ -1650,9 +1671,22 @@ void watch_for_a_crash() {
 
     auto* timer = new QTimer(qApp);
     timer->setInterval(1000);
-    QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, timer]() {
+    QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, shown, timer]() {
+        // Cancelled from the loading screen: the session was stopped on
+        // purpose and Stud is closing, which is no crash.
+        if (stud::ui::loading_cancelled()) {
+            timer->stop();
+            return;
+        }
+        // The game's window has its first frame: the loading screen's job
+        // is done.
+        if (QFile::exists(shown)) {
+            QFile::remove(shown);
+            stud::ui::close_loading_screen();
+        }
         if (QFile::exists(marker)) {
             timer->stop();
+            stud::ui::close_loading_screen();
             QString who = QStringLiteral("Stud");
             QFile f(marker);
             if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -1678,6 +1712,7 @@ void watch_for_a_crash() {
         // test the tray already trusts.
         if (!stud_session_is_running()) {
             timer->stop();
+            stud::ui::close_loading_screen();
             // Whether the session ending is news depends on whether
             // anyone asked for it.
             //
@@ -2109,7 +2144,10 @@ int main(int argc, char** argv) {
     }();
     auto proceed = [launch_uri, tray_wanted]() {
         // Settings is open saying why; it is what keeps Stud running now.
-        if (!launch_game(launch_uri)) return;
+        if (!launch_game(launch_uri)) {
+            stud::ui::close_loading_screen();
+            return;
+        }
         // Real magnet-link behavior: hand off and get out of the way,
         // same as qBittorrent doesn't need to stay open once a
         // torrent's been added, the actual game runs in the

@@ -3,5 +3,6 @@
         <file>stud-logo-color.png</file>
         <file>stud-title.png</file>
         <file>stud-logo-update.png</file>
+        <file>loading_lines.txt</file>
     </qresource>
 </RCC>

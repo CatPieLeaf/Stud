@@ -2232,6 +2232,7 @@ uint64_t gfx_present(const RealFns& fns, RealWindow& window, const GfxFrame& fra
         p.ok = gfx_presenter_init(fns, window);
     }
     if (!p.ok) return 0;
+    stud::logging::note_window_shown();
     fns.eglMakeCurrent_(p.display, p.surface, p.surface, p.context);
     stud::render_host::gfxstream_host::wait_frame(color_buffer);
 

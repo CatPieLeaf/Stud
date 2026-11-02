@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -234,6 +235,13 @@ inline char* clean_exit_marker_path_storage() {
     return path;
 }
 
+// And the note the first frame leaves: the game's window is on screen, so
+// Process A's loading screen can go.
+inline char* window_shown_marker_path_storage() {
+    static char path[4096] = {0};
+    return path;
+}
+
 inline const char*& crash_process_name() {
     static const char* name = "stud";
     return name;
@@ -429,6 +437,24 @@ inline void note_clean_exit() {
     ::close(fd);
 }
 
+// Where the first frame records itself; see note_window_shown().
+inline std::string window_shown_marker_path() {
+    return std::string(detail::window_shown_marker_path_storage());
+}
+
+// Says the window has its first frame. Once per process; called from
+// render-host's present paths.
+inline void note_window_shown() {
+    static std::atomic<bool> noted{false};
+    if (noted.exchange(true)) return;
+    const char* path = detail::window_shown_marker_path_storage();
+    if (path[0] == '\0') return;
+    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return;
+    ::write(fd, "shown\n", 6);
+    ::close(fd);
+}
+
 inline void install_crash_reporter(const char* process_name) {
     detail::crash_process_name() = process_name;
     if (detail::crash_marker_path_storage()[0] == '\0') {
@@ -438,8 +464,10 @@ inline void install_crash_reporter(const char* process_name) {
         if (!log.empty() && log.size() + 6 < 4096) {
             const std::string crash = log + ".crash";
             const std::string clean = log + ".clean";
+            const std::string shown = log + ".shown";
             std::memcpy(detail::crash_marker_path_storage(), crash.c_str(), crash.size() + 1);
             std::memcpy(detail::clean_exit_marker_path_storage(), clean.c_str(), clean.size() + 1);
+            std::memcpy(detail::window_shown_marker_path_storage(), shown.c_str(), shown.size() + 1);
         }
     }
     // Warm backtrace() up now, while allocating is still allowed: its
