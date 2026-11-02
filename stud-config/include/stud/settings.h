@@ -67,7 +67,7 @@ struct StudSettings {
     // was on an unscaled display. Those are separate now (see
     // android-glue's g_display_scale_120 / g_render_scale_120), so the
     // checkbox finally means what it says.
-    bool hidpi = true;
+    bool hidpi = false;
     // Lay the app out at the display's own scale, so it is the same
     // physical size as the rest of the desktop.
     //
@@ -92,7 +92,9 @@ struct StudSettings {
     // 1.0 it draws square corners, above it drops SSAO, both measured),
     // so the engine is left believing nothing changed and the scaling
     // happens entirely inside Stud.
-    bool upscaling = false;
+    //
+    // On by default, with HiDPI off: RAVU on Vulkan, SGSR on OpenGL.
+    bool upscaling = true;
     // NOTE: there is no target-resolution knob either. What the upscaler
     // writes is the window's own size in the display's pixels, which the
     // compositor then shows 1:1, anything else means a second resample

@@ -26,9 +26,11 @@ int main(int argc, char** argv) {
     }
     std::string dir = argv[1];
 
-    // Missing file -> real defaults (hidpi on, Vulkan), not an error.
+    // Missing file -> real defaults (hidpi off, upscaling on, Vulkan), not an error.
     auto defaults = stud::config::load_settings(dir + "/does_not_exist.json");
-    check(defaults.hidpi == true, "missing config file defaults to hidpi on");
+    check(defaults.hidpi == false, "missing config file defaults to hidpi off");
+    check(defaults.upscaling == true, "missing config file defaults to upscaling on");
+    check(defaults.upscaler_choice == "ravu-ar", "missing config file defaults to RAVU");
     check(defaults.follow_dpi == false,
           "missing config file defaults to not following the display, which keeps SSAO");
     check(defaults.graphics_mode == stud::config::GraphicsMode::kVulkan,
