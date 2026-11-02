@@ -1,6 +1,8 @@
 #pragma once
 
 #include "stud/render_host_protocol.h"
+#include <atomic>
+#include <cstdint>
 
 // Shared connection singleton for both libEGL.so/libGLESv2.so client
 // bodies, lazily connects to stud-render-host (Process C) on first
@@ -102,5 +104,11 @@ void release_shared_allocation(SharedAllocation& a);
 // caller, for one that must set something else up first and would
 // otherwise leave the host holding an fd nothing ever claims.
 bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to_host = true);
+
+// The page render-host keeps the window's size and close request in (see
+// CallId::ShareWindowState): the runtime's, if a library already made it,
+// else made and handed to the runtime here. Null where there is none.
+// Slot 0 is the size (width << 32 | height), slot 2 nonzero once filled.
+const std::atomic<uint64_t>* window_state_page();
 
 }  // namespace stud::render_client

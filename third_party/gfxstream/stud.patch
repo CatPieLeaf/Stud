@@ -1,0 +1,2288 @@
+Stud's changes to gfxstream for OpenGL mode (EGL-on-EGL), against
+https://github.com/google/gfxstream.git at 0ab696da6e393009c2ebeeac8f33d1c9531d940f.
+Apply with: git -C <gfxstream> apply <this file>
+The guest build (guest/CMakeLists.txt) also takes Mesa's guest ring stream,
+unchanged, from https://gitlab.freedesktop.org/mesa/mesa.git at
+daa925c3bc78697cc214317ee330a39d1acda19f.
+
+diff --git a/codegen/gles2/gles2.in b/codegen/gles2/gles2.in
+index 4eeea4e7..d6fa1db8 100644
+--- a/codegen/gles2/gles2.in
++++ b/codegen/gles2/gles2.in
+@@ -606,3 +606,6 @@ GL_ENTRY(void, glBlendFunciEXT, GLuint index, GLenum sfactor, GLenum dfactor);
+ GL_ENTRY(void, glBlendFuncSeparateiEXT, GLuint index, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
+ GL_ENTRY(void, glColorMaskiEXT, GLuint index, GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
+ GL_ENTRY(GLboolean, glIsEnablediEXT, GLenum cap, GLuint index);
++GL_ENTRY(void, glCopyImageSubData, GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
++GL_ENTRY(void, glFramebufferTexture2DMultisampleEXT, GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples)
++GL_ENTRY(void, glRenderbufferStorageMultisampleEXT, GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height)
+diff --git a/guest/GLESv2/gl2.cpp b/guest/GLESv2/gl2.cpp
+index f73e5425..de3edfbd 100644
+--- a/guest/GLESv2/gl2.cpp
++++ b/guest/GLESv2/gl2.cpp
+@@ -22,10 +22,31 @@
+ #include "HostConnection.h"
+ #include "ThreadInfo.h"
+ 
++// A GL call with no context current does nothing and returns 0, as
++// Android's loader does; the encoder has no client state to work on then.
++static intptr_t s_glNoContext() { return 0; }
++static void* s_noContextProc(const char*, void*) { return reinterpret_cast<void*>(&s_glNoContext); }
++
++__attribute__((noinline)) static gl2_client_context_t* currentGL2Context() {
++    EGLThreadInfo* tInfo = getEGLThreadInfo();
++    if (tInfo->currentContext != nullptr && tInfo->hostConn != nullptr) {
++        return tInfo->hostConn->gl2Encoder();
++    }
++    static gl2_client_context_t* const sNoContext = [] {
++        auto* noContext = new gl2_client_context_t();
++        noContext->initDispatchByName(s_noContextProc, nullptr);
++        return noContext;
++    }();
++    return sNoContext;
++}
++
++#define GET_CONTEXT gl2_client_context_t * ctx = currentGL2Context();
++#include "gl2_entry.cpp"
++#undef GET_CONTEXT
++
+ //XXX: fix this macro to get the context from fast tls path
+ #define GET_CONTEXT GL2Encoder * ctx = getEGLThreadInfo()->hostConn->gl2Encoder();
+ 
+-#include "gl2_entry.cpp"
+ #include "gl2_ftable.h"
+ #include "gfxstream/common/logging.h"
+ 
+@@ -130,14 +151,18 @@ void * getProcAddress(const char * procname)
+     return NULL;
+ }
+ 
++// EGL's own queries, made before or while it binds a context, so they go to
++// the encoder directly rather than through the public entry points.
+ void finish()
+ {
+-    glFinish();
++    GET_CONTEXT;
++    ctx->glFinish(ctx);
+ }
+ 
+ void getIntegerv(unsigned int pname, int* param)
+ {
+-    glGetIntegerv((GLenum)pname, (GLint*)param);
++    GET_CONTEXT;
++    ctx->glGetIntegerv(ctx, (GLenum)pname, (GLint*)param);
+ }
+ 
+ const GLubyte *my_glGetString (void *self, GLenum name)
+diff --git a/guest/GLESv2_enc/GL2Encoder.cpp b/guest/GLESv2_enc/GL2Encoder.cpp
+index 786bff3a..0401d4f7 100644
+--- a/guest/GLESv2_enc/GL2Encoder.cpp
++++ b/guest/GLESv2_enc/GL2Encoder.cpp
+@@ -233,6 +233,8 @@ GL2Encoder::GL2Encoder(IOStream *stream, ChecksumCalculator *protocol)
+     OVERRIDE(glBindFramebuffer);
+     OVERRIDE(glFramebufferParameteri);
+     OVERRIDE(glFramebufferTexture2D);
++    OVERRIDE(glFramebufferTexture2DMultisampleEXT);
++    OVERRIDE_CUSTOM(glRenderbufferStorageMultisampleEXT);
+     OVERRIDE(glFramebufferTexture3DOES);
+     OVERRIDE(glGetFramebufferAttachmentParameteriv);
+ 
+@@ -3251,6 +3253,38 @@ void GL2Encoder::s_glFramebufferTexture2D(void* self,
+     ctx->m_glFramebufferTexture2D_enc(self, target, attachment, textarget, texture, level);
+ }
+ 
++// GL_EXT_multisampled_render_to_texture: the texture is attached as by
++// glFramebufferTexture2D, and counts as having `samples` samples when the
++// framebuffer's completeness is checked; the host renders it multisampled
++// and resolves it into the texture.
++void GL2Encoder::s_glFramebufferTexture2DMultisampleEXT(void* self,
++        GLenum target, GLenum attachment,
++        GLenum textarget, GLuint texture, GLint level, GLsizei samples) {
++    GL2Encoder* ctx = (GL2Encoder*)self;
++    GLClientState* state = ctx->m_state;
++
++    SET_ERROR_IF(!GLESv2Validation::framebufferTarget(ctx, target), GL_INVALID_ENUM);
++    SET_ERROR_IF(textarget != GL_TEXTURE_2D, GL_INVALID_ENUM);
++    SET_ERROR_IF(!GLESv2Validation::framebufferAttachment(ctx, attachment), GL_INVALID_ENUM);
++    SET_ERROR_IF(!state->getBoundFramebuffer(target), GL_INVALID_OPERATION);
++    SET_ERROR_IF(texture && !state->isTexture(texture), GL_INVALID_OPERATION);
++    SET_ERROR_IF(level != 0 || samples < 0, GL_INVALID_VALUE);
++
++    state->attachTextureObject(target, attachment, texture, level, 0);
++    if (texture && samples) state->setFboAttachmentSamples(target, attachment, samples);
++
++    ctx->m_glFramebufferTexture2DMultisampleEXT_enc(self, target, attachment, textarget, texture,
++                                                    level, samples);
++}
++
++// A renderbuffer's implicit resolve has nothing to resolve into: the same as
++// glRenderbufferStorageMultisample.
++void GL2Encoder::s_glRenderbufferStorageMultisampleEXT(void* self, GLenum target, GLsizei samples,
++                                                       GLenum internalformat, GLsizei width,
++                                                       GLsizei height) {
++    s_glRenderbufferStorageMultisample(self, target, samples, internalformat, width, height);
++}
++
+ void GL2Encoder::s_glFramebufferTexture3DOES(void* self,
+         GLenum target, GLenum attachment,
+         GLenum textarget, GLuint texture, GLint level, GLint zoffset) {
+@@ -3312,6 +3346,25 @@ GLenum GL2Encoder::s_glCheckFramebufferStatus(void* self, GLenum target) {
+ 
+     GLClientState* state = ctx->m_state;
+ 
++    // An app that cannot allocate multisample textures (it never calls
++    // glTexStorage2DMultisample) may still attach them, unallocated, to its
++    // multisampled framebuffers. Each is given storage here, at the sample
++    // count and size of the framebuffer's multisampled attachments, so the
++    // framebuffer is complete.
++    GLuint tex = 0;
++    GLsizei samples = 0, width = 0, height = 0;
++    GLint format = 0;
++    while (state->unallocatedMultisampleAttachment(
++            target, [ctx](GLint f) { return GLESv2Validation::depthRenderableFormat(ctx, f); },
++            &tex, &samples, &format, &width, &height)) {
++        const GLuint previous = state->getBoundTexture(GL_TEXTURE_2D_MULTISAMPLE);
++        ctx->glBindTexture(ctx, GL_TEXTURE_2D_MULTISAMPLE, tex);
++        ctx->glTexStorage2DMultisample(ctx, GL_TEXTURE_2D_MULTISAMPLE, samples, format, width,
++                                       height, GL_TRUE);
++        ctx->glBindTexture(ctx, GL_TEXTURE_2D_MULTISAMPLE, previous);
++        if (!state->isTextureWithStorage(tex)) break;  // refused: leave the rest as the app made it
++    }
++
+     return state->checkFramebufferCompleteness(target);
+ }
+ 
+diff --git a/guest/GLESv2_enc/GL2Encoder.h b/guest/GLESv2_enc/GL2Encoder.h
+index f6aa37a7..83bfdc1f 100644
+--- a/guest/GLESv2_enc/GL2Encoder.h
++++ b/guest/GLESv2_enc/GL2Encoder.h
+@@ -471,6 +471,9 @@ public:
+ 
+     glFramebufferTexture2D_client_proc_t m_glFramebufferTexture2D_enc;
+     static void s_glFramebufferTexture2D(void* self, GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
++    glFramebufferTexture2DMultisampleEXT_client_proc_t m_glFramebufferTexture2DMultisampleEXT_enc;
++    static void s_glFramebufferTexture2DMultisampleEXT(void* self, GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples);
++    static void s_glRenderbufferStorageMultisampleEXT(void* self, GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+ 
+     glFramebufferTexture3DOES_client_proc_t m_glFramebufferTexture3DOES_enc;
+     static void s_glFramebufferTexture3DOES(void*self, GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLint zoffset);
+diff --git a/guest/GLESv2_enc/gl2_client_context.cpp b/guest/GLESv2_enc/gl2_client_context.cpp
+index 0af34098..fdff7c6f 100644
+--- a/guest/GLESv2_enc/gl2_client_context.cpp
++++ b/guest/GLESv2_enc/gl2_client_context.cpp
+@@ -463,6 +463,9 @@ int gl2_client_context_t::initDispatchByName(void *(*getProc)(const char *, void
+ 	glBlendFuncSeparateiEXT = (glBlendFuncSeparateiEXT_client_proc_t) getProc("glBlendFuncSeparateiEXT", userData);
+ 	glColorMaskiEXT = (glColorMaskiEXT_client_proc_t) getProc("glColorMaskiEXT", userData);
+ 	glIsEnablediEXT = (glIsEnablediEXT_client_proc_t) getProc("glIsEnablediEXT", userData);
++	glCopyImageSubData = (glCopyImageSubData_client_proc_t) getProc("glCopyImageSubData", userData);
++	glFramebufferTexture2DMultisampleEXT = (glFramebufferTexture2DMultisampleEXT_client_proc_t) getProc("glFramebufferTexture2DMultisampleEXT", userData);
++	glRenderbufferStorageMultisampleEXT = (glRenderbufferStorageMultisampleEXT_client_proc_t) getProc("glRenderbufferStorageMultisampleEXT", userData);
+ 	return 0;
+ }
+ 
+diff --git a/guest/GLESv2_enc/gl2_client_context.h b/guest/GLESv2_enc/gl2_client_context.h
+index a98cb2a7..ba74478a 100644
+--- a/guest/GLESv2_enc/gl2_client_context.h
++++ b/guest/GLESv2_enc/gl2_client_context.h
+@@ -463,6 +463,9 @@ struct gl2_client_context_t {
+ 	glBlendFuncSeparateiEXT_client_proc_t glBlendFuncSeparateiEXT;
+ 	glColorMaskiEXT_client_proc_t glColorMaskiEXT;
+ 	glIsEnablediEXT_client_proc_t glIsEnablediEXT;
++	glCopyImageSubData_client_proc_t glCopyImageSubData;
++	glFramebufferTexture2DMultisampleEXT_client_proc_t glFramebufferTexture2DMultisampleEXT;
++	glRenderbufferStorageMultisampleEXT_client_proc_t glRenderbufferStorageMultisampleEXT;
+ 	virtual ~gl2_client_context_t() {}
+ 
+ 	typedef gl2_client_context_t *CONTEXT_ACCESSOR_TYPE(void);
+diff --git a/guest/GLESv2_enc/gl2_client_proc.h b/guest/GLESv2_enc/gl2_client_proc.h
+index 579be02d..3a9defaf 100644
+--- a/guest/GLESv2_enc/gl2_client_proc.h
++++ b/guest/GLESv2_enc/gl2_client_proc.h
+@@ -465,6 +465,9 @@ typedef void (gl2_APIENTRY *glBlendFunciEXT_client_proc_t) (void * ctx, GLuint,
+ typedef void (gl2_APIENTRY *glBlendFuncSeparateiEXT_client_proc_t) (void * ctx, GLuint, GLenum, GLenum, GLenum, GLenum);
+ typedef void (gl2_APIENTRY *glColorMaskiEXT_client_proc_t) (void * ctx, GLuint, GLboolean, GLboolean, GLboolean, GLboolean);
+ typedef GLboolean (gl2_APIENTRY *glIsEnablediEXT_client_proc_t) (void * ctx, GLenum, GLuint);
++typedef void (gl2_APIENTRY *glCopyImageSubData_client_proc_t) (void * ctx, GLuint, GLenum, GLint, GLint, GLint, GLint, GLuint, GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei);
++typedef void (gl2_APIENTRY *glFramebufferTexture2DMultisampleEXT_client_proc_t) (void * ctx, GLenum, GLenum, GLenum, GLuint, GLint, GLsizei);
++typedef void (gl2_APIENTRY *glRenderbufferStorageMultisampleEXT_client_proc_t) (void * ctx, GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+ 
+ 
+ #endif
+diff --git a/guest/GLESv2_enc/gl2_enc.cpp b/guest/GLESv2_enc/gl2_enc.cpp
+index b5896105..059b2e67 100644
+--- a/guest/GLESv2_enc/gl2_enc.cpp
++++ b/guest/GLESv2_enc/gl2_enc.cpp
+@@ -12608,6 +12608,110 @@ GLboolean glIsEnablediEXT_enc(void *self , GLenum cap, GLuint index)
+ 	return retval;
+ }
+ 
++void glCopyImageSubData_enc(void *self , GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth)
++{
++	ENCODER_DEBUG_LOG("glCopyImageSubData(srcName:%u, srcTarget:0x%08x, srcLevel:%d, srcX:%d, srcY:%d, srcZ:%d, dstName:%u, dstTarget:0x%08x, dstLevel:%d, dstX:%d, dstY:%d, dstZ:%d, srcWidth:%d, srcHeight:%d, srcDepth:%d)", srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
++	AEMU_SCOPED_TRACE("glCopyImageSubData encode");
++
++	gl2_encoder_context_t *ctx = (gl2_encoder_context_t *)self;
++	IOStream *stream = ctx->m_stream;
++	gfxstream::guest::ChecksumCalculator *checksumCalculator = ctx->m_checksumCalculator;
++	bool useChecksum = checksumCalculator->getVersion() > 0;
++
++	 unsigned char *ptr;
++	 unsigned char *buf;
++	 const size_t sizeWithoutChecksum = 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
++	 const size_t checksumSize = checksumCalculator->checksumByteSize();
++	 const size_t totalSize = sizeWithoutChecksum + checksumSize;
++	buf = stream->alloc(totalSize);
++	ptr = buf;
++	int tmp = OP_glCopyImageSubData;memcpy(ptr, &tmp, 4); ptr += 4;
++	memcpy(ptr, &totalSize, 4);  ptr += 4;
++
++		memcpy(ptr, &srcName, 4); ptr += 4;
++		memcpy(ptr, &srcTarget, 4); ptr += 4;
++		memcpy(ptr, &srcLevel, 4); ptr += 4;
++		memcpy(ptr, &srcX, 4); ptr += 4;
++		memcpy(ptr, &srcY, 4); ptr += 4;
++		memcpy(ptr, &srcZ, 4); ptr += 4;
++		memcpy(ptr, &dstName, 4); ptr += 4;
++		memcpy(ptr, &dstTarget, 4); ptr += 4;
++		memcpy(ptr, &dstLevel, 4); ptr += 4;
++		memcpy(ptr, &dstX, 4); ptr += 4;
++		memcpy(ptr, &dstY, 4); ptr += 4;
++		memcpy(ptr, &dstZ, 4); ptr += 4;
++		memcpy(ptr, &srcWidth, 4); ptr += 4;
++		memcpy(ptr, &srcHeight, 4); ptr += 4;
++		memcpy(ptr, &srcDepth, 4); ptr += 4;
++
++	if (useChecksum) checksumCalculator->addBuffer(buf, ptr-buf);
++	if (useChecksum) checksumCalculator->writeChecksum(ptr, checksumSize); ptr += checksumSize;
++
++}
++
++void glFramebufferTexture2DMultisampleEXT_enc(void *self , GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples)
++{
++	ENCODER_DEBUG_LOG("glFramebufferTexture2DMultisampleEXT(target:0x%08x, attachment:0x%08x, textarget:0x%08x, texture:%u, level:%d, samples:%d)", target, attachment, textarget, texture, level, samples);
++	AEMU_SCOPED_TRACE("glFramebufferTexture2DMultisampleEXT encode");
++
++	gl2_encoder_context_t *ctx = (gl2_encoder_context_t *)self;
++	IOStream *stream = ctx->m_stream;
++	gfxstream::guest::ChecksumCalculator *checksumCalculator = ctx->m_checksumCalculator;
++	bool useChecksum = checksumCalculator->getVersion() > 0;
++
++	 unsigned char *ptr;
++	 unsigned char *buf;
++	 const size_t sizeWithoutChecksum = 8 + 4 + 4 + 4 + 4 + 4 + 4;
++	 const size_t checksumSize = checksumCalculator->checksumByteSize();
++	 const size_t totalSize = sizeWithoutChecksum + checksumSize;
++	buf = stream->alloc(totalSize);
++	ptr = buf;
++	int tmp = OP_glFramebufferTexture2DMultisampleEXT;memcpy(ptr, &tmp, 4); ptr += 4;
++	memcpy(ptr, &totalSize, 4);  ptr += 4;
++
++		memcpy(ptr, &target, 4); ptr += 4;
++		memcpy(ptr, &attachment, 4); ptr += 4;
++		memcpy(ptr, &textarget, 4); ptr += 4;
++		memcpy(ptr, &texture, 4); ptr += 4;
++		memcpy(ptr, &level, 4); ptr += 4;
++		memcpy(ptr, &samples, 4); ptr += 4;
++
++	if (useChecksum) checksumCalculator->addBuffer(buf, ptr-buf);
++	if (useChecksum) checksumCalculator->writeChecksum(ptr, checksumSize); ptr += checksumSize;
++
++}
++
++void glRenderbufferStorageMultisampleEXT_enc(void *self , GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height)
++{
++	ENCODER_DEBUG_LOG("glRenderbufferStorageMultisampleEXT(target:0x%08x, samples:%d, internalformat:0x%08x, width:%d, height:%d)", target, samples, internalformat, width, height);
++	AEMU_SCOPED_TRACE("glRenderbufferStorageMultisampleEXT encode");
++
++	gl2_encoder_context_t *ctx = (gl2_encoder_context_t *)self;
++	IOStream *stream = ctx->m_stream;
++	gfxstream::guest::ChecksumCalculator *checksumCalculator = ctx->m_checksumCalculator;
++	bool useChecksum = checksumCalculator->getVersion() > 0;
++
++	 unsigned char *ptr;
++	 unsigned char *buf;
++	 const size_t sizeWithoutChecksum = 8 + 4 + 4 + 4 + 4 + 4;
++	 const size_t checksumSize = checksumCalculator->checksumByteSize();
++	 const size_t totalSize = sizeWithoutChecksum + checksumSize;
++	buf = stream->alloc(totalSize);
++	ptr = buf;
++	int tmp = OP_glRenderbufferStorageMultisampleEXT;memcpy(ptr, &tmp, 4); ptr += 4;
++	memcpy(ptr, &totalSize, 4);  ptr += 4;
++
++		memcpy(ptr, &target, 4); ptr += 4;
++		memcpy(ptr, &samples, 4); ptr += 4;
++		memcpy(ptr, &internalformat, 4); ptr += 4;
++		memcpy(ptr, &width, 4); ptr += 4;
++		memcpy(ptr, &height, 4); ptr += 4;
++
++	if (useChecksum) checksumCalculator->addBuffer(buf, ptr-buf);
++	if (useChecksum) checksumCalculator->writeChecksum(ptr, checksumSize); ptr += checksumSize;
++
++}
++
+ }  // namespace
+ 
+ gl2_encoder_context_t::gl2_encoder_context_t(IOStream *stream, ChecksumCalculator *checksumCalculator)
+@@ -13054,5 +13158,8 @@ gl2_encoder_context_t::gl2_encoder_context_t(IOStream *stream, ChecksumCalculato
+ 	this->glBlendFuncSeparateiEXT = &glBlendFuncSeparateiEXT_enc;
+ 	this->glColorMaskiEXT = &glColorMaskiEXT_enc;
+ 	this->glIsEnablediEXT = &glIsEnablediEXT_enc;
++	this->glCopyImageSubData = &glCopyImageSubData_enc;
++	this->glFramebufferTexture2DMultisampleEXT = &glFramebufferTexture2DMultisampleEXT_enc;
++	this->glRenderbufferStorageMultisampleEXT = &glRenderbufferStorageMultisampleEXT_enc;
+ }
+ 
+diff --git a/guest/GLESv2_enc/gl2_entry.cpp b/guest/GLESv2_enc/gl2_entry.cpp
+index 28e8fc29..c682e0fe 100644
+--- a/guest/GLESv2_enc/gl2_entry.cpp
++++ b/guest/GLESv2_enc/gl2_entry.cpp
+@@ -458,6 +458,9 @@ extern "C" {
+ 	void glBlendFuncSeparateiEXT(GLuint index, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
+ 	void glColorMaskiEXT(GLuint index, GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
+ 	GLboolean glIsEnablediEXT(GLenum cap, GLuint index);
++	void glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
++	void glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples);
++	void glRenderbufferStorageMultisampleEXT(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+ };
+ 
+ #ifndef GET_CONTEXT
+@@ -3137,3 +3140,21 @@ GLboolean glIsEnablediEXT(GLenum cap, GLuint index)
+ 	return ctx->glIsEnablediEXT(ctx, cap, index);
+ }
+ 
++void glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth)
++{
++	GET_CONTEXT;
++	ctx->glCopyImageSubData(ctx, srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
++}
++
++void glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples)
++{
++	GET_CONTEXT;
++	ctx->glFramebufferTexture2DMultisampleEXT(ctx, target, attachment, textarget, texture, level, samples);
++}
++
++void glRenderbufferStorageMultisampleEXT(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height)
++{
++	GET_CONTEXT;
++	ctx->glRenderbufferStorageMultisampleEXT(ctx, target, samples, internalformat, width, height);
++}
++
+diff --git a/guest/GLESv2_enc/gl2_ftable.h b/guest/GLESv2_enc/gl2_ftable.h
+index 6fb153f9..9cc05087 100644
+--- a/guest/GLESv2_enc/gl2_ftable.h
++++ b/guest/GLESv2_enc/gl2_ftable.h
+@@ -413,6 +413,9 @@ static const struct _gl2_funcs_by_name {
+ 	{"glBlendFuncSeparateiEXT", (void*)glBlendFuncSeparateiEXT},
+ 	{"glColorMaskiEXT", (void*)glColorMaskiEXT},
+ 	{"glIsEnablediEXT", (void*)glIsEnablediEXT},
++	{"glCopyImageSubData", (void*)glCopyImageSubData},
++	{"glFramebufferTexture2DMultisampleEXT", (void*)glFramebufferTexture2DMultisampleEXT},
++	{"glRenderbufferStorageMultisampleEXT", (void*)glRenderbufferStorageMultisampleEXT},
+ };
+ static const int gl2_num_funcs = sizeof(gl2_funcs_by_name) / sizeof(struct _gl2_funcs_by_name);
+ 
+diff --git a/guest/GLESv2_enc/gl2_opcodes.h b/guest/GLESv2_enc/gl2_opcodes.h
+index b58a2dbd..58857c78 100644
+--- a/guest/GLESv2_enc/gl2_opcodes.h
++++ b/guest/GLESv2_enc/gl2_opcodes.h
+@@ -456,7 +456,10 @@
+ #define OP_glBlendFuncSeparateiEXT 					2484
+ #define OP_glColorMaskiEXT 					2485
+ #define OP_glIsEnablediEXT 					2486
+-#define OP_last 					2487
++#define OP_glCopyImageSubData 					2487
++#define OP_glFramebufferTexture2DMultisampleEXT 					2488
++#define OP_glRenderbufferStorageMultisampleEXT 					2489
++#define OP_last 					2490
+ 
+ 
+ #endif
+diff --git a/guest/OpenglCodecCommon/GLClientState.cpp b/guest/OpenglCodecCommon/GLClientState.cpp
+index 931c9b47..ddd1a23d 100644
+--- a/guest/OpenglCodecCommon/GLClientState.cpp
++++ b/guest/OpenglCodecCommon/GLClientState.cpp
+@@ -1958,9 +1958,12 @@ GLenum GLClientState::checkFramebufferAttachmentCompleteness(GLenum target, GLen
+     case FBO_ATTACHMENT_RENDERBUFFER:
+         samplesThisAttachment = fbo_format_info.rb_multisamples;
+         break;
+-    case FBO_ATTACHMENT_TEXTURE:
++    case FBO_ATTACHMENT_TEXTURE: {
+         samplesThisAttachment = fbo_format_info.tex_multisamples;
++        const auto ext = m_extAttachmentSamples.find({boundFramebuffer(target), attachment});
++        if (ext != m_extAttachmentSamples.end()) samplesThisAttachment = ext->second;
+         break;
++    }
+     case FBO_ATTACHMENT_NONE:
+         break;
+     default:
+@@ -2528,6 +2531,14 @@ GLuint GLClientState::boundFramebuffer(GLenum target) const {
+ void GLClientState::attachTextureObject(
+         GLenum target,
+         GLenum attachment, GLuint texture, GLint level, GLint layer) {
++    {
++        const GLuint fbo = boundFramebuffer(target);
++        m_extAttachmentSamples.erase({fbo, attachment});
++        if (attachment == GL_DEPTH_STENCIL_ATTACHMENT) {
++            m_extAttachmentSamples.erase({fbo, GL_DEPTH_ATTACHMENT});
++            m_extAttachmentSamples.erase({fbo, GL_STENCIL_ATTACHMENT});
++        }
++    }
+ 
+     bool attach = texture != 0;
+     std::shared_ptr<TextureRec> texrec = getTextureRec(texture);
+@@ -2667,6 +2678,14 @@ void GLClientState::detachRboFromFbo(GLenum target, GLenum attachment, GLuint re
+ }
+ 
+ void GLClientState::attachRbo(GLenum target, GLenum attachment, GLuint renderbuffer) {
++    {
++        const GLuint fbo = boundFramebuffer(target);
++        m_extAttachmentSamples.erase({fbo, attachment});
++        if (attachment == GL_DEPTH_STENCIL_ATTACHMENT) {
++            m_extAttachmentSamples.erase({fbo, GL_DEPTH_ATTACHMENT});
++            m_extAttachmentSamples.erase({fbo, GL_STENCIL_ATTACHMENT});
++        }
++    }
+ 
+     bool attach = 0 != renderbuffer;
+ 
+@@ -3068,3 +3087,89 @@ bool GLClientState::fenceExists(GLsync sync) {
+ 
+ }  // namespace guest
+ }  // namespace gfxstream
++
++void gfxstream::guest::GLClientState::setFboAttachmentSamples(GLenum target, GLenum attachment, int samples) {
++    const GLuint fbo = boundFramebuffer(target);
++    if (attachment == GL_DEPTH_STENCIL_ATTACHMENT) {
++        m_extAttachmentSamples[{fbo, GL_DEPTH_ATTACHMENT}] = samples;
++        m_extAttachmentSamples[{fbo, GL_STENCIL_ATTACHMENT}] = samples;
++    } else {
++        m_extAttachmentSamples[{fbo, attachment}] = samples;
++    }
++    boundFboProps(target).completenessDirty = true;
++}
++
++bool gfxstream::guest::GLClientState::unallocatedMultisampleAttachment(
++        GLenum target, const std::function<bool(GLint)>& isDepthFormat, GLuint* texture,
++        GLsizei* samples, GLint* internalformat, GLsizei* width, GLsizei* height) const {
++    const FboProps& props = boundFboProps_const(target);
++    struct Attached {
++        std::shared_ptr<TextureRec> tex;
++        std::shared_ptr<RboProps> rbo;
++        bool depth;
++    };
++    std::vector<Attached> attached;
++    for (size_t i = 0; i < props.colorAttachmenti_hasTex.size(); ++i) {
++        attached.push_back({props.colorAttachmenti_hasTex[i] ? props.colorAttachmenti_textures[i] : nullptr,
++                            i < props.colorAttachmenti_hasRbo.size() && props.colorAttachmenti_hasRbo[i]
++                                    ? props.colorAttachmenti_rbos[i]
++                                    : nullptr,
++                            false});
++    }
++    attached.push_back({props.depthAttachment_hasTexObj ? props.depthAttachment_texture : nullptr,
++                        props.depthAttachment_hasRbo ? props.depthAttachment_rbo : nullptr, true});
++    attached.push_back({props.stencilAttachment_hasTexObj ? props.stencilAttachment_texture : nullptr,
++                        props.stencilAttachment_hasRbo ? props.stencilAttachment_rbo : nullptr, true});
++    attached.push_back({props.depthstencilAttachment_hasTexObj ? props.depthstencilAttachment_texture : nullptr,
++                        props.depthstencilAttachment_hasRbo ? props.depthstencilAttachment_rbo : nullptr, true});
++
++    const auto level0 = [](const std::shared_ptr<TextureRec>& t, GLsizei* w, GLsizei* h) {
++        const auto wi = t->dims->widths.find(0), hi = t->dims->heights.find(0);
++        *w = wi == t->dims->widths.end() ? 0 : wi->second;
++        *h = hi == t->dims->heights.end() ? 0 : hi->second;
++    };
++
++    // What it renders together with: the attachments with multisample storage.
++    GLsizei s = 0, w = 0, h = 0;
++    const Attached* missing = nullptr;
++    for (const Attached& at : attached) {
++        if (at.rbo && at.rbo->multisamples > 1) {
++            s = at.rbo->multisamples, w = at.rbo->width, h = at.rbo->height;
++        } else if (at.tex && at.tex->target == GL_TEXTURE_2D_MULTISAMPLE) {
++            if (!at.tex->hasStorage) {
++                if (!missing) missing = &at;
++            } else if (at.tex->multisamples > 1) {
++                s = at.tex->multisamples;
++                level0(at.tex, &w, &h);
++            }
++        }
++    }
++    if (!missing || s <= 1 || w <= 0 || h <= 0) return false;
++
++    // Its format. Depth: that of the single-sample depth texture of the same
++    // size the app made beside it, the one its depth is resolved into.
++    // Colour: GL_R8. The app's multisampled colour texture is the target of a
++    // pass that, without multisampling, renders into an R8 texture of its own
++    // (one that no longer exists when this framebuffer is checked): it writes
++    // an index k/255 per pixel, which a later pass reads back as
++    // floor(x * 255.5). Stored at 8 bits that is k again; at 10 bits
++    // (RGB10_A2) it reads as k - 1.
++    GLint format = 0;
++    if (missing->depth) {
++        AutoReadLock guard(m_tex.textureRecs->lock);
++        for (const auto& [id, rec] : m_tex.textureRecs->map) {
++            if (!rec || rec->target != GL_TEXTURE_2D || !rec->hasStorage || rec->multisamples > 1 ||
++                !isDepthFormat(rec->internalformat)) {
++                continue;
++            }
++            GLsizei rw = 0, rh = 0;
++            level0(rec, &rw, &rh);
++            if (rw == w && rh == h) format = rec->internalformat;  // of several, the highest name
++        }
++    } else {
++        format = GL_R8;
++    }
++    if (!format) return false;
++    *texture = missing->tex->id, *samples = s, *internalformat = format, *width = w, *height = h;
++    return true;
++}
+diff --git a/guest/OpenglCodecCommon/include/gfxstream/guest/GLClientState.h b/guest/OpenglCodecCommon/include/gfxstream/guest/GLClientState.h
+index d0ec8252..b72319e7 100644
+--- a/guest/OpenglCodecCommon/include/gfxstream/guest/GLClientState.h
++++ b/guest/OpenglCodecCommon/include/gfxstream/guest/GLClientState.h
+@@ -23,6 +23,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
++#include <functional>
+ #include <map>
+ #include <memory>
+ #include <set>
+@@ -488,6 +489,19 @@ public:
+     void detachRbo(GLuint renderbuffer);
+     void detachRboFromFbo(GLenum target, GLenum attachment, GLuint renderbuffer);
+     void attachRbo(GLenum target, GLenum attachment, GLuint renderbuffer);
++    // GL_EXT_multisampled_render_to_texture: the texture attached at
++    // `attachment` of the bound framebuffer renders with `samples` samples.
++    void setFboAttachmentSamples(GLenum target, GLenum attachment, int samples);
++    // An attachment of the bound framebuffer that is a multisample texture
++    // never given storage, with the storage it is meant to have: the sample
++    // count and size of the framebuffer's attachments that have multisample
++    // storage, and for depth the internal format of the single-sample depth
++    // texture (by isDepthFormat) of that size, the highest-named of several;
++    // for colour, GL_R8 (see the definition).
++    bool unallocatedMultisampleAttachment(GLenum target,
++                                          const std::function<bool(GLint)>& isDepthFormat,
++                                          GLuint* texture, GLsizei* samples, GLint* internalformat,
++                                          GLsizei* width, GLsizei* height) const;
+     std::shared_ptr<RboProps> getFboAttachmentRbo(GLenum target, GLenum attachment) const;
+ 
+     // FBO attachments in general
+@@ -638,6 +652,9 @@ private:
+     bool m_extensions_set;
+     std::string m_extensions;
+     bool m_has_color_buffer_float_extension;
++    // (framebuffer, attachment) -> samples, for textures attached with
++    // glFramebufferTexture2DMultisampleEXT.
++    std::map<std::pair<GLuint, GLenum>, int> m_extAttachmentSamples;
+     bool m_has_color_buffer_half_float_extension;
+     std::vector<BufferBinding> m_indexedTransformFeedbackBuffers;
+     std::vector<BufferBinding> m_indexedUniformBuffers;
+diff --git a/guest/egl/egl.cpp b/guest/egl/egl.cpp
+index 3909b95e..0ef6b7a1 100644
+--- a/guest/egl/egl.cpp
++++ b/guest/egl/egl.cpp
+@@ -18,6 +18,7 @@
+ #include <assert.h>
+ 
+ #include <poll.h>
++#include <dlfcn.h>
+ #include <qemu_pipe_bp.h>
+ #include <time.h>
+ #include <xf86drm.h>
+@@ -722,10 +723,10 @@ static void sFlushBufferAndCreateFence(
+                      presentFenceFd);
+     } else if (rcEnc->hasNativeSync()) {
+         createGoldfishOpenGLNativeSync(presentFenceFd);
+-    } else {
+-        // equivalent to glFinish if no native sync
+-        eglWaitClient();
+     }
++    // Without native sync the guest used to wait here for the GPU to finish
++    // the frame (eglWaitClient). Stud's host fences each flushed frame and
++    // its presenter waits on that fence on the GPU, so nothing waits here.
+ }
+ 
+ EGLBoolean egl_window_surface_t::swapBuffers()
+@@ -2587,6 +2588,9 @@ EGLint eglWaitSyncKHR(EGLDisplay dpy, EGLSyncKHR eglsync, EGLint flags) {
+ 
+ #include "egl_ftable.h"
+ 
++// Android's gl_unimplemented: called through any GL name the driver lacks.
++static intptr_t sGlUnimplemented() { return 0; }
++
+ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procname)
+ {
+     // search in EGL function table
+@@ -2597,7 +2601,30 @@ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procname)
+     }
+ 
+     // look in gles client api's extensions table
+-    return (__eglMustCastToProperFunctionPointerType)ClientAPIExts::getProcAddress(procname);
++    if (void* ext = ClientAPIExts::getProcAddress(procname)) {
++        return (__eglMustCastToProperFunctionPointerType)ext;
++    }
++
++    // Core GLES entry points. Android's EGL loader, in front of this driver,
++    // answers these itself; without that loader they are this library's own
++    // exported functions. Looked up in this library alone, so a do-nothing
++    // stand-in elsewhere in the process is never handed out.
++    static void* self = [] {
++        Dl_info info{};
++        if (!dladdr(reinterpret_cast<void*>(&eglGetProcAddress), &info) || !info.dli_fname) {
++            return static_cast<void*>(nullptr);
++        }
++        return dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD);
++    }();
++    if (self != nullptr && procname != nullptr && procname[0] == 'g' && procname[1] == 'l') {
++        if (void* core = dlsym(self, procname)) {
++            return (__eglMustCastToProperFunctionPointerType)core;
++        }
++        // What Android's loader hands out for a GL name the driver lacks: a
++        // function that does nothing and returns 0, never null. Applications
++        // call such names without checking, as they can on a device.
++        return (__eglMustCastToProperFunctionPointerType)&sGlUnimplemented;
++    }
+ 
+     // Fail - function not found.
+     return NULL;
+diff --git a/host/gl/OpenGLESDispatch/gles32_only.entries b/host/gl/OpenGLESDispatch/gles32_only.entries
+index 58b0d0c5..f6837f37 100644
+--- a/host/gl/OpenGLESDispatch/gles32_only.entries
++++ b/host/gl/OpenGLESDispatch/gles32_only.entries
+@@ -20,3 +20,6 @@ void glDebugMessageCallback(GFXSTREAM_GLES32_GLDEBUGPROC callback, const void *u
+ GLuint glGetDebugMessageLog(GLuint count, GLsizei bufSize, GLenum *sources, GLenum *types, GLuint *ids, GLenum *severities, GLsizei *lengths, GLchar *messageLog);
+ void glPushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLchar* message);
+ void glPopDebugGroup(void);
++void glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
++void glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples);
++void glRenderbufferStorageMultisampleEXT(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+diff --git a/host/gl/OpenGLESDispatch/gles32_only_dispatch_logging_wrappers.impl b/host/gl/OpenGLESDispatch/gles32_only_dispatch_logging_wrappers.impl
+index f7b72cb9..d194d95f 100644
+--- a/host/gl/OpenGLESDispatch/gles32_only_dispatch_logging_wrappers.impl
++++ b/host/gl/OpenGLESDispatch/gles32_only_dispatch_logging_wrappers.impl
+@@ -45,3 +45,17 @@ void glPopDebugGroup_dispatchLoggingWrapper() {
+ 	GLDispatch::glPopDebugGroup_underlying();
+ }
+ 
++void glCopyImageSubData_dispatchLoggingWrapper(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth) {
++	DISPATCH_DEBUG_LOG("glCopyImageSubData(srcName:%d, srcTarget:0x%X, srcLevel:%d, srcX:%d, srcY:%d, srcZ:%d, dstName:%d, dstTarget:0x%X, dstLevel:%d, dstX:%d, dstY:%d, dstZ:%d, srcWidth:%d, srcHeight:%d, srcDepth:%d)", srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
++	GLDispatch::glCopyImageSubData_underlying(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
++}
++
++void glFramebufferTexture2DMultisampleEXT_dispatchLoggingWrapper(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples) {
++	DISPATCH_DEBUG_LOG("glFramebufferTexture2DMultisampleEXT(target:0x%X, attachment:0x%X, textarget:0x%X, texture:%u, level:%d, samples:%d)", target, attachment, textarget, texture, level, samples);
++	GLDispatch::glFramebufferTexture2DMultisampleEXT_underlying(target, attachment, textarget, texture, level, samples);
++}
++
++void glRenderbufferStorageMultisampleEXT_dispatchLoggingWrapper(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height) {
++	DISPATCH_DEBUG_LOG("glRenderbufferStorageMultisampleEXT(target:0x%X, samples:%d, internalformat:0x%X, width:%d, height:%d)", target, samples, internalformat, width, height);
++	GLDispatch::glRenderbufferStorageMultisampleEXT_underlying(target, samples, internalformat, width, height);
++}
+diff --git a/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_functions.h b/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_functions.h
+index 723a5371..89c9db05 100644
+--- a/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_functions.h
++++ b/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_functions.h
+@@ -36,6 +36,9 @@ typedef void (*GFXSTREAM_GLES32_GLDEBUGPROC)(GLenum source,GLenum type,GLuint id
+   X(GLuint, glGetDebugMessageLog, (GLuint count, GLsizei bufSize, GLenum * sources, GLenum * types, GLuint * ids, GLenum * severities, GLsizei * lengths, GLchar * messageLog), (count, bufSize, sources, types, ids, severities, lengths, messageLog)) \
+   X(void, glPushDebugGroup, (GLenum source, GLuint id, GLsizei length, const GLchar* message), (source, id, length, message)) \
+   X(void, glPopDebugGroup, (), ()) \
++  X(void, glCopyImageSubData, (GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth), (srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth)) \
++  X(void, glFramebufferTexture2DMultisampleEXT, (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples), (target, attachment, textarget, texture, level, samples)) \
++  X(void, glRenderbufferStorageMultisampleEXT, (GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height), (target, samples, internalformat, width, height)) \
+ 
+ 
+ #endif  // GLES32_ONLY_FUNCTIONS_H
+diff --git a/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_static_translator_namespaced_header.h b/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_static_translator_namespaced_header.h
+index 930b5cc8..823dd62f 100644
+--- a/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_static_translator_namespaced_header.h
++++ b/host/gl/OpenGLESDispatch/include/OpenGLESDispatch/gles32_only_static_translator_namespaced_header.h
+@@ -36,5 +36,8 @@ GL_APICALL void GL_APIENTRY glDebugMessageCallback(GFXSTREAM_GLES32_GLDEBUGPROC
+ GL_APICALL GLuint GL_APIENTRY glGetDebugMessageLog(GLuint count, GLsizei bufSize, GLenum * sources, GLenum * types, GLuint * ids, GLenum * severities, GLsizei * lengths, GLchar * messageLog);
+ GL_APICALL void GL_APIENTRY glPushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLchar* message);
+ GL_APICALL void GL_APIENTRY glPopDebugGroup();
++GL_APICALL void GL_APIENTRY glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
++GL_APICALL void GL_APIENTRY glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples);
++GL_APICALL void GL_APIENTRY glRenderbufferStorageMultisampleEXT(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+ } // namespace translator
+ } // namespace gles2
+diff --git a/host/gl/color_buffer_gl.cpp b/host/gl/color_buffer_gl.cpp
+index 62669ea2..4913d291 100644
+--- a/host/gl/color_buffer_gl.cpp
++++ b/host/gl/color_buffer_gl.cpp
+@@ -913,10 +913,12 @@ bool ColorBufferGl::blitFromCurrentReadBuffer() {
+                 }
+             }
+ 
+-            // If the read buffer is multisampled, we need to resolve.
++            // If the read buffer is multisampled, we need to resolve. A blit
++            // also converts formats glCopyTexSubImage2D refuses, such as a
++            // window without alpha into this RGBA image.
+             GLint samples;
+             s_gles2.glGetIntegerv(GL_SAMPLE_BUFFERS, &samples);
+-            if (isGles3 && samples > 0) {
++            if (isGles3) {
+                 s_gles2.glBindTexture(GL_TEXTURE_2D, 0);
+ 
+                 GLuint resolve_fbo;
+diff --git a/host/gl/color_buffer_gl.h b/host/gl/color_buffer_gl.h
+index ac20fac9..d5fcf4dd 100644
+--- a/host/gl/color_buffer_gl.h
++++ b/host/gl/color_buffer_gl.h
+@@ -197,6 +197,8 @@ class ColorBufferGl {
+ 
+     HandleType getHndl() const;
+     GLuint getTexture() const { return m_tex; }
++    // The image the colour buffer's texture is shared through.
++    EGLImageKHR getEGLImage() const { return m_eglImage; }
+ 
+     bool isFastBlitSupported() const { return m_fastBlitSupported; }
+     void postLayer(const ComposeLayer& l, int frameWidth, int frameHeight,
+diff --git a/host/gl/emulation_gl.cpp b/host/gl/emulation_gl.cpp
+index feb719ab..d71ab0a1 100644
+--- a/host/gl/emulation_gl.cpp
++++ b/host/gl/emulation_gl.cpp
+@@ -430,7 +430,11 @@ std::unique_ptr<EmulationGl> EmulationGl::create(uint32_t width, uint32_t height
+         return nullptr;
+     }
+     if (emulationGl->mGlesDispatchMaxVersion > GLES_DISPATCH_MAX_VERSION_3_0) {
+-        if (gpuVendor == gfxstream::host::GpuVendor::kIntel) {
++        // On EGL-on-EGL the guest's GLES runs on the system's own GLES
++        // driver (Mesa on Intel), which supports 3.1 and later; the cap is
++        // for Intel's driver under the desktop GL translator.
++        if (gpuVendor == gfxstream::host::GpuVendor::kIntel &&
++            !emulationGl->mFeatures.EglOnEgl.enabled()) {
+             // BUG: 435712974
+             // Intel gpu driver has crashes when guest is running
+             // gles 3.1. so we have to cap the max gles to 3.0
+@@ -444,9 +448,12 @@ std::unique_ptr<EmulationGl> EmulationGl::create(uint32_t width, uint32_t height
+     const bool disableFastBlit =
+         emulationGl->mEglVendor.find("Imagination Technologies") != std::string::npos;
+ 
++    // The fast blit leaves the colour buffer empty on Mesa under EGL-on-EGL
++    // (measured on Intel; correct on NVIDIA); the copy path is correct on
++    // both.
+     emulationGl->mFastBlitSupported =
+         (emulationGl->mGlesDispatchMaxVersion > GLES_DISPATCH_MAX_VERSION_2) &&
+-        !disableFastBlit &&
++        !disableFastBlit && !emulationGl->mFeatures.EglOnEgl.enabled() &&
+         (get_gfxstream_renderer() == SELECTED_RENDERER_HOST ||
+          get_gfxstream_renderer() == SELECTED_RENDERER_SWIFTSHADER_INDIRECT ||
+          get_gfxstream_renderer() == SELECTED_RENDERER_LAVAPIPE ||
+diff --git a/host/gl/gles2_dec/gles2_dec.cpp b/host/gl/gles2_dec/gles2_dec.cpp
+index 15f609e8..0af57240 100644
+--- a/host/gl/gles2_dec/gles2_dec.cpp
++++ b/host/gl/gles2_dec/gles2_dec.cpp
+@@ -10676,6 +10676,86 @@ size_t gles2_decoder_context_t::decode(void *buf, size_t len, IOStream *stream,
+ 			gfxstream::base::endTrace();
+ 			break;
+ 		}
++		case OP_glCopyImageSubData: {
++			gfxstream::base::beginTrace("glCopyImageSubData decode");
++			GLuint var_srcName = Unpack<GLuint,uint32_t>(ptr + 8);
++			GLenum var_srcTarget = Unpack<GLenum,uint32_t>(ptr + 8 + 4);
++			GLint var_srcLevel = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4);
++			GLint var_srcX = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4);
++			GLint var_srcY = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4);
++			GLint var_srcZ = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4);
++			GLuint var_dstName = Unpack<GLuint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLenum var_dstTarget = Unpack<GLenum,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLint var_dstLevel = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLint var_dstX = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLint var_dstY = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLint var_dstZ = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLsizei var_srcWidth = Unpack<GLsizei,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLsizei var_srcHeight = Unpack<GLsizei,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			GLsizei var_srcDepth = Unpack<GLsizei,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
++			if (useChecksum) {
++				ChecksumCalculatorThreadInfo::validOrDie(checksumCalc, ptr, 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4, ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4, checksumSize,
++					"gles2_decoder_context_t::decode, OP_glCopyImageSubData: GL checksumCalculator failure\n");
++			}
++#ifdef CHECK_GL_ERRORS
++			GLint err = this->glGetError();
++			if (err) {
++				GFXSTREAM_ERROR("gles2 Error (pre-call): 0x%X before glCopyImageSubData", err);
++			}
++#endif  // ifdef CHECK_GL_ERRORS
++			DECODER_DEBUG_LOG("gles2(%p): glCopyImageSubData(srcName:%u srcTarget:0x%08x srcLevel:%d srcX:%d srcY:%d srcZ:%d dstName:%u dstTarget:0x%08x dstLevel:%d dstX:%d dstY:%d dstZ:%d srcWidth:%d srcHeight:%d srcDepth:%d )", stream, var_srcName, var_srcTarget, var_srcLevel, var_srcX, var_srcY, var_srcZ, var_dstName, var_dstTarget, var_dstLevel, var_dstX, var_dstY, var_dstZ, var_srcWidth, var_srcHeight, var_srcDepth);
++			this->glCopyImageSubData(var_srcName, var_srcTarget, var_srcLevel, var_srcX, var_srcY, var_srcZ, var_dstName, var_dstTarget, var_dstLevel, var_dstX, var_dstY, var_dstZ, var_srcWidth, var_srcHeight, var_srcDepth);
++			SET_LASTCALL("glCopyImageSubData");
++			gfxstream::base::endTrace();
++			break;
++		}
++		case OP_glFramebufferTexture2DMultisampleEXT: {
++			gfxstream::base::beginTrace("glFramebufferTexture2DMultisampleEXT decode");
++			GLenum var_target = Unpack<GLenum,uint32_t>(ptr + 8);
++			GLenum var_attachment = Unpack<GLenum,uint32_t>(ptr + 8 + 4);
++			GLenum var_textarget = Unpack<GLenum,uint32_t>(ptr + 8 + 4 + 4);
++			GLuint var_texture = Unpack<GLuint,uint32_t>(ptr + 8 + 4 + 4 + 4);
++			GLint var_level = Unpack<GLint,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4);
++			GLsizei var_samples = Unpack<GLsizei,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4 + 4);
++			if (useChecksum) {
++				ChecksumCalculatorThreadInfo::validOrDie(checksumCalc, ptr, 8 + 4 + 4 + 4 + 4 + 4 + 4, ptr + 8 + 4 + 4 + 4 + 4 + 4 + 4, checksumSize,
++					"gles2_decoder_context_t::decode, OP_glFramebufferTexture2DMultisampleEXT: GL checksumCalculator failure\n");
++			}
++#ifdef CHECK_GL_ERRORS
++			GLint err = this->glGetError();
++			if (err) {
++				GFXSTREAM_ERROR("gles2 Error (pre-call): 0x%X before glFramebufferTexture2DMultisampleEXT", err);
++			}
++#endif  // ifdef CHECK_GL_ERRORS
++			DECODER_DEBUG_LOG("gles2(%p): glFramebufferTexture2DMultisampleEXT(target:0x%08x attachment:0x%08x textarget:0x%08x texture:%u level:%d samples:%d )", stream, var_target, var_attachment, var_textarget, var_texture, var_level, var_samples);
++			this->glFramebufferTexture2DMultisampleEXT(var_target, var_attachment, var_textarget, var_texture, var_level, var_samples);
++			SET_LASTCALL("glFramebufferTexture2DMultisampleEXT");
++			gfxstream::base::endTrace();
++			break;
++		}
++		case OP_glRenderbufferStorageMultisampleEXT: {
++			gfxstream::base::beginTrace("glRenderbufferStorageMultisampleEXT decode");
++			GLenum var_target = Unpack<GLenum,uint32_t>(ptr + 8);
++			GLsizei var_samples = Unpack<GLsizei,uint32_t>(ptr + 8 + 4);
++			GLenum var_internalformat = Unpack<GLenum,uint32_t>(ptr + 8 + 4 + 4);
++			GLsizei var_width = Unpack<GLsizei,uint32_t>(ptr + 8 + 4 + 4 + 4);
++			GLsizei var_height = Unpack<GLsizei,uint32_t>(ptr + 8 + 4 + 4 + 4 + 4);
++			if (useChecksum) {
++				ChecksumCalculatorThreadInfo::validOrDie(checksumCalc, ptr, 8 + 4 + 4 + 4 + 4 + 4, ptr + 8 + 4 + 4 + 4 + 4 + 4, checksumSize,
++					"gles2_decoder_context_t::decode, OP_glRenderbufferStorageMultisampleEXT: GL checksumCalculator failure\n");
++			}
++#ifdef CHECK_GL_ERRORS
++			GLint err = this->glGetError();
++			if (err) {
++				GFXSTREAM_ERROR("gles2 Error (pre-call): 0x%X before glRenderbufferStorageMultisampleEXT", err);
++			}
++#endif  // ifdef CHECK_GL_ERRORS
++			DECODER_DEBUG_LOG("gles2(%p): glRenderbufferStorageMultisampleEXT(target:0x%08x samples:%d internalformat:0x%08x width:%d height:%d )", stream, var_target, var_samples, var_internalformat, var_width, var_height);
++			this->glRenderbufferStorageMultisampleEXT(var_target, var_samples, var_internalformat, var_width, var_height);
++			SET_LASTCALL("glRenderbufferStorageMultisampleEXT");
++			gfxstream::base::endTrace();
++			break;
++		}
+ 		default:
+ 			return ptr - (unsigned char*)buf;
+ 		} //switch
+diff --git a/host/gl/gles2_dec/gles2_opcodes.h b/host/gl/gles2_dec/gles2_opcodes.h
+index cf39eb9b..f325072c 100644
+--- a/host/gl/gles2_dec/gles2_opcodes.h
++++ b/host/gl/gles2_dec/gles2_opcodes.h
+@@ -456,7 +456,10 @@
+ #define OP_glBlendFuncSeparateiEXT 					2484
+ #define OP_glColorMaskiEXT 					2485
+ #define OP_glIsEnablediEXT 					2486
+-#define OP_last 					2487
++#define OP_glCopyImageSubData 					2487
++#define OP_glFramebufferTexture2DMultisampleEXT 					2488
++#define OP_glRenderbufferStorageMultisampleEXT 					2489
++#define OP_last 					2490
+ 
+ 
+ #endif
+diff --git a/host/gl/gles2_dec/gles2_server_context.cpp b/host/gl/gles2_dec/gles2_server_context.cpp
+index 115f6704..25eafe98 100644
+--- a/host/gl/gles2_dec/gles2_server_context.cpp
++++ b/host/gl/gles2_dec/gles2_server_context.cpp
+@@ -463,6 +463,9 @@ int gles2_server_context_t::initDispatchByName(void *(*getProc)(const char *, vo
+ 	glBlendFuncSeparateiEXT = (glBlendFuncSeparateiEXT_dec_server_proc_t) getProc("glBlendFuncSeparateiEXT", userData);
+ 	glColorMaskiEXT = (glColorMaskiEXT_dec_server_proc_t) getProc("glColorMaskiEXT", userData);
+ 	glIsEnablediEXT = (glIsEnablediEXT_dec_server_proc_t) getProc("glIsEnablediEXT", userData);
++	glCopyImageSubData = (glCopyImageSubData_server_proc_t) getProc("glCopyImageSubData", userData);
++	glFramebufferTexture2DMultisampleEXT = (glFramebufferTexture2DMultisampleEXT_server_proc_t) getProc("glFramebufferTexture2DMultisampleEXT", userData);
++	glRenderbufferStorageMultisampleEXT = (glRenderbufferStorageMultisampleEXT_server_proc_t) getProc("glRenderbufferStorageMultisampleEXT", userData);
+ 	return 0;
+ }
+ 
+diff --git a/host/gl/gles2_dec/gles2_server_context.h b/host/gl/gles2_dec/gles2_server_context.h
+index 871879a3..f77834c4 100644
+--- a/host/gl/gles2_dec/gles2_server_context.h
++++ b/host/gl/gles2_dec/gles2_server_context.h
+@@ -574,6 +574,9 @@ struct gles2_server_context_t {
+ 	glColorMaskiEXT_server_proc_t glColorMaskiEXT_dec;
+ 	glIsEnablediEXT_dec_server_proc_t glIsEnablediEXT;
+ 	glIsEnablediEXT_server_proc_t glIsEnablediEXT_dec;
++	glCopyImageSubData_server_proc_t glCopyImageSubData;
++	glFramebufferTexture2DMultisampleEXT_server_proc_t glFramebufferTexture2DMultisampleEXT;
++	glRenderbufferStorageMultisampleEXT_server_proc_t glRenderbufferStorageMultisampleEXT;
+ 	virtual ~gles2_server_context_t() {}
+ 	int initDispatchByName( void *(*getProc)(const char *name, void *userData), void *userData);
+ };
+diff --git a/host/gl/gles2_dec/gles2_server_proc.h b/host/gl/gles2_dec/gles2_server_proc.h
+index fb23010b..0f6c160f 100644
+--- a/host/gl/gles2_dec/gles2_server_proc.h
++++ b/host/gl/gles2_dec/gles2_server_proc.h
+@@ -576,6 +576,9 @@ typedef void (gles2_APIENTRY *glColorMaskiEXT_server_proc_t) (void *ctx, GLuint,
+ typedef void (gles2_APIENTRY *glColorMaskiEXT_dec_server_proc_t) (GLuint, GLboolean, GLboolean, GLboolean, GLboolean);
+ typedef GLboolean (gles2_APIENTRY *glIsEnablediEXT_server_proc_t) (void *ctx, GLenum, GLuint);
+ typedef GLboolean (gles2_APIENTRY *glIsEnablediEXT_dec_server_proc_t) (GLenum, GLuint);
++typedef void (gles2_APIENTRY *glCopyImageSubData_server_proc_t) (GLuint, GLenum, GLint, GLint, GLint, GLint, GLuint, GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei);
++typedef void (gles2_APIENTRY *glFramebufferTexture2DMultisampleEXT_server_proc_t) (GLenum, GLenum, GLenum, GLuint, GLint, GLsizei);
++typedef void (gles2_APIENTRY *glRenderbufferStorageMultisampleEXT_server_proc_t) (GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+ 
+ 
+ #endif
+diff --git a/host/gl/glestranslator/common/gl_dispatch.cpp b/host/gl/glestranslator/common/gl_dispatch.cpp
+index f2b9f422..02e8bff3 100644
+--- a/host/gl/glestranslator/common/gl_dispatch.cpp
++++ b/host/gl/glestranslator/common/gl_dispatch.cpp
+@@ -243,6 +243,9 @@ void GLDispatch::dispatchFuncs(GLESVersion version, GlLibrary* glLib, EGLGetProc
+     if (version >= GLES_3_1) {
+         LIST_GLES31_ONLY_FUNCTIONS(LOAD_GLEXT_FUNC)
+         LIST_GLES31_ONLY_FUNCTIONS(LOAD_GLEXT_FUNC_DEBUG_LOG_WRAPPER)
++        // 3.2 shares the 3.1 context type; what the driver lacks stays null.
++        LIST_GLES32_ONLY_FUNCTIONS(LOAD_GLEXT_FUNC)
++        LIST_GLES32_ONLY_FUNCTIONS(LOAD_GLEXT_FUNC_DEBUG_LOG_WRAPPER)
+     }
+ 
+     const char* kAngleName = "ANGLE";
+diff --git a/host/gl/glestranslator/common/gles_context.cpp b/host/gl/glestranslator/common/gles_context.cpp
+index df539a4d..84baf38f 100644
+--- a/host/gl/glestranslator/common/gles_context.cpp
++++ b/host/gl/glestranslator/common/gles_context.cpp
+@@ -2057,18 +2057,26 @@ void GLEScontext::buildStrings(int major, int minor, const char* baseVendor,
+         isES11 ? s_glVersionGles1 : (isES31 ? s_glVersionGles31 : s_glVersion);
+ 
+     size_t baseVendorLen = strlen(baseVendor);
++    size_t baseRendererLen = strlen(baseRenderer);
++    if (isGles2Gles()) {
++        // On EGL-on-EGL the system's own GLES driver does the rendering, so
++        // it names itself; applications that treat an emulator differently
++        // see the GPU they are on.
++        vendorString.assign(baseVendor, baseVendorLen);
++        rendererString.assign(baseRenderer, baseRendererLen);
++    } else {
+     vendorString.clear();
+     vendorString.reserve(baseVendorLen + VENDOR_LEN + 1);
+     vendorString.append(VENDOR, VENDOR_LEN);
+     vendorString.append(baseVendor, baseVendorLen);
+     vendorString.append(")", 1);
+ 
+-    size_t baseRendererLen = strlen(baseRenderer);
+     rendererString.clear();
+     rendererString.reserve(baseRendererLen + RENDERER_LEN + 1);
+     rendererString.append(RENDERER, RENDERER_LEN);
+     rendererString.append(baseRenderer, baseRendererLen);
+     rendererString.append(")", 1);
++    }
+ 
+     size_t baseVersionLen = strlen(baseVersion);
+     size_t versionLen = strlen(version);
+diff --git a/host/gl/glestranslator/egl/egl_imp.cpp b/host/gl/glestranslator/egl/egl_imp.cpp
+index 5d590558..41886168 100644
+--- a/host/gl/glestranslator/egl/egl_imp.cpp
++++ b/host/gl/glestranslator/egl/egl_imp.cpp
+@@ -983,6 +983,13 @@ static EGLContext eglCreateOrLoadContext(EGLDisplay display, EGLConfig config,
+          case 1:
+              glesVersion = GLES_3_1;
+              break;
++         case 2:
++             // 3.2 runs on the 3.1 context type, as eglSetMaxGLESVersion
++             // and the guest already map it; the native context underneath
++             // is the driver's own 3.2.
++             glesVersion = GLES_3_1;
++             minor_version = 1;
++             break;
+          default:
+              RETURN_ERROR(EGL_NO_CONTEXT, EGL_BAD_ATTRIBUTE);
+              break;
+@@ -1796,6 +1803,14 @@ EGLAPI EGLContext EGLAPIENTRY eglGetNativeContextANDROID(EGLDisplay display, EGL
+     return dpy->getNativeContext(context);
+ }
+ 
++// The host driver's texture behind a translator image, for an embedder
++// whose own context shares the translator's on EGL-on-EGL. 0 if it has none.
++EGLAPI GLuint EGLAPIENTRY eglGetNativeTextureANDROID(EGLImage image) {
++    ImagePtr img = getEGLImage(SafeUIntFromPointer(image));
++    if (!img || !img->globalTexObj) return 0;
++    return img->globalTexObj->getGlobalName();
++}
++
+ EGLAPI EGLImage EGLAPIENTRY eglGetNativeImageANDROID(EGLDisplay display, EGLImage image) {
+     VALIDATE_DISPLAY_RETURN(display, (EGLImage)0);
+     unsigned int imagehndl = SafeUIntFromPointer(image);
+diff --git a/host/gl/glestranslator/egl/egl_os_api_egl.cpp b/host/gl/glestranslator/egl/egl_os_api_egl.cpp
+index 9a9038da..78099b79 100644
+--- a/host/gl/glestranslator/egl/egl_os_api_egl.cpp
++++ b/host/gl/glestranslator/egl/egl_os_api_egl.cpp
+@@ -21,6 +21,7 @@
+ #include <vector>
+ 
+ #include "common/gl_library.h"
++#include "common/gl_utils.h"
+ #include "shader_cache.h"
+ #include "gfxstream/shared_library.h"
+ #include "gfxstream/strings.h"
+@@ -139,6 +140,20 @@ static const char* kGLES2LibName = "libGLESv2.dylib";
+     X(EGLint, eglDebugMessageControlKHR,                                       \
+       (EGLDEBUGPROCKHR callback, const EGLAttrib * attrib_list))               \
+ 
++// The embedder's EGL platform and native display; see
++// gfxstream_set_native_display().
++static EGLenum sStudPlatform = 0;
++static void* sStudNativeDisplay = nullptr;
++
++// Called before the renderer starts: the display EGL-on-EGL opens is the
++// embedder's own (e.g. EGL_PLATFORM_WAYLAND_KHR and its wl_display), so a
++// context the embedder makes can share with gfxstream's.
++extern "C" __attribute__((visibility("default"))) void gfxstream_set_native_display(
++    unsigned int platform, void* native_display) {
++    sStudPlatform = static_cast<EGLenum>(platform);
++    sStudNativeDisplay = native_display;
++}
++
+ namespace {
+ 
+ using gfxstream::HasExtension;
+@@ -378,6 +393,12 @@ EglOsEglDisplay::EglOsEglDisplay(bool nullEgl) {
+ #endif
+     }
+ 
++    // The embedder's own display, when it gave one: its contexts can then
++    // share with these, which on another display they cannot.
++    if (mDisplay == EGL_NO_DISPLAY && sStudNativeDisplay != nullptr) {
++        mDisplay = mDispatcher.eglGetPlatformDisplay(sStudPlatform, sStudNativeDisplay, nullptr);
++    }
++
+     if (mDisplay == EGL_NO_DISPLAY)
+         mDisplay = mDispatcher.eglGetDisplay(EGL_DEFAULT_DISPLAY);
+ 
+@@ -421,6 +442,10 @@ EglOsEglDisplay::EglOsEglDisplay(bool nullEgl) {
+     static const EGLint pbufAttribs[] =
+         { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+ 
++    static const EGLint gles32Attribs[] =
++       { EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
++         EGL_CONTEXT_MINOR_VERSION_KHR, 2, EGL_NONE };
++
+     static const EGLint gles31Attribs[] =
+        { EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
+          EGL_CONTEXT_MINOR_VERSION_KHR, 1, EGL_NONE };
+@@ -438,10 +463,17 @@ EglOsEglDisplay::EglOsEglDisplay(bool nullEgl) {
+         EGLSurface surface = mDispatcher.eglCreatePbufferSurface(mDisplay,
+                 config, pbufAttribs);
+         if (surface != EGL_NO_SURFACE) {
+-            EGLContext ctx = mDispatcher.eglCreateContext(mDisplay,
+-                    config, EGL_NO_CONTEXT, gles31Attribs);
++            // 3.2 only on EGL-on-EGL, where the guest's GLES runs on the
++            // system's own GLES driver; elsewhere 3.1 stays the ceiling.
++            EGLContext ctx = isGles2Gles()
++                    ? mDispatcher.eglCreateContext(mDisplay, config, EGL_NO_CONTEXT,
++                                                   gles32Attribs)
++                    : EGL_NO_CONTEXT;
+ 
+             if (ctx != EGL_NO_CONTEXT) {
++                mGlesVersion = GlesVersion::ES32;
++            } else if ((ctx = mDispatcher.eglCreateContext(mDisplay,
++                    config, EGL_NO_CONTEXT, gles31Attribs)) != EGL_NO_CONTEXT) {
+                 mGlesVersion = GlesVersion::ES31;
+             } else {
+                 ctx = mDispatcher.eglCreateContext(mDisplay, config,
+diff --git a/host/gl/glestranslator/gles_v2/gles_v2_context.cpp b/host/gl/glestranslator/gles_v2/gles_v2_context.cpp
+index c8e911aa..8cabfbeb 100644
+--- a/host/gl/glestranslator/gles_v2/gles_v2_context.cpp
++++ b/host/gl/glestranslator/gles_v2/gles_v2_context.cpp
+@@ -26,6 +26,11 @@
+ 
+ #include <string.h>
+ 
++#include <atomic>
++#include <condition_variable>
++#include <map>
++#include <mutex>
++
+ static const char kGLES20StringPart[] = "OpenGL ES 2.0";
+ static const char kGLES30StringPart[] = "OpenGL ES 3.0";
+ static const char kGLES31StringPart[] = "OpenGL ES 3.1";
+@@ -58,8 +63,116 @@ void GLESv2Context::setMaxGlesVersion(GLESVersion version) {
+     s_maxGlesVersion = version;
+ }
+ 
++namespace {
++
++std::mutex s_unitOverrideLock;
++std::map<unsigned int, GLuint> s_unitOverrides;  // unit index -> global texture name
++std::map<unsigned int, unsigned int> s_cubeMirrors;  // unit index -> unit it shows
++std::atomic<bool> s_clipZeroToOne{false};
++std::atomic<uint64_t> s_unitOverrideGeneration{0};
++// glClipControlEXT from the driver, or null where it has none.
++void (*s_clipControl)(GLenum origin, GLenum depth) = nullptr;
++
++}  // namespace
++
++GLuint GLESv2Context::unitTextureOverride(unsigned int unit) {
++    std::lock_guard<std::mutex> lock(s_unitOverrideLock);
++    const auto it = s_unitOverrides.find(unit);
++    return it == s_unitOverrides.end() ? 0 : it->second;
++}
++
++// Applies the embedder's settings to this context, once per change to them;
++// afterwards glBindTexture keeps the texture ones in place.
++void GLESv2Context::applyEmbedderSettings() {
++    const uint64_t generation = s_unitOverrideGeneration.load();
++    if (m_embedderSettingsGeneration == generation) return;
++    m_embedderSettingsGeneration = generation;
++    if (s_clipControl) {
++        s_clipControl(0x8CA1 /* GL_LOWER_LEFT_EXT */,
++                      s_clipZeroToOne ? 0x935F /* GL_ZERO_TO_ONE_EXT */
++                                      : 0x935E /* GL_NEGATIVE_ONE_TO_ONE_EXT */);
++    }
++    std::map<unsigned int, GLuint> overrides;
++    {
++        std::lock_guard<std::mutex> lock(s_unitOverrideLock);
++        overrides = s_unitOverrides;
++    }
++    const unsigned int active = getActiveTextureUnit();
++    for (const auto& [unit, texture] : overrides) {
++        if (static_cast<int>(unit) >= getMaxCombinedTexUnits()) continue;
++        dispatcher().glActiveTexture(GL_TEXTURE0 + unit);
++        dispatcher().glBindTexture(GL_TEXTURE_2D, texture);
++    }
++    dispatcher().glActiveTexture(GL_TEXTURE0 + active);
++    applyCubeMirrors();
++}
++
++void GLESv2Context::applyCubeMirrors() {
++    std::map<unsigned int, unsigned int> mirrors;
++    {
++        std::lock_guard<std::mutex> lock(s_unitOverrideLock);
++        if (s_cubeMirrors.empty()) return;
++        mirrors = s_cubeMirrors;
++    }
++    const unsigned int active = getActiveTextureUnit();
++    for (const auto& [unit, source] : mirrors) {
++        if (static_cast<int>(std::max(unit, source)) >= getMaxCombinedTexUnits()) continue;
++        const unsigned int local = getBindedTexture(GL_TEXTURE0 + source, GL_TEXTURE_CUBE_MAP);
++        if (local == 0 || !shareGroup().get()) continue;
++        const GLuint global = shareGroup()->getGlobalName(NamedObjectType::TEXTURE, local);
++        if (global == 0) continue;
++        dispatcher().glActiveTexture(GL_TEXTURE0 + unit);
++        dispatcher().glBindTexture(GL_TEXTURE_CUBE_MAP, global);
++    }
++    dispatcher().glActiveTexture(GL_TEXTURE0 + active);
++}
++
++// For the embedder: unit's cube map binding always shows the cube bound on
++// source (unit == source clears it).
++extern "C" __attribute__((visibility("default"))) void gfxstream_set_cube_unit_mirror(
++        unsigned int unit, unsigned int source) {
++    {
++        std::lock_guard<std::mutex> lock(s_unitOverrideLock);
++        if (unit != source) {
++            s_cubeMirrors[unit] = source;
++        } else {
++            s_cubeMirrors.erase(unit);
++        }
++    }
++    ++s_unitOverrideGeneration;
++}
++
++// For the embedder: texture (a global name, 0 to clear) is what the driver
++// has on unit's 2D binding, whatever an app binds there.
++extern "C" __attribute__((visibility("default"))) void gfxstream_set_unit_texture_override(
++        unsigned int unit, unsigned int texture) {
++    {
++        std::lock_guard<std::mutex> lock(s_unitOverrideLock);
++        if (texture) {
++            s_unitOverrides[unit] = texture;
++        } else {
++            s_unitOverrides.erase(unit);
++        }
++    }
++    ++s_unitOverrideGeneration;
++}
++
++// For the embedder: every app context maps depth 0..1 to the depth buffer
++// as it is (glClipControlEXT ZERO_TO_ONE), the convention of apps that build
++// their projections for Vulkan and Direct3D, instead of GLES's -1..1. Only
++// where the driver has EXT_clip_control.
++extern "C" __attribute__((visibility("default"))) void gfxstream_set_clip_control_zero_to_one(
++        bool enable) {
++    s_clipZeroToOne = enable;
++    ++s_unitOverrideGeneration;
++}
++
+ void GLESv2Context::initGlobal(EGLiface* iface) {
+     s_glDispatch.dispatchFuncs(s_maxGlesVersion, iface->eglGetGlLibrary(), iface->getProcAddress);
++    if (iface->getProcAddress) {
++        s_clipControl = reinterpret_cast<void (*)(GLenum, GLenum)>(
++            iface->getProcAddress("glClipControlEXT"));
++    }
+     GLEScontext::initGlobal(iface);
+ }
+ 
+@@ -766,7 +879,8 @@ void InitExtensionString(GLSupport& glSupport, std::string& ext) {
+         "GL_OES_element_index_uint "
+         "GL_OES_texture_float GL_OES_texture_float_linear "
+         "GL_OES_compressed_paletted_texture GL_OES_compressed_ETC1_RGB8_texture "
+-        "GL_OES_depth_texture ";
++        "GL_OES_depth_texture "
++        "GL_EXT_multisampled_render_to_texture ";
+     if (glSupport.GL_ARB_HALF_FLOAT_PIXEL || glSupport.GL_NV_HALF_FLOAT)
+         ext += "GL_OES_texture_half_float GL_OES_texture_half_float_linear ";
+     if (glSupport.GL_EXT_PACKED_DEPTH_STENCIL) ext += "GL_OES_packed_depth_stencil ";
+@@ -923,3 +1037,103 @@ void GLESv2Context::unbindBuffer(GLuint buffer) {
+     }
+     GLEScontext::unbindBuffer(buffer);
+ }
++
++// Frames handed to the embedder without the guest waiting for them. The
++// guest's swap used to wait for the GPU to finish each frame (eglWaitClient,
++// in effect glFinish) before telling the embedder to show it, because the
++// embedder hears of the frame on a channel of its own. Instead the host
++// fences the end of each frame where the guest flushes it, the embedder's
++// presenter has the GPU wait on that fence before drawing the colour buffer,
++// and fences its own draw for the guest's next frame into the same colour
++// buffer to wait on. No CPU waits on the GPU anywhere.
++
++namespace {
++
++struct StudFrame {
++    uint64_t flushed = 0;
++    uint64_t presented = 0;
++    GLsync done = nullptr;   // end of the guest's latest frame into it
++    GLsync shown = nullptr;  // end of the presenter's draw from it
++};
++std::mutex s_framesLock;
++std::condition_variable s_framesChanged;
++// ponytail: entries outlive their colour buffer (two fence slots each);
++// erase on rcCloseColorBuffer if a long session ever churns windows.
++std::map<uint32_t, StudFrame> s_frames;
++
++GLsync studFence() {
++    if (!GLEScontext::dispatcher().glFenceSync) return nullptr;
++    GLsync f = GLEScontext::dispatcher().glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++    // Flushed, so a wait in another context can see it signal.
++    GLEScontext::dispatcher().glFlush();
++    return f;
++}
++
++void studGpuWait(GLsync f) {
++    if (!f) return;
++    GLEScontext::dispatcher().glWaitSync(f, 0, GL_TIMEOUT_IGNORED);
++    GLEScontext::dispatcher().glDeleteSync(f);
++}
++
++}  // namespace
++
++// The guest has flushed a frame into `colorBuffer` (its render thread, its
++// context current).
++extern "C" void gfxstream_stud_frame_flushed(uint32_t colorBuffer) {
++    GLsync f = studFence();
++    std::lock_guard<std::mutex> lock(s_framesLock);
++    StudFrame& frame = s_frames[colorBuffer];
++    if (frame.done) GLEScontext::dispatcher().glDeleteSync(frame.done);
++    frame.done = f;
++    ++frame.flushed;
++    s_framesChanged.notify_all();
++}
++
++// The guest is about to render into `colorBuffer` again: its later
++// commands wait on the GPU for the presenter's draw from it.
++extern "C" void gfxstream_stud_before_reuse(uint32_t colorBuffer) {
++    GLsync f = nullptr;
++    {
++        std::lock_guard<std::mutex> lock(s_framesLock);
++        auto it = s_frames.find(colorBuffer);
++        if (it == s_frames.end()) return;
++        f = it->second.shown;
++        it->second.shown = nullptr;
++    }
++    studGpuWait(f);
++}
++
++// For the embedder's presenter, its context current: waits until the guest's
++// frame into `colorBuffer` has been flushed on the host (the decode of the
++// guest's commands, not the GPU), then has the GPU wait for it.
++extern "C" void gfxstream_wait_frame(uint32_t colorBuffer) {
++    GLsync f = nullptr;
++    {
++        std::unique_lock<std::mutex> lock(s_framesLock);
++        StudFrame& frame = s_frames[colorBuffer];
++        s_framesChanged.wait(lock, [&] { return frame.flushed > frame.presented; });
++        f = frame.done;
++        frame.done = nullptr;
++        frame.presented = frame.flushed;
++    }
++    studGpuWait(f);
++}
++
++// For the presenter, after drawing from `colorBuffer`.
++extern "C" void gfxstream_frame_shown(uint32_t colorBuffer) {
++    GLsync f = studFence();
++    std::lock_guard<std::mutex> lock(s_framesLock);
++    StudFrame& frame = s_frames[colorBuffer];
++    if (frame.shown) GLEScontext::dispatcher().glDeleteSync(frame.shown);
++    frame.shown = f;
++}
++
++// Whether the translator hands ASTC uploads to the driver: that needs native
++// texture decompression on and every ASTC format listed by the driver. Where
++// it does not, it decodes them with its CPU decompressor instead.
++bool GLESv2Context::passesAstc() {
++    return (s_glExtensionsGles31Initialized && s_glSupportGles31.hasAstcSupport) ||
++           (s_glExtensionsInitialized && s_glSupport.hasAstcSupport);
++}
++
++extern "C" bool gfxstream_translator_passes_astc() { return GLESv2Context::passesAstc(); }
+diff --git a/host/gl/glestranslator/gles_v2/gles_v2_context.h b/host/gl/glestranslator/gles_v2/gles_v2_context.h
+index b3a8aacb..beca897e 100644
+--- a/host/gl/glestranslator/gles_v2/gles_v2_context.h
++++ b/host/gl/glestranslator/gles_v2/gles_v2_context.h
+@@ -122,6 +122,19 @@ public:
+ 
+     static void setMaxGlesVersion(GLESVersion version);
+ 
++    // What the embedder sets for every app context: textures always on a
++    // unit's 2D binding (gfxstream_set_unit_texture_override), cube units
++    // that show another unit's cube (gfxstream_set_cube_unit_mirror) and a
++    // 0..1 depth range (gfxstream_set_clip_control_zero_to_one). Applied on
++    // first use of a program after each change, the generation this
++    // context last applied them for kept here.
++    static GLuint unitTextureOverride(unsigned int unit);
++    // Whether ASTC uploads go to the driver rather than the CPU decompressor.
++    static bool passesAstc();
++    void applyEmbedderSettings();
++    void applyCubeMirrors();
++    uint64_t m_embedderSettingsGeneration = 0;
++
+     TransformFeedbackData* boundTransformFeedback();
+ 
+     void enableArr(GLenum arr, bool enable) override;
+diff --git a/host/gl/glestranslator/gles_v2/gles_v2_imp.cpp b/host/gl/glestranslator/gles_v2/gles_v2_imp.cpp
+index b22bf1a9..d3d10d9a 100644
+--- a/host/gl/glestranslator/gles_v2/gles_v2_imp.cpp
++++ b/host/gl/glestranslator/gles_v2/gles_v2_imp.cpp
+@@ -28,8 +28,12 @@
+ #include <math.h>
+ #include <stdio.h>
+ 
++#include <map>
++#include <mutex>
+ #include <numeric>
++#include <set>
+ #include <unordered_map>
++#include <vector>
+ 
+ #include "angle_shader_parser.h"
+ #include "gles_v2_context.h"
+@@ -659,9 +663,354 @@ static void sUpdateFboEmulation(GLESv2Context* ctx) {
+     sSetDesktopGLEnable(ctx, enableDepth32fClamp, GL_DEPTH_CLAMP);
+ }
+ 
++
++// GL_EXT_multisampled_render_to_texture, which mobile drivers have and
++// desktop ones mostly lack: a texture attached with a sample count renders
++// multisampled and is resolved into the texture. Here the driver gets a
++// hidden multisampled renderbuffer of the texture's own format and size in
++// its place (so every attachment has the same sample count, as GLES
++// requires), resolved into the texture by a blit when the app leaves the
++// framebuffer. Per context, by the app's framebuffer name.
++namespace {
++struct StudMsrtt {
++    GLenum attachment;
++    GLuint renderbuffer;  // the driver's, multisampled
++    GLuint texture;       // the driver's
++    GLenum textarget;
++    GLint level;
++    GLsizei width;
++    GLsizei height;
++    // For a twin: the driver's multisample texture it is the twin of.
++    GLuint msTexture = 0;
++};
++std::mutex s_msrttLock;
++std::map<std::pair<const void*, GLuint>, std::vector<StudMsrtt>> s_msrtt;
++
++// A multisample colour texture's single-sample twin. An app whose shaders read
++// textures only through sampler2D (it has no multisample textures of its own;
++// the guest gives an unallocated one storage to complete its framebuffer)
++// still binds the multisample texture where it reads the rendered image: the
++// twin holds that image, resolved, and is what such a read sees.
++struct StudMsTwin {
++    GLuint twin;  // the driver's
++    GLsizei width;
++    GLsizei height;
++};
++std::mutex s_msTwinLock;
++std::map<GLuint, StudMsTwin> s_msTwins;                  // driver's multisample texture -> twin
++std::set<std::pair<const void*, unsigned int>> s_unitShowsTwin;  // (context, unit)
++}  // namespace
++
++// The twin of the multisample colour texture bound to GL_TEXTURE_2D_MULTISAMPLE,
++// just given storage.
++static void sMsTwinCreate(GLESv2Context* ctx, GLenum internalformat, GLsizei width, GLsizei height) {
++    const GLuint ms = ctx->shareGroup()->getGlobalName(
++            NamedObjectType::TEXTURE,
++            ctx->getTextureLocalName(GL_TEXTURE_2D_MULTISAMPLE,
++                                     ctx->getBindedTexture(GL_TEXTURE_2D_MULTISAMPLE)));
++    if (!ms) return;
++    auto& gl = ctx->dispatcher();
++    GLint previous = 0;
++    gl.glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
++    GLuint twin = 0;
++    gl.glGenTextures(1, &twin);
++    gl.glBindTexture(GL_TEXTURE_2D, twin);
++    gl.glTexStorage2D(GL_TEXTURE_2D, 1, internalformat, width, height);
++    // Read as the multisample texture is: texel by texel, with no filtering
++    // between texels (which would blend the ids an app stores per pixel) and
++    // nothing beyond its edges.
++    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    gl.glBindTexture(GL_TEXTURE_2D, previous);
++    GLuint old = 0;
++    {
++        std::lock_guard<std::mutex> lock(s_msTwinLock);
++        auto it = s_msTwins.find(ms);
++        if (it != s_msTwins.end()) old = it->second.twin;
++        s_msTwins[ms] = StudMsTwin{twin, width, height};
++    }
++    if (old) gl.glDeleteTextures(1, &old);
++
++    // Storage comes after the attachment (the guest gives it while checking
++    // the framebuffer the texture is attached to): that framebuffer resolves
++    // into the twin from now on.
++    const GLuint fbo = ctx->getFramebufferBinding(GL_DRAW_FRAMEBUFFER);
++    if (!fbo) return;
++    GLint colorAttachments = 0;
++    gl.glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &colorAttachments);
++    for (GLint i = 0; i < colorAttachments; ++i) {
++        const GLenum attachment = GL_COLOR_ATTACHMENT0 + i;
++        GLint type = GL_NONE, name = 0;
++        gl.glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
++                                                 GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
++        if (type != GL_TEXTURE) continue;
++        gl.glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
++                                                 GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &name);
++        if (static_cast<GLuint>(name) != ms) continue;
++        std::lock_guard<std::mutex> lock(s_msrttLock);
++        s_msrtt[{ctx, fbo}].push_back(
++                StudMsrtt{attachment, 0, twin, GL_TEXTURE_2D, 0, width, height, ms});
++    }
++}
++
++static bool sMsTwinOf(GLuint ms, StudMsTwin* out) {
++    std::lock_guard<std::mutex> lock(s_msTwinLock);
++    auto it = s_msTwins.find(ms);
++    if (it == s_msTwins.end()) return false;
++    *out = it->second;
++    return true;
++}
++
++// After the app binds `ms` (the driver's name, 0 for none) to
++// GL_TEXTURE_2D_MULTISAMPLE on the active unit: the unit's 2D target shows
++// its twin, or again the app's own 2D texture.
++static void sMsTwinShow(GLESv2Context* ctx, GLuint ms) {
++    const auto key = std::make_pair(static_cast<const void*>(ctx), ctx->getActiveTextureUnit());
++    StudMsTwin twin{};
++    if (ms && sMsTwinOf(ms, &twin)) {
++        ctx->dispatcher().glBindTexture(GL_TEXTURE_2D, twin.twin);
++        std::lock_guard<std::mutex> lock(s_msTwinLock);
++        s_unitShowsTwin.insert(key);
++        return;
++    }
++    {
++        std::lock_guard<std::mutex> lock(s_msTwinLock);
++        if (!s_unitShowsTwin.erase(key)) return;
++    }
++    const GLuint override = GLESv2Context::unitTextureOverride(ctx->getActiveTextureUnit());
++    const GLuint own = ctx->shareGroup()->getGlobalName(
++            NamedObjectType::TEXTURE,
++            ctx->getTextureLocalName(GL_TEXTURE_2D, ctx->getBindedTexture(GL_TEXTURE_2D)));
++    ctx->dispatcher().glBindTexture(GL_TEXTURE_2D, override ? override : own);
++}
++
++// The app's texture `ms` (the driver's name) is going: so is its twin, and
++// every resolve into it.
++static void sMsTwinForget(GLESv2Context* ctx, GLuint ms) {
++    StudMsTwin twin{};
++    if (!ms || !sMsTwinOf(ms, &twin)) return;
++    {
++        std::lock_guard<std::mutex> lock(s_msTwinLock);
++        s_msTwins.erase(ms);
++    }
++    {
++        std::lock_guard<std::mutex> lock(s_msrttLock);
++        for (auto it = s_msrtt.begin(); it != s_msrtt.end();) {
++            auto& list = it->second;
++            for (auto r = list.begin(); r != list.end();) {
++                r = r->texture == twin.twin ? list.erase(r) : r + 1;
++            }
++            it = list.empty() ? s_msrtt.erase(it) : std::next(it);
++        }
++    }
++    ctx->dispatcher().glDeleteTextures(1, &twin.twin);
++}
++
++// Forgets (and frees) the hidden renderbuffers of `fbo`, for `attachment` or
++// all of them (0).
++static void sMsrttDrop(GLESv2Context* ctx, GLuint fbo, GLenum attachment) {
++    if (!fbo) return;
++    std::vector<GLuint> freed;
++    {
++        std::lock_guard<std::mutex> lock(s_msrttLock);
++        auto it = s_msrtt.find({ctx, fbo});
++        if (it == s_msrtt.end()) return;
++        auto& list = it->second;
++        for (auto r = list.begin(); r != list.end();) {
++            if (attachment && r->attachment != attachment) {
++                ++r;
++                continue;
++            }
++            freed.push_back(r->renderbuffer);
++            r = list.erase(r);
++        }
++        if (list.empty()) s_msrtt.erase(it);
++    }
++    if (!freed.empty()) {
++        ctx->dispatcher().glDeleteRenderbuffers(static_cast<GLsizei>(freed.size()), freed.data());
++    }
++}
++
++// Twins, per context: the program that copies sample 0 of a multisample
++// texture, and the vertex array its draw runs with.
++namespace {
++struct StudSampleCopy {
++    GLuint program = 0;
++    GLuint vao = 0;
++};
++std::mutex s_sampleCopyLock;
++std::map<const void*, StudSampleCopy> s_sampleCopy;
++}  // namespace
++
++static StudSampleCopy sSampleCopyProgram(GLESv2Context* ctx) {
++    {
++        std::lock_guard<std::mutex> lock(s_sampleCopyLock);
++        auto it = s_sampleCopy.find(ctx);
++        if (it != s_sampleCopy.end()) return it->second;
++    }
++    auto& gl = ctx->dispatcher();
++    static const char* kVertex =
++            "#version 310 es\n"
++            "void main() {\n"
++            "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
++            "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
++            "}\n";
++    static const char* kFragment =
++            "#version 310 es\n"
++            "precision highp float;\n"
++            "uniform highp sampler2DMS source;\n"
++            "layout(location = 0) out vec4 color;\n"
++            "void main() { color = texelFetch(source, ivec2(gl_FragCoord.xy), 0); }\n";
++    StudSampleCopy copy;
++    const GLuint vs = gl.glCreateShader(GL_VERTEX_SHADER);
++    const GLuint fs = gl.glCreateShader(GL_FRAGMENT_SHADER);
++    gl.glShaderSource(vs, 1, &kVertex, nullptr);
++    gl.glShaderSource(fs, 1, &kFragment, nullptr);
++    gl.glCompileShader(vs);
++    gl.glCompileShader(fs);
++    copy.program = gl.glCreateProgram();
++    gl.glAttachShader(copy.program, vs);
++    gl.glAttachShader(copy.program, fs);
++    gl.glLinkProgram(copy.program);
++    gl.glDeleteShader(vs);
++    gl.glDeleteShader(fs);
++    GLint linked = GL_FALSE;
++    gl.glGetProgramiv(copy.program, GL_LINK_STATUS, &linked);
++    if (!linked) {
++        gl.glDeleteProgram(copy.program);
++        copy.program = 0;
++    } else {
++        GLint previous = 0;
++        gl.glGetIntegerv(GL_CURRENT_PROGRAM, &previous);
++        gl.glUseProgram(copy.program);
++        gl.glUniform1i(gl.glGetUniformLocation(copy.program, "source"), 0);
++        gl.glUseProgram(previous);
++        gl.glGenVertexArrays(1, &copy.vao);
++    }
++    std::lock_guard<std::mutex> lock(s_sampleCopyLock);
++    s_sampleCopy[ctx] = copy;
++    return copy;
++}
++
++// Fills each twin in `list` with sample 0 of its multisample texture: the
++// value one sample holds, as a single-sample render target would, where a
++// blit's resolve averages the samples (an id or index stored per pixel
++// becomes one that belongs to nothing). The app's GL state is left as found.
++static void sMsTwinResolve(GLESv2Context* ctx, const std::vector<StudMsrtt>& list) {
++    const StudSampleCopy copy = sSampleCopyProgram(ctx);
++    if (!copy.program) return;
++    auto& gl = ctx->dispatcher();
++    GLint program = 0, vao = 0, drawFbo = 0, activeTexture = GL_TEXTURE0, msBinding = 0;
++    GLint viewport[4] = {};
++    GLboolean colorMask[4] = {};
++    gl.glGetIntegerv(GL_CURRENT_PROGRAM, &program);
++    gl.glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
++    gl.glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
++    gl.glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
++    gl.glGetIntegerv(GL_VIEWPORT, viewport);
++    gl.glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
++    static const GLenum kCaps[] = {GL_SCISSOR_TEST, GL_BLEND,          GL_DEPTH_TEST,
++                                   GL_STENCIL_TEST, GL_CULL_FACE,      GL_RASTERIZER_DISCARD,
++                                   GL_SAMPLE_MASK,  GL_POLYGON_OFFSET_FILL};
++    GLboolean enabled[sizeof(kCaps) / sizeof(kCaps[0])];
++    for (size_t i = 0; i < sizeof(kCaps) / sizeof(kCaps[0]); ++i) {
++        enabled[i] = gl.glIsEnabled(kCaps[i]);
++        if (enabled[i]) gl.glDisable(kCaps[i]);
++    }
++    gl.glActiveTexture(GL_TEXTURE0);
++    gl.glGetIntegerv(GL_TEXTURE_BINDING_2D_MULTISAMPLE, &msBinding);
++    gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    gl.glUseProgram(copy.program);
++    gl.glBindVertexArray(copy.vao);
++
++    GLuint target = 0;
++    gl.glGenFramebuffers(1, &target);
++    gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
++    for (const StudMsrtt& r : list) {
++        if (!r.msTexture) continue;
++        gl.glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, r.textarget, r.texture,
++                                  r.level);
++        gl.glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, r.msTexture);
++        gl.glViewport(0, 0, r.width, r.height);
++        gl.glDrawArrays(GL_TRIANGLES, 0, 3);
++    }
++    gl.glDeleteFramebuffers(1, &target);
++
++    gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
++    gl.glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, msBinding);
++    gl.glActiveTexture(activeTexture);
++    gl.glBindVertexArray(vao);
++    gl.glUseProgram(program);
++    gl.glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
++    gl.glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
++    for (size_t i = 0; i < sizeof(kCaps) / sizeof(kCaps[0]); ++i) {
++        if (enabled[i]) gl.glEnable(kCaps[i]);
++    }
++}
++
++// Resolves `fbo`'s multisampled attachments into their textures.
++static void sMsrttResolve(GLESv2Context* ctx, GLuint fbo) {
++    std::vector<StudMsrtt> list;
++    {
++        std::lock_guard<std::mutex> lock(s_msrttLock);
++        auto it = s_msrtt.find({ctx, fbo});
++        if (it == s_msrtt.end()) return;
++        list = it->second;
++    }
++    auto& gl = ctx->dispatcher();
++    GLint prevRead = 0, prevDraw = 0, prevReadBuffer = GL_COLOR_ATTACHMENT0;
++    gl.glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
++    gl.glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDraw);
++    // A blit is clipped by the scissor test; a resolve is of the whole image.
++    const GLboolean scissor = gl.glIsEnabled(GL_SCISSOR_TEST);
++    if (scissor) gl.glDisable(GL_SCISSOR_TEST);
++    gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, ctx->getFBOGlobalName(fbo));
++    gl.glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
++    GLuint resolve = 0;
++    gl.glGenFramebuffers(1, &resolve);
++    gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve);
++    bool twins = false;
++    for (const StudMsrtt& r : list) {
++        if (r.msTexture) {
++            twins = true;
++            continue;
++        }
++        gl.glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, r.attachment, r.textarget, r.texture, r.level);
++        GLbitfield mask = 0;
++        if (r.attachment == GL_DEPTH_ATTACHMENT) {
++            mask = GL_DEPTH_BUFFER_BIT;
++        } else if (r.attachment == GL_STENCIL_ATTACHMENT) {
++            mask = GL_STENCIL_BUFFER_BIT;
++        } else if (r.attachment == GL_DEPTH_STENCIL_ATTACHMENT) {
++            mask = GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
++        } else {
++            mask = GL_COLOR_BUFFER_BIT;
++            gl.glReadBuffer(r.attachment);
++            const GLenum drawBuffer = r.attachment;
++            gl.glDrawBuffers(1, &drawBuffer);
++        }
++        gl.glBlitFramebuffer(0, 0, r.width, r.height, 0, 0, r.width, r.height, mask, GL_NEAREST);
++        gl.glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, r.attachment, r.textarget, 0, 0);
++    }
++    gl.glReadBuffer(prevReadBuffer);
++    gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDraw);
++    gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
++    gl.glDeleteFramebuffers(1, &resolve);
++    if (scissor) gl.glEnable(GL_SCISSOR_TEST);
++    if (twins) sMsTwinResolve(ctx, list);
++}
++
+ GL_APICALL void  GL_APIENTRY glBindFramebuffer(GLenum target, GLuint framebuffer){
+     GET_CTX_V2();
+     SET_ERROR_IF(!GLESv2Validate::framebufferTarget(ctx, target),GL_INVALID_ENUM);
++    // Leaving a framebuffer that renders multisampled into textures: the
++    // textures get the resolved image.
++    if (target != GL_READ_FRAMEBUFFER) {
++        const GLuint leaving = ctx->getFramebufferBinding(GL_DRAW_FRAMEBUFFER);
++        if (leaving && leaving != framebuffer) sMsrttResolve(ctx, leaving);
++    }
+ 
+     GLuint globalFrameBufferName;
+     bool isDefaultFBO = !framebuffer;
+@@ -765,7 +1114,18 @@ GL_APICALL void  GL_APIENTRY glBindTexture(GLenum target, GLuint texture){
+     }
+ 
+     ctx->setBindedTexture(target,texture);
+-    ctx->dispatcher().glBindTexture(target,globalTextureName);
++    // A unit with an override keeps it, whatever the app binds there.
++    const GLuint override = target == GL_TEXTURE_2D
++            ? GLESv2Context::unitTextureOverride(ctx->getActiveTextureUnit())
++            : 0;
++    ctx->dispatcher().glBindTexture(target, override ? override : globalTextureName);
++    if (target == GL_TEXTURE_CUBE_MAP) ctx->applyCubeMirrors();
++    if (target == GL_TEXTURE_2D_MULTISAMPLE) {
++        sMsTwinShow(ctx, texture ? globalTextureName : 0);
++    } else if (target == GL_TEXTURE_2D) {
++        std::lock_guard<std::mutex> lock(s_msTwinLock);
++        s_unitShowsTwin.erase({ctx, ctx->getActiveTextureUnit()});
++    }
+ 
+     if (ctx->getMajorVersion() < 3) return;
+ 
+@@ -1323,6 +1683,7 @@ GL_APICALL void  GL_APIENTRY glDeleteBuffers(GLsizei n, const GLuint* buffers){
+ 
+ GL_APICALL void  GL_APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers){
+     GET_CTX_V2();
++    for (GLsizei i = 0; framebuffers && i < n; ++i) sMsrttDrop(ctx, framebuffers[i], 0);
+     SET_ERROR_IF(n < 0, GL_INVALID_VALUE);
+     for (int i = 0; i < n; i++) {
+         if (ctx->getFramebufferBinding(GL_FRAMEBUFFER) == framebuffers[i]) {
+@@ -1419,6 +1780,8 @@ GL_APICALL void  GL_APIENTRY glDeleteTextures(GLsizei n, const GLuint* textures)
+                     ctx->setBindedTexture(GL_TEXTURE_BUFFER,0);
+                 s_detachFromFramebuffer(NamedObjectType::TEXTURE, textures[i], GL_DRAW_FRAMEBUFFER);
+                 s_detachFromFramebuffer(NamedObjectType::TEXTURE, textures[i], GL_READ_FRAMEBUFFER);
++                sMsTwinForget(static_cast<GLESv2Context*>(ctx),
++                              ctx->shareGroup()->getGlobalName(NamedObjectType::TEXTURE, textures[i]));
+                 ctx->shareGroup()->deleteName(NamedObjectType::TEXTURE,
+                                               textures[i]);
+             }
+@@ -1704,6 +2067,7 @@ GL_APICALL void  GL_APIENTRY glFramebufferRenderbuffer(GLenum target, GLenum att
+                    GLESv2Validate::framebufferAttachment(ctx, attachment)), GL_INVALID_ENUM);
+     SET_ERROR_IF(!ctx->shareGroup().get(), GL_INVALID_OPERATION);
+     SET_ERROR_IF(ctx->isDefaultFBOBound(target), GL_INVALID_OPERATION);
++    sMsrttDrop(ctx, ctx->getFramebufferBinding(target), attachment);
+ 
+     GLuint globalRenderbufferName = 0;
+     ObjectDataPtr obj;
+@@ -1769,6 +2133,7 @@ GL_APICALL void  GL_APIENTRY glFramebufferTexture2D(GLenum target, GLenum attach
+     SET_ERROR_IF(texture &&
+             !ctx->shareGroup()->isObject(NamedObjectType::TEXTURE, texture),
+             GL_INVALID_OPERATION);
++    sMsrttDrop(ctx, ctx->getFramebufferBinding(target), attachment);
+ 
+     GLuint globalTextureName = 0;
+ 
+@@ -1792,6 +2157,15 @@ GL_APICALL void  GL_APIENTRY glFramebufferTexture2D(GLenum target, GLenum attach
+             ctx, attachment, textarget, texture, ObjectDataPtr());
+     }
+ 
++    StudMsTwin twin{};
++    if (textarget == GL_TEXTURE_2D_MULTISAMPLE && attachment >= GL_COLOR_ATTACHMENT0 &&
++        attachment <= GL_COLOR_ATTACHMENT15 && sMsTwinOf(globalTextureName, &twin)) {
++        std::lock_guard<std::mutex> lock(s_msrttLock);
++        s_msrtt[{ctx, fbName}].push_back(
++                StudMsrtt{attachment, 0, twin.twin, GL_TEXTURE_2D, 0, twin.width, twin.height,
++                          globalTextureName});
++    }
++
+     sUpdateFboEmulation(ctx);
+ }
+ 
+@@ -1822,6 +2196,8 @@ static int maxMipmapLevel(GLsizei width, GLsizei height) {
+     return log2(std::max(width, height) + 0.5);
+ }
+ 
++static bool sKeptOffOverride(GLESv2Context* ctx, GLenum target);
++
+ GL_APICALL void  GL_APIENTRY glGenerateMipmap(GLenum target){
+     GET_CTX_V2();
+     SET_ERROR_IF(!GLESv2Validate::textureTarget(ctx, target), GL_INVALID_ENUM);
+@@ -1833,6 +2209,7 @@ GL_APICALL void  GL_APIENTRY glGenerateMipmap(GLenum target){
+                     texData->height));
+         }
+     }
++    if (sKeptOffOverride(ctx, target)) return;
+     ctx->dispatcher().glGenerateMipmap(target);
+ }
+ 
+@@ -3437,6 +3814,93 @@ GL_APICALL void  GL_APIENTRY glShaderBinary(GLsizei n, const GLuint* shaders, GL
+     }
+ }
+ 
++// Index arithmetic that mixes a uint with bare int constants, as in
++//     CB12[((uint(POSITION.w) >> 8u) & 255u) * 1 + 0]
++// which GLSL ES 3.00 forbids (no implicit int -> uint) and the drivers
++// Android apps are written against accept. A strict desktop driver's GLES
++// compiler rejects it ("implicit cast from int to uint"), so on EGL-on-EGL
++// the bare integers after '*' or '+' inside such an index get a 'u'. Only
++// inside '[...]' that contains "u) * ", the shape these shaders are
++// generated in; nothing else is touched.
++static std::string fixUintIndexArithmetic(const std::string& src) {
++    static const std::string kMarker = "u) * ";
++    if (src.find(kMarker) == std::string::npos) return src;
++    std::string out;
++    out.reserve(src.size() + 64);
++    size_t i = 0;
++    while (i < src.size()) {
++        if (src[i] != '[') {
++            out.push_back(src[i++]);
++            continue;
++        }
++        const size_t close = src.find(']', i);
++        if (close == std::string::npos) {
++            out.append(src, i, std::string::npos);
++            break;
++        }
++        std::string index = src.substr(i, close - i + 1);
++        if (index.find(kMarker) != std::string::npos) {
++            std::string fixed;
++            fixed.reserve(index.size() + 8);
++            for (size_t j = 0; j < index.size(); ++j) {
++                fixed.push_back(index[j]);
++                if (index[j] != '*' && index[j] != '+') continue;
++                size_t k = j + 1;
++                while (k < index.size() && index[k] == ' ') fixed.push_back(index[k++]);
++                const size_t digits = k;
++                while (k < index.size() && isdigit(static_cast<unsigned char>(index[k]))) {
++                    fixed.push_back(index[k++]);
++                }
++                if (k > digits && (k >= index.size() || (index[k] != 'u' && index[k] != '.' &&
++                                                          index[k] != 'f'))) {
++                    fixed.push_back('u');
++                }
++                j = k - 1;
++            }
++            index = std::move(fixed);
++        }
++        out.append(index);
++        i = close + 1;
++    }
++    return out;
++}
++
++// The engine bakes its UI gradients into GradientAtlasTexture with the same
++// y-flipped projection it draws the window with, so on GL (origin lower left)
++// its gradient row k lands on texture row H-1-k; its shaders then read row k,
++// v = CB2[2].x, the top-left convention it renders in on Vulkan. That row
++// holds only the atlas's clear colour, so every UIGradient element came out
++// with alpha 0. Each read of the atlas, texture(GradientAtlasTexture,
++// vec2(u, v)), reads v as 1 - v: the row the bake wrote.
++static std::string flipGradientAtlasRow(const std::string& src) {
++    static const std::string kRead = "texture(GradientAtlasTexture, vec2(";
++    if (src.find(kRead) == std::string::npos) return src;
++    std::string out;
++    size_t from = 0;
++    for (size_t at; (at = src.find(kRead, from)) != std::string::npos;) {
++        const size_t args = at + kRead.size();
++        // The vec2's two arguments: the comma and the closing parenthesis at
++        // its own nesting depth.
++        size_t comma = std::string::npos, close = std::string::npos;
++        int depth = 0;
++        for (size_t i = args; i < src.size() && close == std::string::npos; ++i) {
++            if (src[i] == '(') ++depth;
++            else if (src[i] == ')' && depth-- == 0) close = i;
++            else if (src[i] == ',' && depth == 0) comma = i;
++        }
++        if (comma == std::string::npos || close == std::string::npos) break;
++        size_t v = comma + 1;
++        while (v < close && src[v] == ' ') ++v;
++        out.append(src, from, comma + 1 - from);
++        out += " 1.0 - (";
++        out.append(src, v, close - v);
++        out += ")";
++        from = close;
++    }
++    out.append(src, from, std::string::npos);
++    return out;
++}
++
+ GL_APICALL void  GL_APIENTRY glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length){
+     GET_CTX_V2();
+     SET_ERROR_IF(count < 0,GL_INVALID_VALUE);
+@@ -3462,8 +3926,18 @@ GL_APICALL void  GL_APIENTRY glShaderSource(GLuint shader, GLsizei count, const
+                         string[i]);
+                 }
+             }
+-            ctx->dispatcher().glShaderSource(globalShaderName, count, string,
+-                                         length);
++            std::string joined;
++            for (GLsizei i = 0; i < count; ++i) {
++                if (string[i] == nullptr) continue;
++                if (length != nullptr && length[i] >= 0) {
++                    joined.append(string[i], static_cast<size_t>(length[i]));
++                } else {
++                    joined.append(string[i]);
++                }
++            }
++            joined = flipGradientAtlasRow(fixUintIndexArithmetic(joined));
++            const GLchar* fixed = joined.c_str();
++            ctx->dispatcher().glShaderSource(globalShaderName, 1, &fixed, nullptr);
+         } else {
+             if (sDebugPrintShaders) { // save repeated checks
+                 for (GLsizei i = 0; i < 1; ++i) {
+@@ -3623,6 +4097,14 @@ static void sEmulateUserTextureSwizzle(TextureData* texData,
+     ctx->dispatcher().glTexParameteri(target, pname, hostEquivalentSwizzle);
+ }
+ 
++// On a unit whose 2D binding the embedder overrides, the app's own texture
++// state calls describe a texture the driver never sees there; they stay in
++// the app's state and are kept off the override texture.
++static bool sKeptOffOverride(GLESv2Context* ctx, GLenum target) {
++    return target == GL_TEXTURE_2D &&
++           GLESv2Context::unitTextureOverride(ctx->getActiveTextureUnit()) != 0;
++}
++
+ GL_APICALL void  GL_APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat param){
+     GET_CTX_V2();
+     SET_ERROR_IF(!(GLESv2Validate::textureTarget(ctx, target) &&
+@@ -3633,6 +4115,7 @@ GL_APICALL void  GL_APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloa
+     if (texData) {
+         texData->setTexParam(pname, static_cast<GLint>(param));
+     }
++    if (sKeptOffOverride(ctx, target)) return;
+ 
+     if (sShouldEmulateSwizzles(texData, target, pname)) {
+         sEmulateUserTextureSwizzle(texData, target, pname, (GLint)param);
+@@ -3651,6 +4134,7 @@ GL_APICALL void  GL_APIENTRY glTexParameterfv(GLenum target, GLenum pname, const
+     if (texData) {
+         texData->setTexParam(pname, static_cast<GLint>(params[0]));
+     }
++    if (sKeptOffOverride(ctx, target)) return;
+ 
+     if (sShouldEmulateSwizzles(texData, target, pname)) {
+         sEmulateUserTextureSwizzle(texData, target, pname, (GLint)params[0]);
+@@ -3669,6 +4153,7 @@ GL_APICALL void  GL_APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint
+     if (texData) {
+         texData->setTexParam(pname, param);
+     }
++    if (sKeptOffOverride(ctx, target)) return;
+ 
+     if (sShouldEmulateSwizzles(texData, target, pname)) {
+         sEmulateUserTextureSwizzle(texData, target, pname, param);
+@@ -3686,6 +4171,7 @@ GL_APICALL void  GL_APIENTRY glTexParameteriv(GLenum target, GLenum pname, const
+     if (texData) {
+         texData->setTexParam(pname, params[0]);
+     }
++    if (sKeptOffOverride(ctx, target)) return;
+ 
+ 
+     if (sShouldEmulateSwizzles(texData, target, pname)) {
+@@ -4076,6 +4562,7 @@ GL_APICALL void  GL_APIENTRY glUseProgram(GLuint program){
+         ctx->setUseProgram(program, objData);
+         SHADER_DEBUG_PRINT("use program %u", program);
+ 
++        ctx->applyEmbedderSettings();
+         ctx->dispatcher().glUseProgram(globalProgramName);
+     }
+ }
+@@ -4783,5 +5270,55 @@ GL_APICALL GLenum GL_APIENTRY glGetGraphicsResetStatusEXT() {
+     return res;
+ }
+ 
++
++GL_APICALL void GL_APIENTRY glFramebufferTexture2DMultisampleEXT(GLenum target, GLenum attachment,
++                                                                 GLenum textarget, GLuint texture,
++                                                                 GLint level, GLsizei samples) {
++    GET_CTX_V2();
++    // The texture is attached as for glFramebufferTexture2D, so the app's
++    // records and the driver both have it; with a sample count, the driver's
++    // attachment is then a multisampled renderbuffer resolved into it.
++    glFramebufferTexture2D(target, attachment, textarget, texture, level);
++    SET_ERROR_IF(samples < 0, GL_INVALID_VALUE);
++    if (!samples || !texture || textarget != GL_TEXTURE_2D) return;
++    auto& gl = ctx->dispatcher();
++    GLint maxSamples = 0;
++    gl.glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
++    SET_ERROR_IF(samples > maxSamples, GL_INVALID_VALUE);
++
++    // The texture's own format and size, as the driver holds them.
++    const GLuint globalTexture = ctx->shareGroup()->getGlobalName(
++            NamedObjectType::TEXTURE, ctx->getTextureLocalName(textarget, texture));
++    GLint prevTexture = 0, format = 0, width = 0, height = 0;
++    gl.glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexture);
++    gl.glBindTexture(GL_TEXTURE_2D, globalTexture);
++    gl.glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_INTERNAL_FORMAT, &format);
++    gl.glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH, &width);
++    gl.glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &height);
++    gl.glBindTexture(GL_TEXTURE_2D, prevTexture);
++    if (!format || !width || !height) return;
++
++    GLint prevRenderbuffer = 0;
++    GLuint renderbuffer = 0;
++    gl.glGetIntegerv(GL_RENDERBUFFER_BINDING, &prevRenderbuffer);
++    gl.glGenRenderbuffers(1, &renderbuffer);
++    gl.glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
++    gl.glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format, width, height);
++    gl.glBindRenderbuffer(GL_RENDERBUFFER, prevRenderbuffer);
++    gl.glFramebufferRenderbuffer(target, attachment, GL_RENDERBUFFER, renderbuffer);
++
++    std::lock_guard<std::mutex> lock(s_msrttLock);
++    s_msrtt[{ctx, ctx->getFramebufferBinding(target)}].push_back(
++            StudMsrtt{attachment, renderbuffer, globalTexture, textarget, level, width, height});
++}
++
++GL_APICALL void GL_APIENTRY glRenderbufferStorageMultisampleEXT(GLenum target, GLsizei samples,
++                                                                GLenum internalformat,
++                                                                GLsizei width, GLsizei height) {
++    // A renderbuffer is never sampled, so its implicit resolve has nothing to
++    // resolve into: plain multisampled storage.
++    glRenderbufferStorageMultisample(target, samples, internalformat, width, height);
++}
++
+ } // namespace translator
+ } // namespace gles2
+diff --git a/host/gl/glestranslator/gles_v2/gles_v31_imp.cpp b/host/gl/glestranslator/gles_v2/gles_v31_imp.cpp
+index 241cfd82..e6503d78 100644
+--- a/host/gl/glestranslator/gles_v2/gles_v31_imp.cpp
++++ b/host/gl/glestranslator/gles_v2/gles_v31_imp.cpp
+@@ -659,6 +659,9 @@ GL_APICALL void GL_APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei sam
+     sPrepareTexImage2D(target, 0, (GLint)internalformat, width, height, 0, format, type, samples, NULL, &type, (GLint*)&internalformat, &err);
+     SET_ERROR_IF(err != GL_NO_ERROR, err);
+     ctx->dispatcher().glTexStorage2DMultisample(target, samples, internalformat, width, height, fixedsamplelocations);
++    if (format != GL_DEPTH_COMPONENT && format != GL_DEPTH_STENCIL && format != GL_STENCIL_INDEX) {
++        sMsTwinCreate(ctx, internalformat, width, height);
++    }
+ }
+ 
+ GL_APICALL void GL_APIENTRY glSampleMaski(GLuint maskNumber, GLbitfield mask) {
+diff --git a/host/gl/glestranslator/gles_v2/gles_v32_imp.cpp b/host/gl/glestranslator/gles_v2/gles_v32_imp.cpp
+index f56137e7..94700cf1 100644
+--- a/host/gl/glestranslator/gles_v2/gles_v32_imp.cpp
++++ b/host/gl/glestranslator/gles_v2/gles_v32_imp.cpp
+@@ -52,3 +52,24 @@ GL_APICALL void GL_APIENTRY glPopDebugGroup() {
+     SET_ERROR_IF_DISPATCHER_NOT_SUPPORT(glPopDebugGroup);
+     ctx->dispatcher().glPopDebugGroup();
+ }
++
++// The guest names textures and renderbuffers in its own namespace; the
++// driver gets the global names behind them.
++static GLuint sCopyImageGlobalName(GLESv2Context* ctx, GLuint name, GLenum target) {
++    if (!ctx->shareGroup().get()) return 0;
++    if (target == GL_RENDERBUFFER) {
++        return ctx->shareGroup()->getGlobalName(NamedObjectType::RENDERBUFFER, name);
++    }
++    return ctx->shareGroup()->getGlobalName(NamedObjectType::TEXTURE, name);
++}
++
++GL_APICALL void GL_APIENTRY glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth) {
++    GET_CTX_V2();
++    SET_ERROR_IF_DISPATCHER_NOT_SUPPORT(glCopyImageSubData);
++    const GLuint src = sCopyImageGlobalName(ctx, srcName, srcTarget);
++    const GLuint dst = sCopyImageGlobalName(ctx, dstName, dstTarget);
++    SET_ERROR_IF(!src || !dst, GL_INVALID_VALUE);
++    ctx->dispatcher().glCopyImageSubData(src, srcTarget, srcLevel, srcX, srcY, srcZ,
++                                         dst, dstTarget, dstLevel, dstX, dstY, dstZ,
++                                         srcWidth, srcHeight, srcDepth);
++}
+diff --git a/host/render_api.cpp b/host/render_api.cpp
+index f9a69e7a..30bfb4da 100644
+--- a/host/render_api.cpp
++++ b/host/render_api.cpp
+@@ -15,9 +15,16 @@
+  */
+ #include "render-utils/render_api.h"
+ 
++#include <atomic>
+ #include <memory>
+ 
+ #include "render_lib_impl.h"
++#include "frame_buffer.h"
++#include "gl/color_buffer_gl.h"
++#include "gfxstream/host/address_space_graphics.h"
++#include "render-utils/Renderer.h"
++#include "render-utils/address_space_graphics_types.h"
++#include "gfxstream/host/address_space_device.h"
+ #include "gfxstream/common/logging.h"
+ 
+ namespace gfxstream {
+@@ -26,4 +33,101 @@ RENDER_API_EXPORT RenderLibPtr initLibrary() {
+     return RenderLibPtr(new gfxstream::host::RenderLibImpl());
+ }
+ 
+-}  // namespace gfxstream
+\ No newline at end of file
++}  // namespace gfxstream
++
++namespace translator::egl {
++GLuint eglGetNativeTextureANDROID(EGLImage image);
++}
++
++// For an embedder presenting colour buffers itself, on EGL-on-EGL with its
++// own display (gfxstream_set_native_display).
++//
++// A host driver context sharing gfxstream's colour buffers; the embedder
++// creates its own contexts sharing this one.
++extern "C" RENDER_API_EXPORT void* gfxstream_create_shared_context() {
++    gfxstream::host::FrameBuffer* fb = gfxstream::host::FrameBuffer::getFB();
++    return fb != nullptr ? fb->platformCreateSharedEglContext() : nullptr;
++}
++
++// The host driver's texture holding a colour buffer, and its size; 0 if the
++// handle names none.
++extern "C" RENDER_API_EXPORT unsigned int gfxstream_color_buffer_texture(uint32_t handle,
++                                                                       uint32_t* width,
++                                                                       uint32_t* height) {
++    gfxstream::host::FrameBuffer* fb = gfxstream::host::FrameBuffer::getFB();
++    if (fb == nullptr) return 0;
++    gfxstream::host::IColorBufferRef cb = fb->findColorBuffer(handle);
++    if (!cb) return 0;
++    gfxstream::host::gl::ColorBufferGl* gl = cb->getColorBufferGl();
++    if (gl == nullptr) return 0;
++    if (width != nullptr) *width = gl->getWidth();
++    if (height != nullptr) *height = gl->getHeight();
++    return translator::egl::eglGetNativeTextureANDROID(gl->getEGLImage());
++}
++
++// The ring transport for an embedder in the same host process as the guest's
++// memory: gfxstream's own address space graphics context, on memory the
++// embedder shares with the guest (the ring storage, then the write buffer:
++// kAsgConsumerRingStorageSize + kAsgWriteBufferSize), with its render thread
++// reading the guest's commands where the guest writes them. The embedder
++// rings the doorbell (gfxstream_asg_notify) when the guest asks, which is
++// only while that render thread sleeps.
++
++// The memory a context takes: the ring storage first, then the write buffer.
++extern "C" RENDER_API_EXPORT void gfxstream_asg_layout(uint64_t* ring_storage_size,
++                                                       uint64_t* buffer_size) {
++    *ring_storage_size = gfxstream::kAsgConsumerRingStorageSize;
++    *buffer_size = gfxstream::host::kAsgWriteBufferSize;
++}
++
++// Where the contexts' render threads come from: `renderer`, as gfxstream's
++// virtio renderer sets it up. Once, before the first context.
++extern "C" RENDER_API_EXPORT void gfxstream_asg_set_renderer(void* renderer) {
++    auto* r = static_cast<gfxstream::Renderer*>(renderer);
++    gfxstream::host::AddressSpaceGraphicsContext::setConsumer(gfxstream::ConsumerInterface{
++        .create = [r](const gfxstream::AsgConsumerCreateInfo& info,
++                      gfxstream::Stream* load) -> gfxstream::ConsumerHandle {
++            return r->addressSpaceGraphicsConsumerCreate(info, load);
++        },
++        .destroy = [r](void* consumer) { r->addressSpaceGraphicsConsumerDestroy(consumer); },
++        .preSave = [](void*) {},
++        .globalPreSave = []() {},
++        .save = [](void*, gfxstream::Stream*) {},
++        .globalPostSave = []() {},
++        .postSave = [](void*) {},
++        .postLoad = [](void*) {},
++        .globalPreLoad = []() {},
++        .reloadRingConfig = [](void*) {},
++    });
++}
++
++// A context on `memory` (`size` bytes) for the guest process `puid`, its
++// render thread started and its ring set up, so the guest may map the
++// memory and write as soon as this returns.
++extern "C" RENDER_API_EXPORT void* gfxstream_asg_create(void* memory, uint64_t size,
++                                                        uint32_t puid) {
++    static std::atomic<uint32_t> nextHandle{1};
++    static const char kName[] = "stud";
++    AddressSpaceCreateInfo create = {};
++    create.handle = nextHandle.fetch_add(1);
++    create.type = ADDRESS_SPACE_CONTEXT_TYPE_VIRTIO_GPU_GRAPHICS;
++    create.createRenderThread = true;
++    create.externalAddr = memory;
++    create.externalAddrSize = size;
++    create.virtioGpuContextId = puid;
++    create.virtioGpuCapsetId = 0;
++    create.contextName = kName;
++    create.contextNameSize = sizeof(kName) - 1;
++    return new gfxstream::host::AddressSpaceGraphicsContext(create);
++}
++
++extern "C" RENDER_API_EXPORT void gfxstream_asg_notify(void* context) {
++    AddressSpaceDevicePingInfo ping = {};
++    ping.metadata = ASG_NOTIFY_AVAILABLE;
++    static_cast<gfxstream::host::AddressSpaceGraphicsContext*>(context)->perform(&ping);
++}
++
++// Ends the context's render thread and frees it; the memory is the caller's.
++extern "C" RENDER_API_EXPORT void gfxstream_asg_destroy(void* context) {
++    delete static_cast<gfxstream::host::AddressSpaceGraphicsContext*>(context);
++}
+diff --git a/host/render_control.cpp b/host/render_control.cpp
+index 9b958926..db4d3f1b 100644
+--- a/host/render_control.cpp
++++ b/host/render_control.cpp
+@@ -26,6 +26,9 @@
+ #include "frame_buffer.h"
+ #include "host/gl/gles_version_detector.h"
+ #include "OpenGLESDispatch/DispatchTables.h"
++
++// Whether the translator hands ASTC to the driver (gles_v2_context.cpp).
++extern "C" bool gfxstream_translator_passes_astc();
+ #include "OpenGLESDispatch/EGLDispatch.h"
+ #include "render_thread_info.h"
+ #include "host/gl/render_thread_info_gl.h"
+@@ -57,6 +60,7 @@ using gl::EmulatedEglFenceSync;
+ using gl::GLES_DISPATCH_MAX_VERSION_2;
+ using gl::GLES_DISPATCH_MAX_VERSION_3_0;
+ using gl::GLES_DISPATCH_MAX_VERSION_3_1;
++using gl::GLES_DISPATCH_MAX_VERSION_3_2;
+ using gl::GLESApi;
+ using gl::GLESApi_CM;
+ using gl::GLESDispatchMaxVersion;
+@@ -195,6 +199,7 @@ static const char* kDirectMemStr = "ANDROID_EMU_direct_mem";
+ static const char* kGLESDynamicVersion_2 = "ANDROID_EMU_gles_max_version_2";
+ static const char* kGLESDynamicVersion_3_0 = "ANDROID_EMU_gles_max_version_3_0";
+ static const char* kGLESDynamicVersion_3_1 = "ANDROID_EMU_gles_max_version_3_1";
++static const char* kGLESDynamicVersion_3_2 = "ANDROID_EMU_gles_max_version_3_2";
+ 
+ // HWComposer Host Composition
+ static const char* kHostCompositionV1 = "ANDROID_EMU_host_composition_v1";
+@@ -370,6 +375,8 @@ const char* maxVersionToFeatureString(GLESDispatchMaxVersion version) {
+             return kGLESDynamicVersion_3_0;
+         case GLES_DISPATCH_MAX_VERSION_3_1:
+             return kGLESDynamicVersion_3_1;
++        case GLES_DISPATCH_MAX_VERSION_3_2:
++            return kGLESDynamicVersion_3_2;
+         default:
+             return kGLESDynamicVersion_2;
+     }
+@@ -651,7 +658,12 @@ static EGLint rcGetGLString(EGLenum name, void* buffer, EGLint bufferSize) {
+             const bool hasNativeAstc =
+                 glExtensions.find("GL_KHR_texture_compression_astc_ldr") != std::string::npos;
+             const bool hasAstcDecompressor = vk::AstcCpuDecompressor::get().available();
+-            if (hasNativeAstc || hasAstcDecompressor) {
++            // The driver's extension alone is not enough: the translator hands
++            // ASTC to it only with native texture decompression on and every
++            // format listed, and otherwise decodes on the CPU, which a build
++            // without the decompressor cannot. ASTC offered then would give
++            // the app empty textures.
++            if ((hasNativeAstc && gfxstream_translator_passes_astc()) || hasAstcDecompressor) {
+                 glStr += "GL_KHR_texture_compression_astc_ldr ";
+             } else {
+                 RENDERCONTROL_DPRINT(
+@@ -691,6 +703,9 @@ static EGLint rcGetGLString(EGLenum name, void* buffer, EGLint bufferSize) {
+             case GLES_DISPATCH_MAX_VERSION_3_1:
+                 glStr = replaceESVersionString(glStr, "3.1");
+                 break;
++            case GLES_DISPATCH_MAX_VERSION_3_2:
++                glStr = replaceESVersionString(glStr, "3.2");
++                break;
+             default:
+                 break;
+             }
+@@ -867,6 +882,9 @@ static void rcCloseColorBuffer(uint32_t colorbuffer)
+     fb->closeColorBuffer( colorbuffer );
+ }
+ 
++extern "C" void gfxstream_stud_frame_flushed(uint32_t colorBuffer);
++extern "C" void gfxstream_stud_before_reuse(uint32_t colorBuffer);
++
+ static int rcFlushWindowColorBuffer(uint32_t windowSurface)
+ {
+     GRSYNC_DPRINT("waiting for gralloc cb lock");
+@@ -889,6 +907,7 @@ static int rcFlushWindowColorBuffer(uint32_t windowSurface)
+     // Make the GL updates visible to other backings if necessary.
+     if (colorBufferHandle != 0) {
+         fb->flushColorBufferFromGl(colorBufferHandle);
++        gfxstream_stud_frame_flushed(colorBufferHandle);
+     }
+ 
+     GRSYNC_DPRINT("unlock gralloc cb lock }");
+@@ -931,6 +950,7 @@ static void rcSetWindowColorBuffer(uint32_t windowSurface,
+     if (!fb) {
+         return;
+     }
++    gfxstream_stud_before_reuse(colorBuffer);
+     fb->setEmulatedEglWindowSurfaceColorBuffer(windowSurface, colorBuffer);
+ }
+ 

@@ -129,6 +129,11 @@ struct ProcessBConfig {
     // collected from a real end-to-end run.
     std::vector<std::pair<std::string, std::string>> extra_env;
 
+    // Libraries that take the place of /system/lib64 ones: {host path, name
+    // there}. Bound after Process B's own libraries, so these win; OpenGL
+    // mode through gfxstream uses them for gfxstream's libEGL/libGLESv2.
+    std::vector<std::pair<std::string, std::string>> system_lib_overrides;
+
     // The file descriptor Process B should use as its stdout and stderr,
     // or -1 to inherit this process's. Process A tees its own output into
     // the session log, which replaces its fd 1 with a pipe only its own

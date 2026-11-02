@@ -58,6 +58,9 @@ third_party/*
 # null and failed at runtime behind whichever guard covered it, where a
 # misspelling in volk's table does not compile. MIT, two files.
 !third_party/volk/
+# And gfxstream: not gfxstream itself, which is fetched, but Stud's patch to
+# it and the build of its guest libraries for OpenGL mode, both Stud's own.
+!third_party/gfxstream/
 # And xxHash, which keys the texture cache. It replaced two hand-rolled
 # FNV-1a streams: 0.067 ms against 0.025 ms over the 512 KB of a 1024x1024
 # level, which matters because it runs on every cache HIT, where there is

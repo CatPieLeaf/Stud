@@ -1146,32 +1146,9 @@ void start_submit_feedback(uint64_t device) {
     if (f.device == device) f.page = static_cast<const std::atomic<uint64_t>*>(page.address);
 }
 
-// The page render-host keeps the window's size and close request in (see
-// CallId::ShareWindowState), made once and handed to the runtime, whose
-// main loop reads it instead of asking every 250ms. This library has the
-// shared-memory channel; the runtime does not, so it is made here.
-void share_window_state_once() {
-    static std::once_flag once;
-    std::call_once(once, [] {
-        using SetPage = void (*)(const void*);
-        auto set_page =
-            reinterpret_cast<SetPage>(::dlsym(RTLD_DEFAULT, "stud_set_window_state_page"));
-        if (set_page == nullptr) return;
-        SharedAllocation page;
-        if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), page)) {
-            return;
-        }
-        uint64_t a[8] = {page.id};
-        const uint64_t r = stud::render_client::connection().call(CallId::ShareWindowState, a,
-                                                                 nullptr, 0, nullptr, 0, nullptr);
-        ::close(page.fd);
-        if (r != 1) {
-            ::munmap(page.address, page.length);
-            return;
-        }
-        set_page(page.address);
-    });
-}
+// The window-state page, so the runtime's main loop reads the size and
+// close request instead of asking every 250ms (see window_state_page()).
+void share_window_state_once() { (void)stud::render_client::window_state_page(); }
 
 // Whether every fence (wait_all) or any fence has certainly signalled.
 bool fences_known_signalled(uint64_t device, uint32_t count, const VkFence* fences,

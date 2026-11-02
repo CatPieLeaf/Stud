@@ -123,6 +123,12 @@ set_target_properties(stud-ui PROPERTIES
 )
 
 target_compile_definitions(stud-ui PRIVATE STUD_APP_ID="${STUD_APP_ID}" STUD_VERSION="${STUD_VERSION}")
+# gfxstream's guest libEGL/libGLESv2, for OpenGL mode (see
+# render-host/src/gfxstream_host.h); set together with STUD_GFXSTREAM_DIR.
+set(STUD_GFXSTREAM_GUEST_DIR "" CACHE PATH "gfxstream guest libraries built for bionic")
+if(STUD_GFXSTREAM_GUEST_DIR)
+    target_compile_definitions(stud-ui PRIVATE STUD_GFXSTREAM_GUEST_DIR="${STUD_GFXSTREAM_GUEST_DIR}")
+endif()
 
 # The launcher is the only binary a user runs, so it is the only one on
 # PATH. The others live in libexec and are found relative to it.

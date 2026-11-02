@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/un.h>
+#include <dlfcn.h>
 #include <unistd.h>
 
 // Which shared library this copy was compiled into.
@@ -331,21 +332,26 @@ void move_requests_into_ring() {
         const uint64_t memory_id = next_shared_id();
         const uint64_t consumer_id = next_shared_id();
         const uint64_t producer_id = next_shared_id();
-        const bool ready = ring->create(static_cast<size_t>(sndbuf)) &&
-                           send_shared_fd(memory_id, ring->memory_fd()) &&
-                           send_shared_fd(consumer_id, ring->wake_consumer_fd()) &&
-                           send_shared_fd(producer_id, ring->wake_producer_fd());
+        const bool created = ring->create(static_cast<size_t>(sndbuf));
+        const bool handed = created && send_shared_fd(memory_id, ring->memory_fd()) &&
+                            send_shared_fd(consumer_id, ring->wake_consumer_fd()) &&
+                            send_shared_fd(producer_id, ring->wake_producer_fd());
         const size_t bytes = ring->data_bytes();
         const uint64_t a[8] = {memory_id, consumer_id, producer_id, bytes};
         stud::render_host::TransportRing* r = ring.get();
         const bool moved =
-            ready && client.switch_to_ring(
-                         ring, [r](const void* data, uint32_t n, int peer) {
-                             return r->write(data, n, peer);
-                         },
-                         a);
-        std::printf("stud: render-client (%s): requests travel %s\n", STUD_CLIENT_OWNER,
-                    moved ? "through a shared-memory ring" : "over the socket");
+            handed && client.switch_to_ring(
+                          ring, [r](const void* data, uint32_t n, int peer) {
+                              return r->write(data, n, peer);
+                          },
+                          a);
+        // Which step kept them on the socket, when one did.
+        const char* why = moved     ? ""
+                          : !created ? " (the ring could not be made)"
+                          : !handed  ? " (the ring could not be handed to render-host)"
+                                     : " (the switch was refused)";
+        std::printf("stud: render-client (%s): requests travel %s%s\n", STUD_CLIENT_OWNER,
+                    moved ? "through a shared-memory ring" : "over the socket", why);
         std::fflush(stdout);
     });
 }
@@ -414,6 +420,32 @@ bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to
     out.id = id;
     out.fd = fd;
     return true;
+}
+
+const std::atomic<uint64_t>* window_state_page() {
+    static const std::atomic<uint64_t>* const page = []() -> const std::atomic<uint64_t>* {
+        using GetPage = const void* (*)();
+        using SetPage = void (*)(const void*);
+        auto get_page = reinterpret_cast<GetPage>(::dlsym(RTLD_DEFAULT, "stud_window_state_page"));
+        auto set_page = reinterpret_cast<SetPage>(::dlsym(RTLD_DEFAULT, "stud_set_window_state_page"));
+        if (get_page == nullptr || set_page == nullptr) return nullptr;
+        if (const void* existing = get_page()) return static_cast<const std::atomic<uint64_t>*>(existing);
+        SharedAllocation alloc;
+        if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), alloc)) {
+            return nullptr;
+        }
+        uint64_t a[8] = {alloc.id};
+        const uint64_t r = connection().call(stud::render_host::CallId::ShareWindowState, a, nullptr,
+                                             0, nullptr, 0, nullptr);
+        ::close(alloc.fd);
+        if (r != 1) {
+            ::munmap(alloc.address, alloc.length);
+            return nullptr;
+        }
+        set_page(alloc.address);
+        return static_cast<const std::atomic<uint64_t>*>(alloc.address);
+    }();
+    return page;
 }
 
 }  // namespace stud::render_client

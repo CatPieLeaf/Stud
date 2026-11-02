@@ -168,4 +168,31 @@ bool TransportRing::read(void* dst, size_t len, int peer) {
     return true;
 }
 
+size_t TransportRing::readable() const {
+    return ring_buffer_available_read(&shared_->ring, as_view(view_));
+}
+
+bool TransportRing::wait(int peer, pollfd& other, int timeout_ms) {
+    other.revents = 0;
+    // The same handshake read() sleeps with: said before the last look, so
+    // the producer either wakes this poll or this look sees its bytes.
+    __atomic_store_n(&shared_->consumer_sleeping, 1, __ATOMIC_SEQ_CST);
+    bool alive = true;
+    if (readable() == 0) {
+        pollfd p[3] = {{wake_consumer_fd_, POLLIN, 0}, {peer, POLLRDHUP, 0}, other};
+        int n;
+        do {
+            n = ::poll(p, 3, timeout_ms);
+        } while (n < 0 && errno == EINTR);
+        if (n > 0 && (p[0].revents & POLLIN)) {
+            uint64_t count = 0;
+            (void)::read(wake_consumer_fd_, &count, sizeof(count));
+        }
+        if (n > 0 && (p[1].revents & (POLLRDHUP | POLLHUP | POLLERR | POLLNVAL))) alive = false;
+        other.revents = p[2].revents;
+    }
+    __atomic_store_n(&shared_->consumer_sleeping, 0, __ATOMIC_SEQ_CST);
+    return alive || readable() > 0;
+}
+
 }  // namespace stud::render_host

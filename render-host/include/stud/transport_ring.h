@@ -18,6 +18,8 @@
 // poll() watches the socket, so a peer that dies wakes the sleeper rather
 // than leaving it asleep for good.
 
+#include <poll.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -46,6 +48,14 @@ public:
     // socket; false once it has hung up and nothing more can come.
     bool write(const void* data, size_t len, int peer);
     bool read(void* dst, size_t len, int peer);
+
+    // The consumer's: bytes ready to read now.
+    size_t readable() const;
+    // The consumer's: waits up to `timeout_ms` for bytes, for `peer` to hang
+    // up, or for `other` to become readable (its revents are filled in), so
+    // a loop that also serves another descriptor can wait on both. False on
+    // the hang-up.
+    bool wait(int peer, pollfd& other, int timeout_ms);
 
     // What both processes map; defined in transport_ring.cpp.
     struct Shared;

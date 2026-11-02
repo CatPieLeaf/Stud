@@ -490,6 +490,12 @@ extern "C" __attribute__((visibility("default"))) void stud_set_window_state_pag
                               std::memory_order_release);
 }
 
+// The same page for the other client libraries, so there is only one:
+// render-host writes to the last page it was given.
+extern "C" __attribute__((visibility("default"))) const void* stud_window_state_page() {
+    return g_window_state_page.load(std::memory_order_acquire);
+}
+
 // Slot `slot` of that page, if there is one and render-host has filled it.
 bool window_state_from_page(int slot, uint64_t* value) {
     const std::atomic<uint64_t>* page = g_window_state_page.load(std::memory_order_acquire);

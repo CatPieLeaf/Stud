@@ -25,6 +25,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 |---|---|---|
 | `STUD_DISPLAY_BACKEND` | auto | `x11` or `wayland`, instead of detecting. The X11 path is reachable under a Wayland compositor through XWayland. |
 | `STUD_GRAPHICS_MODE` | from settings | `vulkan` or `opengl`; anything else means Vulkan. |
+| `STUD_GL_GFXSTREAM` | on | `0` runs OpenGL mode on Stud's own GLES forwarding instead of gfxstream. Only in a build configured with gfxstream (`STUD_GFXSTREAM_DIR`, `STUD_GFXSTREAM_BUILD_DIR`, `STUD_GFXSTREAM_GUEST_DIR`); without those, OpenGL mode always forwards. |
 | `STUD_PRESENT_MODE` | `fifo` | `engine`, `mailbox`, `immediate`, `fifo`, `fifo-relaxed`. `engine` forwards whatever the engine asked for, which is the control for measuring whether substituting helps. |
 | `STUD_BACKGROUND_FPS` | `30` | Frames per second while the window is not focused. Above 240 or below 1 disables the throttle entirely. |
 | `STUD_FORCE_REFRESH_HZ` | from the compositor | What refresh rate the engine is told the display runs at. |

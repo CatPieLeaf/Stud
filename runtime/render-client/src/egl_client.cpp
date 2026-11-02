@@ -80,6 +80,10 @@ std::atomic<uint32_t>* frame_page() {
 extern "C" {
 
 EGLDisplay eglGetDisplay(EGLNativeDisplayType) {
+    // Every GL call the engine makes from here on crosses through shared
+    // memory rather than the socket, as Vulkan's do; see
+    // stud/transport_ring.h.
+    stud::render_client::move_requests_into_ring();
     uint64_t a[8] = {};
     uint64_t h = connection().call(CallId::EglGetDisplay, a, nullptr, 0, nullptr, 0, nullptr);
     return h == 0 ? EGL_NO_DISPLAY : from_handle<EGLDisplay>(h);

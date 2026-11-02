@@ -20,6 +20,7 @@
 // render_host_protocol.h's own doc comment for why.
 
 #include "flight_recorder.h"
+#include "gfxstream_host.h"
 #include "socket_reader.h"
 #include "stud/transport_ring.h"
 #include "stud/session_log.h"
@@ -62,6 +63,7 @@
 #include <mutex>
 #include <sys/wait.h>
 #include <fstream>
+#include <condition_variable>
 #include <thread>
 #include <cstdio>
 #include <ctime>
@@ -1013,6 +1015,11 @@ GLuint g_texture[2] = {0, 0};     // the files, once uploaded
 bool g_tried = false;
 constexpr GLenum kUnit[2] = {8, 11};
 constexpr const char* kFile[2] = {"normaldetail.dds", "brdfLUT.dds"};
+// The second environment cube the desktop shaders blend with the engine's
+// (PrefilteredEnvIndoorTexture at 14, PrefilteredEnvTexture at 15): the
+// Android engine leaves a 1x1 placeholder at 14, so it shows 15's cube.
+constexpr GLenum kIndoorCubeUnit = 14;
+constexpr GLenum kEnvCubeUnit = 15;
 
 // One DDS file, mips and all: BC3 (the detail normal, DXT5nm) or
 // R16G16_FLOAT (the lookup table), the two layouts these files use.
@@ -1035,6 +1042,7 @@ GLuint upload(const RealFns& fns, const std::string& path, bool repeat) {
     GLuint tex = 0;
     fns.glGenTextures_(1, &tex);
     fns.glBindTexture_(GL_TEXTURE_2D, tex);
+    uint32_t uploaded = 0;
     for (uint32_t i = 0; i < mips; ++i) {
         const uint32_t mw = std::max(1u, w >> i), mh = std::max(1u, h >> i);
         const size_t bytes = block ? size_t{(mw + 3) / 4} * ((mh + 3) / 4) * 16 : size_t{mw} * mh * 4;
@@ -1048,8 +1056,9 @@ GLuint upload(const RealFns& fns, const std::string& path, bool repeat) {
                               static_cast<GLsizei>(mh), 0, GL_RG, GL_HALF_FLOAT, b.data() + at);
         }
         at += bytes;
-        mips = i + 1;
+        uploaded = i + 1;
     }
+    mips = uploaded;
     const GLint wrap = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
     fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
     fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
@@ -2620,6 +2629,7 @@ struct GlScaleTarget {
     GLint viewport_info = -1;
     GLint source = -1;
     bool program_tried = false;
+    bool top_down = false;   // the source's first row is the image's top
 };
 
 std::mutex g_gl_scale_mutex;
@@ -2702,8 +2712,8 @@ GLuint gl_compile(const RealFns& fns, GLenum type, const std::string& src) {
 void gl_build_program(const RealFns& fns, GlScaleTarget& t) {
     t.program_tried = true;
     // One triangle covering the window, its texture coordinate running
-    // 0..1 across the visible part; both framebuffers are bottom-up, so
-    // nothing flips.
+    // 0..1 across the visible part. A bottom-up source, like the window,
+    // needs no flip; a top-down one is drawn upside down to come out right.
     static const char* kVertex =
         "#version 300 es\n"
         "out highp vec4 in_TEXCOORD0;\n"
@@ -2712,7 +2722,15 @@ void gl_build_program(const RealFns& fns, GlScaleTarget& t) {
         "    in_TEXCOORD0 = vec4(p, 0.0, 0.0);\n"
         "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
         "}\n";
-    GLuint vs = gl_compile(fns, GL_VERTEX_SHADER, kVertex);
+    static const char* kVertexTopDown =
+        "#version 300 es\n"
+        "out highp vec4 in_TEXCOORD0;\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    in_TEXCOORD0 = vec4(p, 0.0, 0.0);\n"
+        "    gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);\n"
+        "}\n";
+    GLuint vs = gl_compile(fns, GL_VERTEX_SHADER, t.top_down ? kVertexTopDown : kVertex);
     GLuint fs = gl_compile(fns, GL_FRAGMENT_SHADER, gl_upscaler_fragment_source());
     if (vs == 0 || fs == 0) {
         if (vs != 0) fns.glDeleteShader_(vs);
@@ -2970,6 +2988,229 @@ void gl_scale_present(const RealFns& fns, GlScaleTarget& t) {
     }
 }
 
+// ---- OpenGL through gfxstream: presenting the guest's colour buffers ----
+//
+// The engine's frames are drawn by gfxstream (gfxstream_host.h) into colour
+// buffers on this process's own EGL display. Each queued one is drawn here
+// into the window: through SGSR when the window is larger than the frame,
+// copied otherwise, then swapped. The presenting context shares gfxstream's,
+// so the frame is read where it lies.
+struct GfxPresenter {
+    bool tried = false;
+    bool ok = false;
+    EGLDisplay display = EGL_NO_DISPLAY;
+    EGLSurface surface = EGL_NO_SURFACE;
+    EGLContext context = EGL_NO_CONTEXT;
+    GlScaleTarget scaler;  // only its SGSR program and vertex array
+    GLuint read_fbo = 0;
+};
+GfxPresenter g_gfx_presenter;
+
+EGLDisplay gfx_platform_display(const RealFns& fns, const RealWindow& window) {
+    constexpr EGLenum kPlatformX11 = 0x31D5;
+    constexpr EGLenum kPlatformWayland = 0x31D8;
+    if (fns.eglGetPlatformDisplayEXT_ == nullptr) return EGL_NO_DISPLAY;
+    return fns.eglGetPlatformDisplayEXT_(
+        window.on_x11() ? kPlatformX11 : kPlatformWayland,
+        window.on_x11() ? window.x11_display : static_cast<void*>(window.display), nullptr);
+}
+
+bool gfx_presenter_init(const RealFns& fns, RealWindow& window) {
+    GfxPresenter& p = g_gfx_presenter;
+    p.tried = true;
+    p.display = gfx_platform_display(fns, window);
+    if (p.display == EGL_NO_DISPLAY || fns.eglInitialize_(p.display, nullptr, nullptr) != EGL_TRUE) {
+        std::fprintf(stderr, "stud-render-host: gfxstream present: no EGL display\n");
+        return false;
+    }
+    fns.eglBindAPI_(EGL_OPENGL_ES_API);
+    constexpr EGLint kEs3Bit = 0x40;  // EGL_OPENGL_ES3_BIT
+    const EGLint attribs[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, kEs3Bit,
+                              EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+                              EGL_ALPHA_SIZE, 8, EGL_NONE};
+    EGLConfig config = nullptr;
+    EGLint n = 0;
+    if (fns.eglChooseConfig_(p.display, attribs, &config, 1, &n) != EGL_TRUE || n < 1) {
+        std::fprintf(stderr, "stud-render-host: gfxstream present: no window config\n");
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> wl_lock(wayland_mutex());
+        if (window.display != nullptr) wl_display_roundtrip(window.display);
+    }
+    p.surface = fns.eglCreateWindowSurface_(p.display, config, window.egl_native_window(), nullptr);
+    // Sharing needs the same reset strategy as gfxstream's contexts, which
+    // ask for lose-on-reset whenever the display offers robustness.
+    const char* exts = fns.eglQueryString_(p.display, EGL_EXTENSIONS);
+    const bool robust = exts != nullptr && std::strstr(exts, "EGL_EXT_create_context_robustness");
+    const EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3,
+                                  robust ? 0x3138 : EGL_NONE,  // RESET_NOTIFICATION_STRATEGY_EXT
+                                  0x31BF,                      // LOSE_CONTEXT_ON_RESET_EXT
+                                  EGL_NONE};
+    p.context = fns.eglCreateContext_(
+        p.display, config,
+        static_cast<EGLContext>(stud::render_host::gfxstream_host::shared_context()), ctx_attribs);
+    if (p.surface == EGL_NO_SURFACE || p.context == EGL_NO_CONTEXT ||
+        fns.eglMakeCurrent_(p.display, p.surface, p.surface, p.context) != EGL_TRUE) {
+        std::fprintf(stderr, "stud-render-host: gfxstream present: window surface or context "
+                             "failed (0x%x)\n", fns.eglGetError_());
+        return false;
+    }
+    // Uncapped, as the engine asks for on its own path; the guest paces
+    // itself on its swaps.
+    fns.eglSwapInterval_(p.display, 0);
+    fns.glGenFramebuffers_(1, &p.read_fbo);
+    p.scaler.top_down = true;
+    // Windows Graphical Parity: the files the desktop material shaders read
+    // go on their units always. No Android shader uses those units; the
+    // engine leaves them empty or puts its 1x1 normal-map placeholder there,
+    // which the DXT5nm detail decode turns into NaN (black).
+    if (!gl_desktop_fill::g_dir.empty()) {
+        for (int i = 0; i < 2; ++i) {
+            const GLuint texture = gl_desktop_fill::upload(
+                fns, gl_desktop_fill::g_dir + "/" + gl_desktop_fill::kFile[i], i == 0);
+            stud::render_host::gfxstream_host::set_unit_texture_override(gl_desktop_fill::kUnit[i],
+                                                                        texture);
+            std::printf("stud-render-host: Windows Graphical Parity (gfxstream): %s %s\n",
+                        gl_desktop_fill::kFile[i], texture != 0 ? "on its unit" : "missing");
+        }
+        stud::render_host::gfxstream_host::set_cube_unit_mirror(gl_desktop_fill::kIndoorCubeUnit,
+                                                                gl_desktop_fill::kEnvCubeUnit);
+        fns.glBindTexture_(GL_TEXTURE_2D, 0);
+        std::fflush(stdout);
+    }
+    g_window_egl_display = p.display;
+    g_window_egl_config = config;
+    g_window_egl_surface = p.surface;
+    return true;
+}
+
+// A frame to show: the colour buffer and the host texture behind it. The
+// texture is looked up where the present arrives: gfxstream finds a colour
+// buffer's image through its EGL state for the calling thread, which the
+// presenter thread does not have.
+struct GfxFrame {
+    uint32_t color_buffer = 0;
+    GLuint tex = 0;
+    uint32_t w = 0;
+    uint32_t h = 0;
+};
+
+uint64_t gfx_present(const RealFns& fns, RealWindow& window, const GfxFrame& frame);
+
+// The guest's present, answered as soon as the frame before it is on
+// screen: its own frame is drawn by the presenter thread meanwhile, so the
+// engine encodes its next frame while this one is waited for and drawn
+// rather than after. One frame in hand at most, so it never runs further
+// ahead than that.
+uint64_t gfx_present_behind(const RealFns& fns, RealWindow& window, uint32_t color_buffer) {
+    static std::mutex m;
+    static std::condition_variable changed;
+    static bool in_hand = false;
+    static GfxFrame next;
+    static std::once_flag started;
+    // ponytail: detached, holding main()'s fns and window; join it at exit
+    // if render-host ever tears down while a game is still presenting.
+    std::call_once(started, [&fns, &window] {
+        std::thread([&fns, &window] {
+            for (;;) {
+                GfxFrame frame;
+                {
+                    std::unique_lock<std::mutex> lock(m);
+                    changed.wait(lock, [] { return in_hand; });
+                    frame = next;
+                }
+                gfx_present(fns, window, frame);
+                {
+                    std::lock_guard<std::mutex> lock(m);
+                    in_hand = false;
+                }
+                changed.notify_all();
+            }
+        }).detach();
+    });
+    GfxFrame frame;
+    frame.color_buffer = color_buffer;
+    frame.tex = stud::render_host::gfxstream_host::color_buffer_texture(color_buffer, &frame.w,
+                                                                       &frame.h);
+    std::unique_lock<std::mutex> lock(m);
+    changed.wait(lock, [] { return !in_hand; });
+    next = frame;
+    in_hand = true;
+    changed.notify_all();
+    return 1;
+}
+
+uint64_t gfx_present(const RealFns& fns, RealWindow& window, const GfxFrame& frame) {
+    const uint32_t color_buffer = frame.color_buffer;
+    GfxPresenter& p = g_gfx_presenter;
+    if (!p.tried) {
+        std::printf("stud-render-host: first frame from gfxstream (colour buffer %u)\n",
+                    color_buffer);
+        std::fflush(stdout);
+        p.ok = gfx_presenter_init(fns, window);
+    }
+    if (!p.ok) return 0;
+    fns.eglMakeCurrent_(p.display, p.surface, p.surface, p.context);
+    stud::render_host::gfxstream_host::wait_frame(color_buffer);
+
+    const GLuint tex = frame.tex;
+    const uint32_t w = frame.w, h = frame.h;
+    if (tex == 0 || w == 0 || h == 0) {
+        static bool told = false;
+        if (!told) {
+            told = true;
+            std::fprintf(stderr, "stud-render-host: gfxstream present: colour buffer %u has no "
+                                 "texture (%ux%u)\n", color_buffer, w, h);
+        }
+        return 0;
+    }
+    EGLint out_w = 0, out_h = 0;
+    fns.eglQuerySurface_(p.display, p.surface, EGL_WIDTH, &out_w);
+    fns.eglQuerySurface_(p.display, p.surface, EGL_HEIGHT, &out_h);
+    if (out_w <= 0 || out_h <= 0) return 0;
+
+    const bool scaling = out_w > static_cast<EGLint>(w) || out_h > static_cast<EGLint>(h);
+    if (scaling && !p.scaler.program_tried) gl_build_program(fns, p.scaler);
+    static bool announced = false;
+    if (scaling && p.scaler.program != 0) {
+        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
+        fns.glViewport_(0, 0, out_w, out_h);
+        fns.glUseProgram_(p.scaler.program);
+        fns.glUniform4f_(p.scaler.viewport_info, 1.0f / static_cast<float>(w),
+                         1.0f / static_cast<float>(h), static_cast<float>(w),
+                         static_cast<float>(h));
+        fns.glUniform1i_(p.scaler.source, 0);
+        fns.glActiveTexture_(GL_TEXTURE0);
+        fns.glBindTexture_(GL_TEXTURE_2D, tex);
+        fns.glBindVertexArray_(p.scaler.vao);
+        fns.glDrawArrays_(GL_TRIANGLES, 0, 3);
+    } else {
+        fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, p.read_fbo);
+        fns.glFramebufferTexture2D_(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex,
+                                    0);
+        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
+        // Colour buffers are top-down; the window is bottom-up.
+        fns.glBlitFramebuffer_(0, 0, static_cast<GLint>(w), static_cast<GLint>(h), 0, out_h, out_w,
+                               0, GL_COLOR_BUFFER_BIT, scaling ? GL_LINEAR : GL_NEAREST);
+    }
+    if (!announced) {
+        announced = true;
+        std::printf("stud-render-host: gfxstream frame %ux%u -> %dx%d (%s)\n", w, h, out_w, out_h,
+                    scaling && p.scaler.program != 0 ? "SGSR" : "copy");
+        std::fflush(stdout);
+    }
+    stud::render_host::gfxstream_host::frame_shown(color_buffer);
+    const bool swapped = fns.eglSwapBuffers_(p.display, p.surface) == EGL_TRUE;
+    {
+        // Sent now; the answers are read by this process's own poll loop.
+        // A round trip here waited on the compositor every frame.
+        std::lock_guard<std::mutex> wl_lock(wayland_mutex());
+        if (window.display != nullptr) wl_display_flush(window.display);
+    }
+    return swapped ? 1 : 0;
+}
+
 // The window size the engine is meant to render at: the compositor's size
 // once it has settled (sync_vk_window_size), width in the high half.
 // GetWindowSize answers with this, so Process B's surface notifications
@@ -3075,6 +3316,8 @@ std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns,
             *out_len = sizeof(version);
             return ok;
         }
+        case CallId::GlPresentColorBuffer:
+            return gfx_present_behind(fns, window, static_cast<uint32_t>(a[0]));
         case CallId::EglBindApi:
             return fns.eglBindAPI_(static_cast<EGLenum>(a[0])) == EGL_TRUE;
         case CallId::EglChooseConfig: {
@@ -3705,6 +3948,8 @@ std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, 
         case CallId::GlStencilOp: fns.glStencilOp_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2])); return 0;
         case CallId::GlTexParameterf: fns.glTexParameterf_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), unpack_float(a[2])); return 0;
         case CallId::GlTexParameteri:
+            if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D && static_cast<GLenum>(a[1]) == GL_TEXTURE_MIN_FILTER) {
+            }
             trace_texture_parameter(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
                                     static_cast<GLint>(a[2]));
             fns.glTexParameteri_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLint>(a[2])); return 0;
@@ -5469,7 +5714,8 @@ bool batch_carries_present(const std::vector<uint8_t>& in) {
         p += sizeof(id16);
         const auto id = static_cast<stud::render_host::CallId>(id16);
         if (id == stud::render_host::CallId::VkQueuePresentKHR ||
-            id == stud::render_host::CallId::EglSwapBuffers) {
+            id == stud::render_host::CallId::EglSwapBuffers ||
+            id == stud::render_host::CallId::GlPresentColorBuffer) {
             return true;
         }
         if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) return false;
@@ -5493,6 +5739,7 @@ bool batch_carries_present(const std::vector<uint8_t>& in) {
 void throttle_before_dispatch(stud::render_host::CallId id, const std::vector<uint8_t>& in) {
     if (id == stud::render_host::CallId::VkQueuePresentKHR ||
         id == stud::render_host::CallId::EglSwapBuffers ||
+        id == stud::render_host::CallId::GlPresentColorBuffer ||
         (id == stud::render_host::CallId::GlCommandBatch && batch_carries_present(in))) {
         throttle_while_hidden();
     }
@@ -6214,6 +6461,23 @@ int main(int argc, char** argv) {
     }
     RealWindow real_window{display, egl_window, surface, x11_display, x11_window};
 
+    // OpenGL mode's engine GLES through gfxstream, on this window's own EGL
+    // display, when this build has it. STUD_GL_GFXSTREAM=0 keeps forwarding.
+    if (!g_prefer_vulkan && stud::render_host::gfxstream_host::available()) {
+        const char* env = std::getenv("STUD_GL_GFXSTREAM");
+        if (env == nullptr || std::string_view(env) != "0") {
+            constexpr unsigned int kPlatformX11 = 0x31D5;
+            constexpr unsigned int kPlatformWayland = 0x31D8;
+            const std::string sock = stud::render_host::default_socket_path();
+            const std::string dir = sock.substr(0, sock.find_last_of('/'));
+            stud::render_host::gfxstream_host::start(
+                real_window.on_x11() ? kPlatformX11 : kPlatformWayland,
+                real_window.on_x11() ? real_window.x11_display
+                                     : static_cast<void*>(real_window.display),
+                dir + "/gfxstream.sock");
+        }
+    }
+
     RealFns fns{};
 #define RESOLVE(name) fns.name##_ = must_resolve<PFN_##name>(#name)
 #define RESOLVE_OPTIONAL(name) fns.name##_ = may_resolve<PFN_##name>(#name)
@@ -6359,6 +6623,12 @@ int main(int argc, char** argv) {
         // The GL connection never carries the shared-fd channel, which only
         // ever arrives on a socket of its own; see serve_connection_thread().
         stud::render_host::SocketReader reader(conn_fd);
+        // As on the other connections: once the client asks for it, its
+        // requests come out of shared memory; replies stay on the socket.
+        std::unique_ptr<stud::render_host::TransportRing> ring;
+        const auto read_request = [&](void* dst, uint32_t len) {
+            return ring ? ring->read(dst, len, conn_fd) : reader.read(dst, len);
+        };
         for (;;) {
             if (stud::android_glue::window_close_requested()) {
                 // Not straight out of the door. Leaving a running
@@ -6409,23 +6679,37 @@ int main(int argc, char** argv) {
             // already holds comes first: a whole request can be sitting there
             // with the socket itself empty, and poll() would wait past it.
             serve_extra_connections(listen_fd, fns, real_window);
-            int pending = 0;
-            const bool have_buffered =
-                reader.buffered() + (::ioctl(conn_fd, FIONREAD, &pending) == 0
-                                         ? static_cast<size_t>(pending) : 0) >=
-                sizeof(Header);
-            if (!have_buffered) {
-                ::poll(cpfds, 2, wayland_poll_ms());
-                pump_display(real_window, (cpfds[1].revents & POLLIN) != 0);
-                if (!(cpfds[0].revents & POLLIN)) continue;
+            if (ring) {
+                // A request the client is still writing is read whole by
+                // read_request() below, so any byte means one is coming.
+                if (ring->readable() == 0) {
+                    pollfd wl{wl_fd, POLLIN, 0};
+                    if (!ring->wait(conn_fd, wl, wayland_poll_ms())) {
+                        std::printf("stud-render-host: client disconnected\n");
+                        break;
+                    }
+                    pump_display(real_window, (wl.revents & POLLIN) != 0);
+                    if (ring->readable() == 0) continue;
+                }
+            } else {
+                int pending = 0;
+                const bool have_buffered =
+                    reader.buffered() + (::ioctl(conn_fd, FIONREAD, &pending) == 0
+                                             ? static_cast<size_t>(pending) : 0) >=
+                    sizeof(Header);
+                if (!have_buffered) {
+                    ::poll(cpfds, 2, wayland_poll_ms());
+                    pump_display(real_window, (cpfds[1].revents & POLLIN) != 0);
+                    if (!(cpfds[0].revents & POLLIN)) continue;
+                }
             }
             Header hdr{};
-            if (!reader.read(&hdr, sizeof(hdr))) {
+            if (!read_request(&hdr, sizeof(hdr))) {
                 std::printf("stud-render-host: client disconnected\n");
                 break;
             }
             g_in_scratch.resize(hdr.in_buffer_len);
-            if (hdr.in_buffer_len > 0 && !reader.read(g_in_scratch.data(), hdr.in_buffer_len)) {
+            if (hdr.in_buffer_len > 0 && !read_request(g_in_scratch.data(), hdr.in_buffer_len)) {
                 break;
             }
             g_out_scratch.clear();
@@ -6436,8 +6720,23 @@ int main(int argc, char** argv) {
             // wait on each other.
             throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id),
                                      g_in_scratch);
-            if (dispatches_without_lock(static_cast<stud::render_host::CallId>(hdr.call_id),
-                                        g_in_scratch)) {
+            if (hdr.call_id == CallId::TransportRing && !ring) {
+                // The last request this socket carries, as on the other
+                // connections.
+                const int memory_fd = stud::render_host::take_shared_fd(hdr.args[0]);
+                const int consumer_fd = stud::render_host::take_shared_fd(hdr.args[1]);
+                const int producer_fd = stud::render_host::take_shared_fd(hdr.args[2]);
+                auto attached = std::make_unique<stud::render_host::TransportRing>();
+                if (attached->attach(memory_fd, consumer_fd, producer_fd,
+                                     static_cast<size_t>(hdr.args[3]))) {
+                    ring = std::move(attached);
+                    result = 1;
+                }
+                std::printf("stud-render-host: the engine's requests now travel %s\n",
+                            ring ? "through a shared-memory ring" : "over the socket");
+                std::fflush(stdout);
+            } else if (dispatches_without_lock(static_cast<stud::render_host::CallId>(hdr.call_id),
+                                               g_in_scratch)) {
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             } else {
                 std::lock_guard<std::mutex> lock(dispatch_mutex());

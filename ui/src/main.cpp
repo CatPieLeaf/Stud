@@ -59,6 +59,7 @@
 #include "stud/session_log.h"
 #include "stud/stud_paths.h"
 #include "stud/engine_teardown.h"
+#include "stud/render_host_protocol.h"
 #include <QDateTime>
 #include <QDir>
 #include <QProcess>
@@ -1302,6 +1303,27 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back(settings.discord_rich_presence ? "on" : "off");
     config.args.push_back("--smooth-zoom");
     config.args.push_back(settings.smooth_zoom ? "on" : "off");
+
+#ifdef STUD_GFXSTREAM_GUEST_DIR
+    // OpenGL mode through gfxstream: the engine gets gfxstream's libEGL and
+    // libGLESv2 (and the names its EGL loads its GLES through), which reach
+    // render-host's gfxstream on its own socket. render-host starts that
+    // under the same condition (render-host/src/gfxstream_host.h).
+    if (graphics_mode_arg == QStringLiteral("opengl")) {
+        const char* env = std::getenv("STUD_GL_GFXSTREAM");
+        if (env == nullptr || std::string_view(env) != "0") {
+            const std::string guest = STUD_GFXSTREAM_GUEST_DIR;
+            for (const char* name : {"libEGL.so", "libGLESv2.so", "libGLESv2_emulation.so",
+                                     "libGLESv1_CM_emulation.so"}) {
+                config.system_lib_overrides.emplace_back(guest + "/" + name, name);
+            }
+            const std::string sock = stud::render_host::default_socket_path();
+            config.extra_env.emplace_back("STUD_GFXSTREAM_SOCKET",
+                                          sock.substr(0, sock.find_last_of('/')) +
+                                              "/gfxstream.sock");
+        }
+    }
+#endif
 
     // The transcoded-texture cache lives inside the Vulkan client
     // library, which Process B loads rather than links, so its size limit

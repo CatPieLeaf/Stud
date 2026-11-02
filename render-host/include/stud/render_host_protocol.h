@@ -848,6 +848,10 @@ enum class CallId : uint32_t {
     // done (a futex word, woken on every change), 1 the GL error read at
     // the latest swap and not yet taken by the client (0 for none).
     GlShareFramePage,
+    // OpenGL through gfxstream (render-host/src/gfxstream_host.h): the guest
+    // queued a finished frame. a[0] the gfxstream colour buffer holding it.
+    // Reply-free; render-host draws it into the window and swaps.
+    GlPresentColorBuffer,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -1176,9 +1180,10 @@ inline const char* call_id_name(CallId id) {
         "GlFramebufferTexture2DMultisampleEXT",
         "GlRenderbufferStorageMultisampleEXT",
         "GlShareFramePage",
+        "GlPresentColorBuffer",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlShareFramePage) + 1,
+                      static_cast<size_t>(CallId::GlPresentColorBuffer) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

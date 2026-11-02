@@ -522,6 +522,11 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
                 argv_storage.push_back("/system/lib64/" + entry.path().filename().string());
             }
         }
+        for (const auto& [host_path, name] : config.system_lib_overrides) {
+            argv_storage.push_back("--ro-bind");
+            argv_storage.push_back(host_path);
+            argv_storage.push_back("/system/lib64/" + name);
+        }
     }
 
     // The executable itself and its containing directory, made visible at
