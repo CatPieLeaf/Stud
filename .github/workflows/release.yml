@@ -204,11 +204,12 @@ jobs:
                       modules += 1
               at = blob.find(MAGIC, at + 1)
           print(f"{p}: {modules} SPIR-V module(s), {blob.count(MAGIC)} raw magic hit(s)")
-          if modules != 3:
-              print("::error::the render host should carry exactly three embedded "
-                    "shaders -- RAVU-Zoom anti-ringing, SGSR edge-direction and "
-                    "RCAS -- and carries " + str(modules) + ". They are built by "
-                    "glslc, which the configure step should have found in the NDK.")
+          if modules != 4:
+              print("::error::the render host should carry exactly four embedded "
+                    "shaders -- RAVU-Zoom anti-ringing, SGSR edge-direction, "
+                    "RCAS and the ETC2/EAC texture decoder -- and carries " + str(modules) + ". "
+                    "They are built by glslc, which the configure step should have "
+                    "found in the NDK.")
               sys.exit(1)
           PY
 

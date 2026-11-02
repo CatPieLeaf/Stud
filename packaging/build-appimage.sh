@@ -175,7 +175,11 @@ sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"$layer\"|" \
 # bionic and Process B are Android ELF that no host tool may patch, strip
 # or resolve.
 say "adding bionic and Process B"
-cp -a /usr/lib/stud "$appdir/lib/stud"
+# Into lib/stud, not as it: quick-sharun has already made lib/stud for
+# gfxstream's host library, and copying the directory onto an existing one
+# nests it at lib/stud/stud, where nothing looks.
+mkdir -p "$appdir/lib/stud"
+cp -a /usr/lib/stud/. "$appdir/lib/stud/"
 cp -a /usr/libexec/stud/stud-runtime-bionic /usr/libexec/stud/lib64 "$appdir/libexec/stud/"
 # Stud's own share/ files: the desktop entry and icons it installs for
 # the user, and the licences of everything it redistributes.

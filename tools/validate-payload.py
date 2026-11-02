@@ -53,10 +53,15 @@ def count_spirv_modules(blob):
 # sandbox. Process B dlopen()s these by name; a missing one is a failure
 # at load with no useful message.
 BIONIC_OVERLAY = [
-    "libaaudio.so", "libandroid.so", "libEGL.so", "libGLESv2.so",
+    "libaaudio.so", "libandroid.so",
     "libmediandk.so", "libnativewindow.so", "libOpenMAXAL.so",
     "libOpenSLES.so", "libvulkan.so.1",
 ]
+
+# The engine's libEGL and libGLESv2: gfxstream's guest libraries, bound over
+# /system/lib64 the same way, from beside bionic. The engine links both in
+# either graphics mode, so a missing one stops it loading at all.
+GFXSTREAM_GUEST = ["libEGL.so", "libGLESv2.so"]
 
 # The real bionic, extracted from an Android system image. linker64 is
 # Process B's PT_INTERP, without it nothing bionic runs at all.
@@ -244,15 +249,16 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
     # Compiled to SPIR-V at build time and embedded. Without glslc the
     # build silently emits an empty array, and the upscaler then does
     # nothing at all while still being offered in Settings. A correct
-    # build carries exactly three: RAVU-Zoom anti-ringing, SGSR
-    # edge-direction, and RCAS, which sharpens after RAVU.
+    # build carries exactly four: RAVU-Zoom anti-ringing, SGSR
+    # edge-direction, RCAS, which sharpens after RAVU, and the ETC2/EAC
+    # texture decoder.
     host = real_binary(sharun_dir, private / "stud-render-host")
     if host.exists():
         modules = count_spirv_modules(host.read_bytes())
-        r.check(modules == 3,
-                f"stud-render-host carries {modules} SPIR-V module(s), not the 3 a build "
-                f"with both upscalers and the sharpening pass has; upscaling would be "
-                f"offered in Settings and do nothing")
+        r.check(modules == 4,
+                f"stud-render-host carries {modules} SPIR-V module(s), not the 4 a build "
+                f"with both upscalers, the sharpening pass and the texture decoder has; "
+                f"upscaling would be offered in Settings and do nothing")
         r.note(f"embedded SPIR-V modules: {modules}")
 
     # ---- the libraries Stud brings with it ------------------------------
@@ -260,6 +266,10 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         r.check((data / "android-bionic" / name).exists(), f"bionic: {name} is missing")
     for name in BIONIC_OVERLAY:
         r.check((private / "lib64" / name).exists(), f"the /system/lib64 overlay: {name} is missing")
+    for name in GFXSTREAM_GUEST:
+        r.check((data / "gfxstream-guest" / name).exists(), f"gfxstream's guest: {name} is missing")
+    r.check((data / "libgfxstream_backend.so.0").exists() or sharun_dir is not None,
+            "gfxstream's host library libgfxstream_backend.so.0 is missing; render-host links it")
 
     # ---- what a desktop needs to show Stud at all -----------------------
     if expect_desktop_files:
