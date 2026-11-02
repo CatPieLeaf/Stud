@@ -83,7 +83,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 
  - Runs the **real, unmodified** Roblox Android app
  - Three separate processes in the shape of a browser's, the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
- - Vulkan by default, and OpenGL in Settings, on the system's own driver, for hardware Vulkan does not run on
+ - Vulkan by default, and OpenGL in Settings, on the system's own driver, for hardware Vulkan does not run on. OpenGL runs on [gfxstream](https://github.com/google/gfxstream), the Android emulator's GPU layer, with MSAA, outlines and Windows Graphical Parity just as on Vulkan
  - **Upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size. Two to pick from: **RAVU-Zoom AR**, which looks each neighbourhood up in a table trained offline, and **SGSR1 ED**, the lightweight one, which reconstructs edges from the pixels alone and is the one to pick on a laptop or an integrated GPU
  - Smooth zoom in/out, just like the Windows client
  - **Sound and voice chat with nothing to install**: the audio device is built into Stud rather than loaded from a library the machine might not have. It speaks PulseAudio (which is how it reaches PipeWire), ALSA, JACK and OSS
@@ -150,10 +150,10 @@ Every GL and Vulkan call the engine makes is forwarded from the bionic process t
 
 ### 1 - Install the system packages
 
-Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, libdrm, X11 (libXi, and libxcb's DRI3 and Present headers), EGL/GLESv2 headers, the Vulkan loader and headers, `bubblewrap`, `cmake`, `ninja` and a C++20 compiler. FFmpeg's headers are optional: without them the build goes ahead and in-game video has no decoders. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
+Qt 6 (base, webengine, keychain), Wayland client and `wayland-egl`, libdrm, X11 (libXi, and libxcb's DRI3 and Present headers), EGL/GLESv2 headers, the Vulkan loader and headers, `bubblewrap`, `cmake`, `ninja`, `meson` (for gfxstream, which the build fetches and builds itself) and a C++20 compiler. FFmpeg's headers are optional: without them the build goes ahead and in-game video has no decoders. `wl-clipboard` (or `xclip` on X11) is what "copy link" copies with.
 
 ```bash
-sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-devel \
+sudo dnf install cmake ninja-build meson gcc-c++ qt6-qtbase-devel qt6-qtwebengine-devel \
   qtkeychain-qt6-devel wayland-devel wayland-protocols-devel libxkbcommon-devel \
   libdrm-devel libXi-devel libglvnd-devel vulkan-loader-devel vulkan-headers \
   freetype-devel openssl-devel 'pkgconfig(libavcodec)' 'pkgconfig(libavutil)' \
@@ -164,7 +164,7 @@ sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtwebengine-deve
 <summary>Debian / Ubuntu</summary>
 
 ```bash
-sudo apt install cmake ninja-build build-essential qt6-base-dev libqt6opengl6-dev \
+sudo apt install cmake ninja-build meson build-essential qt6-base-dev libqt6opengl6-dev \
   qt6-webengine-dev qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
   libdrm-dev libxkbcommon-dev libxi-dev libxcb-dri3-dev libxcb-present-dev \
   libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev libssl-dev \
@@ -409,7 +409,8 @@ In a Flatpak or cpak install the same four live under the sandbox's own home, so
  - [miniaudio](https://github.com/mackron/miniaudio): the render host's audio device, vendored at `third_party/miniaudio` (public domain or MIT-0). It speaks ALSA, PulseAudio, JACK and OSS itself and is compiled in, so audio needs no library installed and no package declares one
  - [Zydis](https://github.com/zyantific/zydis), with its [Zycore](https://github.com/zyantific/zycore-c) library: the x86-64 decoder the runtime reads the engine's own code with, to find what it needs by what the code does rather than by byte patterns that change every build (MIT). Fetched at build time and compiled into `stud-runtime-bionic`
  - [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) and [libdrm](https://gitlab.freedesktop.org/mesa/drm): Stud's present layer speaks `linux-dmabuf-v1` and `linux-drm-syncobj-v1`, generated from the system's own protocol files, and creates its sync objects through libdrm (MIT). On X11 it uses libxcb's DRI3 and Present, opened at runtime and not redistributed (MIT)
- - [gfxstream](https://github.com/google/gfxstream): the Android emulator's GPU layer, whose ETC2 and EAC block decoders are fetched at build time and compiled into the render host's texture decode shader, so a GPU without ETC2 decodes the engine's textures itself, and whose guest-host ring carries the engine's Vulkan commands to the render host through shared memory (Apache-2.0)
+ - [gfxstream](https://github.com/google/gfxstream): the Android emulator's GPU layer, whose ETC2 and EAC block decoders are fetched at build time and compiled into the render host's texture decode shader, so a GPU without ETC2 decodes the engine's textures itself, and whose guest-host ring carries the engine's Vulkan commands to the render host through shared memory. OpenGL mode runs on gfxstream itself: the engine loads its guest libEGL and libGLESv2, and the render host decodes them on the system's own driver. Fetched at build time from a pinned commit and patched by Stud, every change in `third_party/gfxstream/stud.patch` (Apache-2.0)
+ - [Mesa](https://gitlab.freedesktop.org/mesa/mesa): gfxstream's guest ring stream, as Mesa ships it, fetched at build time into OpenGL mode's guest libraries (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Anylinux AppImages](https://github.com/pkgforge-dev/Anylinux-AppImages): the AppImage is built with its quick-sharun, whose AppRun scripts ship inside it, and with its debloated Mesa, built without LLVM, which the AppImage's Mesa drivers come from (MIT)
