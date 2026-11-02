@@ -14,11 +14,12 @@
 # never by the system loader. Left alone, rpm reads their NEEDED entries and
 # demands libc.so, libdl.so, liblog.so and ld-android.so from the
 # distribution, which no package can satisfy.
-%global __requires_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/stud-runtime-bionic$
-# ...and none of Stud's own Android libraries, nor its present layer, may be
+%global __requires_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_prefix}/lib/stud/gfxstream-guest/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/stud-runtime-bionic$
+# ...and none of Stud's own Android libraries, nor its present layer or
+# gfxstream's host library, may be
 # advertised as system provides: they are Stud's private copies, loaded by
 # path.
-%global __provides_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
+%global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
 Version:        1.2.6
@@ -65,6 +66,8 @@ Recommends:     libX11-xcb.so.1()(64bit)
 # libxkbcommon, freetype, OpenSSL, libX11 and libXext.
 
 Provides:       bundled(bionic)
+Provides:       bundled(gfxstream)
+Provides:       bundled(mesa)
 Provides:       bundled(fidelityfx-fsr1)
 Provides:       bundled(snapdragon-gsr)
 Provides:       bundled(mpv-prescalers)

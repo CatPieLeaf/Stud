@@ -99,13 +99,25 @@ Comment:
    detex         Hans-Kristian Lemmens
    PVRTDecompress  Imagination Technologies (PowerVR Native SDK)
 
-Files: (fetched at build time, not in this source tree: gfxstream's ETC2/EAC shaders and ring)
-Copyright: 2018-2019 The Android Open Source Project
+Files: (fetched at build time, not in this source tree: gfxstream)
+Copyright: 2011-2025 The Android Open Source Project
+           2011-2023 Google LLC
 License: Apache-2.0
 Comment:
  gfxstream's ETC2 and EAC block decoders, compiled into stud-render-host's
  texture decode shader, and its shared-memory ring, compiled into
- stud-render-host and Stud's Vulkan library.
+ stud-render-host and Stud's Vulkan library. OpenGL mode runs on gfxstream
+ itself, patched with third_party/gfxstream/stud.patch: its host library,
+ /usr/lib/stud/libgfxstream_backend.so.0, and its guest libraries in
+ /usr/lib/stud/gfxstream-guest/.
+
+Files: (fetched at build time, not in this source tree: Mesa's gfxstream guest ring stream)
+Copyright: 2011-2023 Google LLC
+           2014-2015 Red Hat
+License: MIT
+Comment:
+ Compiled into the gfxstream guest libraries in /usr/lib/stud/gfxstream-guest/.
+ Mesa's licence is in /usr/share/licenses/stud/mesa/.
 
 License: AGPL-3.0-or-later with Roblox-Engine exception
  This program is free software: you can redistribute it and/or modify it

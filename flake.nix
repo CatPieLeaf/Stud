@@ -119,6 +119,8 @@
           '';
 
           postFixup = ''
+            # gfxstream's host library, which render-host links, beside bionic.
+            addAutoPatchelfSearchPath $out/lib/stud
             autoPatchelf $out/libexec/stud/stud-render-host $out/libexec/stud/libstud_present_layer.so
             wrapQtApp $out/bin/stud
             wrapQtApp $out/libexec/stud/stud-webview

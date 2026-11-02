@@ -107,9 +107,10 @@ ExternalProject_Add(gfxstream_host
     BUILD_BYPRODUCTS "${StudGfxstreamHostBuild}/host/libgfxstream_backend.so")
 # Under the name render-host asks for (its soname): the build's is a link to
 # a file named after gfxstream's own version, which a link would not carry.
+# file(INSTALL) puts DESTDIR in front of the destination itself.
 install(CODE "
     file(REAL_PATH \"${StudGfxstreamHostBuild}/host/libgfxstream_backend.so.0\" library)
-    file(INSTALL \"\${library}\" DESTINATION \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${STUD_PRIVATE_LIB_DIR}\"
+    file(INSTALL \"\${library}\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${STUD_PRIVATE_LIB_DIR}\"
          RENAME libgfxstream_backend.so.0)")
 install(FILES "${StudGfxstreamRoot}/LICENSE-mesa.rst"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/mesa")
