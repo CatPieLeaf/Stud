@@ -49,6 +49,7 @@
           nativeBuildInputs = with pkgs; [
             cmake
             ninja
+            meson
             pkg-config
             python3
             wayland-scanner

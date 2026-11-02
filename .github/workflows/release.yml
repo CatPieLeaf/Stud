@@ -125,7 +125,7 @@ jobs:
         # actions/checkout and actions/cache both need it and tar.
         run: |
           dnf install -y --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
-            gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build \
+            gcc-c++ cmake ninja-build meson git pkgconf-pkg-config rpm-build \
             qt6-qtbase-devel qt6-qtwebengine-devel qtkeychain-qt6-devel \
             wayland-devel wayland-protocols-devel libxkbcommon-devel libdrm-devel \
             libXi-devel \
@@ -437,7 +437,7 @@ jobs:
           set -eux
           # git because the build fetches libjnivm; without it the
           # configure step dies in FetchContent.
-          pacman -Sy --noconfirm --needed base-devel cmake ninja git qt6-base qt6-webengine \
+          pacman -Sy --noconfirm --needed base-devel cmake ninja meson git qt6-base qt6-webengine \
               qtkeychain-qt6 vulkan-headers vulkan-icd-loader wayland wayland-protocols \
               libxkbcommon freetype2 ffmpeg
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -578,7 +578,7 @@ jobs:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja git python curl unzip zstd e2fsprogs \
+            base-devel cmake ninja meson git python curl unzip zstd e2fsprogs \
             pkgconf wayland-protocols libdrm vulkan-headers ffmpeg \
             qt6-base qt6-webengine qt6-wayland qtkeychain-qt6 breeze \
             vulkan-icd-loader libglvnd libx11 libxext libxi libxrender \
@@ -672,7 +672,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git curl ca-certificates \
+            build-essential cmake ninja-build meson pkg-config git curl ca-certificates \
             file desktop-file-utils unzip tar xz-utils zstd python3 e2fsprogs \
             qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
             qt6-l10n-tools libqt6opengl6-dev qtkeychain-qt6-dev libssl-dev \

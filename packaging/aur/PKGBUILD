@@ -48,6 +48,7 @@ depends=(
 makedepends=(
   'cmake'
   'ninja'
+  'meson'
   'git'
   'python'
   'curl'

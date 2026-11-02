@@ -55,7 +55,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            g++ cmake ninja-build git pkg-config \
+            g++ cmake ninja-build meson git pkg-config \
             curl unzip tar xz-utils zstd python3 e2fsprogs findutils ca-certificates
 
       - uses: actions/checkout@v7

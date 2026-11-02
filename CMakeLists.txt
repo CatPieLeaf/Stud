@@ -195,6 +195,11 @@ FetchContent_Declare(
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
 
+# gfxstream for OpenGL mode, before render-host, which links its host side.
+if(NOT STUD_BUILD_QT_ONLY)
+    include(cmake/StudGfxstream.cmake)
+endif()
+
 add_subdirectory(bionic-runtime)
 add_subdirectory(cpu-compat)
 add_subdirectory(android-glue)

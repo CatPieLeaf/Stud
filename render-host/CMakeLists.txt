@@ -217,25 +217,23 @@ add_executable(stud-render-host "${EtcDecodeShaderHeader}" "${SharpenShaderHeade
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_codec.cpp
     src/gfxstream_host.cpp)
 
-# OpenGL mode through gfxstream (src/gfxstream_host.h): a gfxstream checkout
-# with third_party/gfxstream/stud.patch applied, and its meson build; the
-# engine's side is third_party/gfxstream/guest (STUD_GFXSTREAM_GUEST_DIR, in
-# ui/). Without them OpenGL mode forwards the engine's GLES calls as before.
-set(STUD_GFXSTREAM_DIR "" CACHE PATH "gfxstream source tree, with Stud's patch applied")
-set(STUD_GFXSTREAM_BUILD_DIR "" CACHE PATH "that tree's meson build directory")
-if(STUD_GFXSTREAM_DIR AND STUD_GFXSTREAM_BUILD_DIR)
-    target_compile_definitions(stud-render-host PRIVATE STUD_HAVE_GFXSTREAM=1)
-    target_include_directories(stud-render-host PRIVATE
-        "${STUD_GFXSTREAM_DIR}/host/include"
-        "${STUD_GFXSTREAM_DIR}/host/features/include"
-        "${STUD_GFXSTREAM_DIR}/common/base/include"
-        "${STUD_GFXSTREAM_DIR}/common/logging/include"
-        "${STUD_GFXSTREAM_BUILD_DIR}/host/features/include")
-    target_link_libraries(stud-render-host PRIVATE
-        "${STUD_GFXSTREAM_BUILD_DIR}/host/libgfxstream_backend.so")
-    set_property(TARGET stud-render-host APPEND PROPERTY BUILD_RPATH
-                 "${STUD_GFXSTREAM_BUILD_DIR}/host")
-endif()
+# OpenGL mode through gfxstream (src/gfxstream_host.h): its host side, built
+# by cmake/StudGfxstream.cmake. Installed in lib/stud, found from libexec
+# through a relative rpath so a moved or mounted tree still finds it.
+target_compile_definitions(stud-render-host PRIVATE STUD_HAVE_GFXSTREAM=1)
+target_include_directories(stud-render-host PRIVATE
+    "${StudGfxstreamSource}/host/include"
+    "${StudGfxstreamSource}/host/features/include"
+    "${StudGfxstreamSource}/common/base/include"
+    "${StudGfxstreamSource}/common/logging/include"
+    "${StudGfxstreamHostBuild}/host/features/include")
+target_link_libraries(stud-render-host PRIVATE
+    "${StudGfxstreamHostBuild}/host/libgfxstream_backend.so")
+add_dependencies(stud-render-host gfxstream_host)
+file(RELATIVE_PATH StudLibFromLibexec "/${STUD_LIBEXEC_DIR}" "/${STUD_PRIVATE_LIB_DIR}")
+set_target_properties(stud-render-host PROPERTIES
+    BUILD_RPATH "${StudGfxstreamHostBuild}/host"
+    INSTALL_RPATH "$ORIGIN/${StudLibFromLibexec}")
 
 # Stud's own swapchain (src/owned_swapchain.h), as the Vulkan layer
 # VK_LAYER_STUD_present (src/present_layer.cpp). A library of its own,

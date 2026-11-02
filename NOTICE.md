@@ -146,6 +146,15 @@ decoders, and the engine's Vulkan commands reach the render host through
 gfxstream's shared-memory ring (both Apache-2.0), fetched at build time from
 a pinned commit.
 
+OpenGL mode runs on gfxstream itself (Apache-2.0), fetched at build time
+from a pinned commit and changed by Stud, every change set out in
+`third_party/gfxstream/stud.patch` in Stud's source: its host library,
+`libgfxstream_backend.so.0`, ships beside the render host, and its guest
+libraries, `libEGL.so` and `libGLESv2.so` in `gfxstream-guest/`, are the
+ones the engine loads in that mode. Those also carry Mesa's guest ring
+stream (MIT), unchanged. Both licences are installed to
+`/usr/share/licenses/stud/`.
+
 RAVU-Zoom is the one copyleft item, so it is worth setting out why it is
 allowed here. LGPLv3 incorporates the terms of GPLv3, and its section
 2(b) permits conveying a copy under the GPL with none of the LGPL's

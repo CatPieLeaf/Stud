@@ -5,8 +5,7 @@
 // GLES driver (EGL-on-EGL), on render-host's display. Finished frames arrive
 // as colour buffers this process draws into the window.
 //
-// Built only when CMake is given a gfxstream build (STUD_GFXSTREAM_DIR);
-// otherwise available() is false and OpenGL mode forwards as before.
+// gfxstream itself is fetched, patched and built by cmake/StudGfxstream.cmake.
 
 #include <cstdint>
 #include <string>
