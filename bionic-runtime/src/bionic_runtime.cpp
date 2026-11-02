@@ -295,6 +295,12 @@ void link_android_system_tree(const ProcessBConfig& config,
             place_link(entry.path(), fs::path("/system/lib64") / filename);
         }
     }
+    // Last, as the bind list puts them, so they win: gfxstream's
+    // libEGL/libGLESv2, which the engine links in either graphics mode.
+    // Missing here, a Flatpak's engine failed to load at all.
+    for (const auto& [host_path, name] : config.system_lib_overrides) {
+        place_link(host_path, fs::path("/system/lib64") / name);
+    }
 
     place_link(linker64_path, "/system/bin/linker64");
     place_link(linker64_path, "/system/lib64/linker64");
