@@ -41,6 +41,7 @@ struct BuildReport {
     size_t aliases = 0;           // two-sided lit keys answered with the one-sided blob
     size_t normal_reads = 0;      // .wy normal-map reads rewritten to .xy
     size_t normal_z = 0;          // normal z taken from the map
+    size_t detail_dropped = 0;    // detail-normal terms removed outside Plastic
     // Of `substituted`: those with the very same bindings as the mobile
     // build, taken because their stage interface matches as well, by
     // shader name.
@@ -69,6 +70,7 @@ struct GlBuildReport {
     size_t kept_terrain = 0;
     size_t kept_unconvertible = 0;
     size_t normal_reads = 0;  // normal-map decodes taken as RGB, z from the map
+    size_t detail_dropped = 0;  // detail-normal samples removed outside Plastic
 };
 std::vector<uint8_t> build_desktop_materials_gl(const std::vector<uint8_t>& mobile,
                                                 const std::vector<uint8_t>& desktop,
@@ -77,12 +79,14 @@ std::vector<uint8_t> build_desktop_materials_gl(const std::vector<uint8_t>& mobi
 // One Windows GLSL 150 shader as GLSL ES 3.00, adapted to what the Android
 // engine binds. Empty when it needs something the engine never provides.
 // Exposed for tests.
-std::string convert_glsl(const std::string& desktop, size_t* normal_reads = nullptr);
+std::string convert_glsl(const std::string& desktop, size_t* normal_reads = nullptr, bool keep_detail = true,
+                         size_t* detail_dropped = nullptr);
 
 // The SPIR-V rewrites, on one module (no blob header), exposed for tests.
 // Each returns how many sites it changed; a module with none comes back
 // unchanged.
 size_t rewrite_normal_reads(std::vector<uint32_t>& words);
 size_t take_normal_z_from_map(std::vector<uint32_t>& words);
+size_t drop_detail_normal(std::vector<uint32_t>& words);
 
 }  // namespace stud::shader_pack

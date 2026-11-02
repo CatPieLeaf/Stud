@@ -25,6 +25,10 @@ constexpr size_t kPermSize = 20;
 constexpr size_t kPermKey = 24;
 constexpr size_t kPermName = 30;
 
+// The material whose detail normal map Stud has: Plastic, the Windows
+// client's plastic\normaldetail.dds.
+bool is_plastic(const std::string& name) { return name.rfind("DefaultUnifiedPlastic", 0) == 0; }
+
 // SPIR-V opcodes, decorations and GLSL.std.450 instructions this file reads.
 enum Op : uint32_t {
     kOpExtInst = 12,
@@ -406,15 +410,19 @@ struct Scan {
 
 }  // namespace
 
-// The desktop builds decode the normal maps at set 1 binding 4 (material)
-// and 8 (detail) as two-channel maps: `.wy` (alpha and green) and z
-// rebuilt. The Android engine binds RGB normal maps there, which its own
-// builds read as `.xyz`, so `.wy` reads alpha (always 1) as x. Taking
-// `.xy` reads the map the way it is stored. One word pair per site.
+// The desktop builds decode the material normal map at set 1 binding 4 as
+// a two-channel map: `.wy` (alpha and green) and z rebuilt. The Android
+// engine binds RGB normal maps there, which its own builds read as `.xyz`,
+// so `.wy` reads alpha (always 1) as x. Taking `.xy` reads the map the way
+// it is stored. One word pair per site.
+//
+// Not binding 8, the detail normal: what is there is the Windows client's
+// own DXT5nm file (render-host binds it), stored the way `.wy` reads it.
+// Its red channel is 255 throughout, so `.xy` turned the detail into a
+// full-strength tilt on every draw.
 size_t rewrite_normal_reads(std::vector<uint32_t>& w) {
     const Scan scan(w);
-    std::set<uint32_t> targets = scan.material(4);
-    for (uint32_t v : scan.material(8)) targets.insert(v);
+    const std::set<uint32_t> targets = scan.material(4);
     size_t patched = 0;
     for (size_t p : scan.insts) {
         if (opcode(w, p) != kOpVectorShuffle || length(w, p) != 7) continue;
@@ -513,6 +521,55 @@ size_t take_normal_z_from_map(std::vector<uint32_t>& w) {
     return sites.size();
 }
 
+// The desktop material builds add a detail normal from set 1 binding 8 on
+// top of the normal map. Each Windows material binds its own detail map
+// there; Stud has Plastic's alone (render-host binds it on every draw), so
+// in any other material the term put Plastic's grain on it, at a strength
+// read from a material constant the Android builds never read and so the
+// Android engine never fills for it. Outside Plastic the term goes: its
+// strength, the first non-constant scale on the value read from 1/8 (after
+// the constant `* 2` of the decode), is replaced with a float 0 constant
+// of the module.
+size_t drop_detail_normal(std::vector<uint32_t>& w) {
+    const Scan scan(w);
+    const std::set<uint32_t> detail = scan.material(8);
+    std::set<uint32_t> float_types, constants;
+    std::optional<uint32_t> zero;
+    for (size_t p : scan.insts) {
+        const uint32_t op = opcode(w, p), len = length(w, p);
+        if (op == kOpConstant || op == kOpConstantComposite || op == kOpConstantNull) constants.insert(w[p + 2]);
+        if (op == kOpTypeFloat && len >= 3 && w[p + 2] == 32) float_types.insert(w[p + 1]);
+        if (!zero && op == kOpConstant && len == 4 && float_types.count(w[p + 1]) && w[p + 3] == 0) zero = w[p + 2];
+        if (!zero && op == kOpConstantNull && float_types.count(w[p + 1])) zero = w[p + 2];
+    }
+    if (!zero) return 0;
+    std::set<uint32_t> derived;
+    size_t patched = 0;
+    for (size_t p : scan.insts) {
+        const uint32_t op = opcode(w, p), len = length(w, p);
+        if (is_sample(op) && len >= 5) {
+            const auto l = scan.load_of(w[p + 3]);
+            if (l && detail.count(*l)) {
+                derived.insert(w[p + 2]);
+                continue;
+            }
+        }
+        if (len < 3) continue;
+        if (op == kOpVectorTimesScalar && len >= 5 && derived.count(w[p + 3])) {
+            if (w[p + 4] == *zero) continue;  // already dropped
+            if (!constants.count(w[p + 4])) {
+                w[p + 4] = *zero;
+                ++patched;
+                continue;
+            }
+        }
+        bool uses = false;
+        for (size_t o = p + 3; o < p + len; ++o) uses = uses || derived.count(w[o]) != 0;
+        if (uses) derived.insert(w[p + 2]);
+    }
+    return patched;
+}
+
 std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_bytes,
                                              const std::vector<uint8_t>& desktop_bytes,
                                              BuildReport* report) {
@@ -607,6 +664,7 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         auto words = spirv_words(blob);
         r.normal_reads += rewrite_normal_reads(words);
         r.normal_z += take_normal_z_from_map(words);
+        if (!is_plastic(name)) r.detail_dropped += drop_detail_normal(words);
         blobs[k] = with_words(blob, words);
         ++r.substituted;
         if (drop_in) {
@@ -638,7 +696,15 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         std::vector<uint8_t> rec(desktop.perm(k), desktop.perm(k) + kPermRecord);
         write16(rec.data() + kPermName, static_cast<uint16_t>(name_at - names.begin()));
         perms.push_back(std::move(rec));
-        blobs[perms.size() - 1] = desktop.blob(k);
+        std::string blob = desktop.blob(k);
+        if (!is_plastic(key.first)) {
+            auto words = spirv_words(blob);
+            if (const size_t dropped = drop_detail_normal(words)) {
+                r.detail_dropped += dropped;
+                blob = with_words(blob, words);
+            }
+        }
+        blobs[perms.size() - 1] = std::move(blob);
         ++r.grafted;
     }
 
@@ -776,7 +842,7 @@ int attribute_location(const std::string& name) {
 
 }  // namespace
 
-std::string convert_glsl(const std::string& src, size_t* normal_reads) {
+std::string convert_glsl(const std::string& src, size_t* normal_reads, bool keep_detail, size_t* detail_dropped) {
     // A multisampled depth texture the Android engine never makes.
     if (src.find("sampler2DMS") != std::string::npos || src.find("DepthAATexture") != std::string::npos) return {};
     const bool vertex = src.find("gl_Position") != std::string::npos;
@@ -852,6 +918,26 @@ std::string convert_glsl(const std::string& src, size_t* normal_reads) {
                 if (normal_reads != nullptr) ++*normal_reads;
             }
         }
+        // The detail normal outside Plastic: see drop_detail_normal. A
+        // sample of 0.5 decodes (`* 2.0 - 1.0`) to exactly 0, whatever
+        // scales it.
+        if (!keep_detail) {
+            for (size_t at = l.find("(NormalDetailMapTexture,"); at != std::string::npos;
+                 at = l.find("(NormalDetailMapTexture,", at)) {
+                size_t begin = at;
+                while (begin > 0 && std::isalnum(static_cast<unsigned char>(l[begin - 1]))) --begin;
+                int depth = 0;
+                size_t end = at;
+                for (; end < l.size(); ++end) {
+                    if (l[end] == '(') ++depth;
+                    if (l[end] == ')' && --depth == 0) break;
+                }
+                if (end == l.size() || l.compare(begin, 7, "texture") != 0) break;
+                l.replace(begin, end + 1 - begin, "vec4(0.5)");
+                at = begin;
+                if (detail_dropped != nullptr) ++*detail_dropped;
+            }
+        }
         out += l;
         out += '\n';
     }
@@ -883,7 +969,8 @@ std::vector<uint8_t> build_desktop_materials_gl(const std::vector<uint8_t>& mobi
             if (terrain(key.first)) {
                 ++r.kept_terrain;
             } else {
-                blob = convert_glsl(desktop.blob(d->second), &r.normal_reads);
+                blob = convert_glsl(desktop.blob(d->second), &r.normal_reads, is_plastic(key.first),
+                                    &r.detail_dropped);
                 ++(blob.empty() ? r.kept_unconvertible : r.substituted);
             }
         }
@@ -900,7 +987,7 @@ std::vector<uint8_t> build_desktop_materials_gl(const std::vector<uint8_t>& mobi
         if (have.count({name, desktop.key(k)}) || terrain(name) || !built.count(name)) continue;
         const auto at = std::find(mobile.names.begin(), mobile.names.end(), name);
         if (at == mobile.names.end()) continue;
-        std::string blob = convert_glsl(desktop.blob(k), &r.normal_reads);
+        std::string blob = convert_glsl(desktop.blob(k), &r.normal_reads, is_plastic(name), &r.detail_dropped);
         if (blob.empty()) continue;
         std::vector<uint8_t> rec(desktop.perm(k), desktop.perm(k) + kPermRecord);
         write16(rec.data() + kPermName, static_cast<uint16_t>(at - mobile.names.begin()));

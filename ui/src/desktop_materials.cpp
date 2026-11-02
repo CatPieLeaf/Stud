@@ -187,11 +187,13 @@ bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack,
         say(QStringLiteral("could not write the combined shader pack"));
         return false;
     }
-    say(QStringLiteral("%1 shaders from Windows, %2 of them drop-in, %3 added, %4 normal-map reads adapted")
+    say(QStringLiteral("%1 shaders from Windows, %2 of them drop-in, %3 added, %4 normal-map reads adapted, "
+                       "%5 detail normals outside Plastic removed")
             .arg(report.substituted)
             .arg(report.drop_in)
             .arg(report.grafted)
-            .arg(report.normal_reads));
+            .arg(report.normal_reads)
+            .arg(report.detail_dropped));
     for (const auto& [name, count] : report.drop_in_by_shader) {
         say(QStringLiteral("drop-in %1: %2").arg(QString::fromStdString(name)).arg(count));
     }
@@ -205,11 +207,13 @@ bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack,
         say(QStringLiteral("could not write the combined GL shader pack"));
         return false;
     }
-    say(QStringLiteral("GL: %1 shaders from Windows, %2 added, %3 normal-map reads adapted; "
-                       "the APK's kept for terrain (%4) and what needs a texture the engine never makes (%5)")
+    say(QStringLiteral("GL: %1 shaders from Windows, %2 added, %3 normal-map reads adapted, "
+                       "%4 detail normals outside Plastic removed; the APK's kept for terrain (%5) and what "
+                       "needs a texture the engine never makes (%6)")
             .arg(gl.substituted)
             .arg(gl.grafted)
             .arg(gl.normal_reads)
+            .arg(gl.detail_dropped)
             .arg(gl.kept_terrain)
             .arg(gl.kept_unconvertible));
     return true;

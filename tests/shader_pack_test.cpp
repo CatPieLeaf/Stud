@@ -68,6 +68,49 @@ void test_normal_reads_and_z() {
     check(stud::shader_pack::take_normal_z_from_map(w) == 0, "a second pass changes nothing");
 }
 
+// The detail normal at set 1 binding 8: %30, %31 = 0.0, %40 a computed
+// strength. Its .wy read is the right one and stays.
+std::vector<uint32_t> detail_decode() {
+    return {
+        0x07230203, 0x10000, 0, 100, 0,
+        op(71, 4), 30, 34, 1,
+        op(71, 4), 30, 33, 8,
+        op(22, 3), 1, 32,
+        op(43, 4), 1, 2, bits(2.0f),
+        op(43, 4), 1, 31, 0,
+        op(61, 4), 7, 32, 30,
+        op(87, 5), 8, 33, 32, 13,
+        op(79, 7), 4, 34, 33, 33, 3, 1,  // %34 = %33.wy
+        op(142, 5), 4, 35, 34, 2,         // decode: * 2, a constant, kept
+        op(142, 5), 4, 36, 35, 40,        // strength
+    };
+}
+
+void test_detail() {
+    std::vector<uint32_t> w = detail_decode();
+    check(stud::shader_pack::rewrite_normal_reads(w) == 0, "the detail map's .wy read is left as it is");
+    check(w[38] == 3 && w[39] == 1, "it stays .wy");
+    check(stud::shader_pack::drop_detail_normal(w) == 1, "the detail strength is found");
+    check(w[44] == 2 && w[49] == 31, "the decode's constant stays, the strength becomes 0");
+    check(stud::shader_pack::drop_detail_normal(w) == 0, "a second pass changes nothing");
+
+    const std::string fs =
+        "#version 150\n"
+        "uniform sampler2D NormalDetailMapTexture;\n"
+        "void main()\n{\n"
+        "    vec2 _1 = _2.xy + (vec3((texture(NormalDetailMapTexture, VARYING0 * CB2[0].x).wy * 2.0) - "
+        "vec2(1.0), 0.0).xy * CB2[1].x);\n"
+        "}";
+    size_t dropped = 0;
+    const std::string kept = stud::shader_pack::convert_glsl(fs, nullptr, true, &dropped);
+    check(kept.find("texture(NormalDetailMapTexture, VARYING0 * CB2[0].x).wy") != std::string::npos && dropped == 0,
+          "GLSL: Plastic keeps its detail normal");
+    const std::string gone = stud::shader_pack::convert_glsl(fs, nullptr, false, &dropped);
+    check(gone.find("(vec3((vec4(0.5).wy * 2.0) - vec2(1.0), 0.0).xy * CB2[1].x)") != std::string::npos &&
+              dropped == 1,
+          "GLSL: elsewhere the sample is 0.5, which decodes to 0");
+}
+
 void test_not_a_pack() {
     bool threw = false;
     try {
@@ -150,6 +193,7 @@ void test_glsl_conversion() {
 
 int main() {
     test_normal_reads_and_z();
+    test_detail();
     test_not_a_pack();
     test_glsl_conversion();
     return 0;
