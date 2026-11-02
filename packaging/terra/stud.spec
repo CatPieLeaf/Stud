@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.6
+Version:        1.2.7
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -122,6 +122,13 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Mon Nov 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.7-1
+- OpenGL mode rebuilt on gfxstream: MSAA, UI gradients and correct highlight outlines on OpenGL
+- Windows Graphical Parity (Beta) now works in OpenGL mode as well as Vulkan
+- A lot of performance work on the Vulkan path: textures, pipelines, the connection to the engine, and the GPU's own work per frame
+- A loading screen while Stud starts, so there's something to look at before the game window appears
+- Building from source now needs meson
+
 * Sat Oct 24 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.6-1
 - <table align="center">
 - </table>

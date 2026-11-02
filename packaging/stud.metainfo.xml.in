@@ -98,6 +98,17 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.7" date="2026-11-02">
+      <description>
+        <ul>
+          <li>OpenGL mode rebuilt on gfxstream: MSAA, UI gradients and correct highlight outlines on OpenGL</li>
+          <li>Windows Graphical Parity (Beta) now works in OpenGL mode as well as Vulkan</li>
+          <li>A lot of performance work on the Vulkan path: textures, pipelines, the connection to the engine, and the GPU's own work per frame</li>
+          <li>A loading screen while Stud starts, so there's something to look at before the game window appears</li>
+          <li>Building from source now needs meson</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.6" date="2026-10-24">
       <description>
         <p>&lt;table align="center"&gt;</p>
