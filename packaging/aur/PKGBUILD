@@ -70,7 +70,7 @@ optdepends=(
 # The tag carries no leading "v", match what is actually published.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Replaced by CI at release time, from the tarball GitHub actually serves.
-sha256sums=('e8d1a7390a89de2901e2561103251a045430fbb104e8e55fac410e6967f70073')
+sha256sums=('2d5c0178d0b9c463d5e15adc7bcfb37396d7d38d8e88d2263b3e57fb97aa948b')
 
 prepare() {
   cd "Stud-$pkgver"
