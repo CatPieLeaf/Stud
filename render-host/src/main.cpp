@@ -308,373 +308,100 @@ using namespace stud::render_host;
 
 // ---- real function pointer types -----------------------------------
 
-using PFN_eglGetDisplay = EGLDisplay (*)(EGLNativeDisplayType);
+
 using PFN_eglInitialize = EGLBoolean (*)(EGLDisplay, EGLint*, EGLint*);
 using PFN_eglBindAPI = EGLBoolean (*)(EGLenum);
 using PFN_eglChooseConfig = EGLBoolean (*)(EGLDisplay, const EGLint*, EGLConfig*, EGLint, EGLint*);
 using PFN_eglCreateWindowSurface = EGLSurface (*)(EGLDisplay, EGLConfig, EGLNativeWindowType,
                                                    const EGLint*);
-using PFN_eglCreatePbufferSurface = EGLSurface (*)(EGLDisplay, EGLConfig, const EGLint*);
 using PFN_eglCreateContext = EGLContext (*)(EGLDisplay, EGLConfig, EGLContext, const EGLint*);
 using PFN_eglMakeCurrent = EGLBoolean (*)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
 using PFN_eglSwapBuffers = EGLBoolean (*)(EGLDisplay, EGLSurface);
 using PFN_eglGetError = EGLint (*)(void);
 using PFN_eglQueryString = const char* (*)(EGLDisplay, EGLint);
-using PFN_eglDestroyContext = EGLBoolean (*)(EGLDisplay, EGLContext);
-using PFN_eglDestroySurface = EGLBoolean (*)(EGLDisplay, EGLSurface);
-using PFN_eglGetConfigAttrib = EGLBoolean (*)(EGLDisplay, EGLConfig, EGLint, EGLint*);
-using PFN_eglGetCurrentContext = EGLContext (*)(void);
 using PFN_eglQuerySurface = EGLBoolean (*)(EGLDisplay, EGLSurface, EGLint, EGLint*);
 using PFN_eglSwapInterval = EGLBoolean (*)(EGLDisplay, EGLint);
-using PFN_eglTerminate = EGLBoolean (*)(EGLDisplay);
-using PFN_eglGetProcAddress = void* (*)(const char*);
-
 using PFN_glActiveTexture = void (*)(GLenum);
 using PFN_glAttachShader = void (*)(GLuint, GLuint);
-using PFN_glBindBuffer = void (*)(GLenum, GLuint);
 using PFN_glBindFramebuffer = void (*)(GLenum, GLuint);
-using PFN_glBindRenderbuffer = void (*)(GLenum, GLuint);
 using PFN_glBindTexture = void (*)(GLenum, GLuint);
-using PFN_glBlendFunc = void (*)(GLenum, GLenum);
-using PFN_glBlendFuncSeparate = void (*)(GLenum, GLenum, GLenum, GLenum);
-using PFN_glCheckFramebufferStatus = GLenum (*)(GLenum);
-using PFN_glClear = void (*)(GLbitfield);
-using PFN_glClearColor = void (*)(GLfloat, GLfloat, GLfloat, GLfloat);
-using PFN_glClearDepthf = void (*)(GLfloat);
-using PFN_glClearStencil = void (*)(GLint);
-using PFN_glColorMask = void (*)(GLboolean, GLboolean, GLboolean, GLboolean);
 using PFN_glCompileShader = void (*)(GLuint);
-using PFN_glCopyTexSubImage2D = void (*)(GLenum, GLint, GLint, GLint, GLint, GLint, GLsizei, GLsizei);
 using PFN_glCreateProgram = GLuint (*)(void);
 using PFN_glCreateShader = GLuint (*)(GLenum);
-using PFN_glCullFace = void (*)(GLenum);
 using PFN_glDeleteProgram = void (*)(GLuint);
 using PFN_glDeleteShader = void (*)(GLuint);
-using PFN_glDepthFunc = void (*)(GLenum);
-using PFN_glDepthMask = void (*)(GLboolean);
-using PFN_glDisable = void (*)(GLenum);
-using PFN_glDisableVertexAttribArray = void (*)(GLuint);
 using PFN_glDrawArrays = void (*)(GLenum, GLint, GLsizei);
-using PFN_glDrawElements = void (*)(GLenum, GLsizei, GLenum, const void*);
-using PFN_glEnable = void (*)(GLenum);
-using PFN_glEnableVertexAttribArray = void (*)(GLuint);
-using PFN_glFramebufferRenderbuffer = void (*)(GLenum, GLenum, GLenum, GLuint);
 using PFN_glFramebufferTexture2D = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
-using PFN_glGenerateMipmap = void (*)(GLenum);
-using PFN_glGetError = GLenum (*)(void);
 using PFN_glLinkProgram = void (*)(GLuint);
-using PFN_glPixelStorei = void (*)(GLenum, GLint);
-using PFN_glPolygonOffset = void (*)(GLfloat, GLfloat);
-using PFN_glReleaseShaderCompiler = void (*)(void);
-using PFN_glRenderbufferStorage = void (*)(GLenum, GLenum, GLsizei, GLsizei);
-using PFN_glScissor = void (*)(GLint, GLint, GLsizei, GLsizei);
-using PFN_glStencilFunc = void (*)(GLenum, GLint, GLuint);
-using PFN_glStencilMask = void (*)(GLuint);
-using PFN_glStencilOp = void (*)(GLenum, GLenum, GLenum);
-using PFN_glTexParameterf = void (*)(GLenum, GLenum, GLfloat);
 using PFN_glTexParameteri = void (*)(GLenum, GLenum, GLint);
 using PFN_glUniform1i = void (*)(GLint, GLint);
 using PFN_glUseProgram = void (*)(GLuint);
 using PFN_glViewport = void (*)(GLint, GLint, GLsizei, GLsizei);
-using PFN_glVertexAttribPointer = void (*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
-using PFN_glGetString = const GLubyte* (*)(GLenum);
 using PFN_glGetUniformLocation = GLint (*)(GLuint, const GLchar*);
-using PFN_glBindAttribLocation = void (*)(GLuint, GLuint, const GLchar*);
 using PFN_glShaderSource = void (*)(GLuint, GLsizei, const GLchar* const*, const GLint*);
 using PFN_glGetProgramInfoLog = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
 using PFN_glGetShaderInfoLog = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
-using PFN_glGetActiveUniform = void (*)(GLuint, GLuint, GLsizei, GLsizei*, GLint*, GLenum*, GLchar*);
-using PFN_glDeleteBuffers = void (*)(GLsizei, const GLuint*);
-using PFN_glDeleteFramebuffers = void (*)(GLsizei, const GLuint*);
-using PFN_glDeleteRenderbuffers = void (*)(GLsizei, const GLuint*);
-using PFN_glDeleteTextures = void (*)(GLsizei, const GLuint*);
-using PFN_glGenBuffers = void (*)(GLsizei, GLuint*);
 using PFN_glGenVertexArrays = void (*)(GLsizei, GLuint*);
-using PFN_glBindBufferRange = void (*)(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr);
-using PFN_glBindBufferBase = void (*)(GLenum, GLuint, GLuint);
-using PFN_glClearBufferfv = void (*)(GLenum, GLint, const GLfloat*);
-using PFN_eglGetPlatformDisplayEXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
-using PFN_glDrawBuffers = void (*)(GLsizei, const GLenum*);
-using PFN_glRenderbufferStorageMultisample = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
-using PFN_glInvalidateFramebuffer = void (*)(GLenum, GLsizei, const GLenum*);
 using PFN_glBlitFramebuffer = void (*)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
-using PFN_glDrawArraysInstanced = void (*)(GLenum, GLint, GLsizei, GLsizei);
-using PFN_glDrawElementsInstanced = void (*)(GLenum, GLsizei, GLenum, const void*, GLsizei);
-using PFN_glVertexAttribDivisor = void (*)(GLuint, GLuint);
-using PFN_glVertexAttribIPointer = void (*)(GLuint, GLint, GLenum, GLsizei, const void*);
-using PFN_glTexStorage2D = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
-using PFN_glTexStorage3D = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLsizei);
-using PFN_glTexSubImage3D = void (*)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*);
-using PFN_glProgramParameteri = void (*)(GLuint, GLenum, GLint);
-using PFN_glGetUniformBlockIndex = GLuint (*)(GLuint, const GLchar*);
-using PFN_glUniformBlockBinding = void (*)(GLuint, GLuint, GLuint);
-using PFN_glGetActiveUniformBlockiv = void (*)(GLuint, GLuint, GLenum, GLint*);
-using PFN_glFenceSync = GLsync (*)(GLenum, GLbitfield);
-using PFN_glClientWaitSync = GLenum (*)(GLsync, GLbitfield, GLuint64);
-using PFN_glWaitSync = void (*)(GLsync, GLbitfield, GLuint64);
-using PFN_glDeleteSync = void (*)(GLsync);
-using PFN_glIsSync = GLboolean (*)(GLsync);
-using PFN_glGetSynciv = void (*)(GLsync, GLenum, GLsizei, GLsizei*, GLint*);
-using PFN_glTexImage3D = void (*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum,
-                                  GLenum, const void*);
-using PFN_glCompressedTexImage3D = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint,
-                                            GLsizei, const void*);
-using PFN_glCompressedTexSubImage3D = void (*)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei,
-                                               GLsizei, GLenum, GLsizei, const void*);
-using PFN_glFramebufferTextureLayer = void (*)(GLenum, GLenum, GLuint, GLint, GLint);
-using PFN_glGetInteger64v = void (*)(GLenum, GLint64*);
-using PFN_glQueryCounterEXT = void (*)(GLuint, GLenum);
-using PFN_glGetQueryiv = void (*)(GLenum, GLenum, GLint*);
-using PFN_glGetQueryObjectivEXT = void (*)(GLuint, GLenum, GLint*);
-using PFN_glProgramBinary = void (*)(GLuint, GLenum, const void*, GLsizei);
-using PFN_glGetProgramBinary = void (*)(GLuint, GLsizei, GLsizei*, GLenum*, void*);
-using PFN_glFramebufferTexture2DMultisampleEXT = void (*)(GLenum, GLenum, GLenum, GLuint, GLint,
-                                                         GLsizei);
-using PFN_glRenderbufferStorageMultisampleEXT = void (*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
-using PFN_glClearBufferiv = void (*)(GLenum, GLint, const GLint*);
-using PFN_glClearBufferuiv = void (*)(GLenum, GLint, const GLuint*);
-using PFN_glClearBufferfi = void (*)(GLenum, GLint, GLfloat, GLint);
-using PFN_glPushGroupMarkerEXT = void (*)(GLsizei, const GLchar*);
-using PFN_glPopGroupMarkerEXT = void (*)();
-using PFN_glObjectLabelKHR = void (*)(GLenum, GLuint, GLsizei, const GLchar*);
-using PFN_glGetBufferParameteriv = void (*)(GLenum, GLenum, GLint*);
-using PFN_glCopyImageSubData = void (*)(GLuint, GLenum, GLint, GLint, GLint, GLint, GLuint, GLenum,
-                                        GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei);
 using PFN_glBindVertexArray = void (*)(GLuint);
-using PFN_glDeleteVertexArrays = void (*)(GLsizei, const GLuint*);
 using PFN_glGenFramebuffers = void (*)(GLsizei, GLuint*);
-using PFN_glGenRenderbuffers = void (*)(GLsizei, GLuint*);
 using PFN_glGenTextures = void (*)(GLsizei, GLuint*);
-using PFN_glIsEnabled = GLboolean (*)(GLenum);
-using PFN_glGetBooleanv = void (*)(GLenum, GLboolean*);
 using PFN_glUniform4f = void (*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
-using PFN_glGetIntegerv = void (*)(GLenum, GLint*);
-using PFN_glTexParameterfv = void (*)(GLenum, GLenum, const GLfloat*);
 using PFN_glGetProgramiv = void (*)(GLuint, GLenum, GLint*);
 using PFN_glGetShaderiv = void (*)(GLuint, GLenum, GLint*);
-using PFN_glGetShaderSource = void (*)(GLuint, GLsizei, GLsizei*, GLchar*);
-using PFN_glBufferData = void (*)(GLenum, GLsizeiptr, const void*, GLenum);
-using PFN_glBufferStorage = void (*)(GLenum, GLsizeiptr, const void*, GLbitfield);
-using PFN_glGenQueries = void (*)(GLsizei, GLuint*);
-using PFN_glDeleteQueries = void (*)(GLsizei, const GLuint*);
-using PFN_glBeginQuery = void (*)(GLenum, GLuint);
-using PFN_glEndQuery = void (*)(GLenum);
-using PFN_glGetQueryObjectuiv = void (*)(GLuint, GLenum, GLuint*);
-using PFN_glGetQueryObjectui64v = void (*)(GLuint, GLenum, GLuint64*);
-using PFN_glBufferSubData = void (*)(GLenum, GLintptr, GLsizeiptr, const void*);
-using PFN_glMapBufferRange = void* (*)(GLenum, GLintptr, GLsizeiptr, GLbitfield);
-using PFN_glGetVertexAttribiv = void (*)(GLuint, GLenum, GLint*);
-using PFN_glGetVertexAttribPointerv = void (*)(GLuint, GLenum, void**);
-using PFN_glUnmapBuffer = GLboolean (*)(GLenum);
 using PFN_glTexImage2D = void (*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum,
                                    const void*);
-using PFN_glTexSubImage2D = void (*)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum,
-                                      const void*);
 using PFN_glCompressedTexImage2D = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei,
                                              const void*);
-using PFN_glCompressedTexSubImage2D = void (*)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum,
-                                                GLsizei, const void*);
-using PFN_glReadPixels = void (*)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
-
-float unpack_float(uint64_t arg) {
-    uint32_t bits = static_cast<uint32_t>(arg);
-    float f;
-    std::memcpy(&f, &bits, sizeof(f));
-    return f;
-}
-uint64_t pack_float(float f) {
-    uint32_t bits;
-    std::memcpy(&bits, &f, sizeof(bits));
-    return bits;
-}
-
-// ---- server-side opaque handle tables --------------------------------
-
-uint64_t g_next_handle = 1;
-std::unordered_map<uint64_t, EGLDisplay> g_displays;
-std::unordered_map<uint64_t, EGLConfig> g_configs;
-std::unordered_map<uint64_t, EGLSurface> g_surfaces;
-std::unordered_map<uint64_t, EGLContext> g_contexts;
-int g_window_surface_create_count = 0;  // temporary diagnostic
-
-uint64_t store_handle(std::unordered_map<uint64_t, void*>&, void*);  // unused generic placeholder
-
-template <typename Map, typename T>
-uint64_t store(Map& map, T value) {
-    uint64_t h = g_next_handle++;
-    map[h] = value;
-    return h;
-}
+using PFN_eglGetPlatformDisplayEXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
 
 struct RealFns {
 #define FN(name) PFN_##name name##_
-    FN(eglGetDisplay);
     FN(eglInitialize);
     FN(eglBindAPI);
     FN(eglChooseConfig);
     FN(eglCreateWindowSurface);
-    FN(eglCreatePbufferSurface);
     FN(eglCreateContext);
     FN(eglMakeCurrent);
     FN(eglSwapBuffers);
     FN(eglGetError);
     FN(eglQueryString);
-    FN(eglDestroyContext);
-    FN(eglDestroySurface);
-    FN(eglGetConfigAttrib);
-    FN(eglGetCurrentContext);
     FN(eglQuerySurface);
     FN(eglSwapInterval);
-    FN(eglTerminate);
-    FN(eglGetProcAddress);
 
     FN(glActiveTexture);
     FN(glAttachShader);
-    FN(glBindBuffer);
     FN(glBindFramebuffer);
-    FN(glBindRenderbuffer);
     FN(glBindTexture);
-    FN(glBlendFunc);
-    FN(glBlendFuncSeparate);
-    FN(glCheckFramebufferStatus);
-    FN(glClear);
-    FN(glClearColor);
-    FN(glClearDepthf);
-    FN(glClearStencil);
-    FN(glColorMask);
     FN(glCompileShader);
-    FN(glCopyTexSubImage2D);
     FN(glCreateProgram);
     FN(glCreateShader);
-    FN(glCullFace);
     FN(glDeleteProgram);
     FN(glDeleteShader);
-    FN(glDepthFunc);
-    FN(glDepthMask);
-    FN(glDisable);
-    FN(glDisableVertexAttribArray);
     FN(glDrawArrays);
-    FN(glDrawElements);
-    FN(glEnable);
-    FN(glEnableVertexAttribArray);
-    FN(glFramebufferRenderbuffer);
     FN(glFramebufferTexture2D);
-    FN(glGenerateMipmap);
-    FN(glGetError);
     FN(glLinkProgram);
-    FN(glPixelStorei);
-    FN(glPolygonOffset);
-    FN(glReleaseShaderCompiler);
-    FN(glRenderbufferStorage);
-    FN(glScissor);
-    FN(glStencilFunc);
-    FN(glStencilMask);
-    FN(glStencilOp);
-    FN(glTexParameterf);
     FN(glTexParameteri);
     FN(glUniform1i);
     FN(glUseProgram);
     FN(glViewport);
-    FN(glVertexAttribPointer);
-    FN(glGetString);
     FN(glGetUniformLocation);
-    FN(glBindAttribLocation);
     FN(glShaderSource);
     FN(glGetProgramInfoLog);
     FN(glGetShaderInfoLog);
-    FN(glGetActiveUniform);
-    FN(glDeleteBuffers);
-    FN(glDeleteFramebuffers);
-    FN(glDeleteRenderbuffers);
-    FN(glDeleteTextures);
-    FN(glGenBuffers);
     FN(glGenVertexArrays);
-    FN(glBindBufferRange);
-    FN(glBindBufferBase);
-    FN(glClearBufferfv);
     FN(eglGetPlatformDisplayEXT);
-    FN(glDrawBuffers);
-    FN(glRenderbufferStorageMultisample);
-    FN(glInvalidateFramebuffer);
     FN(glBlitFramebuffer);
-    FN(glDrawArraysInstanced);
-    FN(glDrawElementsInstanced);
-    FN(glVertexAttribDivisor);
-    FN(glVertexAttribIPointer);
-    FN(glTexStorage2D);
-    FN(glTexStorage3D);
-    FN(glTexSubImage3D);
-    FN(glProgramParameteri);
-    FN(glGetUniformBlockIndex);
-    FN(glUniformBlockBinding);
-    FN(glGetActiveUniformBlockiv);
-    FN(glFenceSync);
-    FN(glClientWaitSync);
-    FN(glWaitSync);
-    FN(glDeleteSync);
-    FN(glIsSync);
-    FN(glGetSynciv);
-    FN(glTexImage3D);
-    FN(glCompressedTexImage3D);
-    FN(glCompressedTexSubImage3D);
-    FN(glFramebufferTextureLayer);
-    FN(glGetInteger64v);
-    FN(glQueryCounterEXT);
-    FN(glGetQueryiv);
-    FN(glGetQueryObjectivEXT);
-    FN(glProgramBinary);
-    FN(glGetProgramBinary);
-    FN(glFramebufferTexture2DMultisampleEXT);
-    FN(glRenderbufferStorageMultisampleEXT);
-    FN(glClearBufferiv);
-    FN(glClearBufferuiv);
-    FN(glClearBufferfi);
-    FN(glPushGroupMarkerEXT);
-    FN(glPopGroupMarkerEXT);
-    FN(glObjectLabelKHR);
-    FN(glGetBufferParameteriv);
-    FN(glCopyImageSubData);
     FN(glBindVertexArray);
-    FN(glDeleteVertexArrays);
     FN(glGenFramebuffers);
-    FN(glGenRenderbuffers);
     FN(glGenTextures);
-    FN(glGetIntegerv);
-    FN(glGetBooleanv);
     FN(glUniform4f);
-    FN(glIsEnabled);
-    FN(glTexParameterfv);
     FN(glGetProgramiv);
     FN(glGetShaderiv);
-    FN(glGetShaderSource);
-    FN(glBufferData);
-    FN(glBufferStorage);
-    FN(glGenQueries);
-    FN(glDeleteQueries);
-    FN(glBeginQuery);
-    FN(glEndQuery);
-    FN(glGetQueryObjectuiv);
-    FN(glGetQueryObjectui64v);
-    FN(glBufferSubData);
-    FN(glMapBufferRange);
-    FN(glGetVertexAttribiv);
-    FN(glGetVertexAttribPointerv);
-    FN(glUnmapBuffer);
     FN(glTexImage2D);
-    FN(glTexSubImage2D);
     FN(glCompressedTexImage2D);
-    FN(glCompressedTexSubImage2D);
-    FN(glReadPixels);
 #undef FN
 };
-
-// Optional: an entry point the driver may genuinely not have. The
-// caller must handle a null, and does; see GlBufferStorage, which
-// falls back to an ordinary mutable allocation.
-template <typename Fn>
-Fn may_resolve(const char* name) {
-    return reinterpret_cast<Fn>(stud::render::resolve(name));
-}
 
 template <typename Fn>
 Fn must_resolve(const char* name) {
@@ -894,69 +621,6 @@ bool write_all(int fd, const void* data, uint32_t len) {
     return true;
 }
 
-// Real GLES3 bytes-per-texel. The old version assumed 4 components for
-// anything it did not recognise, which silently over-read the caller's
-// buffer by 4x for a real GL_RED upload, live-caught as a fatal
-// EFAULT on the render socket (the engine uploads 128x2048 GL_RED
-// glyph/mask atlases during real UI bring-up), which killed the render
-// connection permanently and froze the window mid-frame.
-uint32_t gl_pixel_size(GLenum format, GLenum type) {
-    uint32_t components = 4;
-    switch (format) {
-        case GL_RED:
-        case GL_RED_INTEGER:
-        case GL_ALPHA:
-        case GL_LUMINANCE:
-        case GL_DEPTH_COMPONENT:
-        case GL_STENCIL_INDEX8:
-            components = 1;
-            break;
-        case GL_RG:
-        case GL_RG_INTEGER:
-        case GL_LUMINANCE_ALPHA:
-        case GL_DEPTH_STENCIL:
-            components = 2;
-            break;
-        case GL_RGB:
-        case GL_RGB_INTEGER:
-            components = 3;
-            break;
-        case GL_RGBA:
-        case GL_RGBA_INTEGER:
-        default:
-            components = 4;
-            break;
-    }
-    switch (type) {
-        // Packed types carry the whole texel in one unit.
-        case GL_UNSIGNED_SHORT_5_6_5:
-        case GL_UNSIGNED_SHORT_4_4_4_4:
-        case GL_UNSIGNED_SHORT_5_5_5_1:
-            return 2;
-        case GL_UNSIGNED_INT_2_10_10_10_REV:
-        case GL_UNSIGNED_INT_10F_11F_11F_REV:
-        case GL_UNSIGNED_INT_5_9_9_9_REV:
-        case GL_UNSIGNED_INT_24_8:
-            return 4;
-        case GL_FLOAT_32_UNSIGNED_INT_24_8_REV:
-            return 8;
-        // Unpacked types: one unit per component.
-        case GL_BYTE:
-        case GL_UNSIGNED_BYTE:
-            return components;
-        case GL_SHORT:
-        case GL_UNSIGNED_SHORT:
-        case GL_HALF_FLOAT:
-            return components * 2u;
-        case GL_INT:
-        case GL_UNSIGNED_INT:
-        case GL_FLOAT:
-            return components * 4u;
-        default:
-            return components;
-    }
-}
-
 }  // namespace
 
 // Defined further down, at the main loop that usually calls it, input
@@ -971,8 +635,6 @@ void dispatch_input_queue(wl_display* display, bool fd_readable);
 
 namespace {
 uint64_t share_window_state(uint64_t id);
-uint64_t share_gl_frame_page(uint64_t id);
-uint64_t g_window_surface_handle = kNullHandle;
 bool g_prefer_vulkan = true;
 bool g_hidpi_enabled = true;
 // Stud's own upscaler, and how far below the screen the engine renders
@@ -986,20 +648,6 @@ bool g_upscaling_enabled = false;
 bool g_discord_enabled = false;
 bool g_discord_join_button = false;
 
-// STUD_TRACE_CURSOR=1: the experiment that separates "the engine never draws
-// its own cursor" from "it draws it and the pixels never reach the screen".
-// Roblox's cursor art is a 64x64 texture and belongs topmost, so record the
-// bound texture (and its real dimensions) at every draw and report, per
-// frame, how many draws used a 64x64 texture plus the full GL state and
-// buffer bindings of the last such draw. Off by default; it only reads state
-// and binds nothing, unlike the read-back that once blacked out the window.
-bool cursor_trace_enabled() {
-    static const bool on = std::getenv("STUD_TRACE_CURSOR") != nullptr;
-    return on;
-}
-std::unordered_map<GLuint, std::pair<int, int>> g_tex_dims;
-GLuint g_bound_texture_2d = 0;
-
 // Windows Graphical Parity on the GL path: what the desktop material
 // shaders sample that the Android engine never binds. Their annotations
 // put the detail normal map at unit 8 and the BRDF lookup table at unit
@@ -1009,10 +657,6 @@ GLuint g_bound_texture_2d = 0;
 namespace gl_desktop_fill {
 
 std::string g_dir;                // empty: the feature is off
-GLenum g_active_unit = 0;         // index, not GL_TEXTUREi
-GLuint g_unit_2d[2] = {0, 0};     // what the engine has bound at 8 and 11
-GLuint g_texture[2] = {0, 0};     // the files, once uploaded
-bool g_tried = false;
 constexpr GLenum kUnit[2] = {8, 11};
 constexpr const char* kFile[2] = {"normaldetail.dds", "brdfLUT.dds"};
 // The second environment cube the desktop shaders blend with the engine's
@@ -1069,200 +713,7 @@ GLuint upload(const RealFns& fns, const std::string& path, bool repeat) {
     return tex;
 }
 
-// Puts the files on whichever of the two units is empty. Called where the
-// engine's own binding there may have changed; leaves the active unit and
-// the engine's binding on it as they were.
-void fill(const RealFns& fns) {
-    if (g_dir.empty()) return;
-    if (!g_tried) {
-        g_tried = true;
-        // Uploaded through unit 8, whose binding this code tracks, so no
-        // unit the engine relies on is disturbed.
-        fns.glActiveTexture_(GL_TEXTURE0 + kUnit[0]);
-        for (int i = 0; i < 2; ++i) g_texture[i] = upload(fns, g_dir + "/" + kFile[i], i == 0);
-        fns.glBindTexture_(GL_TEXTURE_2D, g_unit_2d[0]);
-        fns.glActiveTexture_(GL_TEXTURE0 + g_active_unit);
-        std::printf("stud-render-host: Windows Graphical Parity (GL): detail normal %s, BRDF table %s\n",
-                    g_texture[0] != 0 ? "loaded" : "missing", g_texture[1] != 0 ? "loaded" : "missing");
-        std::fflush(stdout);
-    }
-    for (int i = 0; i < 2; ++i) {
-        if (g_unit_2d[i] != 0 || g_texture[i] == 0) continue;
-        fns.glActiveTexture_(GL_TEXTURE0 + kUnit[i]);
-        fns.glBindTexture_(GL_TEXTURE_2D, g_texture[i]);
-        fns.glActiveTexture_(GL_TEXTURE0 + g_active_unit);
-    }
-}
-
 }  // namespace gl_desktop_fill
-
-uint64_t g_frame_draws = 0;
-uint64_t g_frame_cursor_draws = 0;
-GLuint g_last_cursor_tex = 0;
-uint64_t g_cursor_trace_frames = 0;
-std::string g_last_cursor_state;
-
-template <typename Fns>
-void note_draw_for_cursor_trace(const Fns& fns, GLsizei count = 0, GLenum index_type = 0,
-                                uintptr_t index_offset = 0, GLint first = 0) {
-    if (!cursor_trace_enabled()) return;
-    ++g_frame_draws;
-    auto it = g_tex_dims.find(g_bound_texture_2d);
-    if (it == g_tex_dims.end() || it->second.first != 64 || it->second.second != 64) return;
-    ++g_frame_cursor_draws;
-    g_last_cursor_tex = g_bound_texture_2d;
-    GLint vp[4] = {0, 0, 0, 0};
-    GLint sc[4] = {0, 0, 0, 0};
-    GLint prog = 0, fbo = 0, arr = 0, elem = 0, vao = 0, blend_on = 0, depth_on = 0;
-    GLint src_rgb = 0, dst_rgb = 0;
-    fns.glGetIntegerv_(GL_VIEWPORT, vp);
-    fns.glGetIntegerv_(GL_SCISSOR_BOX, sc);
-    fns.glGetIntegerv_(GL_CURRENT_PROGRAM, &prog);
-    fns.glGetIntegerv_(GL_FRAMEBUFFER_BINDING, &fbo);
-    fns.glGetIntegerv_(GL_ARRAY_BUFFER_BINDING, &arr);
-    fns.glGetIntegerv_(GL_ELEMENT_ARRAY_BUFFER_BINDING, &elem);
-    fns.glGetIntegerv_(GL_VERTEX_ARRAY_BINDING, &vao);
-    fns.glGetIntegerv_(GL_BLEND, &blend_on);
-    fns.glGetIntegerv_(GL_DEPTH_TEST, &depth_on);
-    fns.glGetIntegerv_(GL_BLEND_SRC_RGB, &src_rgb);
-    fns.glGetIntegerv_(GL_BLEND_DST_RGB, &dst_rgb);
-    char buf[512];
-    std::snprintf(buf, sizeof(buf),
-                  "tex=%u prog=%d fbo=%d vp=[%d,%d,%d,%d] scissor=[%d,%d,%d,%d] blend=%d(%x/%x) "
-                  "depthTest=%d arrayBuf=%d elemBuf=%d vao=%d",
-                  g_bound_texture_2d, prog, fbo, vp[0], vp[1], vp[2], vp[3], sc[0], sc[1], sc[2],
-                  sc[3], blend_on, src_rgb, dst_rgb, depth_on, arr, elem, vao);
-    g_last_cursor_state = buf;
-
-    // One-shot, and only under the trace: read the real geometry the cursor
-    // draw is about to use. Every piece of surrounding state has repeatedly
-    // measured healthy, so the vertex data itself is the remaining
-    // suspect, and it cannot be settled from the client side by
-    // inspection.
-    // Only sample well after start-up: the first 64x64 draws in a process are
-    // boot-time UI, not the cursor, and dumping those wasted a whole pass.
-    static int dumped = 0;
-    if (g_cursor_trace_frames < 400 || dumped >= 6 || arr == 0) return;
-    ++dumped;
-    std::printf("stud-render-host: CURSORTRACE draw count=%d first=%d indexType=0x%x indexOffset=%zu\n",
-                static_cast<int>(count), static_cast<int>(first), index_type,
-                static_cast<size_t>(index_offset));
-    // Read exactly the indices this draw consumes, then exactly the vertices
-    // they name, using attribute 0's real stride and offset. Everything else
-    // about this draw has measured healthy for several sessions; the data is
-    // the only thing left, and it has never actually been looked at.
-    GLint stride = 0, attrib_size = 0, attrib_type = 0;
-    void* attrib_ptr = nullptr;
-    fns.glGetVertexAttribiv_(0, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &stride);
-    fns.glGetVertexAttribiv_(0, GL_VERTEX_ATTRIB_ARRAY_SIZE, &attrib_size);
-    fns.glGetVertexAttribiv_(0, GL_VERTEX_ATTRIB_ARRAY_TYPE, &attrib_type);
-    fns.glGetVertexAttribPointerv_(0, GL_VERTEX_ATTRIB_ARRAY_POINTER, &attrib_ptr);
-    const size_t attrib_base = reinterpret_cast<uintptr_t>(attrib_ptr);
-    std::printf("stud-render-host: CURSORTRACE attrib0 size=%d type=0x%x stride=%d offset=%zu\n",
-                attrib_size, attrib_type, stride, attrib_base);
-    if (elem != 0 && count > 0 && index_type == GL_UNSIGNED_SHORT) {
-        const GLsizeiptr bytes = static_cast<GLsizeiptr>(count) * 2;
-        if (void* ix = fns.glMapBufferRange_(GL_ELEMENT_ARRAY_BUFFER,
-                                              static_cast<GLintptr>(index_offset), bytes,
-                                              GL_MAP_READ_BIT)) {
-            const unsigned short* u = static_cast<const unsigned short*>(ix);
-            std::vector<unsigned short> idx(u, u + count);
-            fns.glUnmapBuffer_(GL_ELEMENT_ARRAY_BUFFER);
-            std::printf("stud-render-host: CURSORTRACE indices:");
-            for (GLsizei i = 0; i < count && i < 12; ++i) std::printf(" %u", static_cast<unsigned>(idx[i]));
-            std::printf("\n");
-            unsigned short lo = idx[0], hi = idx[0];
-            for (unsigned short v : idx) { lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
-            if (stride > 0) {
-                const GLintptr off = static_cast<GLintptr>(attrib_base + static_cast<size_t>(lo) * stride);
-                const GLsizeiptr len = static_cast<GLsizeiptr>(hi - lo + 1) * stride;
-                if (void* vb = fns.glMapBufferRange_(GL_ARRAY_BUFFER, off, len, GL_MAP_READ_BIT)) {
-                    std::printf("stud-render-host: CURSORTRACE verts[%u..%u] attrib0:", lo, hi);
-                    for (unsigned short v = lo; v <= hi && v < lo + 8; ++v) {
-                        const float* f = reinterpret_cast<const float*>(
-                            static_cast<const unsigned char*>(vb) + (v - lo) * stride);
-                        std::printf(" (%.2f,%.2f)", static_cast<double>(f[0]), static_cast<double>(f[1]));
-                    }
-                    std::printf("\n");
-                    fns.glUnmapBuffer_(GL_ARRAY_BUFFER);
-                }
-            }
-        }
-    }
-    std::fflush(stdout);
-}
-
-// Makes SPIRV-Cross's array-index arithmetic compile under a strict GLES compiler.
-//
-// Roblox's GLES shader pack contains index expressions like
-//
-//     CB12[((uint(POSITION.w) >> 8u) & 255u) * 1 + 0].xyz
-//
-// The `1` and `0` are `const int` while the left operand is `uint`.
-// ESSL 3.00 has no implicit int->uint conversion, so a compiler that
-// implements the spec strictly rejects it:
-//
-//     ERROR: '*' : wrong operand types ... 'highp uint' and 'const int'
-//
-// Real Android GL drivers accept it, which is why the pack ships this
-// way and works on a device. 35 shaders fail here without this, the
-// terrain (SmoothCluster*) and part (DefaultUnified*) shaders, i.e.
-// most of what a game looks like.
-//
-// The rewrite is deliberately narrow: ONLY inside `[...]`, and only
-// where the arithmetic follows an unsigned literal's closing paren
-// (`...255u) * 1 + 0`). A broader "suffix any int after a uint" pass was
-// tried and made things far worse, 35 failures became 795, because
-// it also rewrote signed contexts where the int was correct. Matching
-// the generated shape exactly is what keeps it safe; anything that does
-// not match is left for the driver to judge.
-std::string fix_uint_index_arithmetic(const std::string& src) {
-    static const std::string kMarker = "u) * ";
-    if (src.find(kMarker) == std::string::npos) return src;
-
-    std::string out;
-    out.reserve(src.size() + 64);
-    size_t i = 0;
-    while (i < src.size()) {
-        // Only rewrite between '[' and the matching ']', so ordinary
-        // arithmetic elsewhere in the shader is never touched.
-        if (src[i] != '[') {
-            out.push_back(src[i++]);
-            continue;
-        }
-        const size_t close = src.find(']', i);
-        if (close == std::string::npos) {
-            out.append(src, i, std::string::npos);
-            break;
-        }
-        std::string index = src.substr(i, close - i + 1);
-        if (index.find(kMarker) != std::string::npos) {
-            std::string fixed;
-            fixed.reserve(index.size() + 8);
-            for (size_t j = 0; j < index.size(); ++j) {
-                fixed.push_back(index[j]);
-                if (index[j] != '*' && index[j] != '+') continue;
-                // Copy the spaces, then suffix the bare integer that
-                // follows so it is unsigned like the left operand.
-                size_t k = j + 1;
-                while (k < index.size() && index[k] == ' ') fixed.push_back(index[k++]);
-                const size_t digits = k;
-                while (k < index.size() && std::isdigit(static_cast<unsigned char>(index[k]))) {
-                    fixed.push_back(index[k++]);
-                }
-                if (k > digits && (k >= index.size() || (index[k] != 'u' && index[k] != '.' &&
-                                                          index[k] != 'f'))) {
-                    fixed.push_back('u');
-                }
-                j = k - 1;
-            }
-            index = std::move(fixed);
-        }
-        out.append(index);
-        i = close + 1;
-    }
-    return out;
-}
 
 // Runs stud-ui in a one-shot secret mode, writing `input` to its stdin
 // and, when `capture` is non-null, collecting its stdout into it.
@@ -1436,51 +887,6 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
     ::_exit(status);
 }
 
-// STUD_GL_TRACE_TEX=1: what actually reaches each texture.
-//
-// A texture that samples as though it only has its small mips is either
-// missing its big ones or being told not to use them, and those are
-// different bugs. This records, per texture name, which levels were
-// uploaded and every sampler parameter that can pin the level, base,
-// max, min/max LOD and the min filter, and prints one line per texture
-// the first time it is drawn with.
-void trace_texture_upload(const char* what, GLuint texture, GLint level, GLsizei w, GLsizei h,
-                          GLenum format, size_t bytes = 0, uint64_t pbo_offset_plus_one = 0,
-                          size_t received = 0) {
-    static const bool on = std::getenv("STUD_GL_TRACE_TEX") != nullptr;
-    if (!on) return;
-    // `bytes` is the imageSize the caller declared; `received` is how
-    // much actually arrived over the wire. They must match, or the
-    // driver reads whatever follows the buffer.
-    std::printf("stud-render-host: TEX %s tex=%u level=%d %dx%d fmt=0x%x declared=%zu got=%zu "
-                "pbo=%lld%s\n",
-                what, texture, level, static_cast<int>(w), static_cast<int>(h), format, bytes,
-                received,
-                pbo_offset_plus_one == 0 ? -1LL
-                                         : static_cast<long long>(pbo_offset_plus_one - 1),
-                (pbo_offset_plus_one == 0 && bytes != received) ? "  <-- SHORT" : "");
-    std::fflush(stdout);
-}
-
-void trace_texture_parameter(GLenum target, GLenum pname, GLint value) {
-    static const bool on = std::getenv("STUD_GL_TRACE_TEX") != nullptr;
-    if (!on) return;
-    // Only the ones that decide which level is sampled.
-    switch (pname) {
-        case GL_TEXTURE_BASE_LEVEL:
-        case GL_TEXTURE_MAX_LEVEL:
-        case GL_TEXTURE_MIN_LOD:
-        case GL_TEXTURE_MAX_LOD:
-        case GL_TEXTURE_MIN_FILTER:
-            break;
-        default:
-            return;
-    }
-    std::printf("stud-render-host: TEX param target=0x%x pname=0x%x value=%d\n", target, pname,
-                value);
-    std::fflush(stdout);
-}
-
 
 // STUD_FRAME_PACING=1: the distribution of frame intervals, not their
 // average.
@@ -1591,13 +997,6 @@ void report_reply_free_failure(stud::render_host::CallId id, uint64_t result) {
                 "cannot see this\n",
                 stud::render_host::call_id_name(id), static_cast<int32_t>(result));
     std::fflush(stdout);
-}
-
-// STUD_RENDER_CALL_TRACE: names the draw/clear calls, the swap counter
-// and the shader info logs. Read once, from the three places that trace.
-bool render_call_trace_enabled() {
-    static const bool on = std::getenv("STUD_RENDER_CALL_TRACE") != nullptr;
-    return on;
 }
 
 // STUD_WL_POLL_MS: how long a poll may block before Wayland is pumped
@@ -2210,8 +1609,6 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             return stud::android_glue::window_close_requested() ? 1u : 0u;
         case CallId::ShareWindowState:
             return share_window_state(a[0]);
-        case CallId::GlShareFramePage:
-            return share_gl_frame_page(a[0]);
         case CallId::PollWebViewClosed: {
             uint32_t pending = g_webview_closed.exchange(0, std::memory_order_relaxed);
             return pending;
@@ -2551,100 +1948,25 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
     }
 }
 
-// The engine's GL sync objects, by the id its client carries. Touched only
-// under dispatch_mutex(), including from client_wait_sync().
-std::map<uint64_t, GLsync> g_syncs;
-uint64_t g_next_sync_id = 0;
-
-// glClientWaitSync without holding the dispatch lock for the wait.
-//
-// The engine waits up to 5 s here once a frame. Waiting inside the lock
-// would hold every other connection (audio, input, the window) for as
-// long as the GPU takes, the problem blocks_in_the_driver() exists for.
-// So the real call is made with a zero timeout under the lock, and the
-// lock is let go between polls. GL_SYNC_FLUSH_COMMANDS_BIT only matters
-// on the first poll: after it the fence has been flushed.
-uint64_t client_wait_sync(const RealFns& fns, uint64_t id, GLbitfield flags, uint64_t timeout_ns) {
-    constexpr GLenum kAlreadySignaled = 0x911A;
-    constexpr GLenum kTimeoutExpired = 0x911B;
-    constexpr GLenum kConditionSatisfied = 0x911C;
-    constexpr GLenum kWaitFailed = 0x911D;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(
-                                                                std::min<uint64_t>(timeout_ns,
-                                                                                   INT64_MAX));
-    bool first = true;
-    for (;;) {
-        GLenum r = kWaitFailed;
-        {
-            std::lock_guard<std::mutex> lock(dispatch_mutex());
-            auto it = g_syncs.find(id);
-            if (it == g_syncs.end()) return kWaitFailed;
-            r = fns.glClientWaitSync_(it->second, first ? flags : 0, 0);
-        }
-        if (r == kAlreadySignaled) return first ? kAlreadySignaled : kConditionSatisfied;
-        if (r != kTimeoutExpired) return r;
-        first = false;
-        if (std::chrono::steady_clock::now() >= deadline) return kTimeoutExpired;
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
-}
-
 // ---- Stud's upscaler on the GL path ----
 //
-// The Vulkan path owns the swapchain and upscales between the engine's
-// image and the window's (vulkan_host.cpp). GL has no such seam: the
-// engine draws into the window surface's own back buffer, framebuffer 0,
-// and eglSwapBuffers shows it. So the seam is made. While the window
-// surface is current, framebuffer 0 means a framebuffer Stud owns, at the
-// size the engine renders (the window's logical size), with the depth,
-// stencil and sample count of the engine's own EGL config. The real
-// window surface is at the display's pixels (android-glue sizes it so),
-// and at eglSwapBuffers the engine's frame is scaled into it.
-//
-// The scaler is SGSR's own GLES fragment shader, vendored by Qualcomm for
-// exactly this: one pass, scaling and sharpening. RAVU, the Vulkan path's
-// default, is a compute shader and is not ported. Where the shader cannot
-// be built, or nothing needs scaling, a linear blit does the copy.
-//
-// The engine never sees any of it: binding 0 binds Stud's framebuffer,
-// asking which framebuffer is bound answers 0, and the surface reports
-// the size the engine renders at.
+// gfxstream's frames reach the window through the present below; when the
+// window is larger than the frame they are scaled there. The scaler is
+// SGSR's own GLES fragment shader, vendored by Qualcomm for exactly this:
+// one pass, scaling and sharpening. RAVU, the Vulkan path's default, is a
+// compute shader and is not ported. Where the shader cannot be built, or
+// nothing needs scaling, the frame is copied.
 bool g_gl_scale_in_stud = false;
-EGLDisplay g_window_egl_display = EGL_NO_DISPLAY;
-EGLConfig g_window_egl_config = nullptr;
-EGLSurface g_window_egl_surface = EGL_NO_SURFACE;
 
 #include "sgsr_gles_frag.h"
 
 struct GlScaleTarget {
-    GLuint fbo = 0;          // what the engine draws into as framebuffer 0
-    GLuint color_tex = 0;    // what the scaler reads
-    GLuint msaa_color = 0;   // with a multisampled config: fbo's colour...
-    GLuint resolve_fbo = 0;  // ...resolved into color_tex through this
-    GLuint depth_stencil = 0;
-    GLsizei width = 0;
-    GLsizei height = 0;
     GLuint program = 0;
     GLuint vao = 0;
     GLint viewport_info = -1;
     GLint source = -1;
     bool program_tried = false;
-    bool top_down = false;   // the source's first row is the image's top
 };
-
-std::mutex g_gl_scale_mutex;
-std::unordered_map<EGLContext, GlScaleTarget> g_gl_scale_targets;
-// The target of the context current on this thread, while that context
-// draws to the window surface. Null otherwise: a pbuffer, no surface, or
-// the path switched off.
-thread_local GlScaleTarget* t_gl_scale = nullptr;
-
-// The engine's render size: what ANativeWindow reports, which is the
-// window's logical size while Stud scales.
-void gl_engine_size(GLsizei* w, GLsizei* h) {
-    *w = std::max(1, ANativeWindow_getWidth(nullptr));
-    *h = std::max(1, ANativeWindow_getHeight(nullptr));
-}
 
 // SGSR's shader as vendored, with what it needs to build on GLES 3.0 and
 // to match the Vulkan path's settings. Each change is a line of the
@@ -2712,17 +2034,9 @@ GLuint gl_compile(const RealFns& fns, GLenum type, const std::string& src) {
 void gl_build_program(const RealFns& fns, GlScaleTarget& t) {
     t.program_tried = true;
     // One triangle covering the window, its texture coordinate running
-    // 0..1 across the visible part. A bottom-up source, like the window,
-    // needs no flip; a top-down one is drawn upside down to come out right.
+    // 0..1 across the visible part. The source is top-down, so it is drawn
+    // upside down to come out right in the bottom-up window.
     static const char* kVertex =
-        "#version 300 es\n"
-        "out highp vec4 in_TEXCOORD0;\n"
-        "void main() {\n"
-        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
-        "    in_TEXCOORD0 = vec4(p, 0.0, 0.0);\n"
-        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
-        "}\n";
-    static const char* kVertexTopDown =
         "#version 300 es\n"
         "out highp vec4 in_TEXCOORD0;\n"
         "void main() {\n"
@@ -2730,7 +2044,7 @@ void gl_build_program(const RealFns& fns, GlScaleTarget& t) {
         "    in_TEXCOORD0 = vec4(p, 0.0, 0.0);\n"
         "    gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);\n"
         "}\n";
-    GLuint vs = gl_compile(fns, GL_VERTEX_SHADER, t.top_down ? kVertexTopDown : kVertex);
+    GLuint vs = gl_compile(fns, GL_VERTEX_SHADER, kVertex);
     GLuint fs = gl_compile(fns, GL_FRAGMENT_SHADER, gl_upscaler_fragment_source());
     if (vs == 0 || fs == 0) {
         if (vs != 0) fns.glDeleteShader_(vs);
@@ -2757,235 +2071,6 @@ void gl_build_program(const RealFns& fns, GlScaleTarget& t) {
     t.viewport_info = fns.glGetUniformLocation_(prog, "ViewportInfo[0]");
     t.source = fns.glGetUniformLocation_(prog, "ps0");
     fns.glGenVertexArrays_(1, &t.vao);
-}
-
-EGLint gl_window_config_attrib(const RealFns& fns, EGLint attrib) {
-    EGLint v = 0;
-    if (g_window_egl_config != nullptr) {
-        fns.eglGetConfigAttrib_(g_window_egl_display, g_window_egl_config, attrib, &v);
-    }
-    return v;
-}
-
-// (Re)allocates the target at the engine's current size. The framebuffer
-// keeps its name, so a binding the engine already holds stays valid.
-void gl_size_target(const RealFns& fns, GlScaleTarget& t) {
-    GLsizei w = 0, h = 0;
-    gl_engine_size(&w, &h);
-    if (t.fbo != 0 && w == t.width && h == t.height) return;
-
-    GLint prev_draw = 0, prev_read = 0, prev_tex = 0, prev_rb = 0;
-    fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
-    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
-    fns.glGetIntegerv_(GL_TEXTURE_BINDING_2D, &prev_tex);
-    fns.glGetIntegerv_(GL_RENDERBUFFER_BINDING, &prev_rb);
-
-    if (t.fbo == 0) fns.glGenFramebuffers_(1, &t.fbo);
-    if (t.color_tex != 0) fns.glDeleteTextures_(1, &t.color_tex);
-    if (t.msaa_color != 0) fns.glDeleteRenderbuffers_(1, &t.msaa_color);
-    if (t.depth_stencil != 0) fns.glDeleteRenderbuffers_(1, &t.depth_stencil);
-    t.color_tex = t.msaa_color = t.depth_stencil = 0;
-
-    const EGLint samples = gl_window_config_attrib(fns, EGL_SAMPLES);
-    const bool depth_stencil = gl_window_config_attrib(fns, EGL_DEPTH_SIZE) > 0 ||
-                               gl_window_config_attrib(fns, EGL_STENCIL_SIZE) > 0;
-
-    fns.glGenTextures_(1, &t.color_tex);
-    fns.glBindTexture_(GL_TEXTURE_2D, t.color_tex);
-    fns.glTexStorage2D_(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
-    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    fns.glTexParameteri_(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    fns.glBindFramebuffer_(GL_FRAMEBUFFER, t.fbo);
-    if (samples > 1) {
-        fns.glGenRenderbuffers_(1, &t.msaa_color);
-        fns.glBindRenderbuffer_(GL_RENDERBUFFER, t.msaa_color);
-        fns.glRenderbufferStorageMultisample_(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
-        fns.glFramebufferRenderbuffer_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-                                       t.msaa_color);
-        if (t.resolve_fbo == 0) fns.glGenFramebuffers_(1, &t.resolve_fbo);
-    } else {
-        fns.glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                    t.color_tex, 0);
-    }
-    if (depth_stencil) {
-        fns.glGenRenderbuffers_(1, &t.depth_stencil);
-        fns.glBindRenderbuffer_(GL_RENDERBUFFER, t.depth_stencil);
-        if (samples > 1) {
-            fns.glRenderbufferStorageMultisample_(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8,
-                                                  w, h);
-        } else {
-            fns.glRenderbufferStorage_(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-        }
-        fns.glFramebufferRenderbuffer_(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                       GL_RENDERBUFFER, t.depth_stencil);
-    }
-    const GLenum status = fns.glCheckFramebufferStatus_(GL_FRAMEBUFFER);
-    if (t.resolve_fbo != 0 && samples > 1) {
-        fns.glBindFramebuffer_(GL_FRAMEBUFFER, t.resolve_fbo);
-        fns.glFramebufferTexture2D_(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                    t.color_tex, 0);
-    }
-    t.width = w;
-    t.height = h;
-    std::printf("stud-render-host: GL frame at %dx%d for Stud to scale (samples %d, depth/stencil "
-                "%s)%s\n",
-                w, h, samples, depth_stencil ? "yes" : "no",
-                status == GL_FRAMEBUFFER_COMPLETE ? "" : ", NOT COMPLETE");
-    std::fflush(stdout);
-
-    // A fresh framebuffer is black until the engine draws; the binding the
-    // engine thinks is 0 was ours already, so it is ours again.
-    fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER,
-                           static_cast<GLuint>(prev_draw) == 0 ? t.fbo : prev_draw);
-    fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER,
-                           static_cast<GLuint>(prev_read) == 0 ? t.fbo : prev_read);
-    fns.glBindTexture_(GL_TEXTURE_2D, static_cast<GLuint>(prev_tex));
-    fns.glBindRenderbuffer_(GL_RENDERBUFFER, static_cast<GLuint>(prev_rb));
-}
-
-// After every eglMakeCurrent: whether this thread now draws to the window,
-// and if so, framebuffer 0 becomes Stud's.
-void gl_scale_on_make_current(const RealFns& fns, EGLSurface draw, EGLContext ctx) {
-    GlScaleTarget* previous = t_gl_scale;
-    t_gl_scale = nullptr;
-    if (!g_gl_scale_in_stud || ctx == EGL_NO_CONTEXT) return;
-    if (draw == EGL_NO_SURFACE || draw != g_window_egl_surface) {
-        // The same context, now on another surface: its real framebuffer 0
-        // is that surface, so a binding left on Stud's is put back.
-        std::lock_guard<std::mutex> lock(g_gl_scale_mutex);
-        auto it = g_gl_scale_targets.find(ctx);
-        if (it != g_gl_scale_targets.end() && it->second.fbo != 0) {
-            GLint d = 0, r = 0;
-            fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &d);
-            fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &r);
-            if (static_cast<GLuint>(d) == it->second.fbo) fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
-            if (static_cast<GLuint>(r) == it->second.fbo) fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, 0);
-        }
-        (void)previous;
-        return;
-    }
-    GlScaleTarget* t = nullptr;
-    bool fresh = false;
-    {
-        std::lock_guard<std::mutex> lock(g_gl_scale_mutex);
-        auto [it, inserted] = g_gl_scale_targets.try_emplace(ctx);
-        t = &it->second;
-        fresh = inserted;
-    }
-    gl_size_target(fns, *t);
-    GLint d = 0, r = 0;
-    fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &d);
-    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &r);
-    if (d == 0) fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, t->fbo);
-    if (r == 0) fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, t->fbo);
-    if (fresh) {
-        // A context's first time on a surface sets its viewport and scissor
-        // to the surface, which is the display's size here, not the
-        // engine's.
-        fns.glViewport_(0, 0, t->width, t->height);
-        fns.glScissor_(0, 0, t->width, t->height);
-    }
-    t_gl_scale = t;
-}
-
-// Whether `target`'s binding is Stud's framebuffer standing in for 0.
-bool gl_bound_to_scale_target(const RealFns& fns, GLenum target) {
-    if (t_gl_scale == nullptr || t_gl_scale->fbo == 0) return false;
-    GLint b = 0;
-    fns.glGetIntegerv_(target == GL_READ_FRAMEBUFFER ? GL_READ_FRAMEBUFFER_BINDING
-                                                     : GL_DRAW_FRAMEBUFFER_BINDING,
-                       &b);
-    return static_cast<GLuint>(b) == t_gl_scale->fbo;
-}
-
-// The engine's frame, scaled into the window's back buffer. Every piece of
-// state it touches is put back, so the engine's next frame starts where
-// its last one left off.
-void gl_scale_present(const RealFns& fns, GlScaleTarget& t) {
-    EGLint out_w = 0, out_h = 0;
-    fns.eglQuerySurface_(g_window_egl_display, g_window_egl_surface, EGL_WIDTH, &out_w);
-    fns.eglQuerySurface_(g_window_egl_display, g_window_egl_surface, EGL_HEIGHT, &out_h);
-    if (out_w <= 0 || out_h <= 0 || t.fbo == 0) return;
-
-    GLint draw_fb = 0, read_fb = 0, program = 0, vao = 0, active = 0, tex = 0;
-    GLint viewport[4] = {};
-    GLboolean mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
-    fns.glGetIntegerv_(GL_DRAW_FRAMEBUFFER_BINDING, &draw_fb);
-    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
-    fns.glGetIntegerv_(GL_CURRENT_PROGRAM, &program);
-    fns.glGetIntegerv_(GL_VERTEX_ARRAY_BINDING, &vao);
-    fns.glGetIntegerv_(GL_ACTIVE_TEXTURE, &active);
-    fns.glGetIntegerv_(GL_VIEWPORT, viewport);
-    fns.glGetBooleanv_(GL_COLOR_WRITEMASK, mask);
-    static constexpr GLenum kCaps[] = {GL_SCISSOR_TEST,     GL_BLEND,
-                                       GL_DEPTH_TEST,       GL_STENCIL_TEST,
-                                       GL_CULL_FACE,        GL_RASTERIZER_DISCARD,
-                                       GL_POLYGON_OFFSET_FILL, GL_SAMPLE_ALPHA_TO_COVERAGE,
-                                       GL_SAMPLE_COVERAGE};
-    GLboolean caps[std::size(kCaps)] = {};
-    for (size_t i = 0; i < std::size(kCaps); ++i) {
-        caps[i] = fns.glIsEnabled_(kCaps[i]);
-        if (caps[i]) fns.glDisable_(kCaps[i]);
-    }
-    fns.glColorMask_(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-
-    // A multisampled frame is resolved first; the scaler reads one sample.
-    if (t.msaa_color != 0 && t.resolve_fbo != 0) {
-        fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, t.fbo);
-        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, t.resolve_fbo);
-        fns.glBlitFramebuffer_(0, 0, t.width, t.height, 0, 0, t.width, t.height,
-                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    }
-
-    static bool announced = false;
-    const bool scaling = out_w > t.width || out_h > t.height;
-    if (scaling && !t.program_tried) gl_build_program(fns, t);
-    if (scaling && t.program != 0) {
-        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
-        fns.glViewport_(0, 0, out_w, out_h);
-        fns.glUseProgram_(t.program);
-        fns.glUniform4f_(t.viewport_info, 1.0f / static_cast<float>(t.width),
-                         1.0f / static_cast<float>(t.height), static_cast<float>(t.width),
-                         static_cast<float>(t.height));
-        fns.glUniform1i_(t.source, 0);
-        fns.glActiveTexture_(GL_TEXTURE0);
-        fns.glGetIntegerv_(GL_TEXTURE_BINDING_2D, &tex);
-        fns.glBindTexture_(GL_TEXTURE_2D, t.color_tex);
-        fns.glBindVertexArray_(t.vao);
-        fns.glDrawArrays_(GL_TRIANGLES, 0, 3);
-        fns.glBindTexture_(GL_TEXTURE_2D, static_cast<GLuint>(tex));
-        if (!announced) {
-            announced = true;
-            std::printf("stud-render-host: GL upscale %dx%d -> %dx%d (SGSR, edge direction)\n",
-                        t.width, t.height, out_w, out_h);
-            std::fflush(stdout);
-        }
-    } else {
-        fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, t.msaa_color != 0 ? t.resolve_fbo : t.fbo);
-        fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, 0);
-        fns.glBlitFramebuffer_(0, 0, t.width, t.height, 0, 0, out_w, out_h,
-                               GL_COLOR_BUFFER_BIT, scaling ? GL_LINEAR : GL_NEAREST);
-        if (!announced) {
-            announced = true;
-            std::printf("stud-render-host: GL frame %dx%d -> %dx%d by blit%s\n", t.width,
-                        t.height, out_w, out_h, scaling ? " (the upscaler shader is unavailable)" : "");
-            std::fflush(stdout);
-        }
-    }
-
-    fns.glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(draw_fb));
-    fns.glBindFramebuffer_(GL_READ_FRAMEBUFFER, static_cast<GLuint>(read_fb));
-    fns.glUseProgram_(static_cast<GLuint>(program));
-    fns.glBindVertexArray_(static_cast<GLuint>(vao));
-    fns.glActiveTexture_(static_cast<GLenum>(active));
-    fns.glViewport_(viewport[0], viewport[1], viewport[2], viewport[3]);
-    fns.glColorMask_(mask[0], mask[1], mask[2], mask[3]);
-    for (size_t i = 0; i < std::size(kCaps); ++i) {
-        if (caps[i]) fns.glEnable_(kCaps[i]);
-    }
 }
 
 // ---- OpenGL through gfxstream: presenting the guest's colour buffers ----
@@ -3060,7 +2145,6 @@ bool gfx_presenter_init(const RealFns& fns, RealWindow& window) {
     // itself on its swaps.
     fns.eglSwapInterval_(p.display, 0);
     fns.glGenFramebuffers_(1, &p.read_fbo);
-    p.scaler.top_down = true;
     // Windows Graphical Parity: the files the desktop material shaders read
     // go on their units always. No Android shader uses those units; the
     // engine leaves them empty or puts its 1x1 normal-map placeholder there,
@@ -3079,9 +2163,6 @@ bool gfx_presenter_init(const RealFns& fns, RealWindow& window) {
         fns.glBindTexture_(GL_TEXTURE_2D, 0);
         std::fflush(stdout);
     }
-    g_window_egl_display = p.display;
-    g_window_egl_config = config;
-    g_window_egl_surface = p.surface;
     return true;
 }
 
@@ -3259,1474 +2340,10 @@ uint64_t share_window_state(uint64_t id) {
     return 1;
 }
 
-// The GL client's frame page; see CallId::GlShareFramePage.
-std::atomic<std::atomic<uint32_t>*> g_gl_frame_page{nullptr};
-
-uint64_t share_gl_frame_page(uint64_t id) {
-    const int fd = stud::render_host::take_shared_fd(id);
-    if (fd < 0) return 0;
-    const auto length = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
-    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
-    if (p == MAP_FAILED) return 0;
-    g_gl_frame_page.store(static_cast<std::atomic<uint32_t>*>(p), std::memory_order_release);
-    return 1;
-}
-
 // Defined below the per-domain dispatchers it hands to; a command batch
-// (GlCommandBatch) calls back into it for each call it carries.
+// (VoidCallBatch) calls back into it for each call it carries.
 uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                   const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint32_t* out_len);
-
-// Split out of dispatch(), whose switch it was part of: EGL: displays, contexts, surfaces and the swap.
-// Answers nullopt for any id that is not one of these, and a case that
-// breaks out answers kNullHandle, exactly as it did inside dispatch().
-std::optional<uint64_t> dispatch_egl_call(const Header& hdr, const RealFns& fns, RealWindow& window,
-                                          const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                          uint32_t* out_len) {
-    const uint64_t* a = hdr.args;
-    switch (hdr.call_id) {
-        // ---- EGL ----
-        case CallId::EglGetDisplay: {
-            // The system's EGL is told which window system the display is
-            // on. glvnd guesses from the pointer otherwise, and a guess is
-            // how a Wayland session ends up on an X11 display.
-            EGLDisplay d = EGL_NO_DISPLAY;
-            if (fns.eglGetPlatformDisplayEXT_ != nullptr) {
-                constexpr EGLenum kPlatformX11 = 0x31D5;
-                constexpr EGLenum kPlatformWayland = 0x31D8;
-                d = fns.eglGetPlatformDisplayEXT_(
-                    window.on_x11() ? kPlatformX11 : kPlatformWayland,
-                    window.on_x11() ? window.x11_display : static_cast<void*>(window.display),
-                    nullptr);
-            }
-            if (d == EGL_NO_DISPLAY) {
-                d = fns.eglGetDisplay_(
-                    reinterpret_cast<EGLNativeDisplayType>(window.egl_native_display()));
-            }
-            return d == EGL_NO_DISPLAY ? kNullHandle : store(g_displays, d);
-        }
-        case CallId::EglInitialize: {
-            // Reply: [major][minor], the system EGL's own version.
-            EGLint version[2] = {0, 0};
-            const bool ok =
-                fns.eglInitialize_(g_displays.at(a[0]), &version[0], &version[1]) == EGL_TRUE;
-            out.resize(sizeof(version));
-            std::memcpy(out.data(), version, sizeof(version));
-            *out_len = sizeof(version);
-            return ok;
-        }
-        case CallId::GlPresentColorBuffer:
-            return gfx_present_behind(fns, window, static_cast<uint32_t>(a[0]));
-        case CallId::EglBindApi:
-            return fns.eglBindAPI_(static_cast<EGLenum>(a[0])) == EGL_TRUE;
-        case CallId::EglChooseConfig: {
-            // The engine's own attribute list first. It used to be dropped
-            // for a fixed RGBA8, ES2-only config with no depth or stencil,
-            // and a config without EGL_OPENGL_ES3_BIT cannot back a GLES
-            // 3.1 or 3.2 context. An engine attribute the driver rejects falls
-            // back to the fixed list, now with the ES3 bit, and then to
-            // the old one.
-            constexpr EGLint kEs3Bit = 0x40;  // EGL_OPENGL_ES3_BIT
-            std::vector<EGLint> engine_attribs(in.size() / sizeof(EGLint) / 2 * 2);
-            if (!engine_attribs.empty()) {
-                std::memcpy(engine_attribs.data(), in.data(),
-                            engine_attribs.size() * sizeof(EGLint));
-            }
-            engine_attribs.push_back(EGL_NONE);
-            const EGLint fixed_es3[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-                                        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT | kEs3Bit,
-                                        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                        EGL_ALPHA_SIZE, 8, EGL_NONE};
-            const EGLint fixed_es2[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-                                        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                                        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                        EGL_ALPHA_SIZE, 8, EGL_NONE};
-            const EGLint* tries[] = {engine_attribs.size() > 1 ? engine_attribs.data() : nullptr,
-                                     fixed_es3, fixed_es2};
-            const char* names[] = {"engine's", "fixed ES3", "fixed ES2"};
-            for (int i = 0; i < 3; ++i) {
-                if (tries[i] == nullptr) continue;
-                EGLConfig config;
-                EGLint num_configs = 0;
-                if (fns.eglChooseConfig_(g_displays.at(a[0]), tries[i], &config, 1,
-                                         &num_configs) == EGL_TRUE &&
-                    num_configs > 0) {
-                    static bool announced = false;
-                    if (!announced) {
-                        announced = true;
-                        std::printf("stud-render-host: eglChooseConfig: %s attributes\n",
-                                    names[i]);
-                        std::fflush(stdout);
-                    }
-                    return store(g_configs, config);
-                }
-            }
-            std::fprintf(stderr, "stud-render-host: eglChooseConfig failed, error=0x%x\n",
-                         fns.eglGetError_());
-            return kNullHandle;
-        }
-        case CallId::EglCreateWindowSurface: {
-            // Testable hypothesis (the engineering notes, "no kde window
-            // at all" investigation): stud_try_render_window (a standalone
-            // tool doing the exact same real window+EGL setup sequence)
-            // succeeds immediately at startup, while this same sequence in
-            // stud-render-host only runs many real seconds later, after
-            // Process B works through a long chain of 8s-bounded blocking
-            // calls, during which this process's own Wayland connection
-            // may sit without a fresh dispatch/roundtrip. A stale client-
-            // side view of the connection (a compositor-sent event never
-            // processed) is a real, plausible reason eglCreateWindowSurface
-            // -> vkCreateWaylandSurfaceKHR could fail where the standalone
-            // tool doesn't. Cheap, safe to always do regardless of outcome.
-            {
-                std::lock_guard<std::mutex> wl_lock(wayland_mutex());
-                wl_display_roundtrip(window.display);
-            }
-            // The engine's surface attributes (colorspace and the like),
-            // which used to be dropped.
-            std::vector<EGLint> surface_attribs(in.size() / sizeof(EGLint) / 2 * 2);
-            if (!surface_attribs.empty()) {
-                std::memcpy(surface_attribs.data(), in.data(),
-                            surface_attribs.size() * sizeof(EGLint));
-            }
-            surface_attribs.push_back(EGL_NONE);
-            EGLSurface s = fns.eglCreateWindowSurface_(
-                g_displays.at(a[0]), g_configs.at(a[1]),
-                window.egl_native_window(), surface_attribs.data());
-            if (s == EGL_NO_SURFACE && surface_attribs.size() > 1) {
-                std::fprintf(stderr,
-                             "stud-render-host: eglCreateWindowSurface refused the engine's "
-                             "attributes (0x%x), retrying without them\n",
-                             fns.eglGetError_());
-                s = fns.eglCreateWindowSurface_(g_displays.at(a[0]), g_configs.at(a[1]),
-                                                window.egl_native_window(), nullptr);
-            }
-            if (s == EGL_NO_SURFACE) {
-                std::fprintf(stderr,
-                              "stud-render-host: eglCreateWindowSurface failed, error=0x%x\n",
-                              fns.eglGetError_());
-            } else {
-                ++g_window_surface_create_count;
-            }
-            if (s == EGL_NO_SURFACE) return kNullHandle;
-            // EGL can hand back the *same* EGLSurface for repeated creates
-            // against the one native window this process owns (confirmed
-            // live: both calls returned 0x1). Minting a fresh handle each
-            // time would alias several handles onto one surface, the engine
-            // then destroys an older handle, the shared surface dies, and
-            // every later swap fails with EGL_BAD_SURFACE (0x300d) while the
-            // engine keeps drawing into nothing. Deduplicate on the real
-            // EGLSurface instead, which keeps destroy honest (see
-            // EglDestroySurface below) rather than pinning one handle for the
-            // life of the process.
-            for (const auto& kv : g_surfaces) {
-                if (kv.second == s) return kv.first;
-            }
-            uint64_t h = store(g_surfaces, s);
-            g_window_surface_handle = h;
-            g_window_egl_display = g_displays.at(a[0]);
-            g_window_egl_config = g_configs.at(a[1]);
-            g_window_egl_surface = s;
-            return h;
-        }
-        case CallId::EglCreatePbufferSurface: {
-            // The client sends {display, config, width, height}. This read
-            // the config handle as the width and the width as the height.
-            const EGLint attribs[] = {EGL_WIDTH, static_cast<EGLint>(a[2]), EGL_HEIGHT,
-                                       static_cast<EGLint>(a[3]), EGL_NONE};
-            EGLSurface s = fns.eglCreatePbufferSurface_(g_displays.at(a[0]), g_configs.at(a[1]),
-                                                          attribs);
-            return s == EGL_NO_SURFACE ? kNullHandle : store(g_surfaces, s);
-        }
-        case CallId::EglCreateContext: {
-            // The engine's own attributes and share context. Both used to
-            // be replaced by a fixed client version 2 and no sharing, so a
-            // second context meant to share textures with the first shared
-            // nothing, and the engine was never given the GLES version it
-            // asked for. A client that sends no attributes gets the old
-            // default.
-            std::vector<EGLint> context_attribs;
-            const size_t pairs = in.size() / (2 * sizeof(EGLint));
-            context_attribs.resize(pairs * 2);
-            if (pairs > 0) std::memcpy(context_attribs.data(), in.data(), pairs * 2 * sizeof(EGLint));
-            if (context_attribs.empty()) {
-                context_attribs = {EGL_CONTEXT_CLIENT_VERSION, 2};
-            }
-            context_attribs.push_back(EGL_NONE);
-            EGLContext share = EGL_NO_CONTEXT;
-            if (a[2] != kNullHandle) {
-                auto it = g_contexts.find(a[2]);
-                if (it == g_contexts.end()) return kNullHandle;
-                share = it->second;
-            }
-            EGLContext ctx = fns.eglCreateContext_(g_displays.at(a[0]), g_configs.at(a[1]), share,
-                                                     context_attribs.data());
-            if (ctx == EGL_NO_CONTEXT) {
-                std::fprintf(stderr, "stud-render-host: eglCreateContext failed, error=0x%x\n",
-                             fns.eglGetError_());
-            }
-            return ctx == EGL_NO_CONTEXT ? kNullHandle : store(g_contexts, ctx);
-        }
-        case CallId::EglMakeCurrent: {
-            EGLSurface s = a[1] == kNullHandle ? EGL_NO_SURFACE : g_surfaces.at(a[1]);
-            EGLContext c = a[2] == kNullHandle ? EGL_NO_CONTEXT : g_contexts.at(a[2]);
-            EGLBoolean ok = fns.eglMakeCurrent_(g_displays.at(a[0]), s, s, c);
-            if (ok == EGL_TRUE) gl_scale_on_make_current(fns, s, c);
-            if (ok != EGL_TRUE) {
-                std::printf("stud-render-host: eglMakeCurrent failed dpy=%llu surf=%llu ctx=%llu "
-                            "egl_error=0x%x\n",
-                            static_cast<unsigned long long>(a[0]),
-                            static_cast<unsigned long long>(a[1]),
-                            static_cast<unsigned long long>(a[2]),
-                            fns.eglGetError_());
-            }
-            return ok == EGL_TRUE;
-        }
-        case CallId::EglSwapBuffers: {
-            note_frame_pacing();
-            // Shown on the first frame, like the Vulkan path, so the
-            // window never appears empty. No-op on Wayland.
-            stud::android_glue::x11_ensure_mapped();
-            // The background frame limit is applied before the dispatch
-            // lock is taken; see throttle_before_dispatch().
-            // Real frame-rate measurement, env-gated (STUD_FPS=1, or
-            // STUD_FPS=<seconds> for a different window). Counts swaps and
-            // reports once per window, per-swap tracing
-            // (STUD_RENDER_CALL_TRACE) is far too heavy to measure a real
-            // in-game session with, since it prints for every draw call as
-            // well and changes the thing being measured.
-            {
-                static const char* fps_env = std::getenv("STUD_FPS");
-                if (fps_env != nullptr) {
-                    static const double window_s =
-                        std::atof(fps_env) > 0.0 ? std::atof(fps_env) : 5.0;
-                    static auto window_start = std::chrono::steady_clock::now();
-                    static uint64_t window_swaps = 0;
-                    ++window_swaps;
-                    const auto now = std::chrono::steady_clock::now();
-                    const double elapsed =
-                        std::chrono::duration<double>(now - window_start).count();
-                    if (elapsed >= window_s) {
-                        std::printf("stud-render-host: FPS %.1f (%llu swaps in %.1fs)\n",
-                                    static_cast<double>(window_swaps) / elapsed,
-                                    static_cast<unsigned long long>(window_swaps), elapsed);
-                        std::fflush(stdout);
-                        window_start = now;
-                        window_swaps = 0;
-                    }
-                }
-            }
-            // Honest pixel check, env-gated and off by default: read the
-            // default framebuffer back BEFORE the swap (after it the back
-            // buffer is undefined). Draw counters and "the app reached Home"
-            // both look healthy while the screen is black; this is the only
-            // check that answers "did anything actually get drawn". It binds
-            // nothing and changes no state; the read-back that once blacked
-            // out the window bound an FBO, which this deliberately does not.
-            {
-                static const char* dump_every_env = std::getenv("STUD_DUMP_FRAME");
-                static const int dump_every = dump_every_env ? std::atoi(dump_every_env) : 0;
-                static uint64_t swap_seen = 0;
-                if (dump_every > 0 && (++swap_seen % static_cast<uint64_t>(dump_every)) == 0) {
-                    const int w = ANativeWindow_getWidth(nullptr);
-                    const int h = ANativeWindow_getHeight(nullptr);
-                    GLint fb_binding = -1, read_fb = -1, read_buf = -1;
-                    // Must go through the resolved GLES entry points: the
-                    // plain glXxx symbols this process links against are a
-                    // different libGLESv2 with no context, so they silently
-                    // do nothing (live-caught: every value stayed at its -1
-                    // sentinel and glGetError() read 0).
-                    fns.glGetIntegerv_(GL_FRAMEBUFFER_BINDING, &fb_binding);
-                    fns.glGetIntegerv_(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
-                    fns.glGetIntegerv_(GL_READ_BUFFER, &read_buf);
-                    std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
-                    fns.glReadPixels_(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-                    const char* path_base = std::getenv("STUD_DUMP_FRAME_PATH");
-                    if (path_base == nullptr) path_base = "/tmp/stud_frame.ppm";
-                    // Numbered, so consecutive frames do not overwrite each
-                    // other: comparing one frame with the NEXT one is the
-                    // whole point of dumping more than one, and a fixed
-                    // name silently made that impossible.
-                    std::string numbered(path_base);
-                    {
-                        const size_t dot = numbered.rfind('.');
-                        char suffix[32];
-                        std::snprintf(suffix, sizeof(suffix), "_%04llu",
-                                      static_cast<unsigned long long>(swap_seen));
-                        if (dot == std::string::npos) {
-                            numbered += suffix;
-                        } else {
-                            numbered.insert(dot, suffix);
-                        }
-                    }
-                    const char* path = numbered.c_str();
-                    size_t nonblack = 0;
-                    size_t white = 0;
-                    for (size_t i = 0; i + 3 < px.size(); i += 4) {
-                        if (px[i] || px[i + 1] || px[i + 2]) ++nonblack;
-                        if (px[i] == 255 && px[i + 1] == 255 && px[i + 2] == 255) ++white;
-                    }
-                    if (FILE* f = std::fopen(path, "wb")) {
-                        std::fprintf(f, "P6\n%d %d\n255\n", w, h);
-                        // glReadPixels' origin is bottom-left; PPM is top-down.
-                        for (int y = h - 1; y >= 0; --y) {
-                            for (int x = 0; x < w; ++x) {
-                                const unsigned char* p = &px[(static_cast<size_t>(y) * w + x) * 4];
-                                std::fwrite(p, 1, 3, f);
-                            }
-                        }
-                        std::fclose(f);
-                    }
-                    std::printf("stud-render-host: DUMP frame #%llu %dx%d non-black=%zu of %zu "
-                                "white=%zu drawFbo=%d readFbo=%d readBuf=0x%x glErr=0x%x -> %s\n",
-                                static_cast<unsigned long long>(swap_seen), w, h, nonblack,
-                                px.size() / 4, white, fb_binding, read_fb, read_buf,
-                                fns.glGetError_(), path);
-                    std::fflush(stdout);
-                }
-            }
-            if (cursor_trace_enabled()) {
-                std::printf("stud-render-host: CURSORTRACE frame draws=%llu 64x64draws=%llu %s\n",
-                            static_cast<unsigned long long>(g_frame_draws),
-                            static_cast<unsigned long long>(g_frame_cursor_draws),
-                            g_frame_cursor_draws > 0 ? g_last_cursor_state.c_str() : "(no 64x64 draw)");
-                std::fflush(stdout);
-                ++g_cursor_trace_frames;
-                g_frame_draws = 0;
-                g_frame_cursor_draws = 0;
-            }
-            // Says whether the real EGL surface actually followed a window
-            // resize. Distinguishes "EGL never resized the surface" from
-            // "it did and the engine is still drawing at the old size", which
-            // look identical on screen (a larger frame with the old image in
-            // one corner and uncleared garbage in the rest).
-            {
-                static EGLint last_w = 0, last_h = 0;
-                EGLint sw = 0, sh = 0;
-                fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]), EGL_WIDTH, &sw);
-                fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]), EGL_HEIGHT, &sh);
-                if (sw != last_w || sh != last_h) {
-                    last_w = sw;
-                    last_h = sh;
-                    std::printf("stud-render-host: EGL surface size now %dx%d (window %dx%d)\n", sw,
-                                sh, ANativeWindow_getWidth(nullptr), ANativeWindow_getHeight(nullptr));
-                    std::fflush(stdout);
-                }
-            }
-            // The clock reads follow the switch, not just the print. Both
-            // are cheap (clock_gettime is a vDSO call, not a syscall), but
-            // measuring something nobody reads is still the wrong shape --
-            // and this is the same conditional idiom the Vulkan client's
-            // own frame timing uses.
-            static const bool time_swap = std::getenv("STUD_TIME_SWAP") != nullptr;
-            const auto t_swap_start = time_swap ? std::chrono::steady_clock::now()
-                                                : std::chrono::steady_clock::time_point{};
-            // The frame's GL error, read where the client used to ask for
-            // it, before Stud's own scaling pass.
-            std::atomic<uint32_t>* frame_page = g_gl_frame_page.load(std::memory_order_acquire);
-            if (frame_page != nullptr) {
-                const GLenum error = fns.glGetError_();
-                uint32_t none = 0;
-                if (error != GL_NO_ERROR) frame_page[1].compare_exchange_strong(none, error);
-            }
-            const bool scaled_swap =
-                t_gl_scale != nullptr && g_surfaces.at(a[1]) == g_window_egl_surface;
-            if (scaled_swap) gl_scale_present(fns, *t_gl_scale);
-            uint64_t r = fns.eglSwapBuffers_(g_displays.at(a[0]), g_surfaces.at(a[1])) == EGL_TRUE;
-            // A resized window: the engine's next frame is drawn at the
-            // new size, so its framebuffer follows now.
-            if (scaled_swap) gl_size_target(fns, *t_gl_scale);
-            const auto t_after_swap = time_swap ? std::chrono::steady_clock::now()
-                                                : std::chrono::steady_clock::time_point{};
-            if (r == 0) {
-                // A failing swap presents nothing: the engine draws a full
-                // frame and the window stays black. Report the real EGL error
-                // once. It is the difference between "context lost" and a
-                // plain bad-surface/bad-match.
-                static bool told = false;
-                if (!told) {
-                    told = true;
-                    std::printf("stud-render-host: eglSwapBuffers FAILED egl_error=0x%x dpy=%llu "
-                                "surf=%llu\n",
-                                fns.eglGetError_(), (unsigned long long)a[0],
-                                (unsigned long long)a[1]);
-                    std::fflush(stdout);
-                }
-            }
-            {
-                std::lock_guard<std::mutex> wl_lock(wayland_mutex());
-                wl_display_roundtrip(window.display);
-            }
-            // This swap is done: the client may start the frame after next.
-            if (frame_page != nullptr) {
-                frame_page[0].fetch_add(1, std::memory_order_release);
-                ::syscall(SYS_futex, reinterpret_cast<uint32_t*>(&frame_page[0]), FUTEX_WAKE,
-                          INT_MAX, nullptr, nullptr, 0);
-            }
-            if (time_swap) {
-                static auto last_frame = std::chrono::steady_clock::now();
-                auto now = std::chrono::steady_clock::now();
-                auto ms = [](auto d) {
-                    return std::chrono::duration_cast<std::chrono::microseconds>(d).count() / 1000.0;
-                };
-                std::printf("stud-render-host: SWAPTIME egl=%.2fms roundtrip=%.2fms frame=%.2fms\n",
-                            ms(t_after_swap - t_swap_start), ms(now - t_after_swap),
-                            ms(now - last_frame));
-                std::fflush(stdout);
-                last_frame = now;
-            }
-            // Evidence-based confirmation of the first actual
-            // rendered frame (~Stud plan, "Phase 5" verification: "confirm
-            // the first frame via render-host's own dispatch log on
-            // EglSwapBuffers"), not just a stdout claim from the bionic
-            // side. Env-gated (same convention as
-            // STUD_VULKAN_CALL_TRACE) since every real frame would
-            // otherwise spam this.
-            const bool trace = render_call_trace_enabled();
-            static uint64_t frame_count = 0;
-            if (trace) {
-                ++frame_count;
-                std::printf("stud-render-host: real EglSwapBuffers dispatched (frame #%llu, ok=%llu)\n",
-                            static_cast<unsigned long long>(frame_count),
-                            static_cast<unsigned long long>(r));
-                std::fflush(stdout);
-            }
-            return r;
-        }
-        case CallId::EglGetError:
-            return static_cast<uint64_t>(fns.eglGetError_());
-        case CallId::EglQueryString: {
-            const char* s = fns.eglQueryString_(g_displays.at(a[0]), static_cast<EGLint>(a[1]));
-            if (s != nullptr) {
-                size_t len = std::strlen(s);
-                out.assign(s, s + len);
-                *out_len = static_cast<uint32_t>(len);
-            }
-            return 1;
-        }
-        case CallId::EglDestroyContext: {
-            // Stud's framebuffer goes with the context that owns it.
-            {
-                std::lock_guard<std::mutex> lock(g_gl_scale_mutex);
-                auto it = g_gl_scale_targets.find(g_contexts.at(a[1]));
-                if (it != g_gl_scale_targets.end()) {
-                    if (t_gl_scale == &it->second) t_gl_scale = nullptr;
-                    g_gl_scale_targets.erase(it);
-                }
-            }
-            return fns.eglDestroyContext_(g_displays.at(a[0]), g_contexts.at(a[1])) == EGL_TRUE;
-        }
-        case CallId::EglDestroySurface: {
-            // Honour the destroy. The engine legitimately destroys and
-            // recreates its window surface (a resize, a RenderView rebuild);
-            // refusing meant the next create hit EGL_BAD_ALLOC because the
-            // old surface still held the native window, and the engine
-            // abandoned the frame. Create dedupes on the real EGLSurface, so
-            // one handle only ever names one live surface.
-            auto it = g_surfaces.find(a[1]);
-            if (it == g_surfaces.end()) return EGL_TRUE;
-            if (it->second == g_window_egl_surface) g_window_egl_surface = EGL_NO_SURFACE;
-            EGLBoolean ok = fns.eglDestroySurface_(g_displays.at(a[0]), it->second);
-            g_surfaces.erase(it);
-            if (a[1] == g_window_surface_handle) g_window_surface_handle = kNullHandle;
-            return ok == EGL_TRUE;
-        }
-        case CallId::EglGetConfigAttrib: {
-            EGLint value = 0;
-            EGLBoolean ok = fns.eglGetConfigAttrib_(g_displays.at(a[0]), g_configs.at(a[1]),
-                                                      static_cast<EGLint>(a[2]), &value);
-            out.resize(sizeof(EGLint));
-            std::memcpy(out.data(), &value, sizeof(EGLint));
-            *out_len = sizeof(EGLint);
-            return ok == EGL_TRUE;
-        }
-        case CallId::EglGetCurrentContext: {
-            EGLContext c = fns.eglGetCurrentContext_();
-            for (auto& [h, ctx] : g_contexts) {
-                if (ctx == c) return h;
-            }
-            return kNullHandle;
-        }
-        case CallId::EglQuerySurface: {
-            EGLint value = 0;
-            EGLBoolean ok = fns.eglQuerySurface_(g_displays.at(a[0]), g_surfaces.at(a[1]),
-                                                   static_cast<EGLint>(a[2]), &value);
-            // The window is the size the engine renders at, as far as the
-            // engine can tell; see gl_scale_present.
-            if (ok == EGL_TRUE && g_gl_scale_in_stud &&
-                g_surfaces.at(a[1]) == g_window_egl_surface &&
-                (a[2] == EGL_WIDTH || a[2] == EGL_HEIGHT)) {
-                GLsizei w = 0, h = 0;
-                gl_engine_size(&w, &h);
-                value = a[2] == EGL_WIDTH ? w : h;
-            }
-            out.resize(sizeof(EGLint));
-            std::memcpy(out.data(), &value, sizeof(EGLint));
-            *out_len = sizeof(EGLint);
-            return ok == EGL_TRUE;
-        }
-        case CallId::EglSwapInterval:
-            // The interval the engine asks for. Forcing 1 here made every
-            // frame that missed a refresh wait for the next one, on top of
-            // the engine already waiting for this process.
-            return fns.eglSwapInterval_(g_displays.at(a[0]), static_cast<EGLint>(a[1])) ==
-                   EGL_TRUE;
-        case CallId::EglTerminate:
-            return fns.eglTerminate_(g_displays.at(a[0])) == EGL_TRUE;
-        case CallId::EglGetProcAddress: {
-            // Real pointer, meaningful only to Process C itself.
-            // Process B's own eglGetProcAddress does NOT hand this
-            // raw value back to Roblox (a foreign-process function
-            // pointer would be nonsense to call directly); it maps the
-            // queried name to one of its own local generic forwarding
-            // trampolines instead. This response exists only so Process
-            // B's client can confirm "yes, this name is real" (nonzero)
-            // vs "not found" (zero).
-            void* p = fns.eglGetProcAddress_(in.empty() ? "" : reinterpret_cast<const char*>(in.data()));
-            return p != nullptr ? 1 : 0;
-        }
-
-        default:
-            return std::nullopt;
-    }
-    return kNullHandle;
-}
-
-// Split out of dispatch(), whose switch it was part of: GLES2/GLES3: every GL entry point the engine forwards.
-// Answers nullopt for any id that is not one of these, and a case that
-// breaks out answers kNullHandle, exactly as it did inside dispatch().
-std::optional<uint64_t> dispatch_gl_call(const Header& hdr, const RealFns& fns, RealWindow& window,
-                                         const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
-                                         uint32_t* out_len) {
-    const uint64_t* a = hdr.args;
-    // Real pixel-source resolution: when a real GL_PIXEL_UNPACK_BUFFER is
-    // bound on the client, `pixels` is a byte offset into it, and the client
-    // sends no pixel bytes at all; see Header's own doc comment.
-    auto pixels_ptr = [&]() -> const void* {
-        if (hdr.pixel_buffer_offset_plus_one != 0) {
-            return reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1);
-        }
-        return in.empty() ? nullptr : in.data();
-    };
-    switch (hdr.call_id) {
-        // ---- GLES2: scalar state ----
-        case CallId::GlActiveTexture:
-            gl_desktop_fill::g_active_unit = static_cast<GLenum>(a[0]) - GL_TEXTURE0;
-            fns.glActiveTexture_(static_cast<GLenum>(a[0]));
-            return 0;
-        case CallId::GlAttachShader: fns.glAttachShader_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1])); return 0;
-        case CallId::GlBindBuffer: fns.glBindBuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
-        case CallId::GlBindFramebuffer: {
-            GLuint fb = static_cast<GLuint>(a[1]);
-            if (fb == 0 && t_gl_scale != nullptr) fb = t_gl_scale->fbo;
-            fns.glBindFramebuffer_(static_cast<GLenum>(a[0]), fb);
-            return 0;
-        }
-        case CallId::GlBindRenderbuffer: fns.glBindRenderbuffer_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1])); return 0;
-        case CallId::GlBindTexture:
-            if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D) g_bound_texture_2d = static_cast<GLuint>(a[1]);
-            fns.glBindTexture_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]));
-            if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D) {
-                using namespace gl_desktop_fill;
-                for (int i = 0; i < 2; ++i) {
-                    if (g_active_unit != kUnit[i]) continue;
-                    g_unit_2d[i] = static_cast<GLuint>(a[1]);
-                    if (a[1] == 0) fill(fns);
-                }
-            }
-            return 0;
-        case CallId::GlBlendFunc: fns.glBlendFunc_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1])); return 0;
-        case CallId::GlBlendFuncSeparate: fns.glBlendFuncSeparate_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLenum>(a[3])); return 0;
-                case CallId::GlCheckFramebufferStatus: return fns.glCheckFramebufferStatus_(static_cast<GLenum>(a[0]));
-        case CallId::GlClear: fns.glClear_(static_cast<GLbitfield>(a[0])); return 0;
-        case CallId::GlClearColor: fns.glClearColor_(unpack_float(a[0]), unpack_float(a[1]), unpack_float(a[2]), unpack_float(a[3])); return 0;
-        case CallId::GlClearDepthf: fns.glClearDepthf_(unpack_float(a[0])); return 0;
-        case CallId::GlClearStencil: fns.glClearStencil_(static_cast<GLint>(a[0])); return 0;
-        case CallId::GlColorMask: fns.glColorMask_(static_cast<GLboolean>(a[0]), static_cast<GLboolean>(a[1]), static_cast<GLboolean>(a[2]), static_cast<GLboolean>(a[3])); return 0;
-        case CallId::GlCompileShader: {
-            GLuint sh = static_cast<GLuint>(a[0]);
-            fns.glCompileShader_(sh);
-            // STUD_DUMP_BAD_SHADERS=<dir>: write the source of any shader
-            // that fails to compile, plus its info log. The engine's own
-            // log only reports the name and the error line, which is not
-            // enough to tell a genuinely invalid shader from one the driver is
-            // rejecting more strictly than the drivers Roblox ships
-            // against. Off unless the env var is set; writes nothing on
-            // success.
-            static const char* dump_dir = std::getenv("STUD_DUMP_BAD_SHADERS");
-            if (dump_dir != nullptr) {
-                GLint ok = GL_TRUE;
-                fns.glGetShaderiv_(sh, GL_COMPILE_STATUS, &ok);
-                if (ok == GL_FALSE) {
-                    static int seq = 0;
-                    char path[512];
-                    std::snprintf(path, sizeof(path), "%s/bad_shader_%d.txt", dump_dir, seq++);
-                    if (FILE* f = std::fopen(path, "w")) {
-                        GLint srclen = 0;
-                        fns.glGetShaderiv_(sh, GL_SHADER_SOURCE_LENGTH, &srclen);
-                        if (srclen > 0) {
-                            std::vector<char> buf(static_cast<size_t>(srclen));
-                            GLsizei got = 0;
-                            fns.glGetShaderSource_(sh, srclen, &got, buf.data());
-                            std::fwrite(buf.data(), 1, static_cast<size_t>(got), f);
-                        }
-                        GLint loglen = 0;
-                        fns.glGetShaderiv_(sh, GL_INFO_LOG_LENGTH, &loglen);
-                        if (loglen > 0) {
-                            std::vector<char> log(static_cast<size_t>(loglen));
-                            GLsizei got = 0;
-                            fns.glGetShaderInfoLog_(sh, loglen, &got, log.data());
-                            std::fprintf(f, "\n\n===== INFO LOG =====\n");
-                            std::fwrite(log.data(), 1, static_cast<size_t>(got), f);
-                        }
-                        std::fclose(f);
-                        std::printf("stud-render-host: dumped failing shader to %s\n", path);
-                        std::fflush(stdout);
-                    }
-                }
-            }
-            return 0;
-        }
-        case CallId::GlCopyTexSubImage2D: fns.glCopyTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]), static_cast<GLint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLint>(a[5]), static_cast<GLsizei>(a[6]), static_cast<GLsizei>(a[7])); return 0;
-        case CallId::GlCreateProgram: return fns.glCreateProgram_();
-        case CallId::GlCreateShader: return fns.glCreateShader_(static_cast<GLenum>(a[0]));
-        case CallId::GlCullFace: fns.glCullFace_(static_cast<GLenum>(a[0])); return 0;
-        case CallId::GlDeleteProgram: fns.glDeleteProgram_(static_cast<GLuint>(a[0])); return 0;
-        case CallId::GlDeleteShader: fns.glDeleteShader_(static_cast<GLuint>(a[0])); return 0;
-        case CallId::GlDepthFunc: fns.glDepthFunc_(static_cast<GLenum>(a[0])); return 0;
-        case CallId::GlDepthMask: fns.glDepthMask_(static_cast<GLboolean>(a[0])); return 0;
-        case CallId::GlDisable: fns.glDisable_(static_cast<GLenum>(a[0])); return 0;
-        case CallId::GlDisableVertexAttribArray: fns.glDisableVertexAttribArray_(static_cast<GLuint>(a[0])); return 0;
-        case CallId::GlDrawArrays:
-            note_draw_for_cursor_trace(fns, static_cast<GLsizei>(a[2]), 0, 0, static_cast<GLint>(a[1]));
-            fns.glDrawArrays_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]));
-            return 0;
-        case CallId::GlDrawElements:
-            // `indices` (a[3]) is a real VBO-relative byte OFFSET here,
-            // not a client-side pointer; see glVertexAttribPointer's
-            // own handling below for why that's the real, common case
-            // this forwards correctly, and the documented limitation for
-            // genuine client-side index arrays.
-            note_draw_for_cursor_trace(fns, static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
-                                       static_cast<uintptr_t>(a[3]));
-            fns.glDrawElements_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]), reinterpret_cast<const void*>(a[3]));
-            return 0;
-        case CallId::GlEnable: fns.glEnable_(static_cast<GLenum>(a[0])); return 0;
-        case CallId::GlEnableVertexAttribArray: fns.glEnableVertexAttribArray_(static_cast<GLuint>(a[0])); return 0;
-        case CallId::GlFramebufferRenderbuffer: fns.glFramebufferRenderbuffer_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLuint>(a[3])); return 0;
-        case CallId::GlFramebufferTexture2D: fns.glFramebufferTexture2D_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLuint>(a[3]), static_cast<GLint>(a[4])); return 0;
-        case CallId::GlGenerateMipmap: fns.glGenerateMipmap_(static_cast<GLenum>(a[0])); return 0;
-        case CallId::GlGetError: return fns.glGetError_();
-        case CallId::GlLinkProgram: {
-            fns.glLinkProgram_(static_cast<GLuint>(a[0]));
-            // Real diagnostic, env-gated: libroblox's own FLog reports
-            // "failed to link shader program X,Y," with no reason. The
-            // real reason only exists here, in the driver's own info log.
-            const bool trace = render_call_trace_enabled();
-            if (trace) {
-                GLint status = 0;
-                fns.glGetProgramiv_(static_cast<GLuint>(a[0]), GL_LINK_STATUS, &status);
-                if (status != GL_TRUE) {
-                    char log[2048];
-                    GLsizei len = 0;
-                    fns.glGetProgramInfoLog_(static_cast<GLuint>(a[0]), sizeof(log), &len, log);
-                    log[len < static_cast<GLsizei>(sizeof(log)) ? len : sizeof(log) - 1] = '\0';
-                    std::printf("stud-render-host: shader program %llu failed to link: %s\n",
-                                static_cast<unsigned long long>(a[0]), log);
-                }
-            }
-            return 0;
-        }
-        case CallId::GlPixelStorei: fns.glPixelStorei_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1])); return 0;
-        case CallId::GlPolygonOffset: fns.glPolygonOffset_(unpack_float(a[0]), unpack_float(a[1])); return 0;
-        case CallId::GlReleaseShaderCompiler: fns.glReleaseShaderCompiler_(); return 0;
-        case CallId::GlRenderbufferStorage: fns.glRenderbufferStorage_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
-        case CallId::GlScissor: fns.glScissor_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
-        case CallId::GlStencilFunc: fns.glStencilFunc_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLuint>(a[2])); return 0;
-        case CallId::GlStencilMask: fns.glStencilMask_(static_cast<GLuint>(a[0])); return 0;
-        case CallId::GlStencilOp: fns.glStencilOp_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2])); return 0;
-        case CallId::GlTexParameterf: fns.glTexParameterf_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), unpack_float(a[2])); return 0;
-        case CallId::GlTexParameteri:
-            if (static_cast<GLenum>(a[0]) == GL_TEXTURE_2D && static_cast<GLenum>(a[1]) == GL_TEXTURE_MIN_FILTER) {
-            }
-            trace_texture_parameter(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
-                                    static_cast<GLint>(a[2]));
-            fns.glTexParameteri_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLint>(a[2])); return 0;
-        case CallId::GlUniform1i: fns.glUniform1i_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1])); return 0;
-        case CallId::GlUseProgram:
-            fns.glUseProgram_(static_cast<GLuint>(a[0]));
-            gl_desktop_fill::fill(fns);
-            return 0;
-        case CallId::GlViewport: fns.glViewport_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3])); return 0;
-        case CallId::GlVertexAttribPointer:
-            // `pointer` (a[5]) is a VBO-relative byte offset, correct
-            // and sufficient for the overwhelmingly common real-world
-            // case (a GL_ARRAY_BUFFER bound via glBindBuffer before this
-            // call, per modern GLES usage). Genuine client-side vertex
-            // arrays (a real CPU pointer, no VBO bound) are NOT
-            // supported by this forwarding, would need the pointed-to
-            // data copied into the outgoing buffer at every draw call
-            // using it, not yet implemented since nothing has confirmed
-            // Roblox actually relies on that (rare in modern engines;
-            // flagged, checked at).
-            fns.glVertexAttribPointer_(static_cast<GLuint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLenum>(a[2]), static_cast<GLboolean>(a[3]), static_cast<GLsizei>(a[4]), reinterpret_cast<const void*>(a[5]));
-            return 0;
-
-        // ---- GLES2: string in/out ----
-        case CallId::GlGetString: {
-            const GLubyte* s = fns.glGetString_(static_cast<GLenum>(a[0]));
-            if (s != nullptr) {
-                size_t len = std::strlen(reinterpret_cast<const char*>(s));
-                out.assign(s, s + len);
-                *out_len = static_cast<uint32_t>(len);
-            }
-            return 1;
-        }
-        case CallId::GlGetUniformLocation: {
-            std::string name(reinterpret_cast<const char*>(in.data()), in.size());
-            return static_cast<uint64_t>(static_cast<uint32_t>(fns.glGetUniformLocation_(static_cast<GLuint>(a[0]), name.c_str())));
-        }
-        case CallId::GlBindAttribLocation: {
-            std::string name(reinterpret_cast<const char*>(in.data()), in.size());
-            fns.glBindAttribLocation_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]), name.c_str());
-            return 0;
-        }
-        case CallId::GlShaderSource: {
-            // in-buffer shape: one NUL-terminated source string
-            // (Roblox's real shader-compile call sites always pass a
-            // single concatenated source, count=1, the real GLES2 API
-            // allows a `count`-way array, but nothing has shown Roblox
-            // using more than one; grown against real evidence if that
-            // changes).
-            std::string src(reinterpret_cast<const char*>(in.data()), in.size());
-            src = fix_uint_index_arithmetic(src);
-            const char* src_ptr = src.c_str();
-            fns.glShaderSource_(static_cast<GLuint>(a[0]), 1, &src_ptr, nullptr);
-            return 0;
-        }
-        case CallId::GlGetProgramInfoLog: {
-            GLsizei length = 0;
-            out.resize(hdr.out_buffer_len > 0 ? hdr.out_buffer_len : 1);
-            fns.glGetProgramInfoLog_(static_cast<GLuint>(a[0]), static_cast<GLsizei>(out.size()), &length,
-                                      reinterpret_cast<GLchar*>(out.data()));
-            *out_len = static_cast<uint32_t>(length > 0 ? length : 0);
-            return 1;
-        }
-        case CallId::GlGetShaderInfoLog: {
-            GLsizei length = 0;
-            out.resize(hdr.out_buffer_len > 0 ? hdr.out_buffer_len : 1);
-            fns.glGetShaderInfoLog_(static_cast<GLuint>(a[0]), static_cast<GLsizei>(out.size()), &length,
-                                     reinterpret_cast<GLchar*>(out.data()));
-            *out_len = static_cast<uint32_t>(length > 0 ? length : 0);
-            return 1;
-        }
-        case CallId::GlGetActiveUniform: {
-            GLsizei length = 0;
-            GLint size = 0;
-            GLenum type = 0;
-            std::vector<char> name_buf(hdr.out_buffer_len > 0 ? hdr.out_buffer_len : 1);
-            fns.glGetActiveUniform_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]),
-                                     static_cast<GLsizei>(name_buf.size()), &length, &size, &type,
-                                     name_buf.data());
-            // out layout: [GLint size][GLenum type][name bytes...]
-            out.resize(sizeof(GLint) + sizeof(GLenum) + static_cast<size_t>(length > 0 ? length : 0));
-            std::memcpy(out.data(), &size, sizeof(GLint));
-            std::memcpy(out.data() + sizeof(GLint), &type, sizeof(GLenum));
-            if (length > 0) {
-                std::memcpy(out.data() + sizeof(GLint) + sizeof(GLenum), name_buf.data(),
-                            static_cast<size_t>(length));
-            }
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-
-        // ---- GLES2: fixed-count-N id arrays ----
-        case CallId::GlDeleteBuffers: fns.glDeleteBuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
-        case CallId::GlDeleteFramebuffers: fns.glDeleteFramebuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
-        case CallId::GlDeleteRenderbuffers: fns.glDeleteRenderbuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
-        case CallId::GlDeleteTextures: fns.glDeleteTextures_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
-        // GLES3 sync objects, real.
-        //
-        // They were inert from the first commit: glFenceSync answered 0 and
-        // glClientWaitSync GL_ALREADY_SIGNALED, because forwarding them on
-        // nouveau hung the GPU (`job timeout, channel 10 killed`). The
-        // suspected mechanism was a sync handle that did not survive the
-        // round trip, so a wait was queued on something that never signals.
-        //
-        // Inert was not harmless. The engine's one use of them is its frame
-        // throttle: every frame it waits on the previous frame's fence (5 s
-        // timeout) and then fences again. An already-signalled answer
-        // removed that throttle, so the CPU ran ahead of the GPU unchecked.
-        //
-        // The handle question is answered by never handing the driver
-        // anything but its own GLsync: the client carries a small id from
-        // g_syncs, an unknown id is refused here, and glWaitSync (a
-        // GPU-side wait, and the only call that can stall the GPU on a bad
-        // handle) is issued only for a sync this host created. The wait
-        // itself is GlClientWaitSync below, which polls outside the
-        // dispatch lock.
-        case CallId::GlFenceSync: {
-            GLsync s = fns.glFenceSync_(static_cast<GLenum>(a[0]), static_cast<GLbitfield>(a[1]));
-            if (s == nullptr) return 0;
-            const uint64_t id = ++g_next_sync_id;
-            g_syncs.emplace(id, s);
-            return id;
-        }
-        case CallId::GlClientWaitSync:
-            return client_wait_sync(fns, a[0], static_cast<GLbitfield>(a[1]), a[2]);
-        case CallId::GlWaitSync: {
-            auto it = g_syncs.find(a[0]);
-            if (it == g_syncs.end()) return 0;
-            fns.glWaitSync_(it->second, static_cast<GLbitfield>(a[1]), a[2]);
-            return 0;
-        }
-        case CallId::GlDeleteSync: {
-            auto it = g_syncs.find(a[0]);
-            if (it == g_syncs.end()) return 0;
-            fns.glDeleteSync_(it->second);
-            g_syncs.erase(it);
-            return 0;
-        }
-        case CallId::GlIsSync: {
-            auto it = g_syncs.find(a[0]);
-            return it != g_syncs.end() && fns.glIsSync_(it->second) == GL_TRUE ? 1 : 0;
-        }
-        case CallId::GlGetSynciv: {
-            auto it = g_syncs.find(a[0]);
-            const GLsizei cap = static_cast<GLsizei>(a[2]);
-            if (it == g_syncs.end() || cap <= 0) return 0;
-            std::vector<GLint> values(static_cast<size_t>(cap));
-            GLsizei length = 0;
-            fns.glGetSynciv_(it->second, static_cast<GLenum>(a[1]), cap, &length, values.data());
-            if (length < 0) length = 0;
-            if (length > cap) length = cap;
-            out.resize(static_cast<size_t>(length) * sizeof(GLint));
-            if (length > 0) std::memcpy(out.data(), values.data(), out.size());
-            *out_len = static_cast<uint32_t>(out.size());
-            return 0;
-        }
-        // ---- GLES3 entry points the engine resolves by name ----
-        //
-        // Each of these used to reach a do-nothing function: the client's
-        // eglGetProcAddress handed one back for anything not forwarded,
-        // so the engine believed it had them and every call vanished.
-        case CallId::GlTexImage3D: {
-            // Ten arguments: `format` and `type` ride ahead of the pixels.
-            if (fns.glTexImage3D_ == nullptr || in.size() < 2 * sizeof(uint64_t)) return 0;
-            const auto* extra = reinterpret_cast<const uint64_t*>(in.data());
-            const void* pixels =
-                hdr.pixel_buffer_offset_plus_one != 0
-                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
-                    : (in.size() > 2 * sizeof(uint64_t)
-                           ? static_cast<const void*>(in.data() + 2 * sizeof(uint64_t))
-                           : nullptr);
-            fns.glTexImage3D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                              static_cast<GLint>(a[2]), static_cast<GLsizei>(a[3]),
-                              static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
-                              static_cast<GLint>(a[6]), static_cast<GLenum>(extra[0]),
-                              static_cast<GLenum>(extra[1]), pixels);
-            return 0;
-        }
-        case CallId::GlCompressedTexImage3D: {
-            if (fns.glCompressedTexImage3D_ == nullptr) return 0;
-            const void* data =
-                hdr.pixel_buffer_offset_plus_one != 0
-                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
-                    : (in.empty() ? nullptr : static_cast<const void*>(in.data()));
-            fns.glCompressedTexImage3D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                        static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
-                                        static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
-                                        static_cast<GLint>(a[6]), static_cast<GLsizei>(a[7]), data);
-            return 0;
-        }
-        case CallId::GlCompressedTexSubImage3D: {
-            // Eleven arguments: `format` and `imageSize` ride ahead of the data.
-            if (fns.glCompressedTexSubImage3D_ == nullptr || in.size() < 2 * sizeof(uint64_t)) {
-                return 0;
-            }
-            const auto* extra = reinterpret_cast<const uint64_t*>(in.data());
-            const void* data =
-                hdr.pixel_buffer_offset_plus_one != 0
-                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
-                    : (in.size() > 2 * sizeof(uint64_t)
-                           ? static_cast<const void*>(in.data() + 2 * sizeof(uint64_t))
-                           : nullptr);
-            fns.glCompressedTexSubImage3D_(
-                static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]),
-                static_cast<GLint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLsizei>(a[5]),
-                static_cast<GLsizei>(a[6]), static_cast<GLsizei>(a[7]),
-                static_cast<GLenum>(extra[0]), static_cast<GLsizei>(extra[1]), data);
-            return 0;
-        }
-        case CallId::GlFramebufferTexture2DMultisampleEXT:
-            if (fns.glFramebufferTexture2DMultisampleEXT_ == nullptr) return 0;
-            fns.glFramebufferTexture2DMultisampleEXT_(
-                static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), static_cast<GLenum>(a[2]),
-                static_cast<GLuint>(a[3]), static_cast<GLint>(a[4]), static_cast<GLsizei>(a[5]));
-            return 0;
-        case CallId::GlRenderbufferStorageMultisampleEXT:
-            if (fns.glRenderbufferStorageMultisampleEXT_ == nullptr) return 0;
-            fns.glRenderbufferStorageMultisampleEXT_(
-                static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
-                static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]));
-            return 0;
-        case CallId::GlFramebufferTextureLayer:
-            if (fns.glFramebufferTextureLayer_ == nullptr) return 0;
-            fns.glFramebufferTextureLayer_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
-                                           static_cast<GLuint>(a[2]), static_cast<GLint>(a[3]),
-                                           static_cast<GLint>(a[4]));
-            return 0;
-        case CallId::GlGetInteger64v: {
-            if (fns.glGetInteger64v_ == nullptr) return 0;
-            GLint64 values[16] = {};
-            fns.glGetInteger64v_(static_cast<GLenum>(a[0]), values);
-            out.resize(sizeof(values));
-            std::memcpy(out.data(), values, sizeof(values));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlQueryCounter:
-            if (fns.glQueryCounterEXT_ == nullptr) return 0;
-            fns.glQueryCounterEXT_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]));
-            return 0;
-        case CallId::GlGetQueryiv:
-        case CallId::GlGetQueryObjectiv:
-        case CallId::GlGetBufferParameteriv: {
-            GLint value = 0;
-            if (hdr.call_id == CallId::GlGetQueryiv) {
-                if (fns.glGetQueryiv_ == nullptr) return 0;
-                fns.glGetQueryiv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), &value);
-            } else if (hdr.call_id == CallId::GlGetQueryObjectiv) {
-                if (fns.glGetQueryObjectivEXT_ == nullptr) return 0;
-                fns.glGetQueryObjectivEXT_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
-                                           &value);
-            } else {
-                if (fns.glGetBufferParameteriv_ == nullptr) return 0;
-                fns.glGetBufferParameteriv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]),
-                                            &value);
-            }
-            out.resize(sizeof(value));
-            std::memcpy(out.data(), &value, sizeof(value));
-            *out_len = sizeof(value);
-            return 1;
-        }
-        case CallId::GlProgramBinary:
-            if (fns.glProgramBinary_ == nullptr) return 0;
-            fns.glProgramBinary_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
-                                 in.empty() ? nullptr : in.data(), static_cast<GLsizei>(in.size()));
-            return 0;
-        case CallId::GlGetProgramBinary: {
-            // Reply: [u32 format][u32 length][length bytes].
-            if (fns.glGetProgramBinary_ == nullptr) return 0;
-            const GLsizei cap = static_cast<GLsizei>(a[1]);
-            if (cap < 0) return 0;
-            out.resize(2 * sizeof(uint32_t) + static_cast<size_t>(cap));
-            GLsizei length = 0;
-            GLenum format = 0;
-            fns.glGetProgramBinary_(static_cast<GLuint>(a[0]), cap, &length, &format,
-                                    out.data() + 2 * sizeof(uint32_t));
-            if (length < 0) length = 0;
-            if (length > cap) length = cap;
-            const uint32_t f = format;
-            const uint32_t n = static_cast<uint32_t>(length);
-            std::memcpy(out.data(), &f, sizeof(f));
-            std::memcpy(out.data() + sizeof(uint32_t), &n, sizeof(n));
-            out.resize(2 * sizeof(uint32_t) + n);
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlClearBufferiv:
-            if (fns.glClearBufferiv_ == nullptr || in.size() < 4 * sizeof(GLint)) return 0;
-            fns.glClearBufferiv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                 reinterpret_cast<const GLint*>(in.data()));
-            return 0;
-        case CallId::GlClearBufferuiv:
-            if (fns.glClearBufferuiv_ == nullptr || in.size() < 4 * sizeof(GLuint)) return 0;
-            fns.glClearBufferuiv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                  reinterpret_cast<const GLuint*>(in.data()));
-            return 0;
-        case CallId::GlClearBufferfi:
-            if (fns.glClearBufferfi_ == nullptr) return 0;
-            fns.glClearBufferfi_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                 unpack_float(a[2]), static_cast<GLint>(a[3]));
-            return 0;
-        case CallId::GlPushGroupMarker: {
-            if (fns.glPushGroupMarkerEXT_ == nullptr) return 0;
-            const std::string marker(reinterpret_cast<const char*>(in.data()), in.size());
-            fns.glPushGroupMarkerEXT_(0, marker.c_str());
-            return 0;
-        }
-        case CallId::GlPopGroupMarker:
-            if (fns.glPopGroupMarkerEXT_ == nullptr) return 0;
-            fns.glPopGroupMarkerEXT_();
-            return 0;
-        case CallId::GlObjectLabel: {
-            if (fns.glObjectLabelKHR_ == nullptr) return 0;
-            const std::string label(reinterpret_cast<const char*>(in.data()), in.size());
-            fns.glObjectLabelKHR_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]),
-                                  static_cast<GLsizei>(label.size()), label.c_str());
-            return 0;
-        }
-        case CallId::GlCopyImageSubData: {
-            if (in.size() < 15 * sizeof(int32_t)) return 0;
-            const auto* p = reinterpret_cast<const int32_t*>(in.data());
-            fns.glCopyImageSubData_(static_cast<GLuint>(p[0]), static_cast<GLenum>(p[1]), p[2], p[3],
-                                    p[4], p[5], static_cast<GLuint>(p[6]),
-                                    static_cast<GLenum>(p[7]), p[8], p[9], p[10], p[11], p[12],
-                                    p[13], p[14]);
-            return 0;
-        }
-        case CallId::GlTexStorage2D:
-            trace_texture_upload("storage", g_bound_texture_2d, static_cast<GLint>(a[1]),
-                                 static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
-                                 static_cast<GLenum>(a[2]));
-            if (cursor_trace_enabled()) {
-                g_tex_dims[g_bound_texture_2d] = {static_cast<int>(a[3]), static_cast<int>(a[4])};
-            }
-            fns.glTexStorage2D_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
-                                static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
-                                static_cast<GLsizei>(a[4]));
-            return 0;
-        case CallId::GlTexStorage3D:
-            fns.glTexStorage3D_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
-                                static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
-                                static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]));
-            return 0;
-        case CallId::GlTexSubImage3D: {
-            // 10 real int args exceed the 8 header slots, so `format`
-            // and `type` ride at the front of the in-buffer, ahead of
-            // the real pixel data (see the client side's own comment).
-            if (in.size() < 2 * sizeof(uint64_t)) return 0;
-            const auto* extra = reinterpret_cast<const uint64_t*>(in.data());
-            auto format = static_cast<GLenum>(extra[0]);
-            auto type = static_cast<GLenum>(extra[1]);
-            const void* pixels =
-                hdr.pixel_buffer_offset_plus_one != 0
-                    ? reinterpret_cast<const void*>(hdr.pixel_buffer_offset_plus_one - 1)
-                    : (in.size() > 2 * sizeof(uint64_t)
-                           ? static_cast<const void*>(in.data() + 2 * sizeof(uint64_t))
-                           : nullptr);
-            fns.glTexSubImage3D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                 static_cast<GLint>(a[2]), static_cast<GLint>(a[3]),
-                                 static_cast<GLint>(a[4]), static_cast<GLsizei>(a[5]),
-                                 static_cast<GLsizei>(a[6]), static_cast<GLsizei>(a[7]), format,
-                                 type, pixels);
-            return 0;
-        }
-        case CallId::GlProgramParameteri:
-            fns.glProgramParameteri_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
-                                     static_cast<GLint>(a[2]));
-            return 0;
-        case CallId::GlUniformBlockBinding:
-            fns.glUniformBlockBinding_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]),
-                                       static_cast<GLuint>(a[2]));
-            return 0;
-        case CallId::GlGetUniformBlockIndex: {
-            // NUL-terminated block name arrives in the in-buffer.
-            std::string name(reinterpret_cast<const char*>(in.data()), in.size());
-            if (!name.empty() && name.back() == '\0') name.pop_back();
-            return fns.glGetUniformBlockIndex_(static_cast<GLuint>(a[0]), name.c_str());
-        }
-        case CallId::GlGetActiveUniformBlockiv: {
-            auto program = static_cast<GLuint>(a[0]);
-            auto index = static_cast<GLuint>(a[1]);
-            auto pname = static_cast<GLenum>(a[2]);
-            // Most pnames write a single int; ACTIVE_UNIFORM_INDICES
-            // writes one per active uniform in the block, so size it
-            // from the real count rather than guessing.
-            GLint count = 1;
-            if (pname == GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES) {
-                fns.glGetActiveUniformBlockiv_(program, index, GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS,
-                                               &count);
-                if (count < 0) count = 0;
-            }
-            out.resize(static_cast<size_t>(count) * sizeof(GLint));
-            if (count > 0) {
-                fns.glGetActiveUniformBlockiv_(program, index, pname,
-                                               reinterpret_cast<GLint*>(out.data()));
-            }
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlBindBufferBase:
-            fns.glBindBufferBase_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]),
-                                  static_cast<GLuint>(a[2]));
-            return 0;
-        case CallId::GlBindBufferRange:
-            fns.glBindBufferRange_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]),
-                                   static_cast<GLuint>(a[2]), static_cast<GLintptr>(a[3]),
-                                   static_cast<GLsizeiptr>(a[4]));
-            return 0;
-        case CallId::GlClearBufferfv:
-            fns.glClearBufferfv_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                 reinterpret_cast<const GLfloat*>(in.data()));
-            return 0;
-        case CallId::GlDrawBuffers: {
-            // GL_BACK names framebuffer 0's only buffer; on Stud's stand-in
-            // that is its colour attachment.
-            std::vector<GLenum> bufs(static_cast<size_t>(a[0]));
-            std::memcpy(bufs.data(), in.data(), std::min(in.size(), bufs.size() * sizeof(GLenum)));
-            if (gl_bound_to_scale_target(fns, GL_DRAW_FRAMEBUFFER)) {
-                for (GLenum& b : bufs) {
-                    if (b == GL_BACK) b = GL_COLOR_ATTACHMENT0;
-                }
-            }
-            fns.glDrawBuffers_(static_cast<GLsizei>(a[0]), bufs.data());
-            return 0;
-        }
-        case CallId::GlRenderbufferStorageMultisample:
-            fns.glRenderbufferStorageMultisample_(
-                static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]), static_cast<GLenum>(a[2]),
-                static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]));
-            return 0;
-        case CallId::GlDrawArraysInstanced:
-            fns.glDrawArraysInstanced_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                        static_cast<GLsizei>(a[2]), static_cast<GLsizei>(a[3]));
-            return 0;
-        case CallId::GlDrawElementsInstanced:
-            fns.glDrawElementsInstanced_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
-                                          static_cast<GLenum>(a[2]),
-                                          reinterpret_cast<const void*>(a[3]),
-                                          static_cast<GLsizei>(a[4]));
-            return 0;
-        case CallId::GlVertexAttribDivisor:
-            fns.glVertexAttribDivisor_(static_cast<GLuint>(a[0]), static_cast<GLuint>(a[1]));
-            return 0;
-        case CallId::GlVertexAttribIPointer:
-            fns.glVertexAttribIPointer_(static_cast<GLuint>(a[0]), static_cast<GLint>(a[1]),
-                                         static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
-                                         reinterpret_cast<const void*>(a[4]));
-            return 0;
-        case CallId::GlBlitFramebuffer: {
-            uint32_t tail[2] = {0, 0};
-            if (in.size() >= sizeof(tail)) std::memcpy(tail, in.data(), sizeof(tail));
-            fns.glBlitFramebuffer_(
-                static_cast<GLint>(static_cast<int64_t>(a[0])), static_cast<GLint>(static_cast<int64_t>(a[1])),
-                static_cast<GLint>(static_cast<int64_t>(a[2])), static_cast<GLint>(static_cast<int64_t>(a[3])),
-                static_cast<GLint>(static_cast<int64_t>(a[4])), static_cast<GLint>(static_cast<int64_t>(a[5])),
-                static_cast<GLint>(static_cast<int64_t>(a[6])), static_cast<GLint>(static_cast<int64_t>(a[7])),
-                static_cast<GLbitfield>(tail[0]), static_cast<GLenum>(tail[1]));
-            return 0;
-        }
-        case CallId::GlInvalidateFramebuffer: {
-            // Framebuffer 0's attachments are named GL_COLOR/DEPTH/STENCIL;
-            // a framebuffer object's are the attachment points.
-            std::vector<GLenum> att(static_cast<size_t>(a[1]));
-            std::memcpy(att.data(), in.data(), std::min(in.size(), att.size() * sizeof(GLenum)));
-            if (gl_bound_to_scale_target(fns, static_cast<GLenum>(a[0]))) {
-                for (GLenum& e : att) {
-                    if (e == GL_COLOR) e = GL_COLOR_ATTACHMENT0;
-                    else if (e == GL_DEPTH) e = GL_DEPTH_ATTACHMENT;
-                    else if (e == GL_STENCIL) e = GL_STENCIL_ATTACHMENT;
-                }
-            }
-            fns.glInvalidateFramebuffer_(static_cast<GLenum>(a[0]), static_cast<GLsizei>(a[1]),
-                                          att.data());
-            return 0;
-        }
-        case CallId::GlBindVertexArray: fns.glBindVertexArray_(static_cast<GLuint>(a[0])); return 0;
-        case CallId::GlDeleteVertexArrays: fns.glDeleteVertexArrays_(static_cast<GLsizei>(a[0]), reinterpret_cast<const GLuint*>(in.data())); return 0;
-        case CallId::GlGenVertexArrays: {
-            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
-            fns.glGenVertexArrays_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlGenBuffers: {
-            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
-            fns.glGenBuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlGenFramebuffers: {
-            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
-            fns.glGenFramebuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlGenRenderbuffers: {
-            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
-            fns.glGenRenderbuffers_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlGenTextures: {
-            out.resize(static_cast<size_t>(a[0]) * sizeof(GLuint));
-            fns.glGenTextures_(static_cast<GLsizei>(a[0]), reinterpret_cast<GLuint*>(out.data()));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-
-        // ---- GLES2: small out-param arrays ----
-        case CallId::GlGetIntegerv: {
-            // Generous fixed count (16) covers every real
-            // GLES2 pname's true count (the largest, GL_ALIASED_*_RANGE/
-            // viewport-shaped queries, need at most 4), always reading
-            // a few extra, harmless ints past what a given pname truly
-            // uses is safe (the real driver only ever writes the pname's
-            // own true count; the rest of the buffer is simply unused,
-            // not read).
-            // A list-valued pname (compressed texture formats and the
-            // like) arrives with its length, which the client asked the
-            // matching GL_NUM_* for, and goes back whole.
-            if (a[1] > 0 && (a[0] == 0x86A3 || a[0] == 0x87FF || a[0] == 0x8DF8)) {
-                std::vector<GLint> list(static_cast<size_t>(a[1]));
-                GLint n = 0;
-                fns.glGetIntegerv_(a[0] == 0x86A3 ? 0x86A2 : a[0] == 0x87FF ? 0x87FE : 0x8DF9, &n);
-                if (n > 0 && static_cast<size_t>(n) <= list.size()) {
-                    fns.glGetIntegerv_(static_cast<GLenum>(a[0]), list.data());
-                    list.resize(static_cast<size_t>(n));
-                } else {
-                    list.clear();
-                }
-                out.resize(list.size() * sizeof(GLint));
-                std::memcpy(out.data(), list.data(), out.size());
-                *out_len = static_cast<uint32_t>(out.size());
-                return 1;
-            }
-            GLint values[16] = {};
-            fns.glGetIntegerv_(static_cast<GLenum>(a[0]), values);
-            // Stud's stand-in for framebuffer 0 answers as 0.
-            if (t_gl_scale != nullptr) {
-                const GLenum pname = static_cast<GLenum>(a[0]);
-                if ((pname == GL_DRAW_FRAMEBUFFER_BINDING || pname == GL_READ_FRAMEBUFFER_BINDING) &&
-                    static_cast<GLuint>(values[0]) == t_gl_scale->fbo) {
-                    values[0] = 0;
-                } else if ((pname == GL_DRAW_BUFFER0 || pname == GL_READ_BUFFER) &&
-                           values[0] == GL_COLOR_ATTACHMENT0 &&
-                           gl_bound_to_scale_target(fns, pname == GL_READ_BUFFER
-                                                             ? GL_READ_FRAMEBUFFER
-                                                             : GL_DRAW_FRAMEBUFFER)) {
-                    values[0] = GL_BACK;
-                }
-            }
-            out.resize(sizeof(values));
-            std::memcpy(out.data(), values, sizeof(values));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlTexParameterfv: {
-            // The client sends every value the pname takes (four for
-            // GL_TEXTURE_BORDER_COLOR, one otherwise).
-            GLfloat values[4] = {unpack_float(a[2]), 0, 0, 0};
-            std::memcpy(values, in.data(), std::min(in.size(), sizeof(values)));
-            fns.glTexParameterfv_(static_cast<GLenum>(a[0]), static_cast<GLenum>(a[1]), values);
-            return 0;
-        }
-        case CallId::GlGetProgramiv: {
-            GLint value = 0;
-            fns.glGetProgramiv_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]), &value);
-            out.resize(sizeof(GLint));
-            std::memcpy(out.data(), &value, sizeof(GLint));
-            *out_len = sizeof(GLint);
-            return 1;
-        }
-        case CallId::GlGetShaderiv: {
-            GLint value = 0;
-            fns.glGetShaderiv_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]), &value);
-            out.resize(sizeof(GLint));
-            std::memcpy(out.data(), &value, sizeof(GLint));
-            *out_len = sizeof(GLint);
-            return 1;
-        }
-
-        // ---- GLES2: bulk buffer transfer ----
-        case CallId::GlBufferData:
-            // Bug found in testing: `usage` rides in a[3] (the client
-            // leaves a[2] as a zero placeholder for the data pointer it
-            // cannot send), but this read a[2], so every single
-            // glBufferData call in this project's history passed usage=0,
-            // an invalid enum, and the driver allocated no storage at
-            // all. Caught by a real stud-render-host SIGSEGV inside the
-            // GLES driver's uniform-buffer update during the engine's
-            // first real glDrawArrays: a uniform buffer that was never
-            // actually allocated has nothing behind it.
-            fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
-                               in.empty() ? nullptr : in.data(), static_cast<GLenum>(a[3]));
-            return 0;
-        case CallId::GlCommandBatch: {
-            // Unpacks what call_void() packed: argc, a flags byte, the
-            // 16-bit call id, argc arguments, then the payload length and
-            // PBO offset only if they were used. Each call is dispatched
-            // in order, exactly as if it had arrived as its own request.
-            const uint8_t* p = in.data();
-            const uint8_t* end = in.data() + in.size();
-            while (end - p >= 4) {
-                const uint8_t argc = *p++;
-                const uint8_t bits = *p++;
-                uint16_t id16 = 0;
-                std::memcpy(&id16, p, sizeof(id16));
-                p += sizeof(id16);
-                if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) break;
-
-                Header sub{};
-                sub.call_id = static_cast<CallId>(id16);
-                sub.flags = Header::kNoReply;
-                if (argc > 0) {
-                    std::memcpy(sub.args, p, static_cast<size_t>(argc) * sizeof(uint64_t));
-                    p += static_cast<size_t>(argc) * sizeof(uint64_t);
-                }
-                const uint8_t* payload = nullptr;
-                uint32_t payload_len = 0;
-                if ((bits & 1u) != 0) {
-                    if (end - p < 4) break;
-                    std::memcpy(&payload_len, p, sizeof(payload_len));
-                    p += sizeof(payload_len);
-                    if (end - p < static_cast<ptrdiff_t>(payload_len)) break;
-                    payload = p;
-                    p += payload_len;
-                }
-                if ((bits & 2u) != 0) {
-                    if (end - p < 8) break;
-                    std::memcpy(&sub.pixel_buffer_offset_plus_one, p,
-                                sizeof(sub.pixel_buffer_offset_plus_one));
-                    p += sizeof(sub.pixel_buffer_offset_plus_one);
-                }
-                sub.in_buffer_len = payload_len;
-
-                // Reused across the whole batch rather than allocated
-                // per call, a batch holds thousands of them.
-                static thread_local std::vector<uint8_t> sub_in;
-                static thread_local std::vector<uint8_t> sub_out;
-                sub_in.assign(payload, payload + payload_len);
-                sub_out.clear();
-                uint32_t sub_out_len = 0;
-                dispatch(sub, fns, window, sub_in, sub_out, &sub_out_len);
-            }
-            return 0;
-        }
-        case CallId::GlGenQueries: {
-            const auto n = static_cast<GLsizei>(a[0]);
-            if (fns.glGenQueries_ == nullptr || n <= 0) return 0;
-            out.resize(static_cast<size_t>(n) * sizeof(GLuint));
-            fns.glGenQueries_(n, reinterpret_cast<GLuint*>(out.data()));
-            *out_len = static_cast<uint32_t>(out.size());
-            return 1;
-        }
-        case CallId::GlDeleteQueries:
-            if (fns.glDeleteQueries_ == nullptr || in.empty()) return 0;
-            fns.glDeleteQueries_(static_cast<GLsizei>(a[0]),
-                                 reinterpret_cast<const GLuint*>(in.data()));
-            return 0;
-        case CallId::GlBeginQuery:
-            if (fns.glBeginQuery_ == nullptr) return 0;
-            fns.glBeginQuery_(static_cast<GLenum>(a[0]), static_cast<GLuint>(a[1]));
-            return 0;
-        case CallId::GlEndQuery:
-            if (fns.glEndQuery_ == nullptr) return 0;
-            fns.glEndQuery_(static_cast<GLenum>(a[0]));
-            return 0;
-        case CallId::GlGetQueryObjectuiv: {
-            if (fns.glGetQueryObjectuiv_ == nullptr) return 0;
-            GLuint value = 0;
-            fns.glGetQueryObjectuiv_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]), &value);
-            out.resize(sizeof(value));
-            std::memcpy(out.data(), &value, sizeof(value));
-            *out_len = sizeof(value);
-            return 1;
-        }
-        case CallId::GlGetQueryObjectui64v: {
-            if (fns.glGetQueryObjectui64v_ == nullptr) return 0;
-            GLuint64 value = 0;
-            fns.glGetQueryObjectui64v_(static_cast<GLuint>(a[0]), static_cast<GLenum>(a[1]),
-                                       &value);
-            out.resize(sizeof(value));
-            std::memcpy(out.data(), &value, sizeof(value));
-            *out_len = sizeof(value);
-            return 1;
-        }
-        case CallId::GlBufferStorage:
-            if (fns.glBufferStorage_ == nullptr) {
-                // No immutable storage on this driver: an ordinary
-                // mutable allocation of the same size is a correct
-                // substitute for everything the engine does with it.
-                fns.glBufferData_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
-                                  in.empty() ? nullptr : in.data(), GL_DYNAMIC_DRAW);
-                return 0;
-            }
-            fns.glBufferStorage_(static_cast<GLenum>(a[0]), static_cast<GLsizeiptr>(a[1]),
-                                 in.empty() ? nullptr : in.data(),
-                                 static_cast<GLbitfield>(a[2]));
-            return 0;
-        case CallId::GlBufferSubData:
-            fns.glBufferSubData_(static_cast<GLenum>(a[0]), static_cast<GLintptr>(a[1]),
-                                  static_cast<GLsizeiptr>(a[2]), in.data());
-            return 0;
-        case CallId::GlGetBufferSubData: {
-            // a: target, offset, length. GLES has no glGetBufferSubData, so
-            // read the range back through a real read mapping, the client
-            // needs the buffer's current bytes to honour a non-invalidating
-            // write map (see the CallId's own comment in the protocol header).
-            const GLenum target = static_cast<GLenum>(a[0]);
-            const GLsizeiptr length = static_cast<GLsizeiptr>(a[2]);
-            if (length <= 0) return 0;
-            void* p = fns.glMapBufferRange_(target, static_cast<GLintptr>(a[1]), length,
-                                             GL_MAP_READ_BIT);
-            if (p == nullptr) return 0;
-            out.assign(static_cast<const unsigned char*>(p),
-                       static_cast<const unsigned char*>(p) + length);
-            fns.glUnmapBuffer_(target);
-            *out_len = static_cast<uint32_t>(length);
-            return 1;
-        }
-        case CallId::GlTexImage2D:
-            // a: target,level,internalformat,width,height,border,format,type
-            if (cursor_trace_enabled() && static_cast<GLint>(a[1]) == 0) {
-                g_tex_dims[g_bound_texture_2d] = {static_cast<int>(a[3]), static_cast<int>(a[4])};
-            }
-            fns.glTexImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]),
-                               static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]), static_cast<GLint>(a[5]),
-                               static_cast<GLenum>(a[6]), static_cast<GLenum>(a[7]), pixels_ptr());
-            return 0;
-        case CallId::GlTexSubImage2D:
-            // a: target,level,xoffset,yoffset,width,height,format,type
-            fns.glTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]), static_cast<GLint>(a[2]),
-                                  static_cast<GLint>(a[3]), static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
-                                  static_cast<GLenum>(a[6]), static_cast<GLenum>(a[7]), pixels_ptr());
-            return 0;
-        case CallId::GlCompressedTexImage2D:
-            trace_texture_upload("compressed", g_bound_texture_2d, static_cast<GLint>(a[1]),
-                                 static_cast<GLsizei>(a[3]), static_cast<GLsizei>(a[4]),
-                                 static_cast<GLenum>(a[2]));
-            // a[6] is the real imageSize. It cannot be derived from the
-            // in-buffer size when the pixels come from a real PBO instead.
-            fns.glCompressedTexImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                         static_cast<GLenum>(a[2]), static_cast<GLsizei>(a[3]),
-                                         static_cast<GLsizei>(a[4]), static_cast<GLint>(a[5]),
-                                         static_cast<GLsizei>(a[6]), pixels_ptr());
-            return 0;
-        case CallId::GlCompressedTexSubImage2D:
-            trace_texture_upload("compressed-sub", g_bound_texture_2d, static_cast<GLint>(a[1]),
-                                 static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
-                                 static_cast<GLenum>(a[6]), static_cast<size_t>(a[7]),
-                                 hdr.pixel_buffer_offset_plus_one, in.size());
-            fns.glCompressedTexSubImage2D_(static_cast<GLenum>(a[0]), static_cast<GLint>(a[1]),
-                                            static_cast<GLint>(a[2]), static_cast<GLint>(a[3]),
-                                            static_cast<GLsizei>(a[4]), static_cast<GLsizei>(a[5]),
-                                            static_cast<GLenum>(a[6]), static_cast<GLsizei>(a[7]),
-                                            pixels_ptr());
-            return 0;
-        case CallId::GlReadPixels: {
-            GLenum format = static_cast<GLenum>(a[4]);
-            GLenum type = static_cast<GLenum>(a[5]);
-            // a[6] is the client's span under the engine's pack state
-            // (row padding and skips), which GL writes with; the tight
-            // size alone overran this buffer on a padded read.
-            uint32_t bytes = static_cast<uint32_t>(a[2]) * static_cast<uint32_t>(a[3]) * gl_pixel_size(format, type);
-            if (a[6] > bytes) bytes = static_cast<uint32_t>(a[6]);
-            out.resize(bytes);
-            fns.glReadPixels_(static_cast<GLint>(a[0]), static_cast<GLint>(a[1]), static_cast<GLsizei>(a[2]),
-                               static_cast<GLsizei>(a[3]), format, type, out.data());
-            *out_len = bytes;
-            return 1;
-        }
-
-        default:
-            return std::nullopt;
-    }
-    return kNullHandle;
-}
 
 // Split out of dispatch(), whose switch it was part of: Vulkan: everything vulkan_host.cpp implements, by call id.
 // Answers nullopt for any id that is not one of these, and a case that
@@ -5196,22 +2813,62 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 break;
         }
     }
-    // Temporary diagnostic answering a real, concrete question: does
-    // the engine ever issue a single real draw/clear call, or does it only
-    // ever swap empty frames? STUD_RENDER_CALL_TRACE already exists for
-    // EglSwapBuffers alone (see that case below), extended here to the
-    // three calls that actually put pixels in a frame, since "the swap
-    // loop runs" and "something real gets drawn" are two different real
-    // facts and this project had only ever confirmed the first one.
-    const bool draw_trace = render_call_trace_enabled();
-    if (draw_trace && (hdr.call_id == CallId::GlClear || hdr.call_id == CallId::GlDrawArrays ||
-                        hdr.call_id == CallId::GlDrawElements)) {
-        std::printf("stud-render-host: real draw/clear call id=%d\n", static_cast<int>(hdr.call_id));
-    }
-    if (auto handled = dispatch_egl_call(hdr, fns, window, in, out, out_len)) return *handled;
-    if (auto handled = dispatch_gl_call(hdr, fns, window, in, out, out_len)) return *handled;
     if (auto handled = dispatch_vk_call(hdr, window, in, out, out_len)) return *handled;
     switch (hdr.call_id) {
+        // OpenGL mode: a frame gfxstream drew, presented in the window.
+        case CallId::GlPresentColorBuffer:
+            return gfx_present_behind(fns, window, static_cast<uint32_t>(a[0]));
+        case CallId::VoidCallBatch: {
+            // Unpacks what call_void() packed: argc, a flags byte, the
+            // 16-bit call id, argc arguments, then the payload length and
+            // PBO offset only if they were used. Each call is dispatched
+            // in order, exactly as if it had arrived as its own request.
+            const uint8_t* p = in.data();
+            const uint8_t* end = in.data() + in.size();
+            while (end - p >= 4) {
+                const uint8_t argc = *p++;
+                const uint8_t bits = *p++;
+                uint16_t id16 = 0;
+                std::memcpy(&id16, p, sizeof(id16));
+                p += sizeof(id16);
+                if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) break;
+
+                Header sub{};
+                sub.call_id = static_cast<CallId>(id16);
+                sub.flags = Header::kNoReply;
+                if (argc > 0) {
+                    std::memcpy(sub.args, p, static_cast<size_t>(argc) * sizeof(uint64_t));
+                    p += static_cast<size_t>(argc) * sizeof(uint64_t);
+                }
+                const uint8_t* payload = nullptr;
+                uint32_t payload_len = 0;
+                if ((bits & 1u) != 0) {
+                    if (end - p < 4) break;
+                    std::memcpy(&payload_len, p, sizeof(payload_len));
+                    p += sizeof(payload_len);
+                    if (end - p < static_cast<ptrdiff_t>(payload_len)) break;
+                    payload = p;
+                    p += payload_len;
+                }
+                if ((bits & 2u) != 0) {
+                    if (end - p < 8) break;
+                    std::memcpy(&sub.pixel_buffer_offset_plus_one, p,
+                                sizeof(sub.pixel_buffer_offset_plus_one));
+                    p += sizeof(sub.pixel_buffer_offset_plus_one);
+                }
+                sub.in_buffer_len = payload_len;
+
+                // Reused across the whole batch rather than allocated
+                // per call, a batch holds thousands of them.
+                static thread_local std::vector<uint8_t> sub_in;
+                static thread_local std::vector<uint8_t> sub_out;
+                sub_in.assign(payload, payload + payload_len);
+                sub_out.clear();
+                uint32_t sub_out_len = 0;
+                dispatch(sub, fns, window, sub_in, sub_out, &sub_out_len);
+            }
+            return 0;
+        }
         case CallId::GetWindowSize: {
             return current_window_size();
         }
@@ -5331,8 +2988,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
 }  // namespace
 
 
-// Serialises every dispatch: the GL state and EGL context the handlers
-// touch are not thread-safe, and extra client connections are served on
+// Serialises every dispatch: the driver state the handlers touch is not
+// thread-safe, and extra client connections are served on
 // their own threads (see the accept path).
 std::mutex& dispatch_mutex() {
     static std::mutex m;
@@ -5665,7 +3322,7 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 
 // Services one client connection to completion, on its own thread. Used
 // for Process B's connections beyond the first, each of its client
-// libraries (libGLESv2, libaaudio, ...) links its own copy of the client
+// libraries (libvulkan, libaaudio, ...) links its own copy of the client
 // and opens its own socket.
 
 // The calls that BLOCK in the driver, waiting for the GPU.
@@ -5697,11 +3354,11 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // is to stop drawing a window nobody is looking at, not to slow the
 // process down.
 //
-// A present can also arrive inside a GlCommandBatch: it is sent reply-free,
+// A present can also arrive inside a VoidCallBatch: it is sent reply-free,
 // and reply-free calls travel packed into batches. The batch's own id is
 // all the dispatch loop sees, so the present inside one was never paced
 // and the background cap did nothing at all. A batch is looked through,
-// in the same record format GlCommandBatch's handler reads, for a present
+// in the same record format VoidCallBatch's handler reads, for a present
 // among its calls.
 bool batch_carries_present(const std::vector<uint8_t>& in) {
     const uint8_t* p = in.data();
@@ -5714,7 +3371,6 @@ bool batch_carries_present(const std::vector<uint8_t>& in) {
         p += sizeof(id16);
         const auto id = static_cast<stud::render_host::CallId>(id16);
         if (id == stud::render_host::CallId::VkQueuePresentKHR ||
-            id == stud::render_host::CallId::EglSwapBuffers ||
             id == stud::render_host::CallId::GlPresentColorBuffer) {
             return true;
         }
@@ -5738,9 +3394,8 @@ bool batch_carries_present(const std::vector<uint8_t>& in) {
 
 void throttle_before_dispatch(stud::render_host::CallId id, const std::vector<uint8_t>& in) {
     if (id == stud::render_host::CallId::VkQueuePresentKHR ||
-        id == stud::render_host::CallId::EglSwapBuffers ||
         id == stud::render_host::CallId::GlPresentColorBuffer ||
-        (id == stud::render_host::CallId::GlCommandBatch && batch_carries_present(in))) {
+        (id == stud::render_host::CallId::VoidCallBatch && batch_carries_present(in))) {
         throttle_while_hidden();
     }
 }
@@ -5778,8 +3433,6 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::GetWindowSize:
         case stud::render_host::CallId::PollWindowCloseRequested:
         case stud::render_host::CallId::ShareWindowState:
-        // Waits for the GPU; client_wait_sync() takes the lock per poll.
-        case stud::render_host::CallId::GlClientWaitSync:
         // Video decoding touches no GL state and can take milliseconds a
         // frame; each decoder has its own lock.
         case stud::render_host::CallId::VideoDecoderSupported:
@@ -5817,7 +3470,7 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
 
 // A batch made only of calls exempt above is exempt too.
 //
-// Reply-free calls travel packed into a GlCommandBatch, and the dispatch
+// Reply-free calls travel packed into a VoidCallBatch, and the dispatch
 // loop sees only the batch's id. The audio feeder sends its bursts
 // reply-free, so without this each one waited for the dispatch lock behind
 // the engine's graphics -- pipeline builds, submits -- and arrived late
@@ -5854,30 +3507,7 @@ bool batch_is_lock_free(const std::vector<uint8_t>& in) {
 
 bool dispatches_without_lock(stud::render_host::CallId id, const std::vector<uint8_t>& in) {
     return blocks_in_the_driver(id) ||
-           (id == stud::render_host::CallId::GlCommandBatch && batch_is_lock_free(in));
-}
-
-// STUD_GL_TRACE_ERRORS=1: ask the real GL for its error after every
-// forwarded GL call and name the first call that produced each one.
-//
-// The client answers glGetError from a cache refreshed once a frame, so
-// the engine's own error checks no longer say WHICH call failed. When
-// something uploads and does not appear, a texture stuck at its
-// smallest mip, say. That is the one thing worth knowing, and it is
-// too expensive to leave on.
-void trace_gl_error_after(stud::render_host::CallId id, const RealFns& fns) {
-    static const bool on = std::getenv("STUD_GL_TRACE_ERRORS") != nullptr;
-    if (!on || fns.glGetError_ == nullptr) return;
-    const char* name = stud::render_host::call_id_name(id);
-    if (name == nullptr || name[0] != 'G' || name[1] != 'l') return;  // GL calls only
-    const GLenum err = fns.glGetError_();
-    if (err == GL_NO_ERROR) return;
-    // Once per call/error pair: a failing call usually fails every frame,
-    // and the interesting fact is which ones, not how many times.
-    static std::set<std::pair<std::string, unsigned>> seen;
-    if (!seen.insert({name, err}).second) return;
-    std::printf("stud-render-host: GL ERROR 0x%x after %s\n", err, name);
-    std::fflush(stdout);
+           (id == stud::render_host::CallId::VoidCallBatch && batch_is_lock_free(in));
 }
 
 
@@ -6462,88 +4092,40 @@ int main(int argc, char** argv) {
     RealWindow real_window{display, egl_window, surface, x11_display, x11_window};
 
     // OpenGL mode's engine GLES through gfxstream, on this window's own EGL
-    // display, when this build has it. STUD_GL_GFXSTREAM=0 keeps forwarding.
+    // display.
     if (!g_prefer_vulkan && stud::render_host::gfxstream_host::available()) {
-        const char* env = std::getenv("STUD_GL_GFXSTREAM");
-        if (env == nullptr || std::string_view(env) != "0") {
-            constexpr unsigned int kPlatformX11 = 0x31D5;
-            constexpr unsigned int kPlatformWayland = 0x31D8;
-            const std::string sock = stud::render_host::default_socket_path();
-            const std::string dir = sock.substr(0, sock.find_last_of('/'));
-            stud::render_host::gfxstream_host::start(
-                real_window.on_x11() ? kPlatformX11 : kPlatformWayland,
-                real_window.on_x11() ? real_window.x11_display
-                                     : static_cast<void*>(real_window.display),
-                dir + "/gfxstream.sock");
-        }
+        constexpr unsigned int kPlatformX11 = 0x31D5;
+        constexpr unsigned int kPlatformWayland = 0x31D8;
+        const std::string sock = stud::render_host::default_socket_path();
+        const std::string dir = sock.substr(0, sock.find_last_of('/'));
+        stud::render_host::gfxstream_host::start(
+            real_window.on_x11() ? kPlatformX11 : kPlatformWayland,
+            real_window.on_x11() ? real_window.x11_display
+                                 : static_cast<void*>(real_window.display),
+            dir + "/gfxstream.sock");
     }
 
     RealFns fns{};
 #define RESOLVE(name) fns.name##_ = must_resolve<PFN_##name>(#name)
-#define RESOLVE_OPTIONAL(name) fns.name##_ = may_resolve<PFN_##name>(#name)
-    RESOLVE(eglGetDisplay); RESOLVE(eglInitialize); RESOLVE(eglBindAPI); RESOLVE(eglChooseConfig);
-    RESOLVE(eglCreateWindowSurface); RESOLVE(eglCreatePbufferSurface); RESOLVE(eglCreateContext);
-    RESOLVE(eglMakeCurrent); RESOLVE(eglSwapBuffers); RESOLVE(eglGetError); RESOLVE(eglQueryString);
-    RESOLVE(eglDestroyContext); RESOLVE(eglDestroySurface); RESOLVE(eglGetConfigAttrib);
-    RESOLVE(eglGetCurrentContext); RESOLVE(eglQuerySurface); RESOLVE(eglSwapInterval);
-    RESOLVE(eglTerminate); RESOLVE(eglGetProcAddress);
+    RESOLVE(eglInitialize); RESOLVE(eglBindAPI); RESOLVE(eglChooseConfig);
+    RESOLVE(eglCreateWindowSurface); RESOLVE(eglCreateContext); RESOLVE(eglMakeCurrent);
+    RESOLVE(eglSwapBuffers); RESOLVE(eglGetError); RESOLVE(eglQueryString);
+    RESOLVE(eglQuerySurface); RESOLVE(eglSwapInterval);
     // Optional on purpose: EGL_EXT_platform_base is not on every EGL, and
     // making it required is what killed render-host at startup the first
     // time an EGL without it was selected.
     fns.eglGetPlatformDisplayEXT_ =
         reinterpret_cast<PFN_eglGetPlatformDisplayEXT>(stud::render::resolve("eglGetPlatformDisplayEXT"));
-    RESOLVE(glActiveTexture); RESOLVE(glAttachShader); RESOLVE(glBindBuffer); RESOLVE(glBindFramebuffer);
-    RESOLVE(glBindRenderbuffer); RESOLVE(glBindTexture); RESOLVE(glBlendFunc); RESOLVE(glBlendFuncSeparate);
-    RESOLVE(glCheckFramebufferStatus); RESOLVE(glClear); RESOLVE(glClearColor); RESOLVE(glClearDepthf);
-    RESOLVE(glClearStencil); RESOLVE(glColorMask); RESOLVE(glCompileShader); RESOLVE(glCopyTexSubImage2D);
-    RESOLVE(glCreateProgram); RESOLVE(glCreateShader); RESOLVE(glCullFace); RESOLVE(glDeleteProgram);
-    RESOLVE(glDeleteShader); RESOLVE(glDepthFunc); RESOLVE(glDepthMask); RESOLVE(glDisable);
-    RESOLVE(glDisableVertexAttribArray); RESOLVE(glDrawArrays); RESOLVE(glDrawElements); RESOLVE(glEnable);
-    RESOLVE(glEnableVertexAttribArray); RESOLVE(glFramebufferRenderbuffer); RESOLVE(glFramebufferTexture2D);
-    RESOLVE(glGenerateMipmap); RESOLVE(glGetError); RESOLVE(glLinkProgram); RESOLVE(glPixelStorei);
-    RESOLVE(glPolygonOffset); RESOLVE(glReleaseShaderCompiler); RESOLVE(glRenderbufferStorage);
-    RESOLVE(glScissor); RESOLVE(glStencilFunc); RESOLVE(glStencilMask); RESOLVE(glStencilOp);
-    RESOLVE(glTexParameterf); RESOLVE(glTexParameteri); RESOLVE(glUniform1i); RESOLVE(glUseProgram);
-    RESOLVE(glViewport); RESOLVE(glVertexAttribPointer); RESOLVE(glGetString); RESOLVE(glGetUniformLocation);
-    RESOLVE(glBindAttribLocation); RESOLVE(glShaderSource); RESOLVE(glGetProgramInfoLog);
-    RESOLVE(glGetShaderInfoLog); RESOLVE(glGetActiveUniform); RESOLVE(glDeleteBuffers);
-    RESOLVE(glDeleteFramebuffers); RESOLVE(glDeleteRenderbuffers); RESOLVE(glDeleteTextures);
-    RESOLVE(glGenVertexArrays); RESOLVE(glBindVertexArray); RESOLVE(glDeleteVertexArrays);
-    RESOLVE(glBindBufferRange); RESOLVE(glClearBufferfv); RESOLVE(glDrawBuffers);
-    RESOLVE(glRenderbufferStorageMultisample); RESOLVE(glInvalidateFramebuffer);
-    RESOLVE(glBlitFramebuffer);
-    RESOLVE(glDrawArraysInstanced); RESOLVE(glDrawElementsInstanced);
-    RESOLVE(glVertexAttribDivisor); RESOLVE(glVertexAttribIPointer);
-    RESOLVE(glBindBufferBase);
-    RESOLVE(glFenceSync); RESOLVE(glClientWaitSync); RESOLVE(glWaitSync);
-    RESOLVE(glDeleteSync); RESOLVE(glIsSync); RESOLVE(glGetSynciv);
-    RESOLVE(glCopyImageSubData);
-    RESOLVE(glTexStorage2D); RESOLVE(glTexStorage3D); RESOLVE(glTexSubImage3D);
-    RESOLVE(glProgramParameteri); RESOLVE(glGetUniformBlockIndex);
-    RESOLVE(glUniformBlockBinding); RESOLVE(glGetActiveUniformBlockiv);
-    RESOLVE(glGenBuffers); RESOLVE(glGenFramebuffers); RESOLVE(glGenRenderbuffers); RESOLVE(glGenTextures);
-    RESOLVE(glGetIntegerv); RESOLVE(glGetBooleanv); RESOLVE(glUniform4f); RESOLVE(glIsEnabled); RESOLVE(glTexParameterfv); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glGetShaderSource);
-    RESOLVE_OPTIONAL(glGenQueries); RESOLVE_OPTIONAL(glDeleteQueries);
-    RESOLVE_OPTIONAL(glBeginQuery); RESOLVE_OPTIONAL(glEndQuery);
-    RESOLVE_OPTIONAL(glGetQueryObjectuiv); RESOLVE_OPTIONAL(glGetQueryObjectui64v);
-    // GLES3 core and the extensions the engine looks up by name. Optional,
-    // and every handler checks: a driver without one answers as GL does
-    // for a call it cannot make, instead of the process exiting.
-    RESOLVE_OPTIONAL(glTexImage3D); RESOLVE_OPTIONAL(glCompressedTexImage3D);
-    RESOLVE_OPTIONAL(glCompressedTexSubImage3D); RESOLVE_OPTIONAL(glFramebufferTextureLayer);
-    RESOLVE_OPTIONAL(glGetInteger64v); RESOLVE_OPTIONAL(glQueryCounterEXT);
-    RESOLVE_OPTIONAL(glGetQueryiv); RESOLVE_OPTIONAL(glGetQueryObjectivEXT);
-    RESOLVE_OPTIONAL(glProgramBinary); RESOLVE_OPTIONAL(glGetProgramBinary);
-    RESOLVE_OPTIONAL(glFramebufferTexture2DMultisampleEXT);
-    RESOLVE_OPTIONAL(glRenderbufferStorageMultisampleEXT);
-    RESOLVE_OPTIONAL(glClearBufferiv); RESOLVE_OPTIONAL(glClearBufferuiv);
-    RESOLVE_OPTIONAL(glClearBufferfi); RESOLVE_OPTIONAL(glPushGroupMarkerEXT);
-    RESOLVE_OPTIONAL(glPopGroupMarkerEXT); RESOLVE_OPTIONAL(glObjectLabelKHR);
-    RESOLVE_OPTIONAL(glGetBufferParameteriv);
-    RESOLVE(glBufferData); RESOLVE_OPTIONAL(glBufferStorage); RESOLVE(glBufferSubData); RESOLVE(glTexImage2D); RESOLVE(glTexSubImage2D);
-    RESOLVE(glMapBufferRange); RESOLVE(glUnmapBuffer);
-    RESOLVE(glGetVertexAttribiv); RESOLVE(glGetVertexAttribPointerv);
-    RESOLVE(glCompressedTexImage2D); RESOLVE(glCompressedTexSubImage2D); RESOLVE(glReadPixels);
+    RESOLVE(glActiveTexture); RESOLVE(glAttachShader); RESOLVE(glBindFramebuffer);
+    RESOLVE(glBindTexture); RESOLVE(glCompileShader); RESOLVE(glCreateProgram);
+    RESOLVE(glCreateShader); RESOLVE(glDeleteProgram); RESOLVE(glDeleteShader);
+    RESOLVE(glDrawArrays); RESOLVE(glFramebufferTexture2D); RESOLVE(glLinkProgram);
+    RESOLVE(glTexParameteri); RESOLVE(glUniform1i); RESOLVE(glUseProgram); RESOLVE(glViewport);
+    RESOLVE(glGetUniformLocation); RESOLVE(glShaderSource); RESOLVE(glGetProgramInfoLog);
+    RESOLVE(glGetShaderInfoLog); RESOLVE(glGenVertexArrays); RESOLVE(glBindVertexArray);
+    RESOLVE(glBlitFramebuffer); RESOLVE(glGenFramebuffers); RESOLVE(glGenTextures);
+    RESOLVE(glUniform4f); RESOLVE(glGetProgramiv); RESOLVE(glGetShaderiv); RESOLVE(glTexImage2D);
+    RESOLVE(glCompressedTexImage2D);
 #undef RESOLVE
 
 
@@ -6606,7 +4188,7 @@ int main(int argc, char** argv) {
         if (conn_fd < 0) { std::perror("stud-render-host: accept"); continue; }
         std::printf("stud-render-host: client connected\n");
         // Process B connects more than once: each of its client libraries
-        // (libGLESv2, libaaudio, ...) links its own copy of the client and
+        // (libvulkan, libaaudio, ...) links its own copy of the client and
         // opens its own socket. This loop services one connection inline,
         // so any further one used to sit in the accept backlog forever,
         // live-caught as the app freezing the instant a game started,
@@ -6615,12 +4197,11 @@ int main(int argc, char** argv) {
         // could never come.
         //
         // Extra connections are served on their own threads, serialised
-        // against this one by a dispatch mutex (the GL state and EGL
-        // context they share are not thread-safe). The GL connection keeps
-        // running inline so it also pumps the compositor, exactly as
-        // before.
+        // against this one by a dispatch mutex (the driver state they
+        // share is not thread-safe). The first connection keeps running
+        // inline so it also pumps the compositor.
         serve_extra_connections(listen_fd, fns, real_window);
-        // The GL connection never carries the shared-fd channel, which only
+        // The first connection never carries the shared-fd channel, which only
         // ever arrives on a socket of its own; see serve_connection_thread().
         stud::render_host::SocketReader reader(conn_fd);
         // As on the other connections: once the client asks for it, its
@@ -6742,7 +4323,6 @@ int main(int argc, char** argv) {
                 std::lock_guard<std::mutex> lock(dispatch_mutex());
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             }
-            trace_gl_error_after(static_cast<stud::render_host::CallId>(hdr.call_id), fns);
             // A pipelined request wants no answer, writing one would desync
             // the stream, since the client is not going to read it.
             if ((hdr.flags & Header::kNoReply) != 0) continue;

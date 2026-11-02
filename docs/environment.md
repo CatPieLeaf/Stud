@@ -25,7 +25,6 @@ the source and is missing from this file, so this list cannot quietly go stale.
 |---|---|---|
 | `STUD_DISPLAY_BACKEND` | auto | `x11` or `wayland`, instead of detecting. The X11 path is reachable under a Wayland compositor through XWayland. |
 | `STUD_GRAPHICS_MODE` | from settings | `vulkan` or `opengl`; anything else means Vulkan. |
-| `STUD_GL_GFXSTREAM` | on | `0` runs OpenGL mode on Stud's own GLES forwarding instead of gfxstream. |
 | `STUD_PRESENT_MODE` | `fifo` | `engine`, `mailbox`, `immediate`, `fifo`, `fifo-relaxed`. `engine` forwards whatever the engine asked for, which is the control for measuring whether substituting helps. |
 | `STUD_BACKGROUND_FPS` | `30` | Frames per second while the window is not focused. Above 240 or below 1 disables the throttle entirely. |
 | `STUD_FORCE_REFRESH_HZ` | from the compositor | What refresh rate the engine is told the display runs at. |
@@ -126,7 +125,6 @@ All of these are off by default and most cost something to turn on.
 | `STUD_IPC_TOP` | Which call ids the round trips go to. | **perf** |
 | `STUD_IPC_CONTENTION` | How long engine threads queue behind each other for the connection. | **perf** |
 | `STUD_IPC_OWNERS` | Which library opened each connection. | one line each |
-| `STUD_FPS` | A frame-rate line at intervals. | low |
 | `STUD_FRAME_PACING` | Frame-interval distribution. | low |
 | `STUD_LONG_FRAME_MS` | How long a frame must take before the flight recorder dumps what led to it (default `50`). Needs `STUD_FLIGHT_RECORDER`; the slow-present trigger cannot see these, because the present itself is fast on a stuttering frame. | low |
 | `STUD_AUDIO_STATS` | Clipping and underruns in the audio feed. | low |
@@ -143,21 +141,12 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_VK_TRACE_BARRIERS` | Image barriers Stud drops, and why. |
 | `STUD_VK_TRACE_DESC` | Descriptor template sizes. |
 | `STUD_VK_CMD_STATS` | A histogram of recorded command kinds. |
-| `STUD_RENDER_CALL_TRACE` | Draw and clear calls, the swap counter, shader info logs. |
-| `STUD_GL_TRACE_ERRORS` | Asks GL for its error after every forwarded call, so a failure names the call that caused it. |
-| `STUD_GL_TRACE_TEX` | Texture uploads and parameters. |
-| `STUD_SYNC_GL_ERRORS` | Check `glGetError` after every call instead of once a frame. |
-| `STUD_TRACE_CLIENT_ARRAYS` | Client-side vertex array use, reported once at exit. |
-| `STUD_TRACE_CURSOR` | Which draws the engine makes for its cursor. |
 | `STUD_LOOPER_TRACE` | ALooper activity. |
-| `STUD_TIME_SWAP` | Time in `eglSwapBuffers`. |
 
 ## Capturing what is on screen
 
 | variable | default | what it does |
 |---|---|---|
-| `STUD_DUMP_FRAME` | off | Reads the frame back before the swap and writes it out. The honest check for "is the window really black". **perf** |
-| `STUD_DUMP_FRAME_PATH` | a temp file | Where those frames go. |
 | `STUD_VK_PROBE_PIXELS` | off | Reads a swapchain image back and says whether it is all black. **perf** — a full queue wait. |
 | `STUD_LOOPER_IDLE_WAIT` | on | An engine thread calls `ALooper_pollOnce(0)` in a tight loop. A zero-timeout poll sleeps for the thread's timer slack only when the thread is spinning (it came back without doing anything since the last empty poll); a poll after real work returns at once. `0` lets it spin a core flat, as on a phone. **perf** |
 | `STUD_PRESENT_PACING` | on | `0` stops Stud waiting for the display before letting the engine run further ahead. On, no more than two frames are ever in flight, which is what bounds input lag: it is the half of the default that keeps `fifo` from queueing frames up to the swapchain's depth. Set `STUD_PRESENT_MODE=mailbox` and you almost certainly want this `0`, since waiting on the display caps the rate that mailbox exists to exceed. Needs a driver with `VK_KHR_present_wait`; where there is none this does nothing either way. |
@@ -169,7 +158,6 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_FLIGHT_RECORDER` | off | Records submits, fence waits, presents, acquires and barriers into a ring in memory and dumps the recent history whenever the device is lost, a fence sticks, or a wait or present runs long. Nothing is printed until a trigger fires. |
 | `STUD_FLIGHT_RECORDER_PATH` | stdout only | Also append each flight-recorder dump to this file, which survives a terminal that scrolled away. |
 | `STUD_VK_ENGINE_CHECKPOINTS` | off | Marks the engine's own commands with GPU checkpoints, so a device loss names which command the GPU died in rather than only that Stud's pass finished. **perf** — one extra recorded command per engine command. |
-| `STUD_DUMP_BAD_SHADERS` | off | Writes out any shader that fails to compile, with its log. |
 
 ## Forcing a wrong answer on purpose
 
@@ -181,7 +169,6 @@ Each of these makes Stud do something incorrect, to find out what depends on it.
 | `STUD_VK_FORCE_LOAD_CLEAR` | Forces every attachment's load operation to CLEAR. |
 | `STUD_VK_FORCE_OPAQUE_FORMAT` | Rewrites the swapchain format from UNORM to SRGB. |
 | `STUD_VK_REBUILD_SWAPCHAIN` | Enables rebuilding Stud's own swapchain under the engine. Off because a rebuilt swapchain can come back with a different image count than the images the engine already holds, and the upscale chain then indexes past them. |
-| `STUD_GL_FULL_EXTENSIONS` | Advertises the driver's whole extension string instead of the curated list. |
 
 ## Only used by the standalone tools
 

@@ -230,10 +230,13 @@ elseif(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
             "-DMINIZ_SRC_DIR=${miniz_SOURCE_DIR}"
             "-DMINIZ_BIN_DIR=${miniz_BINARY_DIR}"
             "-DSTUD_BIONIC_DIR=${STUD_THIRD_PARTY_DIR}/android-bionic"
+            # The engine's libEGL/libGLESv2, so the NDK fallback leaves
+            # their symbols to them.
+            "-DSTUD_GFXSTREAM_GUEST_DIR=${StudGfxstreamGuestBuild}"
             "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
         BUILD_ALWAYS ON
         INSTALL_COMMAND ""
-        DEPENDS stud_android_glue
+        DEPENDS stud_android_glue gfxstream_guest
     )
 else()
     message(WARNING "Stud: NDK not found at ${STUD_ANDROID_NDK_ROOT}, "

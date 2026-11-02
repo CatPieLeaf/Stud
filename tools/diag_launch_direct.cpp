@@ -146,7 +146,6 @@ int main(int argc, char** argv) {
     config.extra_binds = std::move(extra_binds);
     config.working_directory = std::filesystem::path(so_path).parent_path().string();
     config.extra_env.push_back({"STUD_VULKAN_CALL_TRACE", "1"});
-    config.extra_env.push_back({"STUD_RENDER_CALL_TRACE", "1"});
 
     try {
         pid_t pid = stud::bionic_runtime::launch_process_b(config);

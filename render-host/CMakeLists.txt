@@ -378,12 +378,6 @@ endif()
 # about which window is Stud's.
 target_compile_definitions(stud-render-host PRIVATE STUD_APP_ID="${STUD_APP_ID}")
 
-# MVP proof-of-mechanism client, independent of Process B/bionic,
-# proves the IPC protocol itself renders a real frame before wiring the
-# bionic-side library that is Process B's real client.
-add_executable(stud_render_host_test_client src/test_client.cpp)
-target_link_libraries(stud_render_host_test_client PRIVATE stud_render_host_protocol PkgConfig::Egl PkgConfig::GlesV2)
-
 install(TARGETS stud-render-host RUNTIME DESTINATION "${STUD_LIBEXEC_DIR}")
 
 # Exports this binary's own symbols to the dynamic table, which is what

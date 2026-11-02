@@ -484,7 +484,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back(kTzdataRoot);
     }
 
-    // Process B's own build output (libEGL.so/libGLESv2.so render-client
+    // Process B's own build output (libvulkan.so.1/libaaudio.so render-client
     // libraries, libandroid.so/libmediandk.so android-glue implementations,
     // and the empty libOpenSLES.so/libOpenMAXAL.so/libnativewindow.so
     // dead-link stand-ins; see process-b/CMakeLists.txt's own doc

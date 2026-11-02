@@ -61,139 +61,9 @@ namespace stud::render_host {
 std::string default_socket_path();
 
 enum class CallId : uint32_t {
-    // EGL
-    EglGetDisplay = 1,
-    EglInitialize,
-    EglBindApi,
-    EglChooseConfig,
-    EglCreateWindowSurface,
-    EglCreatePbufferSurface,
-    EglCreateContext,
-    EglMakeCurrent,
-    EglSwapBuffers,
-    EglGetError,
-    EglQueryString,
-    EglDestroyContext,
-    EglDestroySurface,
-    EglGetConfigAttrib,
-    EglGetCurrentContext,
-    EglQuerySurface,
-    EglSwapInterval,
-    EglTerminate,
-    EglGetProcAddress,
-
-    // GLES2, state/scalar
-    GlActiveTexture,
-    GlAttachShader,
-    GlBindBuffer,
-    GlBindFramebuffer,
-    GlBindRenderbuffer,
-    GlBindTexture,
-    GlBlendFunc,
-    GlBlendFuncSeparate,
-    GlCheckFramebufferStatus,
-    GlClear,
-    GlClearColor,
-    GlClearDepthf,
-    GlClearStencil,
-    GlColorMask,
-    GlCompileShader,
-    GlCopyTexSubImage2D,
-    GlCreateProgram,
-    GlCreateShader,
-    GlCullFace,
-    GlDeleteProgram,
-    GlDeleteShader,
-    GlDepthFunc,
-    GlDepthMask,
-    GlDisable,
-    GlDisableVertexAttribArray,
-    GlDrawArrays,
-    GlDrawElements,
-    GlEnable,
-    GlEnableVertexAttribArray,
-    GlFramebufferRenderbuffer,
-    GlFramebufferTexture2D,
-    GlGenerateMipmap,
-    GlGetError,
-    GlLinkProgram,
-    GlPixelStorei,
-    GlPolygonOffset,
-    GlReleaseShaderCompiler,
-    GlRenderbufferStorage,
-    GlScissor,
-    GlStencilFunc,
-    GlStencilMask,
-    GlStencilOp,
-    GlTexParameterf,
-    GlTexParameteri,
-    GlUniform1i,
-    GlUseProgram,
-    GlViewport,
-    GlVertexAttribPointer,
-
-    // GLES2, string in/out
-    GlGetString,
-    GlGetUniformLocation,
-    GlBindAttribLocation,
-    GlShaderSource,
-    GlGetProgramInfoLog,
-    GlGetShaderInfoLog,
-    GlGetActiveUniform,
-
-    // GLES2, fixed-count-N id arrays
-    GlDeleteBuffers,
-    GlDeleteFramebuffers,
-    GlDeleteRenderbuffers,
-    GlDeleteTextures,
-    GlGenBuffers,
-    GlGenVertexArrays,
-    GlBindBufferRange,
-    GlClearBufferfv,
-    GlDrawBuffers,
-    GlTexStorage2D,
-    GlTexStorage3D,
-    GlTexSubImage3D,
-    GlProgramParameteri,
-    GlGetUniformBlockIndex,
-    GlUniformBlockBinding,
-    GlGetActiveUniformBlockiv,
-    // Real GLES3 sync objects + image copy, libroblox calls all of
-    // these during real render bring-up (live-confirmed by the
-    // "CALLED unimplemented GL function" diagnostic). A GLsync is an
-    // opaque pointer the engine never dereferences, so the host's own
-    // real GLsync value travels the wire as a plain handle.
-    GlFenceSync,
-    GlClientWaitSync,
-    GlWaitSync,
-    GlDeleteSync,
-    GlIsSync,
-    GlGetSynciv,
-    GlCopyImageSubData,
-    GlBindVertexArray,
-    GlDeleteVertexArrays,
-    GlGenFramebuffers,
-    GlGenRenderbuffers,
-    GlGenTextures,
-
-    // GLES2, small out-param arrays (count derived from pname)
-    GlGetIntegerv,
-    GlTexParameterfv,
-    GlGetProgramiv,
-    GlGetShaderiv,
-
-    // GLES2, bulk buffer transfer
-    GlBufferData,
-    GlBufferSubData,
-    GlTexImage2D,
-    GlTexSubImage2D,
-    GlCompressedTexImage2D,
-    GlCompressedTexSubImage2D,
-    GlReadPixels,
-
     // Vulkan (narrow surface-creation interposition only; see this
     // header's own doc comment)
-    VkCreateWaylandSurfaceForAndroidSurface,
+    VkCreateWaylandSurfaceForAndroidSurface = 1,
 
     // ANativeWindow. Process C owns the real window entirely (see
     // android-glue/src/native_window.cpp, excluded from Process B's own
@@ -228,24 +98,7 @@ enum class CallId : uint32_t {
     // updated by a compositor configure it never receives, so it used to
     // guess, three different sizes existed for one window. Returns
     // (width << 32) | height.
-    // Real GLES3 indexed buffer binding. glBindBufferRange was already
-    // implemented but its far more common sibling was not, and it is
-    // genuinely called (live-caught by the "CALLED unimplemented GL
-    // function" diagnostic). A no-op here leaves a shader's uniform block
-    // unbound, so everything it draws gets zeroed uniforms: geometry
-    // collapses to nothing and simply never appears.
-    GlBindBufferBase,
     GetWindowSize,
-    // Reads a live range of a real GL buffer back to Process B. Needed
-    // because glMapBufferRange is emulated with a client-side staging
-    // allocation: a GL_MAP_WRITE_BIT map WITHOUT an invalidate bit is
-    // required by the spec to preserve every byte the caller does not
-    // overwrite, and a zeroed staging buffer uploaded whole on unmap
-    // destroys them. libroblox really does map its index buffer that way
-    // (live-caught: target=GL_ELEMENT_ARRAY_BUFFER access=GL_MAP_WRITE_BIT,
-    // 18432 bytes), which zeroed indices it did not rewrite and collapsed
-    // the geometry into degenerate triangles.
-    GlGetBufferSubData,
     // Real geometry of the display itself (not the window), straight
     // from the compositor's own wl_output. Only Process C has a
     // compositor connection, so this is the only place the truth lives.
@@ -512,34 +365,6 @@ enum class CallId : uint32_t {
     // 8.8 fixed point, so the desktop pointer ends up where the engine's
     // own cursor has moved to rather than back at the press point.
     SetPointerLocked,
-    // Multisampled renderbuffer storage. The engine builds its main colour
-    // buffer as an MSAA renderbuffer, and while this was a no-op stub the
-    // renderbuffer had no storage at all, so the framebuffer it was
-    // attached to came back GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT (0x8cd6)
-    // and the engine gave up on its main render target. Only reachable on
-    // the OpenGL path, which is why it went unnoticed while everything ran
-    // on Vulkan.
-    GlRenderbufferStorageMultisample,
-    // A pure hint: it tells the driver the named attachments' contents are
-    // no longer needed, which lets a tiler skip writing them back. Wrong
-    // to leave as a no-op even so, on a tiler (and Zink over a tiler)
-    // it is the difference between discarding a render target and
-    // resolving it every frame.
-    GlInvalidateFramebuffer,
-    // Resolves the multisampled colour buffer into the framebuffer that
-    // is actually presented, so on the OpenGL path nothing reaches the
-    // screen without it. Ten arguments where the header carries eight, so
-    // `mask` and `filter` ride in the in-buffer, the same shape
-    // glTexSubImage3D already uses for its overflow.
-    GlBlitFramebuffer,
-    // Instanced drawing and its per-attribute divisor. The engine draws
-    // instanced on the OpenGL path, so while these were no-ops the draws
-    // silently did nothing. glVertexAttribIPointer belongs with them:
-    // integer attributes are how an instance index is usually fed in.
-    GlDrawArraysInstanced,
-    GlDrawElementsInstanced,
-    GlVertexAttribDivisor,
-    GlVertexAttribIPointer,
     // The game server's public address, discovered by Process B off the
     // engine's own UDP socket. render-host runs the region lookup and the
     // notification: Process B cannot reach the session bus from inside its
@@ -602,44 +427,18 @@ enum class CallId : uint32_t {
     // out-buffer, returning the number of bytes written. Never blocks.
     AudioReadFrames,
     AudioCloseInputStream,
-    // Immutable buffer storage (GL_EXT_buffer_storage). a: target, size,
-    // flags; the in-buffer carries the initial contents when there are
-    // any.
-    //
-    // The engine only started calling this once Stud stopped truncating
-    // the extension string at 511 bytes, GL_EXT_buffer_storage sits
-    // past that cutoff, so it had never been offered before. Without a
-    // real implementation the buffer is never allocated and the first
-    // map of it crashes the driver. Appended last: every existing id keeps
-    // its value.
-    GlBufferStorage,
-    // GL timer queries (GLES3 core + GL_EXT_disjoint_timer_query).
-    //
-    // Without these the engine's own MicroProfiler reports GPU 0.00ms.
-    // Every query resolved to a no-op stub and answered zero, so the
-    // engine has no idea how long the GPU is taking and its adaptive
-    // work scheduling runs blind. Appended last: every existing id keeps
-    // its value.
-    GlGenQueries,
-    GlDeleteQueries,
-    GlBeginQuery,
-    GlEndQuery,
-    GlGetQueryObjectuiv,
-    GlGetQueryObjectui64v,
     // Many pipelined calls in one request.
     //
-    // A reply-free call still carried a full Header, call id, eight
+    // A reply-free call alone carries a full Header, call id, eight
     // 64-bit arguments, a PBO offset, flags and two lengths, about 100
-    // bytes, for calls that mostly use two or three arguments. On the
-    // OpenGL path the engine issues around 17,700 of them per frame, so
-    // that is ~1.7MB of header per frame to build, copy and write.
+    // bytes, for calls that mostly use two or three arguments.
     //
     // A batch writes one Header and then packs each call as: argc, a
     // flags byte, the 16-bit call id, argc arguments, and only the
-    // length/PBO fields that are actually used. A typical GL call comes
-    // to 12-28 bytes instead of ~100. Appended last: every existing id
-    // keeps its value.
-    GlCommandBatch,
+    // length/PBO fields that are actually used: 12-28 bytes for a typical
+    // call instead of ~100. call_void() fills it; Vulkan and audio send
+    // their reply-free calls this way.
+    VoidCallBatch,
     // A URL the web view was about to navigate to and did NOT, because
     // the app has first refusal on it, exactly what a real device's
     // WebView does (`shouldOverrideUrlLoading` returns true for every
@@ -728,26 +527,6 @@ enum class CallId : uint32_t {
     // timed out.
     PollWindowCloseRequested,
 
-    // GLES3 entry points the engine resolves by name and used to receive a
-    // do-nothing function for; see the host's handlers for the wire shapes.
-    GlTexImage3D,
-    GlCompressedTexImage3D,
-    GlCompressedTexSubImage3D,
-    GlFramebufferTextureLayer,
-    GlGetInteger64v,
-    GlQueryCounter,
-    GlGetQueryiv,
-    GlGetQueryObjectiv,
-    GlProgramBinary,
-    GlGetProgramBinary,
-    GlClearBufferiv,
-    GlClearBufferuiv,
-    GlClearBufferfi,
-    GlPushGroupMarker,
-    GlPopGroupMarker,
-    GlObjectLabel,
-    GlGetBufferParameteriv,
-
     // The output device's underrun count since it opened, for
     // AAudioStream_getXRunCount. Returned as the call's result.
     AudioGetUnderruns,
@@ -834,20 +613,6 @@ enum class CallId : uint32_t {
     // ring's size. Result 1 if every request after this one is read from
     // the ring; replies stay on the socket either way.
     TransportRing,
-    // GL_EXT_multisampled_render_to_texture's own entry points, forwarded to
-    // the driver's EXT functions rather than the core ones: an EXT
-    // renderbuffer is the kind that may share a framebuffer with a texture
-    // attached through glFramebufferTexture2DMultisampleEXT. Same arguments
-    // as the GL functions, in order.
-    GlFramebufferTexture2DMultisampleEXT,
-    GlRenderbufferStorageMultisampleEXT,
-    // A page the host writes at every EglSwapBuffers, so the client sends
-    // swaps reply-free and still knows how far behind the host is. a[0] the
-    // id of the memfd sent over the shared-memory fd channel. Result 1 if
-    // the host will keep it current. 32-bit slots: 0 the number of swaps
-    // done (a futex word, woken on every change), 1 the GL error read at
-    // the latest swap and not yet taken by the client (0 for none).
-    GlShareFramePage,
     // OpenGL through gfxstream (render-host/src/gfxstream_host.h): the guest
     // queued a finished frame. a[0] the gfxstream colour buffer holding it.
     // Reply-free; render-host draws it into the window and swaps.
@@ -882,7 +647,7 @@ struct VideoFrameHeader {
 // Every CallId's own name, for diagnostics; STUD_IPC_TOP used to print
 // a bare number, and reading one wrong (this enum starts at 1, so an
 // off-by-one names a completely unrelated call) sent a whole measurement
-// down the wrong path. Index 0 is unused because EglGetDisplay is 1.
+// down the wrong path. Index 0 is unused because the enum starts at 1.
 //
 // The static_assert is what keeps this honest: append a CallId without
 // appending its name here and the build stops, which is the only
@@ -890,119 +655,6 @@ struct VideoFrameHeader {
 inline const char* call_id_name(CallId id) {
     static const char* const kNames[] = {
         "<none>",
-        "EglGetDisplay",
-        "EglInitialize",
-        "EglBindApi",
-        "EglChooseConfig",
-        "EglCreateWindowSurface",
-        "EglCreatePbufferSurface",
-        "EglCreateContext",
-        "EglMakeCurrent",
-        "EglSwapBuffers",
-        "EglGetError",
-        "EglQueryString",
-        "EglDestroyContext",
-        "EglDestroySurface",
-        "EglGetConfigAttrib",
-        "EglGetCurrentContext",
-        "EglQuerySurface",
-        "EglSwapInterval",
-        "EglTerminate",
-        "EglGetProcAddress",
-        "GlActiveTexture",
-        "GlAttachShader",
-        "GlBindBuffer",
-        "GlBindFramebuffer",
-        "GlBindRenderbuffer",
-        "GlBindTexture",
-        "GlBlendFunc",
-        "GlBlendFuncSeparate",
-        "GlCheckFramebufferStatus",
-        "GlClear",
-        "GlClearColor",
-        "GlClearDepthf",
-        "GlClearStencil",
-        "GlColorMask",
-        "GlCompileShader",
-        "GlCopyTexSubImage2D",
-        "GlCreateProgram",
-        "GlCreateShader",
-        "GlCullFace",
-        "GlDeleteProgram",
-        "GlDeleteShader",
-        "GlDepthFunc",
-        "GlDepthMask",
-        "GlDisable",
-        "GlDisableVertexAttribArray",
-        "GlDrawArrays",
-        "GlDrawElements",
-        "GlEnable",
-        "GlEnableVertexAttribArray",
-        "GlFramebufferRenderbuffer",
-        "GlFramebufferTexture2D",
-        "GlGenerateMipmap",
-        "GlGetError",
-        "GlLinkProgram",
-        "GlPixelStorei",
-        "GlPolygonOffset",
-        "GlReleaseShaderCompiler",
-        "GlRenderbufferStorage",
-        "GlScissor",
-        "GlStencilFunc",
-        "GlStencilMask",
-        "GlStencilOp",
-        "GlTexParameterf",
-        "GlTexParameteri",
-        "GlUniform1i",
-        "GlUseProgram",
-        "GlViewport",
-        "GlVertexAttribPointer",
-        "GlGetString",
-        "GlGetUniformLocation",
-        "GlBindAttribLocation",
-        "GlShaderSource",
-        "GlGetProgramInfoLog",
-        "GlGetShaderInfoLog",
-        "GlGetActiveUniform",
-        "GlDeleteBuffers",
-        "GlDeleteFramebuffers",
-        "GlDeleteRenderbuffers",
-        "GlDeleteTextures",
-        "GlGenBuffers",
-        "GlGenVertexArrays",
-        "GlBindBufferRange",
-        "GlClearBufferfv",
-        "GlDrawBuffers",
-        "GlTexStorage2D",
-        "GlTexStorage3D",
-        "GlTexSubImage3D",
-        "GlProgramParameteri",
-        "GlGetUniformBlockIndex",
-        "GlUniformBlockBinding",
-        "GlGetActiveUniformBlockiv",
-        "GlFenceSync",
-        "GlClientWaitSync",
-        "GlWaitSync",
-        "GlDeleteSync",
-        "GlIsSync",
-        "GlGetSynciv",
-        "GlCopyImageSubData",
-        "GlBindVertexArray",
-        "GlDeleteVertexArrays",
-        "GlGenFramebuffers",
-        "GlGenRenderbuffers",
-        "GlGenTextures",
-        "GlGetIntegerv",
-        "GlTexParameterfv",
-        "GlGetProgramiv",
-        "GlGetShaderiv",
-        "GlBufferData",
-        "GlBufferSubData",
-        "GlTexImage2D",
-        "GlTexSubImage2D",
-        "GlCompressedTexImage2D",
-        "GlCompressedTexSubImage2D",
-        "GlReadPixels",
         "VkCreateWaylandSurfaceForAndroidSurface",
         "ANativeWindowFromSurface",
         "ANativeWindowGetWidth",
@@ -1010,9 +662,7 @@ inline const char* call_id_name(CallId id) {
         "ANativeWindowAcquire",
         "ANativeWindowRelease",
         "PollInputEvents",
-        "GlBindBufferBase",
         "GetWindowSize",
-        "GlGetBufferSubData",
         "GetDisplayOutputGeometry",
         "GetWindowBufferScale",
         "AudioOpenStream",
@@ -1100,13 +750,6 @@ inline const char* call_id_name(CallId id) {
         "DeleteSecret",
         "VkCmdRecordBatch",
         "SetPointerLocked",
-        "GlRenderbufferStorageMultisample",
-        "GlInvalidateFramebuffer",
-        "GlBlitFramebuffer",
-        "GlDrawArraysInstanced",
-        "GlDrawElementsInstanced",
-        "GlVertexAttribDivisor",
-        "GlVertexAttribIPointer",
         "NotifyServerRegion",
         "SetGamePresence",
         "EndSession",
@@ -1116,14 +759,7 @@ inline const char* call_id_name(CallId id) {
         "AudioOpenInputStream",
         "AudioReadFrames",
         "AudioCloseInputStream",
-        "GlBufferStorage",
-        "GlGenQueries",
-        "GlDeleteQueries",
-        "GlBeginQuery",
-        "GlEndQuery",
-        "GlGetQueryObjectuiv",
-        "GlGetQueryObjectui64v",
-        "GlCommandBatch",
+        "VoidCallBatch",
         "PollWebViewNavigation",
         "WebViewLoadUrl",
         "CopyToClipboard",
@@ -1136,23 +772,6 @@ inline const char* call_id_name(CallId id) {
         "VkWriteSharedMappedMemory",
         "VkReadMappedMemory",
         "PollWindowCloseRequested",
-        "GlTexImage3D",
-        "GlCompressedTexImage3D",
-        "GlCompressedTexSubImage3D",
-        "GlFramebufferTextureLayer",
-        "GlGetInteger64v",
-        "GlQueryCounter",
-        "GlGetQueryiv",
-        "GlGetQueryObjectiv",
-        "GlProgramBinary",
-        "GlGetProgramBinary",
-        "GlClearBufferiv",
-        "GlClearBufferuiv",
-        "GlClearBufferfi",
-        "GlPushGroupMarker",
-        "GlPopGroupMarker",
-        "GlObjectLabel",
-        "GlGetBufferParameteriv",
         "AudioGetUnderruns",
         "VideoDecoderSupported",
         "VideoDecoderCreate",
@@ -1177,9 +796,6 @@ inline const char* call_id_name(CallId id) {
         "ShareWindowState",
         "AudioShareState",
         "TransportRing",
-        "GlFramebufferTexture2DMultisampleEXT",
-        "GlRenderbufferStorageMultisampleEXT",
-        "GlShareFramePage",
         "GlPresentColorBuffer",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
@@ -1334,6 +950,43 @@ public:
         }
     }
 
+    // STUD_IPC_STATS: one line a frame, printed at the present, then reset.
+    void report_frame_stats() {
+        // Which ids still cost a round-trip: the ones worth making
+        // reply-free next.
+        uint32_t top_id[4] = {0, 0, 0, 0};
+        uint64_t top_n[4] = {0, 0, 0, 0};
+        for (const auto& kv : stats_by_id_) {
+            for (int slot = 0; slot < 4; ++slot) {
+                if (kv.second > top_n[slot]) {
+                    for (int j = 3; j > slot; --j) {
+                        top_n[j] = top_n[j - 1];
+                        top_id[j] = top_id[j - 1];
+                    }
+                    top_n[slot] = kv.second;
+                    top_id[slot] = kv.first;
+                    break;
+                }
+            }
+        }
+        std::printf("stud: IPCSTATS frame reply=%llu %.2fms | void=%llu %.2fms | top: "
+                    "%u=%llu %u=%llu %u=%llu %u=%llu\n",
+                    static_cast<unsigned long long>(stats_calls_),
+                    static_cast<double>(stats_ns_) / 1e6,
+                    static_cast<unsigned long long>(stats_void_calls_),
+                    static_cast<double>(stats_void_ns_) / 1e6, top_id[0],
+                    static_cast<unsigned long long>(top_n[0]), top_id[1],
+                    static_cast<unsigned long long>(top_n[1]), top_id[2],
+                    static_cast<unsigned long long>(top_n[2]), top_id[3],
+                    static_cast<unsigned long long>(top_n[3]));
+        std::fflush(stdout);
+        stats_calls_ = 0;
+        stats_ns_ = 0;
+        stats_void_calls_ = 0;
+        stats_void_ns_ = 0;
+        stats_by_id_.clear();
+    }
+
     uint64_t call_locked(CallId id, const uint64_t (&args)[8], const void* in_buffer,
                          uint32_t in_len, void* out_buffer, uint32_t out_capacity,
                          uint32_t* out_len_written, uint64_t pixel_buffer_offset_plus_one) {
@@ -1352,7 +1005,7 @@ public:
         // Everything queued reply-free so far has to reach the host
         // before this call's answer is asked for, or the answer would be
         // computed against state that has not been applied yet.
-        emit_gl_batch_locked();
+        emit_void_batch_locked();
         static const bool top = std::getenv("STUD_IPC_TOP") != nullptr;
         const auto top_t0 = top ? std::chrono::steady_clock::now()
                                 : std::chrono::steady_clock::time_point{};
@@ -1460,41 +1113,7 @@ public:
                     std::chrono::steady_clock::now() - call_start)
                     .count());
             stats_by_id_[static_cast<uint32_t>(id)]++;
-            if (id == CallId::EglSwapBuffers) {
-                // Which ids still cost a round-trip: the ones worth making
-                // reply-free next.
-                uint32_t top_id[4] = {0, 0, 0, 0};
-                uint64_t top_n[4] = {0, 0, 0, 0};
-                for (const auto& kv : stats_by_id_) {
-                    for (int slot = 0; slot < 4; ++slot) {
-                        if (kv.second > top_n[slot]) {
-                            for (int j = 3; j > slot; --j) {
-                                top_n[j] = top_n[j - 1];
-                                top_id[j] = top_id[j - 1];
-                            }
-                            top_n[slot] = kv.second;
-                            top_id[slot] = kv.first;
-                            break;
-                        }
-                    }
-                }
-                std::printf("stud: IPCSTATS frame reply=%llu %.2fms | void=%llu %.2fms | top: "
-                            "%u=%llu %u=%llu %u=%llu %u=%llu\n",
-                            static_cast<unsigned long long>(stats_calls_),
-                            static_cast<double>(stats_ns_) / 1e6,
-                            static_cast<unsigned long long>(stats_void_calls_),
-                            static_cast<double>(stats_void_ns_) / 1e6, top_id[0],
-                            static_cast<unsigned long long>(top_n[0]), top_id[1],
-                            static_cast<unsigned long long>(top_n[1]), top_id[2],
-                            static_cast<unsigned long long>(top_n[2]), top_id[3],
-                            static_cast<unsigned long long>(top_n[3]));
-                std::fflush(stdout);
-                stats_calls_ = 0;
-                stats_ns_ = 0;
-                stats_void_calls_ = 0;
-                stats_void_ns_ = 0;
-                stats_by_id_.clear();
-            }
+            if (id == CallId::VkQueuePresentKHR) report_frame_stats();
         }
         return resp.result;
     }
@@ -1706,7 +1325,7 @@ public:
         // question that is otherwise guesswork.
         static const bool no_pipeline = std::getenv("STUD_IPC_NO_PIPELINE") != nullptr;
         if (no_pipeline || batch_.size() >= kQueueFlushBytes) {
-            emit_gl_batch_locked();
+            emit_void_batch_locked();
             hand_off_locked();
         }
         if (stats) {
@@ -1715,6 +1334,7 @@ public:
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - t0)
                     .count());
+            if (id == CallId::VkQueuePresentKHR) report_frame_stats();
         }
     }
 
@@ -1740,7 +1360,7 @@ public:
     bool flush() {
         std::lock_guard<std::mutex> lock(call_mutex_);
         emit_command_batch_locked();
-        emit_gl_batch_locked();
+        emit_void_batch_locked();
         return hand_off_locked();
     }
 
@@ -1752,7 +1372,7 @@ private:
     // Packs whatever reply-free calls have accumulated into one request.
     // Called before anything that must be ordered after them, a call
     // that waits for a reply, or a flush.
-    void emit_gl_batch_locked() {
+    void emit_void_batch_locked() {
         if (batch_.empty()) return;
         // Nothing may be appended inside an open command batch.
         emit_command_batch_locked();
@@ -1760,7 +1380,7 @@ private:
         queue_.resize(at + sizeof(Header) + batch_.size());
         auto* hdr = reinterpret_cast<Header*>(queue_.data() + at);
         std::memset(hdr, 0, sizeof(*hdr));
-        hdr->call_id = CallId::GlCommandBatch;
+        hdr->call_id = CallId::VoidCallBatch;
         hdr->flags = Header::kNoReply;
         hdr->in_buffer_len = static_cast<uint32_t>(batch_.size());
         std::memcpy(queue_.data() + at + sizeof(Header), batch_.data(), batch_.size());
@@ -1774,7 +1394,7 @@ private:
     void open_command_batch_locked() {
         if (command_batch_open_) return;
         // Reply-free calls queued before these commands go first.
-        emit_gl_batch_locked();
+        emit_void_batch_locked();
         reserve_queue_once();
         command_batch_at_ = queue_.size();
         queue_.resize(command_batch_at_ + sizeof(Header));
@@ -1882,7 +1502,7 @@ public:
             std::unique_lock<std::mutex> lock(call_mutex_);
             if (!writer_started_ || fd_ < 0) return false;
             emit_command_batch_locked();
-            emit_gl_batch_locked();
+            emit_void_batch_locked();
             Header hdr{};
             hdr.call_id = CallId::TransportRing;
             for (int i = 0; i < 8; ++i) hdr.args[i] = args[i];
@@ -1953,7 +1573,7 @@ public:
             std::lock_guard<std::mutex> lock(call_mutex_);
             if (fd_ < 0) return;
             emit_command_batch_locked();
-            emit_gl_batch_locked();
+            emit_void_batch_locked();
             marks_.push_back(Mark{queue_.size(), std::move(fn), nullptr});
         }
         writer_wake_.notify_one();
@@ -1974,7 +1594,7 @@ private:
                     return;
                 }
                 emit_command_batch_locked();
-                emit_gl_batch_locked();
+                emit_void_batch_locked();
                 bytes.swap(queue_);
                 queue_.clear();
                 reserve_queue_once();

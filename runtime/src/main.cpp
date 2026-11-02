@@ -11,18 +11,17 @@
 // the call site's own doc comment for why bionic's own fatal-signal
 // path can't be trusted to surface it). Drives its JNI bootstrap and
 // GameActivity lifecycle (jni-bridge/, ported to bionic this session),
-// and renders through real bionic libEGL.so/libGLESv2.so (this
-// session's own render-client libraries, forwarding to stud-render-host:
-// a separate, real glibc process hosting the GPU driver, see render-host/src/
-// main.cpp's own doc comment for why).
+// and renders through Stud's libvulkan.so.1, or in OpenGL mode gfxstream's
+// libEGL.so/libGLESv2.so, both reaching stud-render-host: a separate, real
+// glibc process hosting the GPU driver, see render-host/src/main.cpp's own
+// doc comment for why.
 //
 // Reproduces the real, hard-won bring-up sequence and ordering already
 // proven (across many sessions, under the old architecture) in
 // runtime/src/main.cpp, with everything that was only needed for the
 // old dual-ABI-same-process design removed: no stud::linker::
-// load_library() (real dlopen() instead), no stud::render::resolve()
-// (direct linked calls against real libEGL.so/libGLESv2.so instead, the
-// exact same symbols Roblox itself calls), no tls-compat trampolines
+// load_library() (real dlopen() instead), no stud::render::resolve(),
+// no tls-compat trampolines
 // (same-ABI calls throughout).
 //
 // run_client_settings_bridge() IS called (below, gated on a real
@@ -77,8 +76,6 @@
 #include "stud/platform_params.h"
 #include "stud/trap_recovery.h"
 
-#include <EGL/egl.h>
-#include <GLES2/gl2.h>
 
 #include <atomic>
 #include <chrono>
@@ -228,69 +225,6 @@ void handle_shutdown_signal(int) {
     // engine's threads are about to lose the process under them either
     // way. Async-signal-safe: it sets one atomic.
     stud::jni_bridge::note_shutting_down();
-}
-
-// Real render context: reuses the SAME ANativeWindow GameActivity's own
-// onSurfaceCreatedNative already created (android-glue's per-jobject
-// window_cache; under the new architecture, ANativeWindow_fromSurface's
-// own forwarding client always answers with Process C's one real window,
-// so this and Roblox's own later real calls converge on the exact same
-// object without any extra wiring). Direct, ordinary linked calls
-// against real libEGL.so/libGLESv2.so; no resolver needed, these ARE
-// the real, exported bionic symbols now (the render-client
-// libraries), the same ones Roblox's own compiled code calls.
-struct RealRenderContext {
-    EGLDisplay display = EGL_NO_DISPLAY;
-    EGLSurface surface = EGL_NO_SURFACE;
-    EGLContext context = EGL_NO_CONTEXT;
-};
-
-std::optional<RealRenderContext> create_real_render_context(ANativeWindow* window) {
-    if (window == nullptr) return std::nullopt;
-    RealRenderContext ctx;
-    ctx.display = eglGetDisplay(nullptr);
-    if (ctx.display == EGL_NO_DISPLAY) {
-        std::fprintf(stderr, "stud: eglGetDisplay failed\n");
-        return std::nullopt;
-    }
-    EGLint major = 0, minor = 0;
-    if (eglInitialize(ctx.display, &major, &minor) != EGL_TRUE) {
-        std::fprintf(stderr, "stud: eglInitialize failed, error=0x%x\n", eglGetError());
-        return std::nullopt;
-    }
-    std::printf("stud: real EGL initialized, version %d.%d, vendor=%s\n", major, minor,
-                eglQueryString(ctx.display, EGL_VENDOR));
-    if (eglBindAPI(EGL_OPENGL_ES_API) != EGL_TRUE) {
-        std::fprintf(stderr, "stud: eglBindAPI failed\n");
-        return std::nullopt;
-    }
-    EGLConfig config;
-    EGLint num_configs = 0;
-    if (eglChooseConfig(ctx.display, nullptr, &config, 1, &num_configs) != EGL_TRUE ||
-        num_configs == 0) {
-        std::fprintf(stderr, "stud: eglChooseConfig failed, error=0x%x\n", eglGetError());
-        return std::nullopt;
-    }
-    ctx.surface =
-        eglCreateWindowSurface(ctx.display, config, reinterpret_cast<EGLNativeWindowType>(window),
-                                nullptr);
-    if (ctx.surface == EGL_NO_SURFACE) {
-        std::fprintf(stderr, "stud: eglCreateWindowSurface failed, error=0x%x\n", eglGetError());
-        return std::nullopt;
-    }
-    const EGLint context_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-    ctx.context = eglCreateContext(ctx.display, config, EGL_NO_CONTEXT, context_attribs);
-    if (ctx.context == EGL_NO_CONTEXT) {
-        std::fprintf(stderr, "stud: eglCreateContext failed, error=0x%x\n", eglGetError());
-        return std::nullopt;
-    }
-    if (eglMakeCurrent(ctx.display, ctx.surface, ctx.surface, ctx.context) != EGL_TRUE) {
-        std::fprintf(stderr, "stud: eglMakeCurrent failed, error=0x%x\n", eglGetError());
-        return std::nullopt;
-    }
-    std::printf("stud: real GL_RENDERER=%s\n", glGetString(GL_RENDERER));
-    std::printf("stud: real GL_VERSION=%s\n", glGetString(GL_VERSION));
-    return ctx;
 }
 
 }  // namespace

@@ -1,6 +1,6 @@
 // Real libaaudio.so, bionic-compiled, placed where the real bionic linker
 // resolves the engine's own dlopen("libaaudio.so"), exactly the same
-// shape as this project's libEGL/libGLESv2 clients, and for the same
+// shape as this project's libvulkan client, and for the same
 // reason: Process B cannot talk to the host's audio server, so the real
 // device work happens in Process C and this forwards to it.
 //

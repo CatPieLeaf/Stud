@@ -282,7 +282,7 @@ QString find_process_b_binary() {
     return QStandardPaths::findExecutable("stud-runtime-bionic");
 }
 
-// gfxstream's guest libEGL.so/libGLESv2.so for OpenGL mode (built by
+// gfxstream's guest libEGL.so/libGLESv2.so, the engine's (built by
 // cmake/StudGfxstream.cmake): the AppImage's, this dev build's, or an
 // install tree's lib/stud. Empty where none is.
 QString find_gfxstream_guest_dir() {
@@ -1321,26 +1321,27 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back("--smooth-zoom");
     config.args.push_back(settings.smooth_zoom ? "on" : "off");
 
-    // OpenGL mode through gfxstream: the engine gets gfxstream's libEGL and
-    // libGLESv2, the latter also under the two names its EGL loads its GLES
-    // through, which reach render-host's gfxstream on its own socket.
-    // render-host starts that under the same condition
-    // (render-host/src/gfxstream_host.h).
-    if (graphics_mode_arg == QStringLiteral("opengl")) {
-        const char* env = std::getenv("STUD_GL_GFXSTREAM");
-        const QString guest = find_gfxstream_guest_dir();
-        if ((env == nullptr || std::string_view(env) != "0") && !guest.isEmpty()) {
-            const std::string dir = guest.toStdString();
-            config.system_lib_overrides.emplace_back(dir + "/libEGL.so", "libEGL.so");
-            for (const char* name :
-                 {"libGLESv2.so", "libGLESv2_emulation.so", "libGLESv1_CM_emulation.so"}) {
-                config.system_lib_overrides.emplace_back(dir + "/libGLESv2.so", name);
-            }
+    // The engine's libEGL and libGLESv2 are gfxstream's, the latter also
+    // under the two names its EGL loads its GLES through. The engine links
+    // both whatever it renders with; in OpenGL mode they reach
+    // render-host's gfxstream on its own socket, which render-host starts
+    // in that mode only (render-host/src/gfxstream_host.h).
+    if (const QString guest = find_gfxstream_guest_dir(); !guest.isEmpty()) {
+        const std::string dir = guest.toStdString();
+        config.system_lib_overrides.emplace_back(dir + "/libEGL.so", "libEGL.so");
+        for (const char* name :
+             {"libGLESv2.so", "libGLESv2_emulation.so", "libGLESv1_CM_emulation.so"}) {
+            config.system_lib_overrides.emplace_back(dir + "/libGLESv2.so", name);
+        }
+        if (graphics_mode_arg == QStringLiteral("opengl")) {
             const std::string sock = stud::render_host::default_socket_path();
             config.extra_env.emplace_back("STUD_GFXSTREAM_SOCKET",
                                           sock.substr(0, sock.find_last_of('/')) +
                                               "/gfxstream.sock");
         }
+    } else {
+        std::fprintf(stderr, "stud: gfxstream's guest libraries are missing; the engine "
+                             "will not load\n");
     }
 
     // The transcoded-texture cache lives inside the Vulkan client

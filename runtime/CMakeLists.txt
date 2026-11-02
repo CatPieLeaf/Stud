@@ -218,30 +218,6 @@ target_include_directories(stud_runtime_framework PUBLIC
 )
 target_link_libraries(stud_runtime_framework PUBLIC fake-jni nlohmann_json::nlohmann_json)
 
-add_library(stud_runtime_libEGL SHARED
-    render-client/src/egl_client.cpp
-    render-client/src/render_client_common.cpp
-)
-target_include_directories(stud_runtime_libEGL PRIVATE render-client/src)
-target_link_libraries(stud_runtime_libEGL PRIVATE stud_runtime_render_host_protocol)
-set_target_properties(stud_runtime_libEGL PROPERTIES
-    OUTPUT_NAME "EGL"
-    SUFFIX ".so"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib64"
-)
-
-add_library(stud_runtime_libGLESv2 SHARED
-    render-client/src/gles_client.cpp
-    render-client/src/render_client_common.cpp
-)
-target_include_directories(stud_runtime_libGLESv2 PRIVATE render-client/src)
-target_link_libraries(stud_runtime_libGLESv2 PRIVATE stud_runtime_render_host_protocol)
-set_target_properties(stud_runtime_libGLESv2 PROPERTIES
-    OUTPUT_NAME "GLESv2"
-    SUFFIX ".so"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib64"
-)
-
 # Real ETC1/ETC2/EAC and PVRTC decoders, fetched at configure time with a
 # pinned hash, same "vendor it, do not hand-roll it" reasoning as miniz
 # and libjnivm elsewhere in this tree. A block decoder that is subtly wrong
@@ -331,14 +307,12 @@ set(STUD_IPC_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../stud-ipc")
 
 # Which library each copy of render_client_common.cpp ends up in.
 #
-# That file is listed in all five of these targets, so each gets its own
-# copy of the connection statics, up to fifteen sockets to render-host,
+# That file is listed in all three of these targets, so each gets its own
+# copy of the connection statics, up to nine sockets to render-host,
 # not the three the header describes. STUD_IPC_OWNERS=1 makes each one
 # say which library opened it.
 target_compile_definitions(stud_runtime_libandroid PRIVATE STUD_CLIENT_OWNER="libandroid.so")
 target_compile_definitions(stud_runtime_libaaudio PRIVATE STUD_CLIENT_OWNER="libaaudio.so")
-target_compile_definitions(stud_runtime_libEGL PRIVATE STUD_CLIENT_OWNER="libEGL.so")
-target_compile_definitions(stud_runtime_libGLESv2 PRIVATE STUD_CLIENT_OWNER="libGLESv2.so")
 target_compile_definitions(stud_runtime_libvulkan PRIVATE STUD_CLIENT_OWNER="libvulkan.so.1")
 
 add_library(stud_runtime_ipc STATIC
@@ -374,8 +348,6 @@ target_link_libraries(stud-runtime-bionic PRIVATE
     Zydis
     stud_runtime_framework
     stud_runtime_libandroid
-    stud_runtime_libEGL
-    stud_runtime_libGLESv2
     stud_runtime_ipc
     fake-jni
 )
@@ -410,7 +382,7 @@ set(STUD_NDK_FALLBACK_C "${CMAKE_CURRENT_BINARY_DIR}/ndk_fallback.c")
 set(STUD_NDK_FALLBACK_LIBS
     stud_runtime_libandroid stud_runtime_libmediandk stud_runtime_libaaudio
     stud_runtime_libOpenSLES stud_runtime_libnativewindow
-    stud_runtime_libEGL stud_runtime_libGLESv2 stud_runtime_libvulkan)
+    stud_runtime_libvulkan)
 add_custom_command(
     OUTPUT "${STUD_NDK_FALLBACK_C}"
     COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gen_ndk_fallback.py"
@@ -418,6 +390,7 @@ add_custom_command(
             --stubs "${CMAKE_SYSROOT}/usr/lib/${STUD_NDK_LIB_TRIPLE}"
             --have-dir "${CMAKE_CURRENT_BINARY_DIR}/lib64"
             --have-dir "${STUD_BIONIC_DIR}"
+            $<$<BOOL:${STUD_GFXSTREAM_GUEST_DIR}>:--have-dir> ${STUD_GFXSTREAM_GUEST_DIR}
             --have "$<TARGET_FILE:stud-runtime-bionic>"
             --skip-lib libc.so --skip-lib libm.so --skip-lib libdl.so
             --skip-lib libc++.so --skip-lib libstdc++.so

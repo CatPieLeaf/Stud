@@ -22,9 +22,9 @@
 
 // Which shared library this copy was compiled into.
 //
-// render_client_common.cpp is listed in five separate SHARED targets, so
-// each of libandroid, libaaudio, libEGL, libGLESv2 and libvulkan gets its
-// OWN copy of the statics below, up to fifteen sockets, not the three
+// render_client_common.cpp is listed in three separate SHARED targets, so
+// each of libandroid, libaaudio and libvulkan gets its
+// OWN copy of the statics below, up to nine sockets, not the three
 // this file's header describes. STUD_IPC_OWNERS=1 names them, so a host
 // connection can be matched to the library that opened it.
 #ifndef STUD_CLIENT_OWNER

@@ -121,7 +121,7 @@ struct ProcessBConfig {
     // Previously-missing gap: extra environment variables for
     // Process B, passed via bwrap's own real `--setenv NAME VALUE`.
     // Before this field existed, launch_process_b() had no way at all
-    // to set anything like STUD_VULKAN_CALL_TRACE/STUD_RENDER_CALL_TRACE
+    // to set anything like STUD_VULKAN_CALL_TRACE
     // for a real production launch; every env-gated diagnostic this
     // project has built stayed permanently off outside a hand-run
     // bwrap test script, so e.g. real evidence of whether libroblox.so
@@ -130,8 +130,8 @@ struct ProcessBConfig {
     std::vector<std::pair<std::string, std::string>> extra_env;
 
     // Libraries that take the place of /system/lib64 ones: {host path, name
-    // there}. Bound after Process B's own libraries, so these win; OpenGL
-    // mode through gfxstream uses them for gfxstream's libEGL/libGLESv2.
+    // there}. Bound after Process B's own libraries, so these win; the
+    // engine's libEGL/libGLESv2 are gfxstream's, bound this way.
     std::vector<std::pair<std::string, std::string>> system_lib_overrides;
 
     // The file descriptor Process B should use as its stdout and stderr,
