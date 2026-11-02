@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.8
+Version:        1.2.9
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -122,6 +122,10 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Mon Nov 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.9-1
+- Fixed: the Flatpak started, but Roblox never opened
+- New defaults: HiDPI off, upscaling on (RAVU on Vulkan, SGSR on OpenGL)
+
 * Mon Nov 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.8-1
 - New setting: HQ Textures (Unstable), in Settings > Graphics
 - Textures and game cursors (like Regretevator's) are sharp instead of blurry and blocky
