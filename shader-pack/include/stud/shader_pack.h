@@ -41,7 +41,6 @@ struct BuildReport {
     size_t aliases = 0;           // two-sided lit keys answered with the one-sided blob
     size_t normal_reads = 0;      // .wy normal-map reads rewritten to .xy
     size_t normal_z = 0;          // normal z taken from the map
-    size_t detail_dropped = 0;    // Plastic detail-normal terms removed
     // Of `substituted`: those with the very same bindings as the mobile
     // build, taken because their stage interface matches as well, by
     // shader name.
@@ -85,6 +84,5 @@ std::string convert_glsl(const std::string& desktop, size_t* normal_reads = null
 // unchanged.
 size_t rewrite_normal_reads(std::vector<uint32_t>& words);
 size_t take_normal_z_from_map(std::vector<uint32_t>& words);
-size_t drop_detail_normal(std::vector<uint32_t>& words);
 
 }  // namespace stud::shader_pack

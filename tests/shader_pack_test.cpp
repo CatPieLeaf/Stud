@@ -68,26 +68,6 @@ void test_normal_reads_and_z() {
     check(stud::shader_pack::take_normal_z_from_map(w) == 0, "a second pass changes nothing");
 }
 
-void test_detail_dropped() {
-    // %30 at set 1 binding 8; %31 = 0.0; %40 a computed strength.
-    std::vector<uint32_t> w = {
-        0x07230203, 0x10000, 0, 100, 0,
-        op(71, 4), 30, 34, 1,
-        op(71, 4), 30, 33, 8,
-        op(22, 3), 1, 32,
-        op(43, 4), 1, 2, bits(2.0f),
-        op(43, 4), 1, 31, 0,
-        op(61, 4), 7, 32, 30,
-        op(87, 5), 8, 33, 32, 13,
-        op(79, 7), 4, 34, 33, 33, 0, 1,
-        op(142, 5), 4, 35, 34, 2,   // decode: * 2, a constant, kept
-        op(142, 5), 4, 36, 35, 40,  // strength: dropped
-    };
-    check(stud::shader_pack::drop_detail_normal(w) == 1, "the detail strength is found");
-    check(w[44] == 2 && w[49] == 31, "the decode's constant stays, the strength becomes 0");
-    check(stud::shader_pack::drop_detail_normal(w) == 0, "a second pass changes nothing");
-}
-
 void test_not_a_pack() {
     bool threw = false;
     try {
@@ -131,6 +111,28 @@ void test_glsl_conversion() {
     check(has("float _13 = ((_10).z * 2.0 - 1.0);") && reads == 1, "z comes from the map");
     check(!has("BlendTarget") && has("texture(PrefilteredEnvTexture,"), "the second cube becomes the first");
 
+    // The detiled builds sample the normal map inside the decode itself.
+    const std::string inline_fs =
+        "#version 150\n"
+        "uniform sampler2D NormalMapTexture;\n"
+        "in vec4 VARYING2;\n"
+        "out vec4 _entryPointOutput;\n"
+        "void main()\n"
+        "{\n"
+        "    vec2 _21 = textureGrad(NormalMapTexture, VARYING2.xy, VARYING2.zw, VARYING2.zw).wy * 2.0;\n"
+        "    vec2 _22 = _21 - vec2(1.0);\n"
+        "    _entryPointOutput.z = sqrt(clamp(1.0 + dot(vec2(1.0) - _21, _22), 0.0, 1.0));\n"
+        "}\n";
+    size_t inline_reads = 0;
+    const std::string inline_out = stud::shader_pack::convert_glsl(inline_fs, &inline_reads);
+    check(inline_out.find("vec2 _21 = textureGrad(NormalMapTexture, VARYING2.xy, VARYING2.zw, VARYING2.zw).xy * 2.0;") !=
+              std::string::npos,
+          "an inline normal-map sample is read as .xy");
+    check(inline_out.find("_entryPointOutput.z = ((textureGrad(NormalMapTexture, VARYING2.xy, VARYING2.zw, "
+                          "VARYING2.zw)).z * 2.0 - 1.0);") != std::string::npos &&
+              inline_reads == 1,
+          "an inline sample's z comes from the map");
+
     const std::string vs =
         "#version 150\n"
         "in vec4 POSITION;\n"
@@ -148,7 +150,6 @@ void test_glsl_conversion() {
 
 int main() {
     test_normal_reads_and_z();
-    test_detail_dropped();
     test_not_a_pack();
     test_glsl_conversion();
     return 0;

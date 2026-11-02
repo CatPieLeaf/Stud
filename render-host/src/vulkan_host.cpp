@@ -7682,12 +7682,13 @@ void flush(Loader& l) {
 //   2   a second environment cube, blended with the one at 14. The Android
 //       engine binds a 1x1 placeholder there, never a reflection map, so
 //       the cube at 14 is put in its place, always.
-//   8   the detail normal map, null where the engine has nothing
+//   8   the detail normal map. No Android build reads 1/8; the engine
+//       leaves it null or binds its 1x1 normal-map placeholder there
 //   11  the BRDF lookup table, always null
 //
-// 8 and 11 are filled only where the engine left them null, from the two
-// Windows client files the UI prepared. A null image there is a draw that
-// faults on the GPU.
+// 8 and 11 get the two Windows client files the UI prepared: 8 always, so
+// the detail decode never reads the placeholder, 11 where the engine left
+// it null. A null image there is a draw that faults on the GPU.
 namespace desktop_fill {
 
 struct Texture {
@@ -7949,7 +7950,7 @@ void fill(Loader& l, const std::vector<VkDescriptorUpdateTemplateEntry>& entries
         std::memcpy(data.data() + by_binding[2]->offset, data.data() + by_binding[14]->offset,
                     sizeof(VkDescriptorImageInfo));
     }
-    if (by_binding[8] != nullptr && is_null(by_binding[8])) put(by_binding[8], s.detail);
+    if (by_binding[8] != nullptr) put(by_binding[8], s.detail);
     if (by_binding[11] != nullptr && is_null(by_binding[11])) put(by_binding[11], s.brdf);
 }
 

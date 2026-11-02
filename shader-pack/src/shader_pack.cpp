@@ -513,52 +513,6 @@ size_t take_normal_z_from_map(std::vector<uint32_t>& w) {
     return sites.size();
 }
 
-// The desktop Plastic builds add a detail normal from set 1 binding 8 on
-// top of the normal map. No Android build reads 1/8, and what the Android
-// engine binds there is not a detail map, so the term only adds noise
-// (the "crunchy" plastic). Its strength, the first non-constant scale on
-// the value read from 1/8 (after the constant `* 2` of the decode), is
-// replaced with a float 0 constant of the module.
-size_t drop_detail_normal(std::vector<uint32_t>& w) {
-    const Scan scan(w);
-    const std::set<uint32_t> detail = scan.material(8);
-    std::set<uint32_t> float_types, constants;
-    std::optional<uint32_t> zero;
-    for (size_t p : scan.insts) {
-        const uint32_t op = opcode(w, p), len = length(w, p);
-        if (op == kOpConstant || op == kOpConstantComposite || op == kOpConstantNull) constants.insert(w[p + 2]);
-        if (op == kOpTypeFloat && len >= 3 && w[p + 2] == 32) float_types.insert(w[p + 1]);
-        if (!zero && op == kOpConstant && len == 4 && float_types.count(w[p + 1]) && w[p + 3] == 0) zero = w[p + 2];
-        if (!zero && op == kOpConstantNull && float_types.count(w[p + 1])) zero = w[p + 2];
-    }
-    if (!zero) return 0;
-    std::set<uint32_t> derived;
-    size_t patched = 0;
-    for (size_t p : scan.insts) {
-        const uint32_t op = opcode(w, p), len = length(w, p);
-        if (is_sample(op) && len >= 5) {
-            const auto l = scan.load_of(w[p + 3]);
-            if (l && detail.count(*l)) {
-                derived.insert(w[p + 2]);
-                continue;
-            }
-        }
-        if (len < 3) continue;
-        if (op == kOpVectorTimesScalar && len >= 5 && derived.count(w[p + 3])) {
-            if (w[p + 4] == *zero) continue;  // already dropped
-            if (!constants.count(w[p + 4])) {
-                w[p + 4] = *zero;
-                ++patched;
-                continue;
-            }
-        }
-        bool uses = false;
-        for (size_t o = p + 3; o < p + len; ++o) uses = uses || derived.count(w[o]) != 0;
-        if (uses) derived.insert(w[p + 2]);
-    }
-    return patched;
-}
-
 std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_bytes,
                                              const std::vector<uint8_t>& desktop_bytes,
                                              BuildReport* report) {
@@ -653,7 +607,6 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         auto words = spirv_words(blob);
         r.normal_reads += rewrite_normal_reads(words);
         r.normal_z += take_normal_z_from_map(words);
-        if (name.rfind("DefaultUnifiedPlastic", 0) == 0) r.detail_dropped += drop_detail_normal(words);
         blobs[k] = with_words(blob, words);
         ++r.substituted;
         if (drop_in) {
@@ -878,7 +831,10 @@ std::string convert_glsl(const std::string& src, size_t* normal_reads) {
             l.compare(l.size() - tail.size(), tail.size(), tail) == 0) {
             const std::string expr = l.substr(eq + 3, l.size() - tail.size() - eq - 3);
             const auto used = ids_in(expr);
-            if (std::any_of(used.begin(), used.end(), [&](const std::string& id) { return samples.count(id) != 0; })) {
+            // The sample is either a vec4 of its own or inline in the decode,
+            // as the detiled builds have it (textureGrad(NormalMapTexture, ...)).
+            if (expr.find("(NormalMapTexture,") != std::string::npos ||
+                std::any_of(used.begin(), used.end(), [&](const std::string& id) { return samples.count(id) != 0; })) {
                 decoded[l.substr(9, eq - 9)] = expr;
                 l = l.substr(0, eq + 3) + expr + ".xy * 2.0;";
             }
