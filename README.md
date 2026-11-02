@@ -84,7 +84,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Runs the **real, unmodified** Roblox Android app
  - Three separate processes in the shape of a browser's, the same split CEF and Chromium use, so the GPU driver never shares a process with the engine. No crashes with NVIDIA at all.
  - Vulkan by default, and OpenGL in Settings, on the system's own driver, for hardware Vulkan does not run on. OpenGL runs on [gfxstream](https://github.com/google/gfxstream), the Android emulator's GPU layer, with MSAA, outlines and Windows Graphical Parity just as on Vulkan
- - **Upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size. Two to pick from: **RAVU-Zoom AR**, which looks each neighbourhood up in a table trained offline, and **SGSR1 ED**, the lightweight one, which reconstructs edges from the pixels alone and is the one to pick on a laptop or an integrated GPU
+ - **Upscaling**: the game renders below your screen's resolution and Stud rebuilds the frame at full size. Two to pick from: **RAVU-Zoom AR**, which looks each neighbourhood up in a table trained offline, and **SGSR1 ED**, the lightweight one, which reconstructs edges from the pixels alone and is the one to pick on a laptop or an integrated GPU. On by default, with RAVU on Vulkan and SGSR on OpenGL
  - Smooth zoom in/out, just like the Windows client
  - **Sound and voice chat with nothing to install**: the audio device is built into Stud rather than loaded from a library the machine might not have. It speaks PulseAudio (which is how it reaches PipeWire), ALSA, JACK and OSS
  - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring, the same safe-storage arrangement Chromium uses
@@ -99,6 +99,31 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Caps the frame rate while nothing can see the window: minimised, covered, or on another workspace
  - Export every session log as one tarball, for when you file a bug
  - Ships as an **rpm** (also in the [Terra](https://terra.fyralabs.com) repository), a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, a **Flatpak** and a [cpak](https://github.com/Containerpak/cpak)
+
+## Windows Graphical Parity
+
+Games look the way they do on Windows: real reflections, shine on every material, and surface detail on bricks, wood, metal and the rest. On Vulkan and OpenGL alike.
+
+<table align="center">
+  <tr>
+    <td><a href="1"><img src="https://github.com/user-attachments/assets/a73be2ce-b215-4102-b1a6-0970ee673ce3" width="260"></a></td>
+    <td><a href="2"><img src="https://github.com/user-attachments/assets/5163e1a1-f815-467d-b58c-d40e34b0ba7a" width="260"></a></td>
+  </tr>
+</table>
+
+<table align="center">
+  <tr>
+    <td><a href="1"><img src="https://github.com/user-attachments/assets/202da4d0-a6cf-4a4c-b41a-1ffae8aeae6e" width="260"></a></td>
+    <td><a href="2"><img src="https://github.com/user-attachments/assets/f0ae93bf-f3de-4534-9256-c77818ab25c2" width="260"></a></td>
+  </tr>
+</table>
+
+<table align="center">
+  <tr>
+    <td><a href="1"><img src="https://github.com/user-attachments/assets/dc2d82cf-8588-4751-903e-8740477c6857" width="260"></a></td>
+    <td><a href="2"><img src="https://github.com/user-attachments/assets/7ed7f751-380d-484e-a097-3aba5ead554c" width="260"></a></td>
+  </tr>
+</table>
 
 <br>
 
