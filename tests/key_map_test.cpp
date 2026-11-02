@@ -342,6 +342,19 @@ int main() {
         check(engine_scan_code_for_event(105, "") == 105, "the left arrow keeps its position");
         check(engine_scan_code_for_event(42, "") == 42, "shift keeps its position");
 
+        // AZERTY (issue #19): letter and digit positions keep their place
+        // whatever the layout makes them type, so ZQSD walks and the digit
+        // row is the hotbar.
+        check(engine_scan_code_for_event(17, "z") == 17, "azerty: the W position stays W");
+        check(engine_scan_code_for_event(16, "a") == 16, "azerty: the Q position stays Q");
+        check(engine_scan_code_for_event(30, "q") == 30, "azerty: the A position stays A");
+        check(engine_scan_code_for_event(44, "w") == 44, "azerty: the Z position stays Z");
+        check(engine_scan_code_for_event(2, "&") == 2, "azerty: the 1 position stays 1");
+        check(engine_scan_code_for_event(4, "\"") == 4, "azerty: the 3 position stays 3");
+        // Punctuation still moves by character: AZERTY types "m" at the US
+        // semicolon position, which is the M key.
+        check(engine_scan_code_for_event(39, "m") == 50, "azerty: m reaches the M position");
+
         // A character no US position types (ABNT2 has a dedicated cedilla
         // key) has nowhere to move to, so it stays where it is.
         check(engine_scan_code_for_event(39, "\xC3\xA7") == 39,

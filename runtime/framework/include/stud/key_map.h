@@ -394,10 +394,21 @@ inline bool is_keypad_scan_code(uint32_t scan) {
 // (HostInputEvent::layout_chars). All ones means unknown, and then every
 // position counts as reachable, which is what this did before the set
 // existed.
+//
+// Letter and digit positions never move. Games bind them by where they
+// sit, as Roblox's desktop client reads them: on AZERTY the keys in the
+// WASD positions type Z, Q, S, D and are still how a player walks, and its
+// digit row types "&", "é" and so on unshifted and is still the hotbar.
+// Moved by character, the W position typed "z" and became the US Z key,
+// so walking needed a QWERTY layout (issue #19). Only punctuation moves,
+// which is what the ABNT2 cases above need.
 inline bool position_must_be_kept(uint32_t reported_scan, char typed,
                                   const uint64_t layout_chars[2]) {
     char at_position = 0;
     if (!char_for_scan_code(reported_scan, false, &at_position)) return false;
+    if ((at_position >= 'a' && at_position <= 'z') || (at_position >= '0' && at_position <= '9')) {
+        return true;
+    }
     // Not "is it already right": the keypad's own "/" types a slash and
     // still has to move, which is the whole reason this file moves keys.
     const unsigned char c = static_cast<unsigned char>(at_position);
