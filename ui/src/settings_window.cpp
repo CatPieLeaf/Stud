@@ -158,12 +158,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "Android client does.");
     graphics->addWidget(windowsMaterialsCheck_);
 
-    hqTexturesCheck_ = new QCheckBox("HQ Textures (Beta)", this);
+    hqTexturesCheck_ = new QCheckBox("HQ Textures (Unstable)", this);
     hqTexturesCheck_->setToolTip(
-        "Ask Roblox for its newer texture format only. Textures and custom cursors come in at "
-        "full quality instead of the downsized mobile copies. Roblox still generates that format "
-        "on demand, so until it has, some materials show without their normal maps. Takes effect "
-        "on the next launch.");
+        "Full-quality textures and cursors. Disables normal maps; still being investigated.");
     graphics->addWidget(hqTexturesCheck_);
 
     // Stud's own upscaler. The engine renders at the window's logical size

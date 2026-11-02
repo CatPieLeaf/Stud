@@ -396,12 +396,13 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     // with this on, which the Android settings leave off.
     if (desktop_materials) flags["FFlagHighlightOutlinesOnMobile"] = "True";
     // HQ Textures. The engine asks Roblox for textures in the formats this
-    // list names, and Android's list is the downsized mobile transcode.
-    // Naming only the newer transcode, which Roblox generates on demand,
-    // gets an image's original wherever that is not generated yet; a
-    // material's texture pack has no original to fall back to, so it has
-    // no normal map until Roblox has generated it.
-    if (hq_textures) flags["FStringTextureTranscodeRollout"] = "[(8,ktx2)]";
+    // list names, and Android's list is the downsized mobile transcode. An
+    // empty list asks for none, so every image comes as its original. A
+    // material's texture pack has no usable original (Roblox answers with
+    // its XML manifest), so materials lose their normal maps while this is
+    // on. Naming only a newer transcode instead was tried and only looked
+    // right until Roblox had generated it.
+    if (hq_textures) flags["FStringTextureTranscodeRollout"] = "";
     return flags;
 }
 
