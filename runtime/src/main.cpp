@@ -297,7 +297,7 @@ int available_physical_cores() {
 // Stud's own engine defaults, as already-serialised ClientSettings
 // values. Merged BEFORE the user's hand-edited file, so anything they
 // set by hand still wins, the same rule as the renderer flags below.
-std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
+std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bool hq_textures) {
     std::map<std::string, std::string> flags = {
         // Highest texture quality, always. The engine's own quality
         // control is tuned for a phone's memory budget, and Stud is not
@@ -395,6 +395,13 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials) {
     // outline passes into the shader pack; the engine only draws them
     // with this on, which the Android settings leave off.
     if (desktop_materials) flags["FFlagHighlightOutlinesOnMobile"] = "True";
+    // HQ Textures. The engine asks Roblox for textures in the formats this
+    // list names, and Android's list is the downsized mobile transcode.
+    // Naming only the newer transcode, which Roblox generates on demand,
+    // gets an image's original wherever that is not generated yet; a
+    // material's texture pack has no original to fall back to, so it has
+    // no normal map until Roblox has generated it.
+    if (hq_textures) flags["FStringTextureTranscodeRollout"] = "[(8,ktx2)]";
     return flags;
 }
 
@@ -822,7 +829,8 @@ void restore_local_storage() {
 // defaults, the render path's flags and the user's overrides merged in, or
 // the body unchanged if it cannot be parsed.
 std::string merge_client_settings(const std::string& body, const std::string& graphics_mode,
-                                  const stud::jni_bridge::FlagOverrides& overrides, bool desktop_materials) {
+                                  const stud::jni_bridge::FlagOverrides& overrides, bool desktop_materials,
+                                  bool hq_textures) {
     std::string client_settings_body = body;
     const std::map<std::string, bool> renderer_flags =
         renderer_flags_for_mode(graphics_mode);
@@ -834,7 +842,7 @@ std::string merge_client_settings(const std::string& body, const std::string& gr
             // Stud's own defaults first, so a hand-edited override
             // of the same flag below replaces any of them.
             std::string defaults_named;
-            for (const auto& [name, value] : stud_default_flags(desktop_materials)) {
+            for (const auto& [name, value] : stud_default_flags(desktop_materials, hq_textures)) {
                 const std::string key = client_settings_key(name, value);
                 app[key] = value;
                 // Named, because up to now nothing said whether this
@@ -1076,6 +1084,8 @@ int main(int argc, char** argv) {
     // The Windows Graphical Parity files the UI prepared, or empty for the
     // Android look (see ui/src/desktop_materials.h).
     const std::string desktop_materials = find_named_arg(argc, argv, "--desktop-materials");
+    // HQ Textures, from Settings; see stud_default_flags().
+    const bool hq_textures = find_named_arg(argc, argv, "--hq-textures") == "on";
     // How large the app draws everything, in 120ths (120 = 1.0). Absent or
     // 0 means "follow the display": which, with HiDPI off, means 1.0
     // rather than the desktop's scale: the buffer is then the window's
@@ -1862,7 +1872,7 @@ int main(int argc, char** argv) {
         // only how they reach the engine changes.
         std::string client_settings_body =
             merge_client_settings(launch_payload->client_settings_body, graphics_mode, overrides,
-                                  !desktop_materials.empty());
+                                  !desktop_materials.empty(), hq_textures);
         try {
             auto client_settings_result = stud::jni_bridge::run_client_settings_bridge(
                 jvm, lib, client_settings_body,
@@ -2152,7 +2162,7 @@ int main(int argc, char** argv) {
         // what is preloaded is applied after that. The user's file still
         // wins: a flag it sets is left as it set it.
         stud::jni_bridge::FlagOverrides preload = overrides;
-        for (const auto& [name, value] : stud_default_flags(!desktop_materials.empty())) {
+        for (const auto& [name, value] : stud_default_flags(!desktop_materials.empty(), hq_textures)) {
             if (preload.has(name)) continue;
             const bool numeric =
                 !value.empty() && value.find_first_not_of("-0123456789") == std::string::npos;

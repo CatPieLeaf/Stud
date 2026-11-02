@@ -112,6 +112,7 @@ private:
     void paintRestartIcon();
     QCheckBox* smoothZoomCheck_;
     QCheckBox* windowsMaterialsCheck_;
+    QCheckBox* hqTexturesCheck_;
     QCheckBox* gamemodeCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;

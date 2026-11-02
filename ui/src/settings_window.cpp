@@ -158,6 +158,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "Android client does.");
     graphics->addWidget(windowsMaterialsCheck_);
 
+    hqTexturesCheck_ = new QCheckBox("HQ Textures (Beta)", this);
+    hqTexturesCheck_->setToolTip(
+        "Ask Roblox for its newer texture format only. Textures and custom cursors come in at "
+        "full quality instead of the downsized mobile copies. Roblox still generates that format "
+        "on demand, so until it has, some materials show without their normal maps. Takes effect "
+        "on the next launch.");
+    graphics->addWidget(hqTexturesCheck_);
+
     // Stud's own upscaler. The engine renders at the window's logical size
     // what HiDPI off already does, at scale 1.0, so its UI size,
     // rounded corners and SSAO are all untouched, and Stud builds the
@@ -370,6 +378,7 @@ void SettingsWindow::installResets() {
     add(hidpiCheck_, [this, d] { hidpiCheck_->setChecked(d.hidpi); });
     add(followDpiCheck_, [this, d] { followDpiCheck_->setChecked(d.follow_dpi); });
     add(windowsMaterialsCheck_, [this, d] { windowsMaterialsCheck_->setChecked(d.windows_materials); });
+    add(hqTexturesCheck_, [this, d] { hqTexturesCheck_->setChecked(d.hq_textures); });
     add(upscalingCheck_, [this, d] { upscalingCheck_->setChecked(d.upscaling); });
     // TEMPORARY, with the rest of the filter comparison.
     add(upscalerCombo_, [this, d] {
@@ -437,6 +446,7 @@ void SettingsWindow::loadFromDisk() {
     followDpiCheck_->setChecked(settings.follow_dpi);
     followDpiCheck_->setEnabled(settings.hidpi);
     windowsMaterialsCheck_->setChecked(settings.windows_materials);
+    hqTexturesCheck_->setChecked(settings.hq_textures);
     upscalingCheck_->setChecked(settings.upscaling);
     upscalingCheck_->setEnabled(!settings.hidpi);
     {
@@ -717,6 +727,7 @@ void SettingsWindow::onSaveClicked() {
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.windows_materials = windowsMaterialsCheck_->isChecked();
+    settings.hq_textures = hqTexturesCheck_->isChecked();
     settings.upscaling = upscalingCheck_->isChecked();
     // TEMPORARY, with the rest of the filter comparison.
     settings.upscaler_choice = upscalerWanted_.toStdString();

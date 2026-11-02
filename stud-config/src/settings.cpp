@@ -120,6 +120,12 @@ StudSettings load_settings(const std::string& path) {
         }
         result.windows_materials = doc.at("windowsMaterials").get<bool>();
     }
+    if (doc.contains("hqTextures")) {
+        if (!doc.at("hqTextures").is_boolean()) {
+            throw SettingsError("stud: config '" + path + "' has a non-boolean \"hqTextures\"");
+        }
+        result.hq_textures = doc.at("hqTextures").get<bool>();
+    }
     if (doc.contains("smoothZoom")) {
         if (!doc.at("smoothZoom").is_boolean()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
@@ -258,6 +264,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["textOverlayFontRatio"] = settings.text_overlay_font_ratio;
     doc["smoothZoom"] = settings.smooth_zoom;
     doc["windowsMaterials"] = settings.windows_materials;
+    doc["hqTextures"] = settings.hq_textures;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
     doc["gamemode"] = settings.gamemode;

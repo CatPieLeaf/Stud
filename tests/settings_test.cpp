@@ -36,6 +36,7 @@ int main(int argc, char** argv) {
     check(defaults.gpu.device_index == 0, "missing config file defaults gpu.deviceIndex to 0");
     check(defaults.background_fps == 30, "missing config file defaults the background frame rate to 30");
     check(defaults.windows_materials, "missing config file defaults Windows Graphical Parity to on");
+    check(!defaults.hq_textures, "missing config file defaults HQ Textures to off");
 
     std::string path = dir + "/config.json";
 

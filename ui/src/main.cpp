@@ -1337,6 +1337,8 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     config.args.push_back(settings.discord_rich_presence ? "on" : "off");
     config.args.push_back("--smooth-zoom");
     config.args.push_back(settings.smooth_zoom ? "on" : "off");
+    config.args.push_back("--hq-textures");
+    config.args.push_back(settings.hq_textures ? "on" : "off");
 
     // The engine's libEGL and libGLESv2 are gfxstream's, the latter also
     // under the two names its EGL loads its GLES through. The engine links
