@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.7
+Version:        1.2.8
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -122,6 +122,11 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Mon Nov 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.8-1
+- New setting: HQ Textures (Unstable), in Settings > Graphics
+- Textures and game cursors (like Regretevator's) are sharp instead of blurry and blocky
+- Keyboard layouts: AZERTY walks on ZQSD, and the number row is the hotbar on every layout
+
 * Mon Nov 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.7-1
 - OpenGL mode rebuilt on gfxstream: MSAA, UI gradients and correct highlight outlines on OpenGL
 - Windows Graphical Parity (Beta) now works in OpenGL mode as well as Vulkan

@@ -98,6 +98,15 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.8" date="2026-11-02">
+      <description>
+        <ul>
+          <li>New setting: HQ Textures (Unstable), in Settings &gt; Graphics</li>
+          <li>Textures and game cursors (like Regretevator's) are sharp instead of blurry and blocky</li>
+          <li>Keyboard layouts: AZERTY walks on ZQSD, and the number row is the hotbar on every layout</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.7" date="2026-11-02">
       <description>
         <ul>
