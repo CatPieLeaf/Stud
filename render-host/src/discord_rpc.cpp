@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace stud::render_host {
 
@@ -70,10 +71,22 @@ void close_connection() {
 
 // Discord listens on discord-ipc-0 through discord-ipc-9; a client tries
 // each in turn, because several Discord builds can run at once.
+//
+// A sandboxed Discord puts its socket in its own directory rather than
+// at the top of the runtime dir, so those are tried too: the Flatpak
+// builds under app/<id>/ and the Snap under snap.discord/. Only the top
+// level used to be tried, so presence never connected to either.
 bool connect_locked() {
     if (g_fd >= 0) return true;
-    for (int i = 0; i < 10; ++i) {
-        const std::string path = runtime_dir() + "/discord-ipc-" + std::to_string(i);
+    static const char* const kDirs[] = {"", "/app/com.discordapp.Discord",
+                                        "/app/dev.vencord.Vesktop", "/snap.discord"};
+    std::vector<std::string> paths;
+    for (const char* dir : kDirs) {
+        for (int i = 0; i < 10; ++i) {
+            paths.push_back(runtime_dir() + dir + "/discord-ipc-" + std::to_string(i));
+        }
+    }
+    for (const std::string& path : paths) {
         const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (fd < 0) return false;
         sockaddr_un addr{};

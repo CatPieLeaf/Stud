@@ -35,6 +35,9 @@ finish-args:
   - --filesystem=xdg-run/discord-ipc-7
   - --filesystem=xdg-run/discord-ipc-8
   - --filesystem=xdg-run/discord-ipc-9
+  # A Flatpak Discord keeps its sockets in its own directory instead.
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
   # The key the stored login is encrypted with. The login itself never leaves
   # Stud's own data directory.
   - --talk-name=org.freedesktop.secrets
