@@ -17,6 +17,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QString>
 #include <QUrl>
 
@@ -105,6 +106,15 @@ std::optional<QByteArray> fetch(const QString& url) {
 QString release_of(const QString& version) {
     const QStringList parts = version.split(QLatin1Char('.'));
     return parts.size() >= 2 ? parts[1] : QString();
+}
+
+// Whether a Windows upload name is what Roblox publishes, "version-" and
+// hex. It becomes a directory name here, one that is later removed and
+// renamed, so a value from the network or from state.json that is
+// anything else (a "../", a slash) is refused rather than trusted.
+bool is_upload_name(const QString& upload) {
+    static const QRegularExpression kShape(QStringLiteral("^version-[0-9a-fA-F]+$"));
+    return kShape.match(upload).hasMatch();
 }
 
 // Package name -> MD5, from the version's package manifest: a "v0" line,
@@ -268,7 +278,8 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
     const fs::path prepared = root / state.value("windows").toString().toStdString();
     const bool same_version =
         !apk_version.isEmpty() && state.value("apkVersion").toString() == apk_version;
-    const bool reusable = same_version && state.value("ready").toBool() && complete(prepared);
+    const bool reusable = same_version && state.value("ready").toBool() &&
+                          is_upload_name(state.value("windows").toString()) && complete(prepared);
     if (reusable) {
         // Another Stud combined it, and how packs are combined changes
         // between versions: combined again from the Windows pack it kept.
@@ -309,7 +320,7 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
         const QJsonObject version = QJsonDocument::fromJson(*version_json).object();
         const QString windows_version = version.value("version").toString();
         const QString upload = version.value("clientVersionUpload").toString();
-        if (upload.isEmpty() || release_of(windows_version).isEmpty()) {
+        if (!is_upload_name(upload) || release_of(windows_version).isEmpty()) {
             say(QStringLiteral("Roblox did not say which Windows version is current"));
             return {};
         }
