@@ -213,7 +213,9 @@ bool write_property_area(const std::string& output_path,
         return false;
     }
     size_t written = std::fwrite(file.data(), 1, file.size(), f);
-    bool ok = (written == file.size()) && (std::fclose(f) == 0);
+    // Closed either way: a short write used to skip the fclose.
+    const bool closed = std::fclose(f) == 0;
+    bool ok = (written == file.size()) && closed;
     if (!ok) {
         std::remove(tmp_path.c_str());
         return false;

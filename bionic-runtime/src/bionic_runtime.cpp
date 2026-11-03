@@ -230,11 +230,17 @@ bool can_create_user_namespace() {
 }
 
 // One symlink, replacing whatever is already at that path.
+// Said out loud when it fails: a link that silently went missing only
+// surfaced later as the engine failing to load a library, far from here.
 bool place_link(const fs::path& target, const fs::path& link) {
     std::error_code ec;
     fs::create_directories(link.parent_path(), ec);
     fs::remove(link, ec);
     fs::create_symlink(target, link, ec);
+    if (ec) {
+        std::fprintf(stderr, "stud: could not link %s -> %s: %s\n", link.c_str(), target.c_str(),
+                     ec.message().c_str());
+    }
     return !ec;
 }
 

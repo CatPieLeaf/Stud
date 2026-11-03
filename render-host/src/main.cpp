@@ -1540,7 +1540,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                     ::setsid();
                     char* argv[8] = {};
                     size_t n = 0;
-                    for (; argv_template[n] != nullptr && n < 7; ++n) {
+                    for (; n < 7 && argv_template[n] != nullptr; ++n) {
                         argv[n] = const_cast<char*>(argv_template[n]);
                     }
                     ::execvp(argv[0], argv);
