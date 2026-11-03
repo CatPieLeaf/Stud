@@ -739,6 +739,13 @@ uint64_t audio_open_input_stream(int sample_rate, int channels) {
     return 1;
 }
 
+size_t audio_input_buffered() {
+    Capture& c = capture();
+    if (!c.open) return 0;
+    return c.ring_write.load(std::memory_order_acquire) -
+           c.ring_read.load(std::memory_order_relaxed);
+}
+
 uint64_t audio_read_frames(void* out, size_t bytes) {
     Capture& c = capture();
     if (!c.open || out == nullptr || bytes == 0) return 0;

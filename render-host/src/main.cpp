@@ -1591,7 +1591,11 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             return stud::render_host::audio_open_input_stream(static_cast<int>(a[0]),
                                                               static_cast<int>(a[1]));
         case CallId::AudioReadFrames: {
-            out.resize(hdr.out_buffer_len);
+            // Sized by what is buffered, never by the request alone: the
+            // reply cannot be larger, and the request's length is the
+            // engine's to get wrong.
+            out.resize(std::min<size_t>(hdr.out_buffer_len,
+                                        stud::render_host::audio_input_buffered()));
             const uint64_t written =
                 stud::render_host::audio_read_frames(out.data(), out.size());
             out.resize(static_cast<size_t>(written));
@@ -3650,6 +3654,30 @@ void serve_shared_fd_channel(int conn_fd) {
     }
 }
 
+// Sizes `buf` for a request's payload, or says the connection is lost.
+//
+// A call the protocol does not define means the stream has lost its
+// framing, and the length beside it is garbage: allocating it first
+// asked for up to 4 GB on a corrupt header. An allocation that still
+// fails ends the connection rather than this process.
+bool size_request_buffer(std::vector<unsigned char>& buf, const Header& hdr) {
+    if (std::strcmp(stud::render_host::call_id_name(hdr.call_id), "<unknown>") == 0) {
+        std::fprintf(stderr,
+                     "stud-render-host: request with unknown call id %d, closing the connection\n",
+                     static_cast<int>(hdr.call_id));
+        return false;
+    }
+    try {
+        buf.resize(hdr.in_buffer_len);
+    } catch (const std::bad_alloc&) {
+        std::fprintf(stderr,
+                     "stud-render-host: could not hold a %u-byte request, closing the connection\n",
+                     hdr.in_buffer_len);
+        return false;
+    }
+    return true;
+}
+
 void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_window) {
     std::vector<unsigned char> in_scratch;
     std::vector<unsigned char> out_scratch;
@@ -3672,7 +3700,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
     };
     for (bool first = true; serving; first = false) {
         if (!first && !read_request(&hdr, sizeof(hdr))) break;
-        in_scratch.resize(hdr.in_buffer_len);
+        if (!size_request_buffer(in_scratch, hdr)) break;
         if (hdr.in_buffer_len > 0 && !read_request(in_scratch.data(), hdr.in_buffer_len)) {
             break;
         }
@@ -4302,7 +4330,7 @@ int main(int argc, char** argv) {
                 std::printf("stud-render-host: client disconnected\n");
                 break;
             }
-            g_in_scratch.resize(hdr.in_buffer_len);
+            if (!size_request_buffer(g_in_scratch, hdr)) break;
             if (hdr.in_buffer_len > 0 && !read_request(g_in_scratch.data(), hdr.in_buffer_len)) {
                 break;
             }

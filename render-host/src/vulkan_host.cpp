@@ -537,7 +537,12 @@ uint64_t vk_enumerate_instance_extension_properties(const std::vector<uint8_t>& 
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     std::string layer;
-    if (!in.empty()) layer.assign(reinterpret_cast<const char*>(in.data()));
+    if (!in.empty()) {
+        // Bounded by the payload: a name without its NUL used to read on
+        // past the end of it.
+        const char* name = reinterpret_cast<const char*>(in.data());
+        layer.assign(name, ::strnlen(name, in.size()));
+    }
     const char* layer_ptr = layer.empty() ? nullptr : layer.c_str();
 
     // Always ask the driver for the true count first, so the reply can
@@ -656,7 +661,10 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
     const std::string engine_name = take(hdr.engine_name_len);
     auto take_cstr = [&in, &off]() -> std::string {
         if (off >= in.size()) return {};
-        std::string s(reinterpret_cast<const char*>(in.data() + off));
+        // Bounded by what is left: a string without its NUL used to read
+        // on past the end of the payload.
+        const char* p = reinterpret_cast<const char*>(in.data() + off);
+        std::string s(p, ::strnlen(p, in.size() - off));
         off += s.size() + 1;
         return s;
     };
@@ -1139,7 +1147,12 @@ uint64_t vk_enumerate_device_extension_properties(uint64_t device, const std::ve
     }
     VkPhysicalDevice pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
     std::string layer;
-    if (!in.empty()) layer.assign(reinterpret_cast<const char*>(in.data()));
+    if (!in.empty()) {
+        // Bounded by the payload: a name without its NUL used to read on
+        // past the end of it.
+        const char* name = reinterpret_cast<const char*>(in.data());
+        layer.assign(name, ::strnlen(name, in.size()));
+    }
     const char* layer_ptr = layer.empty() ? nullptr : layer.c_str();
 
     uint32_t count = 0;
@@ -1515,7 +1528,10 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 
     auto take_cstr = [&in, &off]() -> std::string {
         if (off >= in.size()) return {};
-        std::string s(reinterpret_cast<const char*>(in.data() + off));
+        // Bounded by what is left: a string without its NUL used to read
+        // on past the end of the payload.
+        const char* p = reinterpret_cast<const char*>(in.data() + off);
+        std::string s(p, ::strnlen(p, in.size() - off));
         off += s.size() + 1;
         return s;
     };

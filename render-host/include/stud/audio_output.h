@@ -54,6 +54,9 @@ uint64_t audio_open_input_stream(int sample_rate, int channels);
 // AAudio read with a zero timeout does too.
 uint64_t audio_read_frames(void* out, size_t bytes);
 
+// How many captured bytes are waiting to be read; 0 with no stream open.
+size_t audio_input_buffered();
+
 void audio_close_input_stream();
 
 }  // namespace stud::render_host
