@@ -115,8 +115,9 @@ VkResult enumerate_properties(const char* layer_name, uint32_t* pCount, VkT* pPr
         return static_cast<VkResult>(static_cast<int32_t>(r));
     }
 
-    const uint32_t have = (written - sizeof(uint32_t)) / sizeof(WireT);
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t)) / sizeof(WireT));
+    const uint32_t n = std::min({count, have, capacity});
     // What is really in pProperties when this returns. The PVRTC entry
     // below is written AT index n, so reporting n alone said "there are n
     // extensions" while having written n + 1 -- the emulated extension was
@@ -1440,8 +1441,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumeratePhysicalDevices(VkInstance /*inst
         *pPhysicalDeviceCount = count;
         return static_cast<VkResult>(static_cast<int32_t>(r));
     }
-    const uint32_t have = (written - sizeof(uint32_t)) / sizeof(uint64_t);
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t)) / sizeof(uint64_t));
+    const uint32_t n = std::min({count, have, capacity});
     for (uint32_t i = 0; i < n; ++i) {
         uint64_t h = 0;
         std::memcpy(&h, out.data() + sizeof(uint32_t) + i * sizeof(h), sizeof(h));
@@ -1532,8 +1534,9 @@ VKAPI_ATTR void VKAPI_CALL stud_vkGetPhysicalDeviceQueueFamilyProperties(
         *pQueueFamilyPropertyCount = 0;
         return;
     }
-    const uint32_t have = (written - sizeof(uint32_t) * 2) / stride;
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t) * 2) / stride);
+    const uint32_t n = std::min({count, have, capacity});
     for (uint32_t i = 0; i < n; ++i) {
         std::memcpy(&pQueueFamilyProperties[i], out.data() + sizeof(uint32_t) * 2 + i * stride,
                     stride);
@@ -1570,9 +1573,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkEnumerateDeviceExtensionProperties(
         *pPropertyCount = count;
         return static_cast<VkResult>(static_cast<int32_t>(r));
     }
-    const uint32_t have =
-        (written - sizeof(uint32_t)) / sizeof(vk_wire::ExtensionProperties);
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t)) / sizeof(vk_wire::ExtensionProperties));
+    const uint32_t n = std::min({count, have, capacity});
     // What is really in pProperties when this returns. The PVRTC entry is
     // written AT index n, so reporting n alone said "there are n
     // extensions" while having written n + 1 -- the emulated extension was
@@ -2495,8 +2498,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceSurfaceFormatsKHR(
         return static_cast<VkResult>(static_cast<int32_t>(r));
     }
     if (stride != sizeof(VkSurfaceFormatKHR)) return VK_ERROR_INITIALIZATION_FAILED;
-    const uint32_t have = (written - sizeof(uint32_t) * 2) / stride;
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t) * 2) / stride);
+    const uint32_t n = std::min({count, have, capacity});
     for (uint32_t i = 0; i < n; ++i) {
         std::memcpy(&pSurfaceFormats[i], out.data() + sizeof(uint32_t) * 2 + i * stride, stride);
     }
@@ -2522,8 +2526,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceSurfacePresentModesKHR(
         *pPresentModeCount = count;
         return static_cast<VkResult>(static_cast<int32_t>(r));
     }
-    const uint32_t have = (written - sizeof(uint32_t)) / sizeof(uint32_t);
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t)) / sizeof(uint32_t));
+    const uint32_t n = std::min({count, have, capacity});
     for (uint32_t i = 0; i < n; ++i) {
         uint32_t m = 0;
         std::memcpy(&m, out.data() + sizeof(uint32_t) * (1 + i), sizeof(m));
@@ -2610,8 +2615,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetSwapchainImagesKHR(VkDevice device,
         *pSwapchainImageCount = count;
         return static_cast<VkResult>(static_cast<int32_t>(r));
     }
-    const uint32_t have = (written - sizeof(uint32_t)) / sizeof(uint64_t);
-    const uint32_t n = count < have ? count : have;
+    const uint32_t have = static_cast<uint32_t>(
+        (std::min<size_t>(written, out.size()) - sizeof(uint32_t)) / sizeof(uint64_t));
+    const uint32_t n = std::min({count, have, capacity});
     for (uint32_t i = 0; i < n; ++i) {
         uint64_t hh = 0;
         std::memcpy(&hh, out.data() + sizeof(uint32_t) + i * sizeof(hh), sizeof(hh));
