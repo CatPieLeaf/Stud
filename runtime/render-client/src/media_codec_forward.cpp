@@ -104,9 +104,12 @@ int32_t fetch_frame(AMediaCodec* c, OutputSlot& slot, VideoFrameHeader& header) 
         host_call(CallId::VideoDecoderDequeue, c->host, 0, 0, nullptr, 0, buf.data(),
                   static_cast<uint32_t>(buf.size()), &written)));
     if (r != 1) return r;
-    if (written < sizeof(VideoFrameHeader)) return -1;
+    // `written` is what the host sent, which can be more than fitted, and
+    // that is the case below: only `held` bytes are really in buf.
+    const size_t held = std::min<size_t>(written, buf.size());
+    if (held < sizeof(VideoFrameHeader)) return -1;
     std::memcpy(&header, buf.data(), sizeof(header));
-    if (sizeof(header) + header.data_size > written) {
+    if (sizeof(header) + header.data_size > held) {
         // Did not fit, and the host has already handed the frame over:
         // there is no second copy to ask for. Sized for the next one.
         std::fprintf(stderr, "stud: AMediaCodec: a %ux%u frame outgrew the buffer\n",
@@ -134,9 +137,10 @@ int32_t fetch_packet(AMediaCodec* c, OutputSlot& slot) {
                   static_cast<uint32_t>(buf.size()), &written)));
     if (r != 1) return r;
     stud::render_host::EncodedPacketHeader h{};
-    if (written < sizeof(h)) return -1;
+    const size_t held = std::min<size_t>(written, buf.size());
+    if (held < sizeof(h)) return -1;
     std::memcpy(&h, buf.data(), sizeof(h));
-    if (sizeof(h) + h.size > written) return -1;
+    if (sizeof(h) + h.size > held) return -1;
     slot.data.assign(buf.begin() + sizeof(h), buf.begin() + static_cast<long>(sizeof(h) + h.size));
     slot.pts_us = h.pts_us;
     slot.flags = h.flags;
@@ -462,7 +466,16 @@ AMediaFormat* AMediaCodec_getOutputFormat(AMediaCodec* codec) {
         uint32_t written = 0;
         host_call(CallId::VideoEncoderConfig, codec->host, 0, 0, nullptr, 0, csd.data(),
                   static_cast<uint32_t>(csd.size()), &written);
-        if (written > 0) AMediaFormat_setBuffer(f, "csd-0", csd.data(), written);
+        // The host says how long the configuration really is, so one that
+        // did not fit is asked for again at its own size.
+        if (written > csd.size()) {
+            csd.resize(written);
+            host_call(CallId::VideoEncoderConfig, codec->host, 0, 0, nullptr, 0, csd.data(),
+                      static_cast<uint32_t>(csd.size()), &written);
+        }
+        if (written > 0) {
+            AMediaFormat_setBuffer(f, "csd-0", csd.data(), std::min<size_t>(written, csd.size()));
+        }
         return f;
     }
     const VideoFrameHeader& h = codec->format;
