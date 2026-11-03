@@ -1,11 +1,14 @@
 #include "stud/discord_rpc.h"
 
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -29,12 +32,52 @@ std::string runtime_dir() {
     return "/tmp";
 }
 
+constexpr uint32_t kOpClose = 2;
+std::string g_inbox;
+
+// Reads whatever Discord has answered so far, without waiting. Every
+// handshake and SET_ACTIVITY gets a reply; never reading them let them
+// pile up for the whole session, and hid the one that matters: Discord
+// refuses a bad handshake with a CLOSE frame, which is said out loud
+// here. False when Discord has closed the connection.
+bool drain_replies() {
+    char buf[4096];
+    for (;;) {
+        const ssize_t n = ::recv(g_fd, buf, sizeof(buf), MSG_DONTWAIT);
+        if (n > 0) {
+            g_inbox.append(buf, static_cast<size_t>(n));
+            continue;
+        }
+        if (n == 0) return false;
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+        return false;
+    }
+    while (g_inbox.size() >= 8) {
+        uint32_t header[2];
+        std::memcpy(header, g_inbox.data(), sizeof(header));
+        if (g_inbox.size() - 8 < header[1]) break;
+        if (header[0] == kOpClose) {
+            std::printf("stud-render-host: Discord closed rich presence: %s\n",
+                        g_inbox.substr(8, header[1]).c_str());
+            std::fflush(stdout);
+            return false;
+        }
+        g_inbox.erase(0, 8 + static_cast<size_t>(header[1]));
+    }
+    return true;
+}
+
+// One write of the whole frame, never waiting: the socket is
+// non-blocking, so a Discord that has stopped reading costs this update
+// rather than the engine thread that asked for it.
 bool send_frame(uint32_t opcode, const std::string& payload) {
-    if (g_fd < 0) return false;
+    if (g_fd < 0 || !drain_replies()) return false;
     uint32_t header[2] = {opcode, static_cast<uint32_t>(payload.size())};
-    if (::send(g_fd, header, sizeof(header), MSG_NOSIGNAL) != sizeof(header)) return false;
-    const ssize_t n = ::send(g_fd, payload.data(), payload.size(), MSG_NOSIGNAL);
-    return n == static_cast<ssize_t>(payload.size());
+    std::string frame(reinterpret_cast<const char*>(header), sizeof(header));
+    frame += payload;
+    const ssize_t n = ::send(g_fd, frame.data(), frame.size(), MSG_NOSIGNAL);
+    return n == static_cast<ssize_t>(frame.size());
 }
 
 // Minimal JSON string escaping. Presence text is a game name and a
@@ -67,6 +110,7 @@ void close_connection() {
         ::close(g_fd);
         g_fd = -1;
     }
+    g_inbox.clear();
 }
 
 // Discord listens on discord-ipc-0 through discord-ipc-9; a client tries
@@ -93,6 +137,7 @@ bool connect_locked() {
         addr.sun_family = AF_UNIX;
         std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path.c_str());
         if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+            ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
             g_fd = fd;
             const std::string handshake =
                 "{\"v\":1,\"client_id\":\"" + escape(g_application_id) + "\"}";
