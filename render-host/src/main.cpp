@@ -1343,7 +1343,17 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             // reading it after reported 0 bytes every time, which is what
             // a moved-from string is.
             const size_t payload_bytes = uri.size();
-            const bool has_token = uri.find("activationToken=") != std::string::npos;
+            const std::string key = "activationToken=";
+            std::optional<std::string> launcher_token;
+            for (size_t at = 0; at < uri.size();) {
+                size_t end = uri.find('\n', at);
+                if (end == std::string::npos) end = uri.size();
+                if (uri.compare(at, key.size(), key) == 0) {
+                    launcher_token = uri.substr(at + key.size(), end - at - key.size());
+                    break;
+                }
+                at = end + 1;
+            }
             {
                 std::lock_guard<std::mutex> lock(g_deep_link_mutex);
                 // Two links queued at once means the first was never
@@ -1358,35 +1368,25 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             // can see is not much of an answer.
             //
             // Handled here rather than in Process B because this process
-            // owns the Wayland surface; the token is consumed and does
-            // not travel on with the rest of the payload.
+            // owns the Wayland surface. The token is taken out above,
+            // before the payload is moved into the queue: read after, it
+            // was never found, and the launcher's token was never spent.
             {
-                const std::string key = "activationToken=";
                 // Said out loud, because the second stud-ui's own stderr
                 // goes nowhere. It has no terminal and is not teed into
                 // the session log, so a missing token was invisible
                 // from both ends.
                 std::printf("stud-render-host: deep link payload %zu bytes, activation token %s\n",
                             payload_bytes,
-                            has_token ? "present" : "ABSENT");
+                            launcher_token ? "present" : "ABSENT");
                 std::fflush(stdout);
-                size_t at = 0;
-                bool raised = false;
-                while (at < uri.size()) {
-                    size_t end = uri.find('\n', at);
-                    if (end == std::string::npos) end = uri.size();
-                    if (uri.compare(at, key.size(), key) == 0) {
-                        raised = true;
-                        const std::string token = uri.substr(at + key.size(), end - at - key.size());
-                        // Same window the activation-token getter above
-                        // uses; the one real surface this process owns.
-                        stud::android_glue::native_window_activate(g_real_window, token.c_str());
-                        std::printf("stud-render-host: raising the window for the new link\n");
-                        break;
-                    }
-                    at = end + 1;
-                }
-                if (!raised) {
+                if (launcher_token) {
+                    // Same window the activation-token getter above
+                    // uses; the one real surface this process owns.
+                    stud::android_glue::native_window_activate(g_real_window,
+                                                               launcher_token->c_str());
+                    std::printf("stud-render-host: raising the window for the new link\n");
+                } else {
                     // No token from the launcher. Mint one against this
                     // window and spend it here.
                     //
