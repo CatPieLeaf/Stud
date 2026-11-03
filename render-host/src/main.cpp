@@ -312,6 +312,7 @@ using namespace stud::render_host;
 using PFN_eglInitialize = EGLBoolean (*)(EGLDisplay, EGLint*, EGLint*);
 using PFN_eglBindAPI = EGLBoolean (*)(EGLenum);
 using PFN_eglChooseConfig = EGLBoolean (*)(EGLDisplay, const EGLint*, EGLConfig*, EGLint, EGLint*);
+using PFN_eglGetConfigAttrib = EGLBoolean (*)(EGLDisplay, EGLConfig, EGLint, EGLint*);
 using PFN_eglCreateWindowSurface = EGLSurface (*)(EGLDisplay, EGLConfig, EGLNativeWindowType,
                                                    const EGLint*);
 using PFN_eglCreateContext = EGLContext (*)(EGLDisplay, EGLConfig, EGLContext, const EGLint*);
@@ -360,6 +361,7 @@ struct RealFns {
     FN(eglInitialize);
     FN(eglBindAPI);
     FN(eglChooseConfig);
+    FN(eglGetConfigAttrib);
     FN(eglCreateWindowSurface);
     FN(eglCreateContext);
     FN(eglMakeCurrent);
@@ -2117,12 +2119,29 @@ bool gfx_presenter_init(const RealFns& fns, RealWindow& window) {
     constexpr EGLint kEs3Bit = 0x40;  // EGL_OPENGL_ES3_BIT
     const EGLint attribs[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, kEs3Bit,
                               EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                              EGL_ALPHA_SIZE, 8, EGL_NONE};
+                              EGL_ALPHA_SIZE, window.on_x11() ? 0 : 8, EGL_NONE};
     EGLConfig config = nullptr;
     EGLint n = 0;
-    if (fns.eglChooseConfig_(p.display, attribs, &config, 1, &n) != EGL_TRUE || n < 1) {
+    if (fns.eglChooseConfig_(p.display, attribs, nullptr, 0, &n) != EGL_TRUE || n < 1) {
         std::fprintf(stderr, "stud-render-host: gfxstream present: no window config\n");
         return false;
+    }
+    std::vector<EGLConfig> configs(static_cast<size_t>(n));
+    fns.eglChooseConfig_(p.display, attribs, configs.data(), n, &n);
+    config = configs.front();
+    // X11: a config without alpha. The window is the screen's default,
+    // opaque visual, and a config with alpha belongs to an ARGB one, which
+    // X11's EGL refuses for it (EGL_BAD_CONFIG at eglCreateWindowSurface),
+    // so OpenGL mode never showed a frame there. Wayland takes either.
+    if (window.on_x11()) {
+        for (EGLConfig candidate : configs) {
+            EGLint alpha = -1;
+            if (fns.eglGetConfigAttrib_(p.display, candidate, EGL_ALPHA_SIZE, &alpha) == EGL_TRUE &&
+                alpha == 0) {
+                config = candidate;
+                break;
+            }
+        }
     }
     {
         std::lock_guard<std::mutex> wl_lock(wayland_mutex());
@@ -2294,6 +2313,10 @@ uint64_t gfx_present(const RealFns& fns, RealWindow& window, const GfxFrame& fra
         // A round trip here waited on the compositor every frame.
         std::lock_guard<std::mutex> wl_lock(wayland_mutex());
         if (window.display != nullptr) wl_display_flush(window.display);
+        // As on the Vulkan path, the X11 window is shown on the first
+        // frame. Without this OpenGL mode drew into a window that never
+        // came up. No-op on Wayland and after the first call.
+        stud::android_glue::x11_ensure_mapped();
     }
     return swapped ? 1 : 0;
 }
@@ -4146,6 +4169,7 @@ int main(int argc, char** argv) {
     RealFns fns{};
 #define RESOLVE(name) fns.name##_ = must_resolve<PFN_##name>(#name)
     RESOLVE(eglInitialize); RESOLVE(eglBindAPI); RESOLVE(eglChooseConfig);
+    RESOLVE(eglGetConfigAttrib);
     RESOLVE(eglCreateWindowSurface); RESOLVE(eglCreateContext); RESOLVE(eglMakeCurrent);
     RESOLVE(eglSwapBuffers); RESOLVE(eglGetError); RESOLVE(eglQueryString);
     RESOLVE(eglQuerySurface); RESOLVE(eglSwapInterval);
