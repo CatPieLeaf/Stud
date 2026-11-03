@@ -764,9 +764,11 @@ std::vector<std::string> ui_helper_candidates(const std::string& own_dir) {
 }
 
 // Replaces this (forked) process with stud-ui run as `stud <mode> <argument>`,
-// trying each candidate in turn; exits 127 if none of them runs.
-[[noreturn]] void exec_ui_helper(const char* mode, const std::string& argument) {
-    for (const std::string& path : ui_helper_candidates(own_exe_dir())) {
+// trying each candidate in turn; exits 127 if none of them runs. The
+// candidates are built before the fork, so the child only execs.
+[[noreturn]] void exec_ui_helper(const std::vector<std::string>& candidates, const char* mode,
+                                 const std::string& argument) {
+    for (const std::string& path : candidates) {
         if (path.find('/') == std::string::npos) {
             ::execlp(path.c_str(), path.c_str(), mode, argument.c_str(), nullptr);
         } else {
@@ -777,6 +779,7 @@ std::vector<std::string> ui_helper_candidates(const std::string& own_dir) {
 }
 
 void run_ui_helper_detached(const char* mode, const std::string& argument) {
+    const std::vector<std::string> candidates = ui_helper_candidates(own_exe_dir());
     const pid_t pid = ::fork();
     if (pid != 0) {
         if (pid > 0) ::waitpid(pid, nullptr, 0);  // the intermediate exits at once
@@ -786,7 +789,7 @@ void run_ui_helper_detached(const char* mode, const std::string& argument) {
     // process never has to reap it.
     if (::fork() != 0) ::_exit(0);
     ::setsid();
-    exec_ui_helper(mode, argument);
+    exec_ui_helper(candidates, mode, argument);
 }
 
 // One stud-ui helper at a time.
@@ -806,12 +809,13 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
     std::lock_guard<std::mutex> helper_lock(ui_helper_mutex());
     int to_child[2] = {-1, -1};
     int from_child[2] = {-1, -1};
-    if (::pipe(to_child) != 0) return false;
-    if (capture != nullptr && ::pipe(from_child) != 0) {
+    if (::pipe2(to_child, O_CLOEXEC) != 0) return false;
+    if (capture != nullptr && ::pipe2(from_child, O_CLOEXEC) != 0) {
         ::close(to_child[0]);
         ::close(to_child[1]);
         return false;
     }
+    const std::vector<std::string> candidates = ui_helper_candidates(own_exe_dir());
     const pid_t pid = ::fork();
     if (pid == 0) {
         ::close(to_child[1]);
@@ -823,7 +827,7 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
             ::close(from_child[1]);
         }
         ::setsid();
-        exec_ui_helper(mode, name);
+        exec_ui_helper(candidates, mode, name);
     }
     ::close(to_child[0]);
     if (capture != nullptr) ::close(from_child[1]);
@@ -1189,13 +1193,13 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 return 0;
             }
             int pipe_fds[2] = {-1, -1};
-            if (::pipe(pipe_fds) != 0) return 0;
+            if (::pipe2(pipe_fds, O_CLOEXEC) != 0) return 0;
             // A second pipe, the other way: the page's JavaScript bridge
             // answers through the viewer's stdout (see
             // read_web_view_output), which is how a login challenge
             // reports that it is done.
             int out_fds[2] = {-1, -1};
-            if (::pipe(out_fds) != 0) {
+            if (::pipe2(out_fds, O_CLOEXEC) != 0) {
                 ::close(pipe_fds[0]);
                 ::close(pipe_fds[1]);
                 return 0;
@@ -1525,7 +1529,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             for (const char* const* argv_template : candidates) {
                 if (argv_template == nullptr) continue;
                 int fds[2] = {-1, -1};
-                if (::pipe(fds) != 0) return 0;
+                if (::pipe2(fds, O_CLOEXEC) != 0) return 0;
                 const pid_t pid = ::fork();
                 if (pid == 0) {
                     ::close(fds[1]);
@@ -3835,6 +3839,14 @@ int main(int argc, char** argv) {
     // away from the terminal or the journal (stud/session_log.h).
     stud::logging::start_session_log_from_env();
     stud::logging::install_crash_reporter("stud-render-host");
+    // A write into a child that already exited (a closed web view, a
+    // keyring helper that never read its input) is an EPIPE every caller
+    // already handles, not a reason for the game to lose its window.
+    // Caught rather than ignored: a caught signal is reset by exec, so
+    // the helpers this process starts still get the default.
+    struct sigaction pipe_action {};
+    pipe_action.sa_handler = [](int) {};
+    ::sigaction(SIGPIPE, &pipe_action, nullptr);
 
     // A web-view viewer is a session leader of its own, so nothing takes
     // it down with this process, live-reported as a panel still on
