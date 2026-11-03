@@ -52,8 +52,8 @@ std::string pool_string(const std::vector<uint8_t>& data, size_t pool_offset, ui
                         uint32_t flags, size_t strings_start, uint32_t index) {
     if (index >= count) return {};
     const size_t offsets_at = pool_offset + 28;
-    if (offsets_at + (index + 1) * 4 > data.size()) return {};
-    const uint32_t rel = read_u32(data.data() + offsets_at + index * 4);
+    if (offsets_at + (size_t{index} + 1) * 4 > data.size()) return {};
+    const uint32_t rel = read_u32(data.data() + offsets_at + size_t{index} * 4);
     const size_t at = pool_offset + strings_start + rel;
     if (at + 2 > data.size()) return {};
 
@@ -71,7 +71,7 @@ std::string pool_string(const std::vector<uint8_t>& data, size_t pool_offset, ui
         }
         size_t len_at = at;
         if ((data[len_at] & 0x80) != 0) len_at += 2; else len_at += 1;
-        if (len_at >= data.size()) return {};
+        if (len_at + 1 >= data.size()) return {};
         size_t byte_len = (data[len_at] & 0x80) != 0
                               ? ((static_cast<size_t>(data[len_at] & 0x7f) << 8) | data[len_at + 1])
                               : data[len_at];
@@ -87,10 +87,11 @@ std::string pool_string(const std::vector<uint8_t>& data, size_t pool_offset, ui
         len = ((len & 0x7fff) << 16) | read_u16(data.data() + p);
         p += 2;
     }
+    // Checked before reserving: the length comes from the file.
+    if (p + size_t{len} * 2 > data.size()) return {};
     std::string out;
     out.reserve(len);
     for (uint32_t i = 0; i < len; ++i) {
-        if (p + 2 > data.size()) return {};
         const uint16_t ch = read_u16(data.data() + p);
         p += 2;
         if (ch == 0 || ch > 0x7f) return {};
@@ -169,7 +170,6 @@ std::string apk_version_name(const std::string& apk_path) {
                     const size_t a = attrs_at + static_cast<size_t>(i) * attr_size;
                     if (a + 20 > data.size()) break;
                     const uint32_t name_index = read_u32(data.data() + a + 4);
-                    (void)0;
                     if (pool_string(data, pool_offset, pool_count, pool_flags, pool_strings_start,
                                     name_index) != "versionName") {
                         continue;
