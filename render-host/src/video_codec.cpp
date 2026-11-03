@@ -317,6 +317,7 @@ int32_t video_decoder_configure(uint64_t handle, uint32_t width, uint32_t height
     if (!d) return kErrorUnknown;
     std::lock_guard<std::mutex> lock(d->mutex);
     if (d->opened) return kOk;
+    if (d->ctx == nullptr) return kErrorUnknown;  // destroyed while this waited
     d->ctx->width = static_cast<int>(width);
     d->ctx->height = static_cast<int>(height);
     if (csd != nullptr && csd_size > 0) {
@@ -406,7 +407,11 @@ void video_decoder_destroy(uint64_t handle) {
         decoders().erase(it);
     }
     std::lock_guard<std::mutex> lock(d->mutex);
+    // A call on another thread may already hold this decoder and be
+    // waiting on the mutex: it has to find it closed, not freed and open.
+    d->opened = false;
     if (d->sws != nullptr) av().sws_free(d->sws);
+    d->sws = nullptr;
     av().frame_free(&d->frame);
     av().packet_free(&d->packet);
     av().free_context(&d->ctx);
