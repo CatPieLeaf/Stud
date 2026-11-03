@@ -1086,6 +1086,7 @@ bool shared_memory_enabled() {
 struct SubmitFeedback {
     std::mutex m;
     const std::atomic<uint64_t>* page = nullptr;
+    size_t page_length = 0;
     uint64_t device = 0;
     uint64_t submits = 0;
     struct Fence {
@@ -1124,7 +1125,13 @@ void start_submit_feedback(uint64_t device) {
     SubmitFeedback& f = submit_feedback();
     {
         std::lock_guard<std::mutex> lock(f.m);
+        // The last device's page goes with it: dropping the pointer alone
+        // left one mapping behind per device, i.e. per game joined.
+        if (f.page != nullptr) {
+            ::munmap(const_cast<std::atomic<uint64_t>*>(f.page), f.page_length);
+        }
         f.page = nullptr;
+        f.page_length = 0;
         f.device = device;
         f.submits = 0;
         f.fences.clear();
@@ -1144,7 +1151,12 @@ void start_submit_feedback(uint64_t device) {
         return;
     }
     std::lock_guard<std::mutex> lock(f.m);
-    if (f.device == device) f.page = static_cast<const std::atomic<uint64_t>*>(page.address);
+    if (f.device == device) {
+        f.page = static_cast<const std::atomic<uint64_t>*>(page.address);
+        f.page_length = page.length;
+    } else {
+        ::munmap(page.address, page.length);  // a newer device took over meanwhile
+    }
 }
 
 // The window-state page, so the runtime's main loop reads the size and
