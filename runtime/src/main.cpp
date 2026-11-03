@@ -552,6 +552,56 @@ void poll_window_resize(stud::jni_bridge::BionicAwareJvm& jvm,
 
 // What a web-view panel, or a second launcher, hands back.
 //
+// A web-view navigation that joins one particular server, as the
+// key=value lines join_experience_from_deep_link() reads. The server
+// list sends https://<host>.roblox.com/games/start?placeId=...&
+// accessCode=... (or linkCode, or gameInstanceId) plus the join-attempt
+// fields. Empty for anything that names no server, which the engine is
+// still asked about.
+std::optional<std::string> server_join_payload(const std::string& url) {
+    const size_t path = url.find("/games/start?");
+    if (url.rfind("https://", 0) != 0 || path == std::string::npos ||
+        url.substr(0, path).find(".roblox.com") == std::string::npos) {
+        return std::nullopt;
+    }
+    std::string place_id;
+    std::string payload;
+    bool names_server = false;
+    size_t at = path + std::strlen("/games/start?");
+    while (at < url.size()) {
+        size_t end = url.find_first_of("&#", at);
+        if (end == std::string::npos) end = url.size();
+        const std::string pair = url.substr(at, end - at);
+        const size_t eq = pair.find('=');
+        if (eq != std::string::npos && eq + 1 < pair.size()) {
+            std::string key = pair.substr(0, eq);
+            std::transform(key.begin(), key.end(), key.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const std::string value = pair.substr(eq + 1);
+            if (key == "placeid") {
+                place_id = value;
+            } else if (key == "accesscode" || key == "linkcode" || key == "gameinstanceid") {
+                names_server = true;
+                payload += (key == "accesscode"   ? "accessCode="
+                            : key == "linkcode"   ? "linkCode="
+                                                  : "gameInstanceId=") +
+                           value + "\n";
+            } else if (key == "joinattemptid") {
+                payload += "joinAttemptId=" + value + "\n";
+            } else if (key == "joinattemptorigin") {
+                payload += "joinOrigin=" + value + "\n";
+            }
+        }
+        if (end < url.size() && url[end] == '#') break;
+        at = end + 1;
+    }
+    const bool numeric = !place_id.empty() &&
+                         std::all_of(place_id.begin(), place_id.end(),
+                                     [](unsigned char c) { return std::isdigit(c) != 0; });
+    if (!numeric || !names_server) return std::nullopt;
+    return "placeId=" + place_id + "\n" + payload;
+}
+
 // Four polls that belong together and share nothing with the rest of the
 // event loop: a panel that closed, a navigation it declined to follow,
 // anything its page sent over the JavaScript bridge, and a deep link from
@@ -590,9 +640,28 @@ void poll_web_view_and_deep_links(stud::jni_bridge::BionicAwareJvm& jvm,
                     stud::render_host::CallId::PollWebViewNavigation, args, nullptr, 0, url.data(),
                     static_cast<uint32_t>(url.size()), &written);
                 if (got == 0 || written == 0) break;
-                stud::jni_bridge::ask_engine_about_url(
-                    jvm, lib,
-                    std::string(url.data(), std::min<size_t>(written, url.size())));
+                const std::string nav(url.data(), std::min<size_t>(written, url.size()));
+                // Joining one particular server from the server list. The
+                // engine claims these links, but handed one it only goes
+                // back to the experience page and never asks for a
+                // launch, so the click did nothing. They join through the
+                // same path a browser's link to a server takes instead,
+                // which carries the access code or instance into the real
+                // start-game call.
+                if (const auto join = server_join_payload(nav)) {
+                    uint64_t answer[8] = {1};  // handled: the viewer drops it
+                    stud::render_client::connection().call(
+                        stud::render_host::CallId::WebViewLoadUrl, answer, nav.data(),
+                        static_cast<uint32_t>(nav.size()), nullptr, 0, nullptr);
+                    uint64_t close_args[8] = {};
+                    stud::render_client::connection().call(
+                        stud::render_host::CallId::CloseWebView, close_args, nullptr, 0, nullptr,
+                        0, nullptr);
+                    stud::jni_bridge::join_experience_from_deep_link(
+                        jvm, lib, *join, v2_platform_params, v2_device_params, lifecycle.surface);
+                    continue;
+                }
+                stud::jni_bridge::ask_engine_about_url(jvm, lib, nav);
             }
         }
         // Anything the page sent through its JavaScript bridge, in the
