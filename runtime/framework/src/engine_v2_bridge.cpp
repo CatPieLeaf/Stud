@@ -906,6 +906,10 @@ bool resume_lua_app_after_game(FakeJni::Jvm& jvm, const stud::linker::LoadedLibr
     return !outcome.still_running && !outcome.trapped_abort;
 }
 
+// One at a time: the engine can re-signal, and two concurrent start-game
+// calls would hand it two conflicting launches.
+static std::atomic<bool> g_experience_start_in_flight{false};
+
 bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                     const std::string& payload,
                                     const std::shared_ptr<PlatformParams>& platform_params,
@@ -949,12 +953,22 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
         std::fflush(stderr);
         return false;
     }
+    // Refused here, before the request is replaced: the start in progress
+    // reads that request, and acknowledge_experience_start() below would
+    // return without a word, leaving this join dropped and the log saying
+    // it had happened.
+    if (g_experience_start_in_flight.load()) {
+        std::fprintf(stderr, "stud: not joining placeId=%lld: another join is still starting\n",
+                     request.place_id);
+        std::fflush(stderr);
+        return false;
+    }
     // Everything past here is what a Lua-initiated launch already does:
     // the request becomes the one acknowledge_experience_start reads, and
     // that runs the real nativeAppBridgeV2StartGameWithParam. Reusing it
     // rather than repeating it means one join path, not two that can
     // drift.
-    std::fprintf(stderr, "stud: joining placeId=%lld from a second launch\n", request.place_id);
+    std::fprintf(stderr, "stud: joining placeId=%lld from a link\n", request.place_id);
     std::fflush(stderr);
     NativeHelperJava::set_last_launch_request(std::move(request));
     acknowledge_experience_start(jvm, lib, platform_params, device_params, surface);
@@ -968,11 +982,8 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
     void* addr = lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartGameWithParam");
     if (addr == nullptr || platform_params == nullptr || surface == nullptr) return;
-    // One at a time: the engine can re-signal, and two concurrent start-game
-    // calls would hand it two conflicting launches.
-    static std::atomic<bool> in_flight{false};
     bool expected = false;
-    if (!in_flight.compare_exchange_strong(expected, true)) return;
+    if (!g_experience_start_in_flight.compare_exchange_strong(expected, true)) return;
 
     auto* fn = reinterpret_cast<V2StartGameFn>(addr);
     // Detached, because this is called from the engine's own callback
@@ -1091,7 +1102,7 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
             });
         }
 
-        in_flight.store(false);
+        g_experience_start_in_flight.store(false);
     }).detach();
 }
 
