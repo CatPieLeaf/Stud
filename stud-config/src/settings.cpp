@@ -4,6 +4,7 @@
 
 #include <sys/stat.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 
@@ -290,11 +291,26 @@ void save_settings(const std::string& path, const StudSettings& settings) {
 
     make_directories(parent_directory(path));
 
-    std::ofstream out(path);
-    if (!out.is_open()) {
-        throw SettingsError("stud: failed to open '" + path + "' for writing");
+    // Written beside it and renamed over it: truncating the real file
+    // first left it empty or half-written after a crash or a full disk,
+    // and the next launch then read it as malformed and ran on defaults.
+    const std::string temp = path + ".new";
+    {
+        std::ofstream out(temp);
+        if (!out.is_open()) {
+            throw SettingsError("stud: failed to open '" + temp + "' for writing");
+        }
+        out << doc.dump(2);
+        out.close();
+        if (out.fail()) {
+            std::remove(temp.c_str());
+            throw SettingsError("stud: failed to write '" + temp + "'");
+        }
     }
-    out << doc.dump(2);
+    if (std::rename(temp.c_str(), path.c_str()) != 0) {
+        std::remove(temp.c_str());
+        throw SettingsError("stud: failed to replace '" + path + "'");
+    }
 }
 
 std::string default_config_path() {

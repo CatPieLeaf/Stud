@@ -912,8 +912,10 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     stud::config::StudSettings settings;
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
-    } catch (const stud::config::SettingsError&) {
-        // Fall through with defaults, apk_path will be empty, caught below.
+    } catch (const stud::config::SettingsError& e) {
+        // Runs on defaults, said out loud: silently, a broken file looked
+        // like every setting having been reset for no reason.
+        std::fprintf(stderr, "%s; launching with default settings\n", e.what());
     }
 
     // A launch that has never seen the settings window still gets a real
@@ -2108,14 +2110,11 @@ int main(int argc, char** argv) {
     // That one is about a launch that CAN happen going to the home screen
     // rather than to Settings, which is still exactly what it does.
     {
-        bool have_apk = false;
-        try {
-            const auto configured = stud::config::load_settings(stud::config::default_config_path());
-            have_apk = QFileInfo::exists(
-                QString::fromStdString(stud::paths::stored_apk_path()));
-        } catch (const stud::config::SettingsError&) {
-            // No readable config at all is the same answer: nothing configured.
-        }
+        // The APK lives at a fixed path, so the settings file has no say:
+        // reading it first sent a malformed one to Settings as if no APK
+        // were installed.
+        const bool have_apk =
+            QFileInfo::exists(QString::fromStdString(stud::paths::stored_apk_path()));
         if (!have_apk) {
             if (stud::ui::SettingsWindow::handOffToRunningInstance()) return 0;
             stud::ui::SettingsWindow::listenForOpenRequests();
