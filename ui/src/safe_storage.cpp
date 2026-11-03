@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QStandardPaths>
 
 #include <openssl/evp.h>
@@ -120,22 +121,21 @@ bool store_secret(const QString& name, const QString& value, QString* error_out)
 
     // nonce || tag || ciphertext, written whole then moved into place so
     // a crash mid-write cannot leave a half-file that fails to decrypt.
+    // QSaveFile: commit() refuses if any write failed and replaces the
+    // old file in one rename, so neither a full disk nor a crash between
+    // removing the old file and renaming the new one can lose the login.
     const QString path = secret_path(name);
-    const QString temp = path + ".new";
-    QFile file(temp);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        if (error_out != nullptr) *error_out = "could not open " + temp;
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error_out != nullptr) *error_out = "could not open " + path;
         return false;
     }
     file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     file.write(nonce);
     file.write(tag);
     file.write(cipher);
-    file.close();
-    QFile::remove(path);
-    if (!QFile::rename(temp, path)) {
-        QFile::remove(temp);
-        if (error_out != nullptr) *error_out = "could not replace " + path;
+    if (!file.commit()) {
+        if (error_out != nullptr) *error_out = "could not write " + path;
         return false;
     }
     return true;
