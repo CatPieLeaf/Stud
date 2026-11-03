@@ -14,6 +14,8 @@ with zipfile.ZipFile(out_path, "w") as z:
         "-----BEGIN CERTIFICATE-----\nFAKE_BUT_REAL_BYTES\n-----END CERTIFICATE-----\n",
     )
     z.writestr("assets/top_level.txt", "hello from a top-level asset\n")
+    # A hostile entry: must be refused, never written outside dest_dir.
+    z.writestr("assets/../escaped.txt", "must not leave the asset directory\n")
     # Real APKs have plenty of non-assets/ entries, must NOT be
     # extracted by extract_apk_assets().
     z.writestr("AndroidManifest.xml", "<manifest/>")

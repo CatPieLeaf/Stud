@@ -60,6 +60,8 @@ int main(int argc, char** argv) {
     check(!file_exists(dest_dir + "/AndroidManifest.xml"),
           "a non-assets/ entry (manifest) was correctly NOT extracted");
     check(!file_exists(dest_dir + "/classes.dex"), "dex files were correctly NOT extracted");
+    check(!file_exists(dest_dir + "/../escaped.txt"),
+          "an assets/../ entry was refused instead of written outside dest_dir");
 
     // Real content check, not just presence.
     {

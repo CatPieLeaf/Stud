@@ -5,6 +5,7 @@
 
 #include <sys/stat.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -37,6 +38,20 @@ std::string parent_directory(const std::string& path) {
 std::string base_name(const std::string& path) {
     size_t pos = path.find_last_of('/');
     return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+// Whether a zip entry's relative path stays under the directory it is
+// extracted into: not absolute, and no ".." component anywhere.
+bool stays_inside(std::string_view relative) {
+    if (relative.empty() || relative.front() == '/') return false;
+    size_t at = 0;
+    while (at <= relative.size()) {
+        size_t end = relative.find('/', at);
+        if (end == std::string_view::npos) end = relative.size();
+        if (relative.substr(at, end - at) == "..") return false;
+        at = end + 1;
+    }
+    return true;
 }
 
 // APKMirror's .apkm and SAI's .apks are both plain zips holding a whole
@@ -309,6 +324,14 @@ void extract_assets_from_single_apk(const std::string& apk_path, const std::stri
         }
 
         std::string relative(name.substr(kPrefix.size()));
+        // An entry may name any path, and an APK is often a download from
+        // a mirror: `assets/../../x` would land outside dest_dir. A real
+        // APK has neither an absolute name nor a ".." in one.
+        if (!stays_inside(relative)) {
+            std::fprintf(stderr, "stud: skipping APK entry '%s': it points outside assets/\n",
+                         std::string(name).c_str());
+            continue;
+        }
         std::string dest_path = dest_dir + "/" + relative;
         make_directories(parent_directory(dest_path));
 
