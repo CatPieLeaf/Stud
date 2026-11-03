@@ -134,7 +134,9 @@ bool bar_export_requested() {
     return on;
 }
 // Whether the current device was created able to export dma-bufs.
-bool g_bar_export = false;
+// Atomic and stored once per device: memory is allocated on other
+// connections' threads while a device is created (the one at game join).
+std::atomic<bool> g_bar_export{false};
 }  // namespace
 
 // Bumped every time the window changes size, so tracing that is capped
@@ -1780,7 +1782,7 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         timeline_enabled = true;
     }
 
-    g_bar_export = false;
+    bool bar_export = false;
     if (bar_export_requested() &&
         device_supports_extension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
         device_supports_extension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
@@ -1790,8 +1792,12 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
                 extensions.push_back(name);
             }
         }
-        g_bar_export = true;
+        bar_export = true;
     }
+    // One store, never a passing false: written as false-then-true, an
+    // allocation racing this saw the copying path for a device whose
+    // buffers were declared for export.
+    g_bar_export.store(bar_export);
 
     std::vector<const char*> ext_ptrs;
     for (const std::string& s : extensions) ext_ptrs.push_back(s.c_str());
@@ -3779,7 +3785,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             return v == nullptr || std::strcmp(v, "0") != 0;
         }();
         // Design C: the BAR itself, exported to the engine's process.
-        if (g_bar_export && pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 &&
+        if (g_bar_export.load() && pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 &&
             vkGetPhysicalDeviceMemoryProperties != nullptr) {
             VkPhysicalDeviceMemoryProperties mp{};
             vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
