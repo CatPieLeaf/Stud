@@ -6,6 +6,9 @@ add_library(stud_render_host_protocol STATIC
 )
 target_include_directories(stud_render_host_protocol PUBLIC include)
 target_include_directories(stud_render_host_protocol PRIVATE ${StudRingIncludes})
+# stud/stud_paths.h, header-only: where the render-host socket lives.
+target_include_directories(stud_render_host_protocol PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include)
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)

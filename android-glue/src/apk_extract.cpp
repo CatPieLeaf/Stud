@@ -1,4 +1,5 @@
 #include "stud/android_glue.h"
+#include "stud/stud_paths.h"
 
 #include <miniz.h>
 #include <miniz_zip.h>
@@ -127,15 +128,7 @@ bool is_foreign_abi_split(std::string_view name) {
            name.find("mips") != std::string_view::npos;
 }
 
-std::string cache_root() {
-    if (const char* xdg_cache_home = std::getenv("XDG_CACHE_HOME")) {
-        return std::string(xdg_cache_home) + "/stud";
-    }
-    if (const char* home = std::getenv("HOME")) {
-        return std::string(home) + "/.cache/stud";
-    }
-    return "/tmp/stud";
-}
+std::string cache_root() { return stud::paths::cache_dir(); }
 
 // Unpacks the bundle's own .apk members once into the cache and returns
 // their paths, base first. Cached by the bundle's file name and size:

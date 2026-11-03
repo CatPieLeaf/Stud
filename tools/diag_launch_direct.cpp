@@ -20,6 +20,7 @@
 
 #include "stud/bionic_runtime.h"
 #include "stud/ipc.h"
+#include "stud/stud_paths.h"
 
 namespace {
 // Plain curl subprocess fetch. This driver is glibc-side and throwaway,
@@ -130,9 +131,7 @@ int main(int argc, char** argv) {
     std::vector<stud::bionic_runtime::HostBind> extra_binds;
     extra_binds.push_back(
         {std::filesystem::path(so_path).parent_path().string(), /*writable=*/true});
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        extra_binds.push_back({xdg_runtime_dir, /*writable=*/true});
-    }
+    extra_binds.push_back({stud::paths::runtime_dir(), /*writable=*/true});
     {
         std::string apk_dir = std::filesystem::path(apk_path).parent_path().string();
         if (!apk_dir.empty()) {

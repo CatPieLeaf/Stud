@@ -1,5 +1,7 @@
 #pragma once
 
+#include <sys/stat.h>
+
 #include <cstdlib>
 #include <string>
 
@@ -48,6 +50,27 @@ inline std::string cache_dir() { return detail::xdg_dir("XDG_CACHE_HOME", "/.cac
 // nothing, but a cache cleaner has no business taking it mid-session.
 inline std::string state_dir() { return detail::xdg_dir("XDG_STATE_HOME", "/.local/state/stud"); }
 inline std::string log_dir() { return state_dir() + "/logs"; }
+
+// Sockets and other files that only live as long as a session.
+//
+// XDG_RUNTIME_DIR is private to the user by definition. Without one (su,
+// sudo -u, a minimal session) this used to fall back to /tmp/stud-<uid>,
+// a name any other local user could create first and own, and with it
+// every socket Stud listens on, the one that hands out the stored login
+// included. The fallback is now under the user's own home, made private
+// here, so it never depends on who got to a shared directory first.
+inline std::string runtime_dir() {
+    if (const char* xdg = std::getenv("XDG_RUNTIME_DIR"); xdg != nullptr && *xdg != '\0') {
+        return std::string(xdg) + "/stud";
+    }
+    const std::string dir = state_dir() + "/run";
+    for (size_t at = dir.find('/', 1); at != std::string::npos; at = dir.find('/', at + 1)) {
+        ::mkdir(dir.substr(0, at).c_str(), 0700);
+    }
+    ::mkdir(dir.c_str(), 0700);
+    ::chmod(dir.c_str(), 0700);
+    return dir;
+}
 
 // The engine's own two directories, in Android's own terms: getFilesDir()
 // is what an app is expected to keep, getCacheDir() is what it is

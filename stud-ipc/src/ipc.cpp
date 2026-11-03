@@ -1,4 +1,5 @@
 #include "stud/ipc.h"
+#include "stud/stud_paths.h"
 
 #include <nlohmann/json.hpp>
 
@@ -140,12 +141,7 @@ sockaddr_un make_sockaddr(const std::string& path) {
 
 }  // namespace
 
-std::string default_socket_path() {
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        return std::string(xdg_runtime_dir) + "/stud/launch.sock";
-    }
-    return "/tmp/stud-" + std::to_string(::getuid()) + "/launch.sock";
-}
+std::string default_socket_path() { return stud::paths::runtime_dir() + "/launch.sock"; }
 
 void serve_launch_payload_once(const std::string& socket_path, const LaunchPayload& payload,
                                 int timeout_ms) {

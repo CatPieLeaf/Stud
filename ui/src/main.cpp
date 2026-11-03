@@ -347,17 +347,11 @@ QString find_gfxstream_guest_dir() {
 // unix socket has a name and no storage, and a write to it is a copy
 // into a kernel buffer that never reaches a disk.
 std::string log_collector_socket_path() {
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        return std::string(xdg_runtime_dir) + "/stud/log-collector.sock";
-    }
-    return "/tmp/stud-" + std::to_string(::getuid()) + "/log-collector.sock";
+    return stud::paths::runtime_dir() + "/log-collector.sock";
 }
 
 std::string render_host_socket_path() {
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        return std::string(xdg_runtime_dir) + "/stud/render-host.sock";
-    }
-    return "/tmp/stud-" + std::to_string(::getuid()) + "/render-host.sock";
+    return stud::paths::runtime_dir() + "/render-host.sock";
 }
 
 // Bounded, condition-based wait, not a guessed timing window
@@ -1248,17 +1242,16 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // identical absolute path outside it (bionic_runtime::launch_process_b()'s
     // own transparent-passthrough convention): the extracted libroblox.so/
     // assets/cache root (writable; Process B's own cache_subdir() writes
-    // there), $XDG_RUNTIME_DIR (writable, covers both stud-render-host's
-    // socket and stud-ipc's own launch socket, both live under
-    // $XDG_RUNTIME_DIR/stud/), and the configured APK's own containing
+    // there), Stud's runtime directory (writable: stud-render-host's
+    // socket and stud-ipc's launch socket both live there, and nothing
+    // else of the session's runtime directory is the engine's business),
+    // and the configured APK's own containing
     // directory (read-only, only needed for the one-shot asset
     // extraction, already read-only by nature).
     std::vector<stud::bionic_runtime::HostBind> extra_binds;
     extra_binds.push_back(
         {std::filesystem::path(so_path).parent_path().string(), /*writable=*/true});
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        extra_binds.push_back({xdg_runtime_dir, /*writable=*/true});
-    }
+    extra_binds.push_back({stud::paths::runtime_dir(), /*writable=*/true});
     // No bind for the APK: it lives inside Stud's own data directory,
     // which is bound writable just below.
     // Writable bind for Stud's own data directory, where the runtime keeps

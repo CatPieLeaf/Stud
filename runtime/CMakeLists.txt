@@ -37,6 +37,8 @@ add_library(stud_runtime_render_host_protocol STATIC
 )
 target_include_directories(stud_runtime_render_host_protocol PUBLIC "${RENDER_HOST_SRC}/include")
 target_include_directories(stud_runtime_render_host_protocol PRIVATE ${StudRingIncludes})
+# stud/stud_paths.h, header-only: where the render-host socket lives.
+target_include_directories(stud_runtime_render_host_protocol PRIVATE "${ANDROID_GLUE_SRC}/include")
 
 # Link-time only: clang warns 'argument unused during compilation' for
 # every translation unit if it is a compile option too.
@@ -319,6 +321,8 @@ add_library(stud_runtime_ipc STATIC
     "${STUD_IPC_SRC}/src/ipc.cpp"
 )
 target_include_directories(stud_runtime_ipc PUBLIC "${STUD_IPC_SRC}/include")
+# stud/stud_paths.h, header-only: where the launch socket lives.
+target_include_directories(stud_runtime_ipc PRIVATE "${ANDROID_GLUE_SRC}/include")
 target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 
 add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp

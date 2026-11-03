@@ -62,10 +62,7 @@ namespace {
 // experience (see ui/src/main.cpp's --game-info). Written on every presence change and removed on the
 // way back to the app shell, so its absence means "not in a game".
 QString server_link_path() {
-    if (const char* xdg = std::getenv("XDG_RUNTIME_DIR")) {
-        return QString::fromUtf8(xdg) + "/stud/invite";
-    }
-    return QStringLiteral("/tmp/stud/invite");
+    return QString::fromStdString(stud::paths::runtime_dir() + "/invite");
 }
 
 QString read_server_link() {
@@ -82,9 +79,7 @@ QString read_server_link() {
 // believing a dead session was alive. The kernel releases a lock however
 // the holder dies, so this cannot go stale.
 bool session_is_running() {
-    const char* xdg = std::getenv("XDG_RUNTIME_DIR");
-    const std::string path =
-        std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/stud.lock";
+    const std::string path = stud::paths::runtime_dir() + "/stud.lock";
     const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return true;  // Cannot tell: do not kill the tray over it.
     const bool free_to_take = ::flock(fd, LOCK_EX | LOCK_NB) == 0;

@@ -1329,7 +1329,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     } else {
-        asset_dir = "/tmp/stud-assets-placeholder";
+        asset_dir = stud::paths::cache_dir() + "/assets-placeholder";
     }
     stud::android_glue::set_asset_base_directory(asset_dir);
 

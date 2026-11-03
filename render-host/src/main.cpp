@@ -1745,10 +1745,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 // The tray offers "copy server link" and is a separate
                 // process, so the link is left where it can read it. Its
                 // absence is what "not in a game" looks like from there.
-                const std::string invite_path = []() {
-                    const char* xdg = std::getenv("XDG_RUNTIME_DIR");
-                    return std::string(xdg != nullptr ? xdg : "/tmp") + "/stud/invite";
-                }();
+                const std::string invite_path = stud::paths::runtime_dir() + "/invite";
                 if (body.empty()) {
                     std::lock_guard<std::mutex> lock(apply_mutex);
                     if (!current()) return;

@@ -1,5 +1,6 @@
 #include "stud/bionic_runtime.h"
 #include "stud/property_area.h"
+#include "stud/stud_paths.h"
 
 #include <sched.h>
 #include <spawn.h>
@@ -138,10 +139,7 @@ std::string default_shipped_bionic_directory() {
 // mechanism this backs), same convention as stud-ipc's own launch
 // socket path.
 std::string default_property_area_path() {
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        return std::string(xdg_runtime_dir) + "/stud/dns_property_area";
-    }
-    return "/tmp/stud-dns-property-area";
+    return stud::paths::runtime_dir() + "/dns_property_area";
 }
 
 // Minimal /etc/resolv.conf parse, just real "nameserver <ip>"

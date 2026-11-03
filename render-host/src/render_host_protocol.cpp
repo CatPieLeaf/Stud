@@ -1,4 +1,5 @@
 #include "stud/render_host_protocol.h"
+#include "stud/stud_paths.h"
 
 #include <cstdlib>
 
@@ -6,11 +7,6 @@
 
 namespace stud::render_host {
 
-std::string default_socket_path() {
-    if (const char* xdg_runtime_dir = std::getenv("XDG_RUNTIME_DIR")) {
-        return std::string(xdg_runtime_dir) + "/stud/render-host.sock";
-    }
-    return "/tmp/stud-" + std::to_string(::getuid()) + "/render-host.sock";
-}
+std::string default_socket_path() { return stud::paths::runtime_dir() + "/render-host.sock"; }
 
 }  // namespace stud::render_host
