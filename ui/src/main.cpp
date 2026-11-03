@@ -83,6 +83,7 @@
 #include <thread>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 // Defined at the bottom, used by the launch path above.
@@ -125,9 +126,28 @@ void terminate_stale_processes() {
     // calling into it, and Process B then faulted on a dead socket,
     // `connection lost on read ... call_id=120` followed by a STUD_TRAP
     // and a core dump, every restart.
-    std::vector<pid_t> engine;
-    std::vector<pid_t> sandbox;
-    std::vector<pid_t> hosts;
+    //
+    // Each process is held by a pidfd from the moment it is matched, and
+    // signalled through it: the wait below can last seconds, and a bare
+    // PID that exited meanwhile may already belong to something else by
+    // the time the SIGKILL goes out. Without pidfds (a kernel before 5.3)
+    // it falls back to the PID.
+    struct Target {
+        pid_t pid;
+        int fd;
+    };
+    auto hold = [](pid_t pid, std::vector<Target>& group) {
+        const int fd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+        if (fd < 0 && errno == ESRCH) return;  // already gone
+        group.push_back({pid, fd});
+    };
+    auto send_signal = [](const Target& t, int sig) {
+        if (t.fd >= 0) return ::syscall(SYS_pidfd_send_signal, t.fd, sig, nullptr, 0) == 0;
+        return ::kill(t.pid, sig) == 0;
+    };
+    std::vector<Target> engine;
+    std::vector<Target> sandbox;
+    std::vector<Target> hosts;
     for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
         if (!entry.is_directory()) continue;
         const std::string name = entry.path().filename().string();
@@ -139,7 +159,7 @@ void terminate_stale_processes() {
         std::filesystem::path exe = std::filesystem::read_symlink(entry.path() / "exe", ec);
         const std::string exe_name = ec ? std::string() : exe.filename().string();
         if (exe_name == "stud-render-host" || exe_name == "stud-webview") {
-            hosts.push_back(pid);
+            hold(pid, hosts);
             continue;
         }
 
@@ -153,52 +173,65 @@ void terminate_stale_processes() {
         // running against a dead render host and started a second beside
         // it. Matching the command line covers bwrap, linker64, and a
         // plain exec of the binary itself.
+        //
+        // Only in the shapes Stud launches it in, though: the program is
+        // bwrap, the bionic loader or the binary itself, and one argument
+        // IS the binary. Any mention used to do, so a debugger, an editor
+        // or a `tail -f` on its log was killed along with it.
         std::ifstream cmdline_file(entry.path() / "cmdline", std::ios::binary);
         std::string cmdline((std::istreambuf_iterator<char>(cmdline_file)),
                              std::istreambuf_iterator<char>());
-        if (cmdline.find("stud-runtime-bionic") == std::string::npos) continue;
+        std::vector<std::string> args;
+        for (size_t at = 0; at < cmdline.size();) {
+            size_t end = cmdline.find('\0', at);
+            if (end == std::string::npos) end = cmdline.size();
+            args.push_back(std::filesystem::path(cmdline.substr(at, end - at)).filename().string());
+            at = end + 1;
+        }
+        if (args.empty()) continue;
+        const std::string& program = args.front();
+        if (program != "bwrap" && program != "linker64" && program != "stud-runtime-bionic") {
+            continue;
+        }
+        if (std::find(args.begin(), args.end(), "stud-runtime-bionic") == args.end()) continue;
         // bwrap itself, the outer process and the PID namespace's init,
         // carries the same command line, and is left alone: a SIGTERM to
         // the namespace's init ends it, and the kernel then kills every
         // process in the namespace, Process B mid-teardown included. That
         // is how a restart cut DestroyApp off. bwrap exits by itself once
         // Process B has.
-        const std::string argv0 = cmdline.substr(0, cmdline.find('\0'));
-        if (std::filesystem::path(argv0).filename() == "bwrap") {
-            sandbox.push_back(pid);
-        } else {
-            engine.push_back(pid);
-        }
+        hold(pid, program == "bwrap" ? sandbox : engine);
     }
     if (engine.empty() && sandbox.empty() && hosts.empty()) return;
 
     using stud::engine_teardown::kBoundedCallPollMs;
-    auto wait_for = [](const std::vector<pid_t>& pids, int tries) {
+    auto wait_for = [&send_signal](const std::vector<Target>& group, int tries) {
         for (int i = 0; i < tries; ++i) {
             bool any_alive = false;
-            for (pid_t pid : pids) {
-                if (::kill(pid, 0) == 0) any_alive = true;
+            for (const Target& t : group) {
+                if (send_signal(t, 0)) any_alive = true;
             }
             if (!any_alive) return;
             std::this_thread::sleep_for(std::chrono::milliseconds(kBoundedCallPollMs));
         }
     };
 
-    for (pid_t pid : engine) ::kill(pid, SIGTERM);
+    for (const Target& t : engine) send_signal(t, SIGTERM);
     // As long as Process B's own teardown may take, LeaveGame then
     // DestroyApp, each bounded, then its exit. A fixed 3s used to stop
     // short of that and kill the engine inside DestroyApp, so it never
     // once finished its shutdown. This only waits while something is
     // still alive, so a session that ends promptly still ends promptly.
     wait_for(engine, stud::engine_teardown::kTeardownLimitMs / kBoundedCallPollMs);
-    for (pid_t pid : hosts) ::kill(pid, SIGTERM);
+    for (const Target& t : hosts) send_signal(t, SIGTERM);
     wait_for(hosts, 20);
 
-    for (const std::vector<pid_t>* group : {&engine, &sandbox, &hosts}) {
-        for (pid_t pid : *group) {
-            if (::kill(pid, 0) == 0) {
-                ::kill(pid, SIGKILL);  // still alive after the grace period, force it
+    for (const std::vector<Target>* group : {&engine, &sandbox, &hosts}) {
+        for (const Target& t : *group) {
+            if (send_signal(t, 0)) {
+                send_signal(t, SIGKILL);  // still alive after the grace period, force it
             }
+            if (t.fd >= 0) ::close(t.fd);
         }
     }
 }
