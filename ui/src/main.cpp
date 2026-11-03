@@ -872,6 +872,13 @@ void start_session_log() {
     for (int i = 0; i < old.size() - (kSessionsKept - 1); ++i) {
         QFile::remove(log_dir.filePath(old.at(i)));
     }
+    // A session's notes (.crash, .clean, .shown) go with its log. Only the
+    // logs used to be removed, so the notes piled up without end.
+    for (const QString& note : log_dir.entryList({QStringLiteral("session-*.log.*")}, QDir::Files)) {
+        if (!log_dir.exists(note.left(note.lastIndexOf(QLatin1Char('.'))))) {
+            QFile::remove(log_dir.filePath(note));
+        }
+    }
 
     const QString path =
         log_dir.filePath(QStringLiteral("session-%1.log")
