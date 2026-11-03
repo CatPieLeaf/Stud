@@ -563,6 +563,21 @@ void register_with_gamemode(qint64 pid) {
     std::fflush(stdout);
 }
 
+// Whether render-host will draw on X11, by the rule android-glue's
+// display_backend() applies in render-host: STUD_DISPLAY_BACKEND first,
+// then Wayland if its socket is there (what wl_display_connect looks
+// for), X11 otherwise.
+bool render_host_on_x11(const QProcessEnvironment& env) {
+    const QString forced = env.value(QStringLiteral("STUD_DISPLAY_BACKEND"));
+    if (forced == QLatin1String("x11")) return true;
+    if (forced == QLatin1String("wayland")) return false;
+    const QString name = env.value(QStringLiteral("WAYLAND_DISPLAY"), QStringLiteral("wayland-0"));
+    const QString socket = name.startsWith(QLatin1Char('/'))
+                               ? name
+                               : env.value(QStringLiteral("XDG_RUNTIME_DIR")) + QLatin1Char('/') + name;
+    return !QFileInfo::exists(socket);
+}
+
 void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vulkan_render_path) {
     // Undo what keep_mangohud_out_of_this_process() did to our own
     // environment before deciding anything: that entry was for Stud's UI,
@@ -601,6 +616,17 @@ void apply_mangohud_environment(QProcessEnvironment& env, bool enabled, bool vul
     // MangoHud's layer sits above; that is all it needs. The OpenGL path
     // presents through GL instead, which only MangoHud's GL shim sees.
     if (vulkan_render_path) return;
+    // Not on X11. Preloaded there, the shim makes the X11 display
+    // unobtainable: eglGetPlatformDisplay for it returns no display, with
+    // no error, on NVIDIA's EGL and Mesa's alike, so render-host never
+    // presents a frame and Stud sits on its loading screen. Reproduced
+    // outside Stud with the same calls and only the preload changed.
+    if (render_host_on_x11(env)) {
+        std::printf("stud: MangoHud's overlay is off in OpenGL mode on X11: its OpenGL shim "
+                    "stops the window from showing anything there\n");
+        std::fflush(stdout);
+        return;
+    }
     // $LIB is expanded by the dynamic linker itself (lib64 or lib), which
     // is exactly how MangoHud's own wrapper spells this.
     const QString shim = QStringLiteral("/usr/$LIB/mangohud/libMangoHud_shim.so");
