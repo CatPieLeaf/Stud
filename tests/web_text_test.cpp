@@ -4,6 +4,7 @@
 #include <cassert>
 #include <string>
 
+#include "stud/hybrid_command.h"
 #include "stud/json_field.h"
 #include "stud/stud_paths.h"
 #include "stud/text_editor.h"
@@ -47,6 +48,30 @@ int main() {
     assert(!json_true_field(R"({"a":"on"})", "on"));
     assert(json_escaped("a\"b\\c\n") == "a\\\"b\\\\c\\u000a");
     assert(json_string_field("{\"u\":\"" + json_escaped("x\ny\"") + "\"}", "u") == "x\ny\"");
+
+    using stud::jni_bridge::captcha_view_url;
+    using stud::jni_bridge::native_callback_script;
+    using stud::jni_bridge::parse_navigation_command;
+    const std::string navigate =
+        R"({"moduleID":"Navigation","functionName":"navigateToFeature",)"
+        R"("params":{"params":{"feature":"CaptchaSuccess"}},"callbackID":"cb-1"})";
+    assert(parse_navigation_command(navigate)->feature == "CaptchaSuccess");
+    assert(parse_navigation_command(navigate)->callback_id == "cb-1");
+    assert(!parse_navigation_command(R"({"moduleID":"Game","functionName":"launchGame"})"));
+    assert(!parse_navigation_command("not json"));
+    assert(native_callback_script("cb-1").find("nativeCallback(\"cb-1\", true, {})") !=
+           std::string::npos);
+    assert(native_callback_script("a\"); alert(1); (\"").find("\"); alert") == std::string::npos ||
+           native_callback_script("a\"); alert(1); (\"").find("\\\"); alert") != std::string::npos);
+    assert(captcha_view_url(R"({"captchaType":"signup"})") ==
+           "https://www.roblox.com/captcha/app/signup?hybrid-return-token=1");
+    assert(captcha_view_url(R"({"captchaType":"login","cvalueType":"username","cvalue":"a b"})") ==
+           "https://www.roblox.com/captcha/app/login?credentialsType=username"
+           "&credentialsValue=a%20b&hybrid-return-token=1");
+    assert(captcha_view_url(R"({"captchaType":"login","cvalueType":"phone_number","cvalue":"1"})")
+               .find("credentialsType=phonenumber") != std::string::npos);
+    assert(captcha_view_url(R"({"captchaType":"login","cvalueType":"other","cvalue":"1"})").empty());
+    assert(captcha_view_url("{}").empty());
 
     assert(stud::paths::valid_secret_name("roblosecurity"));
     assert(stud::paths::valid_secret_name("safe-storage_2"));

@@ -1,10 +1,12 @@
 #include "stud/webview_bridge.h"
 
 #include "stud/bionic_jvm.h"
+#include "stud/hybrid_command.h"
 #include "stud/json_field.h"
 #include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
+#include <atomic>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -58,6 +60,13 @@ std::string loggable_url(const std::string& url) {
     const auto cut = url.find('?');
     return cut == std::string::npos ? url : url.substr(0, cut) + "?<query withheld>";
 }
+
+// How a panel is opened, kept from bring-up for the engine's security check.
+std::function<void(const std::string&, const std::string&)>& panel_opener() {
+    static std::function<void(const std::string&, const std::string&)> opener;
+    return opener;
+}
+std::atomic<bool> g_security_check_open{false};
 
 std::mutex& ids_mutex() {
     static std::mutex m;
@@ -124,6 +133,7 @@ bool run_webview_protocol_bootstrap(
     FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
     std::function<void(const std::string& url, const std::string& title)> on_open,
     std::function<void()> on_close) {
+    panel_opener() = on_open;
     const WebViewProtocolIds ids = read_webview_protocol_ids(jvm, lib);
     if (!ids.valid) {
         std::fprintf(stderr, "stud: webview: protocol identifiers unavailable, not registering\n");
@@ -221,7 +231,33 @@ bool run_webview_protocol_bootstrap(
     return true;
 }
 
+void open_security_check(const std::string& payload) {
+    const std::string url = captcha_view_url(payload);
+    if (url.empty() || !panel_opener()) {
+        std::printf("stud: webview: could not open the security check\n");
+        std::fflush(stdout);
+        return;
+    }
+    g_security_check_open.store(true);
+    panel_opener()(url, "Roblox verification");
+}
+
 void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib) {
+    if (g_security_check_open.exchange(false)) {
+        static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+        FakeJni::LocalFrame frame(jvm);
+        auto& env = frame.getJniEnv();
+        auto* jni_env = static_cast<JNIEnv*>(&env);
+        auto* broadcast = reinterpret_cast<void (*)(JNIEnv*, jclass, jstring, jstring, jstring)>(
+            lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_"
+                            "nativeBroadcastEventWithNamespace"));
+        if (broadcast != nullptr) {
+            jclass klass = env.FindClass("com/roblox/engine/jni/NativeGLInterface");
+            call_trapping_abort(broadcast, jni_env, klass, env.NewStringUTF("AppInput"),
+                                env.NewStringUTF(""), env.NewStringUTF("Focused"));
+            clear_pending_jni_exception(jni_env, "nativeBroadcastEventWithNamespace");
+        }
+    }
     const WebViewProtocolIds ids = read_webview_protocol_ids(jvm, lib);
     if (!ids.valid || ids.handle_window_close_id.empty()) return;
 

@@ -10,6 +10,7 @@
 #include "stud/android_framework.h"
 #include "stud/startup_throttle.h"
 #include "stud/trap_recovery.h"
+#include "stud/webview_bridge.h"
 
 #include <nlohmann/json.hpp>
 
@@ -545,6 +546,14 @@ void NativeGLJavaInterfaceJava::onAppBridgeNotification(std::shared_ptr<FakeJni:
                                                           std::shared_ptr<FakeJni::JString> data) {
     std::string type_str = type ? type->asStdString() : "";
     std::string data_str = data ? data->asStdString() : "";
+    // Names the account being signed in to, so its payload stays out of the log.
+    if (type_str == "OPEN_CAPTCHA_VIEW") {
+        std::printf("stud: onAppBridgeNotification: OPEN_CAPTCHA_VIEW (%zu bytes)\n",
+                    data_str.size());
+        std::fflush(stdout);
+        open_security_check(data_str);
+        return;
+    }
     std::printf("stud: onAppBridgeNotification: type=\"%s\" data=%s\n", type_str.c_str(),
                 data_str.c_str());
     // Confirmed shape for the one payload this project knows

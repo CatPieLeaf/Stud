@@ -14,7 +14,8 @@ target_compile_definitions(stud-webview PRIVATE STUD_APP_ID="${STUD_APP_ID}")
 # stud/webview_user_agent.h, the agent string has to be the same one the
 # engine reports to Roblox, so both build it from the same header.
 target_include_directories(stud-webview PRIVATE
-                            "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include")
+                            "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/framework/include")
 target_link_libraries(stud-webview PRIVATE Qt6::Widgets Qt6::WebEngineWidgets Qt6::Network)
 set_target_properties(stud-webview PROPERTIES AUTOMOC ON)
 

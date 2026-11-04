@@ -35,6 +35,7 @@
 #include <QWebEngineScriptCollection>
 #include <QWebEngineView>
 
+#include "stud/hybrid_command.h"
 #include "stud/web_origin.h"
 #include "stud/webview_user_agent.h"
 
@@ -158,6 +159,21 @@ public:
     void markHandled(const QString& url) { m_answered.insert(url); }
 
 private:
+    // The engine hears a command through the bridge, and the page waits to be
+    // told it was heard: it stops at "Verification complete" until its
+    // callback is called, which on a device the app does. CaptchaSuccess ends
+    // the window once the page has taken the answer, and only then, so a page
+    // with no callback to call is not closed on a guess.
+    void answerPage(const std::string& command) {
+        const auto parsed = stud::jni_bridge::parse_navigation_command(command);
+        if (!parsed || parsed->callback_id.empty()) return;
+        const bool passed = parsed->feature == "CaptchaSuccess";
+        runJavaScript(QString::fromStdString(stud::jni_bridge::native_callback_script(parsed->callback_id)),
+                      [passed](const QVariant& answered) {
+                          if (passed && answered.toBool()) QApplication::quit();
+                      });
+    }
+
     QString m_allowed;
     QSet<QString> m_answered;
 
@@ -186,6 +202,7 @@ protected:
             // ends. A JSON document has no raw newlines in it.
             std::printf("hybrid %s\n", utf8.constData());
             std::fflush(stdout);
+            answerPage(utf8.toStdString());
             return;
         }
         // Everything else the page says, on this process's own stdout so

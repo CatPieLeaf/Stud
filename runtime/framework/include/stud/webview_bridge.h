@@ -62,6 +62,11 @@ bool run_webview_protocol_bootstrap(
 // navigation work rather than leaving a dead screen.
 void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib);
 
+// The engine's OPEN_CAPTCHA_VIEW app-bridge notification: the security check
+// it wants shown, opened like any other panel. When that panel closes,
+// publish_webview_closed() also tells the engine it has focus back.
+void open_security_check(const std::string& payload);
+
 // Hands the engine one message a web view's page sent through its
 // JavaScript bridge (`__globalRobloxAndroidBridge__.executeRoblox`).
 // This is how a login challenge reports that it is finished: without it
