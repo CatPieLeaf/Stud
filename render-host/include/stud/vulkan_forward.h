@@ -173,6 +173,8 @@ enum class DestroyKind : uint32_t {
     Event,
     // Appended, so every kind above keeps its value.
     DescriptorUpdateTemplate,
+    BufferView,
+    SamplerYcbcrConversion,
 };
 
 struct ChainNodeHeader {
@@ -234,7 +236,49 @@ enum class CmdKind : uint32_t {
     // client created in its place, decoded by render-host's GPU. Payload:
     // the compressed VkFormat, then CopyBufferToImage's.
     DecodeCopyBufferToImage,
+    // Every core command the engine does not use today, so one it starts
+    // using reaches the driver. depth_prepass does not know these: a pass
+    // holding any of them, PushConstants onward, goes without a prepass.
+    PushConstants,
+    DrawIndirect,
+    DrawIndexedIndirect,
+    DispatchIndirect,
+    DispatchBase,
+    ClearAttachments,
+    ClearColorImage,
+    ClearDepthStencilImage,
+    FillBuffer,
+    UpdateBuffer,
+    CopyQueryPoolResults,
+    BeginQuery,
+    EndQuery,
+    SetBlendConstants,
+    SetDepthBias,
+    SetDepthBounds,
+    SetLineWidth,
+    SetStencilCompareMask,
+    SetStencilWriteMask,
+    SetStencilReference,
+    NextSubpass,
+    ExecuteCommands,
+    SetEvent,
+    ResetEvent,
+    WaitEvents,
+};
 
+// What VkGetPhysicalDeviceChained asks for: a query whose answer is a fixed
+// struct and a pNext chain.
+enum class ChainedQuery : uint32_t {
+    Properties = 1,
+    MemoryProperties,
+    FormatProperties,
+};
+
+// What VkEventOp does to an event.
+enum class EventOp : uint32_t {
+    Status = 1,
+    Set,
+    Reset,
 };
 
 // ---- compact serializer ---------------------------------------------

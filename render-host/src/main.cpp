@@ -2379,6 +2379,17 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
 // Split out of dispatch(), whose switch it was part of: Vulkan: everything vulkan_host.cpp implements, by call id.
 // Answers nullopt for any id that is not one of these, and a case that
 // breaks out answers kNullHandle, exactly as it did inside dispatch().
+// VkBeginCommandBuffer's arguments past the flags.
+stud::render_host::CommandBufferInheritance inheritance_of(const uint64_t* a) {
+    stud::render_host::CommandBufferInheritance i;
+    i.secondary = a[2] != 0;
+    i.render_pass = a[3];
+    i.subpass = static_cast<uint32_t>(a[4]);
+    i.framebuffer = a[5];
+    i.query_flags = static_cast<uint32_t>(a[6]);
+    return i;
+}
+
 std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
                                          const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                          uint32_t* out_len) {
@@ -2571,7 +2582,7 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
         // fails every frame.
         case CallId::VkBeginCommandBuffer: {
             const uint64_t r = stud::render_host::vk_begin_command_buffer(
-                a[0], static_cast<uint32_t>(a[1]));
+                a[0], static_cast<uint32_t>(a[1]), inheritance_of(a));
             report_reply_free_failure(hdr.call_id, r);
             return r;
         }
@@ -2582,6 +2593,45 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
         }
         case CallId::VkResetCommandPool:
             return stud::render_host::vk_reset_command_pool(a[1], static_cast<uint32_t>(a[2]));
+        case CallId::VkResetCommandBuffer:
+            return stud::render_host::vk_reset_command_buffer(a[0], static_cast<uint32_t>(a[1]));
+        case CallId::VkFreeCommandBuffers:
+            return stud::render_host::vk_free_command_buffers(a[1], in);
+        case CallId::VkUpdateDescriptorSets:
+            return stud::render_host::vk_update_descriptor_sets(in);
+        case CallId::VkFreeDescriptorSets:
+            return stud::render_host::vk_free_descriptor_sets(a[1], in);
+        case CallId::VkCreateBufferView: {
+            const uint64_t r = stud::render_host::vk_create_buffer_view(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkCreateEvent: {
+            const uint64_t r = stud::render_host::vk_create_event(static_cast<uint32_t>(a[1]), out,
+                                                                  out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkEventOp:
+            return stud::render_host::vk_event_op(a[1], static_cast<uint32_t>(a[2]));
+        case CallId::VkGetImageSubresourceLayout:
+            return stud::render_host::vk_get_image_subresource_layout(
+                a[1], static_cast<uint32_t>(a[2]), static_cast<uint32_t>(a[3]),
+                static_cast<uint32_t>(a[4]), out, out_len);
+        case CallId::VkGetRenderAreaGranularity:
+            return stud::render_host::vk_get_render_area_granularity(a[1], out, out_len);
+        case CallId::VkMergePipelineCaches:
+            return stud::render_host::vk_merge_pipeline_caches(a[1], in);
+        case CallId::VkCreateSamplerYcbcrConversion: {
+            const uint64_t r =
+                stud::render_host::vk_create_sampler_ycbcr_conversion(in, out, out_len, a[7]);
+            if (a[7] != 0) report_reply_free_failure(hdr.call_id, r);
+            return r;
+        }
+        case CallId::VkGetPhysicalDeviceChained:
+            return stud::render_host::vk_get_physical_device_chained(
+                static_cast<uint32_t>(a[0]), a[1], static_cast<uint32_t>(a[2]), in,
+                static_cast<uint32_t>(a[3]), out, out_len);
         // Reply-free in the normal configuration, like the command-buffer
         // bracket above, so this is the only place a failure can be seen.
         case CallId::VkQueueSubmit: {
@@ -2814,7 +2864,8 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 return 0;
             case CallId::VkBeginCommandBuffer:
                 if (reply_free) {
-                    stud::render_host::replay::enqueue_begin(a[0], static_cast<uint32_t>(a[1]));
+                    stud::render_host::replay::enqueue_begin(a[0], static_cast<uint32_t>(a[1]),
+                                                             inheritance_of(a));
                     return 0;
                 }
                 stud::render_host::replay::wait_all();

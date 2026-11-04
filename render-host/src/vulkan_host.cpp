@@ -7363,6 +7363,15 @@ uint64_t vk_create_image_view(const std::vector<uint8_t>& in, std::vector<uint8_
     ci.components = {static_cast<VkComponentSwizzle>(q[3]), static_cast<VkComponentSwizzle>(q[4]),
                      static_cast<VkComponentSwizzle>(q[5]), static_cast<VkComponentSwizzle>(q[6])};
     ci.subresourceRange = {q[7], q[8], q[9], q[10], q[11]};
+    uint64_t conversion_handle = 0;
+    const size_t conversion_at = sizeof(image) + sizeof(q);
+    if (in.size() >= conversion_at + sizeof(conversion_handle)) {
+        std::memcpy(&conversion_handle, in.data() + conversion_at, sizeof(conversion_handle));
+    }
+    VkSamplerYcbcrConversionInfo conversion{};
+    conversion.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+    conversion.conversion = from_u64<VkSamplerYcbcrConversion>(real_handle(conversion_handle));
+    if (conversion.conversion != VK_NULL_HANDLE) ci.pNext = &conversion;
 
     VkImageView view = VK_NULL_HANDLE;
     VkResult r = l.vk.vkCreateImageView(l.device, &ci, nullptr, &view);
@@ -9087,6 +9096,16 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             }
             break;
         }
+        case K::Event:
+            l.vk.vkDestroyEvent(l.device, from_u64<VkEvent>(handle), nullptr);
+            break;
+        case K::BufferView:
+            l.vk.vkDestroyBufferView(l.device, from_u64<VkBufferView>(handle), nullptr);
+            break;
+        case K::SamplerYcbcrConversion:
+            l.vk.vkDestroySamplerYcbcrConversion(
+                l.device, from_u64<VkSamplerYcbcrConversion>(handle), nullptr);
+            break;
         case K::DescriptorUpdateTemplate:
             if (l.vk.vkDestroyDescriptorUpdateTemplate) {
                 l.vk.vkDestroyDescriptorUpdateTemplate(
@@ -9356,6 +9375,10 @@ uint64_t vk_create_sampler(const std::vector<uint8_t>& in, std::vector<uint8_t>&
     ci.maxLod = r.f32();
     ci.borderColor = static_cast<VkBorderColor>(r.u32());
     ci.unnormalizedCoordinates = r.u32();
+    VkSamplerYcbcrConversionInfo conversion{};
+    conversion.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+    conversion.conversion = from_u64<VkSamplerYcbcrConversion>(real_handle(r.u64()));
+    if (conversion.conversion != VK_NULL_HANDLE) ci.pNext = &conversion;
 
     VkSampler sampler = VK_NULL_HANDLE;
     VkResult res = l.vk.vkCreateSampler(l.device, &ci, nullptr, &sampler);
@@ -10394,6 +10417,12 @@ void replay(uint64_t cb, const std::vector<Record>& recs) {
                 bool ok = false;
                 for (size_t j = i + 1; j < end; ++j) {
                     const auto k = static_cast<K>(recs[j].kind);
+                    // A command the prepass cannot copy: the pass runs as
+                    // the engine recorded it.
+                    if (k >= K::PushConstants) {
+                        count = 0;
+                        break;
+                    }
                     if (k == K::BindPipeline && recs[j].len >= 12) {
                         uint32_t bp = 0;
                         std::memcpy(&bp, recs[j].payload, 4);
@@ -10576,7 +10605,8 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
-uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags) {
+uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags,
+                                 const CommandBufferInheritance& inherited) {
     cb = real_handle(cb);
     framebuffer_lifetimes::begin(cb);
     Loader& l = loader();
@@ -10587,6 +10617,16 @@ uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags) {
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = flags;
+    VkCommandBufferInheritanceInfo inheritance{};
+    if (inherited.secondary) {
+        inheritance.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
+        inheritance.renderPass = from_u64<VkRenderPass>(real_handle(inherited.render_pass));
+        inheritance.subpass = inherited.subpass;
+        inheritance.framebuffer = from_u64<VkFramebuffer>(real_handle(inherited.framebuffer));
+        inheritance.occlusionQueryEnable = inherited.query_flags & 1;
+        inheritance.queryFlags = inherited.query_flags >> 1;
+        bi.pInheritanceInfo = &inheritance;
+    }
     return static_cast<uint64_t>(
         static_cast<int32_t>(l.vk.vkBeginCommandBuffer(from_u64<VkCommandBuffer>(cb), &bi)));
 }
@@ -13215,6 +13255,478 @@ struct PassState {
 };
 thread_local PassState pass_state;
 
+
+// ---- the rest of core Vulkan 1.0 and 1.1 -------------------------------
+//
+// Today's engine calls none of this. It is here so that one which does gets
+// the driver instead of a dropped command.
+void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, vk_wire::Reader& r) {
+    using K = vk_wire::CmdKind;
+    switch (kind) {
+        case K::PushConstants: {
+            const auto layout = from_u64<VkPipelineLayout>(real_handle(r.u64()));
+            const uint32_t stages = r.u32(), offset = r.u32();
+            uint32_t size = 0;
+            const uint8_t* values = r.bytes(&size);
+            l.vk.vkCmdPushConstants(cb, layout, stages, offset, size, values);
+            break;
+        }
+        case K::DrawIndirect:
+        case K::DrawIndexedIndirect: {
+            const auto buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+            const uint64_t offset = r.u64();
+            const uint32_t count = r.u32(), stride = r.u32();
+            (kind == K::DrawIndirect ? l.vk.vkCmdDrawIndirect : l.vk.vkCmdDrawIndexedIndirect)(
+                cb, buffer, offset, count, stride);
+            break;
+        }
+        case K::DispatchIndirect: {
+            const auto buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+            l.vk.vkCmdDispatchIndirect(cb, buffer, r.u64());
+            break;
+        }
+        case K::DispatchBase: {
+            const uint32_t bx = r.u32(), by = r.u32(), bz = r.u32();
+            const uint32_t x = r.u32(), y = r.u32(), z = r.u32();
+            l.vk.vkCmdDispatchBase(cb, bx, by, bz, x, y, z);
+            break;
+        }
+        case K::ClearAttachments: {
+            std::vector<VkClearAttachment> attachments(r.u32());
+            for (auto& a : attachments) {
+                a.aspectMask = r.u32();
+                a.colorAttachment = r.u32();
+                a.clearValue = r.scalar<VkClearValue>();
+            }
+            std::vector<VkClearRect> rects(r.u32());
+            for (auto& c : rects) c = r.scalar<VkClearRect>();
+            l.vk.vkCmdClearAttachments(cb, static_cast<uint32_t>(attachments.size()),
+                                       attachments.data(), static_cast<uint32_t>(rects.size()),
+                                       rects.data());
+            break;
+        }
+        case K::ClearColorImage:
+        case K::ClearDepthStencilImage: {
+            const auto image = from_u64<VkImage>(real_handle(r.u64()));
+            const auto layout = static_cast<VkImageLayout>(r.u32());
+            const auto value = r.scalar<VkClearValue>();
+            std::vector<VkImageSubresourceRange> ranges(r.u32());
+            for (auto& c : ranges) c = r.scalar<VkImageSubresourceRange>();
+            const auto n = static_cast<uint32_t>(ranges.size());
+            if (kind == K::ClearColorImage) {
+                l.vk.vkCmdClearColorImage(cb, image, layout, &value.color, n, ranges.data());
+            } else {
+                l.vk.vkCmdClearDepthStencilImage(cb, image, layout, &value.depthStencil, n,
+                                                 ranges.data());
+            }
+            break;
+        }
+        case K::FillBuffer: {
+            const auto buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+            const uint64_t offset = r.u64(), size = r.u64();
+            l.vk.vkCmdFillBuffer(cb, buffer, offset, size, r.u32());
+            break;
+        }
+        case K::UpdateBuffer: {
+            const auto buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+            const uint64_t offset = r.u64();
+            uint32_t size = 0;
+            const uint8_t* data = r.bytes(&size);
+            l.vk.vkCmdUpdateBuffer(cb, buffer, offset, size, data);
+            break;
+        }
+        case K::CopyQueryPoolResults: {
+            const auto pool = from_u64<VkQueryPool>(real_handle(r.u64()));
+            const uint32_t first = r.u32(), count = r.u32();
+            const auto buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+            const uint64_t offset = r.u64(), stride = r.u64();
+            l.vk.vkCmdCopyQueryPoolResults(cb, pool, first, count, buffer, offset, stride, r.u32());
+            break;
+        }
+        case K::BeginQuery: {
+            const auto pool = from_u64<VkQueryPool>(real_handle(r.u64()));
+            const uint32_t query = r.u32();
+            l.vk.vkCmdBeginQuery(cb, pool, query, r.u32());
+            break;
+        }
+        case K::EndQuery: {
+            const auto pool = from_u64<VkQueryPool>(real_handle(r.u64()));
+            const uint32_t query = r.u32();
+            l.vk.vkCmdEndQuery(cb, pool, query);
+            query_share::touch(cb, pool, query, 1, true);
+            break;
+        }
+        case K::SetBlendConstants: {
+            float constants[4];
+            for (float& c : constants) c = r.f32();
+            l.vk.vkCmdSetBlendConstants(cb, constants);
+            break;
+        }
+        case K::SetDepthBias: {
+            const float constant = r.f32(), clamp = r.f32(), slope = r.f32();
+            l.vk.vkCmdSetDepthBias(cb, constant, clamp, slope);
+            break;
+        }
+        case K::SetDepthBounds: {
+            const float low = r.f32(), high = r.f32();
+            l.vk.vkCmdSetDepthBounds(cb, low, high);
+            break;
+        }
+        case K::SetLineWidth:
+            l.vk.vkCmdSetLineWidth(cb, r.f32());
+            break;
+        case K::SetStencilCompareMask:
+        case K::SetStencilWriteMask:
+        case K::SetStencilReference: {
+            const uint32_t faces = r.u32(), value = r.u32();
+            (kind == K::SetStencilCompareMask ? l.vk.vkCmdSetStencilCompareMask
+             : kind == K::SetStencilWriteMask ? l.vk.vkCmdSetStencilWriteMask
+                                              : l.vk.vkCmdSetStencilReference)(cb, faces, value);
+            break;
+        }
+        case K::NextSubpass:
+            l.vk.vkCmdNextSubpass(cb, static_cast<VkSubpassContents>(r.u32()));
+            break;
+        case K::ExecuteCommands: {
+            std::vector<VkCommandBuffer> buffers(r.u32());
+            for (auto& b : buffers) {
+                const uint64_t number = r.u64();
+                // Its End may still be on another pool's worker.
+                replay::wait_for_command_buffer(number);
+                b = from_u64<VkCommandBuffer>(real_handle(number));
+            }
+            l.vk.vkCmdExecuteCommands(cb, static_cast<uint32_t>(buffers.size()), buffers.data());
+            break;
+        }
+        case K::SetEvent:
+        case K::ResetEvent: {
+            const auto event = from_u64<VkEvent>(real_handle(r.u64()));
+            (kind == K::SetEvent ? l.vk.vkCmdSetEvent : l.vk.vkCmdResetEvent)(cb, event, r.u32());
+            break;
+        }
+        case K::WaitEvents: {
+            std::vector<VkEvent> events(r.u32());
+            for (auto& e : events) e = from_u64<VkEvent>(real_handle(r.u64()));
+            const uint32_t src = r.u32(), dst = r.u32();
+            std::vector<VkMemoryBarrier> mem(r.u32());
+            for (auto& b : mem) {
+                b.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                b.srcAccessMask = r.u32();
+                b.dstAccessMask = r.u32();
+            }
+            std::vector<VkBufferMemoryBarrier> buf(r.u32());
+            for (auto& b : buf) {
+                b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                b.srcAccessMask = r.u32();
+                b.dstAccessMask = r.u32();
+                b.srcQueueFamilyIndex = r.u32();
+                b.dstQueueFamilyIndex = r.u32();
+                b.buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+                b.offset = r.u64();
+                b.size = r.u64();
+            }
+            std::vector<VkImageMemoryBarrier> img(r.u32());
+            for (auto& b : img) {
+                b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                b.srcAccessMask = r.u32();
+                b.dstAccessMask = r.u32();
+                b.oldLayout = static_cast<VkImageLayout>(r.u32());
+                b.newLayout = static_cast<VkImageLayout>(r.u32());
+                b.srcQueueFamilyIndex = r.u32();
+                b.dstQueueFamilyIndex = r.u32();
+                b.image = from_u64<VkImage>(real_handle(r.u64()));
+                b.subresourceRange.aspectMask = r.u32();
+                b.subresourceRange.baseMipLevel = r.u32();
+                b.subresourceRange.levelCount = r.u32();
+                b.subresourceRange.baseArrayLayer = r.u32();
+                b.subresourceRange.layerCount = r.u32();
+            }
+            l.vk.vkCmdWaitEvents(cb, static_cast<uint32_t>(events.size()), events.data(), src, dst,
+                                 static_cast<uint32_t>(mem.size()), mem.data(),
+                                 static_cast<uint32_t>(buf.size()), buf.data(),
+                                 static_cast<uint32_t>(img.size()), img.data());
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+uint64_t vk_reset_command_buffer(uint64_t cb, uint32_t flags) {
+    cb = real_handle(cb);
+    Loader& l = loader();
+    return static_cast<uint64_t>(static_cast<int32_t>(
+        l.vk.vkResetCommandBuffer(from_u64<VkCommandBuffer>(cb), flags)));
+}
+
+uint64_t vk_free_command_buffers(uint64_t pool, const std::vector<uint8_t>& in) {
+    pool = real_handle(pool);
+    Loader& l = loader();
+    std::vector<VkCommandBuffer> buffers(in.size() / sizeof(uint64_t));
+    for (size_t i = 0; i < buffers.size(); ++i) {
+        uint64_t number = 0;
+        std::memcpy(&number, in.data() + i * sizeof(number), sizeof(number));
+        buffers[i] = from_u64<VkCommandBuffer>(forget_client_handle(number));
+    }
+    l.vk.vkFreeCommandBuffers(l.device, from_u64<VkCommandPool>(pool),
+                              static_cast<uint32_t>(buffers.size()), buffers.data());
+    return 0;
+}
+
+uint64_t vk_update_descriptor_sets(const std::vector<uint8_t>& in) {
+    Loader& l = loader();
+    vk_wire::Reader r(in.data(), in.size());
+    struct Write {
+        VkWriteDescriptorSet w{};
+        std::vector<VkDescriptorImageInfo> images;
+        std::vector<VkDescriptorBufferInfo> buffers;
+        std::vector<VkBufferView> texels;
+    };
+    std::vector<Write> writes(r.u32());
+    std::vector<VkWriteDescriptorSet> vk_writes;
+    for (Write& e : writes) {
+        VkWriteDescriptorSet& w = e.w;
+        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet = resolve_descriptor_set(r.u64());
+        w.dstBinding = r.u32();
+        w.dstArrayElement = r.u32();
+        w.descriptorCount = r.u32();
+        w.descriptorType = static_cast<VkDescriptorType>(r.u32());
+        e.images.resize(r.u32());
+        for (auto& i : e.images) {
+            i.sampler = from_u64<VkSampler>(real_handle(r.u64()));
+            i.imageView = from_u64<VkImageView>(real_handle(r.u64()));
+            i.imageLayout = static_cast<VkImageLayout>(r.u32());
+        }
+        e.buffers.resize(r.u32());
+        for (auto& b : e.buffers) {
+            b.buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+            b.offset = r.u64();
+            b.range = r.u64();
+        }
+        e.texels.resize(r.u32());
+        for (auto& t : e.texels) t = from_u64<VkBufferView>(real_handle(r.u64()));
+        w.pImageInfo = e.images.data();
+        w.pBufferInfo = e.buffers.data();
+        w.pTexelBufferView = e.texels.data();
+        // A set that never resolved is not handed to the driver; see
+        // vk_update_descriptor_set_with_template.
+        if (w.dstSet != VK_NULL_HANDLE) vk_writes.push_back(w);
+    }
+    // The Windows shaders' textures, as for a template: each set's writes
+    // laid out the way desktop_fill reads them, and copied back.
+    std::map<VkDescriptorSet, std::vector<Write*>> materials;
+    for (Write& e : writes) {
+        if (e.w.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && !e.images.empty()) {
+            materials[e.w.dstSet].push_back(&e);
+        }
+    }
+    for (const auto& [set, set_writes] : materials) {
+        std::vector<VkDescriptorUpdateTemplateEntry> entries;
+        std::vector<uint8_t> data(set_writes.size() * sizeof(VkDescriptorImageInfo));
+        for (size_t i = 0; i < set_writes.size(); ++i) {
+            const size_t offset = i * sizeof(VkDescriptorImageInfo);
+            entries.push_back({set_writes[i]->w.dstBinding, 0, 1,
+                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, offset, 0});
+            std::memcpy(data.data() + offset, set_writes[i]->images.data(),
+                        sizeof(VkDescriptorImageInfo));
+        }
+        desktop_fill::fill(l, entries, data);
+        for (size_t i = 0; i < set_writes.size(); ++i) {
+            std::memcpy(set_writes[i]->images.data(), data.data() + i * sizeof(VkDescriptorImageInfo),
+                        sizeof(VkDescriptorImageInfo));
+        }
+    }
+    std::vector<VkCopyDescriptorSet> copies(r.u32());
+    std::vector<VkCopyDescriptorSet> vk_copies;
+    for (auto& c : copies) {
+        c.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+        c.srcSet = resolve_descriptor_set(r.u64());
+        c.srcBinding = r.u32();
+        c.srcArrayElement = r.u32();
+        c.dstSet = resolve_descriptor_set(r.u64());
+        c.dstBinding = r.u32();
+        c.dstArrayElement = r.u32();
+        c.descriptorCount = r.u32();
+        if (c.srcSet != VK_NULL_HANDLE && c.dstSet != VK_NULL_HANDLE) vk_copies.push_back(c);
+    }
+    l.vk.vkUpdateDescriptorSets(l.device, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
+                                static_cast<uint32_t>(vk_copies.size()), vk_copies.data());
+    return 0;
+}
+
+uint64_t vk_free_descriptor_sets(uint64_t pool, const std::vector<uint8_t>& in) {
+    pool = real_handle(pool);
+    Loader& l = loader();
+    std::vector<VkDescriptorSet> sets;
+    {
+        std::lock_guard<std::mutex> lock(descriptor_set_mutex());
+        for (size_t at = 0; at + sizeof(uint64_t) <= in.size(); at += sizeof(uint64_t)) {
+            uint64_t id = 0;
+            std::memcpy(&id, in.data() + at, sizeof(id));
+            const auto it = descriptor_sets().find(id);
+            if (it == descriptor_sets().end()) continue;
+            sets.push_back(it->second.set);
+            descriptor_sets().erase(it);
+        }
+    }
+    return static_cast<uint64_t>(static_cast<int32_t>(
+        l.vk.vkFreeDescriptorSets(l.device, from_u64<VkDescriptorPool>(pool),
+                                  static_cast<uint32_t>(sets.size()), sets.data())));
+}
+
+uint64_t vk_create_buffer_view(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                               uint32_t* out_len, uint64_t client) {
+    Loader& l = loader();
+    vk_wire::Reader r(in.data(), in.size());
+    VkBufferViewCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
+    ci.buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
+    ci.flags = r.u32();
+    ci.format = static_cast<VkFormat>(r.u32());
+    ci.offset = r.u64();
+    ci.range = r.u64();
+    VkBufferView view = VK_NULL_HANDLE;
+    const VkResult res = l.vk.vkCreateBufferView(l.device, &ci, nullptr, &view);
+    if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
+    return answer_handle(to_u64(view), client, out, out_len);
+}
+
+uint64_t vk_create_event(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len,
+                         uint64_t client) {
+    Loader& l = loader();
+    VkEventCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
+    ci.flags = flags;
+    VkEvent event = VK_NULL_HANDLE;
+    const VkResult res = l.vk.vkCreateEvent(l.device, &ci, nullptr, &event);
+    if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
+    return answer_handle(to_u64(event), client, out, out_len);
+}
+
+uint64_t vk_event_op(uint64_t event, uint32_t op) {
+    Loader& l = loader();
+    const auto e = from_u64<VkEvent>(real_handle(event));
+    using Op = vk_wire::EventOp;
+    const VkResult res = static_cast<Op>(op) == Op::Status ? l.vk.vkGetEventStatus(l.device, e)
+                         : static_cast<Op>(op) == Op::Set  ? l.vk.vkSetEvent(l.device, e)
+                                                           : l.vk.vkResetEvent(l.device, e);
+    return static_cast<uint64_t>(static_cast<int32_t>(res));
+}
+
+namespace {
+// A POD reply, prefixed with its size, as read_pod() on the client expects.
+template <typename T>
+uint64_t answer_pod(const T& value, std::vector<uint8_t>& out, uint32_t* out_len) {
+    const uint32_t size = sizeof(T);
+    out.resize(sizeof(size) + size);
+    std::memcpy(out.data(), &size, sizeof(size));
+    std::memcpy(out.data() + sizeof(size), &value, size);
+    *out_len = static_cast<uint32_t>(out.size());
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+}  // namespace
+
+uint64_t vk_get_image_subresource_layout(uint64_t image, uint32_t aspect, uint32_t mip,
+                                         uint32_t layer, std::vector<uint8_t>& out,
+                                         uint32_t* out_len) {
+    Loader& l = loader();
+    VkImageSubresource sub{aspect, mip, layer};
+    VkSubresourceLayout layout{};
+    l.vk.vkGetImageSubresourceLayout(l.device, from_u64<VkImage>(real_handle(image)), &sub, &layout);
+    return answer_pod(layout, out, out_len);
+}
+
+uint64_t vk_get_render_area_granularity(uint64_t pass, std::vector<uint8_t>& out,
+                                        uint32_t* out_len) {
+    Loader& l = loader();
+    VkExtent2D granularity{};
+    l.vk.vkGetRenderAreaGranularity(l.device, from_u64<VkRenderPass>(real_handle(pass)),
+                                    &granularity);
+    return answer_pod(granularity, out, out_len);
+}
+
+uint64_t vk_merge_pipeline_caches(uint64_t dst, const std::vector<uint8_t>& in) {
+    Loader& l = loader();
+    std::vector<VkPipelineCache> sources(in.size() / sizeof(uint64_t));
+    for (size_t i = 0; i < sources.size(); ++i) {
+        uint64_t v = 0;
+        std::memcpy(&v, in.data() + i * sizeof(v), sizeof(v));
+        sources[i] = from_u64<VkPipelineCache>(real_handle(v));
+    }
+    return static_cast<uint64_t>(static_cast<int32_t>(l.vk.vkMergePipelineCaches(
+        l.device, from_u64<VkPipelineCache>(real_handle(dst)),
+        static_cast<uint32_t>(sources.size()), sources.data())));
+}
+
+uint64_t vk_create_sampler_ycbcr_conversion(const std::vector<uint8_t>& in,
+                                            std::vector<uint8_t>& out, uint32_t* out_len,
+                                            uint64_t client) {
+    Loader& l = loader();
+    vk_wire::Reader r(in.data(), in.size());
+    VkSamplerYcbcrConversionCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO;
+    ci.format = static_cast<VkFormat>(r.u32());
+    ci.ycbcrModel = static_cast<VkSamplerYcbcrModelConversion>(r.u32());
+    ci.ycbcrRange = static_cast<VkSamplerYcbcrRange>(r.u32());
+    ci.components = r.scalar<VkComponentMapping>();
+    ci.xChromaOffset = static_cast<VkChromaLocation>(r.u32());
+    ci.yChromaOffset = static_cast<VkChromaLocation>(r.u32());
+    ci.chromaFilter = static_cast<VkFilter>(r.u32());
+    ci.forceExplicitReconstruction = r.u32();
+    VkSamplerYcbcrConversion conversion = VK_NULL_HANDLE;
+    const VkResult res = l.vk.vkCreateSamplerYcbcrConversion(l.device, &ci, nullptr, &conversion);
+    if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
+    return answer_handle(to_u64(conversion), client, out, out_len);
+}
+
+uint64_t vk_get_physical_device_chained(uint32_t query, uint64_t device, uint32_t format,
+                                        const std::vector<uint8_t>& in, uint32_t node_count,
+                                        std::vector<uint8_t>& out, uint32_t* out_len) {
+    std::vector<std::vector<uint8_t>> storage;
+    void* chain = rebuild_chain(in.data(), in.size(), node_count, storage);
+    const auto pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
+    uint32_t base = 0;
+    const void* fixed = nullptr;
+    VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, chain};
+    VkPhysicalDeviceMemoryProperties2 memory{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+                                             chain};
+    VkFormatProperties2 formats{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, chain};
+    using Q = vk_wire::ChainedQuery;
+    switch (static_cast<Q>(query)) {
+        case Q::Properties:
+            (vkGetPhysicalDeviceProperties2 != nullptr ? vkGetPhysicalDeviceProperties2
+                                                       : vkGetPhysicalDeviceProperties2KHR)(pd, &props);
+            base = sizeof(props.properties);
+            fixed = &props.properties;
+            break;
+        case Q::MemoryProperties:
+            (vkGetPhysicalDeviceMemoryProperties2 != nullptr
+                 ? vkGetPhysicalDeviceMemoryProperties2
+                 : vkGetPhysicalDeviceMemoryProperties2KHR)(pd, &memory);
+            base = sizeof(memory.memoryProperties);
+            fixed = &memory.memoryProperties;
+            break;
+        case Q::FormatProperties:
+            (vkGetPhysicalDeviceFormatProperties2 != nullptr
+                 ? vkGetPhysicalDeviceFormatProperties2
+                 : vkGetPhysicalDeviceFormatProperties2KHR)(pd, static_cast<VkFormat>(format),
+                                                            &formats);
+            base = sizeof(formats.formatProperties);
+            fixed = &formats.formatProperties;
+            break;
+    }
+    if (fixed == nullptr) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
+    }
+    out.resize(sizeof(uint32_t) + base);
+    std::memcpy(out.data(), &base, sizeof(base));
+    std::memcpy(out.data() + sizeof(uint32_t), fixed, base);
+    flatten_chain(chain, out);
+    *out_len = static_cast<uint32_t>(out.size());
+    return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
 uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
     STUD_ZONE();
     Loader& l = loader();
@@ -13739,6 +14251,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             break;
         }
         default:
+            record_core_command(static_cast<K>(kind), l, cb, r);
             break;
     }
     return 0;
@@ -13771,8 +14284,12 @@ struct Task {
     enum class Kind { Begin, Records, End } kind = Kind::Records;
     uint64_t cb = 0;
     uint32_t flags = 0;
+    CommandBufferInheritance inherited;
     std::vector<uint8_t> bytes;
 };
+
+// The pool whose queue this worker is draining.
+thread_local uint64_t t_worker_pool = 0;
 
 struct PoolQueue {
     std::deque<Task> tasks;
@@ -13783,6 +14300,7 @@ struct State {
     std::mutex m;
     std::condition_variable work;
     std::condition_variable idle;
+    std::condition_variable pool_drained;
     std::unordered_map<uint64_t, PoolQueue> queues;  // by pool
     std::deque<uint64_t> ready;                      // pools waiting for a worker
     std::unordered_map<uint64_t, uint64_t> pool_of;  // command buffer -> pool
@@ -13808,7 +14326,8 @@ void report_failure(const char* what, uint64_t r) {
 void run(const Task& t) {
     switch (t.kind) {
         case Task::Kind::Begin:
-            report_failure("vkBeginCommandBuffer", vk_begin_command_buffer(t.cb, t.flags));
+            report_failure("vkBeginCommandBuffer",
+                           vk_begin_command_buffer(t.cb, t.flags, t.inherited));
             depth_prepass::begin(t.cb);
             break;
         case Task::Kind::End:
@@ -13857,6 +14376,7 @@ void worker() {
         const uint64_t pool = s.ready.front();
         s.ready.pop_front();
         ++s.busy;
+        t_worker_pool = pool;
         PoolQueue& q = s.queues[pool];
         while (!q.tasks.empty()) {
             Task t = std::move(q.tasks.front());
@@ -13867,6 +14387,7 @@ void worker() {
             --s.outstanding;
         }
         q.owned = false;
+        s.pool_drained.notify_all();
         --s.busy;
         if (s.outstanding == 0) s.idle.notify_all();
     }
@@ -13912,13 +14433,14 @@ void note_pool(uint64_t cb, uint64_t pool) {
     s.pool_of[cb] = pool;
 }
 
-void enqueue_begin(uint64_t cb, uint32_t flags) {
+void enqueue_begin(uint64_t cb, uint32_t flags, const CommandBufferInheritance& inherited) {
     State& s = state();
     std::lock_guard<std::mutex> lock(s.m);
     Task t;
     t.kind = Task::Kind::Begin;
     t.cb = cb;
     t.flags = flags;
+    t.inherited = inherited;
     enqueue_locked(s, std::move(t));
 }
 
@@ -13929,6 +14451,21 @@ void enqueue_end(uint64_t cb) {
     t.kind = Task::Kind::End;
     t.cb = cb;
     enqueue_locked(s, std::move(t));
+}
+
+// Called from a worker replaying a vkCmdExecuteCommands: the buffers it runs
+// were ended by another pool's worker, or are about to be. Ends only ever
+// reach a queue before the primary that executes them, so waiting cannot
+// close a circle.
+void wait_for_command_buffer(uint64_t cb) {
+    State& s = state();
+    std::unique_lock<std::mutex> lock(s.m);
+    const uint64_t pool = pool_for(s, cb);
+    if (pool == t_worker_pool) return;
+    s.pool_drained.wait(lock, [&s, pool] {
+        const auto it = s.queues.find(pool);
+        return it == s.queues.end() || !it->second.owned;
+    });
 }
 
 // A batch may hold more than one command buffer's commands (those recorded

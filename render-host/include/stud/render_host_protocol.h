@@ -617,6 +617,19 @@ enum class CallId : uint32_t {
     // queued a finished frame. a[0] the gfxstream colour buffer holding it.
     // Reply-free; render-host draws it into the window and swaps.
     GlPresentColorBuffer,
+    // The rest of core Vulkan 1.0 and 1.1, for an engine that starts using it.
+    VkUpdateDescriptorSets,
+    VkFreeDescriptorSets,
+    VkFreeCommandBuffers,
+    VkResetCommandBuffer,
+    VkCreateBufferView,
+    VkCreateEvent,
+    VkEventOp,
+    VkGetImageSubresourceLayout,
+    VkGetRenderAreaGranularity,
+    VkMergePipelineCaches,
+    VkCreateSamplerYcbcrConversion,
+    VkGetPhysicalDeviceChained,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -797,9 +810,21 @@ inline const char* call_id_name(CallId id) {
         "AudioShareState",
         "TransportRing",
         "GlPresentColorBuffer",
+        "VkUpdateDescriptorSets",
+        "VkFreeDescriptorSets",
+        "VkFreeCommandBuffers",
+        "VkResetCommandBuffer",
+        "VkCreateBufferView",
+        "VkCreateEvent",
+        "VkEventOp",
+        "VkGetImageSubresourceLayout",
+        "VkGetRenderAreaGranularity",
+        "VkMergePipelineCaches",
+        "VkCreateSamplerYcbcrConversion",
+        "VkGetPhysicalDeviceChained",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::GlPresentColorBuffer) + 1,
+                      static_cast<size_t>(CallId::VkGetPhysicalDeviceChained) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

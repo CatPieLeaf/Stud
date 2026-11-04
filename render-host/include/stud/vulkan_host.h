@@ -198,12 +198,21 @@ uint64_t vk_share_query_results(uint64_t pool, uint64_t id, uint64_t length, uin
 
 // Command buffers replayed on worker threads, one ordered queue per pool;
 // see the definitions.
+// What a secondary command buffer inherits from the pass it runs in.
+struct CommandBufferInheritance {
+    bool secondary = false;
+    uint64_t render_pass = 0;
+    uint32_t subpass = 0;
+    uint64_t framebuffer = 0;
+    uint32_t query_flags = 0;  // bit 0 occlusionQueryEnable, the rest queryFlags
+};
 namespace replay {
 bool enabled();
 void note_pool(uint64_t cb, uint64_t pool);
-void enqueue_begin(uint64_t cb, uint32_t flags);
+void enqueue_begin(uint64_t cb, uint32_t flags, const CommandBufferInheritance& inherited = {});
 void enqueue_end(uint64_t cb);
 void enqueue_records(const uint8_t* data, size_t size);
+void wait_for_command_buffer(uint64_t cb);
 void wait_all();
 }  // namespace replay
 uint64_t vk_unmap_memory(uint64_t memory);
@@ -271,9 +280,31 @@ uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector
 uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t count,
                                       const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
                                       uint32_t* out_len);
-uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags);
+uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags,
+                                 const CommandBufferInheritance& inherited = {});
 uint64_t vk_end_command_buffer(uint64_t cb);
 uint64_t vk_reset_command_pool(uint64_t pool, uint32_t flags);
+uint64_t vk_reset_command_buffer(uint64_t cb, uint32_t flags);
+uint64_t vk_free_command_buffers(uint64_t pool, const std::vector<uint8_t>& in);
+uint64_t vk_update_descriptor_sets(const std::vector<uint8_t>& in);
+uint64_t vk_free_descriptor_sets(uint64_t pool, const std::vector<uint8_t>& in);
+uint64_t vk_create_buffer_view(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
+                               uint32_t* out_len, uint64_t client);
+uint64_t vk_create_event(uint32_t flags, std::vector<uint8_t>& out, uint32_t* out_len,
+                         uint64_t client);
+uint64_t vk_event_op(uint64_t event, uint32_t op);
+uint64_t vk_get_image_subresource_layout(uint64_t image, uint32_t aspect, uint32_t mip,
+                                         uint32_t layer, std::vector<uint8_t>& out,
+                                         uint32_t* out_len);
+uint64_t vk_get_render_area_granularity(uint64_t pass, std::vector<uint8_t>& out,
+                                        uint32_t* out_len);
+uint64_t vk_merge_pipeline_caches(uint64_t dst, const std::vector<uint8_t>& in);
+uint64_t vk_create_sampler_ycbcr_conversion(const std::vector<uint8_t>& in,
+                                            std::vector<uint8_t>& out, uint32_t* out_len,
+                                            uint64_t client);
+uint64_t vk_get_physical_device_chained(uint32_t query, uint64_t device, uint32_t format,
+                                        const std::vector<uint8_t>& in, uint32_t node_count,
+                                        std::vector<uint8_t>& out, uint32_t* out_len);
 uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8_t>& in);
 uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, uint64_t timeout);
 uint64_t vk_reset_fences(const std::vector<uint8_t>& in);
