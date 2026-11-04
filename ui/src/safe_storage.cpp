@@ -33,7 +33,10 @@ QString secrets_dir() {
 }
 
 
+// Empty for a name that is not a plain slug, which every caller then fails
+// on: the name comes from the sandbox, and ../ would reach out of this folder.
 QString secret_path(const QString& name) {
+    if (!stud::paths::valid_secret_name(name.toStdString())) return {};
     return secrets_dir() + "/" + name + ".bin";
 }
 

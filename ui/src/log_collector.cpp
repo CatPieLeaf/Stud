@@ -127,7 +127,7 @@ bool start_log_collector(const std::string& socket_path, const std::string& log_
         // everything the old one said goes to its own file, and from here
         // on lines go to the new one. The socket and its threads stay.
         const int next_fd =
-            ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+            ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
         if (next_fd < 0) return true;
         flush_now();
         std::lock_guard<std::mutex> write_lock(c.write_mutex);
@@ -136,7 +136,7 @@ bool start_log_collector(const std::string& socket_path, const std::string& log_
         return true;
     }
 
-    c.log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    c.log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (c.log_fd < 0) return false;
 
     // A socket left by a session that did not shut down cleanly would

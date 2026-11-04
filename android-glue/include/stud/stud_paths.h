@@ -72,6 +72,35 @@ inline std::string runtime_dir() {
     return dir;
 }
 
+// What the host processes keep from the engine.
+//
+// The sandbox can write the data, cache, log and runtime directories, so
+// nothing outside it can trust what is in them: a file there can be swapped
+// after it is written, and a name there can be a symlink to anything of the
+// user's. This one is never bound in. It is a real host path, under Flatpak
+// as well, where the runtime directory is private and KWin could not read a
+// file left in it.
+inline std::string private_dir() {
+    const std::string dir = state_dir() + "/private";
+    for (size_t at = dir.find('/', 1); at != std::string::npos; at = dir.find('/', at + 1)) {
+        ::mkdir(dir.substr(0, at).c_str(), 0700);
+    }
+    ::mkdir(dir.c_str(), 0700);
+    ::chmod(dir.c_str(), 0700);
+    return dir;
+}
+
+// A secret's name becomes a file name, and it comes from the sandbox.
+inline bool valid_secret_name(const std::string& name) {
+    if (name.empty()) return false;
+    for (const char c : name) {
+        const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                           (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if (!plain) return false;
+    }
+    return true;
+}
+
 // The engine's own two directories, in Android's own terms: getFilesDir()
 // is what an app is expected to keep, getCacheDir() is what it is
 // expected to lose. Stud honours that distinction rather than putting

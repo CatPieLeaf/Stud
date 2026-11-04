@@ -655,6 +655,54 @@ std::optional<std::string> server_join_payload(const std::string& url) {
     return "placeId=" + place_id + "\n" + payload;
 }
 
+// The display's refresh rate as last told to the engine, which paces frames to
+// it, so a window moved to another monitor has to say so.
+uint64_t g_reported_refresh_mhz = 0;
+
+void report_display_refresh(stud::jni_bridge::BionicAwareJvm& jvm,
+                            const stud::linker::LoadedLibrary& lib) {
+    // Tell the engine what the display can actually do. Read from the
+    // compositor at runtime, so this follows whatever panel is attached
+    // rather than any number written down here.
+    {
+        uint64_t rate_args[8] = {};
+        const uint64_t current_mhz = stud::render_client::connection().call(
+            stud::render_host::CallId::GetDisplayRefreshRate, rate_args, nullptr, 0, nullptr, 0,
+            nullptr);
+        g_reported_refresh_mhz = current_mhz;
+        std::vector<uint32_t> supported_mhz(16, 0);
+        uint32_t supported_len = 0;
+        stud::render_client::connection().call(
+            stud::render_host::CallId::GetSupportedRefreshRates, rate_args, nullptr, 0,
+            supported_mhz.data(), static_cast<uint32_t>(supported_mhz.size() * sizeof(uint32_t)),
+            &supported_len);
+        std::vector<float> supported_hz;
+        for (uint32_t i = 0; i < supported_len / sizeof(uint32_t); ++i) {
+            if (supported_mhz[i] > 0) supported_hz.push_back(supported_mhz[i] / 1000.0f);
+        }
+        float current_hz = static_cast<float>(current_mhz) / 1000.0f;
+        // STUD_FORCE_REFRESH_HZ=<n>: report a rate the display does not
+        // have. Purely a test lever, if frames follow it, the engine
+        // is pacing to what Stud reports; if they do not, it is pacing
+        // to something else and reporting is not the lever.
+        if (const char* forced = std::getenv("STUD_FORCE_REFRESH_HZ")) {
+            const float value = std::strtof(forced, nullptr);
+            if (value > 0.0f) current_hz = value;
+        }
+        if (current_hz > 0.0f) {
+            const bool ok = stud::jni_bridge::run_pass_display_refresh_rates(jvm, lib, current_hz,
+                                                                            supported_hz);
+            std::printf("stud: display refresh: %.3f Hz current, %zu supported -> %s\n",
+                        static_cast<double>(current_hz), supported_hz.size(),
+                        ok ? "reported" : "not reported");
+        } else {
+            std::printf("stud: display refresh: compositor reported none, leaving the engine's "
+                        "own default\n");
+        }
+        std::fflush(stdout);
+    }
+}
+
 // Four polls that belong together and share nothing with the rest of the
 // event loop: a panel that closed, a navigation it declined to follow,
 // anything its page sent over the JavaScript bridge, and a deep link from
@@ -2226,45 +2274,7 @@ int main(int argc, char** argv) {
                     static_cast<int>(is_first_install), first_install_ok);
 
         std::string base_url = launch_payload ? launch_payload->base_url : "";
-    // Tell the engine what the display can actually do. Read from the
-    // compositor at runtime, so this follows whatever panel is attached
-    // rather than any number written down here.
-    {
-        uint64_t rate_args[8] = {};
-        const uint64_t current_mhz = stud::render_client::connection().call(
-            stud::render_host::CallId::GetDisplayRefreshRate, rate_args, nullptr, 0, nullptr, 0,
-            nullptr);
-        std::vector<uint32_t> supported_mhz(16, 0);
-        uint32_t supported_len = 0;
-        stud::render_client::connection().call(
-            stud::render_host::CallId::GetSupportedRefreshRates, rate_args, nullptr, 0,
-            supported_mhz.data(), static_cast<uint32_t>(supported_mhz.size() * sizeof(uint32_t)),
-            &supported_len);
-        std::vector<float> supported_hz;
-        for (uint32_t i = 0; i < supported_len / sizeof(uint32_t); ++i) {
-            if (supported_mhz[i] > 0) supported_hz.push_back(supported_mhz[i] / 1000.0f);
-        }
-        float current_hz = static_cast<float>(current_mhz) / 1000.0f;
-        // STUD_FORCE_REFRESH_HZ=<n>: report a rate the display does not
-        // have. Purely a test lever, if frames follow it, the engine
-        // is pacing to what Stud reports; if they do not, it is pacing
-        // to something else and reporting is not the lever.
-        if (const char* forced = std::getenv("STUD_FORCE_REFRESH_HZ")) {
-            const float value = std::strtof(forced, nullptr);
-            if (value > 0.0f) current_hz = value;
-        }
-        if (current_hz > 0.0f) {
-            const bool ok = stud::jni_bridge::run_pass_display_refresh_rates(jvm, lib, current_hz,
-                                                                            supported_hz);
-            std::printf("stud: display refresh: %.3f Hz current, %zu supported -> %s\n",
-                        static_cast<double>(current_hz), supported_hz.size(),
-                        ok ? "reported" : "not reported");
-        } else {
-            std::printf("stud: display refresh: compositor reported none, leaving the engine's "
-                        "own default\n");
-        }
-        std::fflush(stdout);
-    }
+    report_display_refresh(jvm, lib);
         auto app_bridge_result = stud::jni_bridge::run_app_bridge_start(jvm, lib, base_url);
         std::printf("stud: run_app_bridge_start() complete: app_start_called=%d trapped_abort=%d\n",
                     app_bridge_result.app_start_called, app_bridge_result.app_start_trapped_abort);
@@ -3202,6 +3212,14 @@ int main(int argc, char** argv) {
 
         if (notify_server_region) report_server_region();
 
+        // The window moved to a monitor with another refresh rate.
+        {
+            uint64_t rate_args[8] = {};
+            const uint64_t mhz = stud::render_client::connection().call(
+                stud::render_host::CallId::GetDisplayRefreshRate, rate_args, nullptr, 0, nullptr, 0,
+                nullptr);
+            if (mhz != 0 && mhz != g_reported_refresh_mhz) report_display_refresh(jvm, lib);
+        }
         // The window changed size; see poll_window_resize().
         poll_window_resize(jvm, lib, v2_platform_params, lifecycle, layout_density,
                            real_window_width, real_window_height);

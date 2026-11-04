@@ -5,6 +5,7 @@
 #include <string>
 
 #include "stud/json_field.h"
+#include "stud/stud_paths.h"
 #include "stud/text_editor.h"
 #include "stud/web_origin.h"
 
@@ -46,6 +47,14 @@ int main() {
     assert(!json_true_field(R"({"a":"on"})", "on"));
     assert(json_escaped("a\"b\\c\n") == "a\\\"b\\\\c\\u000a");
     assert(json_string_field("{\"u\":\"" + json_escaped("x\ny\"") + "\"}", "u") == "x\ny\"");
+
+    assert(stud::paths::valid_secret_name("roblosecurity"));
+    assert(stud::paths::valid_secret_name("safe-storage_2"));
+    assert(!stud::paths::valid_secret_name(""));
+    assert(!stud::paths::valid_secret_name(".."));
+    assert(!stud::paths::valid_secret_name("../../x"));
+    assert(!stud::paths::valid_secret_name("a/b"));
+    assert(!stud::paths::valid_secret_name("a\nb"));
 
     assert(utf16_offset("abc", 2) == 2);
     assert(utf16_offset("\xC3\xA7z", 2) == 1);          // two bytes, one unit

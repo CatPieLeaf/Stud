@@ -682,6 +682,12 @@ GLuint upload(const RealFns& fns, const std::string& path, bool repeat) {
     }
     if (!block && dxgi != 34) return 0;  // DXGI_FORMAT_R16G16_FLOAT
     size_t at = block ? 128 : 148;
+    // Past 32 a shift of the size means nothing, and without a first level
+    // there is no texture to speak of.
+    mips = std::min(mips, 32u);
+    const size_t first_mip = block ? size_t{(std::max(w, 1u) + 3) / 4} * ((std::max(h, 1u) + 3) / 4) * 16
+                                   : size_t{std::max(w, 1u)} * std::max(h, 1u) * 4;
+    if (at + first_mip > b.size()) return 0;
     GLuint tex = 0;
     fns.glGenTextures_(1, &tex);
     fns.glBindTexture_(GL_TEXTURE_2D, tex);
@@ -1760,7 +1766,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 // The tray offers "copy server link" and is a separate
                 // process, so the link is left where it can read it. Its
                 // absence is what "not in a game" looks like from there.
-                const std::string invite_path = stud::paths::runtime_dir() + "/invite";
+                const std::string invite_path = stud::paths::private_dir() + "/invite";
                 if (body.empty()) {
                     std::lock_guard<std::mutex> lock(apply_mutex);
                     if (!current()) return;
@@ -3615,17 +3621,15 @@ bool dispatches_without_lock(stud::render_host::CallId id, const std::vector<uin
 // blocks in this file are the same namespace.
 namespace {
 void raise_through_kwin() {
-    // The script goes in Stud's own data directory, not the runtime
-    // directory: KWin has to READ this path, and it runs on the host. A
-    // Flatpak's runtime directory is private to the sandbox (the real
-    // one is buried under /run/user/<uid>/.flatpak/<instance>/), so KWin
-    // was handed a path that does not exist for it and the raise
-    // silently did nothing, a game opened from the browser stayed
-    // behind the window in front. The data directory is a real host path
-    // in both cases (~/.local/share/stud, or ~/.var/app/<id>/data/stud).
-    const std::string dir = stud::paths::data_dir();
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
+    // KWin has to READ this path, and it runs on the host. A Flatpak's
+    // runtime directory is private to the sandbox (the real one is buried
+    // under /run/user/<uid>/.flatpak/<instance>/), so KWin was handed a path
+    // that does not exist for it and the raise silently did nothing, a game
+    // opened from the browser stayed behind the window in front. And the
+    // engine's sandbox can write the data directory, which would make this
+    // a script of its choosing, run inside the compositor. The private
+    // directory is a real host path in both cases, and out of its reach.
+    const std::string dir = stud::paths::private_dir();
     std::string js_path = dir + "/kwin-raise.js";
     {
         std::ofstream js(js_path, std::ios::trunc);
@@ -3651,13 +3655,15 @@ void raise_through_kwin() {
         // entry per link clicked for the life of the session.
         const std::string cmd =
             "id=$(gdbus call --session --dest org.kde.KWin --object-path /Scripting "
-            "--method org.kde.kwin.Scripting.loadScript '" + js_path + "' studraise "
+            "--method org.kde.kwin.Scripting.loadScript \"$1\" studraise "
             "2>/dev/null | grep -oE '[0-9]+' | head -1); "
             "[ -n \"$id\" ] && gdbus call --session --dest org.kde.KWin "
             "--object-path /Scripting/Script$id --method org.kde.kwin.Script.run >/dev/null 2>&1; "
             "gdbus call --session --dest org.kde.KWin --object-path /Scripting "
             "--method org.kde.kwin.Scripting.unloadScript studraise >/dev/null 2>&1";
-        ::execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        // The path as an argument, not inside the command: a home directory
+        // can have a quote in its name.
+        ::execl("/bin/sh", "sh", "-c", cmd.c_str(), "sh", js_path.c_str(), nullptr);
         ::_exit(127);
     }
     if (pid > 0) {

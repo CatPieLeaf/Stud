@@ -680,6 +680,9 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
         argv_storage.push_back(value);
     }
 
+    // Off the terminal Stud may have been started from. Keeping it, the
+    // sandbox can open /dev/tty and type into the shell behind it (TIOCSTI).
+    argv_storage.push_back("--new-session");
     argv_storage.push_back("--unshare-pid");
     argv_storage.push_back("--unshare-ipc");
     argv_storage.push_back("--unshare-uts");

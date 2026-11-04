@@ -181,7 +181,26 @@ DecorationMode decoration_mode() {
     return mode;
 }
 
+// One monitor, as the compositor describes it. The state below holds a copy
+// of whichever of these the window is on.
+struct OutputRecord {
+    uint32_t name = 0;  // the registry's, which is how its removal is named
+    wl_output* output = nullptr;
+    int32_t phys_mm_w = 0;
+    int32_t phys_mm_h = 0;
+    int32_t transform = 0;
+    int32_t mode_px_w = 0;
+    int32_t mode_px_h = 0;
+    int32_t refresh_mhz = 0;
+    int32_t scale = 1;
+    std::vector<int32_t> supported_refresh_mhz;
+};
+
 struct WaylandConnectionState {
+    std::vector<std::unique_ptr<OutputRecord>> outputs;
+    OutputRecord* current_output = nullptr;
+    // After this the registry only listens for monitors coming and going.
+    bool globals_settled = false;
     wl_display* display = nullptr;
     wl_compositor* compositor = nullptr;
     // Real xdg-shell global (the engineering notes' M6 entry; Vulkan surface
@@ -697,6 +716,9 @@ std::atomic<bool> g_pointer_confined{false};
 // rather than created: whoever asked for it still wants it when the lock
 // ends, and a lock already keeps the pointer inside the window anyway.
 std::atomic<bool> g_confine_wanted{false};
+// The same for the lock. The bridge asks once, so a mouse unplugged and
+// plugged back in has to find its lock again here.
+std::atomic<bool> g_lock_wanted{false};
 
 void pointer_enter(void*, wl_pointer* pointer, uint32_t serial, wl_surface*, wl_fixed_t sx,
                     wl_fixed_t sy) {
@@ -1250,12 +1272,21 @@ const zwp_relative_pointer_v1_listener kRelativePointerListener = {
 
 void seat_capabilities(void* data, wl_seat* seat, uint32_t caps) {
     auto* state = static_cast<WaylandConnectionState*>(data);
-    // The last mouse or keyboard unplugged. The objects are done with, and
+    // The last mouse or keyboard unplugged. The objects are done with,
+    // constraints included, since those were made on this pointer, and
     // one that plugs back in is a new one to ask for; a held button or key
     // will not be heard coming up.
     if ((caps & WL_SEAT_CAPABILITY_POINTER) == 0 && state->pointer != nullptr) {
         release_all_held_buttons();
         g_pointer_inside = false;
+        if (state->locked_pointer != nullptr) zwp_locked_pointer_v1_destroy(state->locked_pointer);
+        state->locked_pointer = nullptr;
+        g_pointer_locked.store(false);
+        if (state->confined_pointer != nullptr) {
+            zwp_confined_pointer_v1_destroy(state->confined_pointer);
+        }
+        state->confined_pointer = nullptr;
+        g_pointer_confined.store(false);
         if (state->pinch != nullptr) zwp_pointer_gesture_pinch_v1_destroy(state->pinch);
         state->pinch = nullptr;
         if (state->relative_pointer != nullptr) {
@@ -1296,6 +1327,21 @@ void seat_capabilities(void* data, wl_seat* seat, uint32_t caps) {
             zwp_relative_pointer_v1_add_listener(state->relative_pointer,
                                                  &kRelativePointerListener, state);
         }
+        // Back from an unplug with the engine still wanting the pointer held.
+        wl_surface* surface = g_primary_surface.load();
+        if (state->pointer_constraints != nullptr && surface != nullptr) {
+            if (g_lock_wanted.load()) {
+                state->locked_pointer = zwp_pointer_constraints_v1_lock_pointer(
+                    state->pointer_constraints, surface, state->pointer, nullptr,
+                    ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+                g_pointer_locked.store(state->locked_pointer != nullptr);
+            } else if (g_confine_wanted.load()) {
+                state->confined_pointer = zwp_pointer_constraints_v1_confine_pointer(
+                    state->pointer_constraints, surface, state->pointer, nullptr,
+                    ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+                g_pointer_confined.store(state->confined_pointer != nullptr);
+            }
+        }
     }
     if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) != 0 && state->keyboard == nullptr) {
         state->keyboard = wl_seat_get_keyboard(seat);
@@ -1313,28 +1359,61 @@ const wl_seat_listener kSeatListener = {
 // wants; done/scale are required members of the listener struct and are
 // genuinely nothing-to-do here (Stud reads the values it cached, it does
 // not batch state across a done event).
+//
+// Every monitor is listened to, and what the rest of Stud reads is a copy of
+// the one the window is on.
+bool output_is_rotated(const WaylandConnectionState& state) {
+    return state.output_transform == WL_OUTPUT_TRANSFORM_90 ||
+           state.output_transform == WL_OUTPUT_TRANSFORM_270 ||
+           state.output_transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
+           state.output_transform == WL_OUTPUT_TRANSFORM_FLIPPED_270;
+}
+int32_t upright_mode_width(const WaylandConnectionState& state) {
+    return output_is_rotated(state) ? state.output_mode_px_h : state.output_mode_px_w;
+}
+int32_t upright_mode_height(const WaylandConnectionState& state) {
+    return output_is_rotated(state) ? state.output_mode_px_w : state.output_mode_px_h;
+}
+
+void publish_output(const OutputRecord& record) {
+    auto& state = wayland_state();
+    if (state.current_output != &record) return;
+    state.output = record.output;
+    state.output_phys_mm_w = record.phys_mm_w;
+    state.output_phys_mm_h = record.phys_mm_h;
+    state.output_transform = record.transform;
+    state.output_mode_px_w = record.mode_px_w;
+    state.output_mode_px_h = record.mode_px_h;
+    state.output_refresh_mhz = record.refresh_mhz;
+    state.output_scale = record.scale;
+    state.output_supported_refresh_mhz = record.supported_refresh_mhz;
+}
+
 void output_geometry(void* data, wl_output*, int32_t, int32_t, int32_t phys_mm_w,
                      int32_t phys_mm_h, int32_t, const char*, const char*, int32_t transform) {
-    auto* state = static_cast<WaylandConnectionState*>(data);
-    state->output_phys_mm_w = phys_mm_w;
-    state->output_phys_mm_h = phys_mm_h;
-    state->output_transform = transform;
+    auto* record = static_cast<OutputRecord*>(data);
+    record->phys_mm_w = phys_mm_w;
+    record->phys_mm_h = phys_mm_h;
+    record->transform = transform;
+    publish_output(*record);
 }
 void output_mode(void* data, wl_output*, uint32_t flags, int32_t width, int32_t height,
                  int32_t refresh_mhz) {
-    auto* state = static_cast<WaylandConnectionState*>(data);
+    auto* record = static_cast<OutputRecord*>(data);
     // Every mode is a rate the display supports; the engine wants the
     // whole set, not just the active one, so it can pick a target.
     if (refresh_mhz > 0) {
-        auto& all = state->output_supported_refresh_mhz;
+        auto& all = record->supported_refresh_mhz;
         if (std::find(all.begin(), all.end(), refresh_mhz) == all.end()) {
             all.push_back(refresh_mhz);
         }
     }
-    if ((flags & WL_OUTPUT_MODE_CURRENT) == 0) return;
-    state->output_mode_px_w = width;
-    state->output_mode_px_h = height;
-    state->output_refresh_mhz = refresh_mhz;
+    if ((flags & WL_OUTPUT_MODE_CURRENT) != 0) {
+        record->mode_px_w = width;
+        record->mode_px_h = height;
+        record->refresh_mhz = refresh_mhz;
+    }
+    publish_output(*record);
 }
 void output_done(void*, wl_output*) {}
 void output_scale(void* data, wl_output*, int32_t factor) {
@@ -1342,7 +1421,9 @@ void output_scale(void* data, wl_output*, int32_t factor) {
     // actual meaning of "HiDPI" for a Wayland client. A client that
     // ignores it renders at logical size and gets upscaled (blurry);
     // one that honours it renders at factor x and stays sharp.
-    static_cast<WaylandConnectionState*>(data)->output_scale = factor;
+    auto* record = static_cast<OutputRecord*>(data);
+    record->scale = factor;
+    publish_output(*record);
 }
 
 const wl_output_listener kOutputListener = {
@@ -1376,7 +1457,17 @@ const zxdg_output_v1_listener kXdgOutputListener = {
     .description = xdg_output_noop_name,
 };
 
+void registry_global_unsettled(void* data, wl_registry* registry, uint32_t name,
+                               const char* interface, uint32_t version);
+
 void registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface,
+                     uint32_t version) {
+    const auto* state = static_cast<WaylandConnectionState*>(data);
+    if (state->globals_settled && std::string_view(interface) != wl_output_interface.name) return;
+    registry_global_unsettled(data, registry, name, interface, version);
+}
+
+void registry_global_unsettled(void* data, wl_registry* registry, uint32_t name, const char* interface,
                       uint32_t version) {
     auto* state = static_cast<WaylandConnectionState*>(data);
     if (std::string_view(interface) == wl_shm_interface.name) {
@@ -1456,18 +1547,23 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
         state->viewporter = static_cast<wp_viewporter*>(
             wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
     } else if (std::string_view(interface) == wl_output_interface.name) {
-        // Bind the first output advertised. A multi-monitor host has
-        // several; Stud's window lives on one of them and cannot know
-        // which before it is mapped, so the first is the honest
-        // best-effort answer, and it is what a single-monitor machine
-        // (the common case) reports exactly. Version 2 is where
-        // wl_output.scale arrived; the listener implements through it.
-        if (state->output == nullptr) {
-            uint32_t bind_version = version < 2 ? version : 2;
-            state->output = static_cast<wl_output*>(
-                wl_registry_bind(registry, name, &wl_output_interface, bind_version));
-            wl_output_add_listener(state->output, &kOutputListener, state);
+        // Every output. A multi-monitor host has several and Stud's window
+        // lives on one of them, which wl_surface.enter says once it is
+        // mapped. The first stands in until then, and is what a
+        // single-monitor machine (the common case) reports exactly. Version
+        // 2 is where wl_output.scale arrived; the listener implements
+        // through it.
+        uint32_t bind_version = version < 2 ? version : 2;
+        auto record = std::make_unique<OutputRecord>();
+        record->name = name;
+        record->output = static_cast<wl_output*>(
+            wl_registry_bind(registry, name, &wl_output_interface, bind_version));
+        wl_output_add_listener(record->output, &kOutputListener, record.get());
+        if (state->current_output == nullptr) {
+            state->current_output = record.get();
+            state->output = record->output;
         }
+        state->outputs.push_back(std::move(record));
     } else if (std::string_view(interface) == xdg_wm_base_interface.name) {
         // Up to version 6, for xdg_toplevel's `suspended` state.
         //
@@ -1490,10 +1586,21 @@ void registry_global(void* data, wl_registry* registry, uint32_t name, const cha
     }
 }
 
-void registry_global_remove(void*, wl_registry*, uint32_t) {
-    // A compositor global disappearing mid-session isn't a case Stud
-    // needs to handle for a single short-lived registry round-trip at
-    // startup; nothing to do.
+// A monitor unplugged. Anything else leaving mid-session is not a case Stud
+// handles.
+void registry_global_remove(void* data, wl_registry*, uint32_t name) {
+    auto* state = static_cast<WaylandConnectionState*>(data);
+    auto& all = state->outputs;
+    const auto gone = std::find_if(all.begin(), all.end(), [name](const auto& record) {
+        return record->name == name;
+    });
+    if (gone == all.end()) return;
+    const bool was_current = state->current_output == gone->get();
+    wl_output_destroy((*gone)->output);
+    all.erase(gone);
+    if (!was_current) return;
+    state->current_output = all.empty() ? nullptr : all.front().get();
+    if (state->current_output != nullptr) publish_output(*state->current_output);
 }
 
 // Standard integration of a foreign (non-ALooper-native) event
@@ -1646,7 +1753,8 @@ void ensure_wayland_connection() {
     // sent in response to the bind above, which happened during that
     // first round-trip, so they are still in flight at this point.
     wl_display_roundtrip_queue(state.display, state.queue);
-    wl_registry_destroy(registry);
+    // Kept, not destroyed: a monitor can arrive or leave at any time.
+    state.globals_settled = true;
 
     if (state.output != nullptr) {
         std::printf("stud: android-glue: real output %dx%d px, %dx%d mm (transform=%d "
@@ -2107,6 +2215,22 @@ std::atomic<bool> g_window_activated{true};
 std::atomic<ANativeWindow*> g_toplevel_window{nullptr};
 std::atomic<bool> g_window_fullscreen{false};
 
+// What the compositor says about the window, whichever path it came by: the
+// frame pacing behind a hidden or unfocused window depends on it.
+void note_window_state(bool suspended, bool activated) {
+    const bool visible = !suspended;
+    if (visible != g_window_visible.exchange(visible)) {
+        std::printf("stud: android-glue: window %s\n",
+                     visible ? "visible again" : "no longer visible (suspended)");
+        std::fflush(stdout);
+    }
+    if (activated != g_window_activated.exchange(activated)) {
+        std::printf("stud: android-glue: window %s\n",
+                     activated ? "focused" : "in the background");
+        std::fflush(stdout);
+    }
+}
+
 void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t height,
                              wl_array* states) {
     if (states != nullptr) {
@@ -2121,17 +2245,7 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
             if (first[i] == XDG_TOPLEVEL_STATE_FULLSCREEN) fullscreen = true;
         }
         g_window_fullscreen.store(fullscreen);
-        const bool visible = !suspended;
-        if (visible != g_window_visible.exchange(visible)) {
-            std::printf("stud: android-glue: window %s\n",
-                         visible ? "visible again" : "no longer visible (suspended)");
-            std::fflush(stdout);
-        }
-        if (activated != g_window_activated.exchange(activated)) {
-            std::printf("stud: android-glue: window %s\n",
-                         activated ? "focused" : "in the background");
-            std::fflush(stdout);
-        }
+        note_window_state(suspended, activated);
     }
     if (width <= 0 || height <= 0) {
         return;
@@ -2170,6 +2284,32 @@ void xdg_toplevel_close(void*, xdg_toplevel*) {
     g_window_close_requested.store(true);
     stud::android_glue::window_state_changed();
 }
+
+// The window arrived on a monitor. What it reports from here on is that one's.
+void window_surface_enter(void*, wl_surface*, wl_output* output) {
+    auto& state = wayland_state();
+    for (const auto& record : state.outputs) {
+        if (record->output != output || record.get() == state.current_output) continue;
+        state.current_output = record.get();
+        publish_output(*record);
+        std::printf("stud: android-glue: window is on a %dx%d monitor at %d mHz\n",
+                    record->mode_px_w, record->mode_px_h, record->refresh_mhz);
+        std::fflush(stdout);
+    }
+}
+void window_surface_leave(void*, wl_surface*, wl_output*) {}
+#ifdef WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION
+void window_surface_scale(void*, wl_surface*, int32_t) {}
+void window_surface_transform(void*, wl_surface*, uint32_t) {}
+#endif
+const wl_surface_listener kWindowSurfaceListener = {
+    .enter = window_surface_enter,
+    .leave = window_surface_leave,
+#ifdef WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION
+    .preferred_buffer_scale = window_surface_scale,
+    .preferred_buffer_transform = window_surface_transform,
+#endif
+};
 
 const xdg_toplevel_listener kToplevelListener = {
     .configure = xdg_toplevel_configure,
@@ -2212,6 +2352,11 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
     libdecor_window_state window_state = LIBDECOR_WINDOW_STATE_NONE;
     if (decor.configuration_get_window_state(configuration, &window_state)) {
         g_window_fullscreen.store((window_state & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0);
+        // By value: older headers lack this name, and an older library
+        // simply never sets the bit.
+        constexpr int kWindowStateSuspended = 1 << 7;
+        note_window_state((static_cast<int>(window_state) & kWindowStateSuspended) != 0,
+                          (window_state & LIBDECOR_WINDOW_STATE_ACTIVE) != 0);
     }
 
     window->logical_width.store(width);
@@ -2435,6 +2580,9 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     auto& state = wayland_state();
     if (state.compositor != nullptr) {
         window->surface = wl_compositor_create_surface(state.compositor);
+        if (window->surface != nullptr) {
+            wl_surface_add_listener(window->surface, &kWindowSurfaceListener, nullptr);
+        }
 
         // Ask for the exact scale before the surface is ever mapped, so
         // the first buffer is already the right size.
@@ -2635,12 +2783,8 @@ void display_output_geometry(int32_t* px_w, int32_t* px_h, int32_t* mm_w, int32_
     // a 90/270 transform the two disagree about which axis is which.
     // Swap the pixel axes to match, which keeps dots-per-inch correct on
     // a rotated monitor instead of transposing it.
-    const bool rotated = state.output_transform == WL_OUTPUT_TRANSFORM_90 ||
-                         state.output_transform == WL_OUTPUT_TRANSFORM_270 ||
-                         state.output_transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
-                         state.output_transform == WL_OUTPUT_TRANSFORM_FLIPPED_270;
-    if (px_w != nullptr) *px_w = rotated ? state.output_mode_px_h : state.output_mode_px_w;
-    if (px_h != nullptr) *px_h = rotated ? state.output_mode_px_w : state.output_mode_px_h;
+    if (px_w != nullptr) *px_w = upright_mode_width(state);
+    if (px_h != nullptr) *px_h = upright_mode_height(state);
     if (mm_w != nullptr) *mm_w = state.output_phys_mm_w;
     if (mm_h != nullptr) *mm_h = state.output_phys_mm_h;
 }
@@ -2679,8 +2823,8 @@ void set_render_scale_120(int32_t requested_scale_120) {
     int32_t logical_h = kDefaultLogicalHeight;
     const auto& st = wayland_state();
     if (st.output_mode_px_w > 0 && st.output_mode_px_h > 0 && scale_120 > 0) {
-        const int32_t out_logical_w = st.output_mode_px_w * kScaleUnit / scale_120;
-        const int32_t out_logical_h = st.output_mode_px_h * kScaleUnit / scale_120;
+        const int32_t out_logical_w = upright_mode_width(st) * kScaleUnit / scale_120;
+        const int32_t out_logical_h = upright_mode_height(st) * kScaleUnit / scale_120;
         // Nine tenths of the desktop, which is what other clients open at:
         // clearly a window rather than a fullscreen surface, and it never
         // needs the compositor to configure it smaller on the first frame.
@@ -2741,6 +2885,7 @@ void native_window_set_pointer_locked(ANativeWindow* window, bool locked) {
         return;
     }
     auto& state = wayland_state();
+    g_lock_wanted.store(locked);
     if (locked == g_pointer_locked.load()) return;
     if (locked && state.confined_pointer != nullptr) {
         // Make room: one constraint per surface, and the lock is the
@@ -3122,8 +3267,9 @@ int32_t native_window_wait_for_display_scale_120() {
     // and both are known before any surface exists.
     ensure_xdg_output();
     if (state.output_logical_w > 0 && state.output_mode_px_w > 0) {
-        const int32_t derived =
-            state.output_mode_px_w * kScaleUnit / state.output_logical_w;
+        // The logical size is as the desktop sees it, the mode as the panel
+        // does: on a rotated monitor the two are swapped.
+        const int32_t derived = upright_mode_width(state) * kScaleUnit / state.output_logical_w;
         if (derived > 0) {
             g_display_scale_120.store(derived);
             std::printf("stud: android-glue: display scale %d/120 from xdg-output "

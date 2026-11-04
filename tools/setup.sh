@@ -32,6 +32,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 third_party="${STUD_THIRD_PARTY_DIR:-$repo_root/third_party}"
 
 NDK_VERSION="r28c"
+# From Google's own listing, repository2-3.xml, for this version's Linux zip.
+NDK_SHA1="a7b54a5de87fecd125a17d54f73c446199e72a64"
 NDK_URL="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
 NDK_DIR="$third_party/android-ndk-${NDK_VERSION}"
 BIONIC_DIR="$third_party/android-bionic"
@@ -94,6 +96,8 @@ setup_ndk() {
     local zip="$third_party/android-ndk-${NDK_VERSION}-linux.zip"
     say "downloading the NDK ${NDK_VERSION} (about 700 MB)"
     curl -fL --progress-bar -o "$zip.part" "$NDK_URL"
+    echo "$NDK_SHA1  $zip.part" | sha1sum -c --quiet - ||
+        { rm -f "$zip.part"; die "the NDK download does not match its checksum"; }
     mv "$zip.part" "$zip"
     say "unpacking"
     unzip -q "$zip" -d "$third_party"

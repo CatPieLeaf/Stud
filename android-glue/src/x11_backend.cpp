@@ -121,6 +121,7 @@ struct Xlib {
     int (*GrabPointer)(Display*, Window, Bool, unsigned int, int, int, Window, Cursor,
                        Time) = nullptr;
     int (*UngrabPointer)(Display*, Time) = nullptr;
+    int (*QueryKeymap)(Display*, char*) = nullptr;
     int (*WarpPointer)(Display*, Window, Window, int, int, unsigned int, unsigned int, int,
                        int) = nullptr;
     int (*SetSelectionOwner)(Display*, Atom, Window, Time) = nullptr;
@@ -321,6 +322,7 @@ bool load_xlib() {
     // keeps the old behaviour.
     x.SetDetectableAutoRepeat = reinterpret_cast<decltype(x.SetDetectableAutoRepeat)>(
         ::dlsym(x.handle, "XkbSetDetectableAutoRepeat"));
+    x.QueryKeymap = reinterpret_cast<decltype(x.QueryKeymap)>(::dlsym(x.handle, "XQueryKeymap"));
     LOAD(CloseDisplay, "XCloseDisplay");
     LOAD(CreateSimpleWindow, "XCreateSimpleWindow");
     LOAD(DestroyWindow, "XDestroyWindow");
@@ -619,7 +621,7 @@ bool create_window(int32_t width, int32_t height) {
     constexpr long kEventMask = StructureNotifyMask | VisibilityChangeMask | FocusChangeMask |
                                 KeyPressMask | KeyReleaseMask | ButtonPressMask |
                                 ButtonReleaseMask | PointerMotionMask | EnterWindowMask |
-                                LeaveWindowMask | ExposureMask;
+                                LeaveWindowMask | ExposureMask | PropertyChangeMask;
     x.SelectInput(g_display, g_window, kEventMask);
     setup_input_method(kEventMask);
 
@@ -750,16 +752,27 @@ void warp_pointer(int x, int y) {
 void set_pointer_confined(bool confined) {
     if (g_display == nullptr || g_window == 0) return;
     Xlib& x11 = xlib();
+    // A lock and a confinement are one grab here, whichever asked first, so
+    // neither may end it while the other still wants it.
+    const bool locked = g_pointer_locked.load();
+    if (confined && locked) {
+        g_pointer_confined.store(true);
+        return;
+    }
+    if (!confined && locked) {
+        g_pointer_confined.store(false);
+        return;
+    }
     if (confined) {
         if (x11.GrabPointer == nullptr) return;
         // confine_to = this window, and nothing else: the pointer keeps
         // its own position and its ordinary motion, it simply cannot
         // cross the frame. No warping, unlike the mouse-look grab.
         // Not owner-events; see set_pointer_locked().
-        x11.GrabPointer(g_display, g_window, False,
-                        ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
-                        GrabModeAsync, g_window, 0, 0);
-        g_pointer_confined.store(true);
+        g_pointer_confined.store(
+            x11.GrabPointer(g_display, g_window, False,
+                            ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync,
+                            GrabModeAsync, g_window, 0, 0) == GrabSuccess);
     } else if (x11.UngrabPointer != nullptr) {
         x11.UngrabPointer(g_display, 0);
         g_pointer_confined.store(false);
@@ -799,7 +812,9 @@ void set_pointer_locked(bool locked) {
     }
     g_pointer_locked.store(false);
     g_ignore_next_motion = false;
-    if (x.UngrabPointer != nullptr) x.UngrabPointer(g_display, CurrentTime);
+    if (x.UngrabPointer != nullptr && !g_pointer_confined.load()) {
+        x.UngrabPointer(g_display, CurrentTime);
+    }
     // Put the pointer back where the drag started, which is where the
     // engine's own cursor has stayed, the Wayland path gets this from
     // the compositor, which does not move a locked pointer at all.
@@ -1233,7 +1248,9 @@ namespace {
 std::string g_clipboard_owned;      // what Stud last copied
 std::string g_clipboard_received;   // the most recent paste, once it arrives
 bool g_clipboard_reply_pending = false;
+bool g_clipboard_incr = false;      // a large selection, arriving in pieces
 Atom g_atom_clipboard = 0;
+Atom g_atom_incr = 0;
 Atom g_atom_utf8 = 0;
 Atom g_atom_targets = 0;
 Atom g_atom_stud_selection = 0;
@@ -1244,6 +1261,7 @@ void intern_clipboard_atoms() {
     g_atom_clipboard = x.InternAtom(g_display, "CLIPBOARD", False);
     g_atom_utf8 = x.InternAtom(g_display, "UTF8_STRING", False);
     g_atom_targets = x.InternAtom(g_display, "TARGETS", False);
+    g_atom_incr = x.InternAtom(g_display, "INCR", False);
     // Our own property, which a paste reply is written to. Named rather
     // than reusing a standard one so nothing else can collide with it.
     g_atom_stud_selection = x.InternAtom(g_display, "STUD_SELECTION", False);
@@ -1251,6 +1269,28 @@ void intern_clipboard_atoms() {
 
 // Somebody is pasting from Stud. Hand over the text, or the list of
 // formats it is available in.
+// XA_STRING is Latin-1, and what Stud holds is UTF-8. Anything Latin-1 has no
+// place for becomes a question mark, as other X clients do.
+std::string latin1_from_utf8(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size();) {
+        const auto byte = static_cast<unsigned char>(text[i]);
+        if (byte < 0x80) {
+            out.push_back(text[i]);
+            ++i;
+            continue;
+        }
+        const size_t length = byte >= 0xF0 ? 4 : byte >= 0xE0 ? 3 : 2;
+        const bool fits = length == 2 && byte <= 0xC3 && i + 1 < text.size();
+        out.push_back(fits ? static_cast<char>(((byte & 0x03) << 6) |
+                                               (static_cast<unsigned char>(text[i + 1]) & 0x3F))
+                           : '?');
+        i += length;
+    }
+    return out;
+}
+
 void answer_selection_request(const XSelectionRequestEvent& request) {
     Xlib& x = xlib();
     XEvent reply{};
@@ -1272,7 +1312,13 @@ void answer_selection_request(const XSelectionRequestEvent& request) {
                          reinterpret_cast<const unsigned char*>(offered),
                          static_cast<int>(sizeof(offered) / sizeof(offered[0])));
         reply.xselection.property = property;
-    } else if (request.target == g_atom_utf8 || request.target == XA_STRING) {
+    } else if (request.target == XA_STRING) {
+        const std::string latin1 = latin1_from_utf8(g_clipboard_owned);
+        x.ChangeProperty(g_display, request.requestor, property, XA_STRING, 8, PropModeReplace,
+                         reinterpret_cast<const unsigned char*>(latin1.data()),
+                         static_cast<int>(latin1.size()));
+        reply.xselection.property = property;
+    } else if (request.target == g_atom_utf8) {
         x.ChangeProperty(g_display, request.requestor, property, request.target, 8,
                          PropModeReplace,
                          reinterpret_cast<const unsigned char*>(g_clipboard_owned.data()),
@@ -1301,11 +1347,38 @@ void read_selection_reply(const XSelectionEvent& notify) {
     if (x.GetWindowProperty(g_display, g_window, notify.property, 0, 1 << 20, True, AnyPropertyType,
                             &actual_type, &actual_format, &count, &remaining, &data) == Success &&
         data != nullptr) {
-        if (actual_format == 8) {
+        if (actual_type == g_atom_incr) {
+            // Too big for one property. Deleting it, just done above, is
+            // what asks for the first piece.
+            g_clipboard_incr = true;
+            g_clipboard_reply_pending = true;
+        } else if (actual_format == 8) {
             g_clipboard_received.assign(reinterpret_cast<const char*>(data), count);
         }
         if (x.Free != nullptr) x.Free(data);
     }
+}
+
+// One piece of a large selection; an empty one says that was the last.
+void read_selection_piece() {
+    Xlib& x = xlib();
+    Atom actual_type = 0;
+    int actual_format = 0;
+    unsigned long count = 0;
+    unsigned long remaining = 0;
+    unsigned char* data = nullptr;
+    if (x.GetWindowProperty(g_display, g_window, g_atom_stud_selection, 0, 1 << 20, True,
+                            AnyPropertyType, &actual_type, &actual_format, &count, &remaining,
+                            &data) != Success) {
+        return;
+    }
+    if (data != nullptr && actual_format == 8 && count > 0) {
+        g_clipboard_received.append(reinterpret_cast<const char*>(data), count);
+    } else if (count == 0) {
+        g_clipboard_incr = false;
+        g_clipboard_reply_pending = false;
+    }
+    if (data != nullptr && x.Free != nullptr) x.Free(data);
 }
 
 // The engine's pixels, not the server's.
@@ -1490,6 +1563,28 @@ void release_all_held_input() {
 // The window has just been mapped, so whatever it held is gone and the
 // engine should draw now rather than at its own leisure. See
 // HostInputEvent::kWindowRedrawNeeded.
+// A keyboard grab has ended, and what was let go during it went to the
+// grabber. Anything still believed held that no longer is goes up now.
+void release_keys_let_go_during_grab() {
+    Xlib& x = xlib();
+    if (x.QueryKeymap == nullptr) return;
+    char keys[32] = {};
+    x.QueryKeymap(g_display, keys);
+    for (auto it = keys_down().begin(); it != keys_down().end();) {
+        const unsigned int keycode = *it + 8;
+        if (keycode / 8 < sizeof(keys) && (keys[keycode / 8] & (1 << (keycode % 8))) != 0) {
+            ++it;
+            continue;
+        }
+        stud::android_glue::HostInputEvent ev;
+        ev.type = stud::android_glue::HostInputEvent::kKey;
+        ev.code = *it;
+        ev.a = 0.0f;
+        push(ev);
+        it = keys_down().erase(it);
+    }
+}
+
 void push_window_redraw_needed() {
     stud::android_glue::HostInputEvent ev;
     ev.type = stud::android_glue::HostInputEvent::kWindowRedrawNeeded;
@@ -1824,7 +1919,22 @@ void pump() {
                     std::fflush(stdout);
                 }
                 break;
+            case PropertyNotify:
+                if (g_clipboard_incr && event.xproperty.state == PropertyNewValue &&
+                    event.xproperty.atom == g_atom_stud_selection) {
+                    read_selection_piece();
+                }
+                break;
             case FocusIn:
+                // A window manager or a hotkey tool holding the keyboard for
+                // a moment is not the window losing focus. Treated as one,
+                // every held key let go here and a walking character stopped
+                // with the key still down.
+                if (event.xfocus.mode == NotifyGrab) break;
+                if (event.xfocus.mode == NotifyUngrab) {
+                    release_keys_let_go_during_grab();
+                    break;
+                }
                 if (!g_focused.exchange(true)) {
                     std::printf("stud: android-glue: window focused\n");
                     std::fflush(stdout);
@@ -1835,6 +1945,7 @@ void pump() {
                 push_window_focus(true);
                 break;
             case FocusOut:
+                if (event.xfocus.mode == NotifyGrab || event.xfocus.mode == NotifyUngrab) break;
                 if (g_focused.exchange(false)) {
                     std::printf("stud: android-glue: window in the background\n");
                     std::fflush(stdout);
@@ -2143,12 +2254,21 @@ std::string clipboard_get() {
     // rather than blocking: an owner that never answers is a real case
     // (a dead application still holding the selection), and an empty
     // paste is better than a frozen window.
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    constexpr auto kPatience = std::chrono::milliseconds(200);
+    auto deadline = std::chrono::steady_clock::now() + kPatience;
+    size_t received = 0;
     while (g_clipboard_reply_pending && std::chrono::steady_clock::now() < deadline) {
         pump();
+        // A large selection is judged by whether it is still coming, not by
+        // how long the whole of it takes.
+        if (g_clipboard_received.size() != received) {
+            received = g_clipboard_received.size();
+            deadline = std::chrono::steady_clock::now() + kPatience;
+        }
         if (g_clipboard_reply_pending) std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     g_clipboard_reply_pending = false;
+    g_clipboard_incr = false;
     return g_clipboard_received;
 }
 

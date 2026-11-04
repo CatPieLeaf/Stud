@@ -62,7 +62,7 @@ namespace {
 // experience (see ui/src/main.cpp's --game-info). Written on every presence change and removed on the
 // way back to the app shell, so its absence means "not in a game".
 QString server_link_path() {
-    return QString::fromStdString(stud::paths::runtime_dir() + "/invite");
+    return QString::fromStdString(stud::paths::private_dir() + "/invite");
 }
 
 QString read_server_link() {
@@ -319,8 +319,10 @@ void Tray::exportLogs() {
     // session made the user pick which run mattered, from a directory
     // they have no reason to know exists, before they knew.
     const QDir log_dir(QString::fromStdString(stud::paths::log_dir()));
-    const QStringList sessions =
-        log_dir.entryList({QStringLiteral("session-*.log")}, QDir::Files, QDir::Time);
+    // No symlinks: the sandbox can write this directory, and this archive is
+    // made to be shared.
+    const QStringList sessions = log_dir.entryList({QStringLiteral("session-*.log")},
+                                                   QDir::Files | QDir::NoSymLinks, QDir::Time);
     if (sessions.isEmpty()) {
         QMessageBox::information(nullptr, QStringLiteral("Stud"),
                                   QStringLiteral("There are no logs to export yet."));
