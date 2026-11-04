@@ -39,6 +39,10 @@ add_custom_command(
 )
 add_custom_target(stud_toy_apk_fixture DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/toy_apk.apk)
 
+add_executable(stud_apk_check_test apk_check_test.cpp)
+target_link_libraries(stud_apk_check_test PRIVATE stud_android_glue)
+add_test(NAME apk_check_test COMMAND stud_apk_check_test)
+
 add_executable(stud_apk_extract_test apk_extract_test.cpp)
 target_link_libraries(stud_apk_extract_test PRIVATE stud_android_glue)
 add_dependencies(stud_apk_extract_test stud_toy_apk_fixture)

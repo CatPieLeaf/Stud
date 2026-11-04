@@ -6,6 +6,10 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(WaylandEgl REQUIRED IMPORTED_TARGET wayland-egl)
 pkg_check_modules(Egl REQUIRED IMPORTED_TARGET egl)
 pkg_check_modules(GlesV2 REQUIRED IMPORTED_TARGET glesv2)
+# What a Roblox APK would need from this Stud; see android-glue/src/apk_check.cpp.
+add_executable(stud_apk_check apk_check_main.cpp)
+target_link_libraries(stud_apk_check PRIVATE stud_android_glue)
+
 add_executable(stud_try_vulkan_window try_vulkan_window.cpp)
 target_link_libraries(stud_try_vulkan_window PRIVATE stud_android_glue vulkan)
 

@@ -323,6 +323,7 @@ add_custom_command(
 
 add_library(stud_android_glue STATIC
     src/asset_manager.cpp
+    src/apk_check.cpp
     src/apk_extract.cpp
     src/apk_manifest.cpp
     src/configuration.cpp
@@ -365,6 +366,7 @@ add_library(stud_android_glue STATIC
 )
 target_include_directories(stud_android_glue PUBLIC "${XdgShellGeneratedDir}")
 target_include_directories(stud_android_glue PUBLIC include)
+target_include_directories(stud_android_glue PRIVATE ../bionic-symbol-lookup/include)
 
 # X11 headers, for types only.
 #

@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <string_view>
@@ -146,6 +148,38 @@ std::vector<std::string> resolve_apk_sources_for_metadata(const std::string& pat
 // libroblox.so, so neither can silently drift onto a different path for
 // what's meant to be the one cached, already-patched-or-not file.
 // ($XDG_CACHE_HOME/stud/libroblox.so, or ~/.cache/stud/libroblox.so.)
+// What an APK's DEX files declare: class/name.method -> JNI signature for its
+// native methods, and every member name of every class.
+struct DexMethods {
+    std::map<std::string, std::string> native_signatures;
+    std::map<std::string, std::set<std::string>> members;
+};
+// Adds one DEX file's. Throws ExtractError on a file that is not one.
+void read_dex_methods(const std::vector<uint8_t>& dex, DexMethods& out);
+
+// The dynamic symbols of a shared library. Weak imports are left out: the
+// library runs without them.
+struct ElfSymbols {
+    std::set<std::string> defined;
+    std::set<std::string> imported;
+};
+ElfSymbols read_elf_symbols(const std::vector<uint8_t>& elf);
+
+// What an APK would need from this Stud, found without running it.
+struct ApkCheckReport {
+    std::vector<std::string> blocking;  // it cannot start
+    std::vector<std::string> warnings;  // something Stud calls has gone or changed
+    std::vector<std::string> notes;     // worth a look when moving to this version
+};
+// `library_dirs`, when given, hold the bundled libraries the engine's imports
+// are checked against.
+ApkCheckReport check_apk(const std::string& apk_path, const std::string& engine_path,
+                         const std::vector<std::string>& library_dirs = {});
+// The comparison itself. `provided` null skips the imports.
+ApkCheckReport check_apk_contents(const DexMethods& dex, const ElfSymbols& engine,
+                                  const std::vector<uint8_t>& engine_bytes,
+                                  const std::set<std::string>* provided);
+
 std::string default_libroblox_cache_path();
 
 // Where the APK's assets are extracted, the same directory Process B

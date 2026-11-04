@@ -800,6 +800,27 @@ void SettingsWindow::onSaveClicked() {
                 ".apks, .xapk) or a full APK. Nothing was changed.");
             return;
         }
+        // What this version would need from this Stud. One it cannot start
+        // is turned down while the one already imported still works.
+        try {
+            const auto report = stud::android_glue::check_apk(pickedApkPath_.toStdString(), candidate_so);
+            if (!report.blocking.empty()) {
+                QFile::remove(QString::fromStdString(candidate_so));
+                statusLabel_->setText(
+                    QString("This version of Roblox isn't supported by this Stud yet (%1). Nothing "
+                            "was changed.")
+                        .arg(QString::fromStdString(report.blocking.front())));
+                return;
+            }
+            for (const std::string& line : report.warnings) {
+                std::printf("stud: !!! this APK: %s\n", line.c_str());
+            }
+            std::fflush(stdout);
+        } catch (const stud::android_glue::ExtractError& e) {
+            // The check found the file unreadable; the engine itself decides.
+            std::printf("stud: could not check this APK: %s\n", e.what());
+            std::fflush(stdout);
+        }
         // Stop the session BEFORE replacing anything underneath it.
         //
         // A running Stud has the extracted libroblox.so mapped and the
