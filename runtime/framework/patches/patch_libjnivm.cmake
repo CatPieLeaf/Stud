@@ -1152,3 +1152,43 @@ else()
     file(WRITE "${jnitypes_h}" "${jnitypes_content}")
     message(STATUS "patch_libjnivm.cmake: patched '${jnitypes_h}' successfully")
 endif()
+
+# Seventh patch, internal/method.cpp and internal/field.cpp again: each MISS
+# diagnostic also tells Stud, which keeps the first report of each one and
+# marks it, so one search of a log lists what this Roblox asks for that
+# this Stud does not have. On its own check, so it reaches a checkout the
+# sixth patch has already been through.
+foreach(miss_kind IN ITEMS method field)
+    set(miss_file "${${miss_kind}_cpp_path}")
+    file(READ "${miss_file}" miss_content)
+    string(FIND "${miss_content}" "stud_note_java_miss" miss_present)
+    if(NOT miss_present EQUAL -1)
+        message(STATUS "patch_libjnivm.cmake: the ${miss_kind} miss hook is already in '${miss_file}'")
+    else()
+        if(miss_kind STREQUAL "method")
+            set(miss_original "                    str0 ? str0 : \"(null)\", str1 ? str1 : \"(null)\");
+            }
+#endif")
+            set(miss_hook "                stud_note_java_miss(cur ? cur->nativeprefix.data() : \"(null)\",
+                                    str0 ? str0 : \"(null)\", str1 ? str1 : \"(null)\");")
+        else()
+            set(miss_original "                    name ? name : \"(null)\", type ? type : \"(null)\");
+            }
+#endif")
+            set(miss_hook "                stud_note_java_miss(cl ? cl->nativeprefix.data() : \"(null)\",
+                                    name ? name : \"(null)\", type ? type : \"(null)\");")
+        endif()
+        string(FIND "${miss_content}" "${miss_original}" miss_pos)
+        if(miss_pos EQUAL -1)
+            message(FATAL_ERROR
+                "patch_libjnivm.cmake: the ${miss_kind} MISS diagnostic not found in '${miss_file}'")
+        endif()
+        string(REPLACE "\n            }\n#endif" "" miss_head "${miss_original}")
+        string(REPLACE "${miss_original}" "${miss_head}\n${miss_hook}\n            }\n#endif"
+               miss_content "${miss_content}")
+        string(PREPEND miss_content
+               "extern \"C\" void stud_note_java_miss(const char*, const char*, const char*);\n")
+        file(WRITE "${miss_file}" "${miss_content}")
+        message(STATUS "patch_libjnivm.cmake: added the ${miss_kind} miss hook to '${miss_file}'")
+    endif()
+endforeach()
