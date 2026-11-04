@@ -1026,6 +1026,10 @@ VkResult create_from_payload(const uint64_t (&a)[8], const std::vector<uint8_t>&
 // A descriptor-update template's payload is a bare pointer with no
 // length; the size is implied by the entries the template was created
 // with, so it is computed once there and remembered here.
+std::mutex& template_blob_size_mutex() {
+    static std::mutex m;
+    return m;
+}
 std::map<uint64_t, uint64_t>& template_blob_size() {
     static std::map<uint64_t, uint64_t> m;
     return m;
@@ -1363,11 +1367,34 @@ bool all_forwarded(const char* commands) {
     return true;
 }
 
-// An extension is only offered when Stud forwards what it always needs:
-// offered and not forwarded, the engine would use it and its commands would
-// go nowhere. Not offered, it takes the path it has for a driver without it.
-// One the registry does not list brings no commands Stud could check.
+// The extensions Stud carries end to end, and so the only ones it offers.
+//
+// A list, because the driver's own says nothing about what crosses the wire.
+// Most extensions have no commands to check: they work through a pNext on a
+// pipeline or a sampler, or a new enum, and none of that is forwarded, so the
+// engine would turn one on and it would quietly do nothing, or fault. Not
+// offered, it takes the path it has for a driver without it.
+//
+// The instance's three and the device's seven the engine enables. One joins
+// by being forwarded, every struct and enum of it, not just its commands.
+constexpr const char* kCarriedExtensions[] = {
+    "VK_KHR_surface",
+    "VK_KHR_android_surface",
+    "VK_KHR_get_physical_device_properties2",
+    "VK_EXT_device_fault",
+    "VK_EXT_queue_family_foreign",
+    "VK_KHR_bind_memory2",
+    "VK_KHR_get_memory_requirements2",
+    "VK_KHR_maintenance1",
+    "VK_KHR_sampler_ycbcr_conversion",
+    "VK_KHR_swapchain",
+};
+
 bool extension_forwarded(const char* name) {
+    const auto same = [name](const char* carried) { return std::strcmp(carried, name) == 0; };
+    if (std::none_of(std::begin(kCarriedExtensions), std::end(kCarriedExtensions), same)) {
+        return false;
+    }
     for (const vk_wire::ExtensionCommands& e : vk_wire::kExtensionCommands) {
         if (std::strcmp(e.name, name) == 0) return all_forwarded(e.commands);
     }
@@ -3441,6 +3468,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDescriptorUpdateTemplate(
         // Remember how big a payload this template's updates carry: the
         // caller passes a bare pointer with no length, so the size has to
         // come from the entries that defined the layout.
+        std::lock_guard<std::mutex> lock(template_blob_size_mutex());
         template_blob_size()[to_u64(*pTemplate)] = blob_size;
     }
     return res;
@@ -3449,8 +3477,13 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateDescriptorUpdateTemplate(
 VKAPI_ATTR void VKAPI_CALL stud_vkUpdateDescriptorSetWithTemplate(
     VkDevice device, VkDescriptorSet set, VkDescriptorUpdateTemplate tmpl, const void* pData) {
     if (pData == nullptr) return;
-    auto it = template_blob_size().find(to_u64(tmpl));
-    if (it == template_blob_size().end()) return;
+    uint64_t blob_size = 0;
+    {
+        std::lock_guard<std::mutex> lock(template_blob_size_mutex());
+        const auto it = template_blob_size().find(to_u64(tmpl));
+        if (it == template_blob_size().end()) return;
+        blob_size = it->second;
+    }
     uint64_t a[8] = {to_u64(device), to_u64(set), to_u64(tmpl)};
     // Reply-free: this returns nothing, so blocking for an answer bought
     // nothing but latency. Measured in a real game, it was 771 calls a
@@ -3458,7 +3491,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkUpdateDescriptorSetWithTemplate(
     // Ordering is unaffected, the stream stays ordered, and anything
     // that does need an answer flushes what is queued ahead of it first.
     stud::render_client::connection().call_void(CallId::VkUpdateDescriptorSetWithTemplate, a,
-                                                 pData, static_cast<uint32_t>(it->second));
+                                                 pData, static_cast<uint32_t>(blob_size));
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateGraphicsPipelines(
@@ -3470,6 +3503,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateGraphicsPipelines(
     // loop here rather than a second wire format.
     for (uint32_t p = 0; p < createInfoCount; ++p) {
         const VkGraphicsPipelineCreateInfo& ci = pCreateInfos[p];
+        report_dropped(ci.pNext, "a pNext chain", "vkCreateGraphicsPipelines");
         std::vector<uint8_t> in;
         vk_wire::Writer w(in);
         w.u64(to_u64(cache));
@@ -3508,6 +3542,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkCreateGraphicsPipelines(
         const auto* ia = ci.pInputAssemblyState;
         w.u32(ia != nullptr ? ia->topology : 0);
         w.u32(ia != nullptr ? ia->primitiveRestartEnable : 0);
+        w.u32(ci.pTessellationState != nullptr ? ci.pTessellationState->patchControlPoints : 0);
 
         // The viewport/scissor VALUES, not just their counts.
         //
@@ -6119,24 +6154,45 @@ VKAPI_ATTR void VKAPI_CALL stud_vkUpdateDescriptorSets(VkDevice device, uint32_t
                                                        const VkWriteDescriptorSet* writes,
                                                        uint32_t copyCount,
                                                        const VkCopyDescriptorSet* copies) {
+    const auto is_image = [](VkDescriptorType t) {
+        return t == VK_DESCRIPTOR_TYPE_SAMPLER || t == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+               t == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || t == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ||
+               t == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    };
+    const auto is_texel = [](VkDescriptorType t) {
+        return t == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
+               t == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+    };
+    const auto is_buffer = [](VkDescriptorType t) {
+        return t == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER || t == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ||
+               t == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC ||
+               t == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    };
+    // The others come with extensions Stud does not offer, and their data
+    // is in a pNext this does not read.
+    std::vector<const VkWriteDescriptorSet*> known;
+    for (uint32_t i = 0; i < writeCount; ++i) {
+        const VkDescriptorType t = writes[i].descriptorType;
+        if (is_image(t) || is_texel(t) || is_buffer(t)) {
+            known.push_back(&writes[i]);
+        } else {
+            report_dropped(&writes[i], "a descriptor of a type Stud does not carry",
+                           "vkUpdateDescriptorSets");
+        }
+    }
     std::vector<uint8_t> in;
     vk_wire::Writer w(in);
-    w.u32(writeCount);
-    for (uint32_t i = 0; i < writeCount; ++i) {
-        const VkWriteDescriptorSet& d = writes[i];
+    w.u32(static_cast<uint32_t>(known.size()));
+    for (const VkWriteDescriptorSet* write : known) {
+        const VkWriteDescriptorSet& d = *write;
         w.u64(to_u64(d.dstSet));
         w.u32(d.dstBinding);
         w.u32(d.dstArrayElement);
         w.u32(d.descriptorCount);
         w.u32(d.descriptorType);
-        const bool image = d.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER ||
-                           d.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
-                           d.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
-                           d.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ||
-                           d.descriptorType == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
-        const bool texel = d.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
-                           d.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-        const bool buffer = !image && !texel;
+        const bool image = is_image(d.descriptorType);
+        const bool texel = is_texel(d.descriptorType);
+        const bool buffer = is_buffer(d.descriptorType);
         w.u32(image ? d.descriptorCount : 0);
         for (uint32_t k = 0; image && k < d.descriptorCount; ++k) {
             w.u64(to_u64(d.pImageInfo[k].sampler));

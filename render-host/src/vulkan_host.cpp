@@ -9103,7 +9103,9 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
             l.vk.vkDestroyBufferView(l.device, from_u64<VkBufferView>(handle), nullptr);
             break;
         case K::SamplerYcbcrConversion:
-            l.vk.vkDestroySamplerYcbcrConversion(
+            (l.vk.vkDestroySamplerYcbcrConversion != nullptr
+                 ? l.vk.vkDestroySamplerYcbcrConversion
+                 : l.vk.vkDestroySamplerYcbcrConversionKHR)(
                 l.device, from_u64<VkSamplerYcbcrConversion>(handle), nullptr);
             break;
         case K::DescriptorUpdateTemplate:
@@ -9750,6 +9752,7 @@ struct GraphicsPipelineInfo {
     std::vector<VkVertexInputBindingDescription> binds;
     std::vector<VkVertexInputAttributeDescription> attrs;
     VkPipelineInputAssemblyStateCreateInfo ia{};
+    VkPipelineTessellationStateCreateInfo ts{};
     VkPipelineViewportStateCreateInfo vp{};
     std::vector<VkViewport> viewports;
     std::vector<VkRect2D> scissors;
@@ -9822,6 +9825,8 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     ia.topology = static_cast<VkPrimitiveTopology>(r.u32());
     ia.primitiveRestartEnable = r.u32();
+    info->ts.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+    info->ts.patchControlPoints = r.u32();
 
     auto& vp = info->vp;
     vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -9937,6 +9942,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
     ci.pStages = stages.empty() ? nullptr : stages.data();
     ci.pVertexInputState = &vi;
     ci.pInputAssemblyState = &ia;
+    if (info->ts.patchControlPoints != 0) ci.pTessellationState = &info->ts;
     ci.pViewportState = &vp;
     ci.pRasterizationState = &rs;
     ci.pMultisampleState = &ms;
@@ -10164,7 +10170,8 @@ void schedule_variants(uint64_t pipeline, std::shared_ptr<GraphicsPipelineInfo> 
     if (!enabled() || pipeline == 0) return;
     const VkGraphicsPipelineCreateInfo& ci = info->ci;
     if (ci.pDepthStencilState == nullptr || ci.pRasterizationState == nullptr ||
-        ci.pMultisampleState == nullptr || ci.pInputAssemblyState == nullptr) {
+        ci.pMultisampleState == nullptr || ci.pInputAssemblyState == nullptr ||
+        ci.pTessellationState != nullptr) {
         return;
     }
     const VkPipelineDepthStencilStateCreateInfo& ds = *ci.pDepthStencilState;
@@ -13288,7 +13295,8 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
         case K::DispatchBase: {
             const uint32_t bx = r.u32(), by = r.u32(), bz = r.u32();
             const uint32_t x = r.u32(), y = r.u32(), z = r.u32();
-            l.vk.vkCmdDispatchBase(cb, bx, by, bz, x, y, z);
+            (l.vk.vkCmdDispatchBase != nullptr ? l.vk.vkCmdDispatchBase
+                                               : l.vk.vkCmdDispatchBaseKHR)(cb, bx, by, bz, x, y, z);
             break;
         }
         case K::ClearAttachments: {
@@ -13675,7 +13683,11 @@ uint64_t vk_create_sampler_ycbcr_conversion(const std::vector<uint8_t>& in,
     ci.chromaFilter = static_cast<VkFilter>(r.u32());
     ci.forceExplicitReconstruction = r.u32();
     VkSamplerYcbcrConversion conversion = VK_NULL_HANDLE;
-    const VkResult res = l.vk.vkCreateSamplerYcbcrConversion(l.device, &ci, nullptr, &conversion);
+    // Core from 1.1; before that, the extension's name for it.
+    const auto create = l.vk.vkCreateSamplerYcbcrConversion != nullptr
+                            ? l.vk.vkCreateSamplerYcbcrConversion
+                            : l.vk.vkCreateSamplerYcbcrConversionKHR;
+    const VkResult res = create(l.device, &ci, nullptr, &conversion);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return answer_handle(to_u64(conversion), client, out, out_len);
 }
