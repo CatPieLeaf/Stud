@@ -637,6 +637,10 @@ struct PendingReadback {
     uint64_t memory = 0;
     uint64_t offset = 0;
     uint64_t size = 0;
+    // The submit that carries it, once there is one. Fetched any sooner it
+    // would read what the memory held before the GPU got to it, and that
+    // would be taken for the answer.
+    uint64_t submit = 0;
 };
 std::vector<PendingReadback>& recorded_readbacks() {
     static std::vector<PendingReadback> v;
@@ -664,6 +668,12 @@ std::recursive_mutex& emulation_mutex() {
     return m;
 }
 
+// Each host-visible allocation's size, for a map of VK_WHOLE_SIZE. Under
+// mapped_mutex().
+std::map<uint64_t, uint64_t>& allocation_sizes() {
+    static std::map<uint64_t, uint64_t> m;
+    return m;
+}
 std::map<uint64_t, MappedRange>& mapped_ranges() {
     static std::map<uint64_t, MappedRange> m;
     return m;
@@ -1203,6 +1213,25 @@ bool fences_known_signalled(uint64_t device, uint32_t count, const VkFence* fenc
     return wait_all || any;
 }
 
+// The newest submit known finished, once a wait on `fences` has succeeded.
+// Submits to a queue finish in order, so a finished fence vouches for every
+// submit before its own. Where a fence's number is not known, every submit
+// is taken as finished, which is what a wait meant before they had numbers.
+uint64_t completed_submit_after_wait(uint32_t count, const VkFence* fences, bool wait_all) {
+    SubmitFeedback& f = submit_feedback();
+    std::lock_guard<std::mutex> lock(f.m);
+    if (f.page == nullptr) return UINT64_MAX;
+    uint64_t vouched = wait_all ? 0 : UINT64_MAX;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto it = f.fences.find(to_u64(fences[i]));
+        if (it == f.fences.end()) return UINT64_MAX;
+        // Signalled with no submit: it vouches for nothing.
+        const uint64_t number = it->second.submit;
+        vouched = wait_all ? std::max(vouched, number) : std::min(vouched, number);
+    }
+    return std::max(vouched, f.page->load(std::memory_order_acquire));
+}
+
 void note_present_sent() {
     SubmitFeedback& f = submit_feedback();
     std::lock_guard<std::mutex> lock(f.m);
@@ -1338,10 +1367,10 @@ void run_pending_decodes(const std::vector<VkCommandBuffer>& submitted);
 // Brings back anything the GPU wrote into memory the host could not
 // share with this process. Cheap and silent when there is nothing to
 // bring back, which is every session where the import works.
-void fetch_pending_readbacks();
+void fetch_pending_readbacks(uint64_t completed_submit);
 // Moves the readbacks recorded against these command buffers to
 // awaiting, now that a submit will actually run them.
-void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted);
+void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted, uint64_t submit);
 // Defined below, next to the emulation decision it belongs to; needed at
 // device creation, which comes first in this file.
 bool driver_supports_format(VkPhysicalDevice physicalDevice, VkFormat format);
@@ -1399,6 +1428,31 @@ bool extension_forwarded(const char* name) {
         if (std::strcmp(e.name, name) == 0) return all_forwarded(e.commands);
     }
     return true;
+}
+
+// Whether a command belongs only to extensions Stud does not offer. Those
+// answer null, as a driver does for an extension that was not enabled: an
+// application may decide from the pointer, and a stub would tell it yes. Core
+// commands keep their stubs: the engine resolves its whole table up front and
+// calls through it unchecked, and a version's commands are not what it tests.
+bool hidden_extension_command(const char* name) {
+    static const std::set<std::string> hidden = [] {
+        std::set<std::string> commands;
+        const auto each = [](const char* blob, const auto& use) {
+            for (const char* c = blob; *c != '\0'; c += std::strlen(c) + 1) use(c);
+        };
+        for (const vk_wire::ExtensionCommands& e : vk_wire::kExtensionCommands) {
+            if (extension_forwarded(e.name)) continue;
+            each(e.commands, [&commands](const char* c) { commands.insert(c); });
+        }
+        // A command can belong to several; one offered extension keeps it.
+        for (const vk_wire::ExtensionCommands& e : vk_wire::kExtensionCommands) {
+            if (!extension_forwarded(e.name)) continue;
+            each(e.commands, [&commands](const char* c) { commands.erase(c); });
+        }
+        return commands;
+    }();
+    return hidden.count(name) != 0;
 }
 
 // The newest Vulkan version whose every command is forwarded, as the driver
@@ -2289,7 +2343,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkDeviceWaitIdle(VkDevice device) {
         ++frame_timing().wait_idle_calls;
     }
     // Everything submitted has finished, so anything read back is ready.
-    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) fetch_pending_readbacks();
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) {
+        fetch_pending_readbacks(UINT64_MAX);
+    }
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
 
@@ -2345,6 +2401,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
         return result != VK_SUCCESS ? result : VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
     *pMemory = from_u64<VkDeviceMemory>(handle);
+    {
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+        allocation_sizes()[handle] = pAllocateInfo->allocationSize;
+    }
     // Recorded now, while the type index is still in hand: the flush path
     // only ever sees the memory handle. See non_coherent_memory_types().
     if (non_coherent_memory_types().count(pAllocateInfo->memoryTypeIndex) != 0) {
@@ -2409,6 +2469,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
     {
         std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
         mapped_ranges().erase(to_u64(memory));
+        allocation_sizes().erase(to_u64(memory));
         non_coherent_allocations().erase(to_u64(memory));
     }
     {
@@ -2437,6 +2498,16 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
                                                  VkDeviceSize offset, VkDeviceSize size,
                                                  VkMemoryMapFlags flags, void** ppData) {
     if (ppData == nullptr) return VK_ERROR_MEMORY_MAP_FAILED;
+    // Resolved here: everything below needs a real length, and so does the
+    // host, which is why this comes before it hears of the map.
+    if (size == VK_WHOLE_SIZE) {
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+        const auto it = allocation_sizes().find(to_u64(memory));
+        if (it == allocation_sizes().end() || offset >= it->second) {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+        size = it->second - offset;
+    }
     uint64_t a[8] = {to_u64(device), to_u64(memory), offset, size, flags};
     {
         // Shared with the host: the engine writes straight into the
@@ -2456,13 +2527,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
                                                          0, nullptr);
     VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
     if (result != VK_SUCCESS) return result;
-    // VK_WHOLE_SIZE has no length the client can know; the engine always
-    // maps a range it sized itself, so this is the case that matters.
-    if (size == VK_WHOLE_SIZE) {
-        std::fprintf(stderr, "stud: vulkan-client: vkMapMemory(VK_WHOLE_SIZE) is not supported\n");
-        std::fflush(stderr);
-        return VK_ERROR_MEMORY_MAP_FAILED;
-    }
     std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     auto& slot = mapped_ranges()[to_u64(memory)];
     slot = MappedRange{};
@@ -4061,9 +4125,6 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
     // Stays here, on the engine's own thread: this has to keep program
     // order with the engine's writes to its mapped memory.
     flush_all_mapped_memory();
-    // Any readback recorded into these command buffers is now really
-    // going to run, so it becomes something to go and collect.
-    arm_pending_readbacks(submitted);
     // Reused, not rebuilt per submit; call_void copies it into the queue.
     thread_local std::vector<uint8_t> in;
     in.clear();
@@ -4071,6 +4132,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
     w.u32(submitCount);
     for (uint32_t i = 0; i < submitCount; ++i) {
         const auto& s = pSubmits[i];
+        report_dropped(s.pNext, "a pNext chain", "vkQueueSubmit");
         w.u32(s.waitSemaphoreCount);
         for (uint32_t j = 0; j < s.waitSemaphoreCount; ++j) w.u64(to_u64(s.pWaitSemaphores[j]));
         for (uint32_t j = 0; j < s.waitSemaphoreCount; ++j) {
@@ -4086,10 +4148,12 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
     uint64_t a[8] = {to_u64(queue), to_u64(fence)};
     // Numbered in the order the host will see them: the engine submits to
     // a queue from one thread at a time, and this is queued in that order.
+    uint64_t submit_number = 0;
     {
         SubmitFeedback& f = submit_feedback();
         std::lock_guard<std::mutex> lock(f.m);
         const uint64_t number = ++f.submits;
+        submit_number = number;
         if (fence != VK_NULL_HANDLE) {
             auto it = f.fences.find(to_u64(fence));
             if (it != f.fences.end()) it->second = SubmitFeedback::Fence{number, false};
@@ -4109,6 +4173,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueSubmit(VkQueue queue, uint32_t submit
             }
         }
     }
+    // Any readback recorded into these command buffers is now really
+    // going to run, so it becomes something to go and collect.
+    arm_pending_readbacks(submitted, submit_number);
     uint64_t r = VK_SUCCESS;
     if (sync_submit()) {
         run_pending_decodes(submitted);
@@ -4153,7 +4220,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fe
     // would have, without waiting for it.
     if (fences_known_signalled(to_u64(device), fenceCount, pFences, waitAll != VK_FALSE)) {
         stud::render_client::connection().flush();
-        fetch_pending_readbacks();
+        fetch_pending_readbacks(
+            completed_submit_after_wait(fenceCount, pFences, waitAll != VK_FALSE));
         return VK_SUCCESS;
     }
     // A fence cannot signal before the submit that would signal it has
@@ -4175,7 +4243,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkWaitForFences(VkDevice device, uint32_t fe
     // The engine waited because it is about to look at what the submit
     // produced. If any of that was a readback into memory the host does
     // not share, this is the moment it has to be real.
-    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) fetch_pending_readbacks();
+    if (static_cast<VkResult>(static_cast<int32_t>(r)) == VK_SUCCESS) {
+        fetch_pending_readbacks(
+            completed_submit_after_wait(fenceCount, pFences, waitAll != VK_FALSE));
+    }
     return static_cast<VkResult>(static_cast<int32_t>(r));
 }
 
@@ -4306,6 +4377,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAcquireNextImageKHR(VkDevice device,
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
                                                        const VkPresentInfoKHR* pi) {
     if (pi == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    report_dropped(pi->pNext, "a pNext chain", "vkQueuePresentKHR");
     // Reused, not rebuilt per present; the call copies it into the queue.
     thread_local std::vector<uint8_t> in;
     in.clear();
@@ -4332,6 +4404,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
                                                      static_cast<uint32_t>(in.size()));
         r = VK_SUCCESS;  // as above: reply-free, so the host is the only reporter
 
+    }
+    if (pi->pResults != nullptr) {
+        for (uint32_t i = 0; i < pi->swapchainCount; ++i) {
+            pi->pResults[i] = static_cast<VkResult>(static_cast<int32_t>(r));
+        }
     }
     if (frame_timing_enabled()) {
         const auto now = std::chrono::steady_clock::now();
@@ -4895,7 +4972,7 @@ const uint8_t* mapped_bytes_for(VkBuffer buffer, uint64_t offset, uint64_t lengt
     return read_vram(vram_memory, vram_start, length, keep);
 }
 
-void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted) {
+void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted, uint64_t submit) {
     std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
     auto& recorded = recorded_readbacks();
     if (recorded.empty()) return;
@@ -4904,6 +4981,7 @@ void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted) {
         const bool in_this_submit =
             std::find(submitted.begin(), submitted.end(), recorded[i].cb) != submitted.end();
         if (in_this_submit) {
+            recorded[i].submit = submit;
             awaiting.push_back(recorded[i]);
             recorded.erase(recorded.begin() + static_cast<long>(i));
         } else {
@@ -4913,13 +4991,18 @@ void arm_pending_readbacks(const std::vector<VkCommandBuffer>& submitted) {
     g_have_readbacks.store(!awaiting.empty(), std::memory_order_relaxed);
 }
 
-void fetch_pending_readbacks() {
+void fetch_pending_readbacks(uint64_t completed_submit) {
     if (!g_have_readbacks.load(std::memory_order_relaxed)) return;
     std::vector<PendingReadback> take;
     {
         std::lock_guard<std::recursive_mutex> lock(emulation_mutex());
-        take.swap(awaiting_readbacks());
-        g_have_readbacks.store(false, std::memory_order_relaxed);
+        auto& awaiting = awaiting_readbacks();
+        const auto still_running = std::stable_partition(
+            awaiting.begin(), awaiting.end(),
+            [completed_submit](const PendingReadback& rb) { return rb.submit <= completed_submit; });
+        take.assign(awaiting.begin(), still_running);
+        awaiting.erase(awaiting.begin(), still_running);
+        g_have_readbacks.store(!awaiting.empty(), std::memory_order_relaxed);
     }
     if (take.empty()) return;
     std::vector<uint8_t> bytes;
@@ -5696,16 +5779,20 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyBufferToImage(VkCommandBuffer cb, VkBuf
 // letting the engine read whatever was in its own copy.
 // A command that writes into `buffer`: where the GPU's result cannot reach the
 // engine on its own, remember to go and get it; see PendingReadback.
-void note_readback(VkCommandBuffer cb, VkBuffer buffer) {
+void note_readback(VkCommandBuffer cb, VkBuffer buffer, VkDeviceSize offset = 0,
+                   VkDeviceSize size = VK_WHOLE_SIZE) {
     std::lock_guard<std::recursive_mutex> emu_lock(emulation_mutex());
     auto bit = buffer_bindings().find(to_u64(buffer));
-    if (bit == buffer_bindings().end() || bit->second.size == 0) return;
+    if (bit == buffer_bindings().end() || offset >= bit->second.size) return;
     std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
     const bool shared = shared_allocations().count(bit->second.memory) != 0;
     const bool mapped = mapped_ranges().count(bit->second.memory) != 0;
     if (shared || !mapped) return;
+    // Only what the command writes: the fetched bytes replace these pages,
+    // and the rest of the buffer may have newer data of the engine's.
+    const VkDeviceSize length = std::min<VkDeviceSize>(size, bit->second.size - offset);
     recorded_readbacks().push_back(
-        PendingReadback{cb, bit->second.memory, bit->second.offset, bit->second.size});
+        PendingReadback{cb, bit->second.memory, bit->second.offset + offset, length});
     static bool said = false;
     if (!said) {
         said = true;
@@ -5988,7 +6075,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdFillBuffer(VkCommandBuffer cb, VkBuffer buf
     w.u64(offset);
     w.u64(size);
     w.u32(data);
-    note_readback(cb, buffer);
+    note_readback(cb, buffer, offset, size);
     record_bytes(cb, vk_wire::CmdKind::FillBuffer, w.data(), w.size());
 }
 
@@ -6000,7 +6087,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdUpdateBuffer(VkCommandBuffer cb, VkBuffer b
     w.u64(to_u64(buffer));
     w.u64(offset);
     w.bytes(data, size);
-    note_readback(cb, buffer);
+    note_readback(cb, buffer, offset, size);
     record(cb, vk_wire::CmdKind::UpdateBuffer, in);
 }
 
@@ -6017,7 +6104,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkCmdCopyQueryPoolResults(VkCommandBuffer cb, Vk
     w.u64(offset);
     w.u64(stride);
     w.u32(flags);
-    note_readback(cb, buffer);
+    note_readback(cb, buffer, offset, stride * count);
     record_bytes(cb, vk_wire::CmdKind::CopyQueryPoolResults, w.data(), w.size());
 }
 
@@ -6921,6 +7008,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance /*inst
     if (vulkan_disabled) return nullptr;
 
     if (PFN_vkVoidFunction fn = lookup_command(pName)) return fn;
+    if (hidden_extension_command(pName)) return nullptr;
 
     if (std::strcmp(pName, "vkGetDeviceProcAddr") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(
@@ -6928,6 +7016,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance /*inst
                 trace("vkGetDeviceProcAddr", inner_name);
                 if (inner_name == nullptr) return nullptr;
                 if (PFN_vkVoidFunction fn = lookup_command(inner_name)) return fn;
+                if (hidden_extension_command(inner_name)) return nullptr;
                 // Anything the real driver does not have is answered
                 // null, exactly as that driver would; see
                 // host_has_proc() for why claiming otherwise actively
