@@ -1645,6 +1645,16 @@ void show_crash_dialog(const QString& which_process, const QString& unsupported)
     // complete log; Export only copies a file that is already finished.
     stud::ui::flush_log_collector();
 
+    // gfxstream ends the process when the driver reports a reset, and says so
+    // on its way out. Nothing Stud does can carry on from one, so the reason
+    // is worth more than "crashed".
+    bool gpu_reset = false;
+    {
+        QFile f(log);
+        gpu_reset = f.open(QIODevice::ReadOnly) &&
+                    f.readAll().contains("Stream server aborting due to graphics reset");
+    }
+
     auto* box = new QMessageBox;
     box->setAttribute(Qt::WA_DeleteOnClose);
     // Stud's own mark rather than the system's red error triangle: the
@@ -1653,7 +1663,13 @@ void show_crash_dialog(const QString& which_process, const QString& unsupported)
     box->setIconPixmap(QPixmap(QStringLiteral(":/stud-logo-update.png"))
                            .scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     box->setWindowTitle(QStringLiteral("Stud"));
-    if (unsupported.isEmpty()) {
+    if (gpu_reset) {
+        box->setText(QStringLiteral("The graphics card stopped responding"));
+        box->setInformativeText(
+            QStringLiteral("The graphics driver had to reset the GPU, and the session could not "
+                           "carry on after it. Choosing another GPU or render path in Settings "
+                           "may help."));
+    } else if (unsupported.isEmpty()) {
         box->setText(QStringLiteral("Oops, Stud has crashed!"));
         box->setInformativeText(
             log.isEmpty()
@@ -1790,6 +1806,8 @@ void watch_for_a_crash() {
         if (QFile::exists(marker)) {
             timer->stop();
             stud::ui::close_loading_screen();
+            // Whatever is left of the session cannot do anything now.
+            stud::ui::terminate_stud_session();
             QString who = QStringLiteral("Stud");
             QFile f(marker);
             if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -1838,6 +1856,9 @@ void watch_for_a_crash() {
                 }
                 return;
             }
+            // The lock going says render-host has gone, not that the engine
+            // has.
+            stud::ui::terminate_stud_session();
             show_crash_dialog(QStringLiteral("stud-render-host"), not_supported);
         }
     });

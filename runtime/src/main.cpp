@@ -104,6 +104,7 @@
 #include <dlfcn.h>
 #include <netdb.h>
 #include <sys/syscall.h>
+#include <poll.h>
 #include <unistd.h>
 
 namespace {
@@ -229,6 +230,31 @@ void handle_shutdown_signal(int) {
 
 }  // namespace
 
+
+// Ends this process the moment render-host goes, from a thread of its own.
+//
+// The main loop notices too, but only if it is running, and its thread can be
+// stuck behind an engine thread waiting on a graphics connection that is
+// never going to answer. It was: a GPU reset took render-host down, and the
+// engine sat there for good, past a SIGTERM, which only that loop reads.
+//
+// Polls a duplicate, for no events: only the hang-up wakes it, it reads
+// nothing the connection is owed, and the descriptor stays valid after the
+// connection closes its own.
+void watch_render_host() {
+    const int fd = ::dup(stud::render_client::connection().socket_fd());
+    if (fd < 0) return;
+    std::thread([fd] {
+        pollfd p{fd, 0, 0};
+        while (::poll(&p, 1, -1) < 0 && errno == EINTR) {
+        }
+        stud::jni_bridge::note_shutting_down();
+        std::printf("stud: render-host has gone, exiting\n");
+        std::fflush(stdout);
+        std::fflush(stderr);
+        ::_exit(0);
+    }).detach();
+}
 
 // The engine's own renderer preference, as the real flags that decide it.
 //
@@ -3131,6 +3157,7 @@ int main(int argc, char** argv) {
     std::fflush(stdout);
     std::signal(SIGINT, handle_shutdown_signal);
     std::signal(SIGTERM, handle_shutdown_signal);
+    watch_render_host();
     // Whether the loop ended because render-host went away, rather
     // than because Stud was asked to stop. The two need different
     // shutdowns; see where it is read, below.

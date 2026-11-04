@@ -1144,6 +1144,7 @@ public:
     }
 
     bool connected() const { return fd_ >= 0; }
+    int socket_fd() const { return fd_; }
 
     // For diagnostics only: lets a client say which socket it got,
     // so a host-side connection can be matched to the library that
