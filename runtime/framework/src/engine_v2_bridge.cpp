@@ -21,6 +21,15 @@ namespace stud::jni_bridge {
 
 namespace {
 
+// An entry point the session cannot start without. Everything after it would
+// wait on an engine that never comes up, so this stops the session and says
+// why instead of leaving the user on the loading screen.
+void cannot_start_without(const char* name) {
+    std::fprintf(stderr, "stud: engine_v2_bridge: %s not found\n", name);
+    stud::logging::note_unsupported_roblox(std::string("this Roblox has no ") + name,
+                                           /*fatal=*/true);
+}
+
 using V2VoidOneObjFn = void (*)(JNIEnv*, jclass, jobject);
 using V2VoidTwoObjFn = void (*)(JNIEnv*, jclass, jobject, jobject);
 using V2ResumeGameFn = void (*)(JNIEnv*, jclass, jobject, jobject, jobject);
@@ -249,8 +258,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             ok = !outcome.trapped_abort && ok;
             any_still_running = any_still_running || outcome.still_running;
         } else {
-            std::fprintf(stderr,
-                          "stud: engine_v2_bridge: nativeGameGlobalInit not found, skipping\n");
+            cannot_start_without("nativeGameGlobalInit");
         }
         if (void* addr = lib.find_symbol(
                 "Java_com_roblox_engine_jni_NativeGLInterface_nativeUpdateAdapterInit");
@@ -302,9 +310,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         result.init_with_params_trapped_abort = outcome.trapped_abort;
         result.init_with_params_still_running = outcome.still_running;
     } else {
-        std::fprintf(
-            stderr,
-            "stud: engine_v2_bridge: nativeAppBridgeV2InitWithParams not found, skipping\n");
+        cannot_start_without("nativeAppBridgeV2InitWithParams");
     }
 }
 
@@ -540,9 +546,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     } else if (lib.find_symbol(
                    "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams") ==
                nullptr) {
-        std::fprintf(
-            stderr,
-            "stud: engine_v2_bridge: nativeAppBridgeV2StartAppWithParams not found, skipping\n");
+        cannot_start_without("nativeAppBridgeV2StartAppWithParams");
     } else {
         std::fprintf(stderr,
                       "stud: engine_v2_bridge: nativeAppBridgeV2StartAppWithParams skipped (%s)\n",
@@ -641,9 +645,13 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     } else if (lib.find_symbol(
                    "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartGameWithParam") ==
                nullptr) {
-        std::fprintf(
-            stderr,
-            "stud: engine_v2_bridge: nativeAppBridgeV2StartGameWithParam not found, skipping\n");
+        // The home page does not need it, a join does.
+        if (bare_launch) {
+            stud::logging::note_unsupported_roblox(
+                "this Roblox has no nativeAppBridgeV2StartGameWithParam");
+        } else {
+            cannot_start_without("nativeAppBridgeV2StartGameWithParam");
+        }
     } else {
         std::fprintf(stderr,
                       "stud: engine_v2_bridge: nativeAppBridgeV2StartGameWithParam skipped; no "
@@ -710,9 +718,7 @@ void start_app_with_params_background(FakeJni::Jvm& jvm, const stud::linker::Loa
     void* addr = lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams");
     if (addr == nullptr) {
-        std::fprintf(
-            stderr,
-            "stud: engine_v2_bridge: nativeAppBridgeV2StartAppWithParams not found, skipping\n");
+        cannot_start_without("nativeAppBridgeV2StartAppWithParams");
         return;
     }
 

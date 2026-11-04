@@ -54,6 +54,8 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     if (addr == nullptr) {
         std::fprintf(stderr, "stud: GameActivity_initializeNativeCode is not exported by this "
                              "libroblox.so, so there is no AGDK lifecycle\n");
+        stud::logging::note_unsupported_roblox("this Roblox has no GameActivity lifecycle",
+                                               /*fatal=*/true);
         return out;
     }
     out.initialize_native_code_found = true;

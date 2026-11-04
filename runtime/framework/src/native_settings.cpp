@@ -22,12 +22,14 @@ using OverrideChannelPlatformNameFn = void (*)(JNIEnv*, jclass, jstring);
 using InitFastLogFn = void (*)(JNIEnv*, jclass);
 using SetRobloxVersionFn = void (*)(JNIEnv*, jclass, jstring);
 
+// A setter this Roblox no longer has is skipped: the rest of the engine may
+// well run without it, so losing one is not worth refusing to start. It is
+// noted, and is the first thing to read if the session goes wrong afterwards.
 template <typename Fn>
-Fn find_required_symbol(const stud::linker::LoadedLibrary& lib, const char* name) {
+Fn find_setter(const stud::linker::LoadedLibrary& lib, const char* name) {
     void* addr = lib.find_symbol(name);
     if (addr == nullptr) {
-        throw stud::linker::LoadError(std::string("native_settings: required symbol not found: ") +
-                                       name);
+        stud::logging::note_unsupported_roblox(std::string("this Roblox has no ") + name);
     }
     return reinterpret_cast<Fn>(addr);
 }
@@ -76,15 +78,15 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // own real callers depend on this sequence (e.g. its directory
     // calls explicitly null-check that field first, gated on running after
     // the exception-filename/base-URL group above it).
-    auto* set_exception_reason_filename = find_required_symbol<SetExceptionReasonFilenameFn>(
-        lib,
-        "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetExceptionReasonFilename");
-    jstring exception_reason_filename_jstring =
-        env.NewStringUTF(config.exception_reason_filename.c_str());
-    result.set_exception_reason_filename_called = true;
-    result.set_exception_reason_filename_trapped_abort = !call_trapping_abort(
-        set_exception_reason_filename, jni_env, nullptr, exception_reason_filename_jstring);
-    clear_pending_jni_exception(jni_env, "nativeSetExceptionReasonFilename");
+    if (auto* set_exception_reason_filename = find_setter<SetExceptionReasonFilenameFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetExceptionReasonFilename")) {
+        jstring exception_reason_filename_jstring =
+            env.NewStringUTF(config.exception_reason_filename.c_str());
+        result.set_exception_reason_filename_called = true;
+        result.set_exception_reason_filename_trapped_abort = !call_trapping_abort(
+            set_exception_reason_filename, jni_env, nullptr, exception_reason_filename_jstring);
+        clear_pending_jni_exception(jni_env, "nativeSetExceptionReasonFilename");
+    }
 
     // Optional, called first when a real files directory is
     // configured, matches try_bootstrap.cpp's own established probe
@@ -95,14 +97,15 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // the previous, unchanged behavior rather than a call that would
     // just fail silently on Roblox's own side.
     if (!config.files_directory.empty()) {
-        auto* set_files_directory = find_required_symbol<SetFilesDirectoryFn>(
-            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetFilesDirectory");
-        jstring files_directory_jstring = env.NewStringUTF(config.files_directory.c_str());
-        result.set_files_directory_called = true;
-        result.set_files_directory_trapped_abort =
-            !call_trapping_abort(set_files_directory, jni_env, nullptr,
-                                         files_directory_jstring);
-        clear_pending_jni_exception(jni_env, "nativeSetFilesDirectory");
+        if (auto* set_files_directory = find_setter<SetFilesDirectoryFn>(
+                lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetFilesDirectory")) {
+            jstring files_directory_jstring = env.NewStringUTF(config.files_directory.c_str());
+            result.set_files_directory_called = true;
+            result.set_files_directory_trapped_abort =
+                !call_trapping_abort(set_files_directory, jni_env, nullptr,
+                                             files_directory_jstring);
+            clear_pending_jni_exception(jni_env, "nativeSetFilesDirectory");
+        }
     }
 
     // Real gap closed (the engineering notes, "verify the 2D shell renders"
@@ -112,44 +115,47 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // \"\"") that omitting it isn't a silent no-op, it's a real,
     // observable failure blocking Roblox's own storage init.
     if (!config.cache_directory.empty()) {
-        auto* set_cache_directory = find_required_symbol<SetCacheDirectoryFn>(
-            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetCacheDirectory");
-        jstring cache_directory_jstring = env.NewStringUTF(config.cache_directory.c_str());
-        result.set_cache_directory_called = true;
-        result.set_cache_directory_trapped_abort =
-            !call_trapping_abort(set_cache_directory, jni_env, nullptr,
-                                         cache_directory_jstring);
-        clear_pending_jni_exception(jni_env, "nativeSetCacheDirectory");
+        if (auto* set_cache_directory = find_setter<SetCacheDirectoryFn>(
+                lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetCacheDirectory")) {
+            jstring cache_directory_jstring = env.NewStringUTF(config.cache_directory.c_str());
+            result.set_cache_directory_called = true;
+            result.set_cache_directory_trapped_abort =
+                !call_trapping_abort(set_cache_directory, jni_env, nullptr,
+                                             cache_directory_jstring);
+            clear_pending_jni_exception(jni_env, "nativeSetCacheDirectory");
+        }
     }
 
     // Immediately-following calls in the app's own settings bootstrap, right
     // after its cache/files directory pair.
-    auto* init_fast_log = find_required_symbol<InitFastLogFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeInitFastLog");
-    result.init_fast_log_called = true;
-    result.init_fast_log_trapped_abort =
-        !call_trapping_abort(init_fast_log, jni_env, nullptr);
-    clear_pending_jni_exception(jni_env, "nativeInitFastLog");
+    if (auto* init_fast_log = find_setter<InitFastLogFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeInitFastLog")) {
+        result.init_fast_log_called = true;
+        result.init_fast_log_trapped_abort =
+            !call_trapping_abort(init_fast_log, jni_env, nullptr);
+        clear_pending_jni_exception(jni_env, "nativeInitFastLog");
+    }
 
-    auto* set_roblox_version = find_required_symbol<SetRobloxVersionFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetRobloxVersion");
-    jstring roblox_version_jstring = env.NewStringUTF(config.roblox_version.c_str());
-    result.set_roblox_version_called = true;
-    result.set_roblox_version_trapped_abort =
-        !call_trapping_abort(set_roblox_version, jni_env, nullptr, roblox_version_jstring);
-    clear_pending_jni_exception(jni_env, "nativeSetRobloxVersion");
+    if (auto* set_roblox_version = find_setter<SetRobloxVersionFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetRobloxVersion")) {
+        jstring roblox_version_jstring = env.NewStringUTF(config.roblox_version.c_str());
+        result.set_roblox_version_called = true;
+        result.set_roblox_version_trapped_abort =
+            !call_trapping_abort(set_roblox_version, jni_env, nullptr, roblox_version_jstring);
+        clear_pending_jni_exception(jni_env, "nativeSetRobloxVersion");
+    }
 
     if (!config.base_internal_directory.empty() && !config.base_external_directory.empty()) {
-        auto* set_base_data_directories = find_required_symbol<SetBaseDataDirectoriesFn>(
-            lib,
-            "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetBaseDataDirectories");
-        jstring internal_jstring = env.NewStringUTF(config.base_internal_directory.c_str());
-        jstring external_jstring = env.NewStringUTF(config.base_external_directory.c_str());
-        result.set_base_data_directories_called = true;
-        result.set_base_data_directories_trapped_abort =
-            !call_trapping_abort(set_base_data_directories, jni_env, nullptr,
-                                         internal_jstring, external_jstring);
-        clear_pending_jni_exception(jni_env, "nativeSetBaseDataDirectories");
+        if (auto* set_base_data_directories = find_setter<SetBaseDataDirectoriesFn>(
+                lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetBaseDataDirectories")) {
+            jstring internal_jstring = env.NewStringUTF(config.base_internal_directory.c_str());
+            jstring external_jstring = env.NewStringUTF(config.base_external_directory.c_str());
+            result.set_base_data_directories_called = true;
+            result.set_base_data_directories_trapped_abort =
+                !call_trapping_abort(set_base_data_directories, jni_env, nullptr,
+                                             internal_jstring, external_jstring);
+            clear_pending_jni_exception(jni_env, "nativeSetBaseDataDirectories");
+        }
     }
 
     // Confirmed: `InitHelper` (`InitHelper`) calls
@@ -170,24 +176,26 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // preferences file the engine has nowhere to persist it and every
     // Stud launch looks like a first-ever launch.
     {
-        auto* set_preferences_file = find_required_symbol<SetPreferencesFileFn>(
-            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetPreferencesFile");
-        jstring prefs_jstring = env.NewStringUTF("prefs");
-        result.set_preferences_file_called = true;
-        result.set_preferences_file_trapped_abort =
-            !call_trapping_abort(set_preferences_file, jni_env, nullptr, prefs_jstring);
-        clear_pending_jni_exception(jni_env, "nativeSetPreferencesFile");
+        if (auto* set_preferences_file = find_setter<SetPreferencesFileFn>(
+                lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetPreferencesFile")) {
+            jstring prefs_jstring = env.NewStringUTF("prefs");
+            result.set_preferences_file_called = true;
+            result.set_preferences_file_trapped_abort =
+                !call_trapping_abort(set_preferences_file, jni_env, nullptr, prefs_jstring);
+            clear_pending_jni_exception(jni_env, "nativeSetPreferencesFile");
+        }
     }
 
     if (!config.external_directory.empty()) {
-        auto* set_external_directory = find_required_symbol<SetExternalDirectoryFn>(
-            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetExternalDirectory");
-        jstring external_directory_jstring = env.NewStringUTF(config.external_directory.c_str());
-        result.set_external_directory_called = true;
-        result.set_external_directory_trapped_abort =
-            !call_trapping_abort(set_external_directory, jni_env, nullptr,
-                                         external_directory_jstring);
-        clear_pending_jni_exception(jni_env, "nativeSetExternalDirectory");
+        if (auto* set_external_directory = find_setter<SetExternalDirectoryFn>(
+                lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetExternalDirectory")) {
+            jstring external_directory_jstring = env.NewStringUTF(config.external_directory.c_str());
+            result.set_external_directory_called = true;
+            result.set_external_directory_trapped_abort =
+                !call_trapping_abort(set_external_directory, jni_env, nullptr,
+                                             external_directory_jstring);
+            clear_pending_jni_exception(jni_env, "nativeSetExternalDirectory");
+        }
     }
 
     // Real call order traced from the app's own HTTP/cookie layer (the engineering notes,
@@ -195,52 +203,57 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     // each other, order between them doesn't matter to Roblox's own code
     // (confirmed: the other two are called from unrelated places, never
     // adjacent in the real sequence) but is kept here for readability.
-    auto* set_base_url = find_required_symbol<SetBaseUrlFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetBaseUrl");
-    jstring base_url_jstring = env.NewStringUTF(config.base_url.c_str());
-    jstring api_base_url_jstring = env.NewStringUTF(config.api_base_url.c_str());
-    result.set_base_url_called = true;
-    result.set_base_url_trapped_abort =
-        !call_trapping_abort(set_base_url, jni_env, nullptr, base_url_jstring,
-                                     api_base_url_jstring);
-    clear_pending_jni_exception(jni_env, "nativeSetBaseUrl");
+    if (auto* set_base_url = find_setter<SetBaseUrlFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetBaseUrl")) {
+        jstring base_url_jstring = env.NewStringUTF(config.base_url.c_str());
+        jstring api_base_url_jstring = env.NewStringUTF(config.api_base_url.c_str());
+        result.set_base_url_called = true;
+        result.set_base_url_trapped_abort =
+            !call_trapping_abort(set_base_url, jni_env, nullptr, base_url_jstring,
+                                         api_base_url_jstring);
+        clear_pending_jni_exception(jni_env, "nativeSetBaseUrl");
+    }
 
     // Immediately-following calls in the app's own settings bootstrap, right
     // after nativeSetBaseUrl.
-    auto* set_roblox_channel = find_required_symbol<SetRobloxChannelFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetRobloxChannel");
-    jstring roblox_channel_jstring = env.NewStringUTF(config.roblox_channel.c_str());
-    result.set_roblox_channel_called = true;
-    result.set_roblox_channel_trapped_abort =
-        !call_trapping_abort(set_roblox_channel, jni_env, nullptr, roblox_channel_jstring);
-    clear_pending_jni_exception(jni_env, "nativeSetRobloxChannel");
+    if (auto* set_roblox_channel = find_setter<SetRobloxChannelFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetRobloxChannel")) {
+        jstring roblox_channel_jstring = env.NewStringUTF(config.roblox_channel.c_str());
+        result.set_roblox_channel_called = true;
+        result.set_roblox_channel_trapped_abort =
+            !call_trapping_abort(set_roblox_channel, jni_env, nullptr, roblox_channel_jstring);
+        clear_pending_jni_exception(jni_env, "nativeSetRobloxChannel");
+    }
 
-    auto* override_channel_platform_name = find_required_symbol<OverrideChannelPlatformNameFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeOverrideChannelPlatformName");
-    jstring platform_name_jstring = env.NewStringUTF(config.platform_name.c_str());
-    result.override_channel_platform_name_called = true;
-    result.override_channel_platform_name_trapped_abort = !call_trapping_abort(
-        override_channel_platform_name, jni_env, nullptr, platform_name_jstring);
-    clear_pending_jni_exception(jni_env, "nativeOverrideChannelPlatformName");
+    if (auto* override_channel_platform_name = find_setter<OverrideChannelPlatformNameFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeOverrideChannelPlatformName")) {
+        jstring platform_name_jstring = env.NewStringUTF(config.platform_name.c_str());
+        result.override_channel_platform_name_called = true;
+        result.override_channel_platform_name_trapped_abort = !call_trapping_abort(
+            override_channel_platform_name, jni_env, nullptr, platform_name_jstring);
+        clear_pending_jni_exception(jni_env, "nativeOverrideChannelPlatformName");
+    }
 
-    auto* set_http_client_proxy = find_required_symbol<SetHttpClientProxyFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetHttpClientProxy");
-    jstring proxy_host_jstring = env.NewStringUTF(config.http_proxy_host.c_str());
-    result.set_http_client_proxy_called = true;
-    result.set_http_client_proxy_trapped_abort = !call_trapping_abort(
-        set_http_client_proxy, jni_env, nullptr, proxy_host_jstring,
-        static_cast<jlong>(config.http_proxy_port));
-    clear_pending_jni_exception(jni_env, "nativeSetHttpClientProxy");
+    if (auto* set_http_client_proxy = find_setter<SetHttpClientProxyFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetHttpClientProxy")) {
+        jstring proxy_host_jstring = env.NewStringUTF(config.http_proxy_host.c_str());
+        result.set_http_client_proxy_called = true;
+        result.set_http_client_proxy_trapped_abort = !call_trapping_abort(
+            set_http_client_proxy, jni_env, nullptr, proxy_host_jstring,
+            static_cast<jlong>(config.http_proxy_port));
+        clear_pending_jni_exception(jni_env, "nativeSetHttpClientProxy");
+    }
 
-    auto* set_multiple_cookies = find_required_symbol<SetMultipleCookiesFn>(
-        lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetMultipleCookies");
-    jstring cookies_base_url_jstring = env.NewStringUTF(config.base_url.c_str());
-    jstring cookies_jstring = env.NewStringUTF(config.cookies.c_str());
-    result.set_multiple_cookies_called = true;
-    result.set_multiple_cookies_trapped_abort =
-        !call_trapping_abort(set_multiple_cookies, jni_env, nullptr,
-                                     cookies_base_url_jstring, cookies_jstring);
-    clear_pending_jni_exception(jni_env, "nativeSetMultipleCookies");
+    if (auto* set_multiple_cookies = find_setter<SetMultipleCookiesFn>(
+            lib, "Java_com_roblox_engine_jni_NativeSettingsInterface_nativeSetMultipleCookies")) {
+        jstring cookies_base_url_jstring = env.NewStringUTF(config.base_url.c_str());
+        jstring cookies_jstring = env.NewStringUTF(config.cookies.c_str());
+        result.set_multiple_cookies_called = true;
+        result.set_multiple_cookies_trapped_abort =
+            !call_trapping_abort(set_multiple_cookies, jni_env, nullptr,
+                                         cookies_base_url_jstring, cookies_jstring);
+        clear_pending_jni_exception(jni_env, "nativeSetMultipleCookies");
+    }
 
     // Real read-back: did the engine actually accept and store the
     // cookie we just handed it? The Lua app decides logged-in vs
