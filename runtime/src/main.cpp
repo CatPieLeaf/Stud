@@ -1339,6 +1339,21 @@ int main(int argc, char** argv) {
                          apk_path.c_str());
         }
     }
+    // Stud tells the engine it runs on one Android version. An APK that
+    // asks for more than that was never promised to work here, and what
+    // breaks first will not look like this, so it is said now.
+    if (!apk_path.empty()) {
+        const int min_sdk = stud::android_glue::apk_min_sdk(apk_path);
+        const int reported = stud::jni_bridge::BuildVersionJava::SDK_INT;
+        if (min_sdk > reported) {
+            std::printf("stud: !!! this APK needs Android API %d and Stud reports %d\n", min_sdk,
+                        reported);
+            std::fflush(stdout);
+            stud::logging::note_unsupported_roblox(
+                "This APK needs Android API " + std::to_string(min_sdk) + ", and Stud provides " +
+                std::to_string(reported) + ".");
+        }
+    }
     stud::jni_bridge::set_real_app_version(real_app_version);
     std::printf("stud: app version: %s\n", real_app_version.c_str());
     std::fflush(stdout);

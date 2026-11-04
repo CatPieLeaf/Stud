@@ -19,6 +19,7 @@
 #include <miniz_zip.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -120,10 +121,78 @@ std::vector<uint8_t> read_manifest_bytes(const std::string& apk_path) {
 
 }  // namespace
 
-std::string apk_version_name(const std::string& apk_path) {
-    // For a bundle, the manifest that carries the app's own version is
-    // the base module's, the splits have their own, and they describe
-    // the split, not the app.
+namespace {
+
+// One attribute of the first element that has it, or of the root
+// <manifest> element alone when `root_only`. Empty when it is not there.
+std::string manifest_attribute(const std::vector<uint8_t>& data, const char* attribute,
+                               bool root_only) {
+    if (data.size() < 8) return {};
+
+    // Locate the string pool (always the first chunk after the file
+    // header) and remember what it takes to read entries from it.
+    size_t pool_offset = 0;
+    uint32_t pool_count = 0;
+    uint32_t pool_flags = 0;
+    size_t pool_strings_start = 0;
+
+    size_t at = 8;  // past the file header
+    while (at + 8 <= data.size()) {
+        const uint16_t chunk_type = read_u16(data.data() + at);
+        const uint32_t chunk_size = read_u32(data.data() + at + 4);
+        if (chunk_size < 8 || at + chunk_size > data.size()) break;
+
+        if (chunk_type == kChunkStringPool) {
+            pool_offset = at;
+            pool_count = read_u32(data.data() + at + 8);
+            pool_flags = read_u32(data.data() + at + 16);
+            pool_strings_start = read_u32(data.data() + at + 20);
+        } else if (chunk_type == kChunkStartElement && pool_count != 0) {
+            // Element chunk body: ns(4) name(4) attributeStart(2)
+            // attributeSize(2) attributeCount(2) ..., verified against
+            // the real manifest of the configured build rather than
+            // assumed.
+            const uint16_t header_size = read_u16(data.data() + at + 2);
+            const size_t body = at + header_size;
+            if (body + 14 > data.size()) break;
+            const uint16_t attr_start = read_u16(data.data() + body + 8);
+            const uint16_t attr_size = read_u16(data.data() + body + 10);
+            const uint16_t attr_count = read_u16(data.data() + body + 12);
+            const size_t attrs_at = body + attr_start;
+            if (attr_size < 20) break;
+            for (uint16_t i = 0; i < attr_count; ++i) {
+                const size_t a = attrs_at + static_cast<size_t>(i) * attr_size;
+                if (a + 20 > data.size()) break;
+                const uint32_t name_index = read_u32(data.data() + a + 4);
+                if (pool_string(data, pool_offset, pool_count, pool_flags, pool_strings_start,
+                                name_index) != attribute) {
+                    continue;
+                }
+                const uint32_t raw_value = read_u32(data.data() + a + 8);
+                const uint8_t value_type = data[a + 15];
+                const uint32_t value_data = read_u32(data.data() + a + 16);
+                if (raw_value != 0xffffffffu) {
+                    return pool_string(data, pool_offset, pool_count, pool_flags,
+                                       pool_strings_start, raw_value);
+                }
+                if (value_type == kTypeString) {
+                    return pool_string(data, pool_offset, pool_count, pool_flags,
+                                       pool_strings_start, value_data);
+                }
+                if (value_type == kTypeIntDec) return std::to_string(value_data);
+                return {};
+            }
+            if (root_only) return {};
+        }
+        at += chunk_size;
+    }
+    return {};
+}
+
+// For a bundle, the manifest that carries the app's own values is the
+// base module's: the splits have their own, and they describe the split,
+// not the app.
+std::string apk_attribute(const std::string& apk_path, const char* attribute, bool root_only) {
     std::vector<std::string> sources;
     try {
         sources = resolve_apk_sources_for_metadata(apk_path);
@@ -131,73 +200,22 @@ std::string apk_version_name(const std::string& apk_path) {
         return {};
     }
     for (const std::string& source : sources) {
-        const std::vector<uint8_t> data = read_manifest_bytes(source);
-        if (data.size() < 8) continue;
-
-        // Locate the string pool (always the first chunk after the file
-        // header) and remember what it takes to read entries from it.
-        size_t pool_offset = 0;
-        uint32_t pool_count = 0;
-        uint32_t pool_flags = 0;
-        size_t pool_strings_start = 0;
-
-        size_t at = 8;  // past the file header
-        std::string found;
-        while (at + 8 <= data.size()) {
-            const uint16_t chunk_type = read_u16(data.data() + at);
-            const uint32_t chunk_size = read_u32(data.data() + at + 4);
-            if (chunk_size < 8 || at + chunk_size > data.size()) break;
-
-            if (chunk_type == kChunkStringPool) {
-                pool_offset = at;
-                pool_count = read_u32(data.data() + at + 8);
-                pool_flags = read_u32(data.data() + at + 16);
-                pool_strings_start = read_u32(data.data() + at + 20);
-            } else if (chunk_type == kChunkStartElement && pool_count != 0) {
-                // Element chunk body: ns(4) name(4) attributeStart(2)
-                // attributeSize(2) attributeCount(2) ..., verified
-                // against the real manifest of the configured build
-                // rather than assumed.
-                const uint16_t header_size = read_u16(data.data() + at + 2);
-                const size_t body = at + header_size;
-                if (body + 14 > data.size()) break;
-                const uint16_t attr_start = read_u16(data.data() + body + 8);
-                const uint16_t attr_size = read_u16(data.data() + body + 10);
-                const uint16_t attr_count = read_u16(data.data() + body + 12);
-                const size_t attrs_at = body + attr_start;
-                if (attr_size < 20) break;
-                for (uint16_t i = 0; i < attr_count; ++i) {
-                    const size_t a = attrs_at + static_cast<size_t>(i) * attr_size;
-                    if (a + 20 > data.size()) break;
-                    const uint32_t name_index = read_u32(data.data() + a + 4);
-                    if (pool_string(data, pool_offset, pool_count, pool_flags, pool_strings_start,
-                                    name_index) != "versionName") {
-                        continue;
-                    }
-                    const uint32_t raw_value = read_u32(data.data() + a + 8);
-                    const uint8_t value_type = data[a + 15];
-                    const uint32_t value_data = read_u32(data.data() + a + 16);
-                    if (raw_value != 0xffffffffu) {
-                        found = pool_string(data, pool_offset, pool_count, pool_flags,
-                                            pool_strings_start, raw_value);
-                    } else if (value_type == kTypeString) {
-                        found = pool_string(data, pool_offset, pool_count, pool_flags,
-                                            pool_strings_start, value_data);
-                    } else if (value_type == kTypeIntDec) {
-                        found = std::to_string(value_data);
-                    }
-                    break;
-                }
-                // versionName lives on the root <manifest> element, so
-                // the first element chunk either has it or the manifest
-                // genuinely does not declare one.
-                break;
-            }
-            at += chunk_size;
-        }
+        std::string found = manifest_attribute(read_manifest_bytes(source), attribute, root_only);
         if (!found.empty()) return found;
     }
     return {};
+}
+
+}  // namespace
+
+std::string apk_version_name(const std::string& apk_path) {
+    // versionName lives on the root <manifest> element.
+    return apk_attribute(apk_path, "versionName", /*root_only=*/true);
+}
+
+int apk_min_sdk(const std::string& apk_path) {
+    // On <uses-sdk>, a child of the root.
+    return std::atoi(apk_attribute(apk_path, "minSdkVersion", /*root_only=*/false).c_str());
 }
 
 }  // namespace stud::android_glue

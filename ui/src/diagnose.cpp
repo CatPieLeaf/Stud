@@ -320,6 +320,7 @@ void write_diagnostics() {
         line("apk", apk);
         line("apk file", exists_size(apk));
         line("apk version", stud::android_glue::apk_version_name(apk));
+        line("apk min api", std::to_string(stud::android_glue::apk_min_sdk(apk)));
     }
     std::printf("\n");
 

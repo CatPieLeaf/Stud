@@ -123,6 +123,10 @@ std::vector<uint8_t> read_apk_asset(const std::string& apk_path, const std::stri
 // is worse than an honest gap.
 std::string apk_version_name(const std::string& apk_path);
 
+// The Android API level the APK says it needs, its minSdkVersion. 0 when it
+// cannot be read.
+int apk_min_sdk(const std::string& apk_path);
+
 // Identity of the chosen APK/bundle as a short string (path, size,
 // mtime). Used to notice that the user picked a different build, so
 // everything extracted from the previous one can be cleared instead of
