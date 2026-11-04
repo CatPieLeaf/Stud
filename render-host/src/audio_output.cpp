@@ -33,6 +33,7 @@
 #include "stud/session_log.h"
 #include "stud/vulkan_host.h"
 
+#include <chrono>
 #include <sys/mman.h>
 
 #include <atomic>
@@ -280,6 +281,14 @@ struct Device {
     // is held here by value and never copied.
     ma_device ma_dev{};
     bool device_open = false;
+    // Set when the last stream closes. The ring's read position is the
+    // callback's alone, so the callback does the emptying.
+    std::atomic<bool> flush{false};
+    std::atomic<int> open_streams{0};
+    // The stream whose audio the ring carries. There is one ring and no
+    // mixer: two writers would alternate bursts and garble each other.
+    uint64_t owner = 0;
+    std::chrono::steady_clock::time_point owner_wrote{};
     int channels = 2;
     int rate = 48000;
     // 32-bit float, which is what the engine actually produces and what a
@@ -365,8 +374,13 @@ void playback_callback(ma_device* dev, void* output, const void* /*input*/, ma_u
         std::memset(out, 0, wanted);
         return;
     }
-    const size_t read = s->ring_read.load(std::memory_order_relaxed);
+    size_t read = s->ring_read.load(std::memory_order_relaxed);
     const size_t write = s->ring_write.load(std::memory_order_acquire);
+    if (s->flush.exchange(false, std::memory_order_acq_rel)) {
+        read = write;
+        s->ring_read.store(read, std::memory_order_release);
+        publish(kRead, read);
+    }
     size_t available = write - read;
     if (available > capacity) available = capacity;  // producer overran; take what is valid
     if (available < wanted) {
@@ -529,8 +543,9 @@ uint64_t audio_open_stream(int sample_rate, int channels, int bytes_per_frame) {
         return 0;
     }
     audio_start_output_device();
+    device().open_streams.fetch_add(1, std::memory_order_relaxed);
     // Every engine stream plays through the one process-wide device, so
-    // the handle is only a token saying "the engine has audio open now".
+    // the handle says which of them is writing and nothing more.
     static uint64_t next_handle = 1;
     const uint64_t id = next_handle++;
     std::printf("stud-render-host: audio: engine opened stream %llu (%d Hz, %d ch, 16-bit)\n",
@@ -561,9 +576,30 @@ uint64_t audio_share_state(uint64_t id) {
     return 1;
 }
 
-uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes) {
+uint64_t audio_write_frames(uint64_t stream, const void* data, size_t bytes) {
     if (data == nullptr || bytes == 0) return 0;
     Device& d = device();
+    // Everything queued has played by the time the owner has been quiet this
+    // long, so a stream it left behind is not waited for.
+    const auto now = std::chrono::steady_clock::now();
+    const auto ring_length = std::chrono::milliseconds(
+        d.ring.size() * 1000 / (static_cast<size_t>(d.rate) * static_cast<size_t>(d.channels) *
+                                static_cast<size_t>(d.bytes_per_sample)));
+    if (d.owner != 0 && d.owner != stream && now - d.owner_wrote <= ring_length) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud-render-host: audio: stream %llu is playing beside stream %llu and "
+                        "there is no mixer; its audio is dropped\n",
+                        static_cast<unsigned long long>(stream),
+                        static_cast<unsigned long long>(d.owner));
+            std::fflush(stdout);
+        }
+        publish(kReceived, g_audio_received.fetch_add(bytes) + bytes);
+        return 0;
+    }
+    d.owner = stream;
+    d.owner_wrote = now;
     // Counted whatever becomes of the burst below, so the client can tell
     // what is still on its way here from what has arrived.
     struct Received {
@@ -614,15 +650,14 @@ uint64_t audio_write_frames(uint64_t /*stream*/, const void* data, size_t bytes)
 
 void audio_close_stream(uint64_t stream) {
     // The device itself stays open for the process's lifetime (see
-    // Device's own comment), what ends here is the engine feeding it, so
-    // anything still queued is dropped rather than played after the sound
-    // that produced it is gone.
+    // Device's own comment), so when the last stream goes anything still
+    // queued is dropped rather than played after the sound that produced it
+    // is gone. Only the last: the engine opens and closes short-lived streams
+    // beside the one that is playing, and the ring is that one's audio.
     Device& d = device();
-    {
-        std::lock_guard<std::mutex> lock(d.mutex);
-        const size_t written = d.ring_write.load(std::memory_order_acquire);
-        d.ring_read.store(written, std::memory_order_release);
-        publish(kRead, written);
+    if (d.owner == stream) d.owner = 0;
+    if (d.open_streams.fetch_sub(1, std::memory_order_relaxed) == 1) {
+        d.flush.store(true, std::memory_order_release);
     }
     std::printf("stud-render-host: audio: engine closed stream %llu (device stays open)\n",
                 static_cast<unsigned long long>(stream));

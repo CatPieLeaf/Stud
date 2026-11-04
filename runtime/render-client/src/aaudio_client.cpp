@@ -194,19 +194,18 @@ void feed(Stream* s) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
+        // Nothing to play: this stream's data only comes from a callback, and
+        // silence sent for it would take the host's one ring from a stream
+        // that has some. AAudioStream_write is not something the engine uses.
+        if (s->data_callback == nullptr) {
+            std::this_thread::sleep_for(burst_duration);
+            continue;
+        }
         void* buffer = s->format == AAUDIO_FORMAT_PCM_FLOAT
                            ? static_cast<void*>(float_scratch.data())
                            : static_cast<void*>(pcm.data());
-        int32_t result = AAUDIO_CALLBACK_RESULT_CONTINUE;
-        if (s->data_callback != nullptr) {
-            result = s->data_callback(s, s->data_callback_user, buffer,
-                                      static_cast<int32_t>(frames));
-        } else {
-            // No callback installed: a real AAudio stream in this state is
-            // written to with AAudioStream_write, which this build's engine
-            // never imports. Silence is the honest output.
-            std::memset(pcm.data(), 0, pcm.size() * sizeof(int16_t));
-        }
+        const int32_t result = s->data_callback(s, s->data_callback_user, buffer,
+                                                static_cast<int32_t>(frames));
         // The host takes float. When the engine asked for 16-bit, widen,
         // never the other way round, which is what used to clip the mix.
         if (s->format != AAUDIO_FORMAT_PCM_FLOAT) {
@@ -281,6 +280,12 @@ void feed(Stream* s) {
                                            reinterpret_cast<const uint8_t*>(float_scratch.data()),
                                            burst_bytes, nullptr, 0, nullptr);
         }
+        // Here, before the pacing below, which can skip the rest of the loop.
+        if (result != AAUDIO_CALLBACK_RESULT_CONTINUE) {
+            s->running.store(false, std::memory_order_relaxed);
+            set_state(s, AAUDIO_STREAM_STATE_STOPPED);
+            break;
+        }
 
         // Track the device's clock instead of free-running against it.
         //
@@ -346,10 +351,6 @@ void feed(Stream* s) {
             // which would only flood the host's queue.
             next_deadline = now;
         }
-        if (result != AAUDIO_CALLBACK_RESULT_CONTINUE) {
-            s->running.store(false, std::memory_order_relaxed);
-            set_state(s, AAUDIO_STREAM_STATE_STOPPED);
-        }
     }
 }
 
@@ -411,7 +412,9 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
             return AAUDIO_ERROR_INVALID_STATE;
         }
         auto* input = new Stream();
-        input->format = b->format;
+        // What AAudioStream_read can deliver; anything else reads as float.
+        input->format = b->format == AAUDIO_FORMAT_PCM_I16 ? AAUDIO_FORMAT_PCM_I16
+                                                           : AAUDIO_FORMAT_PCM_FLOAT;
         input->channels = 1;
         input->is_input = true;
         *stream_out = input;
@@ -458,6 +461,9 @@ int32_t AAudioStream_requestStart(void* stream) {
     // A capture stream has nothing to feed, the engine reads from it,
     // and the host is already capturing from the moment it opened.
     if (!s->is_input && !s->running.exchange(true)) {
+        // One that stopped itself has returned but is still joinable, and
+        // assigning over a joinable thread ends the process.
+        if (s->feeder.joinable()) s->feeder.join();
         s->feeder = std::thread(feed, s);
     }
     return AAUDIO_OK;
@@ -499,6 +505,11 @@ int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames, int64_t ti
     const auto* s = static_cast<Stream*>(stream);
     if (s == nullptr || !s->is_input || buffer == nullptr || frames <= 0) return 0;
     const int32_t bytes_per_frame = s->channels * 4;  // float frames, as opened
+    // The host only has float. Reading it straight into a 16-bit caller's
+    // buffer would write twice what that buffer holds.
+    const bool as_i16 = s->format == AAUDIO_FORMAT_PCM_I16;
+    std::vector<float> floats(as_i16 ? static_cast<size_t>(frames) * s->channels : 0);
+    auto* into = as_i16 ? reinterpret_cast<uint8_t*>(floats.data()) : static_cast<uint8_t*>(buffer);
     const uint64_t args[8] = {};
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::nanoseconds(timeout_ns > 0 ? timeout_ns : 0);
@@ -511,12 +522,18 @@ int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames, int64_t ti
         uint32_t written = 0;
         const uint32_t want = static_cast<uint32_t>((frames - got) * bytes_per_frame);
         audio_connection().call(CallId::AudioReadFrames, args, nullptr, 0,
-                                static_cast<uint8_t*>(buffer) + got * bytes_per_frame, want,
+                                into + got * bytes_per_frame, want,
                                 &written);
         got += static_cast<int32_t>(written / bytes_per_frame);
         if (got >= frames) break;
         if (std::chrono::steady_clock::now() >= deadline) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (as_i16) {
+        auto* out = static_cast<int16_t*>(buffer);
+        for (size_t i = 0; i < static_cast<size_t>(got) * s->channels; ++i) {
+            out[i] = static_cast<int16_t>(std::clamp(floats[i], -1.0f, 1.0f) * 32767.0f);
+        }
     }
     return got;
 }
