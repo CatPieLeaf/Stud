@@ -1,6 +1,7 @@
 #include "stud/linking_bridge.h"
 
 #include "stud/bionic_jvm.h"
+#include "stud/json_field.h"
 #include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
@@ -64,26 +65,6 @@ std::string message_id(FakeJni::Env& env, const stud::linker::LoadedLibrary& lib
     }
     clear_pending_jni_exception(jni_env, "MessageBus.getMessageId");
     return read_jstring(env, result);
-}
-
-// Minimal JSON string field read, same shape webview_bridge uses: the
-// payloads here are small and engine-generated.
-std::string json_string_field(const std::string& json, const std::string& key) {
-    if (key.empty()) return {};
-    const std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return {};
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return {};
-    pos = json.find('"', pos);
-    if (pos == std::string::npos) return {};
-    ++pos;
-    std::string out;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) ++pos;
-        out.push_back(json[pos++]);
-    }
-    return out;
 }
 
 // A URL can carry a one-time ticket in its query, so only the part that
@@ -219,16 +200,6 @@ LinkingUrlIds& cached_url_ids() {
     return ids;
 }
 
-std::string json_escaped(const std::string& value) {
-    std::string out;
-    out.reserve(value.size());
-    for (const char c : value) {
-        if (c == '"' || c == '\\') out.push_back('\\');
-        out.push_back(c);
-    }
-    return out;
-}
-
 // Some of this protocol's own getters return an id that is ALREADY
 // qualified ("Linking.detectURL") while others return a bare method
 // name ("openURL"), so running every one through MessageBus.getMessageId
@@ -331,8 +302,7 @@ bool run_linking_url_detection_bootstrap(
                 }
             }
         }
-        const bool registered =
-            payload.find("\"" + registered_key + "\":true") != std::string::npos;
+        const bool registered = json_true_field(payload, registered_key);
         std::printf("stud: linking: the engine %s %s\n",
                     registered ? "claims" : "does not claim", loggable_url(url).c_str());
         std::fflush(stdout);

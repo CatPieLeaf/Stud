@@ -75,6 +75,7 @@ struct AMediaCodec {
     // has seen the format change.
     bool have_pending = false;
     OutputSlot pending;
+    std::vector<uint8_t> fetch_buffer;  // polled once a millisecond, so kept
     VideoFrameHeader format{};
     bool format_reported = false;
     bool ended = false;
@@ -82,11 +83,23 @@ struct AMediaCodec {
 
 namespace {
 
+stud::render_host::Client& media_connection() {
+    stud::render_host::Client& own = stud::render_client::video_connection();
+    return own.connected() ? own : stud::render_client::connection();
+}
+
 uint64_t host_call(CallId id, uint64_t a0, uint64_t a1, uint64_t a2, const void* in, size_t in_len,
                    void* out = nullptr, uint32_t out_cap = 0, uint32_t* written = nullptr) {
     uint64_t a[8] = {a0, a1, a2};
-    return stud::render_client::connection().call(id, a, in, static_cast<uint32_t>(in_len), out,
-                                                   out_cap, written);
+    return media_connection().call(id, a, in, static_cast<uint32_t>(in_len), out, out_cap,
+                                   written);
+}
+
+// A frame's worth of room, grown and never cleared: this runs on every poll,
+// and nearly every poll finds nothing.
+std::vector<uint8_t>& fetch_room(AMediaCodec* c, size_t needed) {
+    if (c->fetch_buffer.size() < needed) c->fetch_buffer.resize(needed);
+    return c->fetch_buffer;
 }
 
 int64_t as_signed(uint64_t v) { return static_cast<int64_t>(v); }
@@ -98,7 +111,7 @@ int32_t fetch_frame(AMediaCodec* c, OutputSlot& slot, VideoFrameHeader& header) 
     const size_t guess =
         sizeof(VideoFrameHeader) +
         static_cast<size_t>((c->width + 15u) & ~15u) * ((c->height + 1u) & ~1u) * 3u / 2u;
-    std::vector<uint8_t> buf(std::max<size_t>(guess, 1u << 20));
+    std::vector<uint8_t>& buf = fetch_room(c, std::max<size_t>(guess, 1u << 20));
     uint32_t written = 0;
     const int32_t r = static_cast<int32_t>(as_signed(
         host_call(CallId::VideoDecoderDequeue, c->host, 0, 0, nullptr, 0, buf.data(),
@@ -127,10 +140,10 @@ int32_t fetch_frame(AMediaCodec* c, OutputSlot& slot, VideoFrameHeader& header) 
 
 // One packet from the host's encoder, or none yet.
 int32_t fetch_packet(AMediaCodec* c, OutputSlot& slot) {
-    std::vector<uint8_t> buf(std::max<size_t>(
-        sizeof(stud::render_host::EncodedPacketHeader) +
-            static_cast<size_t>(c->width) * c->height * 3u / 2u,
-        1u << 20));
+    std::vector<uint8_t>& buf = fetch_room(
+        c, std::max<size_t>(sizeof(stud::render_host::EncodedPacketHeader) +
+                                static_cast<size_t>(c->width) * c->height * 3u / 2u,
+                            1u << 20));
     uint32_t written = 0;
     const int32_t r = static_cast<int32_t>(as_signed(
         host_call(CallId::VideoEncoderDequeue, c->host, 0, 0, nullptr, 0, buf.data(),
@@ -261,10 +274,13 @@ media_status_t AMediaCodec_configure(AMediaCodec* codec, const AMediaFormat* for
                          static_cast<uint64_t>(std::max(0.0f, fps) * 1000.0f),
                          static_cast<uint64_t>(std::max(0.0f, key_interval) * 1000.0f),
                          static_cast<uint64_t>(static_cast<uint32_t>(color))};
-        const int32_t r = static_cast<int32_t>(as_signed(stud::render_client::connection().call(
+        const int32_t r = static_cast<int32_t>(as_signed(media_connection().call(
             CallId::VideoEncoderConfigure, a, nullptr, 0, nullptr, 0, nullptr)));
         if (r != AMEDIA_OK) return r;
-        const size_t frame = static_cast<size_t>(codec->width) * codec->height * 3u / 2u;
+        // Chroma rounds up on an odd size, so this is not width * height * 3/2.
+        const size_t frame = static_cast<size_t>(codec->width) * codec->height +
+                             2u * ((static_cast<size_t>(codec->width) + 1u) / 2u) *
+                                 ((static_cast<size_t>(codec->height) + 1u) / 2u);
         codec->input_capacity = std::max<size_t>(frame, 1u << 16);
         codec->inputs.assign(kInputBuffers, std::vector<uint8_t>(codec->input_capacity));
         codec->input_free.assign(kInputBuffers, true);
@@ -307,7 +323,13 @@ media_status_t AMediaCodec_start(AMediaCodec* codec) {
 
 media_status_t AMediaCodec_stop(AMediaCodec* codec) {
     if (codec == nullptr) return kErrorUnknown;
-    return AMediaCodec_flush(codec);
+    const media_status_t r = AMediaCodec_flush(codec);
+    // The next configure may be for something else, and start is what hands
+    // it over.
+    std::lock_guard<std::mutex> lock(codec->mutex);
+    codec->started = false;
+    codec->format_reported = false;
+    return r;
 }
 
 media_status_t AMediaCodec_flush(AMediaCodec* codec) {
@@ -398,6 +420,7 @@ ssize_t AMediaCodec_dequeueOutputBuffer(AMediaCodec* codec, void* info_ptr, int6
                 eos.flags = kFlagEndOfStream;
                 return deliver(codec, std::move(eos), info);
             }
+            if (r < -1) return r;
             if (r < 0 || std::chrono::steady_clock::now() >= deadline) return kTryAgainLater;
             lock.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -423,6 +446,10 @@ ssize_t AMediaCodec_dequeueOutputBuffer(AMediaCodec* codec, void* info_ptr, int6
             eos.flags = kFlagEndOfStream;
             return deliver(codec, std::move(eos), info);
         }
+        // -1 is one bad frame, and the next may be fine. Anything lower is a
+        // status saying this codec is finished, and only the engine hearing
+        // it ends the polling.
+        if (r < -1) return r;
         if (r < 0) return kTryAgainLater;
         if (std::chrono::steady_clock::now() >= deadline) return kTryAgainLater;
         // Not holding the codec while waiting: the engine may be queueing

@@ -15,6 +15,18 @@
 // boundary.
 namespace stud::jni_bridge {
 
+// A byte offset into UTF-8 text, as the UTF-16 units Java counts: one for
+// each character, and two for one past U+FFFF.
+inline int utf16_offset(const std::string& text, int bytes) {
+    int units = 0;
+    const size_t end = bytes < 0 ? 0 : static_cast<size_t>(bytes);
+    for (size_t i = 0; i < end && i < text.size(); ++i) {
+        const auto byte = static_cast<unsigned char>(text[i]);
+        if ((byte & 0xC0) != 0x80) units += byte >= 0xF0 ? 2 : 1;
+    }
+    return units;
+}
+
 class TextEditor {
 public:
     void set_text(std::string text);

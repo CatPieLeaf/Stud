@@ -912,6 +912,24 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
                                          buffer_format, fourcc, ci->imageExtent);
         }
     }
+    // For a swapchain the driver presents after all. What the engine retires
+    // may be one of Stud's, which is no object of the driver's, and the
+    // surface may hold a syncobj object from one: a driver presenting there
+    // with no acquire point, or asking for its own, ends the connection.
+    const auto driver_presents = [&] {
+        VkSwapchainCreateInfoKHR plain = *ci;
+        if (ours(ci->oldSwapchain) != nullptr) plain.oldSwapchain = VK_NULL_HANDLE;
+        if (target != s.targets.end() && target->second.surface != nullptr) {
+            const auto sync = s.syncobj_surfaces.find(target->second.surface);
+            if (sync != s.syncobj_surfaces.end()) {
+                wp_linux_drm_syncobj_surface_v1_destroy(sync->second);
+                s.syncobj_surfaces.erase(sync);
+                wl_display_flush(target->second.compositor->display);
+            }
+        }
+        lock.unlock();
+        return d.vk.vkCreateSwapchainKHR(device, &plain, alloc, out);
+    };
     if (modifiers.empty()) {
         static int said = 0;
         if (said++ < 4) {
@@ -920,8 +938,7 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
                         static_cast<int>(ci->imageFormat));
             std::fflush(stdout);
         }
-        lock.unlock();
-        return d.vk.vkCreateSwapchainKHR(device, ci, alloc, out);
+        return driver_presents();
     }
 
     auto* sc = new Swapchain();
@@ -1017,8 +1034,7 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
                     "presents this one\n");
         std::fflush(stdout);
         destroy_swapchain_objects(sc);
-        lock.unlock();
-        return d.vk.vkCreateSwapchainKHR(device, ci, alloc, out);
+        return driver_presents();
     }
 
     s.swapchains.insert(sc);

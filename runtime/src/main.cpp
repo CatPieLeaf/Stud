@@ -50,6 +50,7 @@
 #include "stud/webview_bridge.h"
 #include "stud/permissions_bridge.h"
 #include "stud/webview_user_agent.h"
+#include "stud/web_origin.h"
 #include "stud/webview_cookies.h"
 #include "stud/linking_bridge.h"
 #include "stud/album_bridge.h"
@@ -2947,13 +2948,26 @@ int main(int argc, char** argv) {
                 }
             }
             auto cookies = stud::jni_bridge::engine_cookies_for_url(jvm, lib, cookie_url);
+            // The signed-in session, for Roblox's own sites over TLS and
+            // nothing else: the viewer sets every cookie it is given on
+            // the host of this URL, whatever that host is.
+            const bool signed_in = stud::web::is_roblox_https_url(url);
+            if (!signed_in) {
+                cookies.erase(std::remove_if(cookies.begin(), cookies.end(),
+                                             [](const std::string& header) {
+                                                 return header.rfind(".ROBLOSECURITY=", 0) == 0 ||
+                                                        header.rfind("rbxas=", 0) == 0;
+                                             }),
+                              cookies.end());
+            }
             // Merge in the session the engine is using right now. The
             // per-domain jar alone is not enough: after switching
             // accounts, www.roblox.com's jar holds only GuestData
             // (live-observed) because the new session was filed under
             // the auth/apis domains, and a panel opened then was signed
             // out entirely.
-            const auto live = stud::jni_bridge::current_session_cookies();
+            const auto live = signed_in ? stud::jni_bridge::current_session_cookies()
+                                        : std::vector<std::string>();
             for (const auto& header : live) {
                 const auto eq = header.find('=');
                 const std::string name = eq == std::string::npos ? header : header.substr(0, eq);

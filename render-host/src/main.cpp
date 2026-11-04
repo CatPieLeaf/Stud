@@ -1149,12 +1149,23 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                         ::setenv("DESKTOP_STARTUP_ID", token.c_str(), 1);
                         const std::string options =
                             "{'activation_token': <'" + token + "'>}";
-                        ::execlp("gdbus", "gdbus", "call", "--session", "--dest",
-                                 "org.freedesktop.portal.Desktop", "--object-path",
-                                 "/org/freedesktop/portal/desktop", "--method",
-                                 "org.freedesktop.portal.OpenURI.OpenURI", "", url.c_str(),
-                                 options.c_str(), nullptr);
-                        // Only reached if gdbus is missing entirely.
+                        // Waited for: gdbus being there says nothing about
+                        // a portal being there, and without one it fails
+                        // after the fact, too late to fall through by exec.
+                        const pid_t portal = ::fork();
+                        if (portal == 0) {
+                            ::execlp("gdbus", "gdbus", "call", "--session", "--dest",
+                                     "org.freedesktop.portal.Desktop", "--object-path",
+                                     "/org/freedesktop/portal/desktop", "--method",
+                                     "org.freedesktop.portal.OpenURI.OpenURI", "", url.c_str(),
+                                     options.c_str(), nullptr);
+                            ::_exit(127);
+                        }
+                        int status = 0;
+                        if (portal > 0 && ::waitpid(portal, &status, 0) == portal &&
+                            WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                            ::_exit(0);
+                        }
                     }
                     ::execlp("xdg-open", "xdg-open", url.c_str(), nullptr);
                     ::_exit(127);
@@ -1469,9 +1480,14 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
         case CallId::WebViewLoadUrl: {
             const int fd = g_webview_stdin.load();
             if (fd < 0 || in.empty()) return 0;
-            std::string line = (a[0] != 0 ? std::string("drop ") : std::string("load ")) +
-                               std::string(reinterpret_cast<const char*>(in.data()), in.size()) +
-                               "\n";
+            const std::string url(reinterpret_cast<const char*>(in.data()), in.size());
+            // The viewer loads what it is told to, past its own checks, so
+            // the rule for opening a panel holds here too. Anything else
+            // that reached this point is simply left unloaded.
+            if (a[0] == 0 && url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
+                return 0;
+            }
+            std::string line = (a[0] != 0 ? std::string("drop ") : std::string("load ")) + url + "\n";
             size_t left = line.size();
             const char* bytes = line.data();
             while (left > 0) {

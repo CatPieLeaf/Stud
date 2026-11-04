@@ -111,6 +111,10 @@ struct Stream {
     std::mutex state_mutex;
     std::condition_variable state_changed;
     std::atomic<bool> running{false};
+    // A stop from the callback and a start from the engine, each a change
+    // of both `running` and the state: one between the other's two would
+    // leave a feeder and a state that disagree.
+    std::mutex start_mutex;
     std::thread feeder;
     // Capture streams have no feeder: the engine reads from them.
     bool is_input = false;
@@ -186,6 +190,7 @@ void feed(Stream* s) {
     };
     s->underrun_base = host_underruns();
     uint64_t bursts_since_query = 0;
+    uint64_t refilled_to = 0;
 
     while (s->running.load(std::memory_order_relaxed)) {
         if (s->state.load(std::memory_order_relaxed) != AAUDIO_STREAM_STATE_STARTED) {
@@ -282,6 +287,7 @@ void feed(Stream* s) {
         }
         // Here, before the pacing below, which can skip the rest of the loop.
         if (result != AAUDIO_CALLBACK_RESULT_CONTINUE) {
+            std::lock_guard<std::mutex> lock(s->start_mutex);
             s->running.store(false, std::memory_order_relaxed);
             set_state(s, AAUDIO_STREAM_STATE_STOPPED);
             break;
@@ -337,10 +343,16 @@ void feed(Stream* s) {
         // arrives late is followed by a second one straight away.
         constexpr uint64_t kLowWater =
             static_cast<uint64_t>(kFramesPerBurst) * kChannels * sizeof(float) * 2;
-        if (fill > 0 && fill < kLowWater) {
+        //
+        // Only while that is working: a stream whose bursts the host is
+        // dropping raises nothing, and would run the engine's mixer flat out
+        // for as long as the ring stayed low.
+        if (fill > 0 && fill < kLowWater && fill > refilled_to) {
+            refilled_to = fill;
             next_deadline = std::chrono::steady_clock::now();
             continue;
         }
+        refilled_to = 0;
         next_deadline += burst_duration + correction;
         const auto now = std::chrono::steady_clock::now();
         if (next_deadline > now) {
@@ -457,6 +469,7 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
 int32_t AAudioStream_requestStart(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
+    std::lock_guard<std::mutex> lock(s->start_mutex);
     set_state(s, AAUDIO_STREAM_STATE_STARTED);
     // A capture stream has nothing to feed, the engine reads from it,
     // and the host is already capturing from the moment it opened.

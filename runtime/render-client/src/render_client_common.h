@@ -28,6 +28,10 @@ stud::render_host::Client& audio_connection();
 // writer thread, which would wait on itself if it asked down that one.
 stud::render_host::Client& readback_connection();
 
+// A fifth, for video. Encoding a frame can take as long as the encoder likes,
+// and on the render connection everything behind it would wait as long.
+stud::render_host::Client& video_connection();
+
 // A third connection, for input, for the same reason audio has one and
 // with a sharper deadline still.
 //

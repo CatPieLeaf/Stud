@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <set>
 #include <cstring>
+#include <map>
 #include <thread>
 #include <vector>
 
@@ -559,7 +560,8 @@ constexpr jint kKeyActionUp = 1;
 // Hands the focused TextBox its whole updated contents, in the real order
 // RbxKeyboard uses: syncTextboxTextAndCursorPosition2 first (the call that
 // actually carries live typing in this build), then nativePassText.
-void deliver_text(const InputFns& fns, const std::string& text, long text_box, bool done) {
+void deliver_text(const InputFns& fns, const std::string& text, int caret, long text_box,
+                  bool done) {
     if (g_jvm == nullptr) return;
     FakeJni::LocalFrame text_frame(*g_jvm);
     auto& tenv = text_frame.getJniEnv();
@@ -583,7 +585,8 @@ void deliver_text(const InputFns& fns, const std::string& text, long text_box, b
         std::fflush(stdout);
         return;
     }
-    const auto cursor = static_cast<jint>(text.size());
+    // In UTF-16 units, as EditText counts them, where the caret really is.
+    const auto cursor = static_cast<jint>(utf16_offset(text, caret));
     bool sync_ok = false;
     if (fns.sync_text != nullptr) {
         jstring jsync = tenv.NewStringUTF(text.c_str());
@@ -1068,6 +1071,9 @@ float to_density_independent(float pixels) {
 // leave the two permanently apart. Nothing is done then, which is the
 // behaviour this had before.
 void recentre_after_engine_lock(float& last_x, float& last_y) {
+    // Behind another window the pointer is the desktop's, and X11 would move
+    // it anyway.
+    if (!g_window_focused) return;
     if (g_surface_px_w <= 0.0f || g_surface_px_h <= 0.0f) return;
     if (!pointer_warp_available()) {
         static bool said = false;
@@ -1240,7 +1246,7 @@ void publish_text_edit(const InputFns& fns, long text_box) {
     auto& ed = editor();
     const std::string text = ed.text();
     NativeGLJavaInterfaceJava::set_active_text_box_text(text);
-    deliver_text(fns, text, text_box, /*done=*/false);
+    deliver_text(fns, text, ed.caret(), text_box, /*done=*/false);
     push_text_overlay(true, text, ed.caret(), ed.selection_begin(), ed.selection_end());
     if (g_agdk_env != nullptr) send_agdk_text(*g_agdk_env, g_agdk_activity_ref, text);
 }
@@ -1405,7 +1411,7 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
     const bool keep_position =
         typed_text.size() == 1 && !is_keypad_scan_code(ev.code) &&
         position_must_be_kept(ev.code, typed_text[0], ev.layout_chars);
-    const jint key_code = keep_position
+    jint key_code = keep_position
                               ? android_key_code_for_scan_code(ev.code)
                               : android_key_code_for_event(ev.code, ev.keysym);
     // The scan code is what the engine actually keys off; it
@@ -1413,7 +1419,7 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
     // reads the Android key code at all. So it has to carry what
     // the key types rather than where it sits. See
     // engine_scan_code_for_event().
-    const jint scan_code = static_cast<jint>(
+    jint scan_code = static_cast<jint>(
         engine_scan_code_for_event(ev.code, typed_text, ev.layout_chars));
 
     // Real text entry. When the engine has told us a Lua TextBox
@@ -1484,8 +1490,11 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
             ed.select_all();
             moved = true;
         } else if (ctrl && (ev.code == 46 || ev.code == 45)) {  // Ctrl+C / Ctrl+X
-            set_clipboard(ed.selected_text());
-            if (ev.code == 45) changed = ed.delete_selection();  // cut
+            // A password box gives nothing back, as an Android one does not.
+            if (!NativeGLJavaInterfaceJava::active_text_box_style().password) {
+                set_clipboard(ed.selected_text());
+                if (ev.code == 45) changed = ed.delete_selection();  // cut
+            }
             moved = true;
         } else if (ctrl && ev.code == 47) {  // Ctrl+V
             // All of it, line breaks included. This used to keep only the
@@ -1513,7 +1522,7 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
             // Real order from RbxKeyboard.onEditorAction: sync the
             // text first, then report the return key, then the final
             // done=true nativePassText.
-            deliver_text(fns, ed.text(), text_box, /*done=*/true);
+            deliver_text(fns, ed.text(), ed.caret(), text_box, /*done=*/true);
             if (fns.return_pressed != nullptr) {
                 call_trapping_abort(fns.return_pressed, jni_env, nullptr,
                                     static_cast<jlong>(text_box));
@@ -1564,7 +1573,30 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
     // send, in either of its two paths.
     if (held_through_text_entry) return;
 
-    const bool alt_left_back = ev.code == 105 && (g_meta_state & kMetaAlt) != 0;
+    // A key is the same key from press to release, whatever changed in
+    // between. Worked out afresh, a release follows the layout and modifiers
+    // of its own moment: Shift let go first, or the release Stud sends when a
+    // text box closes, which has no keysym at all. That names another key
+    // and leaves this one down in the engine.
+    struct SentKey {
+        jint scan;
+        jint key;
+    };
+    static std::map<uint32_t, SentKey> sent_keys;
+    const auto sent = sent_keys.find(ev.code);
+    if (sent != sent_keys.end() && (is_repeat || !down)) {
+        scan_code = sent->second.scan;
+        key_code = sent->second.key;
+        if (!down) sent_keys.erase(sent);
+    } else if (down) {
+        if (ev.code == 105 && (g_meta_state & kMetaAlt) != 0) {
+            scan_code = static_cast<jint>(ev.code);
+            key_code = kKeyCodeBack;
+        }
+        sent_keys[ev.code] = {scan_code, key_code};
+    }
+
+    const bool alt_left_back = key_code == kKeyCodeBack;
     if (alt_left_back) {
         if (g_agdk_env != nullptr) {
             send_agdk_key(*g_agdk_env, g_agdk_activity_ref, down,
@@ -1730,7 +1762,7 @@ void dispatch_pointer_motion(const stud::android_glue::HostInputEvent& ev, const
     }
     if (g_text_drag.load() && NativeGLJavaInterfaceJava::active_text_box() != 0) {
         auto& ed = editor();
-        ed.set_caret(text_offset_at(last_x), /*select=*/true);
+        ed.set_caret(text_offset_at(x), /*select=*/true);
         push_text_overlay(true, ed.text(), ed.caret(), ed.selection_begin(),
                           ed.selection_end());
     }

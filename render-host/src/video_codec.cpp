@@ -3,6 +3,7 @@
 #include "stud/render_host_protocol.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -71,6 +72,7 @@ struct Av {
 #endif
     decltype(&av_packet_unref) packet_unref = nullptr;
     decltype(&av_frame_get_buffer) frame_get_buffer = nullptr;
+    decltype(&av_frame_make_writable) frame_make_writable = nullptr;
     // Hardware frames, for the encoders that only take frames already on
     // the GPU (VA-API, Vulkan): the engine's frame is uploaded into one.
     bool hw_ok = false;
@@ -129,6 +131,7 @@ const Av& av() {
 #endif
         STUD_AV(packet_unref, codec, av_packet_unref);
         STUD_AV(frame_get_buffer, util, av_frame_get_buffer);
+        STUD_AV(frame_make_writable, util, av_frame_make_writable);
         STUD_AV(hwdevice_create, util, av_hwdevice_ctx_create);
         STUD_AV(hwframe_ctx_alloc, util, av_hwframe_ctx_alloc);
         STUD_AV(hwframe_ctx_init, util, av_hwframe_ctx_init);
@@ -177,6 +180,10 @@ struct Decoder {
     AVFrame* frame = nullptr;
     const AVCodec* codec = nullptr;
     bool opened = false;
+    // What it was opened for, to tell a configure that changes nothing.
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> csd;
     // Frames taken out of FFmpeg to make room for a packet, in order,
     // ahead of anything still inside it.
     std::deque<std::vector<uint8_t>> ready;
@@ -316,8 +323,18 @@ int32_t video_decoder_configure(uint64_t handle, uint32_t width, uint32_t height
     auto d = find(handle);
     if (!d) return kErrorUnknown;
     std::lock_guard<std::mutex> lock(d->mutex);
-    if (d->opened) return kOk;
     if (d->ctx == nullptr) return kErrorUnknown;  // destroyed while this waited
+    const std::vector<uint8_t> wanted(csd, csd != nullptr ? csd + csd_size : csd);
+    if (d->opened) {
+        if (width == d->width && height == d->height && wanted == d->csd) return kOk;
+        // A context is opened once: a different stream takes a new one.
+        av().free_context(&d->ctx);
+        d->ready.clear();
+        d->opened = false;
+        d->ctx = av().alloc_context(d->codec);
+        if (d->ctx == nullptr) return kErrorUnknown;
+        d->ctx->thread_count = 0;
+    }
     d->ctx->width = static_cast<int>(width);
     d->ctx->height = static_cast<int>(height);
     if (csd != nullptr && csd_size > 0) {
@@ -332,6 +349,9 @@ int32_t video_decoder_configure(uint64_t handle, uint32_t width, uint32_t height
     }
     if (av().open(d->ctx, d->codec, nullptr) < 0) return kErrorUnknown;
     d->opened = true;
+    d->width = width;
+    d->height = height;
+    d->csd = wanted;
     return kOk;
 }
 
@@ -371,7 +391,7 @@ int32_t video_decoder_queue(uint64_t handle, const uint8_t* data, uint32_t size,
 
 int32_t video_decoder_dequeue(uint64_t handle, std::vector<uint8_t>& out, uint32_t* out_len) {
     auto d = find(handle);
-    if (!d) return -1;
+    if (!d) return kErrorUnknown;
     std::lock_guard<std::mutex> lock(d->mutex);
     if (!d->opened) return 0;
     if (!d->ready.empty()) {
@@ -508,12 +528,14 @@ AVPixelFormat encoder_pixel_format(const AVCodec* codec, AVCodecContext* ctx) {
 // A pool of `c.device` frames of this size, NV12 underneath, for an
 // encoder that takes only device frames. Null where the device cannot be
 // opened (no such GPU, no driver), which rules the encoder out.
-AVBufferRef* device_frames_for(const Candidate& c, uint32_t width, uint32_t height) {
+AVBufferRef* device_frames_for(const Candidate& c, uint32_t width, uint32_t height,
+                               bool* no_device = nullptr) {
     if (c.device == AV_HWDEVICE_TYPE_NONE || !av().hw_ok) return nullptr;
     AVBufferRef* device = nullptr;
     if (av().hwdevice_create(&device, c.device,
                              c.device_name.empty() ? nullptr : c.device_name.c_str(), nullptr,
                              0) < 0) {
+        if (no_device != nullptr) *no_device = true;
         return nullptr;
     }
     AVBufferRef* frames = av().hwframe_ctx_alloc(device);
@@ -597,19 +619,19 @@ EncoderSupport probe_encoder(const char* mime) {
             // Which devices to try. Vulkan's default is simply the first
             // GPU, and on a hybrid laptop that is the integrated one, which
             // may have no video-encode queue while the other GPU does; the
-            // rest are tried by index. VA-API's default is the render node
-            // the system picks, and there is nothing to enumerate.
-            std::vector<std::string> devices = {""};
-            if (listed.device == AV_HWDEVICE_TYPE_VULKAN) {
-                devices = {"", "1", "2", "3"};
-            }
+            // rest are tried by index, up to the first that names no device.
+            // VA-API's default is the render node the system picks, and there
+            // is nothing to enumerate.
+            const bool numbered = listed.device == AV_HWDEVICE_TYPE_VULKAN;
             bool opened = false;
             Candidate c = listed;
-            for (const std::string& device : devices) {
-                c.device_name = device;
+            for (int index = 0; index == 0 || numbered; ++index) {
+                c.device_name = index == 0 ? std::string() : std::to_string(index);
                 AVBufferRef* frames = nullptr;
                 if (c.device != AV_HWDEVICE_TYPE_NONE) {
-                    frames = device_frames_for(c, 256, 256);
+                    bool no_device = false;
+                    frames = device_frames_for(c, 256, 256, &no_device);
+                    if (no_device) break;
                     if (frames == nullptr) continue;
                 }
                 AVCodecContext* ctx =
@@ -646,6 +668,8 @@ struct Encoder {
     AVPacket* packet = nullptr;
     SwsContext* sws = nullptr;
     AVPixelFormat input = AV_PIX_FMT_NV12;
+    // What it was opened for, to tell a configure that changes nothing.
+    std::array<uint32_t, 6> opened_for{};
     std::vector<uint8_t> config;
     bool config_sent = false;
     bool ended = false;
@@ -673,6 +697,18 @@ std::vector<uint8_t> packet_bytes(const AVPacket* p) {
     std::memcpy(out.data(), &h, sizeof(h));
     std::memcpy(out.data() + sizeof(h), p->data, h.size);
     return out;
+}
+
+// Back to what video_encoder_create left: an encoder opens once, so a
+// different stream takes a new one. Used by destroy as well.
+void close_encoder(Encoder& e) {
+    if (e.ctx != nullptr) av().free_context(&e.ctx);
+    if (e.device_frames != nullptr) av().buffer_unref(&e.device_frames);
+    av().frame_unref(e.frame);
+    e.ready.clear();
+    e.config.clear();
+    e.config_sent = false;
+    e.ended = false;
 }
 
 // Everything the encoder has finished, into `ready`. True at its end.
@@ -714,7 +750,12 @@ int32_t video_encoder_configure(uint64_t handle, uint32_t width, uint32_t height
     auto e = find_encoder(handle);
     if (!e || width == 0 || height == 0) return kErrorUnknown;
     std::lock_guard<std::mutex> lock(e->mutex);
-    if (e->ctx != nullptr) return kOk;
+    const std::array<uint32_t, 6> wanted = {width,           height,          bit_rate,
+                                            frame_rate_milli, key_interval_ms, color_format};
+    if (e->ctx != nullptr) {
+        if (wanted == e->opened_for) return kOk;
+        close_encoder(*e);
+    }
     constexpr uint32_t kNv12 = 21;
     constexpr uint32_t kI420 = 19;
     constexpr uint32_t kFlexible = 0x7F420888;
@@ -730,7 +771,7 @@ int32_t video_encoder_configure(uint64_t handle, uint32_t width, uint32_t height
     }
     if (e->candidate.device != AV_HWDEVICE_TYPE_NONE) {
         e->device_frames = device_frames_for(e->candidate, width, height);
-        e->device_frame = av().frame_alloc();
+        if (e->device_frame == nullptr) e->device_frame = av().frame_alloc();
         if (e->device_frames == nullptr || e->device_frame == nullptr) return kErrorUnknown;
     }
     e->ctx = open_encoder(e->codec, width, height, bit_rate, frame_rate_milli, key_interval_ms,
@@ -745,6 +786,7 @@ int32_t video_encoder_configure(uint64_t handle, uint32_t width, uint32_t height
     if (e->ctx->extradata != nullptr && e->ctx->extradata_size > 0) {
         e->config.assign(e->ctx->extradata, e->ctx->extradata + e->ctx->extradata_size);
     }
+    e->opened_for = wanted;
     return kOk;
 }
 
@@ -769,6 +811,11 @@ int32_t video_encoder_queue(uint64_t handle, const uint8_t* data, uint32_t size,
             src_stride[1] = (w + 1) / 2;
             src_stride[2] = (w + 1) / 2;
         }
+        // The encoder can still hold the last frame sent, and this buffer
+        // is about to be written over.
+        if (av().frame_make_writable != nullptr && av().frame_make_writable(e->frame) < 0) {
+            return kErrorUnknown;
+        }
         // Into the encoder's own frame, converting where it wants another
         // layout (libswscale copies when the two are the same).
         e->sws = av().sws_get(e->sws, w, h, e->input, w, h,
@@ -790,12 +837,21 @@ int32_t video_encoder_queue(uint64_t handle, const uint8_t* data, uint32_t size,
         }
         int r = av().send_frame(e->ctx, sent);
         while (r == AVERROR(EAGAIN)) {
-            drain_encoder(*e);
+            if (drain_encoder(*e)) break;  // it has failed: nothing will make room
             r = av().send_frame(e->ctx, sent);
         }
         if (e->device_frames != nullptr) av().frame_unref(e->device_frame);
         if (r < 0) return kErrorUnknown;
         drain_encoder(*e);
+    } else if (data != nullptr && size > 0) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud-render-host: video: a %u byte frame is too small for %dx%d\n", size,
+                        w, h);
+            std::fflush(stdout);
+        }
+        return kErrorUnknown;
     }
     if (end_of_stream) {
         av().send_frame(e->ctx, nullptr);
@@ -806,7 +862,7 @@ int32_t video_encoder_queue(uint64_t handle, const uint8_t* data, uint32_t size,
 
 int32_t video_encoder_dequeue(uint64_t handle, std::vector<uint8_t>& out, uint32_t* out_len) {
     auto e = find_encoder(handle);
-    if (!e) return -1;
+    if (!e) return kErrorUnknown;
     std::lock_guard<std::mutex> lock(e->mutex);
     if (e->ctx == nullptr) return 0;
     if (!e->config_sent && !e->config.empty()) {
@@ -846,12 +902,11 @@ void video_encoder_destroy(uint64_t handle) {
         encoders().erase(it);
     }
     std::lock_guard<std::mutex> lock(e->mutex);
+    close_encoder(*e);
     if (e->sws != nullptr) av().sws_free(e->sws);
     av().frame_free(&e->frame);
     if (e->device_frame != nullptr) av().frame_free(&e->device_frame);
     av().packet_free(&e->packet);
-    if (e->ctx != nullptr) av().free_context(&e->ctx);
-    if (e->device_frames != nullptr) av().buffer_unref(&e->device_frames);
 }
 
 #else  // no FFmpeg headers at build time: no decoders, and says so.

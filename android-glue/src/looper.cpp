@@ -8,6 +8,7 @@
 #include <sys/prctl.h>
 #include <time.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,7 +31,12 @@ struct ALooper {
         void* data = nullptr;
         int ident = 0;
     };
+    // addFd is free to be called from any thread, and the orphan poller
+    // reads this from its own.
+    std::mutex fd_mutex;
     std::unordered_map<int, CallbackEntry> fd_callbacks;
+    // How many ALooper_pollOnce are in progress on the thread that owns this.
+    std::atomic<int> owner_polling{0};
 
     // When the last zero-timeout poll came back empty, and how long that
     // poll itself took. Plain fields: a looper is polled by its own thread.
@@ -126,12 +132,18 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
             }
             return ALOOPER_POLL_TIMEOUT;
         }
-        if (n < 0) return ALOOPER_POLL_ERROR;
+        // A signal is a wake, as Android's own looper reports it.
+        if (n < 0) return errno == EINTR ? ALOOPER_POLL_WAKE : ALOOPER_POLL_ERROR;
         looper->last_empty_return_ns = 0;
 
         int fd = ev.data.fd;
-        auto it = looper->fd_callbacks.find(fd);
-        if (it == looper->fd_callbacks.end()) continue;
+        ALooper::CallbackEntry entry;
+        {
+            std::lock_guard<std::mutex> lock(looper->fd_mutex);
+            auto it = looper->fd_callbacks.find(fd);
+            if (it == looper->fd_callbacks.end()) continue;
+            entry = it->second;
+        }
 
         int events = 0;
         if (ev.events & EPOLLIN) events |= ALOOPER_EVENT_INPUT;
@@ -139,14 +151,15 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
         if (ev.events & EPOLLERR) events |= ALOOPER_EVENT_ERROR;
         if (ev.events & EPOLLHUP) events |= ALOOPER_EVENT_HANGUP;
 
-        if (it->second.callback != nullptr) {
+        if (entry.callback != nullptr) {
             // Matches real ALooper semantics: a registered callback
             // handles the event internally and pollOnce keeps polling
             // rather than returning to the caller. Returning 0 from the
             // callback means "remove this fd," matching the real API.
-            int result = it->second.callback(fd, events, it->second.data);
+            int result = entry.callback(fd, events, entry.data);
             if (result == 0) {
                 ::epoll_ctl(looper->epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                std::lock_guard<std::mutex> lock(looper->fd_mutex);
                 looper->fd_callbacks.erase(fd);
             }
             continue;
@@ -154,8 +167,8 @@ int poll_once_on_looper(ALooper* looper, int timeoutMillis, int* outFd, int* out
 
         if (outFd != nullptr) *outFd = fd;
         if (outEvents != nullptr) *outEvents = events;
-        if (outData != nullptr) *outData = it->second.data;
-        return it->second.ident;
+        if (outData != nullptr) *outData = entry.data;
+        return entry.ident;
     }
 }
 }  // namespace
@@ -190,8 +203,11 @@ struct ThreadLooperOwner {
         {
             std::lock_guard<std::mutex> lock(g_all_loopers_mutex);
             const auto& all = g_all_loopers;
-            unused = std::find(all.begin(), all.end(), looper) != all.end() &&
-                     looper->fd_callbacks.empty();
+            unused = std::find(all.begin(), all.end(), looper) != all.end();
+        }
+        if (unused) {
+            std::lock_guard<std::mutex> lock(looper->fd_mutex);
+            unused = looper->fd_callbacks.empty();
         }
         if (unused) ALooper_release(looper);
     }
@@ -277,18 +293,28 @@ int ALooper_addFd(ALooper* looper, int fd, int ident, int events, ALooper_callba
     if (events & ALOOPER_EVENT_INPUT) ev.events |= EPOLLIN;
     if (events & ALOOPER_EVENT_OUTPUT) ev.events |= EPOLLOUT;
     ev.data.fd = fd;
-    if (::epoll_ctl(looper->epoll_fd, EPOLL_CTL_ADD, fd, &ev) != 0) return -1;
+    // Adding an fd again replaces what it had, as on Android.
+    if (::epoll_ctl(looper->epoll_fd, EPOLL_CTL_ADD, fd, &ev) != 0 &&
+        (errno != EEXIST || ::epoll_ctl(looper->epoll_fd, EPOLL_CTL_MOD, fd, &ev) != 0)) {
+        return -1;
+    }
+    std::lock_guard<std::mutex> lock(looper->fd_mutex);
     looper->fd_callbacks[fd] = {callback, data, ident};
     return 1;
 }
 
 int ALooper_removeFd(ALooper* looper, int fd) {
     ::epoll_ctl(looper->epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+    std::lock_guard<std::mutex> lock(looper->fd_mutex);
     return looper->fd_callbacks.erase(fd) != 0 ? 1 : 0;
 }
 
 int ALooper_pollOnce(int timeoutMillis, int* outFd, int* outEvents, void** outData) {
-    return poll_once_on_looper(t_looper, timeoutMillis, outFd, outEvents, outData);
+    ALooper* looper = t_looper;
+    if (looper != nullptr) looper->owner_polling.fetch_add(1);
+    const int result = poll_once_on_looper(looper, timeoutMillis, outFd, outEvents, outData);
+    if (looper != nullptr) looper->owner_polling.fetch_sub(1);
+    return result;
 }
 
 }  // extern "C"
@@ -314,8 +340,19 @@ bool poll_orphaned_loopers_once() {
     bool dispatched_any = false;
     const ALooper* calling_thread_looper = t_looper;
     for (ALooper* looper : loopers) {
-        if (looper == calling_thread_looper || looper->fd_callbacks.empty()) {
-            ALooper_release(looper);  // already polled by the caller, or nothing to poll
+        bool nothing_to_poll = false;
+        {
+            std::lock_guard<std::mutex> lock(looper->fd_mutex);
+            nothing_to_poll = looper->fd_callbacks.empty();
+        }
+        // Not only orphans are in this list. A thread sitting in its own poll
+        // is looking after its looper, and two threads taking events off one
+        // would run its callbacks side by side. Whether a thread has gone for
+        // good is not asked: a looper nobody polls is what hangs startup, so
+        // anything not being polled right now is still picked up here.
+        if (looper == calling_thread_looper || nothing_to_poll ||
+            looper->owner_polling.load() != 0) {
+            ALooper_release(looper);
             continue;
         }
 
@@ -336,8 +373,11 @@ bool poll_orphaned_loopers_once() {
             continue;
         }
 
+        // Only what native_app_glue registers has this shape, and it files
+        // each source under the source's own id. Anything else is someone
+        // else's pointer.
         auto* source = static_cast<AndroidPollSourceShape*>(out_data);
-        if (source->process != nullptr) {
+        if (source->id == ident && source->process != nullptr) {
             // This file is itself real bionic code now (compiled by the
             // NDK toolchain, linked into Process B), source->process
             // (native_app_glue's own process_cmd, statically linked in

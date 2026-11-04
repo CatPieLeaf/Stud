@@ -35,9 +35,11 @@
 #include <QWebEngineScriptCollection>
 #include <QWebEngineView>
 
+#include "stud/web_origin.h"
 #include "stud/webview_user_agent.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 
@@ -163,7 +165,22 @@ protected:
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message,
                                   int line, const QString& source) override {
         if (message.startsWith(QLatin1String(kHybridPrefix))) {
-            const QString payload = message.mid(int(sizeof(kHybridPrefix)) - 1);
+            // The bridge is in every page and every frame, and what it
+            // carries reaches the engine as the app's own web pages. Only
+            // those get to use it.
+            if (!stud::web::is_roblox_https_url(url().toString().toStdString())) {
+                std::printf("stud-webview: dropped a bridge message from a page that is not "
+                            "Roblox's\n");
+                std::fflush(stdout);
+                return;
+            }
+            // One message, one line: this is the command channel, and a
+            // line break in the page's text would start a command of the
+            // page's choosing. JSON loses nothing, a raw break in it is
+            // only ever whitespace.
+            QString payload = message.mid(int(sizeof(kHybridPrefix)) - 1);
+            payload.replace(QLatin1Char('\n'), QLatin1Char(' '));
+            payload.replace(QLatin1Char('\r'), QLatin1Char(' '));
             const QByteArray utf8 = payload.toUtf8();
             // One line, so the reader never has to guess where a message
             // ends. A JSON document has no raw newlines in it.
@@ -176,6 +193,14 @@ protected:
         // through QLoggingCategory, which on this desktop goes to
         // journald instead, so a challenge page failing was invisible
         // in the one file a user can actually be asked for.
+        // Pages log what they like, and a script's address can carry a
+        // token in its query, so this is for debugging and not for the
+        // session log a user is asked to share.
+        static const bool debug = [] {
+            const char* v = std::getenv("STUD_DEBUG");
+            return v != nullptr && *v != '\0' && !(v[0] == '0' && v[1] == '\0');
+        }();
+        if (!debug) return;
         const QByteArray text = message.toUtf8();
         const QByteArray where = source.toUtf8();
         std::printf("stud-webview: js [%d] %s (%s:%d)\n", static_cast<int>(level),

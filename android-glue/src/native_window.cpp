@@ -1250,6 +1250,38 @@ const zwp_relative_pointer_v1_listener kRelativePointerListener = {
 
 void seat_capabilities(void* data, wl_seat* seat, uint32_t caps) {
     auto* state = static_cast<WaylandConnectionState*>(data);
+    // The last mouse or keyboard unplugged. The objects are done with, and
+    // one that plugs back in is a new one to ask for; a held button or key
+    // will not be heard coming up.
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) == 0 && state->pointer != nullptr) {
+        release_all_held_buttons();
+        g_pointer_inside = false;
+        if (state->pinch != nullptr) zwp_pointer_gesture_pinch_v1_destroy(state->pinch);
+        state->pinch = nullptr;
+        if (state->relative_pointer != nullptr) {
+            zwp_relative_pointer_v1_destroy(state->relative_pointer);
+        }
+        state->relative_pointer = nullptr;
+        if (state->cursor_shape_device != nullptr) {
+            wp_cursor_shape_device_v1_destroy(state->cursor_shape_device);
+        }
+        state->cursor_shape_device = nullptr;
+        if (wl_pointer_get_version(state->pointer) >= WL_POINTER_RELEASE_SINCE_VERSION) {
+            wl_pointer_release(state->pointer);
+        } else {
+            wl_pointer_destroy(state->pointer);
+        }
+        state->pointer = nullptr;
+    }
+    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) == 0 && state->keyboard != nullptr) {
+        release_all_held_keys();
+        if (wl_keyboard_get_version(state->keyboard) >= WL_KEYBOARD_RELEASE_SINCE_VERSION) {
+            wl_keyboard_release(state->keyboard);
+        } else {
+            wl_keyboard_destroy(state->keyboard);
+        }
+        state->keyboard = nullptr;
+    }
     if ((caps & WL_SEAT_CAPABILITY_POINTER) != 0 && state->pointer == nullptr) {
         state->pointer = wl_seat_get_pointer(seat);
         wl_pointer_add_listener(state->pointer, &kPointerListener, state);

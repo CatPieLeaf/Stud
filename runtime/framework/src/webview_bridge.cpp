@@ -1,6 +1,7 @@
 #include "stud/webview_bridge.h"
 
 #include "stud/bionic_jvm.h"
+#include "stud/json_field.h"
 #include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
@@ -56,37 +57,6 @@ std::string call_string_getter(FakeJni::Env& env, const stud::linker::LoadedLibr
 std::string loggable_url(const std::string& url) {
     const auto cut = url.find('?');
     return cut == std::string::npos ? url : url.substr(0, cut) + "?<query withheld>";
-}
-
-// Minimal reader for the two string fields this protocol needs out of a
-// flat JSON object. The payload is the engine's own, and pulling one
-// string out of it does not justify a parser dependency in this layer.
-std::string json_string_field(const std::string& json, const std::string& key) {
-    const std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return {};
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return {};
-    ++pos;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-    if (pos >= json.size() || json[pos] != '"') return {};
-    ++pos;
-    std::string out;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) {
-            ++pos;
-            switch (json[pos]) {
-                case 'n': out.push_back('\n'); break;
-                case 't': out.push_back('\t'); break;
-                case 'r': out.push_back('\r'); break;
-                default: out.push_back(json[pos]); break;
-            }
-        } else {
-            out.push_back(json[pos]);
-        }
-        ++pos;
-    }
-    return out;
 }
 
 std::mutex& ids_mutex() {

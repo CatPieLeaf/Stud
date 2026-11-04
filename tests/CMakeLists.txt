@@ -74,6 +74,14 @@ target_link_libraries(stud_key_map_test PRIVATE PkgConfig::XkbcommonTest)
 add_test(NAME key_map_test COMMAND stud_key_map_test)
 set_tests_properties(key_map_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# Who gets the session, what a MessageBus payload says, and where a caret is.
+# Header-only, no dependencies.
+add_executable(stud_web_text_test web_text_test.cpp)
+target_include_directories(stud_web_text_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/android-glue/include"
+    "${CMAKE_SOURCE_DIR}/runtime/framework/include")
+add_test(NAME web_text_test COMMAND stud_web_text_test)
+
 # Which language Stud reports to Roblox. Header-only, no dependencies,
 # the table it checks is transcribed from the real app's own code.
 add_executable(stud_locale_test locale_test.cpp)
