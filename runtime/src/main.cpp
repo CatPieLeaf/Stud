@@ -104,6 +104,7 @@
 #include <dlfcn.h>
 #include <netdb.h>
 #include <sys/syscall.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 
@@ -220,6 +221,10 @@ void link_engine_caches(const std::string& files_dir) {
 
 
 std::atomic<bool> g_should_keep_running{true};
+// Set just before asking render-host to go first (CallId::EndSession): the
+// window closes at once and the teardown runs behind it, against a dead
+// connection on purpose. watch_render_host() must leave that alone.
+std::atomic<bool> g_render_host_leaves_first{false};
 void handle_shutdown_signal(int) {
     g_should_keep_running.store(false, std::memory_order_relaxed);
     // SIGTERM is as deliberate an exit as closing the window, and the
@@ -240,14 +245,16 @@ void handle_shutdown_signal(int) {
 //
 // Polls a duplicate, for no events: only the hang-up wakes it, it reads
 // nothing the connection is owed, and the descriptor stays valid after the
-// connection closes its own.
+// connection closes its own. Not inherited: a child holding it would keep
+// the socket open after this process had gone.
 void watch_render_host() {
-    const int fd = ::dup(stud::render_client::connection().socket_fd());
+    const int fd = ::fcntl(stud::render_client::connection().socket_fd(), F_DUPFD_CLOEXEC, 0);
     if (fd < 0) return;
     std::thread([fd] {
         pollfd p{fd, 0, 0};
         while (::poll(&p, 1, -1) < 0 && errno == EINTR) {
         }
+        if (g_render_host_leaves_first.load()) return;
         stud::jni_bridge::note_shutting_down();
         std::printf("stud: render-host has gone, exiting\n");
         std::fflush(stdout);
@@ -3093,6 +3100,7 @@ int main(int argc, char** argv) {
         // reads as a lost connection. That is fine and expected: this
         // process is on its way out, and its own client already treats a
         // dead connection as calls that quietly do nothing.
+        g_render_host_leaves_first.store(true);
         uint64_t end_args[8] = {};
         stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
                                                 nullptr, 0, nullptr, 0, nullptr);
@@ -3110,6 +3118,7 @@ int main(int argc, char** argv) {
     stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit = []() {
         std::printf("stud: the app asked to exit, shutting down\n");
         std::fflush(stdout);
+        g_render_host_leaves_first.store(true);
         uint64_t end_args[8] = {};
         stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
                                                 nullptr, 0, nullptr, 0, nullptr);
