@@ -406,6 +406,25 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     return flags;
 }
 
+// The user's flags with Stud's defaults under them: what the engine is
+// given, and so what is read back from it. A flag the file sets wins.
+stud::jni_bridge::FlagOverrides with_stud_defaults(stud::jni_bridge::FlagOverrides flags,
+                                                   bool desktop_materials, bool hq_textures) {
+    for (const auto& [name, value] : stud_default_flags(desktop_materials, hq_textures)) {
+        if (flags.has(name)) continue;
+        const bool numeric =
+            !value.empty() && value.find_first_not_of("-0123456789") == std::string::npos;
+        if (value == "True" || value == "False") {
+            flags.set(name, value == "True");
+        } else if (numeric) {
+            flags.set(name, std::stoi(value));
+        } else {
+            flags.set(name, value);
+        }
+    }
+    return flags;
+}
+
 std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
     if (mode == "opengl") {
         return {{"DebugGraphicsPreferOpenGL", true},
@@ -2250,20 +2269,9 @@ int main(int argc, char** argv) {
         // ClientSettings and back at the engine's value once it had booted);
         // what is preloaded is applied after that. The user's file still
         // wins: a flag it sets is left as it set it.
-        stud::jni_bridge::FlagOverrides preload = overrides;
-        for (const auto& [name, value] : stud_default_flags(!desktop_materials.empty(), hq_textures)) {
-            if (preload.has(name)) continue;
-            const bool numeric =
-                !value.empty() && value.find_first_not_of("-0123456789") == std::string::npos;
-            if (value == "True" || value == "False") {
-                preload.set(name, value == "True");
-            } else if (numeric) {
-                preload.set(name, std::stoi(value));
-            } else {
-                preload.set(name, value);
-            }
-        }
-        auto preload_result = stud::jni_bridge::run_preload_bootstrap(jvm, lib, asset_dir, preload);
+        auto preload_result = stud::jni_bridge::run_preload_bootstrap(
+            jvm, lib, asset_dir,
+            with_stud_defaults(overrides, !desktop_materials.empty(), hq_textures));
         std::printf(
             "stud: run_preload_bootstrap() complete: set_asset_path=%d preload_flag_overrides=%d\n",
             preload_result.set_asset_path_called, preload_result.preload_flag_overrides_called);
@@ -2503,7 +2511,11 @@ int main(int argc, char** argv) {
         try {
             // Again, once the engine has loaded its own settings: a flag
             // can be right here and replaced a moment later.
-            stud::jni_bridge::report_flag_override_state(jvm, lib, overrides, "after engine boot");
+            // Stud's own defaults too, here and not earlier: they are only
+            // in force once the preloaded values have been applied.
+            stud::jni_bridge::report_flag_override_state(
+                jvm, lib, with_stud_defaults(overrides, !desktop_materials.empty(), hq_textures),
+                "after engine boot");
             auto v2_result = stud::jni_bridge::run_engine_v2_sequence(
                 jvm, lib, v2_platform_params, v2_device_params, v2_init_params, lifecycle.surface,
                 deep_link, /*skip_early_init=*/true);

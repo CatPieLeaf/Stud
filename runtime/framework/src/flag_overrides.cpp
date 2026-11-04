@@ -118,10 +118,14 @@ void report_flag_override_state(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
             call_trapping_abort_with_result(get_flag, got_b, jni_env, nullptr, jname,
                                             static_cast<jboolean>(JNI_TRUE));
             const bool known = got_a == got_b;
+            if (!known) {
+                std::printf("stud: !!! flag %s (%s): this Roblox does not have it\n",
+                            entry.first.c_str(), when);
+                continue;
+            }
             std::printf("stud: flag %s (%s): wanted=%s engine=%s%s\n", entry.first.c_str(), when,
-                        wanted ? "true" : "false",
-                        known ? (got_a ? "true" : "false") : "<unset>",
-                        (known && (got_a != 0) == wanted) ? " OK" : " MISMATCH");
+                        wanted ? "true" : "false", got_a ? "true" : "false",
+                        (got_a != 0) == wanted ? " OK" : " MISMATCH");
         } else if (std::holds_alternative<int>(entry.second) && get_int != nullptr) {
             const int wanted = std::get<int>(entry.second);
             constexpr jint kSentinel = -987654;
@@ -140,23 +144,34 @@ void report_flag_override_state(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
             // documented rather than broken, and calling it MISMATCH
             // put a permanent false alarm in every launch's log.
             if (got == kSentinel) {
-                std::printf("stud: flag %s (%s): wanted=%d, the engine does not expose this one\n",
-                            entry.first.c_str(), when, wanted);
+                const bool log_level = entry.first.rfind("FLog", 0) == 0 ||
+                                       entry.first.rfind("DFLog", 0) == 0;
+                std::printf("stud: %sflag %s (%s): wanted=%d, the engine does not expose this one\n",
+                            log_level ? "" : "!!! ", entry.first.c_str(), when, wanted);
             } else {
                 std::printf("stud: flag %s (%s): wanted=%d engine=%d%s\n", entry.first.c_str(),
                             when, wanted, static_cast<int>(got),
                             static_cast<int>(got) == wanted ? " OK" : " MISMATCH");
             }
         } else if (std::holds_alternative<std::string>(entry.second) && get_string != nullptr) {
+            // Asked for with a default no flag holds: an empty default
+            // reads the same as the empty value HQ Textures wants, and would
+            // call a flag the engine no longer has OK.
+            constexpr const char* kUnset = "stud-flag-unset";
             jstring got = nullptr;
             call_trapping_abort_with_result(get_string, got, jni_env, nullptr, jname,
-                                            env.NewStringUTF(""));
+                                            env.NewStringUTF(kUnset));
             std::string value;
             if (got != nullptr) {
                 auto resolved = env.resolveReference(got);
                 if (auto as_string = std::dynamic_pointer_cast<FakeJni::JString>(resolved)) {
                     value = as_string->asStdString();
                 }
+            }
+            if (value == kUnset) {
+                std::printf("stud: !!! flag %s (%s): this Roblox does not have it\n",
+                            entry.first.c_str(), when);
+                continue;
             }
             std::printf("stud: flag %s (%s): wanted=\"%s\" engine=\"%s\"%s\n",
                         entry.first.c_str(), when, std::get<std::string>(entry.second).c_str(),
