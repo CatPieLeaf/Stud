@@ -42,7 +42,11 @@ std::string call_string_getter(FakeJni::Env& env, const stud::linker::LoadedLibr
     return read_jstring(env, result);
 }
 
-constexpr const char* kSetClipboardTextTopic = "ExternalContentSharing.setClipboardText";
+// The one id with no getter, see call_string_getter. It is this protocol's
+// like the others, so its protocol name comes from one that has a getter;
+// the fallback is only for an engine without that getter.
+constexpr const char* kSetClipboardTextMethod = "setClipboardText";
+constexpr const char* kFallbackProtocol = "ExternalContentSharing";
 constexpr const char* kTextKey = "text";
 
 // The payloads here are the engine's own and small; one string field out
@@ -136,6 +140,12 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
         });
     }
 
+    const std::string share_id = call_string_getter(env, lib, "getShareTextId");
+    const size_t dot = share_id.find('.');
+    const std::string clipboard_topic =
+        (dot != std::string::npos ? share_id.substr(0, dot) : std::string(kFallbackProtocol)) + "." +
+        kSetClipboardTextMethod;
+
     auto callback = std::make_shared<MessageBusRawCallbackJava>();
     callback->handler = [on_text](const std::string& payload) {
         const std::string text = json_string_field(payload, kTextKey);
@@ -153,10 +163,10 @@ bool run_content_sharing_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLib
     jobject connection = nullptr;
     const bool ok = call_trapping_abort_with_result(
         do_subscribe, connection, jni_env, env.createLocalReference(bus),
-        env.NewStringUTF(kSetClipboardTextTopic), env.createLocalReference(callback),
+        env.NewStringUTF(clipboard_topic.c_str()), env.createLocalReference(callback),
         static_cast<jboolean>(JNI_FALSE));
     clear_pending_jni_exception(jni_env, "MessageBus.doSubscribeRaw");
-    std::printf("stud: clipboard: subscribed to %s: %s\n", kSetClipboardTextTopic,
+    std::printf("stud: clipboard: subscribed to %s: %s\n", clipboard_topic.c_str(),
                 ok ? "ok" : "trapped");
     std::fflush(stdout);
     // The bus keeps calling it, so it outlives this frame.
