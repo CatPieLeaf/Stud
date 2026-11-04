@@ -183,6 +183,22 @@ struct ChainNodeHeader {
 // Returns 0 for an sType this build does not know how to size.
 uint32_t chain_node_size(uint32_t s_type);
 
+// What the Vulkan registry says; see tools/gen_vulkan_registry.py. Command
+// lists are names ending in NUL, one after the other, ended by an empty name.
+struct ChainNodeSize {
+    uint32_t s_type;
+    uint32_t size;
+};
+struct CoreCommands {
+    int minor;  // of Vulkan 1.x
+    const char* commands;
+};
+struct ExtensionCommands {
+    const char* name;
+    const char* commands;
+};
+#include "stud/vulkan_registry.inc"
+
 // Which vkCmd* a VkCmdRecord call carries. One call id for the whole
 // recording family: they all take a command buffer, return nothing, and
 // differ only in payload.
