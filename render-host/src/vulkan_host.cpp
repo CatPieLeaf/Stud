@@ -7723,6 +7723,7 @@ struct Texture {
 struct State {
     std::mutex m;
     std::string dir;  // empty: the feature is off
+    stud::shader_pack::MaterialSlots slots;
     bool uploaded = false;
     Texture brdf;
     Texture detail;
@@ -7937,16 +7938,24 @@ void fill(Loader& l, const std::vector<VkDescriptorUpdateTemplateEntry>& entries
     State& s = state();
     std::lock_guard<std::mutex> lock(s.m);
     if (s.dir.empty()) return;
-    const VkDescriptorUpdateTemplateEntry* by_binding[16] = {};
+    std::map<uint32_t, const VkDescriptorUpdateTemplateEntry*> by_binding;
     for (const auto& e : entries) {
-        if (e.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && e.dstBinding < 16 &&
+        if (e.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER &&
             e.descriptorCount >= 1 && e.offset + sizeof(VkDescriptorImageInfo) <= data.size()) {
             by_binding[e.dstBinding] = &e;
         }
     }
-    // Only the material set has 14 beside one of these.
-    if (by_binding[14] == nullptr ||
-        (by_binding[2] == nullptr && by_binding[8] == nullptr && by_binding[11] == nullptr)) {
+    const auto at = [&by_binding](int slot) -> const VkDescriptorUpdateTemplateEntry* {
+        const auto it = by_binding.find(static_cast<uint32_t>(slot));
+        return it == by_binding.end() ? nullptr : it->second;
+    };
+    const VkDescriptorUpdateTemplateEntry* indoor_env = at(s.slots.indoor_env);
+    const VkDescriptorUpdateTemplateEntry* blend_target = at(s.slots.blend_target);
+    const VkDescriptorUpdateTemplateEntry* detail = at(s.slots.detail_normal);
+    const VkDescriptorUpdateTemplateEntry* brdf = at(s.slots.brdf);
+    // Only the material set has the indoor cube beside one of these.
+    if (indoor_env == nullptr ||
+        (blend_target == nullptr && detail == nullptr && brdf == nullptr)) {
         return;
     }
     if (!s.uploaded) {
@@ -7968,12 +7977,12 @@ void fill(Loader& l, const std::vector<VkDescriptorUpdateTemplateEntry>& entries
         const VkDescriptorImageInfo info{t.sampler, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         std::memcpy(data.data() + e->offset, &info, sizeof(info));
     };
-    if (by_binding[2] != nullptr && !is_null(by_binding[14])) {
-        std::memcpy(data.data() + by_binding[2]->offset, data.data() + by_binding[14]->offset,
+    if (blend_target != nullptr && !is_null(indoor_env)) {
+        std::memcpy(data.data() + blend_target->offset, data.data() + indoor_env->offset,
                     sizeof(VkDescriptorImageInfo));
     }
-    if (by_binding[8] != nullptr) put(by_binding[8], s.detail);
-    if (by_binding[11] != nullptr && is_null(by_binding[11])) put(by_binding[11], s.brdf);
+    if (detail != nullptr) put(detail, s.detail);
+    if (brdf != nullptr && is_null(brdf)) put(brdf, s.brdf);
 }
 
 }  // namespace desktop_fill
@@ -8485,10 +8494,12 @@ void forget(Loader& l) {
 
 }  // namespace etc_decode
 
-void vk_set_desktop_materials_dir(const std::string& dir) {
+void vk_set_desktop_materials_dir(const std::string& dir,
+                                  const stud::shader_pack::MaterialSlots& slots) {
     desktop_fill::State& s = desktop_fill::state();
     std::lock_guard<std::mutex> lock(s.m);
     s.dir = dir;
+    s.slots = slots;
 }
 
 void destroy_device(Loader& l, uint64_t handle) {

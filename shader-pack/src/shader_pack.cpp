@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -420,9 +421,9 @@ struct Scan {
 // own DXT5nm file (render-host binds it), stored the way `.wy` reads it.
 // Its red channel is 255 throughout, so `.xy` turned the detail into a
 // full-strength tilt on every draw.
-size_t rewrite_normal_reads(std::vector<uint32_t>& w) {
+size_t rewrite_normal_reads(std::vector<uint32_t>& w, uint32_t normal_binding) {
     const Scan scan(w);
-    const std::set<uint32_t> targets = scan.material(4);
+    const std::set<uint32_t> targets = scan.material(normal_binding);
     size_t patched = 0;
     for (size_t p : scan.insts) {
         if (opcode(w, p) != kOpVectorShuffle || length(w, p) != 7) continue;
@@ -441,9 +442,9 @@ size_t rewrite_normal_reads(std::vector<uint32_t>& w) {
 // normalize() turns into NaN, drawn black. The Android builds take z from
 // the map; so does this, replacing that Sqrt with `sample.z * 2 - 1`, the
 // same constants 2 and 1 the x/y decode just used.
-size_t take_normal_z_from_map(std::vector<uint32_t>& w) {
+size_t take_normal_z_from_map(std::vector<uint32_t>& w, uint32_t normal_binding) {
     const Scan scan(w);
-    const std::set<uint32_t> normal = scan.material(4);
+    const std::set<uint32_t> normal = scan.material(normal_binding);
     std::unordered_map<uint32_t, uint32_t> constant_bits;           // id -> value bits
     std::unordered_map<uint32_t, std::vector<uint32_t>> composites;  // id -> constituents
     for (size_t p : scan.insts) {
@@ -530,9 +531,9 @@ size_t take_normal_z_from_map(std::vector<uint32_t>& w) {
 // strength, the first non-constant scale on the value read from 1/8 (after
 // the constant `* 2` of the decode), is replaced with a float 0 constant
 // of the module.
-size_t drop_detail_normal(std::vector<uint32_t>& w) {
+size_t drop_detail_normal(std::vector<uint32_t>& w, uint32_t detail_binding) {
     const Scan scan(w);
-    const std::set<uint32_t> detail = scan.material(8);
+    const std::set<uint32_t> detail = scan.material(detail_binding);
     std::set<uint32_t> float_types, constants;
     std::optional<uint32_t> zero;
     for (size_t p : scan.insts) {
@@ -570,8 +571,41 @@ size_t drop_detail_normal(std::vector<uint32_t>& w) {
     return patched;
 }
 
+MaterialSlots material_slots_from_gl_pack(const std::vector<uint8_t>& desktop_gl) {
+    const std::string_view pack(reinterpret_cast<const char*>(desktop_gl.data()), desktop_gl.size());
+    const auto slot_of = [&pack](const std::string& name) {
+        const std::string key = "$$" + name + "=s";
+        int slot = -1;
+        for (size_t at = pack.find(key); at != std::string_view::npos;
+             at = pack.find(key, at + key.size())) {
+            size_t p = at + key.size();
+            int value = 0;
+            bool any = false;
+            for (; p < pack.size() && pack[p] >= '0' && pack[p] <= '9'; ++p) {
+                value = value * 10 + (pack[p] - '0');
+                any = true;
+            }
+            if (!any || (slot != -1 && slot != value)) {
+                throw PackError("GL shader pack: " + name + " has no single slot");
+            }
+            slot = value;
+        }
+        if (slot == -1) throw PackError("GL shader pack: does not state " + name);
+        return slot;
+    };
+    MaterialSlots s;
+    s.normal = slot_of("NormalMapTexture");
+    s.detail_normal = slot_of("NormalDetailMapTexture");
+    s.blend_target = slot_of("PrefilteredEnvBlendTargetTexture");
+    s.brdf = slot_of("PrecomputedBRDFTexture");
+    s.indoor_env = slot_of("PrefilteredEnvIndoorTexture");
+    s.env = slot_of("PrefilteredEnvTexture");
+    return s;
+}
+
 std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_bytes,
                                              const std::vector<uint8_t>& desktop_bytes,
+                                             const MaterialSlots& slots,
                                              BuildReport* report) {
     const Pack mobile(mobile_bytes, "mobile");
     const Pack desktop(desktop_bytes, "desktop");
@@ -662,9 +696,11 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         }
         std::string blob = desktop.blob(d->second);
         auto words = spirv_words(blob);
-        r.normal_reads += rewrite_normal_reads(words);
-        r.normal_z += take_normal_z_from_map(words);
-        if (!is_plastic(name)) r.detail_dropped += drop_detail_normal(words);
+        r.normal_reads += rewrite_normal_reads(words, static_cast<uint32_t>(slots.normal));
+        r.normal_z += take_normal_z_from_map(words, static_cast<uint32_t>(slots.normal));
+        if (!is_plastic(name)) {
+            r.detail_dropped += drop_detail_normal(words, static_cast<uint32_t>(slots.detail_normal));
+        }
         blobs[k] = with_words(blob, words);
         ++r.substituted;
         if (drop_in) {
@@ -699,7 +735,8 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         std::string blob = desktop.blob(k);
         if (!is_plastic(key.first)) {
             auto words = spirv_words(blob);
-            if (const size_t dropped = drop_detail_normal(words)) {
+            if (const size_t dropped =
+                    drop_detail_normal(words, static_cast<uint32_t>(slots.detail_normal))) {
                 r.detail_dropped += dropped;
                 blob = with_words(blob, words);
             }

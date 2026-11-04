@@ -224,6 +224,9 @@ add_executable(stud-render-host "${EtcDecodeShaderHeader}" "${SharpenShaderHeade
 # by cmake/StudGfxstream.cmake. Installed in lib/stud, found from libexec
 # through a relative rpath so a moved or mounted tree still finds it.
 target_compile_definitions(stud-render-host PRIVATE STUD_HAVE_GFXSTREAM=1)
+# stud/material_slots.h, header-only: where the Windows textures go.
+target_include_directories(stud-render-host PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shader-pack/include")
 target_include_directories(stud-render-host PRIVATE
     "${StudGfxstreamSource}/host/include"
     "${StudGfxstreamSource}/host/features/include"

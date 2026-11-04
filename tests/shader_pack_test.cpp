@@ -50,12 +50,12 @@ std::vector<uint32_t> normal_decode() {
 
 void test_normal_reads_and_z() {
     std::vector<uint32_t> w = normal_decode();
-    check(stud::shader_pack::rewrite_normal_reads(w) == 1, "a .wy read of the normal map is found");
+    check(stud::shader_pack::rewrite_normal_reads(w, 4) == 1, "a .wy read of the normal map is found");
     check(w[43] == 0 && w[44] == 1, "it becomes .xy");
-    check(stud::shader_pack::rewrite_normal_reads(w) == 0, "a second pass changes nothing");
+    check(stud::shader_pack::rewrite_normal_reads(w, 4) == 0, "a second pass changes nothing");
 
     const size_t before = w.size();
-    check(stud::shader_pack::take_normal_z_from_map(w) == 1, "the rebuilt z is found");
+    check(stud::shader_pack::take_normal_z_from_map(w, 4) == 1, "the rebuilt z is found");
     check(w.size() == before - 6 + 15, "the Sqrt is replaced by three instructions");
     check(w[3] == 102, "the id bound grows by the two new ids");
     const std::vector<uint32_t> tail(w.end() - 15, w.end());
@@ -65,7 +65,7 @@ void test_normal_reads_and_z() {
         op(131, 5), 1, 18, 101, 3,   // %18 = %101 - 1
     };
     check(tail == expect, "z is the map's .z * 2 - 1, under the Sqrt's own result id");
-    check(stud::shader_pack::take_normal_z_from_map(w) == 0, "a second pass changes nothing");
+    check(stud::shader_pack::take_normal_z_from_map(w, 4) == 0, "a second pass changes nothing");
 }
 
 // The detail normal at set 1 binding 8: %30, %31 = 0.0, %40 a computed
@@ -88,11 +88,11 @@ std::vector<uint32_t> detail_decode() {
 
 void test_detail() {
     std::vector<uint32_t> w = detail_decode();
-    check(stud::shader_pack::rewrite_normal_reads(w) == 0, "the detail map's .wy read is left as it is");
+    check(stud::shader_pack::rewrite_normal_reads(w, 4) == 0, "the detail map's .wy read is left as it is");
     check(w[38] == 3 && w[39] == 1, "it stays .wy");
-    check(stud::shader_pack::drop_detail_normal(w) == 1, "the detail strength is found");
+    check(stud::shader_pack::drop_detail_normal(w, 8) == 1, "the detail strength is found");
     check(w[44] == 2 && w[49] == 31, "the decode's constant stays, the strength becomes 0");
-    check(stud::shader_pack::drop_detail_normal(w) == 0, "a second pass changes nothing");
+    check(stud::shader_pack::drop_detail_normal(w, 8) == 0, "a second pass changes nothing");
 
     const std::string fs =
         "#version 150\n"
@@ -111,10 +111,40 @@ void test_detail() {
           "GLSL: elsewhere the sample is 0.5, which decodes to 0");
 }
 
+void test_material_slots() {
+    const auto bytes = [](const std::string& text) {
+        return std::vector<uint8_t>(text.begin(), text.end());
+    };
+    const std::string all =
+        "$$NormalMapTexture=s4\n$$NormalMapTexture=s4\n$$NormalDetailMapTexture=s8\n"
+        "$$PrefilteredEnvBlendTargetTexture=s2\n$$PrecomputedBRDFTexture=s11\n"
+        "$$PrefilteredEnvIndoorTexture=s14\n$$PrefilteredEnvTexture=s15\n";
+    const auto slots = stud::shader_pack::material_slots_from_gl_pack(bytes(all));
+    check(slots.normal == 4 && slots.detail_normal == 8 && slots.blend_target == 2 &&
+              slots.brdf == 11 && slots.indoor_env == 14 && slots.env == 15,
+          "each slot is read from the pack's own annotations");
+
+    bool missing = false;
+    try {
+        stud::shader_pack::material_slots_from_gl_pack(bytes("$$NormalMapTexture=s4\n"));
+    } catch (const stud::shader_pack::PackError&) {
+        missing = true;
+    }
+    check(missing, "a texture the pack does not state refuses the pack");
+
+    bool moved = false;
+    try {
+        stud::shader_pack::material_slots_from_gl_pack(bytes(all + "$$NormalMapTexture=s5\n"));
+    } catch (const stud::shader_pack::PackError&) {
+        moved = true;
+    }
+    check(moved, "a texture stated at two slots refuses the pack");
+}
+
 void test_not_a_pack() {
     bool threw = false;
     try {
-        stud::shader_pack::build_desktop_materials({'n', 'o', 'p', 'e'}, {});
+        stud::shader_pack::build_desktop_materials({'n', 'o', 'p', 'e'}, {}, {});
     } catch (const stud::shader_pack::PackError&) {
         threw = true;
     }
@@ -194,6 +224,7 @@ void test_glsl_conversion() {
 int main() {
     test_normal_reads_and_z();
     test_detail();
+    test_material_slots();
     test_not_a_pack();
     test_glsl_conversion();
     return 0;

@@ -27,6 +27,7 @@
 #include "stud/android_glue.h"
 #include "stud/text_overlay.h"
 #include "stud/clipboard.h"
+#include "stud/material_slots.h"
 #include "stud/stud_paths.h"
 #include "stud/ndk_types.h"
 #include <set>
@@ -652,20 +653,16 @@ bool g_discord_join_button = false;
 
 // Windows Graphical Parity on the GL path: what the desktop material
 // shaders sample that the Android engine never binds. Their annotations
-// put the detail normal map at unit 8 and the BRDF lookup table at unit
-// 11, units no Android shader uses; wherever the engine leaves one of
-// those empty, the Windows client file goes there instead, the same rule
-// as desktop_fill on the Vulkan path.
+// name the units of the detail normal map and the BRDF lookup table, which
+// no Android shader uses, and the pack builder leaves them in
+// material_slots; wherever the engine leaves one of those empty, the
+// Windows client file goes there instead, the same rule as desktop_fill on
+// the Vulkan path.
 namespace gl_desktop_fill {
 
 std::string g_dir;                // empty: the feature is off
-constexpr GLenum kUnit[2] = {8, 11};
+stud::shader_pack::MaterialSlots g_slots;
 constexpr const char* kFile[2] = {"normaldetail.dds", "brdfLUT.dds"};
-// The second environment cube the desktop shaders blend with the engine's
-// (PrefilteredEnvIndoorTexture at 14, PrefilteredEnvTexture at 15): the
-// Android engine leaves a 1x1 placeholder at 14, so it shows 15's cube.
-constexpr GLenum kIndoorCubeUnit = 14;
-constexpr GLenum kEnvCubeUnit = 15;
 
 // One DDS file, mips and all: BC3 (the detail normal, DXT5nm) or
 // R16G16_FLOAT (the lookup table), the two layouts these files use.
@@ -2174,16 +2171,21 @@ bool gfx_presenter_init(const RealFns& fns, RealWindow& window) {
     // engine leaves them empty or puts its 1x1 normal-map placeholder there,
     // which the DXT5nm detail decode turns into NaN (black).
     if (!gl_desktop_fill::g_dir.empty()) {
+        const stud::shader_pack::MaterialSlots& slots = gl_desktop_fill::g_slots;
+        const GLenum units[2] = {static_cast<GLenum>(slots.detail_normal),
+                                 static_cast<GLenum>(slots.brdf)};
         for (int i = 0; i < 2; ++i) {
             const GLuint texture = gl_desktop_fill::upload(
                 fns, gl_desktop_fill::g_dir + "/" + gl_desktop_fill::kFile[i], i == 0);
-            stud::render_host::gfxstream_host::set_unit_texture_override(gl_desktop_fill::kUnit[i],
-                                                                        texture);
+            stud::render_host::gfxstream_host::set_unit_texture_override(units[i], texture);
             std::printf("stud-render-host: Windows Graphical Parity (gfxstream): %s %s\n",
                         gl_desktop_fill::kFile[i], texture != 0 ? "on its unit" : "missing");
         }
-        stud::render_host::gfxstream_host::set_cube_unit_mirror(gl_desktop_fill::kIndoorCubeUnit,
-                                                                gl_desktop_fill::kEnvCubeUnit);
+        // The second environment cube the desktop shaders blend with the
+        // engine's: the Android engine leaves a 1x1 placeholder at the
+        // indoor unit, so it shows the outdoor unit's cube.
+        stud::render_host::gfxstream_host::set_cube_unit_mirror(static_cast<GLenum>(slots.indoor_env),
+                                                                static_cast<GLenum>(slots.env));
         fns.glBindTexture_(GL_TEXTURE_2D, 0);
         std::fflush(stdout);
     }
@@ -3939,8 +3941,16 @@ int main(int argc, char** argv) {
             // the engine's real fonts and their mapping table.
             assets_dir() = argv[i + 1];
         } else if (std::string_view(argv[i]) == "--desktop-materials") {
-            stud::render_host::vk_set_desktop_materials_dir(argv[i + 1]);
-            gl_desktop_fill::g_dir = argv[i + 1];
+            // Without the slots nothing says where these textures go, so
+            // the feature stays off rather than guessing.
+            if (const auto slots = stud::shader_pack::load_material_slots(argv[i + 1])) {
+                stud::render_host::vk_set_desktop_materials_dir(argv[i + 1], *slots);
+                gl_desktop_fill::g_dir = argv[i + 1];
+                gl_desktop_fill::g_slots = *slots;
+            } else {
+                std::fprintf(stderr, "stud-render-host: Windows Graphical Parity: no material "
+                                     "slots in %s, not filling its textures\n", argv[i + 1]);
+            }
         } else if (std::string_view(argv[i]) == "--discord-presence") {
             g_discord_enabled = std::string_view(argv[i + 1]) == "on";
         } else if (std::string_view(argv[i]) == "--discord-join-button") {

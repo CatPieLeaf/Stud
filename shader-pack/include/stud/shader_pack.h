@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stud/material_slots.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -53,8 +55,14 @@ struct BuildReport {
 // The combined pack. Throws PackError when either input is not a pack this
 // code understands, or when the result fails its own check that every
 // permutation points at a SPIR-V module.
+// The slots the Windows GL pack states, in its `$$Name=sN` annotations.
+// Throws PackError when one of the textures is not stated, or is stated at
+// two different slots: Stud would not know where to put it.
+MaterialSlots material_slots_from_gl_pack(const std::vector<uint8_t>& desktop_gl);
+
 std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile,
                                              const std::vector<uint8_t>& desktop,
+                                             const MaterialSlots& slots,
                                              BuildReport* report = nullptr);
 
 // The same for the GL path: the APK's GLSL ES pack (shaders_glsles3.pack)
@@ -85,8 +93,8 @@ std::string convert_glsl(const std::string& desktop, size_t* normal_reads = null
 // The SPIR-V rewrites, on one module (no blob header), exposed for tests.
 // Each returns how many sites it changed; a module with none comes back
 // unchanged.
-size_t rewrite_normal_reads(std::vector<uint32_t>& words);
-size_t take_normal_z_from_map(std::vector<uint32_t>& words);
-size_t drop_detail_normal(std::vector<uint32_t>& words);
+size_t rewrite_normal_reads(std::vector<uint32_t>& words, uint32_t normal_binding);
+size_t take_normal_z_from_map(std::vector<uint32_t>& words, uint32_t normal_binding);
+size_t drop_detail_normal(std::vector<uint32_t>& words, uint32_t detail_binding);
 
 }  // namespace stud::shader_pack

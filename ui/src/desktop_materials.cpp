@@ -185,14 +185,36 @@ void write_state(const fs::path& path, const std::string& apk, const QString& ap
 
 // Combines the APK's packs with the Windows ones under `dir` (each file
 // name with `suffix`), and logs what it did: the Vulkan pack, then the GL
-// one.
+// one. `unusable` says the failure was these packs themselves, which trying
+// again will not change.
+//
+// Refused rather than written: a rename in Roblox's shaders makes a rewrite
+// that must fire find nothing, and the pack still builds, and looks wrong.
 bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack, const QByteArray& desktop_gl_pack,
-                    const fs::path& dir, const std::string& suffix) {
+                    const fs::path& dir, const std::string& suffix, bool* unusable = nullptr) {
+    const auto refuse = [unusable](const QString& why) {
+        say(QStringLiteral("these Windows files don't fit, materials look as on Android: %1").arg(why));
+        if (unusable != nullptr) *unusable = true;
+        return false;
+    };
+    const std::vector<uint8_t> desktop_gl(desktop_gl_pack.begin(), desktop_gl_pack.end());
+    stud::shader_pack::MaterialSlots material_slots;
+    try {
+        material_slots = stud::shader_pack::material_slots_from_gl_pack(desktop_gl);
+    } catch (const stud::shader_pack::PackError& e) {
+        return refuse(QString::fromUtf8(e.what()));
+    }
     const fs::path dest = dir / (std::string(kCombinedPack) + suffix);
     const std::vector<uint8_t> mobile = stud::android_glue::read_apk_asset(apk_path, kMobilePackAsset);
     stud::shader_pack::BuildReport report;
     const std::vector<uint8_t> combined = stud::shader_pack::build_desktop_materials(
-        mobile, std::vector<uint8_t>(desktop_pack.begin(), desktop_pack.end()), &report);
+        mobile, std::vector<uint8_t>(desktop_pack.begin(), desktop_pack.end()), material_slots, &report);
+    if (report.substituted == 0 || report.normal_reads == 0 || report.detail_dropped == 0) {
+        return refuse(QStringLiteral("%1 shaders taken, %2 normal-map reads, %3 detail normals")
+                          .arg(report.substituted)
+                          .arg(report.normal_reads)
+                          .arg(report.detail_dropped));
+    }
     if (!write_file(dest, reinterpret_cast<const char*>(combined.data()), combined.size())) {
         say(QStringLiteral("could not write the combined shader pack"));
         return false;
@@ -210,8 +232,19 @@ bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack,
 
     stud::shader_pack::GlBuildReport gl;
     const std::vector<uint8_t> combined_gl = stud::shader_pack::build_desktop_materials_gl(
-        stud::android_glue::read_apk_asset(apk_path, kMobileGlPackAsset),
-        std::vector<uint8_t>(desktop_gl_pack.begin(), desktop_gl_pack.end()), &gl);
+        stud::android_glue::read_apk_asset(apk_path, kMobileGlPackAsset), desktop_gl, &gl);
+    if (gl.substituted == 0 || gl.normal_reads == 0 || gl.detail_dropped == 0) {
+        return refuse(QStringLiteral("GL: %1 shaders taken, %2 normal-map reads, %3 detail normals")
+                          .arg(gl.substituted)
+                          .arg(gl.normal_reads)
+                          .arg(gl.detail_dropped));
+    }
+    const std::string slots_text = stud::shader_pack::material_slots_text(material_slots);
+    if (!write_file(dir / (std::string(stud::shader_pack::kMaterialSlotsFile) + suffix),
+                    slots_text.data(), slots_text.size())) {
+        say(QStringLiteral("could not write the material slots"));
+        return false;
+    }
     if (!write_file(dir / (std::string(kCombinedGlPack) + suffix), reinterpret_cast<const char*>(combined_gl.data()),
                     combined_gl.size())) {
         say(QStringLiteral("could not write the combined GL shader pack"));
@@ -241,7 +274,7 @@ bool rebuild(const std::string& apk_path, const fs::path& prepared) {
         loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
         if (!build_combined(apk_path, file.readAll(), gl_file.readAll(), prepared, ".partial")) return false;
         std::error_code ec;
-        for (const char* pack : {kCombinedPack, kCombinedGlPack}) {
+        for (const char* pack : {kCombinedPack, kCombinedGlPack, stud::shader_pack::kMaterialSlotsFile}) {
             fs::rename(prepared / (std::string(pack) + ".partial"), prepared / pack, ec);
             if (ec) return false;
         }
@@ -284,7 +317,8 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
         // Another Stud combined it, and how packs are combined changes
         // between versions: combined again from the Windows pack it kept.
         const bool current = state.value("stud").toString() == QStringLiteral(STUD_VERSION) &&
-                             fs::exists(prepared / kCombinedGlPack);
+                             fs::exists(prepared / kCombinedGlPack) &&
+                             fs::exists(prepared / stud::shader_pack::kMaterialSlotsFile);
         if (current || rebuild(apk_path, prepared)) {
             if (!current || state.value("apk").toString().toStdString() != fingerprint) {
                 write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
@@ -387,7 +421,18 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
         }
 
         loading.show(QStringLiteral("Preparing Windows Graphical Parity…"));
-        if (!build_combined(apk_path, *desktop_pack, *desktop_gl_pack, partial, "") ||
+        bool unusable = false;
+        const bool built = build_combined(apk_path, *desktop_pack, *desktop_gl_pack, partial, "", &unusable);
+        if (unusable) {
+            // As for a Windows client on another release: this exact file
+            // is not tried again, and what was prepared before stays.
+            QJsonObject refused = state;
+            refused["refused"] = QString::fromStdString(fingerprint);
+            const QByteArray json = QJsonDocument(refused).toJson();
+            write_file(state_path, json.constData(), static_cast<size_t>(json.size()));
+            return {};
+        }
+        if (!built ||
             !write_file(partial / kKeptDesktopPack, desktop_pack->constData(),
                         static_cast<size_t>(desktop_pack->size())) ||
             !write_file(partial / kKeptDesktopGlPack, desktop_gl_pack->constData(),
