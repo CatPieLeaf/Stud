@@ -906,7 +906,7 @@ inline bool ipc_stats_enabled() {
 class Client {
 public:
     bool connect_to(const std::string& path) {
-        fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        fd_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (fd_ < 0) return false;
         sockaddr_un addr{};
         addr.sun_family = AF_UNIX;

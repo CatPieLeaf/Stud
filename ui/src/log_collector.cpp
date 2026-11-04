@@ -95,7 +95,7 @@ void reader_thread(int fd) {
 void accept_thread() {
     Collector& c = collector();
     for (;;) {
-        const int fd = ::accept(c.listen_fd, nullptr, nullptr);
+        const int fd = ::accept4(c.listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
         if (fd < 0) {
             if (errno == EINTR) continue;
             break;

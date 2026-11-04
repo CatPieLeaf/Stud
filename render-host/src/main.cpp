@@ -3924,7 +3924,7 @@ void serve_extra_connections(int listen_fd, const RealFns& fns, RealWindow& real
     for (;;) {
         pollfd pfd{listen_fd, POLLIN, 0};
         if (::poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) return;
-        int extra_fd = ::accept(listen_fd, nullptr, nullptr);
+        int extra_fd = ::accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
         if (extra_fd < 0) return;
         std::printf("stud-render-host: secondary client connected\n");
         std::fflush(stdout);
@@ -4257,7 +4257,11 @@ int main(int argc, char** argv) {
     ::mkdir(parent.c_str(), 0700);
     ::unlink(socket_path.c_str());
 
-    int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    // Close-on-exec, like every connection accepted from it: a child that
+    // inherited one (a browser opened from a link can run for days) would
+    // hold the engine's socket open after this process died, and the engine
+    // would wait on it for ever instead of seeing it go.
+    int listen_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (listen_fd < 0) { std::perror("stud-render-host: socket"); return 1; }
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
@@ -4307,7 +4311,7 @@ int main(int argc, char** argv) {
         // same queue from a render thread.
         pump_display(real_window, (pfds[1].revents & POLLIN) != 0);
         if (!(pfds[0].revents & POLLIN)) continue;
-        int conn_fd = ::accept(listen_fd, nullptr, nullptr);
+        int conn_fd = ::accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
         if (conn_fd < 0) { std::perror("stud-render-host: accept"); continue; }
         std::printf("stud-render-host: client connected\n");
         // Process B connects more than once: each of its client libraries
