@@ -59,6 +59,25 @@ int main(int, char** argv) {
     const glue::ApkCheckReport none = glue::check_apk_contents({}, empty, {}, nullptr);
     check(!none.blocking.empty(), "a missing required entry point blocks");
 
+    // A method Stud calls, with a second overload beside the one it expects.
+    const std::string method = "com/roblox/engine/jni/NativeGLInterface.nativeInitClientSettings";
+    const std::string real = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I";
+    const auto mentions = [](const glue::ApkCheckReport& r, const char* text) {
+        for (const std::string& line : r.blocking) {
+            if (line.find(text) != std::string::npos) return true;
+        }
+        return false;
+    };
+    glue::ElfSymbols engine;
+    engine.defined.insert("Java_com_roblox_engine_jni_NativeGLInterface_nativeInitClientSettings");
+    glue::DexMethods overloaded;
+    overloaded.native_signatures[method] = {"()V", real};
+    check(!mentions(glue::check_apk_contents(overloaded, engine, {}, nullptr), "changed from"),
+          "an overload beside the expected signature is no change");
+    overloaded.native_signatures[method] = {"()V"};
+    check(mentions(glue::check_apk_contents(overloaded, engine, {}, nullptr), "changed from"),
+          "a signature that has gone blocks");
+
     std::set<std::string> provided = {"memcpy"};
     empty.imported = {"memcpy", "brand_new_libc_call"};
     const glue::ApkCheckReport libc = glue::check_apk_contents({}, empty, {}, &provided);

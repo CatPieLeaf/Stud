@@ -7,6 +7,7 @@
 #include "stud/android_glue.h"
 
 #include <cstdio>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -29,7 +30,7 @@ int main(int argc, char** argv) {
         for (const std::string& line : report.warnings) std::printf("warning: %s\n", line.c_str());
         for (const std::string& line : report.notes) std::printf("note: %s\n", line.c_str());
         return report.blocking.empty() ? 0 : 1;
-    } catch (const glue::ExtractError& e) {
+    } catch (const std::exception& e) {
         std::remove(engine.c_str());
         std::fprintf(stderr, "%s\n", e.what());
         return 2;

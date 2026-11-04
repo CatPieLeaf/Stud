@@ -152,7 +152,8 @@ void read_dex_methods(const std::vector<uint8_t>& dex, DexMethods& out) {
                 const std::string method = string_at(b.at<uint32_t>(at + 4));
                 members.insert(method);
                 if ((flags & kAccNative) != 0) {
-                    out.native_signatures[name + "." + method] = signature_of(b.at<uint16_t>(at + 2));
+                    out.native_signatures[name + "." + method].insert(
+                        signature_of(b.at<uint16_t>(at + 2)));
                 }
             }
         }
@@ -220,9 +221,9 @@ ApkCheckReport check_apk_contents(const DexMethods& dex, const ElfSymbols& engin
             report.notes.push_back(std::string(e.method) + " also has a newer form, " + bumped);
         }
         const auto declared = dex.native_signatures.find(e.method);
-        if (declared != dex.native_signatures.end() && declared->second != e.signature) {
+        if (declared != dex.native_signatures.end() && declared->second.count(e.signature) == 0) {
             const std::string line = std::string(e.method) + " changed from " + e.signature +
-                                     " to " + declared->second;
+                                     " to " + *declared->second.begin();
             (e.required ? report.blocking : report.warnings).push_back(line);
         }
     }

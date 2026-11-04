@@ -816,7 +816,7 @@ void SettingsWindow::onSaveClicked() {
                 std::printf("stud: !!! this APK: %s\n", line.c_str());
             }
             std::fflush(stdout);
-        } catch (const stud::android_glue::ExtractError& e) {
+        } catch (const std::exception& e) {
             // The check found the file unreadable; the engine itself decides.
             std::printf("stud: could not check this APK: %s\n", e.what());
             std::fflush(stdout);
