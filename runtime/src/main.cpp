@@ -2619,7 +2619,11 @@ int main(int argc, char** argv) {
         try {
             const auto doc = nlohmann::json::parse(json);
             if (!doc.is_object()) return;
-            auto number = [&doc](const char* key) -> long long {
+            // Every key read below, so what is left over is what this
+            // build of Stud does not know about.
+            std::set<std::string> read_keys;
+            auto number = [&doc, &read_keys](const char* key) -> long long {
+                read_keys.insert(key);
                 if (!doc.contains(key)) return 0;
                 if (doc[key].is_number()) return doc[key].get<long long>();
                 if (doc[key].is_string()) {
@@ -2627,7 +2631,8 @@ int main(int argc, char** argv) {
                 }
                 return 0;
             };
-            auto text = [&doc](const char* key) -> std::string {
+            auto text = [&doc, &read_keys](const char* key) -> std::string {
+                read_keys.insert(key);
                 if (!doc.contains(key) || !doc[key].is_string()) return {};
                 return doc[key].get<std::string>();
             };
@@ -2664,6 +2669,17 @@ int main(int argc, char** argv) {
             request.referral_page = text("referralPage");
             request.iso_context = text("isoContext");
             request.game_id_to_exclude = text("gameIdToExclude");
+            // Names only, as above. A field Stud does not pass on may be
+            // one a newer Roblox needs, and a join that fails for it
+            // looks like anything else otherwise.
+            for (auto it = doc.begin(); it != doc.end(); ++it) {
+                if (read_keys.count(it.key()) == 0) {
+                    std::printf("stud: !!! experience-launch request: field \"%s\" is not passed "
+                                "on, this Stud does not know it (a newer Roblox?)\n",
+                                it.key().c_str());
+                    std::fflush(stdout);
+                }
+            }
             if (request.place_id > 0) {
                 // Which fields arrived, never their contents: the request
                 // carries join tickets, which are credentials.
