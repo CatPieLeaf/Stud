@@ -1475,7 +1475,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (lib_handle == nullptr) {
-        std::fprintf(stderr, "stud: dlopen(%s) failed: %s\n", so_path.c_str(), ::dlerror());
+        // The linker's own words, which name what is missing: a library,
+        // or a libc symbol newer than the bundled bionic.
+        const std::string why = ::dlerror();
+        std::fprintf(stderr, "stud: dlopen(%s) failed: %s\n", so_path.c_str(), why.c_str());
+        stud::logging::note_unsupported_roblox(why, /*fatal=*/true);
         return 1;
     }
     std::printf("stud: loaded %s successfully (handle=%p)\n", so_path.c_str(), lib_handle);

@@ -9,6 +9,8 @@
 #include <string>
 #include <string_view>
 
+#include "stud/session_log.h"
+
 // Minimal, real-dlopen-backed drop-in for jni-bridge's own use of
 // stud::linker::LoadedLibrary/LoadError (find_symbol() only, jni-bridge
 // never calls a full ELF-loading API). The old, from-scratch ELF64
@@ -26,9 +28,13 @@
 // dlopen/dlsym).
 namespace stud::linker {
 
+// A required engine symbol is missing, the likeliest sign of a Roblox this
+// Stud does not know, so every one of them is noted where the UI can see it.
 class LoadError : public std::runtime_error {
 public:
-    using std::runtime_error::runtime_error;
+    explicit LoadError(const std::string& what) : std::runtime_error(what) {
+        stud::logging::note_unsupported_roblox(what);
+    }
 };
 
 class LoadedLibrary {

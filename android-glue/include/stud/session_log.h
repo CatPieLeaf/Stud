@@ -418,6 +418,28 @@ inline std::string crash_marker_path() {
     return std::string(detail::crash_marker_path_storage());
 }
 
+// Beside the session log: what this Roblox needs that this Stud does not
+// have, one line each. Written by Process B, read by Process A, which is
+// the one with a window to say it in. Those are also the failures most
+// likely to come from a Roblox update, and without this they looked like
+// a crash, or like a loading screen that never ends.
+inline std::string unsupported_note_path() {
+    const std::string log = session_log_path_from_env();
+    return log.empty() ? std::string() : log + ".unsupported";
+}
+
+// `fatal`: the engine cannot run at all, so the session is stopped and
+// this is shown at once. Otherwise it is shown only if the session later
+// dies, because a missing symbol may well not matter.
+inline void note_unsupported_roblox(const std::string& reason, bool fatal = false) {
+    const std::string path = unsupported_note_path();
+    if (path.empty()) return;
+    if (FILE* f = std::fopen(path.c_str(), "a")) {
+        std::fprintf(f, "%s%s\n", fatal ? "fatal: " : "", reason.c_str());
+        std::fclose(f);
+    }
+}
+
 // Where a clean shutdown records itself. Process A checks for this when
 // the session ends: present means the user asked for it, absent means
 // whatever happened was not their doing.

@@ -94,7 +94,7 @@ bool crash_dialog_is_open();
 bool session_ended_cleanly();
 void watch_for_a_crash();
 void terminate_stud_session();
-void show_crash_dialog(const QString& which_process);
+void show_crash_dialog(const QString& which_process, const QString& unsupported = QString());
 }  // namespace stud::ui
 
 namespace {
@@ -1619,7 +1619,10 @@ void set_render_host_pid(qint64 pid) { g_render_host_pid = pid; }
 // the whole reason it exists is to be sendable when something goes
 // wrong. It is copied rather than moved, so the original stays where a
 // later look can still find it.
-void show_crash_dialog(const QString& which_process) {
+//
+// `unsupported` is what this Roblox needs that this Stud lacks (see
+// note_unsupported_roblox), which says far more than "crashed" does.
+void show_crash_dialog(const QString& which_process, const QString& unsupported) {
     const QString log = QString::fromUtf8(qgetenv("STUD_LOG_FILE"));
 
     // Shown with open() and a finished() handler, NOT exec().
@@ -1650,13 +1653,21 @@ void show_crash_dialog(const QString& which_process) {
     box->setIconPixmap(QPixmap(QStringLiteral(":/stud-logo-update.png"))
                            .scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     box->setWindowTitle(QStringLiteral("Stud"));
-    box->setText(QStringLiteral("Oops, Stud has crashed!"));
-    box->setInformativeText(
-        log.isEmpty()
-            ? QStringLiteral("%1 stopped unexpectedly.").arg(which_process)
-            : QStringLiteral("%1 stopped unexpectedly.\n\nThe log for this session has been "
-                             "written and can be exported.")
-                  .arg(which_process));
+    if (unsupported.isEmpty()) {
+        box->setText(QStringLiteral("Oops, Stud has crashed!"));
+        box->setInformativeText(
+            log.isEmpty()
+                ? QStringLiteral("%1 stopped unexpectedly.").arg(which_process)
+                : QStringLiteral("%1 stopped unexpectedly.\n\nThe log for this session has been "
+                                 "written and can be exported.")
+                      .arg(which_process));
+    } else {
+        box->setText(QStringLiteral("This version of Roblox isn't supported by this Stud yet"));
+        box->setInformativeText(
+            QStringLiteral("Roblox probably changed something Stud relies on. A newer Stud may "
+                           "fix it.\n\n%1")
+                .arg(unsupported));
+    }
     QPushButton* export_button = nullptr;
     if (!log.isEmpty()) {
         export_button = box->addButton(QStringLiteral("Export logs"), QMessageBox::ActionRole);
@@ -1723,6 +1734,7 @@ void watch_for_a_crash() {
     const QString marker = QString::fromStdString(stud::logging::crash_marker_path());
     const QString clean = QString::fromStdString(stud::logging::clean_exit_marker_path());
     const QString shown = QString::fromStdString(stud::logging::window_shown_marker_path());
+    const QString unsupported = QString::fromStdString(stud::logging::unsupported_note_path());
     if (marker.isEmpty()) {
         stud::ui::close_loading_screen();
         return;
@@ -1731,10 +1743,26 @@ void watch_for_a_crash() {
     // Markers left by an earlier session are not this session's news.
     QFile::remove(marker);
     QFile::remove(clean);
+    QFile::remove(unsupported);
+    // First fatal line, or else the first line; empty with no note.
+    const auto read_unsupported = [unsupported](bool* fatal) {
+        QFile f(unsupported);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+        const QStringList lines = QString::fromUtf8(f.readAll()).split('\n', Qt::SkipEmptyParts);
+        const QString kFatal = QStringLiteral("fatal: ");
+        for (const QString& line : lines) {
+            if (line.startsWith(kFatal)) {
+                if (fatal != nullptr) *fatal = true;
+                return line.mid(kFatal.size());
+            }
+        }
+        return lines.isEmpty() ? QString() : lines.first();
+    };
 
     auto* timer = new QTimer(qApp);
     timer->setInterval(1000);
-    QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, shown, timer]() {
+    QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, shown, timer,
+                                                     read_unsupported]() {
         // Cancelled from the loading screen: the session was stopped on
         // purpose and Stud is closing, which is no crash.
         if (stud::ui::loading_cancelled()) {
@@ -1747,6 +1775,18 @@ void watch_for_a_crash() {
             QFile::remove(shown);
             stud::ui::close_loading_screen();
         }
+        // The engine could not load at all. Process B has gone and
+        // render-host would wait for it for ever, behind a loading screen.
+        bool fatal = false;
+        const QString not_supported = read_unsupported(&fatal);
+        if (fatal) {
+            timer->stop();
+            g_session_end = SessionEnd::Crashed;
+            stud::ui::terminate_stud_session();
+            stud::ui::close_loading_screen();
+            show_crash_dialog(QStringLiteral("Roblox"), not_supported);
+            return;
+        }
         if (QFile::exists(marker)) {
             timer->stop();
             stud::ui::close_loading_screen();
@@ -1758,7 +1798,7 @@ void watch_for_a_crash() {
                 f.close();
             }
             QFile::remove(marker);
-            show_crash_dialog(who);
+            show_crash_dialog(who, not_supported);
             return;
         }
         // Session over, nothing wrong: the launcher's job is done and
@@ -1798,7 +1838,7 @@ void watch_for_a_crash() {
                 }
                 return;
             }
-            show_crash_dialog(QStringLiteral("stud-render-host"));
+            show_crash_dialog(QStringLiteral("stud-render-host"), not_supported);
         }
     });
     timer->start();
