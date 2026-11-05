@@ -22,6 +22,7 @@
 #include <cstring>
 
 #include "flag_cache_guard.h"
+#include "log_scrub.h"
 #include "stud/game_instance.h"
 #include "stud/startup_throttle.h"
 
@@ -56,7 +57,7 @@ void note_line(const char* text, size_t length) {
 extern "C" int __android_log_write(int prio, const char* tag, const char* text) {
     if (text != nullptr) note_line(text, std::strlen(text));
     std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)",
-                text ? text : "(null)");
+                text ? stud::runtime::scrub_engine_log_line(text).c_str() : "(null)");
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*);
     static auto real = reinterpret_cast<RealFn>(::dlsym(RTLD_NEXT, "__android_log_write"));
@@ -66,7 +67,8 @@ extern "C" int __android_log_write(int prio, const char* tag, const char* text) 
 extern "C" int __android_log_buf_write(int buf_id, int prio, const char* tag, const char* text) {
     if (text != nullptr) note_line(text, std::strlen(text));
     std::printf("[roblox buf=%d %s/%s]: %s\n", buf_id, priority_name(prio),
-                tag ? tag : "(null)", text ? text : "(null)");
+                tag ? tag : "(null)",
+                text ? stud::runtime::scrub_engine_log_line(text).c_str() : "(null)");
     std::fflush(stdout);
     using RealFn = int (*)(int, int, const char*, const char*);
     static auto real = reinterpret_cast<RealFn>(::dlsym(RTLD_NEXT, "__android_log_buf_write"));
@@ -80,7 +82,8 @@ extern "C" int __android_log_vprint(int prio, const char* tag, const char* fmt, 
     std::vsnprintf(buf, sizeof(buf), fmt ? fmt : "", ap_copy);
     va_end(ap_copy);
     note_line(buf, std::strlen(buf));
-    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
+    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)",
+                stud::runtime::scrub_engine_log_line(buf).c_str());
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*, va_list);
     static auto real = reinterpret_cast<RealFn>(::dlsym(RTLD_NEXT, "__android_log_vprint"));
@@ -101,7 +104,8 @@ extern "C" int __android_log_print(int prio, const char* tag, const char* fmt, .
     std::vsnprintf(buf, sizeof(buf), fmt ? fmt : "", ap);
     va_end(ap);
     note_line(buf, std::strlen(buf));
-    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)", buf);
+    std::printf("[roblox %s/%s]: %s\n", priority_name(prio), tag ? tag : "(null)",
+                stud::runtime::scrub_engine_log_line(buf).c_str());
     std::fflush(stdout);
     using RealFn = int (*)(int, const char*, const char*, va_list);
     static auto real = reinterpret_cast<RealFn>(::dlsym(RTLD_NEXT, "__android_log_vprint"));
@@ -125,7 +129,8 @@ extern "C" void __android_log_assert(const char* cond, const char* tag, const ch
     } else {
         std::snprintf(buf, sizeof(buf), "Assertion failed: %s", cond ? cond : "(null)");
     }
-    std::printf("[roblox assert %s]: %s\n", tag ? tag : "(null)", buf);
+    std::printf("[roblox assert %s]: %s\n", tag ? tag : "(null)",
+                stud::runtime::scrub_engine_log_line(buf).c_str());
     std::fflush(stdout);
     __android_log_write(7, tag, buf);
     std::abort();

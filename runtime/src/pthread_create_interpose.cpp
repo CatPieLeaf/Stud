@@ -23,6 +23,10 @@
 
 #include <dlfcn.h>
 #include <pthread.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <cstdio>
 
 namespace {
 
@@ -89,8 +93,25 @@ void* stud_thread_trampoline(void* raw) {
     // this single, central thread-wrapping point, not the kind of
     // casual "make an inconvenient crash go away" reach the stricter
     // variant's own doc comment warns against at ad-hoc call sites.
+    //
+    // The price of that choice is a thread that dies holding a lock: anything
+    // waiting on the lock waits for ever, which looks exactly like a freeze
+    // and leaves nothing behind, so it is said here, and loudly. By write(),
+    // not stdio: the thread may have died inside printf, holding stdout's lock.
     void* result = nullptr;
-    stud::jni_bridge::call_trapping_abort_tolerating_wild_sigsegv([&] { result = start(arg); });
+    const bool finished = stud::jni_bridge::call_trapping_abort_tolerating_wild_sigsegv(
+        [&] { result = start(arg); });
+    if (!finished && !stud::jni_bridge::shutting_down()) {
+        char name[32] = "?";
+        ::pthread_getname_np(::pthread_self(), name, sizeof(name));
+        char line[192];
+        const int length = std::snprintf(
+            line, sizeof(line),
+            "stud: !!! thread \"%s\" (tid %ld) crashed and was ended so the game could carry on. "
+            "If the game hangs after this, this is why\n",
+            name, static_cast<long>(::syscall(SYS_gettid)));
+        if (length > 0) (void)!::write(STDOUT_FILENO, line, static_cast<size_t>(length));
+    }
     return result;
 }
 

@@ -165,6 +165,9 @@ bool clear_pending_jni_exception(JNIEnv* env, const char* context);
 // a core dump of a process that is about to _exit(0) helps nobody.
 void note_shutting_down();
 
+// Whether that has happened.
+bool shutting_down();
+
 }  // namespace stud::jni_bridge
 
 extern "C" {

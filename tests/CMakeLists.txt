@@ -206,6 +206,11 @@ add_executable(stud_env_documented_test env_documented_test.cpp)
 add_test(NAME env_documented_test
          COMMAND stud_env_documented_test "${CMAKE_SOURCE_DIR}")
 
+# What of the engine's log may reach the session log.
+add_executable(stud_log_scrub_test log_scrub_test.cpp)
+target_include_directories(stud_log_scrub_test PRIVATE ${CMAKE_SOURCE_DIR}/runtime/src)
+add_test(NAME log_scrub_test COMMAND stud_log_scrub_test)
+
 # Windows-quality materials: the SPIR-V rewrites of the shader-pack builder.
 add_executable(stud_shader_pack_test shader_pack_test.cpp)
 target_link_libraries(stud_shader_pack_test PRIVATE stud_shader_pack)

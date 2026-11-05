@@ -21,11 +21,13 @@
 namespace stud::jni_bridge {
 
 namespace {
-// Set once by note_shutting_down(); read only from a signal handler.
+// Set once by note_shutting_down().
 std::atomic<bool> g_shutting_down{false};
 }  // namespace
 
 void note_shutting_down() { g_shutting_down.store(true, std::memory_order_relaxed); }
+
+bool shutting_down() { return g_shutting_down.load(std::memory_order_relaxed); }
 
 }  // namespace stud::jni_bridge
 

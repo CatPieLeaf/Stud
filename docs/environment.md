@@ -57,7 +57,6 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_VIDEO_ENCODER` | the first that opens | Use only this FFmpeg encoder for the engine's video encoding (`hevc_nvenc`, `hevc_amf`, `hevc_qsv`, `hevc_vaapi`, `hevc_vulkan`, `libx265`, or the `h264_`/`libx264` equivalents). By default they are tried in that order. `stud_video_encode_check` exercises one without launching Stud. |
 | `STUD_USER_AGENT`, `STUD_ANDROID_USER_AGENT` | built from the APK | Override the User-Agent. |
 | `STUD_FORCE_THEME`, `STUD_DARK_MODE` | the desktop's | Force light or dark. |
-| `STUD_TEST_METRICS_DENSITY` | the real density | Test only. |
 | `STUD_DNS_TEST_HOST` | unset | Resolves a host at startup and reports it, for checking DNS inside the sandbox. |
 
 ## Input
@@ -72,7 +71,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_WHEEL_SCALE` | tuned | Scroll wheel scale. |
 | `STUD_NO_SMOOTH_ZOOM` | off | Disable smooth zoom. |
 | `STUD_ZOOM_TAU_MS`, `STUD_ZOOM_END_EPS` | tuned | Smooth-zoom response and stopping point. |
-| `STUD_NO_TEXT_SYNC`, `STUD_TEXT_DONE`, `STUD_NO_TEXT_OVERLAY`, `STUD_IME_HANDSHAKE` | off | Text entry and the overlay that draws it. |
+| `STUD_NO_TEXT_SYNC`, `STUD_TEXT_DONE`, `STUD_NO_TEXT_OVERLAY` | off | Text entry and the overlay that draws it. |
 | `STUD_SYNTHESIZE_TOUCH` | off | Send touch events as well as mouse events. |
 | `STUD_STUD_CURSOR` | off | Draw Stud's stand-in cursor. Normally this just puts a second, wrong cursor on screen. |
 | `STUD_PAD_FIRST_ID` | `1` | First gamepad id. |

@@ -103,14 +103,7 @@ using GamepadSupportedKeyFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint 
 using GamepadSupportedMotionFn = void (*)(JNIEnv*, jclass, jint /*deviceId*/, jint /*axis*/,
                                            jint /*direction*/, jboolean /*supported*/,
                                            jint /*type*/);
-// NativeGLInterface.updateKeyboardSize(boolean visible, int x, int y, int w, int h)
-// and nativeGetTextBoxInfo(): the rest of the handshake a real device performs
-// when its IME actually opens over the GL view. Under test because
-// syncTextboxTextAndCursorPosition2 bails out immediately when
-// the engine's own "currently focused text box" pointer is null
-// and in Stud it is,
-// even though the engine logs handleTextBoxFocused_AndroidLayer_.
-using UpdateKeyboardSizeFn = void (*)(JNIEnv*, jclass, jboolean, jint, jint, jint, jint);
+// nativeGetTextBoxInfo(): where the focused box is right now.
 using GetTextBoxInfoFn = jobject (*)(JNIEnv*, jclass);
 // FlagJniInterface.nativeGetFFlag(String name, boolean default), how the
 // app's own input handler reads the flags it branches on.
@@ -121,8 +114,7 @@ using GetFFlagFn = jboolean (*)(JNIEnv*, jclass, jstring, jboolean);
 // ...), does not arm the pointer sync needs. Tried once with zero geometry
 // and again with a real open-keyboard rectangle (the real caller only reports
 // visible=true when the measured height exceeds 10, so the zero case was not
-// a fair test); neither changed anything. Both are still resolved here
-// because they are real entry points a real device calls.
+// a fair test); neither changed anything.
 
 struct InputFns {
     MouseMoveFn mouse_move = nullptr;
@@ -133,7 +125,6 @@ struct InputFns {
     PassTextFn pass_text = nullptr;
     ReturnPressedFn return_pressed = nullptr;
     SyncTextFn sync_text = nullptr;
-    UpdateKeyboardSizeFn update_keyboard_size = nullptr;
     GetTextBoxInfoFn get_text_box_info = nullptr;
     IsMouseLockedFn is_mouse_locked = nullptr;
     GetFFlagFn get_fflag = nullptr;
@@ -1292,6 +1283,21 @@ void dispatch_text_input_event(const stud::android_glue::HostInputEvent& ev,
     if (changed) publish_text_edit(fns, text_box);
 }
 
+// The letter a Ctrl shortcut means: what the key is labelled, so Ctrl+A is the
+// key marked A on any layout. With no Latin letter to go on (a Cyrillic layout,
+// or X11 before a keysym) the position stands in, as desktop toolkits do.
+char shortcut_letter(const stud::android_glue::HostInputEvent& ev) {
+    if (ev.keysym >= 'a' && ev.keysym <= 'z') return static_cast<char>(ev.keysym);
+    if (ev.keysym >= 'A' && ev.keysym <= 'Z') return static_cast<char>(ev.keysym - 'A' + 'a');
+    switch (ev.code) {
+        case 30: return 'a';
+        case 46: return 'c';
+        case 45: return 'x';
+        case 47: return 'v';
+        default: return '\0';
+    }
+}
+
 // One key event, on its way to the engine.
 //
 // The largest arm of dispatch_event()'s switch by a wide margin, and the
@@ -1440,42 +1446,6 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
     // focused box. See this file's header for what actually
     // suppresses the drawing. The probe itself is gone: it answered
     // its question, and its offsets belong to one Roblox build.
-    // Opt-in (STUD_IME_HANDSHAKE=1) retest of the IME handshake a
-    // real device performs when its keyboard opens over the GL view.
-    // This was tried twice before and disproven, but both attempts
-    // predate `java.lang.String.getBytes` existing at all, and
-    // nativeGetTextBoxInfo builds a real NativeTextBoxInfo out of the
-    // focused box's own text. Off by default.
-    if (down && text_box != 0 && std::getenv("STUD_IME_HANDSHAKE") != nullptr) {
-        static bool handshaken = false;
-        if (!handshaken) {
-            handshaken = true;
-            if (fns.get_text_box_info != nullptr) {
-                jobject info = nullptr;
-                call_trapping_abort_with_result(fns.get_text_box_info, info, jni_env,
-                                                nullptr);
-                std::printf("stud: IME handshake: nativeGetTextBoxInfo -> %s\n",
-                            info != nullptr ? "object" : "null");
-            }
-            if (fns.update_keyboard_size != nullptr) {
-                // A real open keyboard covers the bottom of the view.
-                // The real caller only reports visible=true when the
-                // measured height exceeds 10, so this must be a real
-                // rectangle, not zeroes.
-                // The event carries the live surface size, which is
-                // the same thing the window owner reports.
-                const jint w = static_cast<jint>(ev.surface_width);
-                const jint h = static_cast<jint>(ev.surface_height);
-                const jint kb_h = h / 3 > 10 ? h / 3 : 300;
-                call_trapping_abort(fns.update_keyboard_size, jni_env, nullptr,
-                                    static_cast<jboolean>(JNI_TRUE), 0, h - kb_h, w, kb_h);
-                std::printf("stud: IME handshake: updateKeyboardSize(true, 0,%d,%d,%d)\n",
-                            h - kb_h, w, kb_h);
-            }
-            std::fflush(stdout);
-        }
-    }
-
     if (down && text_box != 0 && fns.pass_text != nullptr) {
         auto& ed = editor();
         if (ed.text() != NativeGLJavaInterfaceJava::active_text_box_text()) {
@@ -1484,19 +1454,20 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
             ed.set_text(NativeGLJavaInterfaceJava::active_text_box_text());
         }
         const bool ctrl = (g_meta_state & 0x1000) != 0;
+        const char shortcut = shortcut_letter(ev);
         bool changed = false;
         bool moved = false;
-        if (ctrl && (ev.code == 30)) {  // Ctrl+A
+        if (ctrl && shortcut == 'a') {
             ed.select_all();
             moved = true;
-        } else if (ctrl && (ev.code == 46 || ev.code == 45)) {  // Ctrl+C / Ctrl+X
+        } else if (ctrl && (shortcut == 'c' || shortcut == 'x')) {
             // A password box gives nothing back, as an Android one does not.
             if (!NativeGLJavaInterfaceJava::active_text_box_style().password) {
                 set_clipboard(ed.selected_text());
-                if (ev.code == 45) changed = ed.delete_selection();  // cut
+                if (shortcut == 'x') changed = ed.delete_selection();
             }
             moved = true;
-        } else if (ctrl && ev.code == 47) {  // Ctrl+V
+        } else if (ctrl && shortcut == 'v') {
             // All of it, line breaks included. This used to keep only the
             // first line, which turned a pasted script into one line of
             // it; what a TextBox does with a line break is the engine's
@@ -1995,11 +1966,13 @@ void dispatch_pointer_relative(const stud::android_glue::HostInputEvent& ev, con
         std::fflush(stdout);
     }
     // The app's other branch, for a build that serves the flag off.
+    const float dx = to_density_independent(ev.x);
+    const float dy = to_density_independent(ev.y);
     if (!app_holds_captured_position(fns, jni_env)) {
-        last_x += ev.x;
-        last_y += ev.y;
+        last_x += dx;
+        last_y += dy;
     }
-    call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, ev.x, ev.y);
+    call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, dx, dy);
 }
 
 void dispatch_pointer_button(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
@@ -2030,7 +2003,6 @@ void dispatch_pointer_button(const stud::android_glue::HostInputEvent& ev, const
         // the app's own handler works in (getActionButton() - 1).
         jint bit = ev.code == 0 ? 1 : (ev.code == 1 ? 2 : 4);
         bool down = ev.a != 0.0f;
-        const jint before = g_button_state;
         if (down) {
             g_button_state |= bit;
             g_down_time = now_ms();
@@ -2086,8 +2058,12 @@ void dispatch_pointer_button(const stud::android_glue::HostInputEvent& ev, const
         // here, where it must be doing so for Sober, and the cause
         // is something Stud tells the engine about itself rather
         // than anything on this path.
+        //
+        // A drag already under way is finished whatever else has happened:
+        // a game can end with the button still down, and nothing else takes
+        // the pointer's fence away.
         if ((bit & kCameraButtons) != 0 &&
-            stud::jni_bridge::NativeHelperJava::experience_is_loaded()) {
+            (g_drag_anchored || stud::jni_bridge::NativeHelperJava::experience_is_loaded())) {
             // From the live button state, not from this one edge:
             // releasing the right button while the middle is still
             // held is still a drag.
@@ -2170,36 +2146,6 @@ void dispatch_pointer_button(const stud::android_glue::HostInputEvent& ev, const
             }
             g_lock_from_drag = held && drag_lock_enabled();
             apply_pointer_lock();
-        }
-        if (down && before == 0) {
-        } else if (!down && g_button_state == 0) {
-            // A drag ends wherever the hand ends. Nothing is
-            // put back.
-            //
-            // This used to snap the reported position to the point
-            // the drag began, on the reasoning that the engine
-            // pins its own cursor for a camera rotation
-            // (MouseBehavior.LockCurrentPosition) and takes the
-            // position back from the platform on release. That
-            // moved only Stud's idea of the cursor: the desktop
-            // pointer stayed where the hand ended, so the two
-            // disagreed, visible the moment the pointer left the
-            // window, and as a cursor teleporting back in a view
-            // whose camera does not rotate at all.
-            //
-            // Locking the real pointer for the drag to make them
-            // agree was tried and rejected: a drag is meant to
-            // move the cursor freely and leave it where it is
-            // released. So the reported position simply follows
-            // the pointer, the whole way through, and there is
-            // nothing for either cursor to jump to.
-            //
-            // Inside an experience the lock taken above ends here.
-            // The compositor does not move a locked pointer, so it
-            // is still where the drag began, which is where the
-            // engine's pinned cursor is, and the next motion
-            // event re-bases rather than applying a delta across
-            // the gap.
         }
         // A primary press inside the focused box places the caret
         // and starts a selection drag; the release ends it. The
@@ -2298,6 +2244,49 @@ void dispatch_pointer_button(const stud::android_glue::HostInputEvent& ev, const
                         static_cast<jint>(ev.code));
 }
 
+// Every held button ends, as far as the engine and the pointer are concerned.
+// For when the release itself will never arrive.
+void end_all_buttons(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
+                     JNIEnv* jni_env, float last_x, float last_y) {
+    // Release whatever is still held.
+    //
+    // Wayland stops sending button events the moment the
+    // pointer leaves the surface, so a button released outside
+    // after dragging out of the window, or when another
+    // surface takes the pointer, or on alt-tab, is a release
+    // Stud never hears about. The engine is then left holding
+    // a button forever: a left-drag that never ends (the climb
+    // fling that will not let go), and a right button that
+    // stays "down" so mouse look never releases the cursor.
+    //
+    // A real device cannot reach this state, because its
+    // window system does not take the pointer away mid-gesture
+    // without ending the gesture. Ending it here is what makes
+    // Stud behave the same.
+    for (jint bit : {1, 2, 4}) {
+        if ((g_button_state & bit) == 0) continue;
+        const jint code = bit == 1 ? 0 : (bit == 2 ? 1 : 3);
+        g_button_state &= ~bit;
+        if (fns.mouse_button != nullptr) {
+            call_trapping_abort(fns.mouse_button, jni_env, nullptr, last_x, last_y,
+                                static_cast<jboolean>(JNI_FALSE), code);
+        }
+    }
+    if (g_touch_down) {
+        g_touch_down = false;
+        send_touch(fns, jni_env, ev, 2);
+    }
+    g_text_drag.store(false);
+    // No button is held any more, so nothing justifies keeping
+    // the pointer locked, or fenced in.
+    g_lock_from_drag = false;
+    apply_pointer_lock();
+    g_drag_anchored = false;
+    g_pin_seen = false;
+    g_warp_pending = false;
+    set_pointer_confined(false);
+}
+
 void dispatch_pointer_leave(const stud::android_glue::HostInputEvent& ev, const InputFns& fns,
                             JNIEnv* jni_env, float& last_x, float& last_y) {
     using Ev = stud::android_glue::HostInputEvent;
@@ -2344,42 +2333,7 @@ void dispatch_pointer_leave(const stud::android_glue::HostInputEvent& ev, const 
         call_trapping_abort(fns.mouse_move, jni_env, nullptr, last_x, last_y, 0.0f, 0.0f);
     }
     if (ev.type == Ev::kPointerLeave && g_button_state != 0) {
-        // Release whatever is still held.
-        //
-        // Wayland stops sending button events the moment the
-        // pointer leaves the surface, so a button released outside
-        // after dragging out of the window, or when another
-        // surface takes the pointer, or on alt-tab, is a release
-        // Stud never hears about. The engine is then left holding
-        // a button forever: a left-drag that never ends (the climb
-        // fling that will not let go), and a right button that
-        // stays "down" so mouse look never releases the cursor.
-        //
-        // A real device cannot reach this state, because its
-        // window system does not take the pointer away mid-gesture
-        // without ending the gesture. Ending it here is what makes
-        // Stud behave the same.
-        for (jint bit : {1, 2, 4}) {
-            if ((g_button_state & bit) == 0) continue;
-            const jint code = bit == 1 ? 0 : (bit == 2 ? 1 : 3);
-            g_button_state &= ~bit;
-            if (fns.mouse_button != nullptr) {
-                call_trapping_abort(fns.mouse_button, jni_env, nullptr, last_x, last_y,
-                                    static_cast<jboolean>(JNI_FALSE), code);
-            }
-        }
-        if (g_touch_down) {
-            g_touch_down = false;
-            send_touch(fns, jni_env, ev, 2);
-        }
-        g_text_drag.store(false);
-        // No button is held any more, so nothing justifies keeping
-        // the pointer locked, or fenced in.
-        g_lock_from_drag = false;
-        apply_pointer_lock();
-        g_drag_anchored = false;
-        g_warp_pending = false;
-        set_pointer_confined(false);
+        end_all_buttons(ev, fns, jni_env, last_x, last_y);
         if (input_trace_enabled()) {
             std::printf("stud: pointer left the surface, released every held button\n");
             std::fflush(stdout);
@@ -2508,9 +2462,7 @@ void dispatch_event(stud::android_glue::HostInputEvent ev, const InputFns& fns, 
                 // moment focus left stays latched for the next keystroke
                 // after coming back.
                 g_meta_state = 0;
-                g_button_state = 0;
-                g_lock_from_drag = false;
-                apply_pointer_lock();
+                end_all_buttons(ev, fns, jni_env, last_x, last_y);
             }
             // Releasing the held keys above is the fix on its own; telling
             // the engine is the belt-and-braces for input it believes is
@@ -2600,8 +2552,6 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
         "Java_com_roblox_engine_jni_NativeGLInterface_nativeReturnPressedFromOnScreenKeyboard"));
     fns.sync_text = reinterpret_cast<SyncTextFn>(lib.find_symbol(
         "Java_com_roblox_engine_jni_NativeGLInterface_syncTextboxTextAndCursorPosition2"));
-    fns.update_keyboard_size = reinterpret_cast<UpdateKeyboardSizeFn>(
-        lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_updateKeyboardSize"));
     fns.get_text_box_info = reinterpret_cast<GetTextBoxInfoFn>(
         lib.find_symbol("Java_com_roblox_engine_jni_NativeGLInterface_nativeGetTextBoxInfo"));
     fns.is_mouse_locked = reinterpret_cast<IsMouseLockedFn>(lib.find_symbol(
@@ -2666,9 +2616,9 @@ bool start_input_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
                 fns.mouse_move != nullptr, fns.mouse_button != nullptr,
                 fns.mouse_wheel != nullptr, fns.key_event != nullptr,
                 fns.pass_input != nullptr);
-    std::printf("stud: input bridge: text=%d return=%d sync=%d keyboardSize=%d textBoxInfo=%d\n",
+    std::printf("stud: input bridge: text=%d return=%d sync=%d textBoxInfo=%d\n",
                 fns.pass_text != nullptr, fns.return_pressed != nullptr, fns.sync_text != nullptr,
-                fns.update_keyboard_size != nullptr, fns.get_text_box_info != nullptr);
+                fns.get_text_box_info != nullptr);
 
     std::thread([&jvm, fns]() {
         // Every thread that makes a real JNI call has to be attached

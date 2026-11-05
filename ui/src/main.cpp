@@ -1473,6 +1473,13 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // mid-frame FBO read-back). Set it in the environment when it is
     // actually wanted.
 
+    // Markers left by an earlier session are not this session's news. Before
+    // Process B exists rather than when the watcher starts: by then it may
+    // already have written one, and this one is the reason the session ended.
+    QFile::remove(QString::fromStdString(stud::logging::crash_marker_path()));
+    QFile::remove(QString::fromStdString(stud::logging::clean_exit_marker_path()));
+    QFile::remove(QString::fromStdString(stud::logging::unsupported_note_path()));
+
     pid_t sandbox_pid = -1;
     QString start_error;
     try {
@@ -1792,10 +1799,6 @@ void watch_for_a_crash() {
         return;
     }
     g_watcher_active = true;
-    // Markers left by an earlier session are not this session's news.
-    QFile::remove(marker);
-    QFile::remove(clean);
-    QFile::remove(unsupported);
     // First fatal line, or else the first line; empty with no note.
     const auto read_unsupported = [unsupported](bool* fatal) {
         QFile f(unsupported);

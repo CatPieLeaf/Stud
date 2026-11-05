@@ -55,6 +55,7 @@
 #include "stud/linking_bridge.h"
 #include "stud/album_bridge.h"
 #include "fmod_audio_output.h"
+#include "log_scrub.h"
 #include "stud/flag_overrides.h"
 #include "flag_cache_guard.h"
 #include "stud/android_framework.h"
@@ -506,6 +507,27 @@ bool window_state_from_page(int slot, uint64_t* value) {
     return true;
 }
 
+// What the engine is told about this machine: its real memory and its real
+// screen, asked of the process that owns the window, and the window's own
+// size for a display that has not said yet.
+auto real_device_params(const std::string& app_version) {
+    uint64_t args[8] = {};
+    const uint64_t geometry = stud::render_client::connection().call(
+        stud::render_host::CallId::GetDisplayOutputGeometry, args, nullptr, 0, nullptr, 0, nullptr);
+    int width = static_cast<int>((geometry >> 48) & 0xffff);
+    int height = static_cast<int>((geometry >> 32) & 0xffff);
+    if (width <= 0 || height <= 0) {
+        const uint64_t window = stud::render_client::connection().call(
+            stud::render_host::CallId::GetWindowSize, args, nullptr, 0, nullptr, 0, nullptr);
+        width = static_cast<int>(window >> 32);
+        height = static_cast<int>(window & 0xffffffffu);
+    }
+    return stud::jni_bridge::build_desktop_device_params(
+        std::to_string(stud::jni_bridge::BuildVersionJava::SDK_INT), "Stud", app_version,
+        std::to_string(width) + "x" + std::to_string(height), width, height,
+        stud::jni_bridge::real_total_memory_mb());
+}
+
 // The window changed size, so everyone who lays out against it is told.
 //
 // Lifted whole out of main()'s poll loop. The debounce state below is
@@ -620,10 +642,7 @@ void poll_window_resize(stud::jni_bridge::BionicAwareJvm& jvm,
 // still asked about.
 std::optional<std::string> server_join_payload(const std::string& url) {
     const size_t path = url.find("/games/start?");
-    if (url.rfind("https://", 0) != 0 || path == std::string::npos ||
-        url.substr(0, path).find(".roblox.com") == std::string::npos) {
-        return std::nullopt;
-    }
+    if (path == std::string::npos || !stud::web::is_roblox_https_url(url)) return std::nullopt;
     std::string place_id;
     std::string payload;
     bool names_server = false;
@@ -677,14 +696,24 @@ void report_display_refresh(stud::jni_bridge::BionicAwareJvm& jvm,
             stud::render_host::CallId::GetDisplayRefreshRate, rate_args, nullptr, 0, nullptr, 0,
             nullptr);
         g_reported_refresh_mhz = current_mhz;
+        // The reply says how long it really was, which is more than was
+        // copied when it did not fit, so the second call asks for all of it.
         std::vector<uint32_t> supported_mhz(16, 0);
         uint32_t supported_len = 0;
-        stud::render_client::connection().call(
-            stud::render_host::CallId::GetSupportedRefreshRates, rate_args, nullptr, 0,
-            supported_mhz.data(), static_cast<uint32_t>(supported_mhz.size() * sizeof(uint32_t)),
-            &supported_len);
+        const auto ask_rates = [&] {
+            stud::render_client::connection().call(
+                stud::render_host::CallId::GetSupportedRefreshRates, rate_args, nullptr, 0,
+                supported_mhz.data(), static_cast<uint32_t>(supported_mhz.size() * sizeof(uint32_t)),
+                &supported_len);
+        };
+        ask_rates();
+        if (supported_len / sizeof(uint32_t) > supported_mhz.size()) {
+            supported_mhz.assign(supported_len / sizeof(uint32_t), 0);
+            ask_rates();
+        }
         std::vector<float> supported_hz;
-        for (uint32_t i = 0; i < supported_len / sizeof(uint32_t); ++i) {
+        const size_t rate_count = std::min<size_t>(supported_len / sizeof(uint32_t), supported_mhz.size());
+        for (size_t i = 0; i < rate_count; ++i) {
             if (supported_mhz[i] > 0) supported_hz.push_back(supported_mhz[i] / 1000.0f);
         }
         float current_hz = static_cast<float>(current_mhz) / 1000.0f;
@@ -872,8 +901,10 @@ void start_logd_sink() {
                     static const char* kPrio = "??VDIWEF";
                     char prio_char = (priority >= 0 && priority < 8) ? kPrio[priority] : '?';
                     stud::jni_bridge::note_engine_log_line(message, msg_len);
-                    std::printf("[logd:%c/%.*s] %.*s\n", prio_char, static_cast<int>(tag_len),
-                                tag, static_cast<int>(msg_len), message);
+                    std::printf("[logd:%c/%.*s] %s\n", prio_char, static_cast<int>(tag_len), tag,
+                                stud::runtime::scrub_engine_log_line(
+                                    std::string_view(message, msg_len))
+                                    .c_str());
                     std::fflush(stdout);
                 }
             }).detach();
@@ -1144,6 +1175,224 @@ void report_server_region() {
                 static_cast<uint32_t>(server.size()), nullptr, 0, nullptr);
         }
     }
+}
+
+// Set once the app is up. An engine callback that also fires while it boots
+// (the return to the app shell does) leaves work that needs a running app
+// until then.
+std::atomic<bool> g_app_is_up{false};
+
+// Everything Stud answers the engine's callbacks with.
+//
+// In one place, and before the engine has anything running. These are plain
+// std::functions the engine's threads read without a lock, so assigning one
+// while the engine runs is a data race, and whatever fires before it is set
+// is lost: a refreshed session cookie, for one.
+void install_engine_callbacks(stud::jni_bridge::BionicAwareJvm& jvm,
+                              const stud::linker::LoadedLibrary& lib, int argc, char** argv,
+                              const std::shared_ptr<stud::jni_bridge::PlatformParams>& v2_platform_params,
+                              const stud::jni_bridge::GameActivityLifecycleResult& lifecycle) {
+    // Send a refreshed login to the keyring. Only the value changes hands
+    // it is never logged, and never written to Stud's own config or
+    // cache. render-host does the actual storing because this process is
+    // sandboxed away from the Secret Service and Process A has already
+    // exited by the time anyone logs in.
+    stud::jni_bridge::set_account_list_cookie_sink([](const std::string& value) {
+        static std::string last;
+        if (value == last) return;
+        last = value;
+        std::string payload = std::string(kAccountListSecretName) + "\n" + value;
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::StoreSecret, args, payload.data(),
+            static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
+        std::printf("stud: engine produced a refreshed account-list cookie (%zu bytes), "
+                    "persisting so every signed-in account survives a restart\n",
+                    value.size());
+        std::fflush(stdout);
+    });
+    stud::jni_bridge::set_session_cookie_sink([](const std::string& value) {
+        static std::string last;
+        if (value == last) return;  // the engine re-sends an unchanged cookie often
+        last = value;
+        std::string payload = std::string(kSessionCookieSecretName) + "\n" + value;
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::StoreSecret, args, payload.data(),
+            static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
+        std::printf("stud: engine produced a refreshed session cookie (%zu bytes), persisting\n",
+                    value.size());
+        std::fflush(stdout);
+    });
+    // A logout: the engine cleared a cookie, so the stored copy goes too.
+    //
+    // Same route the storing sinks above take -- Process B does not own
+    // the keyring, render-host does -- and the same name mapping, so a
+    // cleared cookie forgets exactly the secret its value was kept in.
+    stud::jni_bridge::set_cookie_cleared_sink([](const std::string& cookie_name) {
+        const char* secret = cookie_name == "rbxas" ? kAccountListSecretName
+                           : cookie_name == ".ROBLOSECURITY" ? kSessionCookieSecretName
+                                                             : nullptr;
+        if (secret == nullptr) return;
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::DeleteSecret, args, secret,
+            static_cast<uint32_t>(std::strlen(secret)), nullptr, 0, nullptr);
+        std::printf("stud: the engine cleared %s, so the stored copy is forgotten too\n",
+                    cookie_name.c_str());
+        std::fflush(stdout);
+        // The session also lives in the local-storage document, per
+        // account, and the engine does not clear it on the way out even
+        // though it has the call to do so. See
+        // forget_current_user_values().
+        if (cookie_name == ".ROBLOSECURITY") {
+            stud::jni_bridge::LocalStoragePlatformJava::forget_current_user_values();
+        }
+    });
+
+    // Screenshots and screen recordings go to the user's own Pictures and
+    // Videos folders, which stud-ui resolves (XDG user dirs) and binds
+    // into this sandbox; see album_bridge.h.
+    {
+        stud::jni_bridge::AlbumFolders folders;
+        folders.pictures = find_named_arg(argc, argv, "--pictures-dir");
+        folders.videos = find_named_arg(argc, argv, "--videos-dir");
+        stud::jni_bridge::NativeHelperJava::on_capture_ready =
+            [&jvm, &lib, folders](const std::string& path) {
+                stud::jni_bridge::save_capture_to_album(jvm, lib, folders, path);
+            };
+    }
+
+    // Achievement requests, answered the way the real Java answers them
+    // with no backend: success(handle, false), off the calling thread, as
+    // its coroutine does. See JNIAchievementJava.
+    stud::jni_bridge::JNIAchievementJava::on_answer_not_achieved = [&jvm, &lib](jlong handle) {
+        using SuccessFn = jboolean (*)(JNIEnv*, jobject, jlong, jboolean);
+        static const auto success = reinterpret_cast<SuccessFn>(
+            lib.find_symbol("Java_com_roblox_universalapp_achievement_JNIAchievement_success"));
+        if (success == nullptr) return;
+        std::thread([&jvm, handle] {
+            static_cast<stud::jni_bridge::BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+            FakeJni::LocalFrame frame(jvm);
+            auto& env = frame.getJniEnv();
+            auto* jni_env = static_cast<JNIEnv*>(&env);
+            auto self = std::make_shared<stud::jni_bridge::JNIAchievementJava>();
+            stud::jni_bridge::call_trapping_abort(success, jni_env, env.createLocalReference(self),
+                                                  handle, static_cast<jboolean>(0));
+            stud::jni_bridge::clear_pending_jni_exception(jni_env, "JNIAchievement.success");
+        }).detach();
+    };
+
+    // Roblox's own in-game leave button. The engine reports the return to
+    // its app shell, and with the setting on that is Stud's cue to end the
+    // session rather than sit on the home screen.
+    //
+    // Only after a real experience: this same callback fires while the app
+    // shell is starting, so acting on it unconditionally would quit during
+    // launch. The engine's own experience flag is what tells them apart.
+    // It is still set at this point and cleared by onExperienceStop.
+    const bool close_on_leave = find_named_arg(argc, argv, "--close-on-leave") == "on";
+    stud::jni_bridge::NativeHelperJava::on_returned_to_app = [close_on_leave, &jvm, &lib,
+                                                              v2_platform_params, &lifecycle]() {
+        if (!g_app_is_up.load()) return;
+        stud::jni_bridge::run_set_task_scheduler_foreground(jvm, lib);
+        if (!stud::jni_bridge::NativeHelperJava::experience_is_loaded()) return;
+        if (!close_on_leave) {
+            // Back on the home screen after a real game: StartApp again,
+            // the way the app's own view does when it comes back (see
+            // resume_lua_app_after_game()). On its own thread, because this
+            // runs on the engine's callback thread and the call waits for
+            // the engine.
+            std::thread([&jvm, &lib, v2_platform_params, &lifecycle] {
+                stud::jni_bridge::resume_lua_app_after_game(jvm, lib, v2_platform_params,
+                                                            lifecycle.surface);
+            }).detach();
+            return;
+        }
+        std::printf("stud: left the experience and closeOnLeave is set, shutting down\n");
+        std::fflush(stdout);
+        // Close the window here, not after teardown.
+        //
+        // Setting the flag alone left the home screen on screen for about
+        // half a second: the main loop takes up to its own poll interval
+        // to notice, then LeaveGame and DestroyApp run, and through all
+        // of it the engine is already back on its app shell and rendering
+        // it. Measured on a real leave: decision at t+332.972, teardown
+        // started at t+333.176, finished around t+333.4, window gone only
+        // after that. The setting says close on leaving, so the window
+        // goes now and the teardown below happens behind it.
+        //
+        // render-host exits inside this call and never replies, so it
+        // reads as a lost connection. That is fine and expected: this
+        // process is on its way out, and its own client already treats a
+        // dead connection as calls that quietly do nothing.
+        g_render_host_leaves_first.store(true);
+        uint64_t end_args[8] = {};
+        stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
+                                                nullptr, 0, nullptr, 0, nullptr);
+        g_should_keep_running.store(false, std::memory_order_relaxed);
+    };
+
+    // The app shell's own Exit button.
+    //
+    // Unconditional, unlike closeOnLeave above: this is the user pressing
+    // Exit, not the engine passing through its app shell, so there is
+    // nothing to disambiguate and nothing to gate it on. Same teardown as
+    // closing the window, the window goes first, because the engine
+    // carries on rendering its shell through the seconds LeaveGame and
+    // DestroyApp take.
+    stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit = []() {
+        std::printf("stud: the app asked to exit, shutting down\n");
+        std::fflush(stdout);
+        g_render_host_leaves_first.store(true);
+        uint64_t end_args[8] = {};
+        stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
+                                                nullptr, 0, nullptr, 0, nullptr);
+        g_should_keep_running.store(false, std::memory_order_relaxed);
+    };
+
+    stud::jni_bridge::GameActivityJava::on_finish = [] {
+        if (stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit) {
+            stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit();
+        }
+    };
+
+    // Links the engine wants another application to handle; Roblox
+    // Studio above all. render-host decides what is a Roblox page (its
+    // own panel) and what belongs to the desktop.
+    stud::jni_bridge::JNIAppRestarterJava::on_open_external_url = [](const std::string& url) {
+        std::string payload = url + "\n\n\n";  // url, empty title, empty app token
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::OpenWebView, args, payload.data(),
+            static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
+    };
+
+    // Watch what the engine's own cookie jar holds when the account
+    // changes. Two real, user-reported symptoms to explain: a web-view
+    // panel opened after switching accounts is signed out entirely (it
+    // only ever carries the account Stud booted with), and a second
+    // account's login does not survive a restart.
+    //
+    // Names and counts only; these are real credentials.
+    stud::jni_bridge::NativeHelperJava::on_account_changed = [&jvm, &lib](const char* what) {
+        if (!g_app_is_up.load()) return;
+        const auto cookies = stud::jni_bridge::engine_cookies_for_url(jvm, lib,
+                                                                       "https://www.roblox.com");
+        std::printf("stud: account %s: engine jar now holds %zu cookie(s) (names: %s)\n", what,
+                    cookies.size(), stud::jni_bridge::cookie_names(cookies).c_str());
+        std::fflush(stdout);
+    };
+}
+
+// Gives up on starting, in the one way that ends the session. Once the launch
+// has been handed over nobody waits on this process: render-host keeps its
+// window up for an engine that has gone, and it is the fatal note that makes
+// Process A close it and say why.
+int fail_startup(const std::string& reason) {
+    std::fprintf(stderr, "stud: %s\n", reason.c_str());
+    stud::logging::note_unsupported_roblox(reason, /*fatal=*/true);
+    return 1;
 }
 
 // Closes the abstract Unix sockets of everything outside this process and
@@ -1530,21 +1779,17 @@ int main(int argc, char** argv) {
             // Settings now refuses one at import; this is for one that was
             // imported before it did.
             if (!std::filesystem::exists(asset_dir + "/ssl/cacert.pem")) {
-                std::fprintf(stderr,
-                             "stud: %s is only part of Roblox: it has the engine but none of the "
-                             "base APK's files (it is probably one split out of a bundle). Import "
-                             "the whole bundle (.apkm, .apks, .xapk) or a full APK in Settings.\n",
-                             apk_path.c_str());
-                return 1;
+                return fail_startup(
+                    apk_path + " is only part of Roblox: it has the engine but none of the base "
+                    "APK's files (it is probably one split out of a bundle). Import the whole "
+                    "bundle (.apkm, .apks, .xapk) or a full APK in Settings.");
             }
             // Provision the engine's CA bundle here, before dlopen(), not
             // only in the settings bootstrap further down. The engine
             // issues its first HTTPS request within ~100ms of loading,
             // which beat the later copy: live-caught as a single
             // `SSL certificate ... unable to get local issuer certificate`
-            // at 0.099s, with every later request fine. The copy down
-            // there stays. It is the one that runs when the engine is
-            // driven without an APK path, and both are idempotent.
+            // at 0.099s, with every later request fine.
             {
                 const std::string early_exe_dir = stud::paths::engine_files_dir() + "/exe";
                 const std::error_code cert_ec = provision_ca_bundle(asset_dir, early_exe_dir);
@@ -1554,8 +1799,7 @@ int main(int argc, char** argv) {
                 }
             }
         } catch (const stud::android_glue::ExtractError& e) {
-            std::fprintf(stderr, "stud: %s\n", e.what());
-            return 1;
+            return fail_startup(e.what());
         }
     } else {
         asset_dir = stud::paths::cache_dir() + "/assets-placeholder";
@@ -1606,9 +1850,7 @@ int main(int argc, char** argv) {
     // loaded library nor a live JNI call, so running them this early is
     // safe.
     stud::jni_bridge::NativeGLJavaInterfaceJava::setDeviceStaticParams(
-        stud::jni_bridge::build_desktop_device_static_params(
-            stud::jni_bridge::build_desktop_device_params("34", "Stud", real_app_version, "1920x1080",
-                                                           1920, 1080, 16384)));
+        stud::jni_bridge::build_desktop_device_static_params(real_device_params(real_app_version)));
 
     // Real dlopen(). Real bionic's own linker64 resolves libroblox.so's
     // entire dependency graph natively. No Stud-authored ELF
@@ -1631,8 +1873,7 @@ int main(int argc, char** argv) {
     bool dlopen_completed = stud::jni_bridge::call_trapping_abort_with_result(
         [](const char* path) { return ::dlopen(path, RTLD_NOW); }, lib_handle, so_path.c_str());
     if (!dlopen_completed) {
-        std::fprintf(stderr, "stud: dlopen(%s) trapped a fatal signal mid-call\n", so_path.c_str());
-        return 1;
+        return fail_startup("the engine crashed while it was loading");
     }
     if (lib_handle == nullptr) {
         // The linker's own words, which name what is missing: a library,
@@ -1753,13 +1994,6 @@ int main(int argc, char** argv) {
                     static_cast<double>(engine_dpi_scale), follow_dpi ? "on" : "off",
                     hidpi_enabled ? "on" : "off", static_cast<double>(real_density));
         std::fflush(stdout);
-        // TEST ONLY, off unless set: DisplayMetrics density reported to the
-        // engine, independent of PlatformParams.dpiScale (SSAO investigation).
-        if (const char* v = std::getenv("STUD_TEST_METRICS_DENSITY")) {
-            layout_density = static_cast<float>(std::atof(v));
-            std::printf("stud: TEST DisplayMetrics density forced to %.2f\n",
-                        static_cast<double>(layout_density));
-        }
         std::printf("stud: real display: density=%.2f, viewport %dx%d mm\n",
                     static_cast<double>(real_density), real_viewport_mm_w, real_viewport_mm_h);
         std::fflush(stdout);
@@ -1767,8 +2001,11 @@ int main(int argc, char** argv) {
 
     auto platform_params = stud::jni_bridge::build_desktop_platform_params_with_lua_flags(
         asset_dir, engine_dpi_scale, real_viewport_mm_w, real_viewport_mm_h);
-    auto device_params = stud::jni_bridge::build_desktop_device_params(
-        "34", "Stud", real_app_version, "1920x1080", 1920, 1080, 16384);
+    auto v2_platform_params = stud::jni_bridge::build_desktop_platform_params_with_lua_flags(
+        asset_dir, engine_dpi_scale, real_viewport_mm_w, real_viewport_mm_h);
+    stud::jni_bridge::GameActivityLifecycleResult lifecycle{};
+    install_engine_callbacks(jvm, lib, argc, argv, v2_platform_params, lifecycle);
+    auto device_params = real_device_params(real_app_version);
     // Confirmed against the app's own code, previously-missing call (the engineering notes,
     // "instantiate controllers" investigation): the real
     // setInitParamsForEngine calls this FIRST, strictly before
@@ -1993,29 +2230,6 @@ int main(int argc, char** argv) {
         // but tested directly, with the file set to 30 the engine still
         // ran at 57fps. It does not read that value on this path.
 
-        // Caught in testing:, load-bearing fix: the engine's own internal
-        // HTTP client looks for a CA bundle at `<filesDir>/exe/cacert.pem`
-        // (confirmed via a real `DFLog::HttpTraceError` capture, the
-        // exact path it logged, checked), NOT relative to cwd, and
-        // NOT the `assets/ssl/cacert.pem` path Stud already extracts from
-        // the APK. Without this file present at exactly this path, EVERY
-        // real outbound HTTPS request the engine makes fails at the TLS
-        // trust-anchor stage (`error:12`/`HttpError: Unknown url`,
-        // confirmed live for mobile-client-version, browser-tracker-api,
-        // ecsv2, experience-signals-ingest, ephemeralcounters, a real,
-        // total networking blackout, not one endpoint), directly
-        // implicating this as a root cause (or a major contributor to)
-        // gap #1's "no real game join" mystery, since whatever internal
-        // call resolves a join ticket is exactly this kind of HTTPS
-        // request. Sourced from the same real, already-extracted APK
-        // asset (`assets/ssl/cacert.pem`) `run_preload_bootstrap()`'s own
-        // `asset_dir` already points at, just copied to the second real
-        // path the engine separately expects it at.
-        const std::string exe_dir = files_dir + "/exe";
-        if (const std::error_code cert_ec = provision_ca_bundle(asset_dir, exe_dir)) {
-            std::fprintf(stderr, "stud: warning: failed to provision %s/cacert.pem: %s\n",
-                         exe_dir.c_str(), cert_ec.message().c_str());
-        }
     }
     // Real ordering fix (live-caught via the engine's own FLog, now
     // visible through Stud's logd sink): the engine logs
@@ -2078,8 +2292,7 @@ int main(int argc, char** argv) {
                     settings_result.set_files_directory_called,
                     settings_result.set_cache_directory_called);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud: run_native_settings_bootstrap() failed: %s\n", e.what());
-        return 1;
+        return fail_startup(std::string("run_native_settings_bootstrap() failed: ") + e.what());
     }
 
     // Real device order (see client_settings_bridge.h's own doc
@@ -2325,8 +2538,7 @@ int main(int argc, char** argv) {
         std::printf("stud: run_app_bridge_start() complete: app_start_called=%d trapped_abort=%d\n",
                     app_bridge_result.app_start_called, app_bridge_result.app_start_trapped_abort);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud: run_app_bridge_start() failed: %s\n", e.what());
-        return 1;
+        return fail_startup(std::string("run_app_bridge_start() failed: ") + e.what());
     }
     // Real fix for the onSurfaceCreatedNative hang (proven under the old
     // architecture, still needed): native_app_glue's own android_main()
@@ -2366,8 +2578,7 @@ int main(int argc, char** argv) {
             "stud: run_preload_bootstrap() complete: set_asset_path=%d preload_flag_overrides=%d\n",
             preload_result.set_asset_path_called, preload_result.preload_flag_overrides_called);
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud: run_preload_bootstrap() failed: %s\n", e.what());
-        return 1;
+        return fail_startup(std::string("run_preload_bootstrap() failed: ") + e.what());
     }
     // Real ASMA order (the app's own app-shell manager, the real app-shell manager class):
     // E(context) = nativeGameGlobalInit/nativeUpdateAdapterInit, then
@@ -2381,10 +2592,7 @@ int main(int argc, char** argv) {
     // `setStage: (stage:Native)` and destroying the live
     // SurfaceController/RenderView underneath it. Build the V2 params
     // and run the early-init half BEFORE the surface is handed over.
-    auto v2_platform_params = stud::jni_bridge::build_desktop_platform_params_with_lua_flags(
-        asset_dir, engine_dpi_scale, real_viewport_mm_w, real_viewport_mm_h);
-    auto v2_device_params = stud::jni_bridge::build_desktop_device_params(
-        "34", "Stud", real_app_version, "1920x1080", 1920, 1080, 16384);
+    auto v2_device_params = real_device_params(real_app_version);
     // setDeviceStaticParams is NOT called here any more; it has to run
     // before dlopen(), see the call site up by register_app_java_classes().
     try {
@@ -2477,7 +2685,6 @@ int main(int argc, char** argv) {
     const bool skip_game_activity = skip_ga_env != nullptr && std::string_view(skip_ga_env) == "1";
 
     bool init_params_delivered = false;
-    stud::jni_bridge::GameActivityLifecycleResult lifecycle{};
     if (skip_game_activity) {
         std::printf("stud: STUD_SKIP_GAME_ACTIVITY=1, not starting the engine's own "
                     "android_main/NativeEngine; legacy app-bridge path only\n");
@@ -2844,63 +3051,6 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "stud: experience-launch request was not JSON (%s)\n", e.what());
         }
     };
-    // Send a refreshed login to the keyring. Only the value changes hands
-    // it is never logged, and never written to Stud's own config or
-    // cache. render-host does the actual storing because this process is
-    // sandboxed away from the Secret Service and Process A has already
-    // exited by the time anyone logs in.
-    stud::jni_bridge::set_account_list_cookie_sink([](const std::string& value) {
-        static std::string last;
-        if (value == last) return;
-        last = value;
-        std::string payload = std::string(kAccountListSecretName) + "\n" + value;
-        uint64_t args[8] = {};
-        stud::render_client::connection().call(
-            stud::render_host::CallId::StoreSecret, args, payload.data(),
-            static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-        std::printf("stud: engine produced a refreshed account-list cookie (%zu bytes), "
-                    "persisting so every signed-in account survives a restart\n",
-                    value.size());
-        std::fflush(stdout);
-    });
-    stud::jni_bridge::set_session_cookie_sink([](const std::string& value) {
-        static std::string last;
-        if (value == last) return;  // the engine re-sends an unchanged cookie often
-        last = value;
-        std::string payload = std::string(kSessionCookieSecretName) + "\n" + value;
-        uint64_t args[8] = {};
-        stud::render_client::connection().call(
-            stud::render_host::CallId::StoreSecret, args, payload.data(),
-            static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-        std::printf("stud: engine produced a refreshed session cookie (%zu bytes), persisting\n",
-                    value.size());
-        std::fflush(stdout);
-    });
-    // A logout: the engine cleared a cookie, so the stored copy goes too.
-    //
-    // Same route the storing sinks above take -- Process B does not own
-    // the keyring, render-host does -- and the same name mapping, so a
-    // cleared cookie forgets exactly the secret its value was kept in.
-    stud::jni_bridge::set_cookie_cleared_sink([](const std::string& cookie_name) {
-        const char* secret = cookie_name == "rbxas" ? kAccountListSecretName
-                           : cookie_name == ".ROBLOSECURITY" ? kSessionCookieSecretName
-                                                             : nullptr;
-        if (secret == nullptr) return;
-        uint64_t args[8] = {};
-        stud::render_client::connection().call(
-            stud::render_host::CallId::DeleteSecret, args, secret,
-            static_cast<uint32_t>(std::strlen(secret)), nullptr, 0, nullptr);
-        std::printf("stud: the engine cleared %s, so the stored copy is forgotten too\n",
-                    cookie_name.c_str());
-        std::fflush(stdout);
-        // The session also lives in the local-storage document, per
-        // account, and the engine does not clear it on the way out even
-        // though it has the call to do so. See
-        // forget_current_user_values().
-        if (cookie_name == ".ROBLOSECURITY") {
-            stud::jni_bridge::LocalStoragePlatformJava::forget_current_user_values();
-        }
-    });
     stud::jni_bridge::subscribe_to_experience_launch(jvm, lib);
     // Android's runtime permissions, which nothing in this process has
     // ever answered; see permissions_bridge.h. Voice chat asks for the
@@ -3130,143 +3280,8 @@ int main(int argc, char** argv) {
     // ending, both of which are real signals Stud already receives. A real
     // device would also flip it back to background on pause; Stud has no pause
     // yet, so it does not claim to.
-    auto assert_foreground = [&jvm, &lib]() {
-        stud::jni_bridge::run_set_task_scheduler_foreground(jvm, lib);
-    };
-    assert_foreground();
-
-    // Screenshots and screen recordings go to the user's own Pictures and
-    // Videos folders, which stud-ui resolves (XDG user dirs) and binds
-    // into this sandbox; see album_bridge.h.
-    {
-        stud::jni_bridge::AlbumFolders folders;
-        folders.pictures = find_named_arg(argc, argv, "--pictures-dir");
-        folders.videos = find_named_arg(argc, argv, "--videos-dir");
-        stud::jni_bridge::NativeHelperJava::on_capture_ready =
-            [&jvm, &lib, folders](const std::string& path) {
-                stud::jni_bridge::save_capture_to_album(jvm, lib, folders, path);
-            };
-    }
-
-    // Achievement requests, answered the way the real Java answers them
-    // with no backend: success(handle, false), off the calling thread, as
-    // its coroutine does. See JNIAchievementJava.
-    stud::jni_bridge::JNIAchievementJava::on_answer_not_achieved = [&jvm, &lib](jlong handle) {
-        using SuccessFn = jboolean (*)(JNIEnv*, jobject, jlong, jboolean);
-        static const auto success = reinterpret_cast<SuccessFn>(
-            lib.find_symbol("Java_com_roblox_universalapp_achievement_JNIAchievement_success"));
-        if (success == nullptr) return;
-        std::thread([&jvm, handle] {
-            static_cast<stud::jni_bridge::BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
-            FakeJni::LocalFrame frame(jvm);
-            auto& env = frame.getJniEnv();
-            auto* jni_env = static_cast<JNIEnv*>(&env);
-            auto self = std::make_shared<stud::jni_bridge::JNIAchievementJava>();
-            stud::jni_bridge::call_trapping_abort(success, jni_env, env.createLocalReference(self),
-                                                  handle, static_cast<jboolean>(0));
-            stud::jni_bridge::clear_pending_jni_exception(jni_env, "JNIAchievement.success");
-        }).detach();
-    };
-
-    // Roblox's own in-game leave button. The engine reports the return to
-    // its app shell, and with the setting on that is Stud's cue to end the
-    // session rather than sit on the home screen.
-    //
-    // Only after a real experience: this same callback fires while the app
-    // shell is starting, so acting on it unconditionally would quit during
-    // launch. The engine's own experience flag is what tells them apart.
-    // It is still set at this point and cleared by onExperienceStop.
-    const bool close_on_leave = find_named_arg(argc, argv, "--close-on-leave") == "on";
-    stud::jni_bridge::NativeHelperJava::on_returned_to_app = [assert_foreground, close_on_leave,
-                                                              &jvm, &lib, v2_platform_params,
-                                                              &lifecycle]() {
-        assert_foreground();
-        if (!stud::jni_bridge::NativeHelperJava::experience_is_loaded()) return;
-        if (!close_on_leave) {
-            // Back on the home screen after a real game: StartApp again,
-            // the way the app's own view does when it comes back (see
-            // resume_lua_app_after_game()). On its own thread, because this
-            // runs on the engine's callback thread and the call waits for
-            // the engine.
-            std::thread([&jvm, &lib, v2_platform_params, &lifecycle] {
-                stud::jni_bridge::resume_lua_app_after_game(jvm, lib, v2_platform_params,
-                                                            lifecycle.surface);
-            }).detach();
-            return;
-        }
-        std::printf("stud: left the experience and closeOnLeave is set, shutting down\n");
-        std::fflush(stdout);
-        // Close the window here, not after teardown.
-        //
-        // Setting the flag alone left the home screen on screen for about
-        // half a second: the main loop takes up to its own poll interval
-        // to notice, then LeaveGame and DestroyApp run, and through all
-        // of it the engine is already back on its app shell and rendering
-        // it. Measured on a real leave: decision at t+332.972, teardown
-        // started at t+333.176, finished around t+333.4, window gone only
-        // after that. The setting says close on leaving, so the window
-        // goes now and the teardown below happens behind it.
-        //
-        // render-host exits inside this call and never replies, so it
-        // reads as a lost connection. That is fine and expected: this
-        // process is on its way out, and its own client already treats a
-        // dead connection as calls that quietly do nothing.
-        g_render_host_leaves_first.store(true);
-        uint64_t end_args[8] = {};
-        stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
-                                                nullptr, 0, nullptr, 0, nullptr);
-        g_should_keep_running.store(false, std::memory_order_relaxed);
-    };
-
-    // The app shell's own Exit button.
-    //
-    // Unconditional, unlike closeOnLeave above: this is the user pressing
-    // Exit, not the engine passing through its app shell, so there is
-    // nothing to disambiguate and nothing to gate it on. Same teardown as
-    // closing the window, the window goes first, because the engine
-    // carries on rendering its shell through the seconds LeaveGame and
-    // DestroyApp take.
-    stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit = []() {
-        std::printf("stud: the app asked to exit, shutting down\n");
-        std::fflush(stdout);
-        g_render_host_leaves_first.store(true);
-        uint64_t end_args[8] = {};
-        stud::render_client::connection().call(stud::render_host::CallId::EndSession, end_args,
-                                                nullptr, 0, nullptr, 0, nullptr);
-        g_should_keep_running.store(false, std::memory_order_relaxed);
-    };
-
-    stud::jni_bridge::GameActivityJava::on_finish = [] {
-        if (stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit) {
-            stud::jni_bridge::NativeGLJavaInterfaceJava::on_native_exit();
-        }
-    };
-
-    // Links the engine wants another application to handle; Roblox
-    // Studio above all. render-host decides what is a Roblox page (its
-    // own panel) and what belongs to the desktop.
-    stud::jni_bridge::JNIAppRestarterJava::on_open_external_url = [](const std::string& url) {
-        std::string payload = url + "\n\n\n";  // url, empty title, empty app token
-        uint64_t args[8] = {};
-        stud::render_client::connection().call(
-            stud::render_host::CallId::OpenWebView, args, payload.data(),
-            static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
-    };
-
-    // Watch what the engine's own cookie jar holds when the account
-    // changes. Two real, user-reported symptoms to explain: a web-view
-    // panel opened after switching accounts is signed out entirely (it
-    // only ever carries the account Stud booted with), and a second
-    // account's login does not survive a restart.
-    //
-    // Names and counts only; these are real credentials.
-    stud::jni_bridge::NativeHelperJava::on_account_changed = [&jvm, &lib](const char* what) {
-        const auto cookies = stud::jni_bridge::engine_cookies_for_url(jvm, lib,
-                                                                       "https://www.roblox.com");
-        std::printf("stud: account %s: engine jar now holds %zu cookie(s) (names: %s)\n", what,
-                    cookies.size(), stud::jni_bridge::cookie_names(cookies).c_str());
-        std::fflush(stdout);
-    };
+    g_app_is_up.store(true);
+    stud::jni_bridge::run_set_task_scheduler_foreground(jvm, lib);
 
     // Whether to name the game server's region on a join.
     const bool notify_server_region = find_named_arg(argc, argv, "--notify-region") != "off";

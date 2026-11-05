@@ -136,7 +136,7 @@ include(FetchContent)
 FetchContent_Declare(
     libjnivm
     GIT_REPOSITORY https://github.com/ChristopherHX/libjnivm.git
-    GIT_TAG        main
+    GIT_TAG        f24b98c198fcc5c59a68d1efadd3f5791eb01c2e
     PATCH_COMMAND  ${CMAKE_COMMAND} -Djni_h_path=${CMAKE_BINARY_DIR}/_deps/libjnivm-src/include/jni.h
                    -Dvm_cpp_path=${CMAKE_BINARY_DIR}/_deps/libjnivm-src/src/jnivm/vm.cpp
                    -Dvm_h_path=${CMAKE_BINARY_DIR}/_deps/libjnivm-src/include/jnivm/vm.h
@@ -220,30 +220,23 @@ target_include_directories(stud_runtime_framework PUBLIC
 )
 target_link_libraries(stud_runtime_framework PUBLIC fake-jni nlohmann_json::nlohmann_json)
 
-# Real ETC1/ETC2/EAC and PVRTC decoders, fetched at configure time with a
+# A real PVRTC decoder, fetched at configure time from one commit with a
 # pinned hash, same "vendor it, do not hand-roll it" reasoning as miniz
 # and libjnivm elsewhere in this tree. A block decoder that is subtly wrong
 # produces textures that look plausible and are quietly corrupt, which is
-# far worse than not supporting the format at all, so these are vetted
-# implementations rather than something written from the spec here.
-#   etcdec.h       , public domain (Unlicense), Sergii "iOrange" Kudlai
+# far worse than not supporting the format at all, so this is a vetted
+# implementation rather than something written from the spec here.
 #   PVRTDecompress , MIT, Imagination Technologies' own PowerVR SDK
 set(TexDecodeDir "${CMAKE_CURRENT_BINARY_DIR}/texdec")
 file(MAKE_DIRECTORY "${TexDecodeDir}")
 file(DOWNLOAD
-    "https://raw.githubusercontent.com/iOrange/etcdec/main/etcdec.h"
-    "${TexDecodeDir}/etcdec.h"
-    EXPECTED_HASH SHA256=57317112d44a1fc89d153fa4141587963a2ceeb22c597f23c594b301e1de6838
-    TLS_VERIFY ON
-)
-file(DOWNLOAD
-    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/master/framework/PVRCore/texture/PVRTDecompress.h"
+    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/fa7396af369a3c803be43545504f82c7d5cfa4a9/framework/PVRCore/texture/PVRTDecompress.h"
     "${TexDecodeDir}/PVRTDecompress.h"
     EXPECTED_HASH SHA256=67123a36b99df380af76a65f3dfa3a7f368a153f5401b36a9ff1ed233cee6f5f
     TLS_VERIFY ON
 )
 file(DOWNLOAD
-    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/master/framework/PVRCore/texture/PVRTDecompress.cpp"
+    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/fa7396af369a3c803be43545504f82c7d5cfa4a9/framework/PVRCore/texture/PVRTDecompress.cpp"
     "${TexDecodeDir}/PVRTDecompress.cpp"
     EXPECTED_HASH SHA256=74559c5a4b8161aafce1ebe984bf8060896feaa81276b614491dbee755d6e4c7
     TLS_VERIFY ON
@@ -251,7 +244,7 @@ file(DOWNLOAD
 
 # detex, MIT, Hans-Kristian "hglm" Lemmens' texture decompression
 # library, and the ETC decoder Sober uses for this same job. Measured
-# against etcdec.h on this machine, byte-identical output on every format
+# against etcdec.h, which it replaced, byte-identical output on every format
 # Stud emulates (ETC2 RGB8/RGBA8/RGB8A1, EAC R11/RG11) and 2.3x the
 # throughput on the two colour formats that dominate a real texture
 # burst, 510 -> 1181 MB/s and 420 -> 979 MB/s. Pinned to one commit

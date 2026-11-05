@@ -140,7 +140,7 @@ include(FetchContent)
 FetchContent_Declare(
     libjnivm
     GIT_REPOSITORY https://github.com/ChristopherHX/libjnivm.git
-    GIT_TAG        main
+    GIT_TAG        f24b98c198fcc5c59a68d1efadd3f5791eb01c2e
 )
 set(JNIVM_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(JNIVM_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
