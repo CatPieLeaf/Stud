@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stud/window_memory.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -21,9 +23,14 @@ namespace stud::android_glue::x11 {
 // XOpenDisplay succeeds. Answered once and remembered.
 bool available();
 
-// Creates and maps the one window, at the given logical size. Returns
-// false if anything failed, having reported why.
-bool create_window(int32_t width, int32_t height);
+// Creates and maps the one window, at the given logical size, asking the
+// window manager to open it maximized or fullscreen if `mode` says so.
+// Returns false if anything failed, having reported why.
+bool create_window(int32_t width, int32_t height, WindowMode mode);
+
+// What the window manager says the window is now.
+bool maximized();
+bool fullscreen();
 
 // The real X display and window, for EGL and for Vulkan's WSI. Null/0
 // before create_window() succeeds.

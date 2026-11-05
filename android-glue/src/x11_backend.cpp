@@ -184,6 +184,9 @@ Xlib& xlib() {
 
 Display* g_display = nullptr;
 Window g_window = 0;
+Atom g_atom_wm_state = 0, g_atom_wm_max_vert = 0, g_atom_wm_max_horz = 0, g_atom_wm_fullscreen = 0;
+std::atomic<bool> g_maximized{false};
+std::atomic<bool> g_fullscreen{false};
 // The window the Vulkan driver presents to, a child of g_window; see
 // content_window(). Created and mapped from the render host's dispatch
 // thread, resized from pump(); Xlib is initialised for threads.
@@ -609,7 +612,32 @@ void apply_input_method_target() {
 
 }  // namespace
 
-bool create_window(int32_t width, int32_t height) {
+// _NET_WM_STATE, which is how every EWMH window manager says what it did.
+void read_wm_state() {
+    Xlib& x = xlib();
+    if (g_window == 0 || x.GetWindowProperty == nullptr) return;
+    Atom type = 0;
+    int format = 0;
+    unsigned long count = 0, after = 0;
+    unsigned char* data = nullptr;
+    constexpr long kAtoms = 64;  // far more states than EWMH defines
+    if (x.GetWindowProperty(g_display, g_window, g_atom_wm_state, 0, kAtoms, False, XA_ATOM, &type,
+                            &format, &count, &after, &data) != Success) {
+        return;
+    }
+    bool vert = false, horz = false, full = false;
+    const auto* atoms = reinterpret_cast<const Atom*>(data);
+    for (unsigned long i = 0; atoms != nullptr && i < count; ++i) {
+        vert = vert || atoms[i] == g_atom_wm_max_vert;
+        horz = horz || atoms[i] == g_atom_wm_max_horz;
+        full = full || atoms[i] == g_atom_wm_fullscreen;
+    }
+    if (data != nullptr) x.Free(data);
+    g_maximized.store(vert && horz);
+    g_fullscreen.store(full);
+}
+
+bool create_window(int32_t width, int32_t height, WindowMode mode) {
     if (!available()) return false;
     if (g_window != 0) return true;
     Xlib& x = xlib();
@@ -638,6 +666,20 @@ bool create_window(int32_t width, int32_t height) {
     // Device-level motion, so a camera spin is not stopped by the window
     // edge. Optional: without it the core motion above is all there is.
     enable_raw_motion(g_display);
+
+    g_atom_wm_state = x.InternAtom(g_display, "_NET_WM_STATE", False);
+    g_atom_wm_max_vert = x.InternAtom(g_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    g_atom_wm_max_horz = x.InternAtom(g_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    g_atom_wm_fullscreen = x.InternAtom(g_display, "_NET_WM_STATE_FULLSCREEN", False);
+    // Before the window is mapped, the property is the request.
+    const Atom maximized_atoms[2] = {g_atom_wm_max_vert, g_atom_wm_max_horz};
+    if (mode == WindowMode::Maximized) {
+        x.ChangeProperty(g_display, g_window, g_atom_wm_state, XA_ATOM, 32, PropModeReplace,
+                         reinterpret_cast<const unsigned char*>(maximized_atoms), 2);
+    } else if (mode == WindowMode::Fullscreen) {
+        x.ChangeProperty(g_display, g_window, g_atom_wm_state, XA_ATOM, 32, PropModeReplace,
+                         reinterpret_cast<const unsigned char*>(&g_atom_wm_fullscreen), 1);
+    }
 
     x.StoreName(g_display, g_window, "Stud");
     // WM_CLASS is X11's answer to Wayland's app_id: it is what ties this
@@ -1045,6 +1087,9 @@ bool begin_stretch_locked(int old_w, int old_h) {
 // next frame (frame_presented()).
 std::atomic<bool> g_want_restore_frame{false};
 std::atomic<bool> g_restore_background_set{false};
+
+bool maximized() { return g_maximized.load(); }
+bool fullscreen() { return g_fullscreen.load(); }
 
 bool wants_restore_frame() { return g_want_restore_frame.exchange(false); }
 
@@ -1818,6 +1863,10 @@ void pump() {
         switch (event.type) {
             case ConfigureNotify: {
                 const auto& configure = event.xconfigure;
+                // ponytail: a window manager that resizes before it updates
+                // the property has its maximized size taken as the floating
+                // one. The cost is a large window after un-maximizing.
+                read_wm_state();
                 g_refresh_stale.store(true);
                 sync_text_overlay();
                 if (configure.width > 0 && configure.height > 0) {
@@ -1986,6 +2035,7 @@ void pump() {
                 }
                 break;
             case PropertyNotify:
+                if (event.xproperty.atom == g_atom_wm_state) read_wm_state();
                 if (g_clipboard_incr && event.xproperty.state == PropertyNewValue &&
                     event.xproperty.atom == g_atom_stud_selection) {
                     read_selection_piece();

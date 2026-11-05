@@ -27,6 +27,8 @@
 #include "stud/clipboard.h"
 #include "stud/key_compose.h"
 #include "stud/keymap_chars.h"
+#include "stud/stud_paths.h"
+#include "stud/window_memory.h"
 
 #include <dlfcn.h>
 #include <time.h>
@@ -39,13 +41,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string_view>
+#include <utility>
 
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
+using stud::android_glue::WindowMode;
 
 namespace {
 // User-reported bug, fixed (the engineering notes, "window too big"):
@@ -114,6 +121,7 @@ struct Libdecor {
     // Optional: without them F11 does nothing on this path.
     void (*frame_set_fullscreen)(libdecor_frame*, wl_output*) = nullptr;
     void (*frame_unset_fullscreen)(libdecor_frame*) = nullptr;
+    void (*frame_set_maximized)(libdecor_frame*) = nullptr;
 };
 
 Libdecor& libdecor_api() {
@@ -146,6 +154,8 @@ Libdecor& libdecor_api() {
         sym("libdecor_frame_set_fullscreen"));
     d.frame_unset_fullscreen = reinterpret_cast<decltype(d.frame_unset_fullscreen)>(
         sym("libdecor_frame_unset_fullscreen"));
+    d.frame_set_maximized = reinterpret_cast<decltype(d.frame_set_maximized)>(
+        sym("libdecor_frame_set_maximized"));
     // All or nothing: a partial table would fail at the first null call,
     // somewhere far from here.
     if (d.create == nullptr || d.unref == nullptr || d.dispatch == nullptr ||
@@ -2198,6 +2208,13 @@ std::atomic<bool> g_window_activated{true};
 // request, because the compositor's own keys change it too.
 std::atomic<ANativeWindow*> g_toplevel_window{nullptr};
 std::atomic<bool> g_window_fullscreen{false};
+std::atomic<bool> g_window_maximized{false};
+// How the last session left the window, asked for once when this one's window
+// is made, and the size to keep for the next: see window_memory.h.
+WindowMode g_restore_mode = WindowMode::Windowed;
+std::atomic<bool> g_window_made{false};
+std::atomic<int32_t> g_floating_width{0};
+std::atomic<int32_t> g_floating_height{0};
 
 // What the compositor says about the window, whichever path it came by: the
 // frame pacing behind a hidden or unfocused window depends on it.
@@ -2217,22 +2234,38 @@ void note_window_state(bool suspended, bool activated) {
 
 void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t height,
                              wl_array* states) {
+    bool floating = true;
+    bool tiled = false;
     if (states != nullptr) {
         bool suspended = false;
         bool activated = false;
         bool fullscreen = false;
+        bool maximized = false;
         const auto* first = static_cast<const uint32_t*>(states->data);
         const size_t count = states->size / sizeof(uint32_t);
         for (size_t i = 0; i < count; ++i) {
             if (first[i] == XDG_TOPLEVEL_STATE_SUSPENDED) suspended = true;
             if (first[i] == XDG_TOPLEVEL_STATE_ACTIVATED) activated = true;
             if (first[i] == XDG_TOPLEVEL_STATE_FULLSCREEN) fullscreen = true;
+            if (first[i] == XDG_TOPLEVEL_STATE_MAXIMIZED) maximized = true;
+            if (first[i] == XDG_TOPLEVEL_STATE_TILED_LEFT ||
+                first[i] == XDG_TOPLEVEL_STATE_TILED_RIGHT ||
+                first[i] == XDG_TOPLEVEL_STATE_TILED_TOP ||
+                first[i] == XDG_TOPLEVEL_STATE_TILED_BOTTOM) {
+                tiled = true;
+            }
         }
         g_window_fullscreen.store(fullscreen);
+        g_window_maximized.store(maximized);
+        floating = !fullscreen && !maximized && !tiled;
         note_window_state(suspended, activated);
     }
     if (width <= 0 || height <= 0) {
         return;
+    }
+    if (floating) {
+        g_floating_width.store(width);
+        g_floating_height.store(height);
     }
     auto* window = static_cast<ANativeWindow*>(data);
     // Only when the size ACTUALLY changed.
@@ -2334,13 +2367,24 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
     // the content size, which already accounts for whatever the
     // decoration takes.
     libdecor_window_state window_state = LIBDECOR_WINDOW_STATE_NONE;
+    bool floating = true;
     if (decor.configuration_get_window_state(configuration, &window_state)) {
-        g_window_fullscreen.store((window_state & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0);
+        const bool fullscreen = (window_state & LIBDECOR_WINDOW_STATE_FULLSCREEN) != 0;
+        const bool maximized = (window_state & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
+        constexpr int kTiled = LIBDECOR_WINDOW_STATE_TILED_LEFT | LIBDECOR_WINDOW_STATE_TILED_RIGHT |
+                               LIBDECOR_WINDOW_STATE_TILED_TOP | LIBDECOR_WINDOW_STATE_TILED_BOTTOM;
+        floating = !fullscreen && !maximized && (window_state & kTiled) == 0;
+        g_window_fullscreen.store(fullscreen);
+        g_window_maximized.store(maximized);
         // By value: older headers lack this name, and an older library
         // simply never sets the bit.
         constexpr int kWindowStateSuspended = 1 << 7;
         note_window_state((static_cast<int>(window_state) & kWindowStateSuspended) != 0,
                           (window_state & LIBDECOR_WINDOW_STATE_ACTIVE) != 0);
+    }
+    if (floating) {
+        g_floating_width.store(width);
+        g_floating_height.store(height);
     }
 
     window->logical_width.store(width);
@@ -2384,6 +2428,29 @@ void toggle_fullscreen() {
         return;
     }
     if (wl_display* display = wayland_state().display) wl_display_flush(display);
+}
+
+// The compositor decides, as with F11. Before the first commit it is part of
+// the window's very first configure; libdecor has no toplevel until it maps.
+void request_maximized(ANativeWindow* window) {
+    if (window->decor_frame != nullptr) {
+        if (libdecor_api().frame_set_maximized != nullptr) {
+            libdecor_api().frame_set_maximized(window->decor_frame);
+        }
+    } else if (window->toplevel != nullptr) {
+        xdg_toplevel_set_maximized(window->toplevel);
+    }
+}
+
+// Once: a window given its role back after the login viewer keeps the state it
+// had then, not the one the session started with.
+void request_remembered_mode(ANativeWindow* window) {
+    const WindowMode mode = std::exchange(g_restore_mode, WindowMode::Windowed);
+    if (mode == WindowMode::Maximized) {
+        request_maximized(window);
+    } else if (mode == WindowMode::Fullscreen) {
+        toggle_fullscreen();
+    }
 }
 
 // libdecor draws into subsurfaces of this window's surface, and a
@@ -2452,6 +2519,7 @@ static void create_window_role(ANativeWindow* window) {
             // the roundtrip that lets its first configure through;
             // the queue-specific one below would never see it.
             wl_display_roundtrip(state.display);
+            request_remembered_mode(window);
             // "managing", not "drawing": libdecor binds
             // zxdg_decoration_manager_v1 itself, so on a compositor
             // that offers server-side decorations it asks for those
@@ -2495,6 +2563,7 @@ static void create_window_role(ANativeWindow* window) {
             zxdg_toplevel_decoration_v1_set_mode(
                 window->decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
         }
+        request_remembered_mode(window);
         // Triggers the compositor's first xdg_surface.configure,
         // handled by xdg_surface_configure() above, which acks it
         // and commits again, completing the real map sequence.
@@ -2543,10 +2612,11 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject /*surface*/) {
         // pixel, and a pixel is a swapchain rebuild.
         const int32_t device_w = scaled_px(w, g_display_scale_120.load());
         const int32_t device_h = scaled_px(h, g_display_scale_120.load());
-        if (!stud::android_glue::x11::create_window(device_w, device_h)) {
+        if (!stud::android_glue::x11::create_window(device_w, device_h, g_restore_mode)) {
             delete window;
             return nullptr;
         }
+        g_window_made.store(true);
         window->logical_width.store(w);
         window->logical_height.store(h);
         g_logical_width.store(w);
@@ -2586,6 +2656,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject /*surface*/) {
         window->logical_height.store(g_default_logical_height.load());
 
         create_window_role(window);
+        g_window_made.store(true);
     }
     // The overlay parents itself to the game window, so it needs the one
     // surface the engine actually renders into.
@@ -2737,9 +2808,11 @@ void set_render_scale_120(int32_t requested_scale_120) {
     int32_t logical_w = kDefaultLogicalWidth;
     int32_t logical_h = kDefaultLogicalHeight;
     const auto& st = wayland_state();
+    int32_t out_logical_w = 0;
+    int32_t out_logical_h = 0;
     if (st.output_mode_px_w > 0 && st.output_mode_px_h > 0 && scale_120 > 0) {
-        const int32_t out_logical_w = upright_mode_width(st) * kScaleUnit / scale_120;
-        const int32_t out_logical_h = upright_mode_height(st) * kScaleUnit / scale_120;
+        out_logical_w = upright_mode_width(st) * kScaleUnit / scale_120;
+        out_logical_h = upright_mode_height(st) * kScaleUnit / scale_120;
         // Nine tenths of the desktop, which is what other clients open at:
         // clearly a window rather than a fullscreen surface, and it never
         // needs the compositor to configure it smaller on the first frame.
@@ -2751,6 +2824,22 @@ void set_render_scale_120(int32_t requested_scale_120) {
         if (logical_w > out_logical_w) logical_w = out_logical_w;
         if (logical_h > out_logical_h) logical_h = out_logical_h;
     }
+    // How the last session left the window, within what this desktop has:
+    // the file can be from another monitor.
+    std::ifstream remembered_file(paths::window_memory_path());
+    std::stringstream remembered_text;
+    remembered_text << remembered_file.rdbuf();
+    if (const auto remembered = parse_window_memory(remembered_text.str())) {
+        g_restore_mode = remembered->mode;
+        logical_w = std::max(remembered->width, kMinLogicalWidth);
+        logical_h = std::max(remembered->height, kMinLogicalHeight);
+        if (out_logical_w > 0) logical_w = std::min(logical_w, out_logical_w);
+        if (out_logical_h > 0) logical_h = std::min(logical_h, out_logical_h);
+        std::printf("stud: android-glue: remembered window: %dx%d logical, mode %d\n", logical_w,
+                    logical_h, static_cast<int>(remembered->mode));
+    }
+    g_floating_width.store(logical_w);
+    g_floating_height.store(logical_h);
     g_default_logical_width.store(logical_w);
     g_default_logical_height.store(logical_h);
     g_window_width.store(buffer_px_from_logical(logical_w));
@@ -3045,6 +3134,20 @@ void native_window_logical_size(int* width, int* height) {
 
 bool native_window_is_fullscreen() { return g_window_fullscreen.load(); }
 
+void native_window_save_state() {
+    if (!g_window_made.load()) return;
+    const bool on_x11 = display_backend() == DisplayBackend::X11;
+    const bool fullscreen = on_x11 ? x11::fullscreen() : g_window_fullscreen.load();
+    const bool maximized = on_x11 ? x11::maximized() : g_window_maximized.load();
+    WindowMemory memory;
+    memory.mode = fullscreen  ? WindowMode::Fullscreen
+                  : maximized ? WindowMode::Maximized
+                              : WindowMode::Windowed;
+    memory.width = g_floating_width.load();
+    memory.height = g_floating_height.load();
+    std::ofstream(paths::window_memory_path()) << window_memory_text(memory);
+}
+
 void native_window_detach() {
     if (display_backend() == DisplayBackend::X11) {
         x11::set_window_mapped(false);
@@ -3083,7 +3186,11 @@ void native_window_reattach() {
     wl_surface_attach(window->surface, nullptr, 0, 0);
     wl_surface_commit(window->surface);
     create_window_role(window);
-    if (g_window_fullscreen.exchange(false)) toggle_fullscreen();
+    if (g_window_fullscreen.exchange(false)) {
+        toggle_fullscreen();
+    } else if (g_window_maximized.load()) {
+        request_maximized(window);
+    }
 }
 
 void native_window_set_egl_at_display_size(bool on) { g_egl_at_display_size.store(on); }
@@ -3732,6 +3839,10 @@ void native_window_pump_x11() {
         (static_cast<int64_t>(device_h) * kScaleUnit + scale / 2) / scale);
     g_logical_width.store(logical_w);
     g_logical_height.store(logical_h);
+    if (!x11::maximized() && !x11::fullscreen()) {
+        g_floating_width.store(logical_w);
+        g_floating_height.store(logical_h);
+    }
     // A floor on what the engine is ever told.
     //
     // Shrinking a window far enough, or minimising it, can leave the

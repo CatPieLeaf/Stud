@@ -939,7 +939,10 @@ bool run_ui_secret_helper(const char* mode, const std::string& name, const std::
     // Status 0 only. A non-zero exit is a failure, and a failure should
     // be reported as one rather than quietly excused. atexit() is no use
     // for this: _exit() below deliberately skips it.
-    if (status == 0) stud::logging::note_clean_exit();
+    if (status == 0) {
+        stud::logging::note_clean_exit();
+        stud::android_glue::native_window_save_state();
+    }
     std::fflush(nullptr);
     ::_exit(status);
 }

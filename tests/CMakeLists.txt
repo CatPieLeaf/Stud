@@ -46,6 +46,10 @@ target_link_libraries(stud_discord_rpc_test PRIVATE Threads::Threads)
 add_test(NAME discord_rpc_test COMMAND stud_discord_rpc_test
          WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+add_executable(stud_window_memory_test window_memory_test.cpp)
+target_include_directories(stud_window_memory_test PRIVATE ${PROJECT_SOURCE_DIR}/android-glue/include)
+add_test(NAME window_memory_test COMMAND stud_window_memory_test)
+
 add_executable(stud_range_inside_test range_inside_test.cpp)
 target_include_directories(stud_range_inside_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
 add_test(NAME range_inside_test COMMAND stud_range_inside_test)

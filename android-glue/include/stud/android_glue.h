@@ -370,6 +370,9 @@ float native_window_device_px_from_pointer(float pointer_px);
 // The window's size in logical units and whether it fills the screen.
 void native_window_logical_size(int* width, int* height);
 bool native_window_is_fullscreen();
+// Keeps how the game window is now for the next launch; see window_memory.h.
+// Does nothing if no window was ever made.
+void native_window_save_state();
 // Takes the window off the desktop and puts it back, with no window manager's
 // help in either direction: the toplevel is destroyed and made again. The
 // surface stays and so does the swapchain on it, so the engine carries on

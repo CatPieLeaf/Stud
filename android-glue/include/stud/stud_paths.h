@@ -95,6 +95,8 @@ inline std::string private_dir() {
 // Exists from a web login being stored until the launch that uses it: the
 // running session sees it and restarts, and that launch takes it away.
 inline std::string web_login_marker_path() { return private_dir() + "/web-login"; }
+// How the game window was left; see window_memory.h.
+inline std::string window_memory_path() { return private_dir() + "/window"; }
 
 // Which APK the extracted engine came from. Not beside the engine: that
 // directory is the sandbox's to write, so a name in it can be a symlink.
