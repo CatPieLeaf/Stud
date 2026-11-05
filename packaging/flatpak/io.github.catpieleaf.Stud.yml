@@ -136,7 +136,7 @@ modules:
       - cp -a usr/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
     sources:
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/releases/download/1.2.10/stud-1.2.10-x86_64.tar.zst
+        url: https://github.com/CatPieLeaf/Stud/releases/download/1.2.11/stud-1.2.11-x86_64.tar.zst
         sha256: 8173720bcd89111316860920853cceaea795f79ad94d08e347ffccd4644abd5d
         # The archive is the install tree, rooted at usr/.
         strip-components: 0
@@ -150,7 +150,7 @@ modules:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - -DSTUD_BUILD_QT_ONLY=ON
       - -DSTUD_BUILD_TESTS=OFF
-      - -DSTUD_VERSION=1.2.10
+      - -DSTUD_VERSION=1.2.11
       # No network during the build, so these are supplied as sources.
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
@@ -158,7 +158,7 @@ modules:
       - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
     sources:
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.10.tar.gz
+        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.11.tar.gz
         sha256: f3feb8730f10a20188b833080fcb63bf3d0b32e92305010d2c16f9bc877c0420
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz

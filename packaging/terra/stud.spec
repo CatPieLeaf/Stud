@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.10
+Version:        1.2.11
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -123,6 +123,19 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Thu Nov 05 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.11-1
+- Fixed: the game could look blurry in a window on a scaled display (125%%, 130%%...)
+- Fixed: Discord Rich Presence didn't show if Equibop, Vesktop or Discord opened or restarted after Stud
+- Voice chat: Stud now gives Roblox what it needs for the microphone and calls
+- Fixed: failed launches that left an empty window, or an invisible Stud running forever
+- Fixed: saving Settings could reset settings you'd edited by hand
+- Fixed: the pointer could stay trapped in the window after Alt-Tab or leaving a game
+- Fixed: Ctrl+A, C, X and V in text boxes on AZERTY and Dvorak
+- Fixed: the first paste of a session did nothing on Wayland
+- Old APK copies are now cleaned up, which can free gigabytes
+- Roblox's sandbox is stricter, and logs no longer carry join tickets or your account name
+- Dozens of safety and stability fixes
+
 * Thu Nov 05 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.10-1
 - New: logging in and creating accounts now happen on Roblox's own website, inside a Stud window
 - Fixed: the login security check that never finished

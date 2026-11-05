@@ -98,6 +98,23 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.11" date="2026-11-05">
+      <description>
+        <ul>
+          <li>Fixed: the game could look blurry in a window on a scaled display (125%, 130%...)</li>
+          <li>Fixed: Discord Rich Presence didn't show if Equibop, Vesktop or Discord opened or restarted after Stud</li>
+          <li>Voice chat: Stud now gives Roblox what it needs for the microphone and calls</li>
+          <li>Fixed: failed launches that left an empty window, or an invisible Stud running forever</li>
+          <li>Fixed: saving Settings could reset settings you'd edited by hand</li>
+          <li>Fixed: the pointer could stay trapped in the window after Alt-Tab or leaving a game</li>
+          <li>Fixed: Ctrl+A, C, X and V in text boxes on AZERTY and Dvorak</li>
+          <li>Fixed: the first paste of a session did nothing on Wayland</li>
+          <li>Old APK copies are now cleaned up, which can free gigabytes</li>
+          <li>Roblox's sandbox is stricter, and logs no longer carry join tickets or your account name</li>
+          <li>Dozens of safety and stability fixes</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.10" date="2026-11-05">
       <description>
         <ul>
