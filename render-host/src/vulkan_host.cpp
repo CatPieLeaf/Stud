@@ -1690,6 +1690,12 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // happens here, against the real completion, instead of in the
     // driver against a number it picked. Enabled only where the driver
     // offers it; everything below checks the flag rather than assuming.
+    //
+    // Off wherever Stud's own swapchain runs, and that is right: there the
+    // driver's swapchain, and so the stall above, is not in use, and
+    // VK_LAYER_STUD_present hides the extension because a fence chained to
+    // a present on its swapchain is never signalled. This path is for a
+    // system where that layer has to leave the driver's swapchain alone.
     VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchain_maintenance{};
     bool engine_asked_for_maintenance = false;
     for (const auto* node = reinterpret_cast<const VkBaseInStructure*>(chain); node != nullptr;
@@ -2139,13 +2145,15 @@ H from_u64(uint64_t v) {
 // vk_create_device().
 //
 // A ring rather than a fence per present: the fence handed out N
-// presents ago is waited on before it is reused, which is the ordinary
-// frames-in-flight pattern and costs nothing once the ring is longer
-// than the swapchain is deep.
+// presents ago is reused once it has signalled. Until it has, a present
+// goes without one, which is what the driver gets on any system without
+// the extension; waiting here would stop the whole render-host, and for
+// ever if that present is never retired.
 struct PresentFenceRing {
     std::vector<VkFence> fences;
     std::vector<bool> in_flight;
     size_t next = 0;
+    size_t taken = 0;
 };
 std::map<uint64_t, PresentFenceRing>& present_fence_rings() {
     static std::map<uint64_t, PresentFenceRing> m;
@@ -2157,14 +2165,14 @@ std::map<uint64_t, PresentFenceRing>& present_fence_rings() {
 VkFence take_present_fence(VkSwapchainKHR swapchain) {
     if (!g_swapchain_maintenance1_enabled) return VK_NULL_HANDLE;
     Loader& l = loader();
-    if (l.vk.vkCreateFence == nullptr || l.vk.vkWaitForFences == nullptr ||
+    if (l.vk.vkCreateFence == nullptr || l.vk.vkGetFenceStatus == nullptr ||
         l.vk.vkResetFences == nullptr || l.device == VK_NULL_HANDLE) {
         return VK_NULL_HANDLE;
     }
     PresentFenceRing& ring = present_fence_rings()[to_u64(swapchain)];
     if (ring.fences.empty()) {
-        // Deeper than any swapchain Stud builds, so the wait below is
-        // reached only after the present really has had its turn.
+        // Deeper than any swapchain Stud builds, so a slot comes round
+        // again only after the present really has had its turn.
         constexpr size_t kRingSize = 8;
         ring.fences.assign(kRingSize, VK_NULL_HANDLE);
         ring.in_flight.assign(kRingSize, false);
@@ -2177,16 +2185,23 @@ VkFence take_present_fence(VkSwapchainKHR swapchain) {
         }
     }
     const size_t slot = ring.next;
-    ring.next = (ring.next + 1) % ring.fences.size();
     VkFence f = ring.fences[slot];
-    if (f == VK_NULL_HANDLE) return VK_NULL_HANDLE;
-    if (ring.in_flight[slot]) {
-        l.vk.vkWaitForFences(l.device, 1, &f, VK_TRUE, UINT64_MAX);
-        ring.in_flight[slot] = false;
+    if (ring.in_flight[slot] && l.vk.vkGetFenceStatus(l.device, f) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
     }
+    ring.in_flight[slot] = false;
+    ring.next = (ring.next + 1) % ring.fences.size();
+    if (f == VK_NULL_HANDLE) return VK_NULL_HANDLE;
     l.vk.vkResetFences(l.device, 1, &f);
-    ring.in_flight[slot] = true;
+    ring.taken = slot;
     return f;
+}
+
+// The fence take_present_fence() last gave out is on a present now, so
+// settle_present_fences() and the next take have something to wait for.
+void note_present_fence_used(VkSwapchainKHR swapchain) {
+    PresentFenceRing& ring = present_fence_rings()[to_u64(swapchain)];
+    ring.in_flight[ring.taken] = true;
 }
 
 // The presents handed to each swapchain, numbered. present_wait takes
@@ -2447,12 +2462,6 @@ uint64_t vk_get_pipeline_cache_data(uint64_t cache, uint32_t capacity, std::vect
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
 
-uint64_t vk_destroy_pipeline_cache(uint64_t cache) {
-    Loader& l = loader();
-    if (l.vk.vkDestroyPipelineCache == nullptr) return 0;
-    l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(cache), nullptr);
-    return 0;
-}
 // Per-object create/query chatter. Off by default: it is useful while
 // chasing one specific allocation and pure volume otherwise.
 bool vk_object_trace_enabled() {
@@ -2460,6 +2469,11 @@ bool vk_object_trace_enabled() {
     return enabled;
 }
 
+
+bool vk_barrier_trace_enabled() {
+    static const bool enabled = std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr;
+    return enabled;
+}
 
 // Textures report a scaled-down size to the engine, and live in memory of
 // their real size that Stud owns.
@@ -8939,6 +8953,15 @@ void wait_all() {
 
 }  // namespace pipeline_compiles
 
+uint64_t vk_destroy_pipeline_cache(uint64_t cache) {
+    Loader& l = loader();
+    if (l.vk.vkDestroyPipelineCache == nullptr) return 0;
+    pipeline_compiles::destroy_after_compiles([&l, cache] {
+        l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(cache), nullptr);
+    });
+    return 0;
+}
+
 uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
     // Its compile may still be running, and would bind the number after
     // it had been forgotten and handed to something else.
@@ -9074,13 +9097,6 @@ uint64_t vk_destroy_handle(uint32_t kind, uint64_t handle) {
         case K::Framebuffer:
             if (!framebuffer_lifetimes::destroy(l, handle)) {
                 framebuffer_lifetimes::destroy_now(l, handle);
-            }
-            break;
-        case K::PipelineCache:
-            if (l.vk.vkDestroyPipelineCache) {
-                pipeline_compiles::destroy_after_compiles([&l, handle] {
-                    l.vk.vkDestroyPipelineCache(l.device, from_u64<VkPipelineCache>(handle), nullptr);
-                });
             }
             break;
         case K::Device:
@@ -10631,7 +10647,7 @@ uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector
         std::string name;
     };
     auto info = std::make_shared<Info>();
-    info->cache = from_u64<VkPipelineCache>(r.u64());
+    info->cache = from_u64<VkPipelineCache>(real_handle(r.u64()));
     VkComputePipelineCreateInfo& ci = info->ci;
     ci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     ci.flags = r.u32();
@@ -11322,12 +11338,6 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         for (uint32_t j = 0; j < ns; ++j) signals[i][j] = from_u64<VkSemaphore>(real_handle(r.u64()));
     }
     {
-        uint32_t total_cbs = 0;
-        uint64_t first_cb = 0;
-        for (uint32_t i = 0; i < n; ++i) {
-            total_cbs += static_cast<uint32_t>(buffers[i].size());
-            if (first_cb == 0 && !buffers[i].empty()) first_cb = to_u64(buffers[i][0]);
-        }
         note_fence_submitted(fence);
         // A real wait retires any signal Stud left on that semaphore; see
         // g_semaphores_stud_signalled.
@@ -11355,7 +11365,7 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
     // submitted. A validation complaint that an image is UNDEFINED at
     // submit is a statement about the order of these two, and nothing
     // else in the log relates them.
-    if (std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr) {
+    if (vk_barrier_trace_enabled()) {
         for (uint32_t i = 0; i < n; ++i) {
             for (VkCommandBuffer cb : buffers[i]) {
                 std::printf("stud-render-host: submit cb %llx\n",
@@ -11598,15 +11608,6 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
 }
 
 uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
-    {
-        vk_wire::Reader probe(in.data(), in.size());
-        const uint32_t n = probe.u32();
-        for (uint32_t i = 0; i < n; ++i) {
-            const uint64_t f = real_handle(probe.u64());
-            note_fence_reset(f);
-            framebuffer_lifetimes::fence_gone(f);
-        }
-    }
     Loader& l = loader();
     if (l.vk.vkResetFences == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -11614,7 +11615,11 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
     vk_wire::Reader r(in.data(), in.size());
     const uint32_t n = r.count();
     std::vector<VkFence> fences(n);
-    for (auto& f : fences) f = from_u64<VkFence>(real_handle(r.u64()));
+    for (auto& f : fences) {
+        f = from_u64<VkFence>(real_handle(r.u64()));
+        note_fence_reset(to_u64(f));
+        framebuffer_lifetimes::fence_gone(to_u64(f));
+    }
     // Hold the reset until nothing is waiting on any of these fences.
     //
     // BOUNDED, and it has to be. The comment here used to say the wait
@@ -12564,23 +12569,6 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         pi.pNext = &present_id_info;
     }
 
-    VkSwapchainPresentFenceInfoEXT present_fence_info{};
-    std::vector<VkFence> present_fences;
-    if (g_swapchain_maintenance1_enabled && ns > 0) {
-        present_fences.reserve(ns);
-        for (uint32_t i = 0; i < ns; ++i) {
-            VkFence f = take_present_fence(live[i]);
-            if (f == VK_NULL_HANDLE) break;
-            present_fences.push_back(f);
-        }
-        if (present_fences.size() == ns) {
-            present_fence_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
-            present_fence_info.swapchainCount = ns;
-            present_fence_info.pFences = present_fences.data();
-            present_fence_info.pNext = pi.pNext;
-            pi.pNext = &present_fence_info;
-        }
-    }
     // STUD_VK_PROBE_PIXELS=1: before presenting, copy the swapchain image
     // to a host-visible buffer and report whether it holds anything but
     // black. This is the difference between "the engine renders nothing"
@@ -12614,9 +12602,8 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
             // the pass's work is waited out first (bounded, like every
             // other wait in here) and then they are replaced wholesale.
             if (c.semaphores_tainted) {
-                c.semaphores_tainted = false;
                 bool idle = true;
-                if (l.vk.vkWaitForFences != nullptr && l.vk.vkDeviceWaitIdle != nullptr) {
+                if (l.vk.vkWaitForFences != nullptr) {
                     for (size_t i = 0; i < c.fence.size(); ++i) {
                         if (!c.in_flight[i]) continue;
                         VkResult fr = VK_TIMEOUT;
@@ -12630,23 +12617,34 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
                 if (idle && l.vk.vkDestroySemaphore != nullptr && l.vk.vkCreateSemaphore != nullptr) {
                     VkSemaphoreCreateInfo sci{};
                     sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-                    for (auto& sem : c.done) {
+                    // All of them or none, so a failure leaves the pass
+                    // with semaphores it can use and the next present
+                    // tries again.
+                    std::vector<VkSemaphore> fresh(c.done.size(), VK_NULL_HANDLE);
+                    bool made = true;
+                    for (auto& sem : fresh) {
+                        made = made && l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &sem) ==
+                                           VK_SUCCESS;
+                    }
+                    for (VkSemaphore sem : made ? c.done : fresh) {
                         if (sem != VK_NULL_HANDLE) l.vk.vkDestroySemaphore(l.device, sem, nullptr);
-                        sem = VK_NULL_HANDLE;
-                        l.vk.vkCreateSemaphore(l.device, &sci, nullptr, &sem);
                     }
-                    if (l.vk.vkResetFences != nullptr) {
-                        for (size_t i = 0; i < c.fence.size(); ++i) {
-                            if (c.in_flight[i]) l.vk.vkResetFences(l.device, 1, &c.fence[i]);
-                            c.in_flight[i] = false;
+                    if (made) {
+                        c.done = std::move(fresh);
+                        c.semaphores_tainted = false;
+                        if (l.vk.vkResetFences != nullptr) {
+                            for (size_t i = 0; i < c.fence.size(); ++i) {
+                                if (c.in_flight[i]) l.vk.vkResetFences(l.device, 1, &c.fence[i]);
+                                c.in_flight[i] = false;
+                            }
                         }
-                    }
-                    static int said = 0;
-                    if (said < 4) {
-                        ++said;
-                        std::printf("stud-render-host: a present did not succeed, so the pass's "
-                                    "semaphores were replaced before reuse\n");
-                        std::fflush(stdout);
+                        static int said = 0;
+                        if (said < 4) {
+                            ++said;
+                            std::printf("stud-render-host: a present did not succeed, so the "
+                                        "pass's semaphores were replaced before reuse\n");
+                            std::fflush(stdout);
+                        }
                     }
                 }
             }
@@ -12885,6 +12883,26 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     // jump is gone: the frame is dropped there now, and every early
     // return in this function sweeps before it leaves.
     sweep_retired_chains();
+    // Here and not earlier: a frame can still be dropped above, and a
+    // fence counted for a present that never happens is never signalled.
+    VkSwapchainPresentFenceInfoEXT present_fence_info{};
+    std::vector<VkFence> present_fences;
+    if (g_swapchain_maintenance1_enabled && ns > 0) {
+        present_fences.reserve(ns);
+        for (uint32_t i = 0; i < ns; ++i) {
+            VkFence f = take_present_fence(live[i]);
+            if (f == VK_NULL_HANDLE) break;
+            present_fences.push_back(f);
+        }
+        if (present_fences.size() == ns) {
+            present_fence_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
+            present_fence_info.swapchainCount = ns;
+            present_fence_info.pFences = present_fences.data();
+            present_fence_info.pNext = pi.pNext;
+            pi.pNext = &present_fence_info;
+            for (uint32_t i = 0; i < ns; ++i) note_present_fence_used(live[i]);
+        }
+    }
     // Held across the present itself. It blocks in the driver, so this
     // does hold submits from other threads for its duration -- which is
     // exactly the serialisation the spec asks for, and what was missing.
@@ -14260,7 +14278,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             for (const VkImageMemoryBarrier& b : img) {
                 fr::record(fr::Event::Barrier, to_u64(b.image), b.oldLayout, b.newLayout);
             }
-            if (std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr) {
+            if (vk_barrier_trace_enabled()) {
                 for (const VkImageMemoryBarrier& b : img) {
                     // The command buffer matters as much as the layouts.
                     // Validation reports a layout mismatch against the
@@ -14333,9 +14351,8 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                     // Armed by default this wrote a line every 64 drops
                     // 2.1 million of them in one real session. It is
                     // investigation output; it says so now.
-                    static const bool trace = std::getenv("STUD_VK_TRACE_BARRIERS") != nullptr;
                     static uint64_t announced = 0;
-                    if (trace && (dropped.load() >= announced + 256 || announced == 0)) {
+                    if (vk_barrier_trace_enabled() && (dropped.load() >= announced + 256 || announced == 0)) {
                         announced = dropped.load();
                         std::printf("stud-render-host: dropped %llu image barrier(s): %llu with "
                                     "no image, %llu against a retired one\n",

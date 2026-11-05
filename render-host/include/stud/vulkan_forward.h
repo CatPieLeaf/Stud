@@ -162,6 +162,8 @@ enum class DestroyKind : uint32_t {
     Surface,
     Device,
     Instance,
+    // Not sent: a cache has its own call, VkDestroyPipelineCache. Kept so
+    // every kind below keeps its value.
     PipelineCache,
     Sampler,
     RenderPass,
