@@ -1,4 +1,5 @@
 #include "stud/app_java_classes.h"
+#include "stud/bionic_jvm.h"
 #include "stud/system_theme_bridge.h"
 
 #include <arpa/inet.h>
@@ -1141,7 +1142,48 @@ BEGIN_NATIVE_DESCRIPTOR(WebRtcBuildInfoJava)
 END_NATIVE_DESCRIPTOR
 
 BEGIN_NATIVE_DESCRIPTOR(WebRtcAudioManagerJava)
+{ FakeJni::Constructor<WebRtcAudioManagerJava>{} },
+{ FakeJni::Constructor<WebRtcAudioManagerJava, FakeJni::JLong>{} },
+{ FakeJni::Function<&WebRtcAudioManagerJava::init>{}, "init" },
+{ FakeJni::Function<&WebRtcAudioManagerJava::dispose>{}, "dispose" },
+{ FakeJni::Function<&WebRtcAudioManagerJava::isCommunicationModeEnabled>{},
+  "isCommunicationModeEnabled" },
+{ FakeJni::Function<&WebRtcAudioManagerJava::isDeviceBlacklistedForOpenSLESUsage>{},
+  "isDeviceBlacklistedForOpenSLESUsage" },
 END_NATIVE_DESCRIPTOR
+
+// Hands the engine's audio device module what the platform can do, through the
+// native it registers on this class. Mono at 48 kHz in 10 ms frames both ways,
+// which is what the host's audio serves, and no hardware effects, so WebRTC
+// keeps its own echo cancelling. Reports whether that really happened: the
+// module would otherwise carry on with parameters it never received.
+FakeJni::JBoolean WebRtcAudioManagerJava::init() {
+    auto* jvm = g_process_wide_jvm_for_thread_attach;
+    if (jvm == nullptr) return false;
+    jvm->ensure_env_for_current_thread();
+    FakeJni::LocalFrame frame(*jvm);
+    auto& env = frame.getJniEnv();
+    jobject self = env.createLocalReference(
+        std::static_pointer_cast<WebRtcAudioManagerJava>(shared_from_this()));
+    jclass cls = env.GetObjectClass(self);
+    jmethodID cache = cls != nullptr ? env.GetMethodID(cls, "nativeCacheAudioParameters",
+                                                       "(IIIZZZZZZZIIJ)V")
+                                     : nullptr;
+    if (cache == nullptr) {
+        std::printf("stud: !!! voice chat: the engine has not registered "
+                    "nativeCacheAudioParameters, voice cannot start\n");
+        std::fflush(stdout);
+        return false;
+    }
+    constexpr jint kRate = 48000;
+    constexpr jint kFrames = kRate / 100;
+    env.CallVoidMethod(self, cache, kRate, static_cast<jint>(1), static_cast<jint>(1), JNI_FALSE,
+                       JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE, kFrames,
+                       kFrames, nativeAudioManager);
+    std::printf("stud: voice chat: WebRtcAudioManager.init reported the audio parameters\n");
+    std::fflush(stdout);
+    return true;
+}
 
 BEGIN_NATIVE_DESCRIPTOR(WebRtcAudioRecordJava)
 END_NATIVE_DESCRIPTOR

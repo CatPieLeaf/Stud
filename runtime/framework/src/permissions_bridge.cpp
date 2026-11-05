@@ -1,6 +1,7 @@
 #include "stud/permissions_bridge.h"
 
 #include "stud/app_java_classes.h"
+#include "stud/bionic_jvm.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -12,16 +13,23 @@ namespace stud::jni_bridge {
 namespace {
 
 using SetRequestHandlerRawFn = void (*)(JNIEnv*, jobject, jstring, jstring, jobject);
+using SubscribeRequestRawFn = jobject (*)(JNIEnv*, jobject, jstring, jstring, jobject, jboolean);
+using PublishResponseRawFn = void (*)(JNIEnv*, jobject, jstring, jstring, jstring, jint, jstring);
 
 // The app's own literals. No exported getters exist for this protocol;
 // see the header.
 constexpr const char* kProtocol = "PermissionsProtocol";
 constexpr const char* kMicrophone = "MICROPHONE_ACCESS";
+// Maps to no Android runtime permission at all: the APK lists it, and what
+// the network allows is the host's business.
+constexpr const char* kLocalNetwork = "LOCAL_NETWORK";
 
-// The one permission Stud can honestly claim, and the shape of the
-// answers, both read from the app's own implementation: a status plus the
-// permissions that are still missing.
-bool is_granted(const std::string& permission) { return permission == kMicrophone; }
+// The permissions Stud can honestly claim, and the shape of the answers, both
+// read from the app's own implementation: a status plus the permissions that
+// are still missing.
+bool is_granted(const std::string& permission) {
+    return permission == kMicrophone || permission == kLocalNetwork;
+}
 
 // The engine sends {"permissions":["A","B"]}. Pulled out by hand rather
 // than with a JSON library: this runs inside Process B, where the only
@@ -56,30 +64,32 @@ std::string json_array(const std::vector<std::string>& items) {
     return out;
 }
 
-// AUTHORIZED when everything asked for is granted, ACCESS_DENIED
-// otherwise, the engine's own two words, from its own log strings.
+// AUTHORIZED when everything asked for is granted, DENIED otherwise: the
+// words the app answers with. ACCESS_DENIED is only how the engine's own log
+// spells the outcome.
 std::string status_response(const std::string& payload) {
     std::vector<std::string> missing;
     for (const auto& permission : requested_permissions(payload)) {
         if (!is_granted(permission)) missing.push_back(permission);
     }
-    const char* status = missing.empty() ? "AUTHORIZED" : "ACCESS_DENIED";
+    const char* status = missing.empty() ? "AUTHORIZED" : "DENIED";
     return std::string("{\"status\":\"") + status + "\",\"missingPermissions\":" +
            json_array(missing) + "}";
 }
 
-// What this platform has a permission model for at all. Only the
-// microphone: a desktop has no runtime permission for the rest, and Stud
-// has no camera, contacts, media store or notification permission.
+// What this platform has a permission model for at all: a desktop has no
+// runtime permission for the rest, and Stud has no camera, contacts, media
+// store or notification permission.
 std::string supports_response(const std::string&) {
-    return std::string("{\"permissions\":[\"") + kMicrophone + "\"]}";
+    return "{\"permissions\":" + json_array({kMicrophone, kLocalNetwork}) + "}";
 }
 
 // No upsell, ever. The upsell is Android's "you dismissed this, here is
 // why we need it" screen, which needs a permission dialog to send the
 // user to, and there is none here.
-std::string upsell_response(const std::string&) {
-    return "{\"upsellStatus\":\"HIDE_UPSELL\",\"hiddenUpsellPermissions\":[]}";
+std::string upsell_response(const std::string& payload) {
+    return "{\"upsellStatus\":\"HIDE\",\"hiddenUpsellPermissions\":" +
+           json_array(requested_permissions(payload)) + "}";
 }
 
 }  // namespace
@@ -97,13 +107,47 @@ bool run_permissions_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
         return false;
     }
 
-    // The handlers outlive this frame: the bus keeps calling them for the
-    // life of the process.
+    auto* subscribe_request = reinterpret_cast<SubscribeRequestRawFn>(lib.find_symbol(
+        "Java_com_roblox_universalapp_messagebus_MessageBus_doSubscribeProtocolMethodRequestRaw"));
+    auto* publish_response = reinterpret_cast<PublishResponseRawFn>(lib.find_symbol(
+        "Java_com_roblox_universalapp_messagebus_MessageBus_publishProtocolMethodResponseRaw"));
+
+    // Everything that asks has to hear the answer, and there are two kinds of
+    // asker. The engine's own code takes the handler's return value. The Lua
+    // side publishes its request and listens for a published response, and
+    // that is what decides whether a game offers voice at all: returning the
+    // answer alone, the microphone button stayed away and WebRTC never
+    // started, while the Settings page, which only asks the engine, showed
+    // voice as available. So, as the app does, every answer is published
+    // first and then returned.
+    auto publish = [&jvm, publish_response](const char* method, const std::string& body) {
+        if (publish_response == nullptr) return;
+        static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+        FakeJni::LocalFrame frame(jvm);
+        auto& env = frame.getJniEnv();
+        auto* jni_env = static_cast<JNIEnv*>(&env);
+        auto bus = std::make_shared<MessageBusJava>();
+        call_trapping_abort(publish_response, jni_env, env.createLocalReference(bus),
+                            env.NewStringUTF(kProtocol), env.NewStringUTF(method),
+                            env.NewStringUTF(body.c_str()), static_cast<jint>(0),
+                            env.NewStringUTF("{}"));
+        clear_pending_jni_exception(jni_env, "MessageBus.publishProtocolMethodResponseRaw");
+        std::printf("stud: permissions: %s answered\n", method);
+        std::fflush(stdout);
+    };
+
+    // These outlive this frame: the bus keeps calling them for the life of
+    // the process.
     static std::vector<std::shared_ptr<MessageBusRequestHandlerRawJava>> kept;
+    static std::vector<std::shared_ptr<MessageBusRawCallbackJava>> kept_callbacks;
 
     auto answer = [&](const char* method, std::string (*reply)(const std::string&)) {
         auto handler = std::make_shared<MessageBusRequestHandlerRawJava>();
-        handler->handler = [reply](const std::string& payload) { return reply(payload); };
+        handler->handler = [reply, publish, method](const std::string& payload) {
+            std::string body = reply(payload);
+            publish(method, body);
+            return body;
+        };
         auto bus = std::make_shared<MessageBusJava>();
         const bool ok = call_trapping_abort(set_request_handler, jni_env,
                                             env.createLocalReference(bus),
@@ -112,10 +156,25 @@ bool run_permissions_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
                                             env.createLocalReference(handler));
         clear_pending_jni_exception(jni_env, "MessageBus.setRequestHandlerRaw");
         kept.push_back(handler);
-        std::printf("stud: permissions: %s handler registered: %s\n", method,
-                    ok ? "ok" : "trapped");
+
+        bool heard = false;
+        if (subscribe_request != nullptr) {
+            auto callback = std::make_shared<MessageBusRawCallbackJava>();
+            callback->handler = [reply, publish, method](const std::string& payload) {
+                publish(method, reply(payload));
+            };
+            jobject connection = nullptr;
+            heard = call_trapping_abort_with_result(
+                subscribe_request, connection, jni_env, env.createLocalReference(bus),
+                env.NewStringUTF(kProtocol), env.NewStringUTF(method),
+                env.createLocalReference(callback), static_cast<jboolean>(JNI_FALSE));
+            clear_pending_jni_exception(jni_env, "MessageBus.doSubscribeProtocolMethodRequestRaw");
+            kept_callbacks.push_back(callback);
+        }
+        std::printf("stud: permissions: %s handler registered: %s, requests heard: %s\n", method,
+                    ok ? "ok" : "trapped", heard ? "ok" : "no");
         std::fflush(stdout);
-        return ok;
+        return ok && heard;
     };
 
     bool all = true;

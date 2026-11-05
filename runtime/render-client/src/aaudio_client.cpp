@@ -39,6 +39,10 @@ using stud::render_host::CallId;
 using stud::render_client::connection;
 using stud::render_client::audio_connection;
 
+// Defined with the rest of the API below; feed_input() reads through it.
+extern "C" int32_t AAudioStream_read(void* stream, void* buffer, int32_t frames,
+                                     int64_t timeout_ns);
+
 namespace {
 
 // Real AAudio constants (aaudio/AAudio.h). Only the values that actually
@@ -88,6 +92,8 @@ struct Builder {
     // asked for, and a hot mix clipped against it: loud, bassy passages
     // came out distorted while everything quieter was fine.
     int32_t format = AAUDIO_FORMAT_PCM_FLOAT;
+    // What was asked for by name, which Builder's default above hides.
+    int32_t requested_format = 0;  // AAUDIO_FORMAT_UNSPECIFIED
     int32_t direction = AAUDIO_DIRECTION_OUTPUT;
     int32_t buffer_capacity = kFramesPerBurst * 4;
     AAudioStreamCallback data_callback = nullptr;
@@ -118,7 +124,8 @@ struct Stream {
     // leave a feeder and a state that disagree.
     std::mutex start_mutex;
     std::thread feeder;
-    // Capture streams have no feeder: the engine reads from them.
+    // A capture stream has a feeder only when it has a data callback; without
+    // one the engine reads from it.
     bool is_input = false;
     int32_t channels = kChannels;
 };
@@ -404,6 +411,48 @@ bool set_capture(bool on) {
                                    nullptr) != 0;
 }
 
+// The microphone's half of feed(), for a stream that takes its audio through a
+// data callback, which is how FMOD records for voice chat: whole bursts, as
+// they arrive, on a thread of their own. Everything else about it matches
+// feed(): halts are asked for and ended here, so a callback that stops its own
+// stream cannot wait on itself.
+void feed_input(Stream* s) {
+    const size_t sample_bytes = s->format == AAUDIO_FORMAT_PCM_FLOAT ? sizeof(float) : sizeof(int16_t);
+    const size_t frame_bytes = sample_bytes * static_cast<size_t>(s->channels);
+    std::vector<uint8_t> burst(static_cast<size_t>(kFramesPerBurst) * frame_bytes);
+    // Short, so a stop never waits on a microphone with nothing to say.
+    constexpr int64_t kReadTimeoutNs = 20000000;
+    int32_t have = 0;
+    while (s->running.load(std::memory_order_relaxed)) {
+        settle_state(s);
+        const int32_t state = s->state.load(std::memory_order_relaxed);
+        if (state == AAUDIO_STREAM_STATE_STOPPED) {
+            std::lock_guard<std::mutex> lock(s->start_mutex);
+            if (s->state.load(std::memory_order_relaxed) != AAUDIO_STREAM_STATE_STOPPED) continue;
+            s->running.store(false, std::memory_order_relaxed);
+            break;
+        }
+        if (state != AAUDIO_STREAM_STATE_STARTED) {
+            have = 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        have += AAudioStream_read(s, burst.data() + static_cast<size_t>(have) * frame_bytes,
+                                  kFramesPerBurst - have, kReadTimeoutNs);
+        if (have < kFramesPerBurst) continue;
+        have = 0;
+        const int32_t result =
+            s->data_callback(s, s->data_callback_user, burst.data(), kFramesPerBurst);
+        if (result != AAUDIO_CALLBACK_RESULT_CONTINUE) {
+            std::lock_guard<std::mutex> lock(s->start_mutex);
+            set_capture(false);
+            set_state(s, AAUDIO_STREAM_STATE_STOPPED);
+            s->running.store(false, std::memory_order_relaxed);
+            break;
+        }
+    }
+}
+
 // A pause or a stop. With a feeder it is only asked for, and the feeder ends
 // it; see settle_state(). With none there is nothing to wait for.
 int32_t request_halt(Stream* s, int32_t going, int32_t gone) {
@@ -429,7 +478,10 @@ int32_t AAudioStreamBuilder_delete(void* builder) {
 }
 
 void AAudioStreamBuilder_setFormat(void* builder, int32_t format) {
-    if (builder != nullptr) static_cast<Builder*>(builder)->format = format;
+    if (builder != nullptr) {
+        static_cast<Builder*>(builder)->format = format;
+        static_cast<Builder*>(builder)->requested_format = format;
+    }
     std::fprintf(stderr, "stud: libaaudio: engine asked for format %d (%s)\n", format,
                  format == AAUDIO_FORMAT_PCM_FLOAT  ? "float"
                  : format == AAUDIO_FORMAT_PCM_I16 ? "i16"
@@ -471,13 +523,20 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
             return AAUDIO_ERROR_INVALID_STATE;
         }
         auto* input = new Stream();
-        // What AAudioStream_read can deliver; anything else reads as float.
-        input->format = b->format == AAUDIO_FORMAT_PCM_I16 ? AAUDIO_FORMAT_PCM_I16
-                                                           : AAUDIO_FORMAT_PCM_FLOAT;
+        // 16-bit unless float was asked for by name. An output's default is
+        // float for headroom (see Builder), which a microphone has no use for,
+        // and a device's capture default is 16-bit.
+        input->format = b->requested_format == AAUDIO_FORMAT_PCM_FLOAT ? AAUDIO_FORMAT_PCM_FLOAT
+                                                                       : AAUDIO_FORMAT_PCM_I16;
         input->channels = 1;
         input->is_input = true;
+        input->buffer_capacity = b->buffer_capacity;
+        input->data_callback = b->data_callback;
+        input->data_callback_user = b->data_callback_user;
         *stream_out = input;
-        std::printf("stud: libaaudio: input stream opened\n");
+        std::printf("stud: libaaudio: input stream opened (%s, callback=%s)\n",
+                    input->format == AAUDIO_FORMAT_PCM_FLOAT ? "float" : "i16",
+                    input->data_callback != nullptr ? "yes" : "no");
         std::fflush(stdout);
         return AAUDIO_OK;
     }
@@ -518,14 +577,16 @@ int32_t AAudioStream_requestStart(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
     std::lock_guard<std::mutex> lock(s->start_mutex);
-    // A capture stream has nothing to feed, the engine reads from it.
     if (s->is_input && !set_capture(true)) return AAUDIO_ERROR_INVALID_STATE;
     set_state(s, AAUDIO_STREAM_STATE_STARTED);
-    if (!s->is_input && !s->running.exchange(true)) {
+    // A capture stream with no callback has nothing to feed, the engine reads
+    // from it.
+    const bool fed = !s->is_input || s->data_callback != nullptr;
+    if (fed && !s->running.exchange(true)) {
         // One that stopped itself has returned but is still joinable, and
         // assigning over a joinable thread ends the process.
         if (s->feeder.joinable()) s->feeder.join();
-        s->feeder = std::thread(feed, s);
+        s->feeder = std::thread(s->is_input ? feed_input : feed, s);
     }
     return AAUDIO_OK;
 }

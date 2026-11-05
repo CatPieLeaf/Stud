@@ -17,6 +17,9 @@ namespace stud::jni_bridge {
 // in those words. So voice chat could never start in Stud, whatever the
 // audio path did.
 //
+// The Lua side asks too, by publishing a request and waiting for a published
+// response, so each answer goes out both ways; see run_permissions_bridge().
+//
 // Five real request handlers, read from the app's own permissions
 // protocol implementation: PermissionsRequest, HasPermissions,
 // SupportsPermissions, ShouldShowPermissionUpsell and
@@ -34,6 +37,9 @@ namespace stud::jni_bridge {
 //                         on the host. Whether a microphone exists
 //                         is a different question, answered by the device
 //                         itself when the stream opens.
+//   LOCAL_NETWORK     , authorized. It is no Android runtime permission;
+//                         the APK lists it, and the host decides what the
+//                         network allows.
 //   everything else   , not supported, and therefore missing. Stud has
 //                         no camera, no contacts, no media store and no
 //                         notification permission model. Claiming those

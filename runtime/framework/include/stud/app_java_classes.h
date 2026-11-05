@@ -2215,9 +2215,24 @@ public:
 
 // org.webrtc.voiceengine.WebRtcAudioManager, same WebRTC helpers_android.cc
 // FindClass sequence as WebRtcBuildInfoJava above, next class in line.
+//
+// The one piece of WebRTC's Java audio this engine really uses: voice setup
+// asks it for the platform's audio parameters. The sound itself does not come
+// through Java here. The engine's strings hold neither WebRtcAudioRecord's
+// methods nor WebRtcAudioTrack's; it goes through FMOD and AAudio.
 class WebRtcAudioManagerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("org/webrtc/voiceengine/WebRtcAudioManager")
+    FakeJni::JLong nativeAudioManager = 0;
+    WebRtcAudioManagerJava() = default;
+    explicit WebRtcAudioManagerJava(FakeJni::JLong native) : nativeAudioManager(native) {}
+
+    FakeJni::JBoolean init();
+    void dispose() {}
+    // Nothing here sets Android's in-communication audio mode.
+    FakeJni::JBoolean isCommunicationModeEnabled() { return false; }
+    // Stud's libOpenSLES is an empty stand-in, so OpenSL ES is ruled out.
+    FakeJni::JBoolean isDeviceBlacklistedForOpenSLESUsage() { return true; }
 };
 
 // org.webrtc.voiceengine.WebRtcAudioRecord / WebRtcAudioTrack, same
