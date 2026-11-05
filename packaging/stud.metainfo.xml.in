@@ -98,6 +98,23 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.10" date="2026-11-05">
+      <description>
+        <ul>
+          <li>New: logging in and creating accounts now happen on Roblox's own website, inside a Stud window</li>
+          <li>Fixed: the login security check that never finished</li>
+          <li>New: Stud checks a Roblox APK before importing it, and says what's missing if it can't run it</li>
+          <li>Fixed: a crafted link could make Stud send your Roblox session to another website</li>
+          <li>Fixed: music no longer lags for a moment when you open the Esc menu</li>
+          <li>The microphone now only runs while Roblox is actually using it</li>
+          <li>X11: text boxes stay inside Stud's window, OpenGL mode shows its window again, and MangoHud no longer breaks it</li>
+          <li>Discord: Rich Presence now finds Flatpak, Vesktop/Equibop and Snap Discord</li>
+          <li>Multiple monitors: rotated screens and refresh rates are now correct</li>
+          <li>Fixed: rare random crashes, and freezes that never ended</li>
+          <li>Dozens of safety and stability fixes</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.9" date="2026-11-02">
       <description>
         <ul>

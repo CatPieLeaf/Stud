@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.9
+Version:        1.2.10
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -122,6 +122,19 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Thu Nov 05 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.10-1
+- New: logging in and creating accounts now happen on Roblox's own website, inside a Stud window
+- Fixed: the login security check that never finished
+- New: Stud checks a Roblox APK before importing it, and says what's missing if it can't run it
+- Fixed: a crafted link could make Stud send your Roblox session to another website
+- Fixed: music no longer lags for a moment when you open the Esc menu
+- The microphone now only runs while Roblox is actually using it
+- X11: text boxes stay inside Stud's window, OpenGL mode shows its window again, and MangoHud no longer breaks it
+- Discord: Rich Presence now finds Flatpak, Vesktop/Equibop and Snap Discord
+- Multiple monitors: rotated screens and refresh rates are now correct
+- Fixed: rare random crashes, and freezes that never ended
+- Dozens of safety and stability fixes
+
 * Mon Nov 02 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.9-1
 - Fixed: the Flatpak started, but Roblox never opened
 - New defaults: HiDPI off, upscaling on (RAVU on Vulkan, SGSR on OpenGL)
