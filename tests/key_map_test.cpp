@@ -15,6 +15,7 @@
 #include "stud/key_compose.h"
 
 #include "stud/keymap_chars.h"
+#include "check.h"
 
 #include <xkbcommon/xkbcommon.h>
 
@@ -23,26 +24,9 @@
 
 namespace {
 
-int g_failures = 0;
-
-void check(bool ok, const std::string& what) {
-    if (!ok) {
-        std::printf("FAIL: %s\n", what.c_str());
-        ++g_failures;
-    }
-}
-
 bool has_char(const uint64_t set[2], char c) {
     const unsigned char u = static_cast<unsigned char>(c);
     return (set[u / 64] & (1ull << (u % 64))) != 0;
-}
-
-void check_eq(const std::string& got, const std::string& want, const std::string& what) {
-    if (got != want) {
-        std::printf("FAIL: %s (got \"%s\", wanted \"%s\")\n", what.c_str(), got.c_str(),
-                    want.c_str());
-        ++g_failures;
-    }
 }
 
 // Android key codes, by name, so the expectations below read as intent.
@@ -361,10 +345,6 @@ int main() {
               "a character with no US position stays put");
     }
 
-    if (g_failures != 0) {
-        std::printf("%d check(s) failed\n", g_failures);
-        return 1;
-    }
     std::printf("key_map_test: all checks passed\n");
     return 0;
 }

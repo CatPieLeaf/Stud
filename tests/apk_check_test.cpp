@@ -2,6 +2,7 @@
 // what the engine exports.
 
 #include "stud/android_glue.h"
+#include "check.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -14,14 +15,6 @@
 namespace {
 
 namespace glue = stud::android_glue;
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
 
 bool refused(const std::vector<uint8_t>& dex) {
     try {

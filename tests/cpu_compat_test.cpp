@@ -12,6 +12,7 @@
 
 #include "stud/cpu_compat.h"
 #include "stud/x86_emulator.h"
+#include "check.h"
 
 #include <cpuid.h>
 #include <signal.h>
@@ -21,14 +22,6 @@
 #include <cstring>
 
 namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
 
 void test_feature_detection() {
     auto features = stud::cpu_compat::detect_cpu_features();

@@ -1,12 +1,9 @@
-// M4 test: FFlag overrides, including the exact graphics-API flags found
-// in libroblox.so's own strings (DebugGraphicsDisableVulkan,
-// DebugGraphicsPreferVulkan, GraphicsMode, GraphicsQualityLevel), proves
-// Stud's flag system can carry Vulkan/OpenGL mode overrides end-to-end from
-// a user-editable JSON file to the wire format nativePreloadFlagOverrides
-// expects. See the engineering notes, milestone M4 and the "Nvidia stability"
-// section for why this matters.
+// FFlag overrides, from a user-editable JSON file to the wire format
+// nativePreloadFlagOverrides expects, including the graphics flags named in
+// libroblox.so's own strings.
 
 #include "stud/flag_overrides.h"
+#include "check.h"
 
 #include <nlohmann/json.hpp>
 
@@ -14,24 +11,13 @@
 #include <cstdlib>
 #include <fstream>
 
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
-
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::fprintf(stderr, "usage: %s <scratch-dir>\n", argv[0]);
         return 1;
     }
     std::string dir = argv[1];
+    fresh_dir(dir);
 
     // Missing file -> empty overrides, not an error (no override file is
     // the common case).

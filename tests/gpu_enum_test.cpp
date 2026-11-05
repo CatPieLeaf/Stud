@@ -1,34 +1,21 @@
-// M8 test: real GPU enumeration (ui/src/gpu_enum.h) against this
-// machine's actual Vulkan driver, not a mock, the real
-// vkEnumeratePhysicalDevices output.
+// Real GPU enumeration (ui/src/gpu_enum.h) against this machine's Vulkan driver.
+// Skipped on a machine with none.
 
 #include "gpu_enum.h"
+#include "check.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
-
 int main() {
     auto gpus = stud::ui::enumerate_gpus();
 
-    // Honest either-outcome check, a machine with no usable Vulkan
-    // driver should get an empty, non-crashing result (already exercised
-    // structurally by enumerate_gpus()'s own vkCreateInstance failure
-    // path); this development machine has real GPUs, so assert real
-    // content was found, not just "didn't crash".
-    check(!gpus.empty(), "at least one real GPU was enumerated on this machine");
+    // Reaching this line with an empty list is the no-driver path working.
+    if (gpus.empty()) {
+        std::printf("no Vulkan device on this machine\n");
+        return kSkipped;
+    }
 
     for (const auto& gpu : gpus) {
         check(!gpu.name.empty(), "enumerated GPU has a real, non-empty device name");
@@ -50,13 +37,34 @@ int main() {
         }
     }
 
-    // And no real GPU is listed twice.
+    // And no real GPU is listed twice. Only the UUID can say so: a duplicate
+    // from a second ICD directory has an index of its own.
     for (size_t i = 0; i < gpus.size(); ++i) {
         for (size_t j = i + 1; j < gpus.size(); ++j) {
-            check(gpus[i].device_index != gpus[j].device_index,
-                  "no two entries share a device index");
+            check(gpus[i].uuid.empty() || gpus[i].uuid != gpus[j].uuid,
+                  "no two entries are the same device");
         }
     }
+
+    // The saved choice: the UUID decides, and the index stands in without one.
+    using stud::config::GpuSelection;
+    using stud::ui::chosen_gpu_index;
+    const auto& last = gpus.back();
+    check(chosen_gpu_index(GpuSelection{}) == stud::ui::default_gpu_index(),
+          "nothing chosen yet gets the default device");
+    if (!last.uuid.empty()) {
+        GpuSelection moved;
+        moved.device_name = last.name;
+        moved.device_uuid = last.uuid;
+        moved.device_index = last.device_index + 1000;
+        check(chosen_gpu_index(moved) == last.device_index,
+              "a device that moved is found by its UUID, not the stale index");
+    }
+    GpuSelection gone;
+    gone.device_name = "A card that was removed";
+    gone.device_uuid = "not a real uuid";
+    gone.device_index = 42;
+    check(chosen_gpu_index(gone) == 42, "a UUID nothing has falls back to the saved index");
 
     std::printf("all gpu-enum checks passed\n");
     return 0;

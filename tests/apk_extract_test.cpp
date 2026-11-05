@@ -11,6 +11,7 @@
 
 #include "stud/android_glue.h"
 #include "stud/ndk_types.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -20,14 +21,6 @@
 #include <unistd.h>
 
 namespace {
-
-void check(bool condition, const std::string& what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what.c_str());
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what.c_str());
-}
 
 bool file_exists(const std::string& path) {
     struct stat st{};
@@ -43,6 +36,8 @@ int main(int argc, char** argv) {
     }
     std::string apk_path = argv[1];
     std::string dest_dir = argv[2];
+    fresh_dir(dest_dir);
+    std::filesystem::remove(dest_dir + "/../escaped.txt");
     // Bundles unpack under this; never the real one of whoever runs the test.
     ::setenv("XDG_STATE_HOME", (dest_dir + "/state").c_str(), 1);
 

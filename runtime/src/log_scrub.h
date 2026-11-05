@@ -19,12 +19,25 @@ inline std::string scrub_engine_log_line(std::string_view line) {
     for (size_t at = line.find(kWord); at != std::string_view::npos;
          at = line.find(kWord, at + 1)) {
         if (at == 0 || (line[at - 1] != 't' && line[at - 1] != 'T')) continue;
+        // What can sit between the word and its separator: "ticket", the same
+        // again inside an escaped string, ticket : x, and %22ticket%22.
         size_t after = at + kWord.size();
-        if (after < line.size() && line[after] == '"') ++after;  // "ticket":
+        for (;;) {
+            if (after < line.size() &&
+                (line[after] == '"' || line[after] == '\\' || line[after] == ' ')) {
+                ++after;
+            } else if (line.substr(after, 3) == "%22") {
+                after += 3;
+            } else {
+                break;
+            }
+        }
         const std::string_view rest = line.substr(after);
         size_t value = std::string_view::npos;
         if (rest.rfind("=", 0) == 0 || rest.rfind(":", 0) == 0) value = after + 1;
-        if (rest.rfind("%3d", 0) == 0 || rest.rfind("%3D", 0) == 0) value = after + 3;
+        for (const std::string_view encoded : {"%3d", "%3D", "%3a", "%3A"}) {
+            if (rest.rfind(encoded, 0) == 0) value = after + encoded.size();
+        }
         if (value == std::string_view::npos) continue;
         return std::string(line.substr(0, value)) + "<removed>";
     }

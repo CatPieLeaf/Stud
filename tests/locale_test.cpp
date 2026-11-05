@@ -9,29 +9,13 @@
 // actually ships.
 
 #include "stud/system_locale.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 
 namespace {
-
-int g_failures = 0;
-
-void check(bool ok, const std::string& what) {
-    if (!ok) {
-        std::printf("FAIL: %s\n", what.c_str());
-        ++g_failures;
-    }
-}
-
-void check_eq(const std::string& got, const std::string& want, const std::string& what) {
-    if (got != want) {
-        std::printf("FAIL: %s (got \"%s\", wanted \"%s\")\n", what.c_str(), got.c_str(),
-                    want.c_str());
-        ++g_failures;
-    }
-}
 
 void clear_locale_env() {
     ::unsetenv("STUD_LOCALE");
@@ -145,10 +129,6 @@ int main() {
     }
     clear_locale_env();
 
-    if (g_failures != 0) {
-        std::printf("%d check(s) failed\n", g_failures);
-        return 1;
-    }
     std::printf("locale_test: all checks passed\n");
     return 0;
 }

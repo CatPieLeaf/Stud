@@ -1,6 +1,7 @@
 #include "stud/stud_paths.h"
 #include "stud/app_bridge.h"
 #include "stud/app_java_classes.h"  // real_app_version()
+#include "stud/atomic_file.h"
 
 #include "stud/trap_recovery.h"
 
@@ -49,12 +50,7 @@ std::string real_persistent_android_id() {
     std::filesystem::create_directories(dir_for_android_id(), ec);
     // Beside it and renamed over, so a crash cannot leave half an id that the
     // next launch would replace with a different device.
-    const std::string temp = path + ".tmp";
-    {
-        std::ofstream out(temp);
-        out << generated;
-    }
-    std::filesystem::rename(temp, path, ec);
+    write_file_atomically(path, generated);
     return generated;
 }
 

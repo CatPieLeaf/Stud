@@ -1,26 +1,16 @@
-// M8 test: real QtKeychain-backed credential storage (ui/src/credential_store.h).
-// Runs against this machine's real keychain backend (KWallet, under this
-// live Plasma session), not a mock. Uses a distinct test key so it
-// doesn't collide with any real stored Roblox cookie.
+// Real QtKeychain-backed credential storage (ui/src/credential_store.h), against
+// this machine's keychain, not a mock. Uses a distinct test key so it doesn't
+// collide with a stored Roblox cookie. Skipped where there is no session bus to
+// reach a keychain through.
 
 #include "credential_store.h"
+#include "check.h"
 
 #include <QCoreApplication>
+#include <QDBusConnection>
 
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main(int argc, char** argv) {
     // QtKeychain's Job classes need a running Qt event loop (QCoreApplication)
@@ -28,6 +18,10 @@ int main(int argc, char** argv) {
     // even though stud::ui's wrapper blocks synchronously via a nested
     // QEventLoop per call.
     QCoreApplication app(argc, argv);
+    if (!QDBusConnection::sessionBus().isConnected()) {
+        std::printf("no session bus, so no keychain to test\n");
+        return kSkipped;
+    }
 
     const QString kTestKey = "stud-credential-store-test-key";
 

@@ -2,23 +2,12 @@
 // Roblox would have bumped it to.
 
 #include "stud/linker.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main() {
     using Names = std::vector<std::string>;

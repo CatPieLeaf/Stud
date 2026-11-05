@@ -14,6 +14,7 @@
 
 #include "stud/bionic_runtime.h"
 #include "stud/property_area.h"
+#include "check.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -25,14 +26,6 @@
 #include <sstream>
 
 namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
 
 // Known host paths a real Linux system's GPU driver stack lives
 // under, if any of these show up as a *bind source* (the host-side
@@ -51,6 +44,20 @@ const char* kForbiddenSubstrings[] = {
     "/usr/lib/x86_64-linux-gnu",
     "/usr/lib64/nvidia",
 };
+
+// Whether a bind's host side is a system library tree. Every driver lives under
+// one of these on every distribution, /usr/lib64 on Fedora and /usr/lib on Arch
+// among them, and the sandbox binds nothing from any of them.
+bool binds_system_libraries(const std::vector<std::string>& argv) {
+    for (std::size_t i = 0; i + 2 < argv.size(); ++i) {
+        if (argv[i].find("bind") == std::string::npos || argv[i].rfind("--", 0) != 0) continue;
+        const std::string& source = argv[i + 1];
+        for (const std::string root : {"/usr", "/lib", "/lib64"}) {
+            if (source == root || source.rfind(root + "/", 0) == 0) return true;
+        }
+    }
+    return false;
+}
 
 uint32_t u32(const std::vector<char>& data, size_t at) {
     uint32_t value;
@@ -108,7 +115,7 @@ int main() {
     using namespace stud::bionic_runtime;
 
     ProcessBConfig config;
-    config.executable_path = "/home/testuser/Stud/stud/build/process_b-prefix/src/process_b-build/"
+    config.executable_path = "/home/testuser/Stud/stud/build/runtime-prefix/src/runtime-build/"
                               "stud-runtime-bionic";
     config.args = {"/home/testuser/.cache/stud/libroblox.so", "--apk",
                     "/home/testuser/game.apk", "--ipc-connect",
@@ -147,11 +154,17 @@ int main() {
     }
     std::printf("ok: no bwrap argv entry references a known real host GPU driver path\n");
 
-    // Specific check on top of the substring scan: /dev is bound
-    // as a whole (device *nodes*, not driver code; see this test's
-    // own doc comment for why that's an accepted, understood tradeoff,
-    // not this test's concern) but must never ALSO get a real driver
-    // library directory bound over it via --bind/--ro-bind.
+    // The rule the scan above only approximates: nothing from a system
+    // library tree at all. Shown to fire, since a check that cannot fail
+    // proves nothing.
+    check(!binds_system_libraries(argv), "no bind comes from a system library tree");
+    ProcessBConfig leaky = config;
+    leaky.extra_binds.push_back({"/usr/lib64", /*writable=*/false});
+    check(binds_system_libraries(build_process_b_argv(
+              leaky, "/usr/bin/bwrap", "/home/testuser/stud/third_party/android-bionic",
+              "/home/testuser/stud/third_party/android-bionic/linker64")),
+          "and binding /usr/lib64 would be caught");
+
     int bind_count = 0;
     for (std::size_t i = 0; i + 2 < argv.size(); ++i) {
         if (argv[i] == "--bind" || argv[i] == "--ro-bind") {

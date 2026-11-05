@@ -4,29 +4,20 @@
 // mocked.
 
 #include "stud/ipc.h"
+#include "check.h"
 
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <thread>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main(int argc, char** argv) {
     if (argc != 2) {
         std::fprintf(stderr, "usage: %s <scratch-dir>\n", argv[0]);
         return 1;
     }
+    fresh_dir(argv[1]);
     std::string socket_path = std::string(argv[1]) + "/launch.sock";
 
     // No server listening yet, connect fails clearly.
@@ -51,9 +42,28 @@ int main(int argc, char** argv) {
     sent.deep_link_join_attempt_id = "f923ce81-874a-4ce8-af0d-bc365d3a2153";
     sent.deep_link_referred_by_player_id = 42;
     sent.deep_link_join_attempt_origin = "PlayButton";
+    // Every field away from its default, so one the serializer forgot fails
+    // below rather than arriving looking right.
+    sent.deep_link_game_instance_id = "37ecc77f-db64-47e9-8c14-d3d1dcb71e3";
+    sent.deep_link_link_code = "12345678901234567890";
+    sent.deep_link_access_code = "abc-123";
+    sent.deep_link_user_id = 261;
+    sent.system_dark_mode = true;
+    sent.authenticated_user_id = 77;
+    sent.authenticated_username = "someone";
+    sent.authenticated_display_name = "Some One";
+    sent.fresh_login = true;
+    sent.web_login = false;
 
-    std::thread server_thread(
-        [&]() { stud::ipc::serve_launch_payload_once(socket_path, sent, /*timeout_ms=*/5000); });
+    // A server that times out is a failed connect below, not an abort here.
+    const auto serve = [&socket_path](const stud::ipc::LaunchPayload& payload) {
+        try {
+            stud::ipc::serve_launch_payload_once(socket_path, payload, /*timeout_ms=*/5000);
+        } catch (const stud::ipc::IpcError& e) {
+            std::fprintf(stderr, "the test server gave up: %s\n", e.what());
+        }
+    };
+    std::thread server_thread(serve, std::cref(sent));
 
     // Real race, resolved the honest way: the client may attempt to
     // connect before the server has bound+listened yet, retry briefly
@@ -90,13 +100,29 @@ int main(int argc, char** argv) {
           "deepLinkReferredByPlayerId round-trips exactly");
     check(received.deep_link_join_attempt_origin == sent.deep_link_join_attempt_origin,
           "deepLinkJoinAttemptOrigin round-trips exactly");
+    check(received.deep_link_game_instance_id == sent.deep_link_game_instance_id,
+          "deepLinkGameInstanceId round-trips exactly");
+    check(received.deep_link_link_code == sent.deep_link_link_code,
+          "deepLinkLinkCode round-trips exactly");
+    check(received.deep_link_access_code == sent.deep_link_access_code,
+          "deepLinkAccessCode round-trips exactly");
+    check(received.deep_link_user_id == sent.deep_link_user_id,
+          "deepLinkUserId round-trips exactly");
+    check(received.system_dark_mode, "systemDarkMode round-trips");
+    check(received.authenticated_user_id == sent.authenticated_user_id,
+          "authenticatedUserId round-trips exactly");
+    check(received.authenticated_username == sent.authenticated_username,
+          "authenticatedUsername round-trips exactly");
+    check(received.authenticated_display_name == sent.authenticated_display_name,
+          "authenticatedDisplayName round-trips exactly");
+    check(received.fresh_login, "freshLogin round-trips");
+    check(!received.web_login, "webLogin round-trips");
 
     // Bytes that are not UTF-8: a settings body is whatever the network sent,
     // and this runs on a thread nothing else would catch a throw on.
     stud::ipc::LaunchPayload invalid = sent;
     invalid.client_settings_body = "before \xff after";
-    std::thread invalid_server(
-        [&]() { stud::ipc::serve_launch_payload_once(socket_path, invalid, /*timeout_ms=*/5000); });
+    std::thread invalid_server(serve, std::cref(invalid));
     stud::ipc::LaunchPayload repaired;
     connected = false;
     for (int attempt = 0; attempt < 50 && !connected; ++attempt) {
@@ -110,6 +136,9 @@ int main(int argc, char** argv) {
     invalid_server.join();
     check(connected && repaired.session_cookie == sent.session_cookie,
           "a payload with invalid UTF-8 still arrives");
+    check(repaired.client_settings_body.find("before") == 0 &&
+              repaired.client_settings_body.find("after") != std::string::npos,
+          "and the rest of that body survives the bad byte");
 
     // Timeout path: a server with no client ever connecting throws
     // IpcError instead of hanging forever.

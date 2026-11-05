@@ -1,25 +1,25 @@
-// M4 test: same approach as jni_bridge_test.cpp, build a DeviceParams and
-// an InitParams (wrapping it plus a PlatformParams) and read every field
-// back through genuine JNI accessors, not direct C++ member access.
-// See the engineering notes, milestone M4.
+// Same approach as jni_bridge_test.cpp: build a DeviceParams and an InitParams
+// wrapping it, and read them back through JNI accessors.
 
 #include "stud/device_params.h"
 #include "stud/init_params.h"
 #include "stud/platform_params.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-namespace {
+// InitParams carries an Activity, whose descriptors live in app_java_classes.cpp,
+// which is bionic-only. Nothing here calls one, so they can stand empty.
+namespace stud::jni_bridge {
+BEGIN_NATIVE_DESCRIPTOR(ContextJava)
+END_NATIVE_DESCRIPTOR
+BEGIN_NATIVE_DESCRIPTOR(ActivityJava)
+END_NATIVE_DESCRIPTOR
+}  // namespace stud::jni_bridge
 
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
+namespace {
 
 std::string get_string_field(FakeJni::Env& env, jobject obj, jclass cls, const char* name) {
     jobject field = env.GetObjectField(obj, env.GetFieldID(cls, name, "Ljava/lang/String;"));
@@ -66,6 +66,8 @@ int main() {
           "DeviceParams.cpu64Bit is true");
     check(env.GetBooleanField(dref, env.GetFieldID(dcls, "isLowRamDevice", "Z")) == JNI_FALSE,
           "DeviceParams.isLowRamDevice is false");
+    check(env.GetBooleanField(dref, env.GetFieldID(dcls, "isChrome", "Z")) == JNI_FALSE,
+          "DeviceParams.isChrome is false, matching the default User-Agent");
     check(env.GetLongField(dref, env.GetFieldID(dcls, "lowMemoryKillerBackgroundAppThreshold", "J")) == 0,
           "DeviceParams.lowMemoryKillerBackgroundAppThreshold defaults to 0 (no Android LMK on Linux)");
 
@@ -79,12 +81,14 @@ int main() {
           "InitParams.baseURL() round-trips");
     check(call_string_method(env, iref, icls, "userAgent") == "Stud/0.1",
           "InitParams.userAgent() round-trips");
-    check(env.CallBooleanMethod(iref, env.GetMethodID(icls, "isTablet", "()Z")) == JNI_FALSE,
-          "InitParams.isTablet() is false (desktop spoof)");
+    check(env.CallBooleanMethod(iref, env.GetMethodID(icls, "isTablet", "()Z")) == JNI_TRUE,
+          "InitParams.isTablet() is true, matching the User-Agent's form factor");
     check(env.CallBooleanMethod(iref, env.GetMethodID(icls, "isPotato", "()Z")) == JNI_FALSE,
           "InitParams.isPotato() is false");
     check(env.CallBooleanMethod(iref, env.GetMethodID(icls, "isVrDevice", "()Z")) == JNI_FALSE,
           "InitParams.isVrDevice() is false");
+    check(env.CallLongMethod(iref, env.GetMethodID(icls, "pioneerPlaceId", "()J")) == 0,
+          "InitParams.pioneerPlaceId() answers");
 
     jobject nested_device_ref = env.CallObjectMethod(
         iref, env.GetMethodID(icls, "deviceParams", "()Lcom/roblox/engine/jni/model/DeviceParams;"));

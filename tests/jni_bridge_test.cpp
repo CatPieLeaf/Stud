@@ -1,29 +1,13 @@
-// M4 test (first increment): builds a PlatformParams object; Stud's
-// desktop-vs-mobile spoof, ground-truth-traced from the real Roblox APK
-// (see the engineering notes), via libjnivm's real FakeJni::Jvm/JNIEnv, then
-// reads every field back through genuine JNI field accessors (not direct
-// C++ member access) to prove the object is shaped exactly as
-// libroblox.so's native code, using real JNI calls, would expect. Not yet
-// tested against the real libroblox.so itself, blocked on M2's
-// DT_GNU_HASH gap. See the engineering notes, milestone M4.
+// Builds a PlatformParams, then reads every field back through JNI accessors on
+// libjnivm's FakeJni::Jvm, not C++ member access, to prove the object is shaped
+// as libroblox.so's native code expects.
 
 #include "stud/platform_params.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main() {
     FakeJni::Jvm jvm;
@@ -78,8 +62,8 @@ int main() {
           "isLuaGamesPageEnabled is true");
     check(env.GetBooleanField(lua_ref, env.GetFieldID(lua_cls, "isLuaChatEnabled", "Z")) == JNI_TRUE,
           "isLuaChatEnabled is true");
-    check(env.GetBooleanField(lua_ref, env.GetFieldID(lua_cls, "isTablet", "Z")) == JNI_FALSE,
-          "PlatformParamsWithLuaFlags.isTablet is false (desktop spoof)");
+    check(env.GetBooleanField(lua_ref, env.GetFieldID(lua_cls, "isTablet", "Z")) == JNI_TRUE,
+          "PlatformParamsWithLuaFlags.isTablet is true, as InitParams' own is");
 
     // shared_ptr<PlatformParamsWithLuaFlags> must upcast cleanly into
     // InitParams.platformParams (typed as shared_ptr<PlatformParams>).

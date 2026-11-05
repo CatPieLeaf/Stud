@@ -8,6 +8,10 @@
 // switch and forgetting the document is a build failure rather than a
 // silent omission.
 //
+// Whole names only: "STUD_DEBUG" is not documented by "STUD_DEBUG_LOG" being
+// there, which is how a real variable once went unnoticed. Reads go through
+// getenv and a few helpers; add a helper to the pattern when it's added.
+//
 // Deliberately one-directional: a variable in the source and not in the
 // document fails. A name in the document that the source no longer reads
 // does not, because the document also covers variables Stud only ever
@@ -35,7 +39,7 @@ std::string read_file(const fs::path& p) {
 bool is_ours(const fs::path& p) {
     for (const auto& part : p) {
         const std::string s = part.string();
-        if (s == "build" || s == "third_party" || s == ".git" || s == ".claude" ||
+        if (s.rfind("build", 0) == 0 || s == "third_party" || s == ".git" || s == ".claude" ||
             s == ".flatpak-builder") {
             return false;
         }
@@ -55,9 +59,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "env_documented_test: %s does not exist\n", doc.string().c_str());
         return 1;
     }
-    const std::string documented = read_file(doc);
+    const std::string doc_text = read_file(doc);
+    const std::regex name_pattern("STUD_[A-Z0-9_]+");
+    std::set<std::string> documented;
+    for (std::sregex_iterator it(doc_text.begin(), doc_text.end(), name_pattern), end; it != end;
+         ++it) {
+        documented.insert(it->str());
+    }
 
-    const std::regex pattern("getenv\\(\"(STUD_[A-Z0-9_]+)\"\\)");
+    const std::regex pattern(
+        "(?:getenv|env_or_null|qEnvironmentVariable[A-Za-z]*|env\\.value|env\\.contains)"
+        "\\((?:QStringLiteral\\()?\"(STUD_[A-Z0-9_]+)\"");
     std::set<std::string> missing;
     std::set<std::string> seen;
 
@@ -66,13 +78,13 @@ int main(int argc, char** argv) {
         const fs::path& p = entry.path();
         if (!is_ours(fs::relative(p, root))) continue;
         const std::string ext = p.extension().string();
-        if (ext != ".cpp" && ext != ".h" && ext != ".hpp") continue;
+        if (ext != ".cpp" && ext != ".c" && ext != ".h" && ext != ".hpp") continue;
 
         const std::string text = read_file(p);
         for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
             const std::string name = (*it)[1].str();
             seen.insert(name);
-            if (documented.find(name) == std::string::npos) missing.insert(name);
+            if (documented.count(name) == 0) missing.insert(name);
         }
     }
 

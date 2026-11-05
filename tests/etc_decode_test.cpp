@@ -105,6 +105,12 @@ bool run_on(VkInstance instance, VkPhysicalDevice pd) {
             mai.memoryTypeIndex = i;
         }
     }
+    if (mai.memoryTypeIndex == UINT32_MAX) {
+        std::printf("  no host-visible coherent memory for this buffer, skipping this device\n");
+        vkDestroyBuffer(dev, buffer, nullptr);
+        vkDestroyDevice(dev, nullptr);
+        return true;
+    }
     VkDeviceMemory memory = VK_NULL_HANDLE;
     CHECK_VK(vkAllocateMemory(dev, &mai, nullptr, &memory));
     CHECK_VK(vkBindBufferMemory(dev, buffer, memory, 0));
@@ -203,6 +209,14 @@ bool run_on(VkInstance instance, VkPhysicalDevice pd) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
         vkCmdPushConstants(cb, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
         vkCmdDispatch(cb, (bx + 7) / 8, (by + 7) / 8, layers);
+        // What makes the texels visible to the read below. Waiting for idle
+        // finishes the work, and does not do this.
+        VkMemoryBarrier to_host{};
+        to_host.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        to_host.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        to_host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+                             &to_host, 0, nullptr, 0, nullptr);
         CHECK_VK(vkEndCommandBuffer(cb));
         VkSubmitInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

@@ -6,21 +6,10 @@
 // synthetic values below match the real shape confirmed live.
 
 #include "launch_uri.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main() {
     // A normal, non-launch argument (e.g. no CLI args at all, or some

@@ -4,22 +4,11 @@
 // and needs a running render host, so it is not tested here.
 
 #include "stud/media_ndk_types.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main() {
     AMediaFormat* format = AMediaFormat_new();

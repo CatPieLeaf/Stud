@@ -15,6 +15,7 @@
 // the C++ type, so the complete type is needed here (the header can only
 // forward-declare it, app_java_classes.h includes that header).
 #include "stud/app_java_classes.h"
+#include "stud/atomic_file.h"
 #include "stud/stud_paths.h"
 #include "stud/trap_recovery.h"
 
@@ -844,25 +845,7 @@ bool SharedPreferencesJava::save() {
     const std::string path = shared_prefs_path(name_);
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-    // Written beside it and renamed over it, so a reader never sees half a
-    // file and a crash mid-write leaves the previous one intact.
-    const std::string temp = path + ".tmp." + std::to_string(::getpid());
-    {
-        std::ofstream out(temp, std::ios::trunc);
-        if (!out.is_open()) return false;
-        out << doc.dump();
-        // Closed before it is judged: a small file only reaches the disk
-        // here, and a write that failed must not replace the last good one.
-        out.close();
-        if (out.fail()) {
-            std::filesystem::remove(temp, ec);
-            return false;
-        }
-    }
-    std::filesystem::rename(temp, path, ec);
-    if (!ec) return true;
-    std::filesystem::remove(temp, ec);
-    return false;
+    return write_file_atomically(path, doc.dump());
 }
 
 std::shared_ptr<SharedPreferencesEditorJava> SharedPreferencesJava::edit() {

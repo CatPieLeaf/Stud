@@ -6,6 +6,7 @@
 // that only Stud can read is not an export.
 
 #include "log_archive.h"
+#include "check.h"
 
 #include <QByteArray>
 #include <QDir>
@@ -22,13 +23,6 @@
 #include <miniz.h>
 
 namespace {
-
-int failures = 0;
-
-void check(bool condition, const char* what) {
-    std::printf("%s: %s\n", condition ? "ok" : "FAIL", what);
-    if (!condition) ++failures;
-}
 
 std::vector<unsigned char> gunzip(const QByteArray& gz) {
     // Skip the 10-byte header this writer emits (no extra fields), then
@@ -152,10 +146,6 @@ int main() {
     }
 
     QDir(dir).removeRecursively();
-    if (failures != 0) {
-        std::printf("%d check(s) failed\n", failures);
-        return 1;
-    }
     std::printf("all log-archive checks passed\n");
     return 0;
 }

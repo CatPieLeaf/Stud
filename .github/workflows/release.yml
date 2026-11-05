@@ -157,9 +157,15 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSTUD_REQUIRE_SHADERS=ON \
-            -DSTUD_BUILD_TESTS=OFF \
             -DSTUD_VERSION="${VERSION}"
           cmake --build build -j"$(nproc)"
+
+      - name: Test
+        # The one build that has its tests on: the packages below come from
+        # this tree, so what is tested here is what ships. A container has no
+        # GPU, session bus or keychain, and the tests that need one report
+        # skipped.
+        run: ctest --test-dir build --output-on-failure
 
       # One build, several wrappers. Building each format separately would
       # mean several builds and no guarantee the packages contain

@@ -1,9 +1,38 @@
-# jni_bridge_test/device_params_test/flag_overrides_test: real, still-
-# valid tests for the framework's portable logic (JSON serialization,
-# param-building), moved with the rest of jni-bridge into
-# runtime/framework/ (now bionic-only, no host-side build target).
-# Not wired back into the host-side test suite yet; revisit once the
-# new runtime's own bring-up is proven, not blocking it.
+# The framework's portable logic, built for the host. runtime/framework is
+# otherwise bionic-only, so each test takes just the sources it needs.
+set(StudFramework "${PROJECT_SOURCE_DIR}/runtime/framework")
+function(stud_framework_test name)
+    add_executable(stud_${name} ${name}.cpp ${ARGN})
+    target_include_directories(stud_${name} PRIVATE
+        "${StudFramework}/include"
+        "${PROJECT_SOURCE_DIR}/bionic-symbol-lookup/include"
+        "${PROJECT_SOURCE_DIR}/android-glue/include")
+    target_link_libraries(stud_${name} PRIVATE fake-jni nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+endfunction()
+
+stud_framework_test(jni_bridge_test "${StudFramework}/src/platform_params.cpp")
+add_test(NAME jni_bridge_test COMMAND stud_jni_bridge_test)
+
+stud_framework_test(device_params_test
+    "${StudFramework}/src/device_params.cpp" "${StudFramework}/src/init_params.cpp"
+    "${StudFramework}/src/platform_params.cpp")
+add_test(NAME device_params_test COMMAND stud_device_params_test)
+
+stud_framework_test(flag_overrides_test
+    "${StudFramework}/src/flag_overrides.cpp" "${StudFramework}/src/trap_recovery.cpp")
+add_test(NAME flag_overrides_test COMMAND stud_flag_overrides_test
+         ${CMAKE_CURRENT_BINARY_DIR}/flag_overrides_scratch)
+
+# Optimised whatever the build type: the bug it guards against only exists
+# where the compiler keeps a local in a register across siglongjmp().
+stud_framework_test(trap_recovery_test "${StudFramework}/src/trap_recovery.cpp")
+target_compile_options(stud_trap_recovery_test PRIVATE -O2)
+add_test(NAME trap_recovery_test COMMAND stud_trap_recovery_test)
+
+add_executable(stud_atomic_file_test atomic_file_test.cpp)
+target_include_directories(stud_atomic_file_test PRIVATE "${StudFramework}/include")
+add_test(NAME atomic_file_test COMMAND stud_atomic_file_test
+         ${CMAKE_CURRENT_BINARY_DIR}/atomic_file_scratch)
 
 add_executable(stud_socket_reader_test socket_reader_test.cpp)
 target_include_directories(stud_socket_reader_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/src)
@@ -124,24 +153,23 @@ add_test(NAME render_test COMMAND stud_render_test
          ${CMAKE_CURRENT_BINARY_DIR}/toy_gles_lib.so)
 
 if(STUD_BUILD_UI)
-    # M8: real GPU enumeration against this machine's actual Vulkan driver.
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+    # These three use what the desktop provides, so each reports skipped on
+    # a machine without it, a clean chroot or a CI container among them.
     add_executable(stud_gpu_enum_test gpu_enum_test.cpp)
     target_link_libraries(stud_gpu_enum_test PRIVATE stud_ui_gpu_enum)
     add_test(NAME gpu_enum_test COMMAND stud_gpu_enum_test)
 
-    # M8: real QtKeychain-backed credential storage against this
-    # machine's real keychain backend (KWallet, under this live Plasma
-    # session).
     add_executable(stud_credential_store_test credential_store_test.cpp)
-    target_link_libraries(stud_credential_store_test PRIVATE stud_ui_credential_store)
+    target_link_libraries(stud_credential_store_test PRIVATE stud_ui_credential_store Qt6::DBus)
     add_test(NAME credential_store_test COMMAND stud_credential_store_test)
 
-
-    # M8: real freedesktop Notifications against this machine's live
-    # D-Bus session bus / notification daemon.
     add_executable(stud_notifications_test notifications_test.cpp)
-    target_link_libraries(stud_notifications_test PRIVATE stud_ui_notifications)
+    target_link_libraries(stud_notifications_test PRIVATE stud_ui_notifications Qt6::DBus)
     add_test(NAME notifications_test COMMAND stud_notifications_test)
+
+    set_tests_properties(gpu_enum_test credential_store_test notifications_test
+                         PROPERTIES SKIP_RETURN_CODE 77)
 
     # M8: real roblox-player:/roblox: launch-URI parsing.
     add_executable(stud_launch_uri_test launch_uri_test.cpp)
@@ -185,6 +213,10 @@ target_link_libraries(stud_mapped_write_barrier_test PRIVATE ${CMAKE_DL_LIBS})
 # own definition has to be in the dynamic symbol table.
 set_target_properties(stud_mapped_write_barrier_test PROPERTIES ENABLE_EXPORTS ON)
 add_test(NAME mapped_write_barrier_test COMMAND stud_mapped_write_barrier_test)
+# The default above is uffd-scan wherever the kernel has it, so the fallback
+# needs a run of its own or it is never tested.
+add_test(NAME mapped_write_barrier_fault_test COMMAND stud_mapped_write_barrier_test)
+set_tests_properties(mapped_write_barrier_fault_test PROPERTIES ENVIRONMENT STUD_VK_NO_UFFD_SCAN=1)
 # Under ThreadSanitizer, which is what proves the barrier's own metadata is
 # free of races rather than merely passing. Not a ctest target: it needs a
 # separate toolchain and the suppression beside it, so it is run by hand.
@@ -192,8 +224,10 @@ add_test(NAME mapped_write_barrier_test COMMAND stud_mapped_write_barrier_test)
 #   clang++ -std=c++20 -fsanitize=thread -g -O1 \
 #       -o /tmp/barrier_tsan tests/mapped_write_barrier_test.cpp \
 #       runtime/render-client/src/mapped_write_barrier.cpp \
+#       runtime/render-client/src/uffd_scan.cpp \
 #       -Iruntime/render-client/src -ldl -rdynamic
-#   TSAN_OPTIONS="handle_segv=0 suppressions=tests/tsan.supp" /tmp/barrier_tsan
+#   TSAN_OPTIONS="handle_segv=0 suppressions=tests/tsan.supp" \
+#       STUD_VK_NO_UFFD_SCAN=1 /tmp/barrier_tsan
 #
 # handle_segv=0 is required: the barrier's write faults are its mechanism,
 # not crashes, so TSan must leave SIGSEGV to the test's own handler.
@@ -242,3 +276,9 @@ endif()
 add_executable(stud_transport_ring_test transport_ring_test.cpp)
 target_link_libraries(stud_transport_ring_test PRIVATE stud_render_host_protocol)
 add_test(NAME transport_ring_test COMMAND stud_transport_ring_test)
+
+# Every test here finishes in seconds, so one that doesn't is hung. Several
+# exist to prove something does not hang, and ctest's own default would take
+# 25 minutes to say so.
+get_directory_property(StudAllTests TESTS)
+set_tests_properties(${StudAllTests} PROPERTIES TIMEOUT 120)

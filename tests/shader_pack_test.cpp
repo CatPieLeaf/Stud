@@ -2,6 +2,7 @@
 // like the desktop material shaders' (no Roblox shader is used here).
 
 #include "stud/shader_pack.h"
+#include "check.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -11,14 +12,6 @@
 #include <vector>
 
 namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
 
 uint32_t op(uint32_t code, uint32_t len) { return (len << 16) | code; }
 uint32_t bits(float f) {

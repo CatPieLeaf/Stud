@@ -2,22 +2,11 @@
 // graphics mode). See stud-config/include/stud/settings.h.
 
 #include "stud/settings.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main(int argc, char** argv) {
     if (argc != 2) {
@@ -25,6 +14,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string dir = argv[1];
+    fresh_dir(dir);
 
     // Missing file -> real defaults (hidpi off, upscaling on, Vulkan), not an error.
     auto defaults = stud::config::load_settings(dir + "/does_not_exist.json");
@@ -48,17 +38,53 @@ int main(int argc, char** argv) {
     settings.gpu.device_index = 2;
     settings.gpu.device_name = "Test GPU 9000";
     settings.gpu.device_uuid = "00112233445566778899aabbccddeeff";
-    settings.hidpi = false;
+    // Every field away from its default: one left there proves nothing, since
+    // losing it on the way through would read back the same.
+    settings.hidpi = true;
     settings.follow_dpi = true;
+    settings.upscaling = false;
+    settings.upscaler_choice = "fsr";
+    settings.smooth_zoom = false;
+    settings.text_overlay_font_ratio = 0.5f;
+    settings.background_fps = 120;
+    settings.mangohud = true;
+    settings.gamemode = true;
+    settings.discord_rich_presence = false;
+    settings.discord_join_button = true;
+    settings.system_tray = false;
+    settings.close_on_leave = true;
+    settings.server_region_notification = true;
+    settings.texture_cache = false;
+    settings.texture_cache_mb = 1234;
     settings.graphics_mode = stud::config::GraphicsMode::kOpenGL;
+    settings.windows_materials = false;
+    settings.web_login = false;
+    settings.hq_textures = true;
     stud::config::save_settings(path, settings);
 
     auto loaded = stud::config::load_settings(path);
     check(loaded.gpu.device_index == 2, "gpu.deviceIndex round-trips");
     check(loaded.gpu.device_name == "Test GPU 9000", "gpu.deviceName round-trips");
     check(loaded.gpu.device_uuid == "00112233445566778899aabbccddeeff", "gpu.deviceUuid round-trips");
-    check(loaded.hidpi == false, "hidpi round-trips as false");
-    check(loaded.follow_dpi == true, "followDpi round-trips as true");
+    check(loaded.hidpi, "hidpi round-trips");
+    check(loaded.follow_dpi, "followDpi round-trips");
+    check(!loaded.upscaling, "upscaling round-trips");
+    check(loaded.upscaler_choice == "fsr", "the upscaler choice round-trips");
+    check(!loaded.smooth_zoom, "smooth zoom round-trips");
+    check(loaded.text_overlay_font_ratio == 0.5f, "the text overlay's font ratio round-trips");
+    check(loaded.background_fps == 120, "the background frame rate round-trips");
+    check(loaded.mangohud, "mangohud round-trips");
+    check(loaded.gamemode, "gamemode round-trips");
+    check(!loaded.discord_rich_presence, "Discord presence round-trips");
+    check(loaded.discord_join_button, "Discord's join button round-trips");
+    check(!loaded.system_tray, "the system tray round-trips");
+    check(loaded.close_on_leave, "close on leave round-trips");
+    check(loaded.server_region_notification, "the server region notification round-trips");
+    check(!loaded.texture_cache, "the texture cache switch round-trips");
+    check(loaded.texture_cache_mb == 1234, "the texture cache size round-trips");
+    check(!loaded.windows_materials, "Windows Graphical Parity round-trips");
+    check(!loaded.web_login, "web login round-trips");
+    check(loaded.hq_textures, "HQ Textures round-trips");
     check(loaded.graphics_mode == stud::config::GraphicsMode::kOpenGL, "graphicsMode round-trips as opengl");
     // Retired keys are removed on save rather than carried forward: a
     // file that still lists them reads as if they do something.
@@ -95,18 +121,17 @@ int main(int argc, char** argv) {
     }
 
     // save_settings() preserves an unrelated pre-existing top-level key
-    // (e.g. render/dev_backend_config.h's "devRenderBackend") instead of
-    // clobbering it. This file is shared, not exclusively owned.
+    // instead of clobbering it. This file is shared, not exclusively owned.
     std::string shared_path = dir + "/shared_config.json";
     {
         std::ofstream out(shared_path);
-        out << R"({"devRenderBackend": {"mode": "zink"}})";
+        out << R"({"someOtherKey": {"mode": "x"}})";
     }
     stud::config::save_settings(shared_path, settings);
     {
         std::ifstream f(shared_path);
         std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        check(content.find("devRenderBackend") != std::string::npos,
+        check(content.find("someOtherKey") != std::string::npos,
               "save_settings preserves an unrelated pre-existing top-level key");
         check(content.find("\"hidpi\"") != std::string::npos,
               "save_settings still writes its own keys into the same shared file");

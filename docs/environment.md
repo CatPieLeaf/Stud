@@ -52,6 +52,8 @@ the source and is missing from this file, so this list cannot quietly go stale.
 | `STUD_SKIP_GAME_ACTIVITY` | off | Replaces the GameActivity lifecycle with a synthetic surface. Bring-up experiment. |
 | `STUD_V2_RESIZE_NOTIFY` | off | Tells the V2 bridge about a resize. Known to wedge the engine; kept for measurement. |
 | `STUD_CLIENT_SETTINGS_GROUP` | the real group | Which ClientSettings group to fetch. |
+| `STUD_LOCALE` | the desktop's | The language Stud reports to Roblox, such as `pt_BR`, without changing the desktop's. |
+| `STUD_HOST_LD_LIBRARY_PATH` | unset | The host's `LD_LIBRARY_PATH`, restored for programs Stud starts on the desktop's behalf. A bundle sets this. |
 | `STUD_VIDEO_CODECS` | the real list | Narrows the video decoders advertised to the engine to the MIME types named, comma-separated. By default it is every one the system's FFmpeg can decode. |
 | `STUD_VIDEO_ENCODER` | the first that opens | Use only this FFmpeg encoder for the engine's video encoding (`hevc_nvenc`, `hevc_amf`, `hevc_qsv`, `hevc_vaapi`, `hevc_vulkan`, `libx265`, or the `h264_`/`libx264` equivalents). By default they are tried in that order. `stud_video_encode_check` exercises one without launching Stud. |
 | `STUD_USER_AGENT`, `STUD_ANDROID_USER_AGENT` | built from the APK | Override the User-Agent. |
@@ -169,4 +171,4 @@ Each of these makes Stud do something incorrect, to find out what depends on it.
 
 ## Only used by the standalone tools
 
-`STUD_VK_GPU` (`tools/try_vulkan_window.cpp`), `STUD_VK_UFFD_SCAN` (the write-barrier test).
+`STUD_VK_GPU` (`tools/try_vulkan_window.cpp`).

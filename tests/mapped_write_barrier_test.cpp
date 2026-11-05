@@ -8,12 +8,17 @@
 // pages still dirty. Both lose writes silently, which downstream is a
 // shader reading whatever was there before.
 //
+// Two backends, so ctest runs this twice. uffd-scan is the default wherever
+// the kernel offers it. STUD_VK_NO_UFFD_SCAN=1 forces the fault barrier, the
+// fallback for older kernels and the one those two bugs were in.
+//
 // The barrier resolves its fault hook through dlsym(RTLD_DEFAULT,
 // "stud_set_write_fault_handler"), which Stud's trap handler normally
 // provides. This test provides it instead and drives a real SIGSEGV
-// handler, so the mechanism under test is the real one, faults included.
+// handler, so the fallback's real mechanism is what runs, faults included.
 
 #include "../runtime/render-client/src/mapped_write_barrier.h"
+#include "check.h"
 
 #include <atomic>
 #include <csignal>
@@ -26,13 +31,6 @@
 namespace {
 
 bool (*g_handler)(void*) = nullptr;
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-}
 
 void segv_handler(int, siginfo_t* info, void*) {
     if (g_handler != nullptr && g_handler(info->si_addr)) return;
@@ -166,9 +164,14 @@ extern "C" void stud_set_write_fault_handler(bool (*handler)(void*)) { g_handler
 
 int main() {
     install();
-    std::printf("backend: %s\n",
-                std::getenv("STUD_VK_UFFD_SCAN") != nullptr ? "uffd-scan (kernel)" : "fault barrier");
     check(stud::render_client::install_write_barrier(), "install the barrier");
+    {
+        stud::render_client::MappedWriteBarrier probe;
+        check(probe.allocate(4096), "allocate");
+        std::printf("backend: %s\n", probe.kernel_tracked() ? "uffd-scan (kernel)" : "fault barrier");
+        check(std::getenv("STUD_VK_NO_UFFD_SCAN") == nullptr || !probe.kernel_tracked(),
+              "STUD_VK_NO_UFFD_SCAN really selects the fault barrier");
+    }
     partial_flush_keeps_the_rest();
     unaligned_flush_is_rearmed();
     concurrent_writes_are_all_reported();

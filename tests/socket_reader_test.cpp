@@ -3,6 +3,7 @@
 // buffered together, split across reads, or larger than the buffer.
 
 #include "socket_reader.h"
+#include "check.h"
 
 #include <sys/socket.h>
 #include <unistd.h>
@@ -14,15 +15,6 @@
 #include <vector>
 
 namespace {
-
-int failures = 0;
-
-void check(bool ok, const char* what) {
-    if (!ok) {
-        std::fprintf(stderr, "FAIL: %s\n", what);
-        ++failures;
-    }
-}
 
 bool write_all(int fd, const void* data, size_t len) {
     const auto* p = static_cast<const char*>(data);
@@ -75,6 +67,6 @@ int main() {
     check(!reader.read(out, 1), "read after close fails");
     ::close(sv[1]);
 
-    if (failures == 0) std::printf("socket_reader_test: all checks passed\n");
-    return failures == 0 ? 0 : 1;
+    std::printf("socket_reader_test: all checks passed\n");
+    return 0;
 }

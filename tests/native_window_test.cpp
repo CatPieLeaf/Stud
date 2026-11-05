@@ -8,21 +8,10 @@
 
 #include "stud/android_glue.h"
 #include "stud/ndk_types.h"
+#include "check.h"
 
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::exit(1);
-    }
-    std::printf("ok: %s\n", what);
-}
-
-}  // namespace
 
 int main() {
     ANativeWindow* window = ANativeWindow_fromSurface(nullptr, nullptr);
