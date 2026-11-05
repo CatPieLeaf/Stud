@@ -13,21 +13,35 @@
 
 namespace stud::cpu_compat {
 
+// A decoded memory operand: everything ModRM/SIB/displacement can say
+// about where an operand lives, without yet knowing register contents.
+//
+// Kept separate from the instructions that use it because resolving it
+// needs a register file and decoding does not, so decode stays a pure
+// function that can be tested against instruction bytes alone.
+struct EffectiveAddress {
+    int base_reg = -1;   // -1: no base register
+    int index_reg = -1;  // -1: no index register
+    int scale = 1;       // 1, 2, 4 or 8
+    int32_t disp = 0;
+    // RIP-relative (mod=00, rm=101) is addressed from the END of the
+    // instruction, so resolving it needs the instruction length too.
+    bool rip_relative = false;
+};
+
 struct DecodedPopcnt {
-    // 0 means "not a POPCNT instruction (or an addressing mode not yet
-    // supported, memory operands aren't decoded, only register-to-
-    // register)". Non-zero is the real encoded instruction length in
-    // bytes, needed to advance RIP past it.
+    // 0 means "not a POPCNT instruction". Non-zero is the real encoded
+    // instruction length in bytes, needed to advance RIP past it.
     int length = 0;
     int dest_reg = -1;  // x86-64 register number 0-15 (REX-extended)
-    int src_reg = -1;   // x86-64 register number 0-15 (REX-extended)
+    int src_reg = -1;   // x86-64 register number 0-15, -1 for a memory source
+    EffectiveAddress mem;  // the source when from_memory
+    bool from_memory = false;
     bool is_64bit = false;
 };
 
-// Decodes a POPCNT instruction at `code` (F3 [REX] 0F B8 /r). Only the
-// register-to-register form is supported (ModRM.mod == 3), memory
-// operands aren't decoded yet, matching this module's "grow iteratively
-// against real traps" scope (see cpu_compat.h).
+// Decodes a POPCNT instruction at `code` (F3 [REX] 0F B8 /r), with a
+// register or memory source.
 DecodedPopcnt try_decode_popcnt(const uint8_t* code);
 
 // The four BMI1 instructions, which share one decoder because they share
@@ -91,22 +105,6 @@ DecodedBmi1 try_decode_bmi1(const uint8_t* code);
 // promise.
 void emulate_bmi1(const DecodedBmi1& decoded, greg_t* gregs);
 
-// A decoded memory operand: everything ModRM/SIB/displacement can say
-// about where an operand lives, without yet knowing register contents.
-//
-// Kept separate from the instructions that use it because resolving it
-// needs a register file and decoding does not, so decode stays a pure
-// function that can be tested against instruction bytes alone.
-struct EffectiveAddress {
-    int base_reg = -1;   // -1: no base register
-    int index_reg = -1;  // -1: no index register
-    int scale = 1;       // 1, 2, 4 or 8
-    int32_t disp = 0;
-    // RIP-relative (mod=00, rm=101) is addressed from the END of the
-    // instruction, so resolving it needs the instruction length too.
-    bool rip_relative = false;
-};
-
 // Turns a decoded operand into an address. `next_rip` is the address of
 // the instruction AFTER this one, which is what RIP-relative addressing
 // is measured from.
@@ -141,13 +139,13 @@ void emulate_movbe(const DecodedMovbe& decoded, greg_t* gregs, uint64_t next_rip
 // read/write the right slot in a gregset_t.
 int reg_to_greg_index(int reg);
 
-// Emulates the decoded POPCNT: reads `decoded.src_reg` from `gregs`,
-// counts set bits (32 or 64 depending on `decoded.is_64bit`), writes the
+// Emulates the decoded POPCNT: reads its source, from `gregs` or from
+// memory (`next_rip` is needed for the RIP-relative form), counts set bits (32 or 64 depending on `decoded.is_64bit`), writes the
 // result to `decoded.dest_reg`, and updates EFLAGS the same way real
 // POPCNT does (clears CF/OF/SF/AF/PF, sets ZF iff the result is zero).
 // Pure function over a real gregset_t-shaped array; no signal handling,
 // directly unit-testable with a plain local array standing in for a real
 // mcontext_t's gregs.
-void emulate_popcnt(const DecodedPopcnt& decoded, greg_t* gregs);
+void emulate_popcnt(const DecodedPopcnt& decoded, greg_t* gregs, uint64_t next_rip = 0);
 
 }  // namespace stud::cpu_compat

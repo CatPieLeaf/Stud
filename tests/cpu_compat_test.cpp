@@ -264,11 +264,24 @@ void test_popcnt_decode_and_emulate() {
     check(stud::cpu_compat::try_decode_popcnt(not_popcnt).length == 0,
           "non-POPCNT bytes (NOPs) correctly fail to decode");
 
-    // Memory operand (mod != 3), not supported yet, must report as such
-    // rather than mis-decode.
-    const uint8_t mem_operand[] = {0xF3, 0x0F, 0xB8, 0x03};  // mod=00 -> [rbx]
-    check(stud::cpu_compat::try_decode_popcnt(mem_operand).length == 0,
-          "memory-operand popcnt correctly reports as not-yet-supported, not mis-decoded");
+    // A memory source: popcnt eax, [rbx] reads 4 bytes, and rax, [rbx] 8.
+    const uint8_t mem32[] = {0xF3, 0x0F, 0xB8, 0x03};
+    const uint8_t mem64[] = {0xF3, 0x48, 0x0F, 0xB8, 0x03};
+    auto dmem32 = stud::cpu_compat::try_decode_popcnt(mem32);
+    auto dmem64 = stud::cpu_compat::try_decode_popcnt(mem64);
+    check(dmem32.length == 4 && dmem32.from_memory && dmem32.dest_reg == 0,
+          "popcnt eax, [rbx] decodes as a 4-byte memory source");
+    check(dmem64.length == 5 && dmem64.from_memory && dmem64.is_64bit,
+          "popcnt rax, [rbx] decodes as an 8-byte memory source");
+    uint64_t source = 0xF00000000000000Full;  // 4 bits set low, 4 high
+    greg_t mem_gregs[NGREG] = {};
+    mem_gregs[stud::cpu_compat::reg_to_greg_index(3)] = reinterpret_cast<greg_t>(&source);
+    stud::cpu_compat::emulate_popcnt(dmem32, mem_gregs);
+    check(mem_gregs[stud::cpu_compat::reg_to_greg_index(0)] == 4,
+          "a 4-byte memory popcnt counts only the low half");
+    stud::cpu_compat::emulate_popcnt(dmem64, mem_gregs);
+    check(mem_gregs[stud::cpu_compat::reg_to_greg_index(0)] == 8,
+          "an 8-byte memory popcnt counts all of it");
 
     // Real emulation: known bit patterns, verified against __builtin_popcountll.
     greg_t gregs[NGREG] = {};

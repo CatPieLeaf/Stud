@@ -13,11 +13,15 @@
 // present to run.
 
 #include "stud/bionic_runtime.h"
+#include "stud/property_area.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 
 namespace {
@@ -48,9 +52,59 @@ const char* kForbiddenSubstrings[] = {
     "/usr/lib64/nvidia",
 };
 
+uint32_t u32(const std::vector<char>& data, size_t at) {
+    uint32_t value;
+    std::memcpy(&value, data.data() + at, sizeof(value));
+    return value;
+}
+
+// The offset of the child called `name` of the node at `parent`, walked the
+// way bionic's prop_area::find_property does; 0 when there is none.
+uint32_t find_child(const std::vector<char>& data, size_t base, uint32_t parent, const char* name) {
+    for (uint32_t at = u32(data, base + parent + 16); at != 0;) {
+        const uint32_t length = u32(data, base + at);
+        const std::string node(data.data() + base + at + 20, length);
+        if (node == name) return at;
+        const bool go_left = std::strlen(name) != length ? std::strlen(name) < length : name < node;
+        at = u32(data, base + at + (go_left ? 8 : 12));
+    }
+    return 0;
+}
+
+void test_property_area() {
+    const std::string path = "stud_test_property_area";
+    check(stud::bionic_runtime::write_property_area(path, {{"net.dns1", "1.2.3.4"}, {"net.dns2", "5.6.7.8"}}),
+          "the property area is written");
+    std::ifstream in(path, std::ios::binary);
+    const std::vector<char> data{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    std::remove(path.c_str());
+    const size_t base = 128;
+    check(u32(data, base) == 0, "the node at data_+0 is the nameless root");
+    const uint32_t net = find_child(data, base, 0, "net");
+    check(net != 0, "the root's children hold the top-level segment");
+    const uint32_t dns2 = find_child(data, base, net, "dns2");
+    check(dns2 != 0, "the next segment is under it");
+    const uint32_t info = u32(data, base + dns2 + 4);
+    check(info != 0 && std::strcmp(data.data() + base + info + 4, "5.6.7.8") == 0,
+          "and it holds the value");
+}
+
+void test_sandbox_environment() {
+    char lc[] = "LC_TIME=C", stud[] = "STUD_DEBUG=1", home[] = "HOME=/home/t";
+    char preload[] = "LD_PRELOAD=/usr/lib64/libz.so.1", library[] = "LD_LIBRARY_PATH=/opt";
+    char token[] = "GITHUB_TOKEN=secret", studlike[] = "STUDIO=x";
+    char* env[] = {lc, preload, stud, library, token, home, studlike, nullptr};
+    const std::vector<std::string> kept = stud::bionic_runtime::sandbox_environment(env);
+    check(kept == std::vector<std::string>({"LC_TIME=C", "STUD_DEBUG=1", "HOME=/home/t"}),
+          "only the listed names reach the sandbox");
+}
+
 }  // namespace
 
 int main() {
+    test_property_area();
+    test_sandbox_environment();
+
     using namespace stud::bionic_runtime;
 
     ProcessBConfig config;
@@ -165,6 +219,29 @@ int main() {
                 "nameserver line)\n");
         }
     }
+
+    // /sys is a list of paths, never the whole tree.
+    {
+        bool whole_sys = false, cpu_tree = false;
+        for (std::size_t i = 0; i < argv.size(); ++i) {
+            whole_sys = whole_sys || argv[i] == "/sys";
+            cpu_tree = cpu_tree || argv[i] == "/sys/devices/system/cpu";
+        }
+        check(!whole_sys, "/sys is not bound whole");
+        check(cpu_tree, "the CPU tree the core count comes from is bound");
+    }
+
+    // An older bwrap would refuse this option and never start.
+    check(std::find(argv.begin(), argv.end(), "--disable-userns") == argv.end(),
+          "--disable-userns only appears when asked for");
+    config.block_nested_user_namespaces = true;
+    const std::vector<std::string> blocked =
+        build_process_b_argv(config, "/usr/bin/bwrap", "/home/testuser/stud/third_party/android-bionic",
+                             "/home/testuser/stud/third_party/android-bionic/linker64");
+    const auto disable = std::find(blocked.begin(), blocked.end(), "--disable-userns");
+    check(disable != blocked.end() &&
+              disable > std::find(blocked.begin(), blocked.end(), "--unshare-user"),
+          "and comes after --unshare-user, which it needs");
 
     std::printf("all bionic-runtime sandbox checks passed\n");
     return 0;

@@ -69,6 +69,7 @@
 #include <QTimer>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QTimeZone>
 
 #include <algorithm>
 #include <chrono>
@@ -84,6 +85,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 // Defined at the bottom, used by the launch path above.
@@ -1246,14 +1248,13 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // preserved, but launch_game(), and so proceed()'s subsequent
     // quit(), can no longer return before the handoff genuinely
     // finishes or times out.
-    std::thread payload_thread([socket_path, payload]() {
+    std::atomic<bool> handed_off{false};
+    std::thread payload_thread([socket_path, payload, &handed_off]() {
         try {
             stud::ipc::serve_launch_payload_once(socket_path, payload);
+            handed_off = true;
         } catch (const std::exception&) {
-            // Best-effort handoff, if Process B never connects (e.g.
-            // it failed to start), there's nothing further to report
-            // here; its own stderr already carries the failure if it
-            // did start.
+            // Process B never connected. Answered below, after the join.
         }
     });
 
@@ -1435,6 +1436,10 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
             config.extra_env.emplace_back(name, value.toStdString());
         }
     }
+    // The sandbox has no /etc/localtime, and bionic falls back to GMT.
+    if (const QByteArray zone = QTimeZone::systemTimeZoneId(); !zone.isEmpty()) {
+        config.extra_env.emplace_back("TZ", zone.toStdString());
+    }
     config.stdout_fd = stud::logging::passthrough_stdout_fd();
     // Read-only over the writable binds above, and last so they win. Both are
     // read outside the sandbox: the APK by this process, and the materials by
@@ -1468,11 +1473,12 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // mid-frame FBO read-back). Set it in the environment when it is
     // actually wanted.
 
+    pid_t sandbox_pid = -1;
+    QString start_error;
     try {
-        stud::bionic_runtime::launch_process_b(config);
+        sandbox_pid = stud::bionic_runtime::launch_process_b(config);
     } catch (const std::exception& e) {
-        QMessageBox::critical(nullptr, "Stud",
-                               QString("Failed to start the real bionic runtime: %1").arg(e.what()));
+        start_error = QString::fromUtf8(e.what());
     }
 
     // See payload_thread's own doc comment above, must join, not
@@ -1480,7 +1486,29 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // can't return before the real handoff actually finishes or its own
     // bounded timeout elapses.
     payload_thread.join();
-    return true;
+
+    if (handed_off) {
+        // This process can outlive the session; see proceed().
+        std::thread([sandbox_pid] { ::waitpid(sandbox_pid, nullptr, 0); }).detach();
+        return true;
+    }
+
+    // A spawn that succeeds says nothing about the sandbox: bwrap, the
+    // linker and Process B can each still die before Process B asks for
+    // its payload. Nothing else would notice, and render-host would keep
+    // an empty window open, waiting for an engine that never comes.
+    terminate_stale_processes();
+    if (sandbox_pid > 0) {
+        ::kill(sandbox_pid, SIGKILL);
+        ::waitpid(sandbox_pid, nullptr, 0);
+    }
+    const QByteArray log_file = qgetenv("STUD_LOG_FILE");
+    open_settings_for_launch_failure(
+        QStringLiteral("Roblox didn't start. %1")
+            .arg(!start_error.isEmpty() ? start_error
+                                        : QStringLiteral("The reason is in the log: %1")
+                                              .arg(QString::fromUtf8(log_file))));
+    return false;
 }
 
 }  // namespace

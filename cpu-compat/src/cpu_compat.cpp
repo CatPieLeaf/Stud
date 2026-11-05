@@ -35,7 +35,8 @@ void sigill_handler(int /*signum*/, siginfo_t* /*info*/, void* ucontext_raw) {
 
     DecodedPopcnt decoded = try_decode_popcnt(rip);
     if (decoded.length > 0) {
-        emulate_popcnt(decoded, gregs);
+        emulate_popcnt(decoded, gregs,
+                       static_cast<uint64_t>(gregs[REG_RIP]) + static_cast<uint64_t>(decoded.length));
         gregs[REG_RIP] += decoded.length;
         return;
     }

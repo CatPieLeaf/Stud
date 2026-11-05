@@ -1,5 +1,7 @@
 #include "stud/property_area.h"
 
+#include <sys/stat.h>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -18,6 +20,7 @@ constexpr uint32_t kPropAreaVersion = 0xfc6ed0ab;
 constexpr size_t kHeaderSize = 128;  // bytes_used_(4)+serial_(4)+magic_(4)+version_(4)+reserved_[28*4]
 constexpr size_t kPropValueMax = 92;
 constexpr size_t kPropInfoFixedSize = 4 + kPropValueMax;  // serial + value[92]
+constexpr size_t kTrieNodeHeader = 20;  // namelen, prop, left, right, children
 
 // Confirmed in the engine ordering (prop_area::find_prop_trie_node, this
 // project's own reading of the actual extracted libc.so): siblings at
@@ -91,9 +94,8 @@ uint32_t serialize_prop_info(Arena& arena, const std::string& full_name, const s
     uint32_t info_offset = arena.reserve(kPropInfoFixedSize + full_name.size());
     // Confirmed in the engine encoding (SystemProperties::Read, this
     // project's own reading of the actual extracted libc.so): the
-    // top 8 bits of serial are the real value length; bit 0 selects the
-    // short-inline-value path (vs. a long-property callback this
-    // project never needs; see property_area.h's own doc comment).
+    // top 8 bits of serial are the real value length. Bit 0 says a writer
+    // is mid-update, which never applies to a file written once.
     uint32_t serial = static_cast<uint32_t>(value.size()) << 24;
     arena.write_u32(info_offset + 0, serial);
     // value[92], real null-terminated C string within the fixed field.
@@ -135,9 +137,9 @@ uint32_t serialize_siblings(Arena& arena, const std::vector<const TrieBuildNode*
     // matches the "allocate, then fill in real cross-references" bump-
     // allocator pattern the whole format needs, since offsets can only
     // point at already-reserved space.
-    uint32_t node_offset = arena.reserve(20 + node.token.size());
+    uint32_t node_offset = arena.reserve(kTrieNodeHeader + node.token.size());
     arena.write_u32(node_offset + 0, static_cast<uint32_t>(node.token.size()));
-    arena.write_bytes(node_offset + 20, node.token.data(), node.token.size());
+    arena.write_bytes(node_offset + kTrieNodeHeader, node.token.data(), node.token.size());
 
     uint32_t left = serialize_siblings(arena, siblings, lo, mid, prefix);
     uint32_t right = serialize_siblings(arena, siblings, mid + 1, hi, prefix);
@@ -183,16 +185,15 @@ bool write_property_area(const std::string& output_path,
         cur->value = value;
     }
 
-    // Real prop_area header (128 bytes), then the trie starting at
-    // data_+0, the arena's own offset 0 IS the real root, no separate
-    // "root pointer" field exists in the format (confirmed via this
-    // project's own reading of it: prop_area::find_property starts its walk
-    // from data_ directly).
+    // A nameless root node at data_+0, and every top-level segment ("net")
+    // among its children: prop_area::find_property starts from that node
+    // and looks in its children for the first segment. Putting the first
+    // segment itself at data_+0 instead reads back as "dns1" with
+    // "net.dns1" not found.
     Arena arena;
-    // Real root level: root.children are the actual top-level property
-    // segments (e.g. "net" for "net.dns1"), root itself carries no
-    // value.
-    serialize_children_of(arena, root, "");
+    const uint32_t root_offset = arena.reserve(kTrieNodeHeader);
+    const uint32_t top_level = serialize_children_of(arena, root, "");
+    arena.write_u32(root_offset + 16, top_level);
 
     size_t data_size = arena.bytes().size();
     size_t total_size = kHeaderSize + data_size;
@@ -212,6 +213,8 @@ bool write_property_area(const std::string& output_path,
     if (f == nullptr) {
         return false;
     }
+    // bionic refuses a group- or world-writable file, whatever the umask.
+    ::fchmod(fileno(f), 0644);
     size_t written = std::fwrite(file.data(), 1, file.size(), f);
     // Closed either way: a short write used to skip the fclose.
     const bool closed = std::fclose(f) == 0;

@@ -655,7 +655,10 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
             const auto mb = spirv_words(mobile.blob(k)), db = spirv_words(desktop.blob(d->second));
             if (mb != db) {
                 vs_pair = stage_interface(mb) == stage_interface(db);
-                if (!vs_pair) ++r.refused_vertex_io;
+                if (!vs_pair) {
+                    ++r.refused_vertex_io;
+                    continue;
+                }
             }
         }
         if (mi.bindings == di.bindings && !vs_pair) {
@@ -688,7 +691,8 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
             std::any_of(di.bindings.begin(), di.bindings.end(), [&](const auto& b) {
                 const auto m = mi.bindings.find(b.first);
                 return m != mi.bindings.end() && m->second != b.second &&
-                       b.second.find("image") != std::string::npos;
+                       (b.second.find("image") != std::string::npos ||
+                        m->second.find("image") != std::string::npos);
             });
         if (image_kind_differs) {
             ++r.refused_image;

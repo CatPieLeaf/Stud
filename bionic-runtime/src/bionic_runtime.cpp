@@ -2,8 +2,11 @@
 #include "stud/property_area.h"
 #include "stud/stud_paths.h"
 
+#include <fcntl.h>
 #include <sched.h>
 #include <spawn.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -125,7 +128,71 @@ std::string find_bwrap_on_path() {
     return {};
 }
 
+// The parts of /sys Process B reads, and nothing else of it. A whole /sys
+// hands the sandbox every network card's address and the machine's device
+// tree. Each path here has a reader:
+//
+//   devices/system/cpu    the core count the TaskScheduler is sized from
+//                         (without it the engine sees one CPU and a game
+//                         never starts), and the engine's frequency reads
+//   devices/system/node   the engine's NUMA lookup
+//   transparent_hugepage  read by the engine at startup
+//   power_supply/battery  the engine's battery level, on a machine that
+//                         names its battery that way
+//   class/thermal         the engine's thermal zones, and devices/virtual/
+//                         thermal is where those entries link to
+//   dmi/id                the device name in the User-Agent
+//
+// Two answers need a whole device tree to read as they are, so they are
+// recreated: device_params.cpp asks whether <iface>/wireless exists, and
+// texture_cache.cpp asks whether the disk it writes to rotates.
+//
+// No device nodes in any of it: the GPU stays out of Process B.
+void add_sys_view(std::vector<std::string>& argv) {
+    const auto bind = [&argv](const std::string& from, const std::string& to) {
+        argv.insert(argv.end(), {"--ro-bind-try", from, to});
+    };
+    for (const char* path : {"/sys/devices/system/cpu", "/sys/devices/system/node",
+                             "/sys/kernel/mm/transparent_hugepage/enabled",
+                             "/sys/class/power_supply/battery/capacity",
+                             "/sys/class/power_supply/battery/current_avg",
+                             "/sys/class/power_supply/battery/batt_current_ua_avg",
+                             "/sys/class/thermal", "/sys/devices/virtual/thermal",
+                             "/sys/devices/virtual/dmi/id/sys_vendor",
+                             "/sys/devices/virtual/dmi/id/product_name"}) {
+        bind(path, path);
+    }
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator("/sys/class/net", ec)) {
+        const fs::path wireless = entry.path() / "wireless";
+        if (fs::exists(wireless, ec)) argv.insert(argv.end(), {"--dir", wireless.string()});
+    }
+    struct stat cache {};
+    if (::stat(stud::paths::cache_dir().c_str(), &cache) == 0) {
+        const std::string disk = "/sys/dev/block/" + std::to_string(major(cache.st_dev)) + ":" +
+                                 std::to_string(minor(cache.st_dev));
+        // A partition's answer is on the whole disk, one level up.
+        const std::string rotational = disk + "/queue/rotational";
+        bind(fs::exists(rotational, ec) ? rotational : disk + "/../queue/rotational", rotational);
+    }
+}
+
 }  // namespace
+
+std::vector<std::string> sandbox_environment(char** env) {
+    static const std::set<std::string> kExact = {"HOME", "PATH", "LANG", "LANGUAGE", "DISPLAY",
+                                                 "WAYLAND_DISPLAY", "XMODIFIERS"};
+    std::vector<std::string> kept;
+    for (; env != nullptr && *env != nullptr; ++env) {
+        const std::string entry(*env);
+        const std::string name = entry.substr(0, entry.find('='));
+        if (kExact.count(name) != 0 || name.rfind("STUD_", 0) == 0 || name.rfind("XDG_", 0) == 0 ||
+            name.rfind("LC_", 0) == 0) {
+            kept.push_back(entry);
+        }
+    }
+    return kept;
+}
 
 std::string default_shipped_bionic_directory() {
     for (const std::string& dir : bionic_dir_candidates()) {
@@ -134,12 +201,11 @@ std::string default_shipped_bionic_directory() {
     throw BionicNotFound();
 }
 
-// XDG-scoped path for the generated DNS property area (see
-// property_area.h's own doc comment for the real, ground-truth-traced
-// mechanism this backs), same convention as stud-ipc's own launch
-// socket path.
+// Where the generated property area lives (see property_area.h). The
+// private directory, because Process A writes it, outside the sandbox: a
+// file in the runtime directory could be a link the engine planted.
 std::string default_property_area_path() {
-    return stud::paths::runtime_dir() + "/dns_property_area";
+    return stud::paths::private_dir() + "/dns_property_area";
 }
 
 // Minimal /etc/resolv.conf parse, just real "nameserver <ip>"
@@ -325,10 +391,9 @@ std::vector<std::string> process_b_environment(const ProcessBConfig& config,
                                                const std::string& ca_bundle_path,
                                                const std::string& bionic_lib_dir) {
     std::map<std::string, std::string> env;
-    for (char** e = environ; e != nullptr && *e != nullptr; ++e) {
-        const char* eq = std::strchr(*e, '=');
-        if (eq == nullptr) continue;
-        env[std::string(static_cast<const char*>(*e), eq)] = std::string(eq + 1);
+    for (const std::string& entry : sandbox_environment(environ)) {
+        const size_t eq = entry.find('=');
+        if (eq != std::string::npos) env[entry.substr(0, eq)] = entry.substr(eq + 1);
     }
     // See build_process_b_argv()'s own comments for why each of these is
     // not optional.
@@ -393,28 +458,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back("--proc");
     argv_storage.push_back("/proc");
 
-    // Real /sys, read-only. The sandbox root is a --tmpfs, so /sys did
-    // not exist inside it at all, and that is how many CPUs the engine
-    // thinks this machine has. Android's own CPU detection reads
-    // /sys/devices/system/cpu/{possible,present,online}; with none of
-    // them readable the count comes back as 1, and the engine sizes its
-    // whole TaskScheduler from it.
-    //
-    // Live-measured against a real Sober session on this same machine:
-    //   Sober:  Shader Loading Threads: 8 (TaskScheduler: 16, ...)
-    //   Stud:   Shader Loading Threads: 0 (TaskScheduler: 1,  ...)
-    // A one-thread scheduler is not merely slow: the start-game task
-    // submitted by UgcExperienceController::submitStartGameTask never
-    // ran at all, so the game DataModel was never built
-    // (`stepDataModelJob: No DM yet` forever) and no NetworkClient was
-    // ever created.
-    //
-    // Read-only, and it grants no device access; that lives in /dev,
-    // which stays a synthetic bwrap tmpfs above, so the "vendor GPU
-    // driver never runs inside Process B" constraint is untouched.
-    argv_storage.push_back("--ro-bind-try");
-    argv_storage.push_back("/sys");
-    argv_storage.push_back("/sys");
+    add_sys_view(argv_storage);
 
     // /system/lib64 is a tmpfs Stud fills file by file, NOT a bind of
     // the bionic directory.
@@ -714,6 +758,9 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
     argv_storage.push_back("0");
     argv_storage.push_back("--gid");
     argv_storage.push_back("0");
+    // Many kernel holes are only reachable from inside a user namespace of
+    // one's own; Process B has no use for making one.
+    if (config.block_nested_user_namespaces) argv_storage.push_back("--disable-userns");
     // Caught in testing: regression fixed: --die-with-parent here directly
     // contradicts this project's own documented, intentional architecture
     // (ui/src/main.cpp's launch_game()/proceed(): "hand off and get out
@@ -767,9 +814,7 @@ std::vector<std::string> build_process_b_argv(const ProcessBConfig& config,
 
 namespace {
 
-// One spawn, shared by both launch paths below. `envp` empty means this
-// process's own environment, which is what bwrap gets (it sets Process
-// B's with --setenv from the inside).
+// One spawn, shared by both launch paths below.
 pid_t spawn_process_b(const std::string& program,
                       std::vector<std::string> argv_storage,
                       const std::vector<std::string>& envp_storage,
@@ -781,11 +826,9 @@ pid_t spawn_process_b(const std::string& program,
     argv.push_back(nullptr);
 
     std::vector<char*> envp;
-    if (!envp_storage.empty()) {
-        envp.reserve(envp_storage.size() + 1);
-        for (const std::string& s : envp_storage) envp.push_back(const_cast<char*>(s.c_str()));
-        envp.push_back(nullptr);
-    }
+    envp.reserve(envp_storage.size() + 1);
+    for (const std::string& s : envp_storage) envp.push_back(const_cast<char*>(s.c_str()));
+    envp.push_back(nullptr);
 
     pid_t pid = 0;
     posix_spawn_file_actions_t actions;
@@ -805,14 +848,40 @@ pid_t spawn_process_b(const std::string& program,
         ::posix_spawn_file_actions_addchdir_np(actions_ptr, working_directory.c_str());
     }
 
-    int rc = ::posix_spawn(&pid, program.c_str(), actions_ptr, nullptr, argv.data(),
-                           envp.empty() ? environ : envp.data());
+    int rc = ::posix_spawn(&pid, program.c_str(), actions_ptr, nullptr, argv.data(), envp.data());
     if (actions_ptr != nullptr) ::posix_spawn_file_actions_destroy(actions_ptr);
     if (rc != 0) {
         throw std::runtime_error("stud: posix_spawn(" + program + ") failed: " +
                                  std::string(std::strerror(rc)));
     }
     return pid;
+}
+
+// Whether this bwrap has --disable-userns (0.8 onwards) and can use it: an
+// option it does not know stops it starting at all, and a setuid bwrap
+// refuses that one.
+bool can_block_nested_user_namespaces(const std::string& bwrap_path,
+                                      const std::vector<std::string>& envp) {
+    struct stat info {};
+    if (::stat(bwrap_path.c_str(), &info) != 0 || (info.st_mode & S_ISUID) != 0) return false;
+    int fds[2];
+    if (::pipe2(fds, O_CLOEXEC) != 0) return false;
+    pid_t pid = -1;
+    try {
+        pid = spawn_process_b(bwrap_path, {bwrap_path, "--version"}, envp, std::string(), fds[1]);
+    } catch (const std::runtime_error&) {
+    }
+    ::close(fds[1]);
+    char text[64] = {};
+    const ssize_t got = pid > 0 ? ::read(fds[0], text, sizeof(text) - 1) : -1;
+    ::close(fds[0]);
+    if (pid > 0) {
+        while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
+        }
+    }
+    int major_version = 0, minor_version = 0;
+    return got > 0 && std::sscanf(text, "bubblewrap %d.%d", &major_version, &minor_version) == 2 &&
+           (major_version > 0 || minor_version >= 8);
 }
 
 }  // namespace
@@ -874,9 +943,13 @@ pid_t launch_process_b(const ProcessBConfig& config) {
     const std::string bwrap_path = find_bwrap_on_path();
     if (bwrap_path.empty()) throw BwrapNotFound();
 
+    // bwrap passes its own environment on, so this is what Process B gets.
+    const std::vector<std::string> envp = sandbox_environment(environ);
+    ProcessBConfig sandboxed = config;
+    sandboxed.block_nested_user_namespaces = can_block_nested_user_namespaces(bwrap_path, envp);
     return spawn_process_b(bwrap_path,
-                           build_process_b_argv(config, bwrap_path, bionic_lib_dir, linker64_path),
-                           {}, std::string(), config.stdout_fd);
+                           build_process_b_argv(sandboxed, bwrap_path, bionic_lib_dir, linker64_path),
+                           envp, std::string(), config.stdout_fd);
 }
 
 }  // namespace stud::bionic_runtime

@@ -26,11 +26,9 @@
 //   - a directory without one -> ContextsSplit
 //   - NOT a directory at all -> ContextsPreSplit (the real legacy mode:
 ///    one flat prop_area file, no SELinux-context routing needed)
-// Process B's sandbox shares the host's real /dev (--dev-bind /dev /dev)
-// and the host (a real, non-Android Linux desktop) has no
-// /dev/__properties__ at all, so bind-mounting a single real, regular
-// file at that exact path is what real bionic already, naturally falls
-// back to using, with zero extra tricks needed to force ContextsPreSplit.
+// Process B's /dev is bwrap's own, with no /dev/__properties__ in it, so
+// binding one regular file at that path is what bionic falls back to using,
+// with nothing extra needed to force ContextsPreSplit.
 //
 // Real struct layout (confirmed in the engine against the field writes in
 // prop_area::map_prop_area_rw, cross-checked against AOSP's own current
@@ -39,8 +37,8 @@
 //     version_(4) reserved_[28*4=112]. magic_=0x504f5250,
 //     version_=0xfc6ed0ab (confirmed live: written together as one real
 //     8-byte immediate, 0xfc6ed0ab504f5250, in map_prop_area_rw).
-//   data_ starts immediately after (offset 128), the trie root implicit
-//   at data_+0.
+//   data_ starts immediately after (offset 128), with a nameless root
+//   prop_trie_node at data_+0 whose children hold the top-level segments.
 //   prop_trie_node, 20 bytes + name: namelen(4) prop(4) left(4) right(4)
 //     children(4), then the name bytes (NOT null-terminated in the file;
 //     namelen is authoritative), 4-byte aligned after.
@@ -48,8 +46,8 @@
 //     value[92], then name bytes, 4-byte aligned after. Values longer
 //     than 91 real chars need the "long property" union variant,
 //     genuinely not needed for what Stud uses this for (DNS server
-//     addresses), so not implemented here; write_property_area() clamps
-//     to 91 chars rather than silently corrupting the format.
+//     addresses), so not implemented here; write_property_area() refuses
+//     them rather than corrupting the format.
 // All prop/left/right/children/offset fields are OFFSETS from data_,
 // not absolute file offsets or pointers, 0 means "absent/null".
 namespace stud::bionic_runtime {

@@ -40,19 +40,16 @@ namespace stud::bionic_runtime {
 struct BionicNotFound : std::runtime_error {
     BionicNotFound()
         : std::runtime_error(
-              "stud: could not find Stud's own extracted bionic runtime files "
-              "(libc.so/libm.so/libdl.so/liblog.so/libandroid.so/libc++.so/"
-              "tzdata), extract them from a Waydroid system image first "
-              "(see docs/bionic-process-b.md)") {}
+              "stud: could not find Stud's bionic runtime files (libc.so, libm.so, "
+              "libdl.so, libdl_android.so, liblog.so, libc++.so and tzdata). Reinstall "
+              "Stud, or run tools/setup.sh in a source build") {}
 };
 
 struct LinkerNotFound : std::runtime_error {
     LinkerNotFound()
         : std::runtime_error(
-              "stud: could not find a real bionic linker64 binary, extract "
-              "it from a Waydroid system image's com.android.runtime APEX "
-              "(system/apex/com.android.runtime.apex, apex_payload.img:/bin/"
-              "linker64) first (see docs/bionic-process-b.md)") {}
+              "stud: could not find bionic's linker64 next to its libraries. "
+              "Reinstall Stud, or run tools/setup.sh in a source build") {}
 };
 
 struct BwrapNotFound : std::runtime_error {
@@ -143,7 +140,19 @@ struct ProcessBConfig {
     int stdout_fd = -1;
 
     bool share_network = true;
+
+    // bwrap's --disable-userns. launch_process_b() sets this itself, from
+    // what the bwrap it found can do.
+    bool block_nested_user_namespaces = false;
 };
+
+// What of `env` (an environ-shaped array) reaches Process B, as NAME=value.
+// A list, not everything: the host's environment is not the engine's
+// business (tokens live there), and a host LD_PRELOAD names a library that
+// does not exist in the sandbox, which bionic's linker treats as fatal.
+// Process B's own settings are the STUD_ names; the rest are what it reads
+// for paths, locale and the display.
+std::vector<std::string> sandbox_environment(char** env);
 
 // Spawns Process B inside the bwrap sandbox described above and returns
 // immediately with its PID (the caller. Process A / stud-ui, owns

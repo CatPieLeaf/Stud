@@ -129,7 +129,7 @@ inline bool start_session_log_to_fd(int destination_fd);
 // opened, output simply keeps going where it already went.
 inline bool start_session_log(const std::string& path) {
     if (path.empty()) return false;
-    const int log_fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    const int log_fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (log_fd < 0) return false;
     return start_session_log_to_fd(log_fd);
 }
@@ -363,7 +363,7 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
     // open/write/close only, and the path was built before the crash.
     if (crash_marker_path_storage()[0] != '\0') {
         const int fd = ::open(crash_marker_path_storage(),
-                              O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+                              O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
         if (fd >= 0) {
             const char* who = crash_process_name();
             ::write(fd, who, ::strlen(who));
@@ -453,7 +453,7 @@ inline std::string clean_exit_marker_path() {
 inline void note_clean_exit() {
     const char* path = detail::clean_exit_marker_path_storage();
     if (path[0] == '\0') return;
-    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) return;
     ::write(fd, "clean\n", 6);
     ::close(fd);
@@ -471,7 +471,7 @@ inline void note_window_shown() {
     if (noted.exchange(true)) return;
     const char* path = detail::window_shown_marker_path_storage();
     if (path[0] == '\0') return;
-    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) return;
     ::write(fd, "shown\n", 6);
     ::close(fd);

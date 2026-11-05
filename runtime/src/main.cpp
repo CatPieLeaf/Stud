@@ -96,6 +96,7 @@
 
 #include <cerrno>
 #include <sched.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -1145,10 +1146,44 @@ void report_server_region() {
     }
 }
 
+// Closes the abstract Unix sockets of everything outside this process and
+// its children. The sandbox shares the host's network, which is what the
+// game needs, and abstract sockets belong to the network namespace, so
+// without this the engine could connect to an X server's or any other
+// host service's. Files and game traffic are untouched. Landlock ABI 6,
+// Linux 6.12; on anything older this returns false and nothing changes.
+static bool close_abstract_sockets() {
+    constexpr unsigned kCreateRulesetVersion = 1u << 0;   // LANDLOCK_CREATE_RULESET_VERSION
+    constexpr uint64_t kScopeAbstractSocket = 1ull << 0;  // LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET
+    constexpr long kFirstAbiWithScopes = 6;
+    if (::syscall(SYS_landlock_create_ruleset, nullptr, 0, kCreateRulesetVersion) <
+        kFirstAbiWithScopes) {
+        return false;
+    }
+    // Declared here: the NDK's headers can predate `scoped`.
+    struct {
+        uint64_t handled_access_fs;
+        uint64_t handled_access_net;
+        uint64_t scoped;
+    } ruleset{0, 0, kScopeAbstractSocket};
+    const long fd = ::syscall(SYS_landlock_create_ruleset, &ruleset, sizeof(ruleset), 0);
+    if (fd < 0) return false;
+    const bool restricted = ::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0 &&
+                            ::syscall(SYS_landlock_restrict_self, fd, 0) == 0;
+    ::close(static_cast<int>(fd));
+    return restricted;
+}
+
 int main(int argc, char** argv) {
+    // First of all: it covers this thread and the ones it starts afterwards.
+    const bool abstract_sockets_closed = close_abstract_sockets();
+
     // Before anything else prints: the session log Process A named, so
     // this process's whole bring-up is in it (stud/session_log.h).
     stud::logging::start_session_log_from_env();
+    std::printf("stud: abstract sockets %s\n",
+                abstract_sockets_closed ? "closed to the sandbox" : "left open (Landlock too old)");
+    std::fflush(stdout);
 
     // The CPU shim, before libroblox is loaded, because it exists to
     // catch instructions libroblox itself executes.
@@ -1170,9 +1205,12 @@ int main(int argc, char** argv) {
                          "Stud cannot run here\n");
             return 1;
         }
-        if (!features.popcnt && stud::cpu_compat::install_sigill_handler()) {
-            std::printf("stud: this CPU has no POPCNT; emulating it on SIGILL\n");
-            std::fflush(stdout);
+        // On every CPU, not only one without POPCNT: BMI1 and MOVBE are
+        // missing from CPUs that have it, and whatever is not emulated
+        // still gets named before the abort. It costs nothing until a
+        // SIGILL actually happens.
+        if (!stud::cpu_compat::install_sigill_handler()) {
+            std::fprintf(stderr, "stud: could not install the SIGILL handler\n");
         }
     }
 

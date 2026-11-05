@@ -12,41 +12,6 @@ int reg_to_greg_index(int reg) {
     return table[reg];
 }
 
-DecodedPopcnt try_decode_popcnt(const uint8_t* code) {
-    DecodedPopcnt result;
-    size_t i = 0;
-
-    if (code[i] != 0xF3) return result;
-    i++;
-
-    bool rex_w = false;
-    bool rex_r = false;
-    bool rex_b = false;
-    if ((code[i] & 0xF0) == 0x40) {
-        rex_w = (code[i] & 0x08) != 0;
-        rex_r = (code[i] & 0x04) != 0;
-        rex_b = (code[i] & 0x01) != 0;
-        i++;
-    }
-
-    if (code[i] != 0x0F || code[i + 1] != 0xB8) return result;
-    i += 2;
-
-    uint8_t modrm = code[i];
-    i++;
-    int mod = (modrm >> 6) & 0x3;
-    if (mod != 3) return result;  // memory operand, not decoded yet
-
-    int reg = ((modrm >> 3) & 0x7) | (rex_r ? 8 : 0);
-    int rm = (modrm & 0x7) | (rex_b ? 8 : 0);
-
-    result.length = static_cast<int>(i);
-    result.dest_reg = reg;
-    result.src_reg = rm;
-    result.is_64bit = rex_w;
-    return result;
-}
-
 namespace {
 
 // Decodes ModRM (+ SIB + displacement) into an EffectiveAddress.
@@ -99,6 +64,40 @@ bool decode_memory_operand(const uint8_t* code, size_t& i, uint8_t modrm, bool r
 }
 
 }  // namespace
+
+DecodedPopcnt try_decode_popcnt(const uint8_t* code) {
+    DecodedPopcnt result;
+    size_t i = 0;
+
+    if (code[i] != 0xF3) return result;
+    i++;
+
+    bool rex_w = false;
+    bool rex_r = false;
+    bool rex_x = false;
+    bool rex_b = false;
+    if ((code[i] & 0xF0) == 0x40) {
+        rex_w = (code[i] & 0x08) != 0;
+        rex_r = (code[i] & 0x04) != 0;
+        rex_x = (code[i] & 0x02) != 0;
+        rex_b = (code[i] & 0x01) != 0;
+        i++;
+    }
+
+    if (code[i] != 0x0F || code[i + 1] != 0xB8) return result;
+    i += 2;
+
+    uint8_t modrm = code[i];
+    i++;
+    const bool memory = decode_memory_operand(code, i, modrm, rex_x, rex_b, &result.mem);
+
+    result.length = static_cast<int>(i);
+    result.dest_reg = ((modrm >> 3) & 0x7) | (rex_r ? 8 : 0);
+    result.src_reg = memory ? -1 : (modrm & 0x7) | (rex_b ? 8 : 0);
+    result.from_memory = memory;
+    result.is_64bit = rex_w;
+    return result;
+}
 
 uint64_t resolve_address(const EffectiveAddress& ea, const greg_t* gregs, uint64_t next_rip) {
     if (ea.rip_relative) {
@@ -279,10 +278,16 @@ void emulate_bmi1(const DecodedBmi1& decoded, greg_t* gregs) {
     gregs[REG_EFL] = static_cast<greg_t>(eflags);
 }
 
-void emulate_popcnt(const DecodedPopcnt& decoded, greg_t* gregs) {
-    uint64_t src = static_cast<uint64_t>(gregs[reg_to_greg_index(decoded.src_reg)]);
-    if (!decoded.is_64bit) {
-        src &= 0xFFFFFFFFu;
+void emulate_popcnt(const DecodedPopcnt& decoded, greg_t* gregs, uint64_t next_rip) {
+    uint64_t src = 0;
+    if (decoded.from_memory) {
+        std::memcpy(&src, reinterpret_cast<const void*>(resolve_address(decoded.mem, gregs, next_rip)),
+                    decoded.is_64bit ? 8 : 4);
+    } else {
+        src = static_cast<uint64_t>(gregs[reg_to_greg_index(decoded.src_reg)]);
+        if (!decoded.is_64bit) {
+            src &= 0xFFFFFFFFu;
+        }
     }
     uint64_t result = static_cast<uint64_t>(__builtin_popcountll(src));
     gregs[reg_to_greg_index(decoded.dest_reg)] = static_cast<greg_t>(result);
