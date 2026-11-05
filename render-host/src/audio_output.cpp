@@ -687,6 +687,7 @@ struct Capture {
     std::atomic<size_t> ring_write{0};
     std::atomic<uint64_t> overruns{0};
     bool open = false;
+    bool running = false;
 };
 
 Capture& capture() {
@@ -758,17 +759,38 @@ uint64_t audio_open_input_stream(int sample_rate, int channels) {
         report_alsa_messages("opening the microphone");
         return 0;
     }
-    err = ma_device_start(&c.ma_dev);
+    c.open = true;
+    std::printf("stud-render-host: audio: microphone ready, not capturing yet\n");
+    std::fflush(stdout);
+    return 1;
+}
+
+uint64_t audio_set_input_running(bool running) {
+    Capture& c = capture();
+    if (!c.open) return 0;
+    if (running == c.running) return 1;
+    if (!running) {
+        ma_device_stop(&c.ma_dev);
+        c.running = false;
+        std::printf("stud-render-host: audio: microphone stopped\n");
+        std::fflush(stdout);
+        return 1;
+    }
+    // What was captured before the stop is not for this run. Its reads are
+    // on this connection, and the device is stopped, so nothing else touches
+    // these.
+    c.ring_read.store(0);
+    c.ring_write.store(0);
+    const ma_result err = ma_device_start(&c.ma_dev);
     if (err != MA_SUCCESS) {
         std::printf("stud-render-host: audio: could not start the microphone (%s)\n",
                     ma_result_description(err));
         std::fflush(stdout);
-        ma_device_uninit(&c.ma_dev);
         return 0;
     }
-    c.open = true;
+    c.running = true;
     std::printf("stud-render-host: audio: MICROPHONE OPEN (%d Hz, %d channel(s)), the engine "
-                "asked for an input stream\n",
+                "started an input stream\n",
                 c.rate, c.channels);
     std::fflush(stdout);
     return 1;
@@ -804,6 +826,7 @@ void audio_close_input_stream() {
     // rather than merely left idle.
     ma_device_uninit(&c.ma_dev);
     c.open = false;
+    c.running = false;
     std::printf("stud-render-host: audio: microphone closed (%llu overrun(s))\n",
                 static_cast<unsigned long long>(c.overruns.load()));
     std::fflush(stdout);

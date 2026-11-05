@@ -674,6 +674,12 @@ std::map<uint64_t, uint64_t>& allocation_sizes() {
     static std::map<uint64_t, uint64_t> m;
     return m;
 }
+
+// Copied allocations the engine has mapped at least once. Under mapped_mutex().
+std::set<uint64_t>& mapped_before() {
+    static std::set<uint64_t> s;
+    return s;
+}
 std::map<uint64_t, MappedRange>& mapped_ranges() {
     static std::map<uint64_t, MappedRange> m;
     return m;
@@ -2436,6 +2442,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
             {
                 std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
                 allocation_sizes().erase(handle);
+                mapped_before().erase(handle);
                 non_coherent_allocations().erase(handle);
             }
             uint64_t free_args[8] = {to_u64(device), handle};
@@ -2478,6 +2485,7 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
         std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
         mapped_ranges().erase(to_u64(memory));
         allocation_sizes().erase(to_u64(memory));
+        mapped_before().erase(to_u64(memory));
         non_coherent_allocations().erase(to_u64(memory));
     }
     {
@@ -2500,6 +2508,29 @@ VKAPI_ATTR void VKAPI_CALL stud_vkFreeMemory(VkDevice device, VkDeviceMemory mem
     // After the free is queued, so memory given this number next reaches
     // render-host behind it.
     free_client_handle(to_u64(memory));
+}
+
+// Reads `length` bytes at `offset` into an allocation out of render-host's
+// mapping. A round trip per chunk, so never called holding mapped_mutex().
+VkResult read_mapped_from_host(VkDevice device, uint64_t memory, uint64_t offset, uint8_t* dst,
+                               uint64_t length) {
+    constexpr uint64_t kChunk = 16ull << 20;
+    std::vector<uint8_t> bytes;
+    for (uint64_t done = 0; done < length;) {
+        const uint64_t want = std::min<uint64_t>(kChunk, length - done);
+        bytes.assign(static_cast<size_t>(want), 0);
+        uint64_t a[8] = {to_u64(device), memory, offset + done, want};
+        uint32_t written = 0;
+        const uint64_t res = stud::render_client::connection().call(
+            CallId::VkReadMappedMemory, a, nullptr, 0, bytes.data(),
+            static_cast<uint32_t>(bytes.size()), &written);
+        const VkResult vr = static_cast<VkResult>(static_cast<int32_t>(res));
+        if (vr != VK_SUCCESS) return vr;
+        if (written == 0) break;
+        std::memcpy(dst + done, bytes.data(), std::min<size_t>(written, static_cast<size_t>(want)));
+        done += written;
+    }
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory memory,
@@ -2599,12 +2630,20 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
     }
     if (!landed_shared && (!barrier_ok || !slot.barrier.allocate(static_cast<size_t>(size)))) {
         slot.staging.assign(static_cast<size_t>(size), 0);
-        *ppData = slot.staging.data();
-        return VK_SUCCESS;
     }
-    // A fresh mapping is entirely dirty until the first flush ships it,
+    // These pages are new, and memory keeps its contents across an unmap, so
+    // a map after the first brings them back. Written behind the barrier's
+    // back: the host has them already, and the first flush must not put
+    // zeros over them. A first map is entirely dirty until a flush ships it,
     // which is what allocate() already records.
-    *ppData = slot.barrier.data();
+    if (!mapped_before().insert(to_u64(memory)).second) {
+        uint8_t* bytes = slot.bytes();
+        lock.unlock();
+        read_mapped_from_host(device, to_u64(memory), offset, bytes, size);
+        lock.lock();
+        if (slot.barrier.valid()) slot.barrier.mark_clean_and_protect(0, static_cast<size_t>(size));
+    }
+    *ppData = slot.bytes();
     return VK_SUCCESS;
 }
 
@@ -2631,8 +2670,6 @@ VKAPI_ATTR void VKAPI_CALL stud_vkUnmapMemory(VkDevice device, VkDeviceMemory me
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkInvalidateMappedMemoryRanges(
     VkDevice device, uint32_t memoryRangeCount, const VkMappedMemoryRange* pMemoryRanges) {
     if (pMemoryRanges == nullptr) return VK_SUCCESS;
-    constexpr uint64_t kChunk = 16ull << 20;
-    std::vector<uint8_t> bytes;
     for (uint32_t i = 0; i < memoryRangeCount; ++i) {
         const VkMappedMemoryRange& r = pMemoryRanges[i];
         const uint64_t key = to_u64(r.memory);
@@ -2668,20 +2705,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkInvalidateMappedMemoryRanges(
             continue;
         }
         if (length == 0) continue;
-        for (uint64_t done = 0; done < length;) {
-            const uint64_t want = std::min<uint64_t>(kChunk, length - done);
-            bytes.assign(static_cast<size_t>(want), 0);
-            uint64_t a[8] = {to_u64(device), key, start + done, want};
-            uint32_t written = 0;
-            const uint64_t res = stud::render_client::connection().call(
-                CallId::VkReadMappedMemory, a, nullptr, 0, bytes.data(),
-                static_cast<uint32_t>(bytes.size()), &written);
-            const VkResult vr = static_cast<VkResult>(static_cast<int32_t>(res));
-            if (vr != VK_SUCCESS) return vr;
-            if (written == 0) break;
-            std::memcpy(dst + done, bytes.data(), std::min<size_t>(written, static_cast<size_t>(want)));
-            done += written;
-        }
+        const VkResult read = read_mapped_from_host(device, key, start, dst, length);
+        if (read != VK_SUCCESS) return read;
         // Those bytes came from the device, and the write above made them look
         // like the engine's. Left dirty they would go back at the next flush,
         // over whatever the GPU has written since. Whole pages only: the rest
@@ -5183,7 +5208,14 @@ private:
             const size_t i = batch.next.fetch_add(1, std::memory_order_relaxed);
             if (i >= bands.size()) return;
             const DecodeBand& b = bands[i];
-            stud::texture_decode::decode(b.format, b.src, b.width, b.height, b.dst, b.row_pitch);
+            // Blank, as a failed upload is: what the scratch holds is some
+            // other texture.
+            if (!stud::texture_decode::decode(b.format, b.src, b.width, b.height, b.dst,
+                                              b.row_pitch)) {
+                std::memset(b.dst, 0,
+                            static_cast<size_t>(stud::texture_decode::decoded_size(
+                                b.format, b.width, b.height)));
+            }
             batch.outstanding.fetch_sub(1, std::memory_order_release);
         }
     }

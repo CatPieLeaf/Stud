@@ -222,8 +222,11 @@ bool UffdScan::take_written_and_protect(void* base, std::size_t offset, std::siz
     out.clear();
     if (!k.ok || base == nullptr || len == 0) return false;
     const std::size_t ps = page_size();
-    const auto* start = static_cast<uint8_t*>(base) + offset;
-    const std::size_t span = ((len + ps - 1) / ps) * ps;
+    // Whole pages: the kernel refuses a start that is not page aligned, and a
+    // flush only has to be aligned to the device's atom size.
+    const std::size_t first = (offset / ps) * ps;
+    const auto* start = static_cast<uint8_t*>(base) + first;
+    const std::size_t span = (((offset - first) + len + ps - 1) / ps) * ps;
 
     // One scan can report at most this many separate runs; anything past
     // that is picked up by the next scan, because the pages it did not

@@ -178,12 +178,24 @@ void prune_once() {
     }
 }
 
+// A walk over the tree, on a thread of its own and one at a time: the callers
+// are texture decodes the engine is waiting on.
+void tidy_in_background(bool drop_old, bool prune) {
+    bool expected = false;
+    if (!g_pruning.compare_exchange_strong(expected, true)) return;
+    std::thread([drop_old, prune] {
+        if (drop_old) drop_old_generations();
+        if (prune) prune_once();
+        g_pruning.store(false);
+    }).detach();
+}
+
 // Whether the cache directory lives on a spinning disk.
 //
 // The cache trades a decode for a file read, and that trade is only
 // worth anything when the read is fast. On a spinning disk a random read
 // costs a seek and the writes compete with the engine's own asset writes,
-// so it is off there unless the config file says otherwise.
+// so it is off there unless STUD_TEX_CACHE_FORCE says otherwise.
 //
 // The kernel answers this directly: a block device reports whether it
 // rotates. The cache directory's device is found by its st_dev, and for
@@ -221,14 +233,14 @@ bool ensure_ready() {
         ::mkdir(stud::paths::cache_dir().c_str(), 0700);
         ::mkdir((stud::paths::cache_dir() + "/textures").c_str(), 0700);
         ::mkdir(cache_root().c_str(), 0700);
-        drop_old_generations();
         static const bool forced = std::getenv("STUD_TEX_CACHE_FORCE") != nullptr;
         if (!forced && on_rotational_disk()) {
             std::printf("stud: texture cache off, %s is on a spinning disk, where decoding "
-                        "is about as cheap as reading it back (textureCacheMB in config.json, or "
-                        "STUD_TEX_CACHE_FORCE=1, overrides)\n",
+                        "is about as cheap as reading it back (STUD_TEX_CACHE_FORCE=1 "
+                        "overrides)\n",
                         cache_root().c_str());
             std::fflush(stdout);
+            tidy_in_background(/*drop_old=*/true, /*prune=*/false);
             return false;
         }
         for (unsigned bucket = 0; bucket < 256; ++bucket) {
@@ -236,7 +248,7 @@ bool ensure_ready() {
             std::snprintf(dir_name, sizeof(dir_name), "%02x", bucket);
             ::mkdir((cache_root() + "/" + dir_name).c_str(), 0700);
         }
-        prune_once();
+        tidy_in_background(/*drop_old=*/true, /*prune=*/true);
         return true;
     }();
     return ready;
@@ -334,21 +346,13 @@ void store(uint64_t key_high, uint64_t key_low, const void* src, uint64_t bytes)
     // Enforce the cap during the session, not only at startup, but
     // never on the thread that is storing.
     //
-    // Pruning walks the whole tree and stats every entry, and the caller
-    // here is a texture-decode thread the engine is waiting on. Doing it
-    // inline turns the cache into the thing it exists to prevent: a stall
-    // in the middle of loading. It runs on a thread of its own instead,
-    // one at a time, and nothing waits for it.
+    // Pruning walks the whole tree and stats every entry. Doing it inline
+    // turns the cache into the thing it exists to prevent: a stall in the
+    // middle of loading.
     const uint64_t added = g_stored_since_prune.fetch_add(bytes) + bytes;
     if (added >= g_max_bytes.load() / 8) {
         g_stored_since_prune.store(0);
-        bool expected = false;
-        if (g_pruning.compare_exchange_strong(expected, true)) {
-            std::thread([] {
-                prune_once();
-                g_pruning.store(false);
-            }).detach();
-        }
+        tidy_in_background(/*drop_old=*/false, /*prune=*/true);
     }
 }
 

@@ -58,7 +58,9 @@ constexpr int32_t AAUDIO_FORMAT_PCM_FLOAT = 2;
 constexpr int32_t AAUDIO_DIRECTION_OUTPUT = 0;
 constexpr int32_t AAUDIO_STREAM_STATE_OPEN = 2;
 constexpr int32_t AAUDIO_STREAM_STATE_STARTED = 4;
+constexpr int32_t AAUDIO_STREAM_STATE_PAUSING = 5;
 constexpr int32_t AAUDIO_STREAM_STATE_PAUSED = 6;
+constexpr int32_t AAUDIO_STREAM_STATE_STOPPING = 9;
 constexpr int32_t AAUDIO_STREAM_STATE_STOPPED = 10;
 constexpr int32_t AAUDIO_CALLBACK_RESULT_CONTINUE = 0;
 
@@ -129,6 +131,25 @@ void set_state(Stream* s, int32_t state) {
     s->state_changed.notify_all();
 }
 
+// Ends a pause or a stop, on the thread that runs the data callback. Only that
+// thread knows the callback is not running, and PAUSED and STOPPED promise the
+// engine it is not: it may free what the callback uses as soon as it sees one.
+// Under the lock, so a start that landed in between stands.
+void settle_state(Stream* s) {
+    {
+        std::lock_guard<std::mutex> lock(s->state_mutex);
+        const int32_t state = s->state.load(std::memory_order_relaxed);
+        if (state == AAUDIO_STREAM_STATE_PAUSING) {
+            s->state.store(AAUDIO_STREAM_STATE_PAUSED, std::memory_order_relaxed);
+        } else if (state == AAUDIO_STREAM_STATE_STOPPING) {
+            s->state.store(AAUDIO_STREAM_STATE_STOPPED, std::memory_order_relaxed);
+        } else {
+            return;
+        }
+    }
+    s->state_changed.notify_all();
+}
+
 // render-host's output ring counters, in a page it keeps current (see
 // CallId::AudioShareState): bytes received, write position, read
 // position, underruns, and a flag once written. With it the feeder sends
@@ -193,7 +214,16 @@ void feed(Stream* s) {
     uint64_t refilled_to = 0;
 
     while (s->running.load(std::memory_order_relaxed)) {
-        if (s->state.load(std::memory_order_relaxed) != AAUDIO_STREAM_STATE_STARTED) {
+        settle_state(s);
+        const int32_t state = s->state.load(std::memory_order_relaxed);
+        if (state == AAUDIO_STREAM_STATE_STOPPED) {
+            // Nothing to do until a start, which makes a new thread.
+            std::lock_guard<std::mutex> lock(s->start_mutex);
+            if (s->state.load(std::memory_order_relaxed) != AAUDIO_STREAM_STATE_STOPPED) continue;
+            s->running.store(false, std::memory_order_relaxed);
+            break;
+        }
+        if (state != AAUDIO_STREAM_STATE_STARTED) {
             // Paused: nothing to pull, and nothing to write. The host's
             // own buffer drains on its own.
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -366,6 +396,23 @@ void feed(Stream* s) {
     }
 }
 
+// Whether the real microphone runs. It follows the stream's state, so a stream
+// that is open but stopped or paused records nothing.
+bool set_capture(bool on) {
+    const uint64_t a[8] = {on ? 1u : 0u};
+    return audio_connection().call(CallId::AudioSetInputRunning, a, nullptr, 0, nullptr, 0,
+                                   nullptr) != 0;
+}
+
+// A pause or a stop. With a feeder it is only asked for, and the feeder ends
+// it; see settle_state(). With none there is nothing to wait for.
+int32_t request_halt(Stream* s, int32_t going, int32_t gone) {
+    std::lock_guard<std::mutex> lock(s->start_mutex);
+    if (s->is_input) set_capture(false);
+    set_state(s, s->running.load(std::memory_order_relaxed) ? going : gone);
+    return AAUDIO_OK;
+}
+
 }  // namespace
 
 extern "C" {
@@ -414,8 +461,8 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
     if (builder == nullptr || stream_out == nullptr) return AAUDIO_ERROR_NULL;
     auto* b = static_cast<Builder*>(builder);
     if (b->direction != AAUDIO_DIRECTION_OUTPUT) {
-        // Voice chat. The host opens the real microphone here and only
-        // here, never at startup, and says so in the log.
+        // Voice chat. The host gets the device ready here; the microphone
+        // itself only runs while the stream is started.
         const uint64_t args[8] = {static_cast<uint64_t>(kSampleRate), 1, 0, 0, 0, 0, 0, 0};
         if (audio_connection().call(CallId::AudioOpenInputStream, args, nullptr, 0, nullptr, 0,
                                     nullptr) == 0) {
@@ -449,8 +496,9 @@ int32_t AAudioStreamBuilder_openStream(void* builder, void** stream_out) {
 
     auto* s = new Stream();
     s->host_handle = host;
-    s->format = b->format == AAUDIO_FORMAT_PCM_FLOAT ? AAUDIO_FORMAT_PCM_FLOAT
-                                                      : AAUDIO_FORMAT_PCM_I16;
+    // Float for anything but an explicit i16, unspecified included: see Builder.
+    s->format = b->format == AAUDIO_FORMAT_PCM_I16 ? AAUDIO_FORMAT_PCM_I16
+                                                   : AAUDIO_FORMAT_PCM_FLOAT;
     s->buffer_capacity = b->buffer_capacity;
     // Starts small, as AAudio's does, and grows only when the engine asks
     // through setBufferSizeInFrames; the size now sets the latency, so
@@ -470,9 +518,9 @@ int32_t AAudioStream_requestStart(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
     std::lock_guard<std::mutex> lock(s->start_mutex);
+    // A capture stream has nothing to feed, the engine reads from it.
+    if (s->is_input && !set_capture(true)) return AAUDIO_ERROR_INVALID_STATE;
     set_state(s, AAUDIO_STREAM_STATE_STARTED);
-    // A capture stream has nothing to feed, the engine reads from it,
-    // and the host is already capturing from the moment it opened.
     if (!s->is_input && !s->running.exchange(true)) {
         // One that stopped itself has returned but is still joinable, and
         // assigning over a joinable thread ends the process.
@@ -485,15 +533,13 @@ int32_t AAudioStream_requestStart(void* stream) {
 int32_t AAudioStream_requestPause(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
-    set_state(s, AAUDIO_STREAM_STATE_PAUSED);
-    return AAUDIO_OK;
+    return request_halt(s, AAUDIO_STREAM_STATE_PAUSING, AAUDIO_STREAM_STATE_PAUSED);
 }
 
 int32_t AAudioStream_requestStop(void* stream) {
     auto* s = static_cast<Stream*>(stream);
     if (s == nullptr) return AAUDIO_ERROR_NULL;
-    set_state(s, AAUDIO_STREAM_STATE_STOPPED);
-    return AAUDIO_OK;
+    return request_halt(s, AAUDIO_STREAM_STATE_STOPPING, AAUDIO_STREAM_STATE_STOPPED);
 }
 
 int32_t AAudioStream_close(void* stream) {

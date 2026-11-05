@@ -1726,6 +1726,8 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
         case CallId::AudioCloseInputStream:
             stud::render_host::audio_close_input_stream();
             return 1;
+        case CallId::AudioSetInputRunning:
+            return stud::render_host::audio_set_input_running(a[0] != 0);
         case CallId::SetGamepadRumble: {
             // Magnitudes arrive in 1/1000ths: the header carries ints.
             return stud::render_host::gamepad::set_rumble(
@@ -3637,6 +3639,7 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         case stud::render_host::CallId::AudioShareState:
         case stud::render_host::CallId::AudioGetUnderruns:
         case stud::render_host::CallId::AudioReadFrames:
+        case stud::render_host::CallId::AudioSetInputRunning:
         // Input may WAIT for an event to arrive (see PollInputEvents in
         // the protocol header). It holds no driver state at all, and
         // holding the dispatch lock across that wait would stall every

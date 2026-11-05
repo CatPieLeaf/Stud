@@ -1,5 +1,6 @@
 #include "texture_decode.h"
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -295,6 +296,20 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
             src_row_pitch != static_cast<uint64_t>(blocks(width, l.block_w)) * l.block_bytes) {
             return false;
         }
+        // The decoder works on at least 8x8 texels, 16x8 at 2bpp, and reads
+        // that much source, which is more than a smaller level has. PVRTC
+        // wraps at its edges, so the level is repeated up to that size.
+        const uint32_t decoder_w = std::max(width, l.codec == Layout::kPvrtc2 ? 16u : 8u);
+        const uint32_t decoder_h = std::max(height, 8u);
+        const uint64_t needs = static_cast<uint64_t>(blocks(decoder_w, l.block_w)) *
+                               blocks(decoder_h, l.block_h) * l.block_bytes;
+        const uint64_t have = encoded_size(format, width, height);
+        std::vector<uint8_t> repeated;
+        if (needs > have) {
+            repeated.resize(static_cast<size_t>(needs));
+            for (uint64_t i = 0; i < needs; ++i) repeated[i] = in[i % have];
+            in = repeated.data();
+        }
         pvr::PVRTDecompressPVRTC(in, l.codec == Layout::kPvrtc2 ? 1u : 0u, width, height, out);
         return true;
     }
@@ -302,18 +317,23 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     const uint32_t bw = blocks(width, l.block_w);
     const uint32_t bh = blocks(height, l.block_h);
     const uint32_t row_bytes = width * l.texel_bytes;
+    // Rows of blocks are tightly packed unless the copy said otherwise.
+    const uint64_t block_row_pitch =
+        src_row_pitch != 0 ? src_row_pitch : static_cast<uint64_t>(bw) * l.block_bytes;
     // Has this exact decode been done before?
     //
     // The work below is deterministic: the same source bytes always
     // produce the same output, and Roblox's content never changes. So the
     // result is kept between runs.
-    const uint64_t source_bytes =
-        static_cast<uint64_t>(bh) * (src_row_pitch != 0 ? src_row_pitch
-                                                        : static_cast<uint64_t>(bw) * l.block_bytes);
+    //
+    // The last row has no padding after it, and may be the end of the buffer.
+    const uint64_t source_bytes = static_cast<uint64_t>(bh - 1) * block_row_pitch +
+                                  static_cast<uint64_t>(bw) * l.block_bytes;
     const uint64_t output_bytes = static_cast<uint64_t>(height) * row_bytes;
     uint64_t key_high = 0;
     uint64_t key_low = 0;
-    // Only levels of 64KB and up, a 256x256 level: every decode that
+    // Only bands of 128KB and up. The client decodes 128 rows at a time, so
+    // this is what cuts off below a level 256 RGBA texels wide. Every decode that
     // consults the cache pays a hash of the source, and every miss a file
     // write, which is pure loss for Home's thumbnails, each unique and
     // below that size.
@@ -326,7 +346,7 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
     // 0.06-0.09 cold. In wall time a cold hit is slower than decoding (1.9
     // against 0.66 ms at 1024x1024), because the read waits and the decode
     // runs on several threads: the cache saves CPU, not latency.
-    constexpr uint64_t kMinCacheableOutput = 64u * 1024u;
+    constexpr uint64_t kMinCacheableOutput = 128u * 1024u;
     const bool cacheable = stud::texture_cache::enabled() && output_bytes >= kMinCacheableOutput;
     if (cacheable) {
         stud::texture_cache::key_for(in, source_bytes, static_cast<uint32_t>(format),
@@ -334,9 +354,6 @@ bool decode(VkFormat format, const void* src, uint32_t width, uint32_t height, v
                                      height, &key_high, &key_low);
         if (stud::texture_cache::load(key_high, key_low, dst, output_bytes)) return true;
     }
-    // Rows of blocks are tightly packed unless the copy said otherwise.
-    const uint64_t block_row_pitch =
-        src_row_pitch != 0 ? src_row_pitch : static_cast<uint64_t>(bw) * l.block_bytes;
     // Every block decodes into scratch and is copied out, so a block on
     // the right or bottom edge of a non-multiple-of-four level writes only
     // the part that exists. 4x4 texels at 4 bytes is the largest case any

@@ -94,7 +94,8 @@ bool MappedWriteBarrier::allocate_backed_by(std::size_t bytes, int fd) {
     dirty_ = new std::atomic<uint8_t>[pages_];
     speculative_ = new std::atomic<uint8_t>[pages_];
     for (std::size_t i = 0; i < pages_; ++i) speculative_[i].store(0, std::memory_order_relaxed);
-    // Everything starts dirty: the host has never seen any of it.
+    // Everything starts dirty: the first flush makes the host match. A map
+    // of memory that already holds something is re-armed by its caller.
     for (std::size_t i = 0; i < pages_; ++i) dirty_[i].store(1, std::memory_order_relaxed);
     dirty_pages_.store(pages_, std::memory_order_release);
     armed_ = false;
@@ -107,8 +108,8 @@ bool MappedWriteBarrier::allocate_backed_by(std::size_t bytes, int fd) {
         if (UffdScan::protect(base_, pages_ * ps)) {
             uffd_ = true;
             armed_ = true;
-            // Everything starts written, as it does for the fault barrier: the
-            // host has never seen this memory. The first scan reports it all.
+            // Unlike the fault barrier this starts clean: the first scan
+            // reports only what the engine has written by then.
             return true;
         }
         UffdScan::unregister_range(base_, pages_ * ps);

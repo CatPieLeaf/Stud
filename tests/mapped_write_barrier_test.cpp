@@ -90,6 +90,20 @@ void partial_flush_keeps_the_rest() {
     std::printf("  partial flush keeps what it did not send: ok\n");
 }
 
+// A flush need not start on a page: it only aligns to the device's atom.
+void unaligned_flush_is_rearmed() {
+    stud::render_client::MappedWriteBarrier b;
+    check(b.allocate(64 * 1024), "allocate");
+    const std::size_t ps = 4096;
+    b.mark_all_clean_and_protect();
+    b.data()[ps + 200] = 0xCC;
+    const auto runs = b.take_dirty_runs_and_protect(ps + 64, 256);
+    check(runs.size() == 1 && runs[0].first == ps && runs[0].second == ps,
+          "the written page is found from an unaligned offset");
+    check(b.take_dirty_runs_and_protect(ps + 64, 256).empty(), "and it was re-armed");
+    std::printf("  unaligned flush is scanned and re-armed: ok\n");
+}
+
 // Every write reported, under real concurrent faulting.
 void concurrent_writes_are_all_reported() {
     stud::render_client::MappedWriteBarrier b;
@@ -156,6 +170,7 @@ int main() {
                 std::getenv("STUD_VK_UFFD_SCAN") != nullptr ? "uffd-scan (kernel)" : "fault barrier");
     check(stud::render_client::install_write_barrier(), "install the barrier");
     partial_flush_keeps_the_rest();
+    unaligned_flush_is_rearmed();
     concurrent_writes_are_all_reported();
     std::printf("mapped_write_barrier_test: ok\n");
     return 0;

@@ -476,13 +476,19 @@ std::map<std::string, bool> renderer_flags_for_mode(const std::string& mode) {
 }
 
 // render-host's window-state page (CallId::ShareWindowState), handed over by
-// libvulkan.so once it has made one; null until then, and the polls below
-// ask render-host as before.
+// whichever client library makes one first; null until then, and the polls
+// below ask render-host as before.
 std::atomic<const std::atomic<uint64_t>*> g_window_state_page{nullptr};
 
-extern "C" __attribute__((visibility("default"))) void stud_set_window_state_page(const void* page) {
-    g_window_state_page.store(static_cast<const std::atomic<uint64_t>*>(page),
-                              std::memory_order_release);
+// Keeps the first page offered, and returns whichever is kept.
+extern "C" __attribute__((visibility("default"))) const void* stud_set_window_state_page(
+    const void* page) {
+    const std::atomic<uint64_t>* expected = nullptr;
+    const auto* offered = static_cast<const std::atomic<uint64_t>*>(page);
+    return g_window_state_page.compare_exchange_strong(expected, offered,
+                                                       std::memory_order_acq_rel)
+               ? offered
+               : expected;
 }
 
 // The same page for the other client libraries, so there is only one:

@@ -88,8 +88,7 @@ stud::render_host::Client& connection() {
 
 stud::render_host::Client& audio_connection() {
     static stud::render_host::Client client;
-    static const bool opened =
-        open_client(client, "audio", ", sharing the render connection instead");
+    static const bool opened = open_client(client, "audio", ", so there will be no sound");
     (void)opened;
     return client;
 }
@@ -403,24 +402,31 @@ bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to
 const std::atomic<uint64_t>* window_state_page() {
     static const std::atomic<uint64_t>* const page = []() -> const std::atomic<uint64_t>* {
         using GetPage = const void* (*)();
-        using SetPage = void (*)(const void*);
+        using SetPage = const void* (*)(const void*);
         auto get_page = reinterpret_cast<GetPage>(::dlsym(RTLD_DEFAULT, "stud_window_state_page"));
         auto set_page = reinterpret_cast<SetPage>(::dlsym(RTLD_DEFAULT, "stud_set_window_state_page"));
         if (get_page == nullptr || set_page == nullptr) return nullptr;
         if (const void* existing = get_page()) return static_cast<const std::atomic<uint64_t>*>(existing);
         SharedAllocation alloc;
-        if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), alloc)) {
+        if (!create_shared_allocation(static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)), alloc,
+                                      /*hand_to_host=*/false)) {
             return nullptr;
         }
-        uint64_t a[8] = {alloc.id};
-        const uint64_t r = connection().call(stud::render_host::CallId::ShareWindowState, a, nullptr,
-                                             0, nullptr, 0, nullptr);
+        // Claimed before the host hears of it, so another library doing this
+        // at the same moment ends up on the same page: the host writes only
+        // to the last one it was given. A page nobody fills is never read,
+        // so a failure past here leaves it in place: others may hold it.
+        const void* winner = set_page(alloc.address);
+        if (winner != alloc.address) {
+            release_shared_allocation(alloc);
+            return static_cast<const std::atomic<uint64_t>*>(winner);
+        }
+        if (send_shared_fd(alloc.id, alloc.fd)) {
+            uint64_t a[8] = {alloc.id};
+            connection().call(stud::render_host::CallId::ShareWindowState, a, nullptr, 0, nullptr,
+                              0, nullptr);
+        }
         ::close(alloc.fd);
-        if (r != 1) {
-            ::munmap(alloc.address, alloc.length);
-            return nullptr;
-        }
-        set_page(alloc.address);
         return static_cast<const std::atomic<uint64_t>*>(alloc.address);
     }();
     return page;

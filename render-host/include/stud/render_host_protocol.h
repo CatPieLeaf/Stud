@@ -427,6 +427,9 @@ enum class CallId : uint32_t {
     // out-buffer, returning the number of bytes written. Never blocks.
     AudioReadFrames,
     AudioCloseInputStream,
+    // Starts (a[0] 1) or stops (0) the microphone of an open input stream;
+    // returns 1 on success. Nothing is captured until the first start.
+    AudioSetInputRunning,
     // Many pipelined calls in one request.
     //
     // A reply-free call alone carries a full Header, call id, eight
@@ -776,6 +779,7 @@ inline const char* call_id_name(CallId id) {
         "AudioOpenInputStream",
         "AudioReadFrames",
         "AudioCloseInputStream",
+        "AudioSetInputRunning",
         "VoidCallBatch",
         "PollWebViewNavigation",
         "WebViewLoadUrl",

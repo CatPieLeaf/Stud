@@ -43,10 +43,15 @@ void audio_close_stream(uint64_t stream);
 // microphone open on the chance it might be wanted is not something to
 // do quietly. Every transition is logged.
 //
-// Returns 1 when the microphone is open, 0 when the host has none or the
+// Returns 1 when the device is ready, 0 when the host has none or the
 // audio server refused, which the caller must treat as "no microphone"
-// rather than an error.
+// rather than an error. Nothing is captured until audio_set_input_running().
 uint64_t audio_open_input_stream(int sample_rate, int channels);
+
+// Starts or stops the microphone of the open stream, following the engine's
+// start, pause and stop. 1 on success; 0 with no stream open or a start the
+// device refused.
+uint64_t audio_set_input_running(bool running);
 
 // Copies up to `bytes` of captured interleaved 32-bit float PCM and
 // returns how many bytes were actually available. Never blocks: a
