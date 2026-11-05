@@ -228,6 +228,10 @@ std::atomic<bool> g_visible{true};
 std::atomic<bool> g_focused{true};
 // Whether the game window itself is mapped; g_visible alone follows it late.
 std::atomic<bool> g_window_mapped{true};
+// Somebody else holds the keyboard, which is what a window switcher does while
+// it is up. Not the window losing focus, as far as held keys go, but what is
+// behind the switcher is on show.
+std::atomic<bool> g_keyboard_grabbed{false};
 void sync_text_overlay();
 void sync_text_overlay_locked();
 std::atomic<int32_t> g_width{0};
@@ -1947,6 +1951,8 @@ void pump() {
                 // with the key still down.
                 if (event.xfocus.mode == NotifyGrab) break;
                 if (event.xfocus.mode == NotifyUngrab) {
+                    g_keyboard_grabbed.store(false);
+                    sync_text_overlay();
                     release_keys_let_go_during_grab();
                     break;
                 }
@@ -1961,7 +1967,12 @@ void pump() {
                 push_window_focus(true);
                 break;
             case FocusOut:
-                if (event.xfocus.mode == NotifyGrab || event.xfocus.mode == NotifyUngrab) break;
+                if (event.xfocus.mode == NotifyGrab) {
+                    g_keyboard_grabbed.store(true);
+                    sync_text_overlay();
+                    break;
+                }
+                if (event.xfocus.mode == NotifyUngrab) break;
                 if (g_focused.exchange(false)) {
                     std::printf("stud: android-glue: window in the background\n");
                     std::fflush(stdout);
@@ -2092,13 +2103,14 @@ bool ensure_overlay_window() {
 // An override-redirect window sits above everything and the window manager
 // never hears of it, so nothing ties it to the game window: left alone it stays
 // on screen over other programs when the game window is minimised, covered or
-// moved. So it is shown only while that window is on screen with focus, when
-// nothing is above it, and placed again every time. In root coordinates,
+// moved. So it is shown only while that window is on screen with focus and the
+// keyboard, when nothing is above it, and placed again every time. In root coordinates,
 // because a top-level window is placed in them.
 void sync_text_overlay_locked() {
     if (g_display == nullptr || g_overlay_window == 0) return;
     Xlib& x = xlib();
-    const bool show = g_overlay_wanted && g_visible.load() && g_focused.load() && g_window_mapped;
+    const bool show = g_overlay_wanted && g_visible.load() && g_focused.load() &&
+                      g_window_mapped.load() && !g_keyboard_grabbed.load();
     if (!show) {
         if (x.UnmapWindow != nullptr) x.UnmapWindow(g_display, g_overlay_window);
         if (x.Flush != nullptr) x.Flush(g_display);
