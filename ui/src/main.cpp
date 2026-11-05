@@ -1753,6 +1753,22 @@ void watch_for_a_crash() {
     const QString clean = QString::fromStdString(stud::logging::clean_exit_marker_path());
     const QString shown = QString::fromStdString(stud::logging::window_shown_marker_path());
     const QString unsupported = QString::fromStdString(stud::logging::unsupported_note_path());
+    auto* timer = new QTimer(qApp);
+    // A web login was stored: the launch path is what picks a session up. A
+    // timer of its own, because nothing else restarts the session and this one
+    // has to run even when the crash watch below cannot.
+    auto* web_login = new QTimer(qApp);
+    web_login->setInterval(1000);
+    const QString web_login_marker = QString::fromStdString(stud::paths::web_login_marker_path());
+    QObject::connect(web_login, &QTimer::timeout, qApp, [web_login, timer, web_login_marker]() {
+        if (!QFile::exists(web_login_marker)) return;
+        web_login->stop();
+        timer->stop();
+        hold_for_relaunch();
+        terminate_stud_session();
+        relaunch_stud();
+    });
+    web_login->start();
     if (marker.isEmpty()) {
         stud::ui::close_loading_screen();
         return;
@@ -1777,18 +1793,9 @@ void watch_for_a_crash() {
         return lines.isEmpty() ? QString() : lines.first();
     };
 
-    auto* timer = new QTimer(qApp);
     timer->setInterval(1000);
     QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, shown, timer,
                                                      read_unsupported]() {
-        // A web login was stored: the launch path is what picks a session up.
-        if (QFile::exists(QString::fromStdString(stud::paths::web_login_marker_path()))) {
-            timer->stop();
-            hold_for_relaunch();
-            terminate_stud_session();
-            relaunch_stud();
-            return;
-        }
         // Cancelled from the loading screen: the session was stopped on
         // purpose and Stud is closing, which is no crash.
         if (stud::ui::loading_cancelled()) {

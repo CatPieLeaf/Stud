@@ -133,6 +133,12 @@ std::vector<std::string> current_session_cookies() {
     return headers;
 }
 
+std::string current_session_value() {
+    std::lock_guard<std::mutex> lock(current_mutex());
+    const auto session = current().find(".ROBLOSECURITY");
+    return session != current().end() ? session->second : std::string();
+}
+
 bool has_session_cookie() {
     std::lock_guard<std::mutex> lock(current_mutex());
     return current().count(".ROBLOSECURITY") != 0;

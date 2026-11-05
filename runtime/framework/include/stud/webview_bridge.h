@@ -74,10 +74,16 @@ void open_login_page(const char* url, const char* title);
 // Starts the login window hidden, for when one is about to be wanted: no
 // session, or the account switcher open. open_login_page() then only shows it.
 void prepare_login_page();
-// For opening any other panel: a hidden window would take that panel's place.
-void discard_prepared_login();
-// How a hidden login window is told to show, given the page it is to show.
-void set_login_page_shower(std::function<void(const std::string&)> shower);
+// Whether the panel being opened on this thread is that hidden window.
+bool preparing_login();
+// The viewer could not be started, so no closed event will ever come.
+void login_window_failed();
+// A panel other than the login window is opening. A hidden window would take
+// its place, and none is prepared while it is open.
+void note_panel_opening();
+// How a hidden login window is told to show, given the page it is to show;
+// false if there turned out to be no such window.
+void set_login_page_shower(std::function<bool(const std::string&)> shower);
 void set_web_login_enabled(bool enabled);
 
 // Hands the engine one message a web view's page sent through its

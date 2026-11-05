@@ -407,7 +407,7 @@ chmod +x Stud-x86_64.AppImage
 
 | path | what |
 |---|---|
-| `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides |
+| `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides. `"webLogin": false` in `config.json` goes back to the app's own login screens; it isn't in Settings |
 | `~/.local/share/stud/` | the encrypted session cookie, and the engine's own data |
 | `~/.cache/stud/` | the extracted APK, assets and caches, safe to delete |
 | `~/.local/state/stud/logs/` | one log per session, written by all three processes |

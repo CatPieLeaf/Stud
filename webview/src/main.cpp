@@ -24,6 +24,8 @@
 #include <QIcon>
 #include <QDir>
 #include <QMainWindow>
+#include <QShortcut>
+#include <QSocketNotifier>
 #include <QNetworkCookie>
 #include <QWebEngineSettings>
 #include <QSet>
@@ -44,6 +46,8 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
+
+#include <csignal>
 
 #include <unistd.h>
 
@@ -197,9 +201,17 @@ private:
     bool m_plain_browser = false;
 
 protected:
+    // A page's "open in a new window" links, the sign-up page's Terms for one.
+    // There is one window, so they open in it, and Alt+Left comes back.
+    QWebEnginePage* createWindow(WebWindowType type) override {
+        return m_plain_browser ? this : QWebEnginePage::createWindow(type);
+    }
+
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message,
                                   int line, const QString& source) override {
         if (message.startsWith(QLatin1String(kHybridPrefix))) {
+            // A login has no app on the other end.
+            if (m_plain_browser) return;
             // The bridge is in every page and every frame, and what it
             // carries reaches the engine as the app's own web pages. Only
             // those get to use it.
@@ -245,6 +257,10 @@ protected:
     }
 };
 
+// A login reports its session on the way out, and SIGTERM, which is how Stud
+// closes a viewer, would otherwise skip that.
+int g_term_pipe[2] = {-1, -1};
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     const Request request = read_request();
@@ -258,6 +274,14 @@ int main(int argc, char** argv) {
     auto* profile = new QWebEngineProfile(&app);
     const bool login = request.userAgent.startsWith(QLatin1String(stud::web::kLoginRequest));
     const bool prepared = request.userAgent == QLatin1String(stud::web::kLoginPreparedRequest);
+    if (login && ::pipe(g_term_pipe) == 0) {
+        ::signal(SIGTERM, [](int) {
+            const char byte = 0;
+            (void)!::write(g_term_pipe[1], &byte, 1);
+        });
+        auto* notifier = new QSocketNotifier(g_term_pipe[0], QSocketNotifier::Read, &app);
+        QObject::connect(notifier, &QSocketNotifier::activated, &app, &QApplication::quit);
+    }
 
     // Ask Roblox for its mobile layout, which is what makes these panels
     // show the requested thing and nothing else.
@@ -390,6 +414,7 @@ int main(int argc, char** argv) {
             "document.adoptedStyleSheets = [css];"));
         profile->scripts()->insert(bare);
         page->beAPlainBrowser();
+        new QShortcut(QKeySequence::Back, &window, [view]() { view->back(); });
         page->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
         page->settings()->setAttribute(QWebEngineSettings::PdfViewerEnabled, true);
@@ -408,7 +433,7 @@ int main(int argc, char** argv) {
     // because stdin here is an ordinary pipe and this reads whole lines;
     // the load itself is posted to the GUI thread, which is the only one
     // allowed to touch the page.
-    std::thread([page, prepared, reveal]() {
+    std::thread([page, profile, prepared, reveal, &window, &login_fullscreen]() {
         std::string pending;
         char buffer[4096];
         for (;;) {
@@ -420,6 +445,40 @@ int main(int argc, char** argv) {
                 if (newline == std::string::npos) break;
                 const std::string line = pending.substr(0, newline);
                 pending.erase(0, newline + 1);
+                static constexpr char kCookie[] = "cookie ";
+                static constexpr char kShow[] = "show ";
+                if (prepared && line.rfind(kCookie, 0) == 0) {
+                    const QByteArray header =
+                        QByteArray::fromStdString(line.substr(sizeof(kCookie) - 1));
+                    QMetaObject::invokeMethod(
+                        page,
+                        [page, profile, header]() {
+                            for (const QNetworkCookie& cookie : QNetworkCookie::parseCookies(header)) {
+                                profile->cookieStore()->setCookie(cookie, page->url());
+                            }
+                        },
+                        Qt::QueuedConnection);
+                    continue;
+                }
+                if (prepared && line.rfind(kShow, 0) == 0) {
+                    int width = 0, height = 0, fullscreen = 0, consumed = 0;
+                    if (std::sscanf(line.c_str() + sizeof(kShow) - 1, "%d %d %d %n", &width, &height,
+                                    &fullscreen, &consumed) != 3) {
+                        continue;
+                    }
+                    const QString url = QString::fromStdString(
+                        line.substr(sizeof(kShow) - 1 + static_cast<size_t>(consumed)));
+                    QMetaObject::invokeMethod(
+                        page,
+                        [page, url, width, height, fullscreen, reveal, &window, &login_fullscreen]() {
+                            if (page->url() != QUrl(url)) page->setUrl(QUrl(url));
+                            if (width > 0 && height > 0) window.resize(width, height);
+                            login_fullscreen = fullscreen;
+                            reveal();
+                        },
+                        Qt::QueuedConnection);
+                    continue;
+                }
                 static constexpr char kLoad[] = "load ";
                 static constexpr char kDrop[] = "drop ";
                 const bool load = line.rfind(kLoad, 0) == 0;
@@ -428,11 +487,8 @@ int main(int argc, char** argv) {
                 const QString url = QString::fromStdString(line.substr(sizeof(kLoad) - 1));
                 QMetaObject::invokeMethod(
                     page,
-                    [page, url, load, prepared, reveal]() {
-                        if (prepared && load) {
-                            if (page->url() != QUrl(url)) page->setUrl(QUrl(url));
-                            reveal();
-                        } else if (load) {
+                    [page, url, load]() {
+                        if (load) {
                             page->loadAllowed(url);
                         } else {
                             // The app took it: no page load, and the

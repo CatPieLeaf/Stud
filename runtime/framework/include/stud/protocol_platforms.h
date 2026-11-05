@@ -514,6 +514,20 @@ public:
         std::printf("stud: LocalStorage seeded current user id=%lld\n", user_id);
         std::fflush(stdout);
     }
+    // The app says who is signed in, after every login and every switch inside
+    // it: this is the only place that hears about a switch, and without it a
+    // logout would forget the account switched away from and keep no session
+    // for the one switched to.
+    static void note_signed_in(long long user_id, const std::string& session) {
+        auto& slot = store()[user_id][".ROBLOSECURITY"];
+        if (current_user() == user_id && slot == session) return;
+        current_user() = user_id;
+        slot = session;
+        persist();
+        std::printf("stud: LocalStorage current account is now id=%lld\n", user_id);
+        std::fflush(stdout);
+    }
+
     // Forgets the signed-in account, which is what a logout is.
     //
     // The same two lines deleteCurrentUserValues() runs, reachable from

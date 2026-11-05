@@ -1562,7 +1562,8 @@ void dispatch_key_event(const stud::android_glue::HostInputEvent& ev, const Inpu
     // page, a settings screen) on KEYCODE_BACK, which every real
     // device has as a button or a gesture and which Stud had no
     // way to send at all, leaving a user stuck on any screen
-    // whose only exit is Back, live-reported exactly that way.
+    // whose only exit is Back, live-reported exactly that way. Not every
+    // screen listens: the login screens ignore it.
     // Escape stays KEYCODE_ESCAPE, because that is what a real
     // hardware keyboard sends and what Roblox uses in-game for
     // its own menu; Alt+Left is the desktop convention for

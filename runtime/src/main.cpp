@@ -2928,7 +2928,9 @@ int main(int argc, char** argv) {
     stud::jni_bridge::run_webview_protocol_bootstrap(
         jvm, lib,
         [&jvm, &lib, web_view_agent = stud::jni_bridge::build_web_view_user_agent()](
-            const std::string& url, const std::string& title) {
+            const std::string& url, const std::string& raw_title) {
+            if (url.find_first_of("\r\n") != std::string::npos) return;
+            const std::string title = stud::web::single_line(raw_title);
             // A login gets the account list and nothing else: with the
             // session as well, the site says the user is already signed in
             // and "add account" goes nowhere. The list is what makes the site
@@ -2936,19 +2938,21 @@ int main(int argc, char** argv) {
             // auth.roblox.com.
             if (url == stud::web::kLoginPageUrl || url == stud::web::kSignUpPageUrl) {
                 std::string request = url + "\n" + title + "\n" +
-                                      (title.empty() ? stud::web::kLoginPreparedRequest
-                                                     : stud::web::kLoginRequest) +
+                                      (stud::jni_bridge::preparing_login()
+                                           ? stud::web::kLoginPreparedRequest
+                                           : stud::web::kLoginRequest) +
                                       "\n";
                 for (const auto& header : stud::jni_bridge::current_session_cookies()) {
                     if (header.rfind("rbxas=", 0) == 0) request += header + "\n";
                 }
                 uint64_t args[8] = {};
-                stud::render_client::connection().call(
+                const uint64_t opened = stud::render_client::connection().call(
                     stud::render_host::CallId::OpenWebView, args, request.data(),
                     static_cast<uint32_t>(request.size()), nullptr, 0, nullptr);
+                if (opened == 0) stud::jni_bridge::login_window_failed();
                 return;
             }
-            stud::jni_bridge::discard_prepared_login();
+            stud::jni_bridge::note_panel_opening();
             // url \n title \n app token \n cookie..., the viewer reads
             // this on its stdin.
             //
@@ -3047,10 +3051,16 @@ int main(int argc, char** argv) {
                 stud::render_host::CallId::CloseWebView, args, nullptr, 0, nullptr, 0, nullptr);
         });
     stud::jni_bridge::set_login_page_shower([](const std::string& url) {
-        uint64_t args[8] = {};
-        stud::render_client::connection().call(
-            stud::render_host::CallId::WebViewLoadUrl, args, url.data(),
-            static_cast<uint32_t>(url.size()), nullptr, 0, nullptr);
+        // The account list goes along: the app reissues it as it reads it, and
+        // this window took its copy when it started.
+        std::string request = url;
+        for (const auto& header : stud::jni_bridge::current_session_cookies()) {
+            if (header.rfind("rbxas=", 0) == 0) request += "\n" + header;
+        }
+        uint64_t args[8] = {2};  // show, see WebViewLoadUrl in render-host
+        return stud::render_client::connection().call(
+                   stud::render_host::CallId::WebViewLoadUrl, args, request.data(),
+                   static_cast<uint32_t>(request.size()), nullptr, 0, nullptr) != 0;
     });
     if (!stud::jni_bridge::has_session_cookie()) stud::jni_bridge::prepare_login_page();
 

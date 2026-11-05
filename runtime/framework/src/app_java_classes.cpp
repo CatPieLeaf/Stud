@@ -12,6 +12,7 @@
 #include "stud/trap_recovery.h"
 #include "stud/webview_bridge.h"
 #include "stud/web_origin.h"
+#include "stud/protocol_platforms.h"
 #include "stud/webview_cookies.h"
 
 #include <nlohmann/json.hpp>
@@ -745,8 +746,6 @@ void NativeHelperJava::gameActivity_onAppReady(std::shared_ptr<FakeJni::JString>
     experience_loaded_storage().store(false);
     // Landing also shows for a moment on the way to Home with a session
     // restored; LoginV2 is asked for, by Log In or by adding an account.
-    // Landing also shows for a moment on the way to Home with a session
-    // restored; LoginV2 is asked for, by Log In or by adding an account.
     if (screen == "LoginV2" || (screen == "Landing" && !has_session_cookie())) {
         open_login_page(stud::web::kLoginPageUrl, "Log in to Roblox");
     } else if (screen == "SinglePageSignUp") {
@@ -1341,6 +1340,14 @@ void record_account_info(const std::string& json) {
     {
         std::lock_guard<std::mutex> lock(account_mutex());
         account_info() = info;
+    }
+    long long user_id = 0;
+    if (const auto id = doc.find("userId"); id != doc.end()) {
+        if (id->is_number_integer()) user_id = id->get<long long>();
+        if (id->is_string()) user_id = std::strtoll(id->get<std::string>().c_str(), nullptr, 10);
+    }
+    if (const std::string session = current_session_value(); user_id != 0 && !session.empty()) {
+        LocalStoragePlatformJava::note_signed_in(user_id, session);
     }
     std::printf("stud: account report: under13=%s membershipType=%d subscription=%s\n",
                 info.under_13 ? "yes" : "no", info.membership_type,

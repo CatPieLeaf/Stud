@@ -73,6 +73,9 @@ int main() {
     assert(captcha_view_url(R"({"captchaType":"login","cvalueType":"other","cvalue":"1"})").empty());
     assert(captcha_view_url("{}").empty());
 
+    assert(stud::web::single_line("a\nlogin\rb") == "a login b");
+    assert(stud::web::single_line("plain") == "plain");
+
     using stud::web::parse_login_field;
     assert(parse_login_field("roblosecurity abc")->secret == "roblosecurity");
     assert(parse_login_field("rbxas a b")->value == "a b");

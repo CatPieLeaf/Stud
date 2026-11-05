@@ -507,13 +507,14 @@ bool store_web_login_field(const std::string& field) {
                                          &ignored);
     std::printf("stud-render-host: web login stored \"%s\" (%zu bytes)%s\n",
                 parsed->secret.c_str(), parsed->value.size(), ok ? "" : ", FAILED");
-    if (ok && parsed->secret == "roblosecurity") {
-        const int marker = ::open(stud::paths::web_login_marker_path().c_str(),
-                                  O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
-        if (marker >= 0) ::close(marker);
-        return true;
-    }
-    return false;
+    if (!ok || parsed->secret != "roblosecurity") return false;
+    // False without it: nothing would restart the session, and the window has
+    // to come back instead.
+    const int marker = ::open(stud::paths::web_login_marker_path().c_str(),
+                              O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+    if (marker < 0) return false;
+    ::close(marker);
+    return true;
 }
 
 // Reads the viewer's own stdout, forwarding the lines its bridge writes
@@ -523,8 +524,9 @@ bool store_web_login_field(const std::string& field) {
 //
 // A login takes the game window's place: "ready" is its window up, which is
 // when the game window goes, and it comes back unless the login worked, in which
-// case this session is about to end anyway.
-void read_web_view_output(int fd, bool login) {
+// case this session is about to end anyway. `shown` is whether the viewer has
+// been on screen, see the reaper in OpenWebView.
+void read_web_view_output(int fd, bool login, std::shared_ptr<std::atomic<bool>> shown) {
     bool signed_in = false;
     std::string pending;
     char buffer[4096];
@@ -540,6 +542,7 @@ void read_web_view_output(int fd, bool login) {
             static constexpr char kNavigate[] = "navigate ";
             static constexpr char kPrefix[] = "hybrid ";
             if (login && line == "ready") {
+                shown->store(true);
                 std::scoped_lock lock(wayland_mutex(), dispatch_mutex());
                 stud::android_glue::native_window_detach();
                 continue;
@@ -567,7 +570,7 @@ void read_web_view_output(int fd, bool login) {
             std::fflush(stdout);
         }
     }
-    if (login && !signed_in) {
+    if (login && !signed_in && shown->load()) {
         std::scoped_lock lock(wayland_mutex(), dispatch_mutex());
         stud::android_glue::native_window_reattach();
     }
@@ -1360,7 +1363,12 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 ::close(out_fds[0]);
                 return 0;
             }
-            std::thread(read_web_view_output, out_fds[0], login).detach();
+            // Hidden until asked for, and nothing the app ever knew about, so
+            // its exit is not a window closing.
+            const auto hidden = stud::web::kLoginPreparedRequest;
+            auto shown = std::make_shared<std::atomic<bool>>(
+                !login || payload.compare(agent_start + 1, std::strlen(hidden), hidden) != 0);
+            std::thread(read_web_view_output, out_fds[0], login, shown).detach();
             // The sentinel ends the request; the pipe itself stays open,
             // because a blocked navigation is answered down it later.
             // Without the sentinel the viewer would read its cookies
@@ -1381,19 +1389,23 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 if (previous >= 0) ::close(previous);
             }
             track_web_view(pid);
-            std::thread([pid] {
+            std::thread([pid, own_stdin = pipe_fds[1], shown] {
                 int status = 0;
                 ::waitpid(pid, &status, 0);
                 // Reaped, so it is no longer ours to kill, and the pid
                 // must not be signalled again once the kernel is free to
                 // reuse it.
                 forget_web_view(pid);
-                {
-                    const int fd = g_webview_stdin.exchange(-1);
-                    if (fd >= 0) ::close(fd);
+                // Only its own: a later viewer may hold this by now, and the
+                // viewer that replaced this one already closed this end.
+                int expected = own_stdin;
+                if (g_webview_stdin.compare_exchange_strong(expected, -1)) ::close(own_stdin);
+                if (shown->load()) {
+                    g_webview_closed.fetch_add(1, std::memory_order_relaxed);
+                    std::printf("stud-render-host: web-view window closed\n");
+                } else {
+                    std::printf("stud-render-host: hidden login window closed\n");
                 }
-                g_webview_closed.fetch_add(1, std::memory_order_relaxed);
-                std::printf("stud-render-host: web-view window closed\n");
                 std::fflush(stdout);
             }).detach();
             std::printf("stud-render-host: opened the web-view panel\n");
@@ -1544,14 +1556,36 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
         case CallId::WebViewLoadUrl: {
             const int fd = g_webview_stdin.load();
             if (fd < 0 || in.empty()) return 0;
-            const std::string url(reinterpret_cast<const char*>(in.data()), in.size());
+            std::string url(reinterpret_cast<const char*>(in.data()), in.size());
+            // a[0] is 0 to load, 1 to drop, and 2 to show a hidden login
+            // viewer, whose payload is the url and then the account list: it
+            // started a while ago, and the window and the list have moved on.
+            constexpr uint64_t kDrop = 1;
+            constexpr uint64_t kShow = 2;
+            std::string cookie;
+            if (a[0] == kShow) {
+                if (const auto newline = url.find('\n'); newline != std::string::npos) {
+                    cookie = url.substr(newline + 1);
+                    url.resize(newline);
+                }
+            }
             // The viewer loads what it is told to, past its own checks, so
             // the rule for opening a panel holds here too. Anything else
             // that reached this point is simply left unloaded.
-            if (a[0] == 0 && url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
+            if (a[0] != kDrop && url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
                 return 0;
             }
-            std::string line = (a[0] != 0 ? std::string("drop ") : std::string("load ")) + url + "\n";
+            std::string line;
+            if (a[0] == kShow) {
+                int width = 0;
+                int height = 0;
+                stud::android_glue::native_window_logical_size(&width, &height);
+                if (!cookie.empty()) line = "cookie " + cookie + "\n";
+                line += "show " + std::to_string(width) + " " + std::to_string(height) + " " +
+                        (stud::android_glue::native_window_is_fullscreen() ? "1 " : "0 ") + url + "\n";
+            } else {
+                line = (a[0] == kDrop ? std::string("drop ") : std::string("load ")) + url + "\n";
+            }
             size_t left = line.size();
             const char* bytes = line.data();
             while (left > 0) {

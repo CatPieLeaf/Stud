@@ -71,8 +71,12 @@ std::function<void(const std::string&, const std::string&)>& panel_opener() {
 std::atomic<bool> g_security_check_open{false};
 std::atomic<bool> g_login_open{false};
 std::atomic<bool> g_login_prepared{false};
-std::function<void(const std::string&)>& login_page_shower() {
-    static std::function<void(const std::string&)> shower;
+// A panel other than the login window is up. There is one stdin for a viewer,
+// so a hidden one started now would take it.
+std::atomic<bool> g_panel_open{false};
+thread_local bool t_preparing_login = false;
+std::function<bool(const std::string&)>& login_page_shower() {
+    static std::function<bool(const std::string&)> shower;
     return shower;
 }
 std::function<void()>& panel_closer() {
@@ -258,35 +262,44 @@ void open_security_check(const std::string& payload) {
 
 void set_web_login_enabled(bool enabled) { g_web_login_enabled.store(enabled); }
 
-void set_login_page_shower(std::function<void(const std::string&)> shower) {
+void set_login_page_shower(std::function<bool(const std::string&)> shower) {
     login_page_shower() = std::move(shower);
 }
 
 void prepare_login_page() {
     if (!g_web_login_enabled.load() || !panel_opener() || g_login_open.load() ||
-        g_login_prepared.exchange(true)) {
+        g_panel_open.load() || g_login_prepared.exchange(true)) {
         return;
     }
-    panel_opener()(stud::web::kLoginPageUrl, "");
+    t_preparing_login = true;
+    panel_opener()(stud::web::kLoginPageUrl, "Log in to Roblox");
+    t_preparing_login = false;
 }
 
-void discard_prepared_login() {
+bool preparing_login() { return t_preparing_login; }
+
+void login_window_failed() {
+    g_login_open.store(false);
+    g_login_prepared.store(false);
+}
+
+void note_panel_opening() {
+    g_panel_open.store(true);
     if (g_login_prepared.exchange(false) && panel_closer()) panel_closer()();
 }
 
 void open_login_page(const char* url, const char* title) {
     // Landing and the form behind its button both ask, so one window answers.
     if (!g_web_login_enabled.load() || !panel_opener() || g_login_open.exchange(true)) return;
-    if (g_login_prepared.exchange(false) && login_page_shower()) {
-        login_page_shower()(url);
-    } else {
-        panel_opener()(url, title);
-    }
+    // Fails when the hidden window has died since, which nobody is told of.
+    const bool shown = g_login_prepared.exchange(false) && login_page_shower() &&
+                       login_page_shower()(url);
+    if (!shown) panel_opener()(url, title);
 }
 
 void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib) {
     g_login_open.store(false);
-    g_login_prepared.store(false);
+    g_panel_open.store(false);
     if (!has_session_cookie()) prepare_login_page();
     if (g_security_check_open.exchange(false)) {
         static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();

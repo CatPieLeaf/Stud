@@ -1956,6 +1956,9 @@ void pump() {
                     release_keys_let_go_during_grab();
                     break;
                 }
+                // Focus can move away during a grab, and then the ungrab is
+                // never heard here: having focus is what says it has ended.
+                g_keyboard_grabbed.store(false);
                 if (!g_focused.exchange(true)) {
                     std::printf("stud: android-glue: window focused\n");
                     std::fflush(stdout);

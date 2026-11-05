@@ -3144,8 +3144,8 @@ void native_window_detach() {
         return;
     }
     ANativeWindow* window = g_toplevel_window.load();
-    // ponytail: the OpenGL path presents to this surface itself, which would
-    // make it impossible to give a role again, so that window stays up.
+    // The OpenGL path presents to this surface itself, which would make it
+    // impossible to give a role again, so that window stays up.
     if (window == nullptr || window->content_surface == nullptr) return;
     if (window->decor_frame != nullptr) libdecor_api().frame_unref(window->decor_frame);
     if (window->decoration != nullptr) zxdg_toplevel_decoration_v1_destroy(window->decoration);

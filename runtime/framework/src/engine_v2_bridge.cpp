@@ -39,6 +39,10 @@ using V2VoidNoArgFn = void (*)(JNIEnv*, jclass);
 struct BoundedCallOutcome {
     bool trapped_abort = false;
     bool still_running = false;
+    // The call's own state, for a caller that has to know how a call the
+    // bounded wait gave up on ended.
+    std::shared_ptr<std::atomic<bool>> completed;
+    std::shared_ptr<std::atomic<bool>> trapped;
 };
 
 // Shared bounded-wait machinery for every V2 call (see
@@ -51,23 +55,6 @@ struct BoundedCallOutcome {
 // from the caller). Returns true iff the call completed without
 // trapping a fatal signal; the outer bounded wait treats "still
 // running" as an honest, real report, checked.
-// Same reporting as run_bounded_v2_call, but runs the call on the CALLING
-// thread instead of a fresh one, for the cases where the caller's thread
-// identity is itself load-bearing and moving the work off it changes what
-// the engine does (see acknowledge_experience_start). There is no bound
-// here, by definition: the point is not to hand the work to someone else.
-BoundedCallOutcome run_bounded_v2_call_inline(const char* name, std::function<bool()> invoke) {
-    std::fprintf(stderr, "stud: v2: calling %s (inline, on the caller's thread) ...\n", name);
-    std::fflush(stderr);
-    BoundedCallOutcome outcome{};
-    const bool ok = invoke();
-    outcome.trapped_abort = !ok;
-    outcome.still_running = false;
-    std::fprintf(stderr, "stud: v2: %s returned (trapped=%d)\n", name, outcome.trapped_abort);
-    std::fflush(stderr);
-    return outcome;
-}
-
 BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> invoke) {
     auto completed = std::make_shared<std::atomic<bool>>(false);
     auto trapped = std::make_shared<std::atomic<bool>>(false);
@@ -88,8 +75,8 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
     // independently bounded.
     std::thread([invoke = std::move(invoke), completed, trapped]() mutable {
         bool ok = invoke();
-        trapped->store(!ok, std::memory_order_relaxed);
-        completed->store(true, std::memory_order_relaxed);
+        trapped->store(!ok);
+        completed->store(true);
     }).detach();
 
     constexpr int kPollIntervalMs = stud::engine_teardown::kBoundedCallPollMs;
@@ -101,8 +88,10 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
     }
 
     BoundedCallOutcome outcome;
-    if (completed->load(std::memory_order_relaxed)) {
-        outcome.trapped_abort = trapped->load(std::memory_order_relaxed);
+    outcome.completed = completed;
+    outcome.trapped = trapped;
+    if (completed->load()) {
+        outcome.trapped_abort = trapped->load();
         std::fprintf(stderr, "stud: v2: %s %s within %dms\n", name,
                       outcome.trapped_abort ? "trapped a fatal signal" : "returned normally",
                       polls * kPollIntervalMs);
@@ -115,6 +104,20 @@ BoundedCallOutcome run_bounded_v2_call(const char* name, std::function<bool()> i
     }
     std::fflush(stderr);
     return outcome;
+}
+
+// The shape most of these calls have: no arguments of their own.
+BoundedCallOutcome run_no_arg_v2_call(FakeJni::Jvm& jvm, const char* name, V2VoidNoArgFn fn) {
+    return run_bounded_v2_call(name, [&jvm, name, fn] {
+        static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
+        FakeJni::LocalFrame frame(jvm);
+        auto& env = frame.getJniEnv();
+        auto* jni_env = static_cast<JNIEnv*>(&env);
+        jclass cls = env.FindClass("com/roblox/engine/jni/NativeGLInterface");
+        const bool ok = call_trapping_abort(fn, jni_env, cls);
+        clear_pending_jni_exception(jni_env, name);
+        return ok;
+    });
 }
 
 // Shared JNI plumbing for one UpdateSurfaceApp+UpdateSurfaceGame
@@ -245,16 +248,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             addr != nullptr) {
             result.app_setup_called = true;
             auto* fn = reinterpret_cast<V2VoidNoArgFn>(addr);
-            auto outcome = run_bounded_v2_call("nativeGameGlobalInit", [&jvm, fn] {
-                static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
-                FakeJni::LocalFrame inner_frame(jvm);
-                auto& inner_env = inner_frame.getJniEnv();
-                auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
-                jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-                bool inner_ok = call_trapping_abort(fn, inner_jni_env, inner_class);
-                clear_pending_jni_exception(inner_jni_env, "nativeGameGlobalInit");
-                return inner_ok;
-            });
+            auto outcome = run_no_arg_v2_call(jvm, "nativeGameGlobalInit", fn);
             ok = !outcome.trapped_abort && ok;
             any_still_running = any_still_running || outcome.still_running;
         } else {
@@ -265,16 +259,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
             addr != nullptr) {
             result.app_setup_called = true;
             auto* fn = reinterpret_cast<V2VoidNoArgFn>(addr);
-            auto outcome = run_bounded_v2_call("nativeUpdateAdapterInit", [&jvm, fn] {
-                static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
-                FakeJni::LocalFrame inner_frame(jvm);
-                auto& inner_env = inner_frame.getJniEnv();
-                auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
-                jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-                bool inner_ok = call_trapping_abort(fn, inner_jni_env, inner_class);
-                clear_pending_jni_exception(inner_jni_env, "nativeUpdateAdapterInit");
-                return inner_ok;
-            });
+            auto outcome = run_no_arg_v2_call(jvm, "nativeUpdateAdapterInit", fn);
             ok = !outcome.trapped_abort && ok;
             any_still_running = any_still_running || outcome.still_running;
         } else {
@@ -462,15 +447,8 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // StartApp has already run by then.
     bool want_startapp = !startapp_disabled;
 
-    // nativeAppBridgeStartLuaAppDM + the single UpdateSurfaceApp/Game
-    // pair that follows it: real, load-bearing, unconditional part of
-    // a bare launch (confirmed identically in BOTH real captures below),
-    // pulled out from under the StartAppWithParams conditional they used
-    // to live inside: that nesting made both of these calls wrongly
-    // depend on `force_startapp`, when real evidence shows they're
-    // needed regardless of whether StartAppWithParams is ever called at
-    // all (it isn't, on this real path; see that block's own doc
-    // comment right below).
+    // nativeAppBridgeStartLuaAppDM and the UpdateSurfaceApp/Game pair after it,
+    // in the order both real captures below show.
     if (bare_launch) {
         if (void* dm_addr = lib.find_symbol(
                 "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeStartLuaAppDM");
@@ -486,17 +464,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
             // run_bounded_v2_call(), like every other V2 entry point
             // that might block, lets real bring-up continue after a
             // bound instead of hanging the whole sequence forever.
-            FakeJni::Jvm* jvm_ptr = &jvm;
-            auto outcome = run_bounded_v2_call("nativeAppBridgeStartLuaAppDM", [jvm_ptr, dm_fn] {
-                static_cast<BionicAwareJvm&>(*jvm_ptr).ensure_env_for_current_thread();
-                FakeJni::LocalFrame prereq_frame(*jvm_ptr);
-                auto& prereq_env = prereq_frame.getJniEnv();
-                auto* prereq_jni_env = static_cast<JNIEnv*>(&prereq_env);
-                jclass prereq_class = prereq_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-                bool ok = call_trapping_abort(dm_fn, prereq_jni_env, prereq_class);
-                clear_pending_jni_exception(prereq_jni_env, "nativeAppBridgeStartLuaAppDM");
-                return ok;
-            });
+            auto outcome = run_no_arg_v2_call(jvm, "nativeAppBridgeStartLuaAppDM", dm_fn);
             result.lua_app_dm_trapped_abort = outcome.trapped_abort;
         } else {
             std::fprintf(stderr,
@@ -549,10 +517,8 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         cannot_start_without("nativeAppBridgeV2StartAppWithParams");
     } else {
         std::fprintf(stderr,
-                      "stud: engine_v2_bridge: nativeAppBridgeV2StartAppWithParams skipped (%s)\n",
-                      startapp_disabled ? "STUD_DISABLE_V2_STARTAPP=1"
-                                        : "not a bare launch, a deep link goes straight to "
-                                          "StartGameWithParam");
+                      "stud: engine_v2_bridge: nativeAppBridgeV2StartAppWithParams skipped "
+                      "(STUD_DISABLE_V2_STARTAPP=1)\n");
     }
 
     // Real order (ground-truth, this session's read of the app's own code against the app's own app-shell helper
@@ -704,9 +670,9 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
         result.resume_game_trapped_abort = outcome.trapped_abort;
         result.resume_game_still_running = outcome.still_running;
     } else {
-        std::fprintf(stderr,
-                      "stud: engine_v2_bridge: nativeAppBridgeV2ResumeGameWithPlatformParams not "
-                      "found, skipping\n");
+        std::fprintf(stderr, "stud: engine_v2_bridge: nativeAppBridgeV2ResumeGameWithPlatformParams %s\n",
+                     addr != nullptr ? "off, STUD_ENABLE_V2_RESUMEGAME=1 turns it on"
+                                     : "not found, skipping");
     }
 
     return result;
@@ -816,16 +782,7 @@ EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::lin
         addr != nullptr) {
         result.leave_game_called = true;
         auto* fn = reinterpret_cast<V2VoidNoArgFn>(addr);
-        auto outcome = run_bounded_v2_call("nativeAppBridgeV2LeaveGame", [&jvm, fn] {
-            static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
-            FakeJni::LocalFrame inner_frame(jvm);
-            auto& inner_env = inner_frame.getJniEnv();
-            auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
-            jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-            bool ok = call_trapping_abort(fn, inner_jni_env, inner_class);
-            clear_pending_jni_exception(inner_jni_env, "engine_v2_bridge");
-            return ok;
-        });
+        auto outcome = run_no_arg_v2_call(jvm, "nativeAppBridgeV2LeaveGame", fn);
         result.leave_game_trapped_abort = outcome.trapped_abort;
         result.leave_game_still_running = outcome.still_running;
     } else {
@@ -837,16 +794,7 @@ EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::lin
         addr != nullptr) {
         result.destroy_app_called = true;
         auto* fn = reinterpret_cast<V2VoidNoArgFn>(addr);
-        auto outcome = run_bounded_v2_call("nativeAppBridgeV2DestroyApp", [&jvm, fn] {
-            static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
-            FakeJni::LocalFrame inner_frame(jvm);
-            auto& inner_env = inner_frame.getJniEnv();
-            auto* inner_jni_env = static_cast<JNIEnv*>(&inner_env);
-            jclass inner_class = inner_env.FindClass("com/roblox/engine/jni/NativeGLInterface");
-            bool ok = call_trapping_abort(fn, inner_jni_env, inner_class);
-            clear_pending_jni_exception(inner_jni_env, "engine_v2_bridge");
-            return ok;
-        });
+        auto outcome = run_no_arg_v2_call(jvm, "nativeAppBridgeV2DestroyApp", fn);
         result.destroy_app_trapped_abort = outcome.trapped_abort;
         result.destroy_app_still_running = outcome.still_running;
     } else {
@@ -916,6 +864,12 @@ bool resume_lua_app_after_game(FakeJni::Jvm& jvm, const stud::linker::LoadedLibr
 // calls would hand it two conflicting launches.
 static std::atomic<bool> g_experience_start_in_flight{false};
 
+// The rest of a start, with g_experience_start_in_flight already claimed.
+static void start_claimed_experience(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                                     const std::shared_ptr<PlatformParams>& platform_params,
+                                     const std::shared_ptr<DeviceParams>& device_params,
+                                     const std::shared_ptr<SurfaceJava>& surface);
+
 bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
                                     const std::string& payload,
                                     const std::shared_ptr<PlatformParams>& platform_params,
@@ -960,10 +914,11 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
         return false;
     }
     // Refused here, before the request is replaced: the start in progress
-    // reads that request, and acknowledge_experience_start() below would
-    // return without a word, leaving this join dropped and the log saying
-    // it had happened.
-    if (g_experience_start_in_flight.load()) {
+    // reads that request. Claimed in the same step that checks, or another
+    // start could take it between the two and this join would be dropped
+    // with the log saying it had happened.
+    bool expected = false;
+    if (!g_experience_start_in_flight.compare_exchange_strong(expected, true)) {
         std::fprintf(stderr, "stud: not joining placeId=%lld: another join is still starting\n",
                      request.place_id);
         std::fflush(stderr);
@@ -977,7 +932,7 @@ bool join_experience_from_deep_link(FakeJni::Jvm& jvm, const stud::linker::Loade
     std::fprintf(stderr, "stud: joining placeId=%lld from a link\n", request.place_id);
     std::fflush(stderr);
     NativeHelperJava::set_last_launch_request(std::move(request));
-    acknowledge_experience_start(jvm, lib, platform_params, device_params, surface);
+    start_claimed_experience(jvm, lib, platform_params, device_params, surface);
     return true;
 }
 
@@ -985,11 +940,21 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
                                   const std::shared_ptr<PlatformParams>& platform_params,
                                   const std::shared_ptr<DeviceParams>& device_params,
                                   const std::shared_ptr<SurfaceJava>& surface) {
-    void* addr = lib.find_symbol(
-        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartGameWithParam");
-    if (addr == nullptr || platform_params == nullptr || surface == nullptr) return;
     bool expected = false;
     if (!g_experience_start_in_flight.compare_exchange_strong(expected, true)) return;
+    start_claimed_experience(jvm, lib, platform_params, device_params, surface);
+}
+
+static void start_claimed_experience(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib,
+                                     const std::shared_ptr<PlatformParams>& platform_params,
+                                     const std::shared_ptr<DeviceParams>& device_params,
+                                     const std::shared_ptr<SurfaceJava>& surface) {
+    void* addr = lib.find_symbol(
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartGameWithParam");
+    if (addr == nullptr || platform_params == nullptr || surface == nullptr) {
+        g_experience_start_in_flight.store(false);
+        return;
+    }
 
     auto* fn = reinterpret_cast<V2StartGameFn>(addr);
     // Detached, because this is called from the engine's own callback
@@ -1058,11 +1023,25 @@ void acknowledge_experience_start(FakeJni::Jvm& jvm, const stud::linker::LoadedL
                 clear_pending_jni_exception(jni_env, "nativeAppBridgeV2StartGameWithParam");
                 return ok;
             });
+        // The in-flight flag says a start is running, so it stays up until
+        // this one really has finished, however long past the bound. This
+        // thread has nothing else to do.
+        while (!outcome.completed->load()) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(stud::engine_teardown::kBoundedCallPollMs));
+        }
+        const bool started = !outcome.trapped->load();
         std::fprintf(stderr,
                      "stud: experience start acknowledged: StartGameWithParam trapped=%d "
-                     "still_running=%d result=%d\n",
-                     outcome.trapped_abort, outcome.still_running, *start_game_result);
+                     "waited_past_the_bound=%d result=%d\n",
+                     !started, outcome.still_running, *start_game_result);
         std::fflush(stderr);
+        // Refused for want of a place id, or it trapped: there is no game to
+        // tell the engine is on screen.
+        if (!started) {
+            g_experience_start_in_flight.store(false);
+            return;
+        }
 
         // No UpdateSurface call belongs here. An earlier version of this
         // sent the App/Game pair again right after the launch, on the

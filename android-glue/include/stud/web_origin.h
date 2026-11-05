@@ -17,6 +17,15 @@ inline constexpr char kLoginRequest[] = "login";
 inline constexpr char kLoginPreparedRequest[] = "login-hidden";
 inline constexpr char kLoginSessionPrefix[] = "session ";
 
+// A panel's request to the viewer is a line each, so what goes in one can't
+// have a line break of its own.
+inline std::string single_line(std::string text) {
+    for (char& c : text) {
+        if (c == '\n' || c == '\r') c = ' ';
+    }
+    return text;
+}
+
 struct LoginField {
     std::string secret;
     std::string value;
