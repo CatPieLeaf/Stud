@@ -77,6 +77,12 @@ and no crash reporting of any kind.
 - Requests to `roblox.com` and its subdomains are made by Stud and by
   Roblox's own engine, to run the application: sign-in, settings, the
   experiences you open.
+- With Windows Graphical Parity on, which is the default, Stud downloads
+  some of the Windows client's shader and texture files from Roblox's own
+  servers (`clientsettingscdn.roblox.com` and `setup.rbxcdn.com`), without
+  your login. They are combined with your APK's on your machine, in Stud's
+  extracted copy of its assets; the engine itself is not changed, and
+  nothing is redistributed. Turning the setting off in Settings stops it.
 - Your login is stored on disk, encrypted with AES-256-GCM. Only the
   encryption key is held in the system keyring, through the Secret
   Service interface, the same arrangement Chromium calls safe storage.
