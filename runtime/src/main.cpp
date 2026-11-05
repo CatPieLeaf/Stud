@@ -1757,21 +1757,44 @@ int main(int argc, char** argv) {
         asset_dir = cache_subdir("assets");
         invalidate_stale_extracted_assets(apk_path, asset_dir);
         try {
-            stud::android_glue::extract_apk_assets(apk_path, asset_dir);
-            std::printf("stud: extracted assets from %s into %s\n", apk_path.c_str(), asset_dir.c_str());
-            // Windows Graphical Parity's assets over what was just extracted:
-            // the combined shader pack in place of the APK's own. Extraction
-            // rewrites every asset on every launch, so with the setting
-            // off the APK's own files are simply what stays.
+            // What the assets on disk were made from: this APK, with or
+            // without Windows Graphical Parity. Written last, so extraction
+            // cut short is done again, and only rewritten when it changes.
+            const std::string assets_stamp_path = cache_subdir("assets.ready");
+            std::string assets_wanted = stud::android_glue::apk_source_fingerprint(apk_path);
             if (!desktop_materials.empty()) {
+                std::error_code time_ec;
+                const auto built = std::filesystem::last_write_time(desktop_materials + "/assets",
+                                                                    time_ec);
+                assets_wanted += "|" + desktop_materials + "|" +
+                                 std::to_string(
+                                     static_cast<long long>(built.time_since_epoch().count()));
+            }
+            std::string assets_ready;
+            if (std::ifstream stamp{assets_stamp_path}) std::getline(stamp, assets_ready);
+            if (assets_ready == assets_wanted && !assets_wanted.empty()) {
+                std::printf("stud: assets in %s are current\n", asset_dir.c_str());
+            } else {
+                std::error_code stamp_ec;
+                std::filesystem::remove(assets_stamp_path, stamp_ec);
+                stud::android_glue::extract_apk_assets(apk_path, asset_dir);
+                std::printf("stud: extracted assets from %s into %s\n", apk_path.c_str(),
+                            asset_dir.c_str());
+                // Windows Graphical Parity's assets over what was just
+                // extracted: the combined shader pack in place of the APK's
+                // own. Turning the setting off changes the stamp, so the
+                // extraction above puts the APK's own files back.
                 std::error_code materials_ec;
-                std::filesystem::copy(desktop_materials + "/assets", asset_dir,
-                                      std::filesystem::copy_options::recursive |
-                                          std::filesystem::copy_options::overwrite_existing,
-                                      materials_ec);
-                std::printf("stud: Windows Graphical Parity %s\n",
-                            materials_ec ? ("not applied: " + materials_ec.message()).c_str()
-                                         : "applied");
+                if (!desktop_materials.empty()) {
+                    std::filesystem::copy(desktop_materials + "/assets", asset_dir,
+                                          std::filesystem::copy_options::recursive |
+                                              std::filesystem::copy_options::overwrite_existing,
+                                          materials_ec);
+                    std::printf("stud: Windows Graphical Parity %s\n",
+                                materials_ec ? ("not applied: " + materials_ec.message()).c_str()
+                                             : "applied");
+                }
+                if (!materials_ec) std::ofstream(assets_stamp_path, std::ios::trunc) << assets_wanted << "\n";
             }
             // An APK with no assets is one split of a bundle, the x86_64
             // one, imported on its own: the engine loads from it and then

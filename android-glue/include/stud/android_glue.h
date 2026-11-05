@@ -143,6 +143,12 @@ std::string apk_source_fingerprint(const std::string& apk_path);
 // readers; extraction callers do not need it.
 std::vector<std::string> resolve_apk_sources_for_metadata(const std::string& path);
 
+// Makes sure a bundle is unpacked, and removes every other bundle ever
+// unpacked. Process A calls this before a launch, because Process B can read
+// that directory but not write it. Does nothing to a plain APK but clear the
+// leftovers.
+void keep_only_apk_bundle(const std::string& apk_path);
+
 // The one, shared, XDG-compliant cache path both the UI (extracts +
 // attempts the mimalloc patch here once, at APK import time; see
 // ui/src/settings_window.cpp) and the runtime process (just loads

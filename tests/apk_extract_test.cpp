@@ -43,6 +43,8 @@ int main(int argc, char** argv) {
     }
     std::string apk_path = argv[1];
     std::string dest_dir = argv[2];
+    // Bundles unpack under this; never the real one of whoever runs the test.
+    ::setenv("XDG_STATE_HOME", (dest_dir + "/state").c_str(), 1);
 
     // Missing/corrupt APK -> throws clearly, not a crash.
     bool threw = false;
@@ -162,6 +164,19 @@ int main(int argc, char** argv) {
               std::string(bundle) + ": assets from the base split are extracted");
         check(std::ifstream(out_dir + "/from_split.txt").good(),
               std::string(bundle) + ": assets from a config split are extracted too");
+    }
+
+    // Only the bundle in use stays unpacked.
+    {
+        const std::string keep = fixture_dir + "/toy_bundle.apkm";
+        const auto kept = stud::android_glue::resolve_apk_sources_for_metadata(keep);
+        const auto gone =
+            stud::android_glue::resolve_apk_sources_for_metadata(fixture_dir + "/toy_bundle.xapk");
+        stud::android_glue::keep_only_apk_bundle(keep);
+        check(file_exists(kept.front()), "the bundle in use stays unpacked");
+        check(!file_exists(gone.front()), "any other bundle is removed");
+        stud::android_glue::keep_only_apk_bundle(apk_path);
+        check(!file_exists(kept.front()), "a plain APK leaves no bundle behind");
     }
 
     std::printf("all apk-extract checks passed\n");

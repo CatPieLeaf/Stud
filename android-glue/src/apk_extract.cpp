@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <algorithm>
@@ -47,9 +48,8 @@ std::string base_name(const std::string& path) {
 //
 // miniz's own extract_to_file is a plain fopen, and these destinations are
 // in directories the sandbox can write, with stud-ui on the other side of
-// it: a name there can be a symlink to anything of the user's, and the
-// bytes come from an APK the sandbox can rewrite as well. So the name is
-// taken away first and the new file refuses to be anything else.
+// it: a name there can be a symlink to anything of the user's. So the name
+// is taken away first and the new file refuses to be anything else.
 bool extract_as_new_file(mz_zip_archive& zip, mz_uint index, const std::string& dest) {
     ::unlink(dest.c_str());
     const int fd = ::open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666);
@@ -155,18 +155,22 @@ bool is_foreign_abi_split(std::string_view name) {
 
 std::string cache_root() { return stud::paths::cache_dir(); }
 
-// Unpacks the bundle's own .apk members once into the cache and returns
-// their paths, base first. Cached by the bundle's file name and size:
-// re-extracting ~200MB on every launch would be a real, noticeable cost,
-// and a bundle that differs in either is a different bundle.
+// Where a bundle's members go. Keyed by the file's name, size and time:
+// re-extracting ~200MB on every launch would be a real, noticeable cost, and
+// a bundle that differs in any of them is a different bundle.
+std::string bundle_members_dir(const std::string& bundle_path) {
+    struct ::stat bundle_stat{};
+    if (::stat(bundle_path.c_str(), &bundle_stat) != 0) bundle_stat = {};
+    return stud::paths::bundle_dir() + "/" + base_name(bundle_path) + "-" +
+           std::to_string(static_cast<long long>(bundle_stat.st_size)) + "-" +
+           std::to_string(static_cast<long long>(bundle_stat.st_mtime));
+}
+
+// Unpacks the bundle's own .apk members once and returns their paths, base
+// first.
 std::vector<std::string> unpack_bundle_members(const std::string& bundle_path,
                                                 mz_zip_archive& zip) {
-    struct ::stat bundle_stat{};
-    const long long bundle_size =
-        ::stat(bundle_path.c_str(), &bundle_stat) == 0 ? static_cast<long long>(bundle_stat.st_size)
-                                                        : 0;
-    const std::string dest_dir = cache_root() + "/bundles/" + base_name(bundle_path) + "-" +
-                                  std::to_string(bundle_size);
+    const std::string dest_dir = bundle_members_dir(bundle_path);
     make_directories(dest_dir);
 
     std::vector<std::string> members;
@@ -413,6 +417,23 @@ void extract_native_library_from_single_apk(const std::string& apk_path,
 
 std::vector<std::string> resolve_apk_sources_for_metadata(const std::string& path) {
     return resolve_apk_sources_impl(path);
+}
+
+void keep_only_apk_bundle(const std::string& apk_path) {
+    try {
+        resolve_apk_sources_impl(apk_path);
+    } catch (const ExtractError&) {
+        // Whoever reads the APK next reports it, with somewhere to say so.
+    }
+    namespace fs = std::filesystem;
+    const fs::path keep = bundle_members_dir(apk_path);
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(stud::paths::bundle_dir(), ec)) {
+        std::error_code remove_ec;
+        if (entry.path() != keep) fs::remove_all(entry.path(), remove_ec);
+    }
+    // Where they used to go, which the sandbox can write.
+    fs::remove_all(cache_root() + "/bundles", ec);
 }
 
 std::string apk_source_fingerprint(const std::string& apk_path) {

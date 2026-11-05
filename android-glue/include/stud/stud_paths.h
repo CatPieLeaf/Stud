@@ -124,6 +124,10 @@ inline bool valid_secret_name(const std::string& name) {
 // on disk. The extractor works out a merged .apk from a split bundle by
 // content, so the extension carries no meaning here either.
 inline std::string apk_dir() { return data_dir() + "/apk"; }
+// A bundle's own .apk members, unpacked. Process A parses them outside the
+// sandbox, so this is out of the sandbox's reach like the APK itself: written
+// only by Process A, and bound read-only into the sandbox, which reads them too.
+inline std::string bundle_dir() { return state_dir() + "/bundles"; }
 inline std::string stored_apk_path() { return apk_dir() + "/roblox.apk"; }
 
 inline std::string engine_files_dir() { return data_dir() + "/files"; }

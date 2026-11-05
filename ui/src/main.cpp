@@ -1123,6 +1123,9 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     render_host_args << "--discord-join-button" << (settings.discord_join_button ? "on" : "off");
     // Process C draws the text overlay for a focused TextBox and needs the
     // engine's real fonts to draw it in; see prepare_host_assets().
+    // Before the fonts come out of it, and before the sandbox's binds are
+    // listed: Process B cannot unpack a bundle for itself.
+    stud::android_glue::keep_only_apk_bundle(apk_path);
     render_host_args << "--assets-dir" << QString::fromStdString(prepare_host_assets(apk_path));
     if (!desktop_materials.empty()) {
         render_host_args << "--desktop-materials" << QString::fromStdString(desktop_materials);
@@ -1444,7 +1447,8 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // Read-only over the writable binds above, and last so they win. Both are
     // read outside the sandbox: the APK by this process, and the materials by
     // render-host, which parses them.
-    for (const std::string& dir : {stud::paths::apk_dir(), stud::paths::cache_dir() + "/desktop-materials"}) {
+    for (const std::string& dir : {stud::paths::apk_dir(), stud::paths::bundle_dir(),
+                                   stud::paths::cache_dir() + "/desktop-materials"}) {
         if (QFile::exists(QString::fromStdString(dir))) extra_binds.push_back({dir, /*writable=*/false});
     }
     config.extra_binds = std::move(extra_binds);

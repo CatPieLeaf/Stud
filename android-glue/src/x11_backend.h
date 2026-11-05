@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Stud's X11 window, for sessions with no Wayland compositor.
 //
@@ -92,7 +93,9 @@ void set_pointer_confined(bool confined);
 // the owner hands the bytes over on request. Both calls are no-ops (and
 // an empty string) when this backend is not the active one.
 void clipboard_set(const std::string& text);
-std::string clipboard_get();
+// `pump_events` drains the server's events while the reply is awaited, and
+// must keep pump() to one thread at a time.
+std::string clipboard_get(void (*pump_events)());
 
 // The text overlay's presentation half. The drawing is shared with the
 // Wayland path (text_overlay.cpp); only the surface differs, and on X11
@@ -119,6 +122,12 @@ int32_t display_scale_120();
 // real dots-per-inch is computed from. Returns false when the display
 // cannot be asked.
 bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h);
+
+// The refresh rate of the monitor the window is on and every rate that
+// monitor offers at its current size, in mHz, from RandR. 0 and empty when
+// the server cannot say.
+int32_t refresh_mhz();
+std::vector<int32_t> supported_refresh_mhz();
 
 int32_t width();
 int32_t height();

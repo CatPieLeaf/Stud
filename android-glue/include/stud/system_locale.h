@@ -106,7 +106,13 @@ inline std::string locale_from_environment() {
     if (base == nullptr) return "";
 
     const std::string posix = base;
-    if (posix == "C" || posix == "POSIX" || posix == "C.UTF-8") return "";
+    // Whatever the codeset and however it is spelled: Fedora and Debian call
+    // this one C.utf8.
+    std::string name = posix.substr(0, posix.find('.'));
+    for (char& c : name) {
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    }
+    if (name == "C" || name == "POSIX") return "";
 
     if (const char* language_list = env_or_null("LANGUAGE")) {
         // A colon-separated list in preference order; the first entry is

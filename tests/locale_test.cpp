@@ -122,6 +122,10 @@ int main() {
     check_eq(locale_from_environment(), "", "C means no localisation, LANGUAGE notwithstanding");
     ::setenv("LC_ALL", "POSIX", 1);
     check_eq(locale_from_environment(), "", "POSIX means the same");
+    ::setenv("LC_ALL", "C.utf8", 1);
+    check_eq(locale_from_environment(), "", "C.utf8 is C, as Fedora and Debian spell it");
+    ::setenv("LC_ALL", "C.UTF-8", 1);
+    check_eq(locale_from_environment(), "", "C.UTF-8 is C");
 
     // Stud's own override beats the lot, so a language can be tried
     // without changing the whole desktop's.

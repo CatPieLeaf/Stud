@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <clocale>
+#include <algorithm>
 #include <set>
 #include <chrono>
 #include <string>
@@ -1254,6 +1255,9 @@ namespace {
 // SelectionRequest for as long as Stud holds it; "paste" means asking
 // the current owner and waiting for the reply to land on a property of
 // our own window.
+// The strings and flags below are read by whichever thread is pasting and
+// written by the pump, so they are only touched holding this.
+std::mutex g_clipboard_mutex;
 std::string g_clipboard_owned;      // what Stud last copied
 std::string g_clipboard_received;   // the most recent paste, once it arrives
 bool g_clipboard_reply_pending = false;
@@ -1302,6 +1306,7 @@ std::string latin1_from_utf8(const std::string& text) {
 
 void answer_selection_request(const XSelectionRequestEvent& request) {
     Xlib& x = xlib();
+    std::lock_guard<std::mutex> lock(g_clipboard_mutex);
     XEvent reply{};
     reply.xselection.type = SelectionNotify;
     reply.xselection.display = request.display;
@@ -1342,6 +1347,7 @@ void answer_selection_request(const XSelectionRequestEvent& request) {
 
 // The answer to a paste Stud asked for has landed on our own window.
 void read_selection_reply(const XSelectionEvent& notify) {
+    std::lock_guard<std::mutex> lock(g_clipboard_mutex);
     g_clipboard_reply_pending = false;
     g_clipboard_received.clear();
     Xlib& x = xlib();
@@ -1371,6 +1377,7 @@ void read_selection_reply(const XSelectionEvent& notify) {
 // One piece of a large selection; an empty one says that was the last.
 void read_selection_piece() {
     Xlib& x = xlib();
+    std::lock_guard<std::mutex> lock(g_clipboard_mutex);
     Atom actual_type = 0;
     int actual_format = 0;
     unsigned long count = 0;
@@ -1409,7 +1416,8 @@ void push(stud::android_glue::HostInputEvent ev) {
         ev.type == stud::android_glue::HostInputEvent::kPointerButton ||
         ev.type == stud::android_glue::HostInputEvent::kPointerAxis ||
         ev.type == stud::android_glue::HostInputEvent::kPointerRelative ||
-        ev.type == stud::android_glue::HostInputEvent::kPointerEnter) {
+        ev.type == stud::android_glue::HostInputEvent::kPointerEnter ||
+        ev.type == stud::android_glue::HostInputEvent::kPointerLeave) {
         ev.x = to_engine_px(ev.x);
         ev.y = to_engine_px(ev.y);
     }
@@ -1764,6 +1772,13 @@ void set_input_method_target(bool active, bool sensitive, int x, int y, int heig
     if (g_ime_want.exchange(want) != want || want) g_ime_dirty.store(true);
 }
 
+namespace {
+// Any of the buttons on_button() reports, in an event's modifier state.
+constexpr unsigned int kAnyButtonMask = Button1Mask | Button2Mask | Button3Mask;
+// Set when the window may be on another monitor; see refresh_rates().
+std::atomic<bool> g_refresh_stale{true};
+}  // namespace
+
 void pump() {
     if (g_display == nullptr || g_window == 0) return;
     Xlib& x = xlib();
@@ -1803,6 +1818,7 @@ void pump() {
         switch (event.type) {
             case ConfigureNotify: {
                 const auto& configure = event.xconfigure;
+                g_refresh_stale.store(true);
                 sync_text_overlay();
                 if (configure.width > 0 && configure.height > 0) {
                     const bool resized = configure.width != g_width.load() ||
@@ -1867,12 +1883,40 @@ void pump() {
             case MotionNotify:
                 on_motion(event.xmotion.x, event.xmotion.y);
                 break;
-            case EnterNotify:
-                on_motion(event.xcrossing.x, event.xcrossing.y);
+            case EnterNotify: {
+                const auto& crossing = event.xcrossing;
+                // The pointer really arrived, so the engine re-bases on this
+                // point rather than measuring from where it left. A grab
+                // ending or a held button coming back is not an arrival:
+                // Wayland reports neither.
+                if (crossing.mode != NotifyNormal || (crossing.state & kAnyButtonMask) != 0 ||
+                    g_pointer_locked.load() || g_pointer_confined.load()) {
+                    on_motion(crossing.x, crossing.y);
+                    break;
+                }
+                g_pointer_x = static_cast<float>(crossing.x);
+                g_pointer_y = static_cast<float>(crossing.y);
+                stud::android_glue::HostInputEvent ev;
+                ev.type = stud::android_glue::HostInputEvent::kPointerEnter;
+                ev.x = g_pointer_x;
+                ev.y = g_pointer_y;
+                push(ev);
                 break;
+            }
             case LeaveNotify: {
+                const auto& crossing = event.xcrossing;
+                // A button held across the edge keeps its gesture, as it does
+                // on Wayland, where the pointer stays with the surface until
+                // the release. Leaving for a child, or for someone's grab, is
+                // not leaving either.
+                if (crossing.mode == NotifyGrab || crossing.detail == NotifyInferior ||
+                    (crossing.state & kAnyButtonMask) != 0) {
+                    break;
+                }
                 stud::android_glue::HostInputEvent ev;
                 ev.type = stud::android_glue::HostInputEvent::kPointerLeave;
+                ev.x = g_pointer_x;
+                ev.y = g_pointer_y;
                 push(ev);
                 break;
             }
@@ -1925,7 +1969,10 @@ void pump() {
             case SelectionClear:
                 // Another application took the clipboard; Stud is no
                 // longer the owner and must stop answering for it.
-                g_clipboard_owned.clear();
+                {
+                    std::lock_guard<std::mutex> lock(g_clipboard_mutex);
+                    g_clipboard_owned.clear();
+                }
                 break;
             case MapNotify:
                 if (event.xmap.window == g_window) {
@@ -2235,6 +2282,151 @@ struct RandrMonitor {
     unsigned long* outputs;
 };
 
+// And the rest of what a refresh rate takes, the same way.
+struct RandrMode {
+    unsigned long id;
+    unsigned int width, height;
+    unsigned long dot_clock;
+    unsigned int h_sync_start, h_sync_end, h_total, h_skew;
+    unsigned int v_sync_start, v_sync_end, v_total;
+    char* name;
+    unsigned int name_length;
+    unsigned long flags;
+};
+struct RandrResources {
+    Time timestamp;
+    Time config_timestamp;
+    int ncrtc;
+    unsigned long* crtcs;
+    int noutput;
+    unsigned long* outputs;
+    int nmode;
+    RandrMode* modes;
+};
+struct RandrCrtc {
+    Time timestamp;
+    int x, y;
+    unsigned int width, height;
+    unsigned long mode;
+    unsigned short rotation;
+    int noutput;
+    unsigned long* outputs;
+    unsigned short rotations;
+    int npossible;
+    unsigned long* possible;
+};
+
+namespace {
+void* xrandr_library() {
+    static void* library = ::dlopen("libXrandr.so.2", RTLD_NOW | RTLD_LOCAL);
+    return library;
+}
+
+// The window's middle in root coordinates, -1 when there is no window yet.
+void window_centre(int* x_out, int* y_out) {
+    *x_out = -1;
+    *y_out = -1;
+    Xlib& x = xlib();
+    if (g_window == 0 || x.TranslateCoordinates == nullptr) return;
+    Window child = 0;
+    x.TranslateCoordinates(g_display, g_window, RootWindow(g_display, DefaultScreen(g_display)),
+                           g_width.load() / 2, g_height.load() / 2, x_out, y_out, &child);
+}
+
+int32_t mode_refresh_mhz(const RandrMode& mode) {
+    constexpr unsigned long kInterlace = 0x10;   // RR_Interlace
+    constexpr unsigned long kDoubleScan = 0x20;  // RR_DoubleScan
+    uint64_t lines = mode.v_total;
+    if ((mode.flags & kDoubleScan) != 0) lines *= 2;
+    if ((mode.flags & kInterlace) != 0) lines /= 2;
+    const uint64_t dots = lines * mode.h_total;
+    if (dots == 0) return 0;
+    return static_cast<int32_t>((static_cast<uint64_t>(mode.dot_clock) * 1000 + dots / 2) / dots);
+}
+
+std::mutex g_refresh_mutex;
+int32_t g_refresh_mhz = 0;
+std::vector<int32_t> g_supported_refresh_mhz;
+
+// Asks only once the window may have moved, since the engine reads the rate
+// on every pass of its main loop and each answer is a trip to the server.
+void refresh_rates() {
+    if (g_display == nullptr || !g_refresh_stale.exchange(false)) return;
+    int32_t current = 0;
+    std::vector<int32_t> supported;
+    void* xrandr = xrandr_library();
+    using ResourcesFn = RandrResources* (*)(Display*, Window);
+    using FreeResourcesFn = void (*)(RandrResources*);
+    using CrtcFn = RandrCrtc* (*)(Display*, RandrResources*, unsigned long);
+    using FreeCrtcFn = void (*)(RandrCrtc*);
+    const auto get_resources = reinterpret_cast<ResourcesFn>(
+        xrandr != nullptr ? ::dlsym(xrandr, "XRRGetScreenResourcesCurrent") : nullptr);
+    const auto free_resources = reinterpret_cast<FreeResourcesFn>(
+        xrandr != nullptr ? ::dlsym(xrandr, "XRRFreeScreenResources") : nullptr);
+    const auto get_crtc =
+        reinterpret_cast<CrtcFn>(xrandr != nullptr ? ::dlsym(xrandr, "XRRGetCrtcInfo") : nullptr);
+    const auto free_crtc = reinterpret_cast<FreeCrtcFn>(
+        xrandr != nullptr ? ::dlsym(xrandr, "XRRFreeCrtcInfo") : nullptr);
+    RandrResources* resources =
+        get_resources != nullptr && free_resources != nullptr && get_crtc != nullptr &&
+                free_crtc != nullptr
+            ? get_resources(g_display, RootWindow(g_display, DefaultScreen(g_display)))
+            : nullptr;
+    if (resources != nullptr) {
+        int centre_x = -1;
+        int centre_y = -1;
+        window_centre(&centre_x, &centre_y);
+        // The monitor under the window, or the first lit one before there
+        // is a window to go by.
+        unsigned long mode_id = 0;
+        for (int i = 0; i < resources->ncrtc; ++i) {
+            RandrCrtc* crtc = get_crtc(g_display, resources, resources->crtcs[i]);
+            if (crtc == nullptr) continue;
+            const bool lit = crtc->mode != 0;
+            const bool under_window = lit && centre_x >= crtc->x && centre_y >= crtc->y &&
+                                      centre_x < crtc->x + static_cast<int>(crtc->width) &&
+                                      centre_y < crtc->y + static_cast<int>(crtc->height);
+            if (under_window || (lit && mode_id == 0)) mode_id = crtc->mode;
+            free_crtc(crtc);
+            if (under_window) break;
+        }
+        const RandrMode* mode = nullptr;
+        for (int i = 0; i < resources->nmode; ++i) {
+            if (resources->modes[i].id == mode_id) mode = &resources->modes[i];
+        }
+        if (mode != nullptr) {
+            current = mode_refresh_mhz(*mode);
+            // The rates this resolution comes in. Modes aren't listed per
+            // monitor here, so another monitor's can appear among them.
+            for (int i = 0; i < resources->nmode; ++i) {
+                const RandrMode& other = resources->modes[i];
+                if (other.width != mode->width || other.height != mode->height) continue;
+                const int32_t rate = mode_refresh_mhz(other);
+                if (rate > 0 && std::find(supported.begin(), supported.end(), rate) == supported.end()) {
+                    supported.push_back(rate);
+                }
+            }
+        }
+        free_resources(resources);
+    }
+    std::lock_guard<std::mutex> lock(g_refresh_mutex);
+    g_refresh_mhz = current;
+    g_supported_refresh_mhz = std::move(supported);
+}
+}  // namespace
+
+int32_t refresh_mhz() {
+    refresh_rates();
+    std::lock_guard<std::mutex> lock(g_refresh_mutex);
+    return g_refresh_mhz;
+}
+
+std::vector<int32_t> supported_refresh_mhz() {
+    refresh_rates();
+    std::lock_guard<std::mutex> lock(g_refresh_mutex);
+    return g_supported_refresh_mhz;
+}
+
 bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h) {
     if (g_display == nullptr) return false;
     const int screen = DefaultScreen(g_display);
@@ -2246,7 +2438,7 @@ bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h)
     // is on answers instead, from its EDID, as wl_output does on Wayland.
     mm_w = DisplayWidthMM(g_display, screen);
     mm_h = DisplayHeightMM(g_display, screen);
-    static void* xrandr = ::dlopen("libXrandr.so.2", RTLD_NOW | RTLD_LOCAL);
+    void* xrandr = xrandr_library();
     if (xrandr == nullptr) return px_w > 0 && px_h > 0;
     using GetMonitorsFn = RandrMonitor* (*)(Display*, Window, Bool, int*);
     using FreeMonitorsFn = void (*)(RandrMonitor*);
@@ -2259,12 +2451,7 @@ bool output_geometry(int32_t& px_w, int32_t& px_h, int32_t& mm_w, int32_t& mm_h)
     if (monitors == nullptr) return px_w > 0 && px_h > 0;
     int centre_x = -1;
     int centre_y = -1;
-    Xlib& x = xlib();
-    if (g_window != 0 && x.TranslateCoordinates != nullptr) {
-        Window child = 0;
-        x.TranslateCoordinates(g_display, g_window, root, g_width.load() / 2,
-                               g_height.load() / 2, &centre_x, &centre_y, &child);
-    }
+    window_centre(&centre_x, &centre_y);
     const RandrMonitor* pick = nullptr;
     for (int i = 0; i < count && pick == nullptr; ++i) {
         const RandrMonitor& m = monitors[i];
@@ -2302,22 +2489,31 @@ void clipboard_set(const std::string& text) {
     Xlib& x = xlib();
     if (x.SetSelectionOwner == nullptr) return;
     intern_clipboard_atoms();
-    g_clipboard_owned = text;
+    {
+        std::lock_guard<std::mutex> lock(g_clipboard_mutex);
+        g_clipboard_owned = text;
+    }
     x.SetSelectionOwner(g_display, g_atom_clipboard, g_window, CurrentTime);
     if (x.Flush != nullptr) x.Flush(g_display);
 }
 
-std::string clipboard_get() {
+std::string clipboard_get(void (*pump_events)()) {
     if (g_display == nullptr || g_window == 0) return {};
     Xlib& x = xlib();
     if (x.ConvertSelection == nullptr || x.GetSelectionOwner == nullptr) return {};
     intern_clipboard_atoms();
     // Stud's own copy needs no round trip, and asking oneself through
     // the server would deadlock this thread against its own pump.
-    if (x.GetSelectionOwner(g_display, g_atom_clipboard) == g_window) return g_clipboard_owned;
+    if (x.GetSelectionOwner(g_display, g_atom_clipboard) == g_window) {
+        std::lock_guard<std::mutex> lock(g_clipboard_mutex);
+        return g_clipboard_owned;
+    }
 
-    g_clipboard_received.clear();
-    g_clipboard_reply_pending = true;
+    {
+        std::lock_guard<std::mutex> lock(g_clipboard_mutex);
+        g_clipboard_received.clear();
+        g_clipboard_reply_pending = true;
+    }
     x.ConvertSelection(g_display, g_atom_clipboard, g_atom_utf8, g_atom_stud_selection, g_window,
                        CurrentTime);
     if (x.Flush != nullptr) x.Flush(g_display);
@@ -2328,16 +2524,21 @@ std::string clipboard_get() {
     constexpr auto kPatience = std::chrono::milliseconds(200);
     auto deadline = std::chrono::steady_clock::now() + kPatience;
     size_t received = 0;
-    while (g_clipboard_reply_pending && std::chrono::steady_clock::now() < deadline) {
-        pump();
+    for (;;) {
+        // Not pump() directly: the input and display loops are draining the
+        // same events, and two threads in there means two threads in
+        // keys_down().
+        pump_events();
+        std::lock_guard<std::mutex> lock(g_clipboard_mutex);
         // A large selection is judged by whether it is still coming, not by
         // how long the whole of it takes.
         if (g_clipboard_received.size() != received) {
             received = g_clipboard_received.size();
             deadline = std::chrono::steady_clock::now() + kPatience;
         }
-        if (g_clipboard_reply_pending) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (!g_clipboard_reply_pending || std::chrono::steady_clock::now() >= deadline) break;
     }
+    std::lock_guard<std::mutex> lock(g_clipboard_mutex);
     g_clipboard_reply_pending = false;
     g_clipboard_incr = false;
     return g_clipboard_received;

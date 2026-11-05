@@ -1182,8 +1182,12 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 // surface, is how a launcher says the user asked for
                 // this. Both variable names are set because which one a
                 // program reads depends on its toolkit.
-                const std::string token =
-                    stud::android_glue::native_window_activation_token(g_real_window);
+                const std::string token = [] {
+                    // A roundtrip dispatches Stud's queue, which is the
+                    // pumps' to do, one at a time.
+                    std::lock_guard<std::mutex> lock(wayland_mutex());
+                    return stud::android_glue::native_window_activation_token(g_real_window);
+                }();
                 const pid_t pid = ::fork();
                 if (pid == 0) {
                     // Prefer the desktop portal, which takes the
@@ -1498,8 +1502,10 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                     // If the compositor declines, nothing happens and the
                     // window stays put, which is the same outcome as
                     // doing nothing at all.
-                    const std::string own =
-                        stud::android_glue::native_window_activation_token(g_real_window);
+                    const std::string own = [] {
+                        std::lock_guard<std::mutex> lock(wayland_mutex());
+                        return stud::android_glue::native_window_activation_token(g_real_window);
+                    }();
                     if (!own.empty()) {
                         stud::android_glue::native_window_activate(g_real_window, own.c_str());
                         std::printf("stud-render-host: no token given, raising with our own\n");
@@ -1823,7 +1829,10 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             return 1;
         }
         case CallId::GetClipboardText: {
-            const std::string text = stud::android_glue::clipboard_get_text();
+            const std::string text = stud::android_glue::clipboard_get_text([] {
+                std::lock_guard<std::mutex> lock(wayland_mutex());
+                stud::android_glue::native_window_pump_x11_events_only();
+            });
             out.assign(text.begin(), text.end());
             *out_len = static_cast<uint32_t>(out.size());
             return out.size();

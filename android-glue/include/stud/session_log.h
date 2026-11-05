@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 // execinfo.h is glibc's. bionic has no backtrace(), and Process B
@@ -29,21 +30,19 @@
 // asked to produce when something goes wrong, and the journal keeps no
 // record at all on a system without persistent journald.
 //
-// So each process tees its own stdout and stderr into the file named by
-// STUD_LOG_FILE, and keeps writing to wherever they already went. The
-// terminal still shows everything; the journal still gets everything.
+// So each process tees its own stdout and stderr into the session log, and
+// keeps writing to wherever they already went. The terminal still shows what
+// it can keep up with; the journal the same.
 //
 // Why a tee and not a plain redirect: redirecting would take the output
 // away from whoever was already reading it, which is exactly the
 // behaviour every debugging session in this project depends on.
 //
-// Why each process opens the file rather than inheriting one pipe from
-// Process A: Process A exits within a second of launching the other two
-// (by design; see its own "hand off and get out of the way" note), so
-// a pipe it owned would be dead for the rest of the session. O_APPEND
-// makes concurrent writers safe, the kernel places each write at the
-// current end of file, so lines from three processes interleave but
-// never overwrite each other.
+// Each process has its own tee: Process A's goes to the file, and B and C
+// send theirs to the collector in Process A. Without a collector they open
+// the file themselves, and O_APPEND makes that safe: the kernel places each
+// write at the current end of file, so lines from three processes interleave
+// but never overwrite each other.
 namespace stud::logging {
 
 // STUD_DEBUG=1: diagnostics a normal session does not need -- periodic
@@ -59,12 +58,10 @@ inline bool debug_enabled() {
 
 namespace detail {
 
-// The real stdout, saved before the tee replaced fd 1. Children must be
-// given THIS rather than inheriting the pipe: the pipe's only reader is
-// this process's tee thread, and Process A exits within a second of
-// spawning the other two, after which their writes would hit a pipe
-// nobody reads, and their output would vanish from the terminal and the
-// journal. They open the log file themselves.
+// The real stdout, saved before the tee replaced fd 1. Close-on-exec, like
+// everything of the tee's: a child is handed this explicitly as its own
+// stdout, and otherwise inherits nothing, least of all the pipe's read end,
+// which in the sandboxed engine would be Process A's log to read and to take.
 inline int& passthrough_fd_storage() {
     static int fd = -1;
     return fd;
@@ -76,31 +73,59 @@ struct TeeState {
     int passthrough_fd = -1;
 };
 
+// The same three, for the crash handler, which cannot leave anything to the
+// tee thread: the process is gone the moment it re-raises.
+inline TeeState& tee_outputs() {
+    static TeeState outputs;
+    return outputs;
+}
+
+// write(2) and poll(2) only: the crash handler uses this too.
+inline void write_fully(int fd, const char* data, size_t size) {
+    size_t written = 0;
+    while (written < size) {
+        const ssize_t n = ::write(fd, data + written, size - written);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            return;
+        }
+        written += static_cast<size_t>(n);
+    }
+}
+
+// Whether a chunk can go to the real stdout right now. Whoever reads it may
+// have stopped (a terminal paused with Ctrl+S, a pipe nobody reads), and
+// waiting for them would fill the pipe behind this and block every print in
+// the process. They miss that chunk; the log does not.
+inline bool passthrough_ready(int fd) {
+    pollfd p{fd, POLLOUT, 0};
+    return ::poll(&p, 1, 0) > 0 && (p.revents & POLLOUT) != 0;
+}
+
+inline void forward(const TeeState& to, const char* data, size_t size) {
+    if (to.passthrough_fd >= 0 && passthrough_ready(to.passthrough_fd)) {
+        write_fully(to.passthrough_fd, data, size);
+    }
+    if (to.log_fd >= 0) write_fully(to.log_fd, data, size);
+}
+
 inline void* tee_thread(void* arg) {
     auto* state = static_cast<TeeState*>(arg);
     char buffer[4096];
     for (;;) {
+        // Waits here rather than in read(): the read end is non-blocking,
+        // so that the crash handler can empty it without hanging.
+        pollfd p{state->read_fd, POLLIN, 0};
+        if (::poll(&p, 1, -1) < 0 && errno != EINTR) break;
         const ssize_t got = ::read(state->read_fd, buffer, sizeof(buffer));
         if (got < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR || errno == EAGAIN) continue;
             break;
         }
         if (got == 0) break;
-        // Both destinations get every byte. A short or failed write to
-        // one is not worth losing the other over; this is a logger,
+        // Both destinations get every byte they can take; this is a logger,
         // and it must never be the reason a process stalls or dies.
-        for (int fd : {state->passthrough_fd, state->log_fd}) {
-            if (fd < 0) continue;
-            ssize_t written = 0;
-            while (written < got) {
-                const ssize_t n = ::write(fd, buffer + written, static_cast<size_t>(got - written));
-                if (n <= 0) {
-                    if (n < 0 && errno == EINTR) continue;
-                    break;
-                }
-                written += n;
-            }
-        }
+        forward(*state, buffer, static_cast<size_t>(got));
     }
     ::close(state->read_fd);
     delete state;
@@ -119,9 +144,8 @@ inline void* tee_thread(void* arg) {
 // A write to that socket is a copy into a kernel buffer, with no disk
 // behind it, so a process is never made to wait on file I/O to say
 // something. Batching happens once, in Process A, on its way to the
-// file. Nothing is held back on this side, so nothing can be lost in
-// transit: by the time a process dies, every line it ever produced is
-// already in A's hands.
+// file. What is still in the pipe when a process dies goes through the
+// crash handler, which empties it itself.
 inline bool start_session_log_to_fd(int destination_fd);
 
 // Tees this process's stdout and stderr into `path`. Safe to call with an
@@ -163,20 +187,23 @@ inline bool start_session_log_to_fd(int log_fd) {
     if (log_fd < 0) return false;
 
     int pipe_fds[2] = {-1, -1};
-    if (::pipe(pipe_fds) != 0) {
+    if (::pipe2(pipe_fds, O_CLOEXEC) != 0) {
         ::close(log_fd);
         return false;
     }
+    ::fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK);
 
     // Keep the real stdout so the tee can still write to it after fd 1
     // has been replaced by the pipe.
-    const int passthrough = ::dup(STDOUT_FILENO);
+    const int passthrough = ::fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 0);
     detail::passthrough_fd_storage() = passthrough;
 
     auto* state = new detail::TeeState{pipe_fds[0], log_fd, passthrough};
+    detail::tee_outputs() = *state;
     pthread_t thread{};
     if (::pthread_create(&thread, nullptr, detail::tee_thread, state) != 0) {
         delete state;
+        detail::tee_outputs() = detail::TeeState{};
         ::close(pipe_fds[0]);
         ::close(pipe_fds[1]);
         ::close(log_fd);
@@ -251,6 +278,34 @@ inline const char*& crash_process_name() {
 // printf. Anything else here would be a second crash inside the handler
 // for the first one, a mistake this project has already made once, in
 // its own backtrace walker.
+// The crash report goes straight to where the tee would have put it. Through
+// the pipe it raced the end of the process, and 9 crashes in 300 lost lines,
+// 5 of them everything.
+inline void crash_write(const char* text, size_t size) {
+    const TeeState& to = tee_outputs();
+    if (to.read_fd < 0) {
+        write_fully(STDERR_FILENO, text, size);
+        return;
+    }
+    forward(to, text, size);
+}
+
+inline void crash_write(const char* text) { crash_write(text, ::strlen(text)); }
+
+// Whatever was printed before the crash and is still in the pipe, so the
+// report comes after it. Non-blocking, and the tee thread may be taking some
+// of it at the same moment, which is fine.
+inline void crash_flush_pipe() {
+    const TeeState& to = tee_outputs();
+    if (to.read_fd < 0) return;
+    char buffer[4096];
+    for (;;) {
+        const ssize_t got = ::read(to.read_fd, buffer, sizeof(buffer));
+        if (got <= 0) return;
+        forward(to, buffer, static_cast<size_t>(got));
+    }
+}
+
 inline void write_hex(unsigned long long value) {
     char buf[19] = {'0', 'x'};
     int at = 2;
@@ -261,7 +316,7 @@ inline void write_hex(unsigned long long value) {
         started = true;
         buf[at++] = static_cast<char>(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
     }
-    ::write(STDERR_FILENO, buf, static_cast<size_t>(at));
+    crash_write(buf, static_cast<size_t>(at));
 }
 
 // A one-line breadcrumb the crash handler prints, if anything has set
@@ -297,15 +352,16 @@ inline CrashFields* crash_fields_storage() {
 }
 
 inline void crash_handler(int sig, siginfo_t* info, void*) {
+    crash_flush_pipe();
     const char* name = crash_process_name();
     char digits[3] = {static_cast<char>('0' + (sig / 10) % 10),
                       static_cast<char>('0' + sig % 10), '\n'};
     const char* prefix = "stud: CRASH in ";
     const char* middle = ", signal ";
-    ::write(STDERR_FILENO, prefix, ::strlen(prefix));
-    ::write(STDERR_FILENO, name, ::strlen(name));
-    ::write(STDERR_FILENO, middle, ::strlen(middle));
-    ::write(STDERR_FILENO, digits, sizeof(digits));
+    crash_write(prefix);
+    crash_write(name);
+    crash_write(middle);
+    crash_write(digits, sizeof(digits));
 
     // Where, not just that.
     //
@@ -315,32 +371,32 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
     // diagnosis, and they are cheap enough to always print.
     if (info != nullptr) {
         const char* at = "stud: fault address ";
-        ::write(STDERR_FILENO, at, ::strlen(at));
+        crash_write(at);
         write_hex(reinterpret_cast<unsigned long long>(info->si_addr));
-        ::write(STDERR_FILENO, "\n", 1);
+        crash_write("\n", 1);
     }
 
     if (crash_note_storage()[0] != '\0') {
         const char* label = "stud: last: ";
-        ::write(STDERR_FILENO, label, ::strlen(label));
-        ::write(STDERR_FILENO, crash_note_storage(), ::strlen(crash_note_storage()));
-        ::write(STDERR_FILENO, "\n", 1);
+        crash_write(label);
+        crash_write(crash_note_storage());
+        crash_write("\n", 1);
     }
 
     // The unformatted form, printed with the same write/hex primitives
     // the rest of this handler uses, since snprintf is not safe here.
     if (const CrashFields* f = crash_fields_storage(); f->what != nullptr) {
         const char* label = "stud: last: ";
-        ::write(STDERR_FILENO, label, ::strlen(label));
-        ::write(STDERR_FILENO, f->what, ::strlen(f->what));
+        crash_write(label);
+        crash_write(f->what);
         const char* sep = " ";
-        ::write(STDERR_FILENO, sep, 1);
+        crash_write(sep, 1);
         write_hex(f->a);
-        ::write(STDERR_FILENO, sep, 1);
+        crash_write(sep, 1);
         write_hex(f->b);
-        ::write(STDERR_FILENO, sep, 1);
+        crash_write(sep, 1);
         write_hex(f->c);
-        ::write(STDERR_FILENO, "\n", 1);
+        crash_write("\n", 1);
     }
 
     // backtrace() can allocate the first time it runs, which is not
@@ -352,8 +408,13 @@ inline void crash_handler(int sig, siginfo_t* info, void*) {
     const int count = ::backtrace(frames, 32);
     if (count > 0) {
         const char* header = "stud: backtrace:\n";
-        ::write(STDERR_FILENO, header, ::strlen(header));
-        ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
+        crash_write(header);
+        const TeeState& to = tee_outputs();
+        if (to.read_fd < 0) ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
+        if (to.passthrough_fd >= 0 && passthrough_ready(to.passthrough_fd)) {
+            ::backtrace_symbols_fd(frames, count, to.passthrough_fd);
+        }
+        if (to.log_fd >= 0) ::backtrace_symbols_fd(frames, count, to.log_fd);
     }
 #endif
 

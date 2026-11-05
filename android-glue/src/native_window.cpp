@@ -24,6 +24,7 @@
 #include "text_input.h"
 #include <libdecor.h>
 #include <xkbcommon/xkbcommon.h>
+#include "stud/clipboard.h"
 #include "stud/key_compose.h"
 #include "stud/keymap_chars.h"
 
@@ -41,7 +42,6 @@
 #include <mutex>
 #include <set>
 #include <string_view>
-#include <unordered_map>
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -430,28 +430,6 @@ int32_t effective_scale_120() {
     const int32_t requested = g_requested_render_scale_120.load();
     if (requested > 0) return requested;
     return display_scale_120();
-}
-
-// Real fix for a real, user-observed bug: ANativeWindow_fromSurface()
-// used to ignore its `surface` argument entirely and unconditionally
-// create a brand-new real Wayland surface/xdg_toplevel on every call,
-// matching real Android's OWN semantics for a *first-ever* call on a
-// given Surface, but wrong the moment the SAME real Surface jobject is
-// handed in again (confirmed: GameActivity's real lifecycle drive,
-// jni-bridge/src/game_engine_boot.cpp, correctly reuses one
-// SurfaceJava jobject across both onSurfaceCreatedNative and
-// onSurfaceChangedNative, exactly matching real AGDK/native_app_glue
-// convention, both real entry points independently call
-// ANativeWindow_fromSurface() internally per the real AGDK contract,
-// so this function itself needs to be the one place idempotency is
-// enforced). Without this, two real, independently-mapped windows
-// appeared on screen for a single real launch. Keyed by the raw
-// jobject pointer's identity, not its content, matches how real
-// Android's own native window cache works (tied to the Surface
-// object's own identity/lifetime, not anything about its contents).
-std::unordered_map<jobject, ANativeWindow*>& window_cache() {
-    static std::unordered_map<jobject, ANativeWindow*> cache;
-    return cache;
 }
 
 // xdg_wm_base requires every ping to be answered with a pong, or the
@@ -1755,6 +1733,7 @@ void ensure_wayland_connection() {
     wl_display_roundtrip_queue(state.display, state.queue);
     // Kept, not destroyed: a monitor can arrive or leave at any time.
     state.globals_settled = true;
+    stud::android_glue::clipboard_start();
 
     if (state.output != nullptr) {
         std::printf("stud: android-glue: real output %dx%d px, %dx%d mm (transform=%d "
@@ -1870,11 +1849,6 @@ struct ANativeWindow {
     // event arrived meant the commit went out BEFORE the ack, so it
     // answered no configure at all; see xdg_surface_configure().
     bool geometry_pending = false;
-    // The real Surface jobject this window is cached under (window_cache(),
-    // below), so ANativeWindow_release() can clean up its cache entry when
-    // the window is genuinely destroyed, null if this window was never
-    // associated with a real jobject (surface==nullptr at creation time).
-    jobject surface_key = nullptr;
 };
 
 namespace {
@@ -1907,6 +1881,19 @@ bool hold_presents_for_one_refresh() {
         std::this_thread::yield();
     } while (std::chrono::steady_clock::now() < deadline);
     return false;
+}
+
+// The window surface's own black background, when the driver has already
+// presented to a surface of its own but this configure is the first one it
+// can be attached in (see native_window_content_presented()). Also how the
+// window comes back after native_window_reattach(): the driver's frames go to
+// a subsurface, and a toplevel with no buffer of its own is not on screen.
+void attach_background_if_due(ANativeWindow* window) {
+    if (window->background != nullptr && window->content_presented.load() &&
+        !window->background_attached.exchange(true)) {
+        wl_surface_attach(window->surface, window->background, 0, 0);
+        wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
+    }
 }
 
 void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
@@ -2053,14 +2040,7 @@ void xdg_surface_configure(void* data, xdg_surface* surface, uint32_t serial) {
             std::fflush(stdout);
         }
     }
-    // The window surface's own black background, when the driver has
-    // already presented to a surface of its own but this configure is the
-    // first one it can be attached in (see native_window_content_presented()).
-    if (window->background != nullptr && window->content_presented.load() &&
-        !window->background_attached.exchange(true)) {
-        wl_surface_attach(window->surface, window->background, 0, 0);
-        wl_surface_damage_buffer(window->surface, 0, 0, 1, 1);
-    }
+    attach_background_if_due(window);
     if (commit_now) wl_surface_commit(window->surface);
     if (presents_held) {
         wl_subsurface_set_desync(window->content_subsurface);
@@ -2362,6 +2342,7 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
     window->logical_width.store(width);
     window->logical_height.store(height);
     apply_window_geometry(window, window->configured ? "resized" : "configured");
+    attach_background_if_due(window);
     libdecor_state* state = decor.state_new(width, height);
     decor.frame_commit(frame, state, configuration);
     decor.state_free(state);
@@ -2518,86 +2499,19 @@ static void create_window_role(ANativeWindow* window) {
     }
 }
 
-ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
-    // No real Java Surface object exists in Stud's model (Stud's own
-    // process owns the window, not a Java-side Surface), the jobject
-    // itself carries no real content Stud reads, same pattern as
-    // AAssetManager_fromJava's. Its IDENTITY still matters, though;
-    // see window_cache()'s own doc comment above for the real bug this
-    // fixes (two windows appearing for one launch).
-    if (surface != nullptr) {
-        auto& cache = window_cache();
-        auto it = cache.find(surface);
-        if (it != cache.end()) {
-            it->second->ref_count.fetch_add(1);
-            return it->second;
-        }
-    } else if (!window_cache().empty()) {
-        // User-reported bug, fixed (the engineering notes, "still two
-        // invisible windows" entry): confirmed via a real diagnostic
-        // trace that once the real production window already exists
-        // (window_cache() non-empty), Roblox's own compiled code
-        // sometimes calls this real, exported NDK symbol directly with
-        // a genuinely null Surface (some internal defensive/fallback
-        // path, not a Stud call site. Every one of Stud's own real
-        // call sites always passes the real, non-null surface jobject).
-        // Treating that as "create a fresh standalone window" (the
-        // right behavior for the null-surface case BEFORE any real
-        // window exists; see below) spawned a second, real,
-        // independently-mapped, never-fully-configured (hence
-        // invisible) window. A null Surface once a real one already
-        // exists has no legitimate window to create; degrade honestly
-        // instead.
-        return nullptr;
-    }
-
-    // Hard guard against creating a second real window from a null
-    // Surface. The cache is keyed by jobject identity, so a null Surface
-    // never populates it, which used to mean every null-Surface call
-    // fell through here and mapped a brand new Wayland window. One
-    // caller repeating that in a loop put over a hundred windows on the
-    // user's desktop. Exactly one window is ever legitimate from this
-    // path, so remember that it happened rather than relying on a cache
-    // that this path cannot fill.
-    static bool created_null_surface_window = false;
-    if (surface == nullptr) {
-        if (created_null_surface_window) {
-            std::fprintf(stderr,
-                         "stud: ANativeWindow_fromSurface(null) called again, refusing to "
-                         "create a second window\n");
-            std::fflush(stderr);
-            return nullptr;
-        }
-        created_null_surface_window = true;
-    }
-
-    // Hard cap, by construction rather than by correct logic.
-    //
-    // Stud maps exactly one real window. Every mechanism that is supposed
-    // to guarantee that, the jobject cache, the null-Surface guard
-    // above, is logic that can be wrong, and when it was wrong the
-    // result was over a hundred real windows on the user's desktop
-    // before anyone could react. A runaway window loop is not something
-    // to detect politely and continue through: it is unusable, and every
-    // window past the first is already a bug.
-    //
-    // STUD_MAX_WINDOWS raises the cap for anything that legitimately
-    // needs more than one; it is not a workaround for the loop above.
-    static int windows_created = 0;
-    static const int max_windows = [] {
-        const char* v = std::getenv("STUD_MAX_WINDOWS");
-        const int n = v != nullptr ? std::atoi(v) : 0;
-        return n > 0 ? n : 1;
-    }();
-    if (windows_created >= max_windows) {
-        std::fprintf(stderr,
-                     "stud: refusing to create window #%d (cap %d), something is looping. "
-                     "Set STUD_MAX_WINDOWS to raise the cap if this is genuinely needed.\n",
-                     windows_created + 1, max_windows);
+ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject /*surface*/) {
+    // One window, ever: the engine reaches this through Process B's forwarding
+    // client, and the only caller here is render-host, once. Every window past
+    // the first is a bug, and when that bug was real it put over a hundred on
+    // the user's desktop before anyone could react, so this is by construction
+    // rather than by trusting the callers.
+    static bool window_created = false;
+    if (window_created) {
+        std::fprintf(stderr, "stud: refusing to create a second window, something is looping\n");
         std::fflush(stderr);
         return nullptr;
     }
-    ++windows_created;
+    window_created = true;
 
     auto* window = new ANativeWindow();
 
@@ -2648,10 +2562,6 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
                     "renders %dx%d\n",
                     device_w, device_h, w, h, g_window_width.load(), g_window_height.load());
         std::fflush(stdout);
-        if (surface != nullptr) {
-            window->surface_key = surface;
-            window_cache()[surface] = window;
-        }
         return window;
     }
 
@@ -2677,10 +2587,6 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
 
         create_window_role(window);
     }
-    if (surface != nullptr) {
-        window->surface_key = surface;
-        window_cache()[surface] = window;
-    }
     // The overlay parents itself to the game window, so it needs the one
     // surface the engine actually renders into.
     g_primary_surface.store(window->surface);
@@ -2697,9 +2603,6 @@ void ANativeWindow_release(ANativeWindow* window) {
     if (window->ref_count.fetch_sub(1) == 1) {
         ANativeWindow* was_toplevel = window;
         g_toplevel_window.compare_exchange_strong(was_toplevel, nullptr);
-        if (window->surface_key != nullptr) {
-            window_cache().erase(window->surface_key);
-        }
         // Destroys the xdg_surface and xdg_toplevel it made, so the two
         // below stay null on this path and nothing is destroyed twice.
         if (window->decor_frame != nullptr) {
@@ -2797,9 +2700,13 @@ void display_output_geometry(int32_t* px_w, int32_t* px_h, int32_t* mm_w, int32_
     if (mm_h != nullptr) *mm_h = state.output_phys_mm_h;
 }
 
-int32_t display_refresh_mhz() { return wayland_state().output_refresh_mhz; }
+int32_t display_refresh_mhz() {
+    if (display_backend() == DisplayBackend::X11) return x11::refresh_mhz();
+    return wayland_state().output_refresh_mhz;
+}
 
 std::vector<int32_t> display_supported_refresh_mhz() {
+    if (display_backend() == DisplayBackend::X11) return x11::supported_refresh_mhz();
     return wayland_state().output_supported_refresh_mhz;
 }
 
@@ -3328,7 +3235,11 @@ int32_t native_window_wait_for_display_scale_120() {
     if (state.output_logical_w > 0 && state.output_mode_px_w > 0) {
         // The logical size is as the desktop sees it, the mode as the panel
         // does: on a rotated monitor the two are swapped.
-        const int32_t derived = upright_mode_width(state) * kScaleUnit / state.output_logical_w;
+        // Nearest, not truncated: the logical size is itself rounded, so
+        // 1920 over 1477 is 155.99 of a true 156.
+        const int32_t derived =
+            (upright_mode_width(state) * kScaleUnit + state.output_logical_w / 2) /
+            state.output_logical_w;
         if (derived > 0) {
             g_display_scale_120.store(derived);
             std::printf("stud: android-glue: display scale %d/120 from xdg-output "

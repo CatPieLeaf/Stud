@@ -151,6 +151,10 @@ bool ensure_device(const WaylandOverlayDeps& deps) {
 
 }  // namespace
 
+void clipboard_start() {
+    ensure_device(overlay_deps());
+}
+
 void clipboard_set_text(const std::string& text) {
     // X11 owns its selections through a window rather than a seat, so it
     // has its own implementation entirely (x11_backend.cpp).
@@ -179,8 +183,8 @@ void clipboard_set_text(const std::string& text) {
     wl_display_flush(deps.display);
 }
 
-std::string clipboard_get_text() {
-    if (display_backend() == DisplayBackend::X11) return x11::clipboard_get();
+std::string clipboard_get_text(void (*pump_x11)()) {
+    if (display_backend() == DisplayBackend::X11) return x11::clipboard_get(pump_x11);
     const WaylandOverlayDeps deps = overlay_deps();
     if (deps.display == nullptr || !ensure_device(deps)) return {};
     auto& c = clipboard();
