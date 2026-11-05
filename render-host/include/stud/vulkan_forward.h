@@ -374,9 +374,22 @@ private:
     std::vector<uint8_t> spilled_;
 };
 
+// Says so, once per kind of message; see Reader.
+void report_short_message(uint32_t kind);
+
+// What comes from the engine's side. A message that ends early reads as zeros
+// and carries on, because nothing downstream can do better, and that is said
+// in the log rather than left to look like a driver crash.
 class Reader {
 public:
-    Reader(const uint8_t* data, size_t size) : p_(data), end_(data + size) {}
+    // `kind` names the message in that report.
+    Reader(const uint8_t* data, size_t size, uint32_t kind = 0)
+        : p_(data), end_(data + size), kind_(kind) {}
+    ~Reader() {
+        if (failed_) report_short_message(kind_);
+    }
+    Reader(const Reader&) = delete;
+    Reader& operator=(const Reader&) = delete;
 
     template <typename T>
     T scalar() {
@@ -386,6 +399,7 @@ public:
             p_ += sizeof(T);
         } else {
             p_ = end_;
+            failed_ = true;
         }
         return v;
     }
@@ -393,11 +407,22 @@ public:
     uint64_t u64() { return scalar<uint64_t>(); }
     float f32() { return scalar<float>(); }
 
+    // A count of what follows it, which everything here sizes a vector from.
+    // No element is smaller than a u32, so no honest count is above this.
+    uint32_t count() {
+        const uint32_t n = u32();
+        const size_t most = static_cast<size_t>(end_ - p_) / sizeof(uint32_t);
+        if (n <= most) return n;
+        failed_ = true;
+        return static_cast<uint32_t>(most);
+    }
+
     // Returns a pointer into the message itself; valid while it is.
     const uint8_t* bytes(uint32_t* out_len) {
         const uint32_t n = u32();
         if (static_cast<size_t>(end_ - p_) < n) {
             p_ = end_;
+            failed_ = true;
             *out_len = 0;
             return nullptr;
         }
@@ -407,11 +432,13 @@ public:
         return at;
     }
 
-    bool ok() const { return p_ <= end_; }
+    bool ok() const { return !failed_; }
 
 private:
     const uint8_t* p_;
     const uint8_t* end_;
+    uint32_t kind_;
+    bool failed_ = false;
 };
 
 }  // namespace stud::render_host::vk_wire

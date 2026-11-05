@@ -3927,27 +3927,10 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateCommandBuffers(
 // reply-free they keep their place in the same ordered stream and cost
 // the caller a memcpy.
 //
-// ---- The ordering this relies on, which is easy to break
-//
-// Reply-free means these now travel in the connection's queue rather than
-// being waited for. Against the engine's own recorded commands that is
-// exact: same queue, same mutex, program order, and call_void() emits any
-// pending command batch before appending, so a Begin can never land ahead
-// of commands recorded before it.
-//
-// Against a SUBMIT it is not, and that is the trap. vkQueueSubmit is
-// handed to the deferred thread, so a submit naming this command buffer
-// may still be sitting there unsent. What stops a Begin overtaking it is
-// that the engine resets the pool (or the fence) before re-recording, and
-// vkResetCommandPool/vkResetFences drain the deferred queue first. That
-// drain is the ordering guarantee this call rides on.
-//
-// So: do NOT make those resets reply-free as well without replacing that
-// guarantee with another one. Tried together, the pair reorders a Begin
-// ahead of the submit that still has to read the same command buffer,
-// which is a GPU executing whatever is in it now. Separately, this one is
-// safe, because the drain still happens between the submit and the next
-// Begin.
+// Reply-free, these keep their place in the connection's single ordered stream,
+// with the engine's recorded commands and its submits, so a Begin can't overtake
+// a submit that still has to read the same command buffer. That holds because
+// there is one writer: see Client::start_writer/enqueue_action.
 //
 // STUD_VK_SYNC_CMDBUF=1 puts both back to blocking, as the A/B for any
 // "did this change what the engine sees" question.
@@ -4114,39 +4097,18 @@ void flush_all_mapped_memory() {
 
 namespace {
 
-// Real Vulkan's vkQueueSubmit does not block: it hands the work to the
-// driver and returns. Stud's made a synchronous IPC round-trip and, when
-// a texture upload was in flight, first decoded the compressed texels,
-// measured at 15ms on the engine's own render thread during a streaming
-// burst, which is a dropped frame the engine would never have had on a
-// device that samples ETC2 in hardware.
+// Real Vulkan's vkQueueSubmit does not block: it hands the work to the driver
+// and returns. So submit and present are queued reply-free on the render
+// connection's own single writer, and a texture decode rides the same queue as
+// an ordered action just ahead of the submit that reads it (measured at 15ms on
+// the engine's own render thread during a streaming burst otherwise). With one
+// writer, ordering after a submit is program order, with nothing to drain. See
+// Client::start_writer/enqueue_action.
 //
-// So the ordered tail of a submit: the decode, then the IPC call,
-// runs on one background thread, and everything that could observe it
-// flushes that thread first: acquiring the next image, waiting on a
-// fence, waiting for the device to go idle, and tearing a swapchain
-// down. One thread, not a pool, because queue submission is ordered.
-//
-// What this deliberately does NOT move is flush_all_mapped_memory().
-// That has to stay in program order with the engine's own writes to its
-// mapped memory: running it later would ship whatever the engine had
-// written by then, which is the next frame's data for an earlier submit.
-// Submit and present are queued reply-free on the render connection's own
-// single writer, and the texture decode rides the same queue as an ordered
-// action just ahead of the submit that reads it.
-//
-// This replaced a second thread (DeferredQueue) that ran submit and
-// present itself. It kept the 15ms decode off the engine's thread, which
-// was its whole point and is preserved here, but it also made the stream
-// have two producers, so anything needing to be ordered after a submit
-// could only get that by draining it. Measured in a real game, the
-// engine's Main thread spent 13.1% of its wall clock in exactly that
-// drain. With one writer the ordering is program order and there is
-// nothing to drain. See Client::start_writer/enqueue_action.
-//
-// What still does NOT move is flush_all_mapped_memory(): it has to stay in
-// program order with the engine's own writes to its mapped memory, so it
-// runs on the engine's thread, before the submit is queued.
+// flush_all_mapped_memory() stays out of this: it has to stay in program order
+// with the engine's own writes to its mapped memory, or it would ship the next
+// frame's data for an earlier submit, so it runs on the engine's thread, before
+// the submit is queued.
 
 
 // STUD_VK_SYNC_SUBMIT=1 puts submit and present back to blocking round
@@ -6547,7 +6509,7 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueueBindSparse(VkQueue, uint32_t, const V
 
 // The 1.1 forms of what is already forwarded. Their pNext structs either
 // answer about features Stud does not offer, or, for the dedicated-allocation
-// query, have a truthful answer here: nothing has to be dedicated.
+// query, say that nothing is preferred to be dedicated.
 VKAPI_ATTR VkResult VKAPI_CALL stud_vkBindBufferMemory2(VkDevice device, uint32_t count,
                                                         const VkBindBufferMemoryInfo* infos) {
     for (uint32_t i = 0; i < count; ++i) {
@@ -6572,8 +6534,9 @@ void clear_dedicated_requirements(VkMemoryRequirements2* requirements) {
     for (auto* n = static_cast<VkBaseOutStructure*>(requirements->pNext); n != nullptr; n = n->pNext) {
         if (n->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS) {
             auto* d = reinterpret_cast<VkMemoryDedicatedRequirements*>(n);
+            // A preference Stud can decline. A requirement is left as the
+            // driver gave it, or the engine would do something invalid.
             d->prefersDedicatedAllocation = VK_FALSE;
-            d->requiresDedicatedAllocation = VK_FALSE;
         }
     }
 }

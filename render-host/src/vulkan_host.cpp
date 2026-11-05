@@ -4431,7 +4431,7 @@ uint64_t vk_invalidate_mapped_memory_ranges(uint64_t memory, uint64_t offset, ui
 
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size) {
     Loader& l = loader();
-    if (l.vk.vkFlushMappedMemoryRanges == nullptr) {
+    if (l.vk.vkFlushMappedMemoryRanges == nullptr || l.mapped.count(memory) == 0) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     }
     VkMappedMemoryRange range{};
@@ -9176,7 +9176,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
     vk_wire::Reader r(in.data(), in.size());
     const uint32_t flags = r.u32();
 
-    const uint32_t attachment_count = r.u32();
+    const uint32_t attachment_count = r.count();
     std::vector<VkAttachmentDescription> attachments(attachment_count);
     for (auto& a : attachments) {
         a.flags = r.u32();
@@ -9242,7 +9242,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
     // Subpass attachment references are pointer arrays inside each
     // subpass, so they are read into per-subpass storage that outlives
     // the create call.
-    const uint32_t subpass_count = r.u32();
+    const uint32_t subpass_count = r.count();
     std::vector<VkSubpassDescription> subpasses(subpass_count);
     std::vector<std::vector<VkAttachmentReference>> inputs(subpass_count);
     std::vector<std::vector<VkAttachmentReference>> colors(subpass_count);
@@ -9251,7 +9251,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
     std::vector<bool> has_depth(subpass_count, false);
     std::vector<std::vector<uint32_t>> preserves(subpass_count);
     auto read_refs = [&r](std::vector<VkAttachmentReference>& v) {
-        const uint32_t n = r.u32();
+        const uint32_t n = r.count();
         v.resize(n);
         for (auto& ref : v) {
             ref.attachment = r.u32();
@@ -9269,7 +9269,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
             depths[i].attachment = r.u32();
             depths[i].layout = static_cast<VkImageLayout>(r.u32());
         }
-        const uint32_t np = r.u32();
+        const uint32_t np = r.count();
         preserves[i].resize(np);
         for (auto& v : preserves[i]) v = r.u32();
     }
@@ -9284,7 +9284,7 @@ uint64_t vk_create_render_pass(const std::vector<uint8_t>& in, std::vector<uint8
         subpasses[i].pPreserveAttachments = preserves[i].empty() ? nullptr : preserves[i].data();
     }
 
-    const uint32_t dep_count = r.u32();
+    const uint32_t dep_count = r.count();
     std::vector<VkSubpassDependency> deps(dep_count);
     for (auto& d : deps) {
         d.srcSubpass = r.u32();
@@ -9359,7 +9359,7 @@ uint64_t vk_create_framebuffer(const std::vector<uint8_t>& in, std::vector<uint8
     ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     ci.flags = r.u32();
     ci.renderPass = from_u64<VkRenderPass>(real_handle(r.u64()));
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkImageView> views(n);
     for (auto& v : views) v = from_u64<VkImageView>(real_handle(r.u64()));
     ci.attachmentCount = n;
@@ -9443,7 +9443,7 @@ uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
     VkDescriptorSetLayoutCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     ci.flags = r.u32();
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkDescriptorSetLayoutBinding> bindings(n);
     std::vector<std::vector<VkSampler>> immutable(n);
     for (uint32_t i = 0; i < n; ++i) {
@@ -9451,7 +9451,7 @@ uint64_t vk_create_descriptor_set_layout(const std::vector<uint8_t>& in,
         bindings[i].descriptorType = static_cast<VkDescriptorType>(r.u32());
         bindings[i].descriptorCount = r.u32();
         bindings[i].stageFlags = r.u32();
-        const uint32_t ns = r.u32();
+        const uint32_t ns = r.count();
         immutable[i].resize(ns);
         for (auto& sm : immutable[i]) sm = from_u64<VkSampler>(real_handle(r.u64()));
     }
@@ -9478,10 +9478,10 @@ uint64_t vk_create_pipeline_layout(const std::vector<uint8_t>& in, std::vector<u
     VkPipelineLayoutCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     ci.flags = r.u32();
-    const uint32_t nl = r.u32();
+    const uint32_t nl = r.count();
     std::vector<VkDescriptorSetLayout> layouts(nl);
     for (auto& v : layouts) v = from_u64<VkDescriptorSetLayout>(real_handle(r.u64()));
-    const uint32_t nr = r.u32();
+    const uint32_t nr = r.count();
     std::vector<VkPushConstantRange> ranges(nr);
     for (auto& pr : ranges) {
         pr.stageFlags = r.u32();
@@ -9511,7 +9511,7 @@ uint64_t vk_create_descriptor_pool(const std::vector<uint8_t>& in, std::vector<u
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     ci.flags = r.u32();
     ci.maxSets = r.u32();
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkDescriptorPoolSize> sizes(n);
     for (auto& sz : sizes) {
         sz.type = static_cast<VkDescriptorType>(r.u32());
@@ -9565,7 +9565,7 @@ uint64_t vk_allocate_descriptor_sets(const std::vector<uint8_t>& in, std::vector
     VkDescriptorSetAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     ai.descriptorPool = from_u64<VkDescriptorPool>(real_handle(r.u64()));
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkDescriptorSetLayout> layouts(n);
     for (auto& v : layouts) v = from_u64<VkDescriptorSetLayout>(real_handle(r.u64()));
     ai.descriptorSetCount = n;
@@ -9637,7 +9637,7 @@ uint64_t vk_create_descriptor_update_template(const std::vector<uint8_t>& in,
     VkDescriptorUpdateTemplateCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO;
     ci.flags = r.u32();
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkDescriptorUpdateTemplateEntry> entries(n);
     for (auto& e : entries) {
         e.dstBinding = r.u32();
@@ -9825,7 +9825,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
     ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     ci.flags = r.u32();
 
-    const uint32_t stage_count = r.u32();
+    const uint32_t stage_count = r.count();
     auto& stages = info->stages;
     auto& stage_names = info->stage_names;
     stages.resize(stage_count);
@@ -9843,7 +9843,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
 
     auto& vi = info->vi;
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    const uint32_t nbind = r.u32();
+    const uint32_t nbind = r.count();
     auto& binds = info->binds;
     binds.resize(nbind);
     for (auto& b : binds) {
@@ -9851,7 +9851,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
         b.stride = r.u32();
         b.inputRate = static_cast<VkVertexInputRate>(r.u32());
     }
-    const uint32_t nattr = r.u32();
+    const uint32_t nattr = r.count();
     auto& attrs = info->attrs;
     attrs.resize(nattr);
     for (auto& a : attrs) {
@@ -9875,7 +9875,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
     auto& vp = info->vp;
     vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     vp.viewportCount = r.u32();
-    const uint32_t sent_viewports = r.u32();
+    const uint32_t sent_viewports = r.count();
     auto& viewports = info->viewports;
     viewports.resize(sent_viewports);
     for (auto& v : viewports) {
@@ -9887,7 +9887,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
         v.maxDepth = r.f32();
     }
     vp.scissorCount = r.u32();
-    const uint32_t sent_scissors = r.u32();
+    const uint32_t sent_scissors = r.count();
     auto& scissors = info->scissors;
     scissors.resize(sent_scissors);
     for (auto& sc : scissors) {
@@ -9956,7 +9956,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
     if (has_cb != 0) {
         cb.logicOpEnable = r.u32();
         cb.logicOp = static_cast<VkLogicOp>(r.u32());
-        const uint32_t nb = r.u32();
+        const uint32_t nb = r.count();
         blends.resize(nb);
         for (auto& b : blends) {
             b.blendEnable = r.u32();
@@ -9975,7 +9975,7 @@ std::unique_ptr<GraphicsPipelineInfo> read_graphics_pipeline(const std::vector<u
 
     auto& dyn = info->dyn;
     dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    const uint32_t ndyn = r.u32();
+    const uint32_t ndyn = r.count();
     auto& dyns = info->dyns;
     dyns.resize(ndyn);
     for (auto& d : dyns) d = static_cast<VkDynamicState>(r.u32());
@@ -10377,14 +10377,14 @@ struct Shadow {
             case K::BindPipeline: put("p" + std::to_string(u32(0))); break;
             case K::BindDescriptorSets: {
                 // bp, layout, first, count: each set index is its own key.
-                const uint32_t bp = u32(0), first = u32(12), n = u32(16);
+                const uint32_t bp = u32(0), first = u32(12), n = std::min(u32(16), len / 8);
                 for (uint32_t i = 0; i < n; ++i) {
                     put("d" + std::to_string(bp) + ":" + std::to_string(first + i));
                 }
                 break;
             }
             case K::BindVertexBuffers: {
-                const uint32_t first = u32(0), n = u32(4);
+                const uint32_t first = u32(0), n = std::min(u32(4), len / 8);
                 for (uint32_t i = 0; i < n; ++i) put("v" + std::to_string(first + i));
                 break;
             }
@@ -10443,6 +10443,38 @@ void emit(uint64_t cb, uint32_t kind, const std::vector<uint8_t>& payload) {
 
 // Replays one batch of a command buffer's records, putting a prepass ahead
 // of every render pass that can have one.
+// Named one by one: which of these can sit in a pass that gets a prepass is not
+// a property of where a command falls in the enum.
+bool prepass_understands(vk_wire::CmdKind kind) {
+    using K = vk_wire::CmdKind;
+    switch (kind) {
+        case K::BeginRenderPass:
+        case K::EndRenderPass:
+        case K::BindPipeline:
+        case K::BindDescriptorSets:
+        case K::BindVertexBuffers:
+        case K::BindIndexBuffer:
+        case K::Draw:
+        case K::DrawIndexed:
+        case K::Dispatch:
+        case K::SetViewport:
+        case K::SetScissor:
+        case K::PipelineBarrier:
+        case K::CopyBuffer:
+        case K::CopyBufferToImage:
+        case K::CopyImage:
+        case K::BlitImage:
+        case K::ResetQueryPool:
+        case K::WriteTimestamp:
+        case K::ResolveImage:
+        case K::CopyImageToBuffer:
+        case K::DecodeCopyBufferToImage:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void replay(uint64_t cb, const std::vector<Record>& recs) {
     using K = vk_wire::CmdKind;
     Shadow& sh = shadow_for(cb);
@@ -10470,7 +10502,7 @@ void replay(uint64_t cb, const std::vector<Record>& recs) {
                     const auto k = static_cast<K>(recs[j].kind);
                     // A command the prepass cannot copy: the pass runs as
                     // the engine recorded it.
-                    if (k >= K::PushConstants) {
+                    if (!prepass_understands(k)) {
                         count = 0;
                         break;
                     }
@@ -10593,8 +10625,14 @@ uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
-    const uint64_t cache = r.u64();
-    VkComputePipelineCreateInfo ci{};
+    struct Info {
+        VkPipelineCache cache = VK_NULL_HANDLE;
+        VkComputePipelineCreateInfo ci{};
+        std::string name;
+    };
+    auto info = std::make_shared<Info>();
+    info->cache = from_u64<VkPipelineCache>(r.u64());
+    VkComputePipelineCreateInfo& ci = info->ci;
     ci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     ci.flags = r.u32();
     ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -10603,13 +10641,33 @@ uint64_t vk_create_compute_pipelines(const std::vector<uint8_t>& in, std::vector
     ci.stage.module = from_u64<VkShaderModule>(real_handle(r.u64()));
     uint32_t nlen = 0;
     const uint8_t* nb = r.bytes(&nlen);
-    std::string name(reinterpret_cast<const char*>(nb), nlen);
-    ci.stage.pName = name.c_str();
+    if (nb != nullptr) info->name.assign(reinterpret_cast<const char*>(nb), nlen);
     ci.layout = from_u64<VkPipelineLayout>(real_handle(r.u64()));
+    if (!r.ok()) return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
 
+    const auto compile = [info](VkPipeline* pipeline) {
+        info->ci.stage.pName = info->name.c_str();
+        Loader& worker = loader();
+        const VkResult res = worker.vk.vkCreateComputePipelines(worker.device, info->cache, 1,
+                                                                &info->ci, nullptr, pipeline);
+        if (res != VK_SUCCESS) {
+            std::printf("stud-render-host: vkCreateComputePipelines -> %d\n", static_cast<int>(res));
+            std::fflush(stdout);
+        }
+        return res;
+    };
+    // As graphics pipelines do: numbered by the client, compiled on a worker,
+    // and only a command buffer that binds it early waits for it.
+    if (client != 0) {
+        pipeline_compiles::start(client, [compile] {
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            compile(&pipeline);
+            return to_u64(pipeline);
+        });
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VkResult res = l.vk.vkCreateComputePipelines(l.device, from_u64<VkPipelineCache>(cache), 1, &ci,
-                                               nullptr, &pipeline);
+    const VkResult res = compile(&pipeline);
     if (res != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(res));
     return answer_handle(to_u64(pipeline), client, out, out_len);
 }
@@ -10629,23 +10687,22 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
     ai.commandPool = from_u64<VkCommandPool>(pool);
     ai.level = static_cast<VkCommandBufferLevel>(level);
     ai.commandBufferCount = count;
+    // The client numbers every buffer, one u64 each in the request.
+    if (in.size() < sizeof(uint64_t) * count) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
+    }
     std::vector<VkCommandBuffer> buffers(count);
     VkResult r = l.vk.vkAllocateCommandBuffers(l.device, &ai, buffers.data());
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
-    // The client's numbers, one per buffer, when it chose them; the call
-    // was then reply-free.
-    const bool numbered = in.size() >= sizeof(uint64_t) * count;
-    out.resize(numbered ? 0 : sizeof(uint64_t) * count);
+    out.clear();
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t h = to_u64(buffers[i]);
-        if (numbered) {
-            uint64_t number = 0;
-            std::memcpy(&number, in.data() + i * sizeof(number), sizeof(number));
-            bind_client_handle(number, h);
+        uint64_t number = 0;
+        std::memcpy(&number, in.data() + i * sizeof(number), sizeof(number));
+        bind_client_handle(number, h);
+        {
             std::lock_guard<std::mutex> lock(pool_command_buffers_mutex());
             pool_command_buffers()[pool].push_back(number);
-        } else {
-            std::memcpy(out.data() + i * sizeof(h), &h, sizeof(h));
         }
         // Its pool decides which replay queue records it; see replay.
         replay::note_pool(h, pool);
@@ -11246,21 +11303,21 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkSubmitInfo> submits(n);
     std::vector<std::vector<VkSemaphore>> waits(n), signals(n);
     std::vector<std::vector<VkPipelineStageFlags>> stages(n);
     std::vector<std::vector<VkCommandBuffer>> buffers(n);
     for (uint32_t i = 0; i < n; ++i) {
-        const uint32_t nw = r.u32();
+        const uint32_t nw = r.count();
         waits[i].resize(nw);
         stages[i].resize(nw);
         for (uint32_t j = 0; j < nw; ++j) waits[i][j] = from_u64<VkSemaphore>(real_handle(r.u64()));
         for (uint32_t j = 0; j < nw; ++j) stages[i][j] = r.u32();
-        const uint32_t nc = r.u32();
+        const uint32_t nc = r.count();
         buffers[i].resize(nc);
         for (uint32_t j = 0; j < nc; ++j) buffers[i][j] = from_u64<VkCommandBuffer>(real_handle(r.u64()));
-        const uint32_t ns = r.u32();
+        const uint32_t ns = r.count();
         signals[i].resize(ns);
         for (uint32_t j = 0; j < ns; ++j) signals[i][j] = from_u64<VkSemaphore>(real_handle(r.u64()));
     }
@@ -11446,7 +11503,7 @@ uint64_t vk_wait_for_fences(const std::vector<uint8_t>& in, uint32_t wait_all, u
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkFence> fences(n);
     for (auto& f : fences) f = from_u64<VkFence>(real_handle(r.u64()));
     // Announce the wait so a reset for the same fence cannot land in the
@@ -11555,7 +11612,7 @@ uint64_t vk_reset_fences(const std::vector<uint8_t>& in) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkFence> fences(n);
     for (auto& f : fences) f = from_u64<VkFence>(real_handle(r.u64()));
     // Hold the reset until nothing is waiting on any of these fences.
@@ -12394,12 +12451,12 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     vk_wire::Reader r(in.data(), in.size());
-    const uint32_t nw = r.u32();
+    const uint32_t nw = r.count();
     std::vector<VkSemaphore> waits(nw);
     // Read below and checked before anything is submitted: a present for
     // a frame whose acquire failed is dropped, see g_acquire_failed.
     for (auto& w : waits) w = from_u64<VkSemaphore>(real_handle(r.u64()));
-    const uint32_t ns = r.u32();
+    const uint32_t ns = r.count();
     std::vector<VkSwapchainKHR> chains(ns);
     std::vector<VkSwapchainKHR> live(ns);
     std::vector<uint32_t> indices(ns);
@@ -13057,7 +13114,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             if (l.vk.vkCmdCopyBuffer == nullptr) break;
             VkBuffer src = from_u64<VkBuffer>(real_buffer(r.u64()));
             VkBuffer dst = from_u64<VkBuffer>(real_buffer(r.u64()));
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkBufferCopy> regions(n);
             for (auto& c : regions) {
                 c.srcOffset = r.u64();
@@ -13072,7 +13129,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             VkBuffer src = from_u64<VkBuffer>(real_buffer(r.u64()));
             VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t layout = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkBufferImageCopy> regions(n);
             for (auto& c : regions) {
                 c.bufferOffset = r.u64();
@@ -13102,7 +13159,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             const uint64_t dst_handle = r.u64();
             VkBuffer dst = from_u64<VkBuffer>(real_buffer(dst_handle));
             const uint32_t layout = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkBufferImageCopy> regions(n);
             for (auto& c : regions) {
                 c.bufferOffset = r.u64();
@@ -13157,7 +13214,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             const uint32_t sl = r.u32();
             VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t dl = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkImageCopy> regions(n);
             auto read_subres = [&r](VkImageSubresourceLayers& s) {
                 s.aspectMask = r.u32();
@@ -13189,7 +13246,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             const uint32_t sl = r.u32();
             VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t dl = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkImageBlit> regions(n);
             auto read_subres = [&r](VkImageSubresourceLayers& s) {
                 s.aspectMask = r.u32();
@@ -13234,7 +13291,7 @@ void record_copy_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb,
             const uint32_t sl = r.u32();
             VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
             const uint32_t dl = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkImageResolve> regions(n);
             auto read_subres = [&r](VkImageSubresourceLayers& s) {
                 s.aspectMask = r.u32();
@@ -13783,12 +13840,45 @@ uint64_t vk_get_physical_device_chained(uint32_t query, uint64_t device, uint32_
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
+// A pipeline whose compile failed has no handle, and binding null is invalid, so
+// the bind is skipped, and with it every draw or dispatch that would run on
+// whatever came before: one thing missing from a frame, not a lost device. Per
+// command buffer and per bind point, by the worker that records it. A good
+// bind ends it, and a recording has to bind before it can draw, so a command
+// buffer that is re-recorded can't carry this over.
+std::unordered_map<uint64_t, uint8_t>& unbound_pipelines() {
+    thread_local std::unordered_map<uint64_t, uint8_t> m;
+    return m;
+}
+
+uint8_t pipeline_point(uint32_t bind_point) {
+    return bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS ? 1 : 2;
+}
+
+// Which bind point a command runs on, 0 for one that needs none.
+uint8_t pipeline_point_of(vk_wire::CmdKind kind) {
+    using K = vk_wire::CmdKind;
+    switch (kind) {
+        case K::Draw:
+        case K::DrawIndexed:
+        case K::DrawIndirect:
+        case K::DrawIndexedIndirect:
+            return pipeline_point(VK_PIPELINE_BIND_POINT_GRAPHICS);
+        case K::Dispatch:
+        case K::DispatchIndirect:
+        case K::DispatchBase:
+            return pipeline_point(VK_PIPELINE_BIND_POINT_COMPUTE);
+        default:
+            return 0;
+    }
+}
+
 uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
     STUD_ZONE();
     Loader& l = loader();
     cb_handle = real_handle(cb_handle);
     VkCommandBuffer cb = from_u64<VkCommandBuffer>(cb_handle);
-    vk_wire::Reader r(data, size);
+    vk_wire::Reader r(data, size, kind);
     using K = vk_wire::CmdKind;
 
     // Which command was being recorded, for the crash handler. A
@@ -13810,6 +13900,14 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
     stud::logging::set_crash_fields("vk_cmd_record kind cb in", kind,
                                     static_cast<unsigned long long>(cb_handle),
                                     static_cast<unsigned long long>(size));
+
+    if (!unbound_pipelines().empty()) {
+        const auto it = unbound_pipelines().find(cb_handle);
+        if (it != unbound_pipelines().end() &&
+            (it->second & pipeline_point_of(static_cast<K>(kind))) != 0) {
+            return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+        }
+    }
 
     // STUD_VK_ENGINE_CHECKPOINTS=1: mark the ENGINE's commands too.
     //
@@ -13983,6 +14081,18 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             if (l.vk.vkCmdBindPipeline == nullptr) break;
             const uint32_t bp = r.u32();
             const uint64_t bound = pipeline_compiles::real(r.u64());
+            const uint8_t point = pipeline_point(bp);
+            if (bound == 0) {
+                unbound_pipelines()[cb_handle] |= point;
+                break;
+            }
+            if (!unbound_pipelines().empty()) {
+                const auto it = unbound_pipelines().find(cb_handle);
+                if (it != unbound_pipelines().end()) {
+                    it->second &= static_cast<uint8_t>(~point);
+                    if (it->second == 0) unbound_pipelines().erase(it);
+                }
+            }
             l.vk.vkCmdBindPipeline(cb, static_cast<VkPipelineBindPoint>(bp),
                                  from_u64<VkPipeline>(bound));
             break;
@@ -13993,10 +14103,10 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             const uint32_t bp = r.u32();
             VkPipelineLayout layout = from_u64<VkPipelineLayout>(real_handle(r.u64()));
             const uint32_t first = r.u32();
-            const uint32_t ns = r.u32();
+            const uint32_t ns = r.count();
             std::vector<VkDescriptorSet> sets(ns);
             for (auto& s : sets) s = resolve_descriptor_set(r.u64());
-            const uint32_t nd = r.u32();
+            const uint32_t nd = r.count();
             std::vector<uint32_t> offsets(nd);
             for (auto& o : offsets) o = r.u32();
             // Read in full above either way, so the stream stays in step;
@@ -14011,7 +14121,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         case K::BindVertexBuffers: {
             if (l.vk.vkCmdBindVertexBuffers == nullptr) break;
             const uint32_t first = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkBuffer> buffers(n);
             std::vector<VkDeviceSize> offsets(n);
             for (auto& b : buffers) b = from_u64<VkBuffer>(real_buffer(r.u64()));
@@ -14054,7 +14164,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         case K::SetViewport: {
             if (l.vk.vkCmdSetViewport == nullptr) break;
             const uint32_t first = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkViewport> vps(n);
             for (auto& v : vps) {
                 v.x = r.f32();
@@ -14070,7 +14180,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
         case K::SetScissor: {
             if (l.vk.vkCmdSetScissor == nullptr) break;
             const uint32_t first = r.u32();
-            const uint32_t n = r.u32();
+            const uint32_t n = r.count();
             std::vector<VkRect2D> rects(n);
             for (auto& rc : rects) {
                 rc.offset.x = static_cast<int32_t>(r.u32());
@@ -14086,14 +14196,14 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             // Not const: make_barrier_legal() may widen them below.
             VkPipelineStageFlags src_stage = r.u32(), dst_stage = r.u32();
             const uint32_t dep_flags = r.u32();
-            const uint32_t nm = r.u32();
+            const uint32_t nm = r.count();
             std::vector<VkMemoryBarrier> mem(nm);
             for (auto& m : mem) {
                 m.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
                 m.srcAccessMask = r.u32();
                 m.dstAccessMask = r.u32();
             }
-            const uint32_t nb = r.u32();
+            const uint32_t nb = r.count();
             std::vector<VkBufferMemoryBarrier> buf(nb);
             for (auto& b : buf) {
                 b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -14113,7 +14223,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                                          return b.buffer == VK_NULL_HANDLE;
                                      }),
                       buf.end());
-            const uint32_t ni = r.u32();
+            const uint32_t ni = r.count();
             std::vector<VkImageMemoryBarrier> img(ni);
             for (auto& i : img) {
                 i.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;

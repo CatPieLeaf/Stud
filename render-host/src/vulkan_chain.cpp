@@ -9,7 +9,10 @@
 #include "stud/vulkan_forward.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <iterator>
+#include <mutex>
+#include <set>
 
 namespace stud::render_host::vk_wire {
 
@@ -19,6 +22,17 @@ uint32_t chain_node_size(uint32_t s_type) {
         std::begin(kChainNodeSizes), end, s_type,
         [](const ChainNodeSize& n, uint32_t value) { return n.s_type < value; });
     return it != end && it->s_type == s_type ? it->size : 0;
+}
+
+void report_short_message(uint32_t kind) {
+    static std::mutex mutex;
+    static std::set<uint32_t> said;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!said.insert(kind).second) return;
+    std::printf("stud: a Vulkan message ended before its contents did (kind %u); what was missing "
+                "reads as zero\n",
+                kind);
+    std::fflush(stdout);
 }
 
 }  // namespace stud::render_host::vk_wire

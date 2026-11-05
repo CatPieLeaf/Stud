@@ -3010,6 +3010,7 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
             // already made and is compiled on a worker; see
             // pipeline_compiles in vulkan_host.cpp.
             case CallId::VkCreateGraphicsPipelines:
+            case CallId::VkCreateComputePipelines:
                 if (hdr.args[7] == 0) stud::render_host::replay::wait_all();
                 break;
             default:
