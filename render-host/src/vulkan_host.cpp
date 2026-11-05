@@ -3716,6 +3716,27 @@ VkDeviceSize imported_host_pointer_alignment() {
     return cached;
 }
 
+uint64_t new_lazy_memory(Loader& l, uint64_t size, uint32_t type_index) {
+    static uint64_t next = 0;
+    const uint64_t handle = kLazyTag | ++next;
+    lazy_memory()[handle] = LazyMemory{size, type_index, VK_NULL_HANDLE};
+    l.live_memory.insert(handle);
+    if (redirect_stats_enabled()) allocation_use()[handle] = AllocationUse{size};
+    return handle;
+}
+
+// A bind with no memory to bind to. Said every time: the engine was told the
+// allocation worked, so this log line is all there is, and the object it names
+// stays unbound.
+VkResult no_memory_for_bind(const char* what, VkDeviceSize size, VkResult alloc) {
+    const VkResult r = alloc != VK_SUCCESS ? alloc : VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    std::printf("stud-render-host: no memory could be found for a %s of %llu bytes (%d); it stays "
+                "unbound\n",
+                what, static_cast<unsigned long long>(size), static_cast<int>(r));
+    std::fflush(stdout);
+    return r;
+}
+
 uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vector<uint8_t>& in,
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
                              uint64_t shared_id, uint64_t client) {
@@ -3731,11 +3752,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         if (type_index < mem.memoryTypeCount &&
             (mem.memoryTypes[type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ==
                 0) {
-            static uint64_t next = 0;
-            const uint64_t handle_value = kLazyTag | ++next;
-            lazy_memory()[handle_value] = LazyMemory{size, type_index, VK_NULL_HANDLE};
-            l.live_memory.insert(handle_value);
-            if (redirect_stats_enabled()) allocation_use()[handle_value] = AllocationUse{size};
+            const uint64_t handle_value = new_lazy_memory(l, size, type_index);
             // Numbered by the client and reply-free: GPU-only memory, never
             // mapped, so nothing else needs saying.
             if (client != 0) {
@@ -3928,6 +3945,16 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         std::printf("stud-render-host: vkAllocateMemory -> %d (%llu bytes, type %u)\n",
                     static_cast<int>(r), static_cast<unsigned long long>(size), type_index);
         std::fflush(stdout);
+        // The client was already told this worked, so the handle has to stand
+        // for something. A placeholder gets one more try at the bind, where
+        // the resource says which other memory types it can live in. The
+        // pNext chain is left behind: a dedicated allocation is a preference
+        // unless the resource requires it.
+        if (client != 0) {
+            bind_client_handle(client, new_lazy_memory(l, size, type_index));
+            *out_len = 0;
+            return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+        }
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
     const bool imported = import.pHostPointer != nullptr;
@@ -4026,7 +4053,10 @@ uint64_t vk_bind_image_memory(uint64_t image, uint64_t memory, uint64_t offset) 
     VkMemoryRequirements image_req{};
     l.vk.vkGetImageMemoryRequirements(l.device, from_u64<VkImage>(image), &image_req);
     const VkDeviceMemory target = real_memory(memory, &alloc, image_req.memoryTypeBits);
-    if (target == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(alloc));
+    if (target == VK_NULL_HANDLE) {
+        return static_cast<uint64_t>(
+            static_cast<int32_t>(no_memory_for_bind("image", image_req.size, alloc)));
+    }
     VkResult r = l.vk.vkBindImageMemory(l.device, from_u64<VkImage>(image), target, offset);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
 }
@@ -7340,7 +7370,7 @@ uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset
     const VkDeviceMemory target = real_memory(memory, &alloc, buffer_req.memoryTypeBits);
     VkResult r = target != VK_NULL_HANDLE
                      ? l.vk.vkBindBufferMemory(l.device, real, target, offset)
-                     : alloc;
+                     : no_memory_for_bind("buffer", buffer_req.size, alloc);
     if (r != VK_SUCCESS) {
         if (numbered) l.vk.vkDestroyBuffer(l.device, real, nullptr);
         return static_cast<uint64_t>(static_cast<int32_t>(r));
