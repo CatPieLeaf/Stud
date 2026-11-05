@@ -2880,7 +2880,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkGetPhysicalDeviceImageFormatProperties2(
     if (pImageFormatInfo == nullptr || pImageFormatProperties == nullptr) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    uint32_t q[6] = {static_cast<uint32_t>(pImageFormatInfo->format),
+    // As stud_vkGetPhysicalDeviceImageFormatProperties.
+    const VkFormat format = emulating(pImageFormatInfo->format)
+                                ? stud::texture_decode::substitute(pImageFormatInfo->format)
+                                : pImageFormatInfo->format;
+    uint32_t q[6] = {static_cast<uint32_t>(format),
                      static_cast<uint32_t>(pImageFormatInfo->type),
                      static_cast<uint32_t>(pImageFormatInfo->tiling),
                      pImageFormatInfo->usage,
@@ -6534,9 +6538,11 @@ void clear_dedicated_requirements(VkMemoryRequirements2* requirements) {
     for (auto* n = static_cast<VkBaseOutStructure*>(requirements->pNext); n != nullptr; n = n->pNext) {
         if (n->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS) {
             auto* d = reinterpret_cast<VkMemoryDedicatedRequirements*>(n);
-            // A preference Stud can decline. A requirement is left as the
-            // driver gave it, or the engine would do something invalid.
+            // A preference Stud can decline. A requirement only comes from
+            // an external handle type, and no create info from the engine
+            // carries one here. Written either way: nothing else fills this.
             d->prefersDedicatedAllocation = VK_FALSE;
+            d->requiresDedicatedAllocation = VK_FALSE;
         }
     }
 }

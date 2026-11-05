@@ -9,6 +9,10 @@ add_executable(stud_socket_reader_test socket_reader_test.cpp)
 target_include_directories(stud_socket_reader_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/src)
 add_test(NAME socket_reader_test COMMAND stud_socket_reader_test)
 
+add_executable(stud_range_inside_test range_inside_test.cpp)
+target_include_directories(stud_range_inside_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
+add_test(NAME range_inside_test COMMAND stud_range_inside_test)
+
 add_executable(stud_symbol_names_test symbol_names_test.cpp)
 target_include_directories(stud_symbol_names_test PRIVATE
     ${PROJECT_SOURCE_DIR}/bionic-symbol-lookup/include ${PROJECT_SOURCE_DIR}/android-glue/include)

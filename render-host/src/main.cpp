@@ -2898,6 +2898,7 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
         // this names: vulkan_host.cpp's own loader, not a second libvulkan
         // opened here for this one call.
         case CallId::VkCreateWaylandSurfaceForAndroidSurface: {
+            if (!stud::render_host::vk_is_instance(a[0])) return kNullHandle;
             // X11 answers the same request with an Xlib surface.
             //
             // The call id still says Wayland because it is the engine's
@@ -3623,6 +3624,12 @@ bool blocks_in_the_driver(stud::render_host::CallId id) {
         // resize looked like. It touches one swapchain and the surface,
         // not the shared GL state the lock exists for.
         case stud::render_host::CallId::VkCreateSwapchainKHR:
+        // These wait for surface_mutex, which that build holds, and would
+        // keep the dispatch lock for all of it.
+        case stud::render_host::CallId::VkGetPhysicalDeviceSurfaceCapabilitiesKHR:
+        case stud::render_host::CallId::VkGetPhysicalDeviceSurfaceFormatsKHR:
+        case stud::render_host::CallId::VkGetPhysicalDeviceSurfacePresentModesKHR:
+        case stud::render_host::CallId::VkGetPhysicalDeviceSurfaceSupportKHR:
         // Audio blocks until the device has taken the samples; that is
         // what paces the engine's mixer, so holding the dispatch lock
         // across it makes every other connection wait on the sound card.

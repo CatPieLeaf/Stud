@@ -125,6 +125,8 @@ uint64_t vk_get_physical_device_image_format_properties(uint64_t device, uint32_
 
 // Device level. The VkDevice is the one this process created, held by
 // the loader, so it does not travel on every call.
+// Whether this is the VkInstance the driver gave this process.
+bool vk_is_instance(uint64_t v);
 uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_t>& out,
                               uint32_t* out_len);
 uint64_t vk_create_command_pool(uint32_t flags, uint32_t family, std::vector<uint8_t>& out,

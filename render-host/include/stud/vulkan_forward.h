@@ -382,6 +382,12 @@ void report_short_message(uint32_t kind);
 // What comes from the engine's side. A message that ends early reads as zeros
 // and carries on, because nothing downstream can do better, and that is said
 // in the log rather than left to look like a driver crash.
+// Whether `n` bytes at `offset` lie within `length` bytes from `start`. The
+// values come off the wire, so nothing here adds them up where it could wrap.
+constexpr bool range_inside(uint64_t offset, uint64_t n, uint64_t start, uint64_t length) {
+    return offset >= start && offset - start <= length && n <= length - (offset - start);
+}
+
 class Reader {
 public:
     // `kind` names the message in that report.

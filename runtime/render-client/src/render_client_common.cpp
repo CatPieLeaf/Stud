@@ -357,7 +357,9 @@ void release_shared_allocation(SharedAllocation& a) {
 bool create_shared_allocation(uint64_t size, SharedAllocation& out, bool hand_to_host) {
     const uint64_t id = next_shared_id();
     // Through syscall(): bionic only declares memfd_create() from API 30.
-    const int fd = static_cast<int>(::syscall(SYS_memfd_create, "stud-vk-memory", MFD_CLOEXEC));
+    // Sealing allowed: the host seals it against shrinking before it maps it.
+    const int fd = static_cast<int>(
+        ::syscall(SYS_memfd_create, "stud-vk-memory", MFD_CLOEXEC | MFD_ALLOW_SEALING));
     if (fd < 0) return false;
     // Whole pages: the import on the other side needs a page-aligned
     // mapping of a whole number of pages.

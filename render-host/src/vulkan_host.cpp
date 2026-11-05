@@ -29,6 +29,7 @@
 #include <cstring>
 #include <fstream>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <mutex>
@@ -372,12 +373,14 @@ struct Loader {
 
     // Live host-side mappings, keyed by VkDeviceMemory. The engine writes
     // into its own staging copy in Process B; these are where those bytes
-    // land.
-    std::map<uint64_t, void*> mapped;
-    // How many bytes of each of those a vkMapMemory asked for, so a read
-    // back out of one can be refused rather than run off the end. Zero
-    // where the size is not known (VK_WHOLE_SIZE).
-    std::map<uint64_t, uint64_t> mapped_size;
+    // land. `address` is the byte at `offset` into the allocation, and
+    // `size` is always real: see mapped_bytes().
+    struct Mapping {
+        void* address = nullptr;
+        uint64_t offset = 0;
+        uint64_t size = 0;
+    };
+    std::map<uint64_t, Mapping> mapped;
 
     // Which objects lead to the screen. A frame can look perfectly busy
     // thousands of draws, successful presents, and still be black if
@@ -435,7 +438,8 @@ struct Loader {
     // the same shape as the driver bug that misbehaves when an instance
     // dies while other objects can still reach the present path, so it
     // is worth not doing.
-    std::unordered_set<uint64_t> live_memory;
+    // Each with its size, which is what a map is checked against.
+    std::unordered_map<uint64_t, uint64_t> live_memory;
     // No live_buffers set here any more. One was kept alongside
     // live_memory so the engine's dropped buffers could be destroyed
     // with the memory they sit in, and 7ca61d2 took that destroy back
@@ -665,17 +669,18 @@ uint64_t vk_create_instance(const std::vector<uint8_t>& in, std::vector<uint8_t>
         // on past the end of the payload.
         const char* p = reinterpret_cast<const char*>(in.data() + off);
         std::string s(p, ::strnlen(p, in.size() - off));
-        off += s.size() + 1;
+        off = std::min(in.size(), off + s.size() + 1);
         return s;
     };
-    // The counts are known before the loops, so the vectors are sized once
-    // instead of growing.
+    // The counts come off the wire, so what ends these is the payload.
     std::vector<std::string> layers;
-    layers.reserve(hdr.enabled_layer_count);
-    for (uint32_t i = 0; i < hdr.enabled_layer_count; ++i) layers.push_back(take_cstr());
+    for (uint32_t i = 0; i < hdr.enabled_layer_count && off < in.size(); ++i) {
+        layers.push_back(take_cstr());
+    }
     std::vector<std::string> extensions;
-    extensions.reserve(hdr.enabled_extension_count);
-    for (uint32_t i = 0; i < hdr.enabled_extension_count; ++i) extensions.push_back(take_cstr());
+    for (uint32_t i = 0; i < hdr.enabled_extension_count && off < in.size(); ++i) {
+        extensions.push_back(take_cstr());
+    }
 
     // The engine is an Android client, so it asks for
     // VK_KHR_android_surface. This process presents to Wayland, where
@@ -912,6 +917,49 @@ uint64_t write_pod(const T& value, std::vector<uint8_t>& out, uint32_t* out_len)
 
 }  // namespace
 
+// Handles the loader reads a dispatch table through, so one off the wire has
+// to be one the driver gave out: anything else would have this process call
+// through memory the sandbox chose. Nothing honest sends such a value, so it
+// ends the process rather than being answered.
+namespace {
+std::mutex& known_handles_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::unordered_set<uint64_t>& known_physical_devices() {
+    static std::unordered_set<uint64_t> s;
+    return s;
+}
+
+std::unordered_set<uint64_t>& known_queues() {
+    static std::unordered_set<uint64_t> s;
+    return s;
+}
+
+[[noreturn]] void refuse_handle(const char* kind, uint64_t v) {
+    std::fprintf(stderr, "stud-render-host: %s %llx was never given out; stopping\n", kind,
+                 static_cast<unsigned long long>(v));
+    std::fflush(stderr);
+    std::_Exit(EXIT_FAILURE);
+}
+
+VkPhysicalDevice wire_physical_device(uint64_t v) {
+    std::lock_guard<std::mutex> lock(known_handles_mutex());
+    if (known_physical_devices().count(v) == 0) refuse_handle("physical device", v);
+    return reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(v));
+}
+
+void require_known_queue(uint64_t v) {
+    std::lock_guard<std::mutex> lock(known_handles_mutex());
+    if (known_queues().count(v) == 0) refuse_handle("queue", v);
+}
+}  // namespace
+
+bool vk_is_instance(uint64_t v) {
+    return v != 0 && v == static_cast<uint64_t>(reinterpret_cast<uintptr_t>(loader().instance));
+}
+
 uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& out,
                                         uint32_t* out_len) {
     Loader& l = loader();
@@ -936,6 +984,12 @@ uint64_t vk_enumerate_physical_devices(uint32_t capacity, std::vector<uint8_t>& 
             return static_cast<uint64_t>(static_cast<int32_t>(r));
         }
         all.resize(got);
+    }
+    {
+        std::lock_guard<std::mutex> lock(known_handles_mutex());
+        for (VkPhysicalDevice d : all) {
+            known_physical_devices().insert(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(d)));
+        }
     }
 
     // Honour the GPU chosen in Settings by offering that device and no
@@ -1021,7 +1075,7 @@ uint64_t vk_get_physical_device_properties(uint64_t device, std::vector<uint8_t>
     }
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &props);
+        wire_physical_device(device), &props);
     // Same: one line naming the device Stud renders on.
     static bool announced_device_name = false;
     if (!announced_device_name) {
@@ -1042,7 +1096,7 @@ uint64_t vk_get_physical_device_features(uint64_t device, std::vector<uint8_t>& 
     }
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &features);
+        wire_physical_device(device), &features);
     return write_pod(features, out, out_len);
 }
 
@@ -1054,7 +1108,7 @@ uint64_t vk_get_physical_device_memory_properties(uint64_t device, std::vector<u
     }
     VkPhysicalDeviceMemoryProperties mem{};
     vkGetPhysicalDeviceMemoryProperties(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &mem);
+        wire_physical_device(device), &mem);
 
     // Cap each heap at just under 4GiB, because the engine truncates
     // heap sizes to 32 bits and a real 4GiB heap therefore reads as
@@ -1114,7 +1168,7 @@ uint64_t vk_get_physical_device_queue_family_properties(uint64_t device, uint32_
     if (vkGetPhysicalDeviceQueueFamilyProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    VkPhysicalDevice pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
+    VkPhysicalDevice pd = wire_physical_device(device);
     uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &count, nullptr);
 
@@ -1145,7 +1199,7 @@ uint64_t vk_enumerate_device_extension_properties(uint64_t device, const std::ve
     if (vkEnumerateDeviceExtensionProperties == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    VkPhysicalDevice pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
+    VkPhysicalDevice pd = wire_physical_device(device);
     std::string layer;
     if (!in.empty()) {
         // Bounded by the payload: a name without its NUL used to read on
@@ -1257,7 +1311,7 @@ uint64_t vk_get_physical_device_features2(uint64_t device, const std::vector<uin
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features.pNext = chain;
     l.get_physical_device_features2(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)), &features);
+        wire_physical_device(device), &features);
 
     // Reply: the base struct, then every node the driver filled in.
     const uint32_t base = static_cast<uint32_t>(sizeof(VkPhysicalDeviceFeatures));
@@ -1502,7 +1556,6 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 
     std::vector<VkDeviceQueueCreateInfo> queues;
     std::vector<std::vector<float>> priorities;
-    priorities.reserve(hdr.queue_create_count);
     for (uint32_t i = 0; i < hdr.queue_create_count; ++i) {
         if (off + sizeof(vk_wire::DeviceQueueCreateHeader) > in.size()) break;
         vk_wire::DeviceQueueCreateHeader q{};
@@ -1532,17 +1585,18 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         // on past the end of the payload.
         const char* p = reinterpret_cast<const char*>(in.data() + off);
         std::string s(p, ::strnlen(p, in.size() - off));
-        off += s.size() + 1;
+        off = std::min(in.size(), off + s.size() + 1);
         return s;
     };
-    // The counts are known before the loops, so the vectors are sized once
-    // instead of growing.
+    // The counts come off the wire, so what ends these is the payload.
     std::vector<std::string> layers;
-    layers.reserve(hdr.enabled_layer_count);
-    for (uint32_t i = 0; i < hdr.enabled_layer_count; ++i) layers.push_back(take_cstr());
+    for (uint32_t i = 0; i < hdr.enabled_layer_count && off < in.size(); ++i) {
+        layers.push_back(take_cstr());
+    }
     std::vector<std::string> extensions;
-    extensions.reserve(hdr.enabled_extension_count);
-    for (uint32_t i = 0; i < hdr.enabled_extension_count; ++i) extensions.push_back(take_cstr());
+    for (uint32_t i = 0; i < hdr.enabled_extension_count && off < in.size(); ++i) {
+        extensions.push_back(take_cstr());
+    }
 
     VkPhysicalDeviceFeatures enabled_features{};
     if (hdr.has_enabled_features != 0 && hdr.enabled_features_size == sizeof(enabled_features) &&
@@ -1556,6 +1610,10 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
 
     std::vector<const char*> layer_ptrs;
     for (const std::string& s : layers) layer_ptrs.push_back(s.c_str());
+    // Before anything below asks what this device supports:
+    // device_supports_extension() reads it.
+    l.physical_device = wire_physical_device(physical_device);
+
     // VK_EXT_external_memory_host, whether or not the engine asked for it.
     //
     // It is what lets host-visible allocations be shared outright with the
@@ -1571,18 +1629,6 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
         }
         if (!already) extensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     }
-
-    // Before anything below asks what this device supports.
-    //
-    // device_supports_extension() reads l.physical_device, and this used
-    // to be assigned further down, at the vkCreateDevice call itself --
-    // so every check up here ran against VK_NULL_HANDLE, returned false,
-    // and silently added nothing. The external-memory-host block below
-    // has been dead the whole time for that reason, not because the
-    // driver lacks it. Caught because a checkpoint extension that
-    // vulkaninfo lists as present kept resolving to null entry points.
-    l.physical_device =
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
 
     // VK_KHR_swapchain_mutable_format, so the upscale's last pass can write
     // the swapchain image itself instead of a copy of its output landing
@@ -2093,7 +2139,7 @@ uint64_t vk_get_physical_device_format_properties(uint64_t device, uint32_t form
     }
     VkFormatProperties props{};
     vkGetPhysicalDeviceFormatProperties(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)),
+        wire_physical_device(device),
         static_cast<VkFormat>(format), &props);
     return write_pod(props, out, out_len);
 }
@@ -2109,7 +2155,7 @@ uint64_t vk_get_physical_device_image_format_properties(uint64_t device, uint32_
     }
     VkImageFormatProperties props{};
     VkResult r = vkGetPhysicalDeviceImageFormatProperties(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device)),
+        wire_physical_device(device),
         static_cast<VkFormat>(format), static_cast<VkImageType>(type),
         static_cast<VkImageTiling>(tiling), usage, flags, &props);
     // A format the driver does not support is a normal answer, not a
@@ -2317,6 +2363,10 @@ uint64_t vk_get_device_queue(uint32_t family, uint32_t index, std::vector<uint8_
     VkQueue queue = VK_NULL_HANDLE;
     l.vk.vkGetDeviceQueue(l.device, family, index, &queue);
     submit_feedback::note_queue(l.device, queue);
+    {
+        std::lock_guard<std::mutex> lock(known_handles_mutex());
+        known_queues().insert(to_u64(queue));
+    }
     // The pixel probe needs a queue and a pool of its own; the first
     // queue the engine asks for is as good as any, and it is only used
     // when STUD_VK_PROBE_PIXELS is set.
@@ -2818,6 +2868,13 @@ uint64_t real_handle(uint64_t v) {
     return slot != nullptr ? slot->load(std::memory_order_acquire) : 0;
 }
 
+// A command buffer off the wire. The client numbers every one, so a value that
+// is not a number would be used as a dispatchable handle as it stands.
+uint64_t real_command_buffer(uint64_t v) {
+    if (v != 0 && (v & kHandleTagMask) != kClientHandleTag) refuse_handle("command buffer", v);
+    return real_handle(v);
+}
+
 void bind_client_handle(uint64_t client, uint64_t real) {
     const uint64_t index = client & ~kHandleTagMask;
     {
@@ -2826,8 +2883,10 @@ void bind_client_handle(uint64_t client, uint64_t real) {
         ClientHandleChunks* old = t.chunks.load(std::memory_order_relaxed);
         const uint64_t have = old != nullptr ? old->count : 0;
         if (index / kClientHandleChunk >= have) {
-            uint64_t grown = have == 0 ? 1 : have;
-            while (index / kClientHandleChunk >= grown) grown *= 2;
+            // Numbers are given out in order, so one doubling reaches the
+            // next. Past that it is no number the client gave out.
+            const uint64_t grown = have == 0 ? 1 : have * 2;
+            if (index / kClientHandleChunk >= grown) return;
             void* raw = ::operator new(sizeof(ClientHandleChunks) +
                                        sizeof(std::atomic<uint64_t>*) * grown);
             auto* c = new (raw) ClientHandleChunks;
@@ -2895,9 +2954,10 @@ uint64_t vk_create_image(const std::vector<uint8_t>& in, std::vector<uint8_t>& o
     std::memcpy(&h, in.data(), sizeof(h));
     size_t off = sizeof(h);
 
-    std::vector<uint32_t> families(h.queue_family_count);
     const size_t fam_bytes = sizeof(uint32_t) * h.queue_family_count;
-    if (h.queue_family_count > 0 && off + fam_bytes <= in.size()) {
+    if (off + fam_bytes > in.size()) h.queue_family_count = 0;
+    std::vector<uint32_t> families(h.queue_family_count);
+    if (h.queue_family_count > 0) {
         std::memcpy(families.data(), in.data() + off, fam_bytes);
         off += fam_bytes;
     }
@@ -3060,7 +3120,7 @@ uint64_t vk_get_physical_device_surface_capabilities(uint64_t physical_device, u
         uint64_t{g_resize_generation.load(std::memory_order_acquire)} + 1;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)),
+        wire_physical_device(physical_device),
         from_u64<VkSurfaceKHR>(surface), &caps);
 
     // Wayland has no inherent surface size, so the driver reports
@@ -3371,6 +3431,20 @@ void forget_shared_fds() {
     }
 }
 
+// Maps a file the client made, and closes the fd. A page past the end of a
+// file is SIGBUS on touch, so the size is checked, and the file is sealed
+// first so the client cannot shrink it afterwards.
+void* map_client_file(int fd, size_t length) {
+    struct stat st {};
+    void* p = MAP_FAILED;
+    if (::fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) == 0 && ::fstat(fd, &st) == 0 &&
+        static_cast<uint64_t>(st.st_size) >= length) {
+        p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    }
+    ::close(fd);
+    return p;
+}
+
 // Maps the memfd the client sent under `id`. The fd is closed either
 // way: the mapping holds the pages from here on.
 bool map_shared_memory(uint64_t id, uint64_t size, SharedMapping& out) {
@@ -3379,8 +3453,7 @@ bool map_shared_memory(uint64_t id, uint64_t size, SharedMapping& out) {
     // The import wants the mapping page-aligned and whole pages long, which
     // is what the client sized the file to.
     const size_t length = static_cast<size_t>(size);
-    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
+    void* p = map_client_file(fd, length);
     if (p == MAP_FAILED) return false;
     out.address = p;
     out.length = length;
@@ -3734,7 +3807,7 @@ uint64_t new_lazy_memory(Loader& l, uint64_t size, uint32_t type_index) {
     static uint64_t next = 0;
     const uint64_t handle = kLazyTag | ++next;
     lazy_memory()[handle] = LazyMemory{size, type_index, VK_NULL_HANDLE};
-    l.live_memory.insert(handle);
+    l.live_memory[handle] = size;
     if (redirect_stats_enabled()) allocation_use()[handle] = AllocationUse{size};
     return handle;
 }
@@ -3995,7 +4068,7 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
     // black.
     out.resize(sizeof(uint64_t) * 2);
     const uint64_t handle_value = to_u64(memory);
-    l.live_memory.insert(handle_value);
+    l.live_memory[handle_value] = ai.allocationSize;
     {
         // Set or cleared every time: the driver reuses handle values, and
         // an ordinary allocation must not inherit an earlier one's kind.
@@ -4101,7 +4174,6 @@ uint64_t vk_free_memory(uint64_t memory) {
     }
     if (redirect_stats_enabled()) allocation_use().erase(memory);
     l.mapped.erase(memory);
-    l.mapped_size.erase(memory);
     if (auto lz = lazy_memory().find(memory); lz != lazy_memory().end()) {
         if (lz->second.real != VK_NULL_HANDLE) {
             l.vk.vkFreeMemory(l.device, lz->second.real, nullptr);
@@ -4144,13 +4216,33 @@ uint64_t vk_map_memory(uint64_t memory, uint64_t offset, uint64_t size, uint32_t
     if (l.vk.vkMapMemory == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
+    const auto allocation = l.live_memory.find(memory);
+    if (allocation == l.live_memory.end() || offset >= allocation->second) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
+    if (size == VK_WHOLE_SIZE) size = allocation->second - offset;
+    if (size > allocation->second - offset) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
+    }
     void* p = nullptr;
     VkResult r =
         l.vk.vkMapMemory(l.device, from_u64<VkDeviceMemory>(memory), offset, size, flags, &p);
     if (r != VK_SUCCESS) return static_cast<uint64_t>(static_cast<int32_t>(r));
-    l.mapped[memory] = p;
-    l.mapped_size[memory] = size == VK_WHOLE_SIZE ? 0 : size;
+    l.mapped[memory] = Loader::Mapping{p, offset, size};
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+}
+
+// Where `n` bytes at `offset` into an allocation are in this process, or null
+// when they are not all inside its mapping. The offset comes off the wire and
+// counts from the start of the allocation; the driver's pointer starts where
+// the map did.
+uint8_t* mapped_bytes(Loader& l, uint64_t memory, uint64_t offset, uint64_t n) {
+    const auto it = l.mapped.find(memory);
+    if (it == l.mapped.end() || it->second.address == nullptr ||
+        !vk_wire::range_inside(offset, n, it->second.offset, it->second.size)) {
+        return nullptr;
+    }
+    return static_cast<uint8_t*>(it->second.address) + (offset - it->second.offset);
 }
 
 // A mapped allocation whose pages the client and this process both map.
@@ -4169,8 +4261,7 @@ uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t si
     if (fd < 0) return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     const size_t page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
     const size_t length = (static_cast<size_t>(size) + page - 1) & ~(page - 1);
-    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
+    void* p = map_client_file(fd, length);
     if (p == MAP_FAILED) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     }
@@ -4190,17 +4281,17 @@ uint64_t vk_share_mapped_memory(uint64_t memory, uint64_t shared_id, uint64_t si
 // run out of the shared mapping into the real one.
 uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_t n) {
     Loader& l = loader();
-    auto it = l.mapped.find(memory);
+    uint8_t* to = mapped_bytes(l, memory, offset, n);
     auto sh = shared_writes().find(memory);
-    if (it == l.mapped.end() || it->second == nullptr || sh == shared_writes().end() ||
-        sh->second.first == nullptr) {
+    if (to == nullptr || sh == shared_writes().end() || sh->second.first == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     }
-    if (offset + n > sh->second.second) {
+    // The shared file holds the mapping, not the allocation.
+    const uint64_t in_file = offset - l.mapped[memory].offset;
+    if (!vk_wire::range_inside(in_file, n, 0, sh->second.second)) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     }
-    std::memcpy(static_cast<uint8_t*>(it->second) + offset,
-                static_cast<const uint8_t*>(sh->second.first) + offset,
+    std::memcpy(to, static_cast<const uint8_t*>(sh->second.first) + in_file,
                 static_cast<size_t>(n));
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
@@ -4208,28 +4299,19 @@ uint64_t vk_write_shared_mapped_memory(uint64_t memory, uint64_t offset, uint64_
 // The engine's writes land here: the client ships whatever it changed in
 // its staging copy, and this copies it into the real mapping.
 uint64_t vk_write_mapped_memory(uint64_t memory, uint64_t offset, const std::vector<uint8_t>& in) {
-    Loader& l = loader();
-    auto it = l.mapped.find(memory);
-    if (it == l.mapped.end() || it->second == nullptr) {
+    uint8_t* to = mapped_bytes(loader(), memory, offset, in.size());
+    if (to == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     }
-    std::memcpy(static_cast<uint8_t*>(it->second) + offset, in.data(), in.size());
+    std::memcpy(to, in.data(), in.size());
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
 
 uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
                                std::vector<uint8_t>& out, uint32_t* out_len) {
     Loader& l = loader();
-    auto it = l.mapped.find(memory);
-    if (it == l.mapped.end() || it->second == nullptr) {
-        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
-    }
-    // The caller asks for a range of its own allocation; this process
-    // knows only that it mapped the whole thing, so a request past the end
-    // is the caller's bug and is refused rather than read.
-    const auto size_it = l.mapped_size.find(memory);
-    const uint64_t mapped_size = size_it == l.mapped_size.end() ? 0 : size_it->second;
-    if (mapped_size != 0 && offset + size > mapped_size) {
+    const uint8_t* from = mapped_bytes(l, memory, offset, size);
+    if (from == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_MEMORY_MAP_FAILED));
     }
     // Non-coherent memory holds the device's writes behind the CPU's cache
@@ -4244,8 +4326,7 @@ uint64_t vk_read_mapped_memory(uint64_t memory, uint64_t offset, uint64_t size,
         l.vk.vkInvalidateMappedMemoryRanges(l.device, 1, &range);
     }
     out.resize(static_cast<size_t>(size));
-    std::memcpy(out.data(), static_cast<const uint8_t*>(it->second) + offset,
-                static_cast<size_t>(size));
+    std::memcpy(out.data(), from, static_cast<size_t>(size));
     *out_len = static_cast<uint32_t>(size);
     return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
 }
@@ -4425,7 +4506,6 @@ uint64_t vk_unmap_memory(uint64_t memory) {
     if (l.vk.vkUnmapMemory == nullptr) return 0;
     l.vk.vkUnmapMemory(l.device, from_u64<VkDeviceMemory>(memory));
     l.mapped.erase(memory);
-    l.mapped_size.erase(memory);
     return 0;
 }
 
@@ -4464,7 +4544,7 @@ uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDevice pd =
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
+        wire_physical_device(physical_device);
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
@@ -4498,7 +4578,7 @@ uint64_t vk_get_surface_present_modes(uint64_t physical_device, uint64_t surface
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
     VkPhysicalDevice pd =
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device));
+        wire_physical_device(physical_device);
     VkSurfaceKHR surf = from_u64<VkSurfaceKHR>(surface);
     uint32_t count = 0;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
@@ -4533,7 +4613,7 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
     VkBool32 supported = VK_FALSE;
     std::shared_lock<std::shared_mutex> surface_lock(surface_mutex());
     VkResult r = vkGetPhysicalDeviceSurfaceSupportKHR(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)), queue_family,
+        wire_physical_device(physical_device), queue_family,
         from_u64<VkSurfaceKHR>(surface), &supported);
     write_pod(supported, out, out_len);
     return static_cast<uint64_t>(static_cast<int32_t>(r));
@@ -4542,8 +4622,9 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // Which present mode the swapchain actually gets.
 //
 // The engine asks for IMMEDIATE -- observed, not assumed: every session
-// logs `present mode 0 -> 2 (fifo)`, and 0 is
-// VK_PRESENT_MODE_IMMEDIATE_KHR.
+// logs `present mode 0 -> 1`, and 0 is VK_PRESENT_MODE_IMMEDIATE_KHR.
+// 1 is MAILBOX, which is what ships: Stud's present layer hides
+// VK_KHR_present_wait, so the pacing below has nothing to pace with.
 //
 // FIFO is v-sync: one frame per refresh, and a hard ceiling at the
 // display's rate however much headroom the machine has. MAILBOX renders
@@ -4572,7 +4653,9 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // wchan 0) with the GPU idle and 0.0ms of it in Stud's own queue lock.
 //
 // Not yet acted on, and deliberately so: raising the count was tried
-// once and measured inert, and IMMEDIATE was tried and still froze. What
+// once and measured inert, and IMMEDIATE was tried and still froze,
+// though a request for the mode the engine asked for was skipped back then,
+// so that run may really have been FIFO. What
 // is missing before changing this again is a trace of a freeze that
 // happens with NO focus change, which is what would say whether the
 // third image is the fix or just the most visible anomaly.
@@ -4582,8 +4665,8 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 // mode the surface does not support is undefined behaviour, not a slow
 // path.
 //
-// STUD_PRESENT_MODE=engine|immediate|fifo-relaxed picks another, for
-// measuring only. `engine` forwards whatever the engine asked for, which
+// STUD_PRESENT_MODE=engine|immediate|mailbox|fifo|fifo-relaxed picks another,
+// for measuring only. `engine` forwards whatever the engine asked for, which
 // is the control for measuring whether any of this helps.
 //
 // FIFO, paired with the present pacing below, wherever the driver can
@@ -4605,7 +4688,7 @@ uint64_t vk_get_surface_support(uint64_t physical_device, uint32_t queue_family,
 VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR surface) {
     static const std::string choice = [] {
         const char* v = std::getenv("STUD_PRESENT_MODE");
-        return std::string(v != nullptr ? v : "fifo");
+        return std::string(v != nullptr ? v : "auto");
     }();
     if (choice == "engine" || surface == VK_NULL_HANDLE) return requested;
 
@@ -4629,16 +4712,20 @@ VkPresentModeKHR choose_present_mode(VkPresentModeKHR requested, VkSurfaceKHR su
         wanted = {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR};
     } else if (choice == "fifo-relaxed") {
         wanted = {VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR};
+    } else if (choice == "fifo") {
+        wanted = {VK_PRESENT_MODE_FIFO_KHR};
+    } else if (choice == "mailbox") {
+        wanted = {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
     } else if (g_present_wait_enabled && present_pacing_enabled()) {
         wanted = {VK_PRESENT_MODE_FIFO_KHR};
     } else {
         wanted = {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
     }
     for (VkPresentModeKHR m : wanted) {
-        if (!advertised(m) || m == requested) continue;
+        if (!advertised(m)) continue;
         static std::set<int> announced;
         if (announced.insert(static_cast<int>(m)).second) {
-            std::printf("stud-render-host: present mode %d -> %d (%s)\n",
+            std::printf("stud-render-host: present mode %d -> %d (STUD_PRESENT_MODE=%s)\n",
                          static_cast<int>(requested), static_cast<int>(m), choice.c_str());
             std::fflush(stdout);
         }
@@ -4934,6 +5021,7 @@ void make_barrier_legal(VkPipelineStageFlags* src_stage, VkPipelineStageFlags* d
     // undefined -- so the corrected barrier throws away nothing the
     // engine could legally have relied on, and it is what the engine
     // would have written if its own tracking had been right.
+    if (img.empty()) return;
     std::lock_guard<std::mutex> untransitioned_lock(untransitioned_mutex());
     for (auto& b : img) {
         if (b.image == VK_NULL_HANDLE) continue;
@@ -5061,6 +5149,21 @@ std::atomic<bool> g_have_retired_chains{false};
 // and vkCreateSwapchainKHR is deliberately exempt from the dispatch lock
 // (it blocks in the driver), so those are genuinely different threads.
 std::mutex g_retired_chains_mutex;
+
+size_t retired_chain_count() {
+    std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+    return g_retired_chains.size();
+}
+
+// Hands `swapchain` to the chain retired since the list held `before`, to be
+// destroyed with it, since its pass may still be writing into it. False when
+// none was, which means the swapchain is the caller's to destroy.
+bool retired_chain_keeps(size_t before, VkSwapchainKHR swapchain) {
+    std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
+    if (g_retired_chains.size() <= before) return false;
+    g_retired_chains.back().destroy_with_chain = swapchain;
+    return true;
+}
 
 // `force` destroys the chain even if its GPU work has not finished,
 // instead of deferring it again. Only for the points where deferring
@@ -6318,6 +6421,10 @@ VkSwapchainKHR live_swapchain(uint64_t engine_handle) {
 // and the engine's acquire takes the blocking path as before.
 //
 // STUD_VK_PREACQUIRE=0 turns it off.
+namespace {
+void note_fence_submitted(uint64_t fence);
+}  // namespace
+
 namespace preacquire {
 
 // Within the submit-feedback page, on its own cache line apart from the
@@ -6397,8 +6504,7 @@ void release_locked(State& s, Loader& l) {
     si.pWaitSemaphores = &slot.semaphore;
     si.pWaitDstStageMask = &stage;
     std::lock_guard<std::mutex> queue_lock(queue_mutex());
-    l.vk.vkQueueSubmit(l.probe_queue, 1, &si, slot.fence);
-    slot.in_flight = true;
+    slot.in_flight = l.vk.vkQueueSubmit(l.probe_queue, 1, &si, slot.fence) == VK_SUCCESS;
 }
 
 // Before a swapchain is rebuilt or destroyed.
@@ -6490,10 +6596,9 @@ void after_present(uint64_t swapchain, uint64_t seq) {
     const size_t which = s.next;
     Slot& slot = s.slots[which];
     if (slot.in_flight) {
-        // Normally long finished: it was a frame ago.
-        if (l.vk.vkWaitForFences(l.device, 1, &slot.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-            return;
-        }
+        // Normally long finished: it was a frame ago. If not, the engine's
+        // own acquire does it the slow way; nothing may hold up this thread.
+        if (l.vk.vkGetFenceStatus(l.device, slot.fence) != VK_SUCCESS) return;
         l.vk.vkResetFences(l.device, 1, &slot.fence);
         slot.in_flight = false;
     }
@@ -6548,18 +6653,21 @@ bool take(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint64_t seq, 
         si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = &engine_semaphore;
     }
+    VkResult submitted;
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex());
         if (fence != 0) {
             // The engine's fence on its batch, and Stud's on an empty one
             // behind it, which finishes no earlier.
-            l.vk.vkQueueSubmit(l.probe_queue, 1, &si, from_u64<VkFence>(fence));
-            l.vk.vkQueueSubmit(l.probe_queue, 0, nullptr, slot.fence);
+            if (l.vk.vkQueueSubmit(l.probe_queue, 1, &si, from_u64<VkFence>(fence)) == VK_SUCCESS) {
+                note_fence_submitted(fence);
+            }
+            submitted = l.vk.vkQueueSubmit(l.probe_queue, 0, nullptr, slot.fence);
         } else {
-            l.vk.vkQueueSubmit(l.probe_queue, 1, &si, slot.fence);
+            submitted = l.vk.vkQueueSubmit(l.probe_queue, 1, &si, slot.fence);
         }
     }
-    slot.in_flight = true;
+    slot.in_flight = submitted == VK_SUCCESS;
     s.held = false;
     index = s.index;
     result = s.result;
@@ -6568,7 +6676,9 @@ bool take(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint64_t seq, 
 
 }  // namespace preacquire
 
-void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
+// `key` is the handle the engine holds, which is what every lookup uses, and
+// which stops being `swapchain` once the real one has been rebuilt under it.
+void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain, uint64_t key,
                          const VkSwapchainCreateInfoKHR& ci, bool reuse_offscreen) {
     Loader& l = loader();
     // Anything a previous rebuild had to keep alive; see
@@ -6724,11 +6834,19 @@ void build_upscale_chain(UpscaleChain& pending, VkSwapchainKHR swapchain,
         std::printf("stud-render-host: upscale unavailable for this swapchain, presenting "
                     "the engine's own image instead\n");
         std::fflush(stdout);
-        destroy_upscale_chain(pending);
+        if (reuse_offscreen) {
+            // The engine still holds those images. Kept with no pass, which
+            // is a chain of no real images: its presents are dropped, and
+            // the images go when the engine destroys the swapchain.
+            destroy_upscale_chain_keeping_offscreen(pending);
+            g_upscale_chains[key] = std::move(pending);
+        } else {
+            destroy_upscale_chain(pending);
+        }
     } else {
         pending.in_flight.assign(count, false);
-        g_upscale_chains[to_u64(swapchain)] = std::move(pending);
-        const UpscaleChain& built = g_upscale_chains[to_u64(swapchain)];
+        g_upscale_chains[key] = std::move(pending);
+        const UpscaleChain& built = g_upscale_chains[key];
         // Says whether a sharpening pass is attached, because whether
         // one is has been guessed at twice. Only the filters that do not
         // sharpen inside their own dispatch get one, and only when the
@@ -6801,9 +6919,9 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
 
     vk_wire::CreateSwapchainHeader h{};
     std::memcpy(&h, in.data(), sizeof(h));
+    if (in.size() < sizeof(h) + sizeof(uint32_t) * h.queue_family_count) h.queue_family_count = 0;
     std::vector<uint32_t> families(h.queue_family_count);
-    if (h.queue_family_count > 0 &&
-        in.size() >= sizeof(h) + sizeof(uint32_t) * h.queue_family_count) {
+    if (h.queue_family_count > 0) {
         std::memcpy(families.data(), in.data() + sizeof(h),
                     sizeof(uint32_t) * h.queue_family_count);
     }
@@ -6892,7 +7010,8 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     ci.presentMode = choose_present_mode(static_cast<VkPresentModeKHR>(h.present_mode),
                                           from_u64<VkSurfaceKHR>(h.surface));
     ci.clipped = h.clipped;
-    ci.oldSwapchain = from_u64<VkSwapchainKHR>(h.old_swapchain);
+    // Rebuilt under the engine, its handle may name one already destroyed.
+    ci.oldSwapchain = live_swapchain(h.old_swapchain);
 
     // Stud's own upscale: the real swapchain is bigger than the engine
     // asked for, and the engine is given offscreen images of its own
@@ -7076,7 +7195,7 @@ uint64_t vk_create_swapchain(const std::vector<uint8_t>& in, std::vector<uint8_t
     }
     const auto chain_t0 = std::chrono::steady_clock::now();
     if (want_upscale) {
-        build_upscale_chain(pending, swapchain, ci, /*reuse_offscreen=*/false);
+        build_upscale_chain(pending, swapchain, to_u64(swapchain), ci, /*reuse_offscreen=*/false);
     }
     {
         const auto now = std::chrono::steady_clock::now();
@@ -7189,7 +7308,7 @@ uint64_t vk_get_image_format_properties2(uint64_t physical_device, const std::ve
     props.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
     props.pNext = chain;
     VkResult r = l.get_image_format_properties2(
-        reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(physical_device)), &info,
+        wire_physical_device(physical_device), &info,
         &props);
 
     const uint32_t base = static_cast<uint32_t>(sizeof(VkImageFormatProperties));
@@ -7236,7 +7355,7 @@ struct BufferSlot {
 struct BufferTable {
     std::mutex mutex;  // everything but BufferSlot::real
     std::atomic<BufferSlot**> chunks{nullptr};
-    uint64_t chunk_count = 0;
+    std::atomic<uint64_t> chunk_count{0};  // stored after chunks, so never ahead of it
 };
 
 BufferTable& buffer_table() {
@@ -7244,16 +7363,20 @@ BufferTable& buffer_table() {
     return t;
 }
 
-BufferSlot& buffer_slot(uint64_t index) {
-    BufferSlot** chunks = buffer_table().chunks.load(std::memory_order_acquire);
-    return chunks[index / kBufferChunk][index % kBufferChunk];
+BufferSlot* buffer_slot(uint64_t index) {
+    // Null past the end of the table; the index comes off the wire.
+    BufferTable& t = buffer_table();
+    if (index / kBufferChunk >= t.chunk_count.load(std::memory_order_acquire)) return nullptr;
+    BufferSlot** chunks = t.chunks.load(std::memory_order_acquire);
+    return &chunks[index / kBufferChunk][index % kBufferChunk];
 }
 
 // The driver's buffer behind a handle the engine holds; anything that is
 // not one of Stud's numbers passes through unchanged.
 inline uint64_t real_buffer(uint64_t v) {
     if ((v & kHandleTagMask) != kBufferTag) return v;
-    return buffer_slot(v & ~kHandleTagMask).real.load(std::memory_order_acquire);
+    const BufferSlot* slot = buffer_slot(v & ~kHandleTagMask);
+    return slot != nullptr ? slot->real.load(std::memory_order_acquire) : 0;
 }
 
 // The client's number for a new buffer, and what to make it with.
@@ -7261,35 +7384,38 @@ void register_buffer_number(uint64_t v, const VkBufferCreateInfo& ci) {
     BufferTable& t = buffer_table();
     std::lock_guard<std::mutex> lock(t.mutex);
     const uint64_t index = v & ~kHandleTagMask;
-    if (index / kBufferChunk >= t.chunk_count) {
-        uint64_t grown = t.chunk_count == 0 ? 1 : t.chunk_count;
-        while (index / kBufferChunk >= grown) grown *= 2;
+    const uint64_t have = t.chunk_count.load(std::memory_order_relaxed);
+    if (index / kBufferChunk >= have) {
+        // In order, as bind_client_handle() says of its own numbers.
+        const uint64_t grown = have == 0 ? 1 : have * 2;
+        if (index / kBufferChunk >= grown) return;
         auto** chunks = new BufferSlot*[grown]();
         BufferSlot** old = t.chunks.load(std::memory_order_relaxed);
-        for (uint64_t c = 0; c < t.chunk_count; ++c) chunks[c] = old[c];
-        for (uint64_t c = t.chunk_count; c < grown; ++c) chunks[c] = new BufferSlot[kBufferChunk];
+        for (uint64_t c = 0; c < have; ++c) chunks[c] = old[c];
+        for (uint64_t c = have; c < grown; ++c) chunks[c] = new BufferSlot[kBufferChunk];
         t.chunks.store(chunks, std::memory_order_release);
-        t.chunk_count = grown;
+        t.chunk_count.store(grown, std::memory_order_release);
     }
-    BufferSlot& slot = buffer_slot(index);
-    slot.real.store(0, std::memory_order_relaxed);
-    slot.flags = ci.flags;
-    slot.size = ci.size;
-    slot.usage = ci.usage;
-    slot.sharing = ci.sharingMode;
+    BufferSlot* slot = buffer_slot(index);
+    slot->real.store(0, std::memory_order_relaxed);
+    slot->flags = ci.flags;
+    slot->size = ci.size;
+    slot->usage = ci.usage;
+    slot->sharing = ci.sharingMode;
 }
 
 // The create info a numbered buffer was given; false for any other handle.
 bool buffer_create_info(uint64_t v, VkBufferCreateInfo& ci) {
     if ((v & kHandleTagMask) != kBufferTag) return false;
     std::lock_guard<std::mutex> lock(buffer_table().mutex);
-    const BufferSlot& slot = buffer_slot(v & ~kHandleTagMask);
+    const BufferSlot* slot = buffer_slot(v & ~kHandleTagMask);
+    if (slot == nullptr) return false;
     ci = VkBufferCreateInfo{};
     ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    ci.flags = slot.flags;
-    ci.size = slot.size;
-    ci.usage = slot.usage;
-    ci.sharingMode = slot.sharing;
+    ci.flags = slot->flags;
+    ci.size = slot->size;
+    ci.usage = slot->usage;
+    ci.sharingMode = slot->sharing;
     return true;
 }
 
@@ -7298,7 +7424,8 @@ uint64_t forget_buffer_number(uint64_t v) {
     if ((v & kHandleTagMask) != kBufferTag) return v;
     BufferTable& t = buffer_table();
     std::lock_guard<std::mutex> lock(t.mutex);
-    return buffer_slot(v & ~kHandleTagMask).real.exchange(0, std::memory_order_acq_rel);
+    BufferSlot* slot = buffer_slot(v & ~kHandleTagMask);
+    return slot != nullptr ? slot->real.exchange(0, std::memory_order_acq_rel) : 0;
 }
 
 uint64_t vk_create_buffer(uint32_t flags, uint64_t size, uint32_t usage, uint32_t sharing_mode,
@@ -7390,7 +7517,7 @@ uint64_t vk_bind_buffer_memory(uint64_t buffer, uint64_t memory, uint64_t offset
         return static_cast<uint64_t>(static_cast<int32_t>(r));
     }
     if (numbered) {
-        buffer_slot(buffer & ~kHandleTagMask).real.store(to_u64(real), std::memory_order_release);
+        buffer_slot(buffer & ~kHandleTagMask)->real.store(to_u64(real), std::memory_order_release);
     }
     note_bind(memory, false, offset, 0);
     {
@@ -7551,19 +7678,11 @@ void destroy_swapchain(Loader& l, uint64_t handle) {
     {
         auto chain = g_upscale_chains.find(handle);
         if (chain != g_upscale_chains.end()) {
-            size_t retired_before = 0;
-            {
-                std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
-                retired_before = g_retired_chains.size();
-            }
+            const size_t retired_before = retired_chain_count();
             destroy_upscale_chain(chain->second);
             g_upscale_chains.erase(chain);
-            std::lock_guard<std::mutex> lock(g_retired_chains_mutex);
-            if (g_retired_chains.size() > retired_before) {
-                g_retired_chains.back().destroy_with_chain =
-                    from_u64<VkSwapchainKHR>(live);
-                swapchain_held_by_chain = true;
-            }
+            swapchain_held_by_chain =
+                retired_chain_keeps(retired_before, from_u64<VkSwapchainKHR>(live));
         }
     }
     auto images = l.swapchain_image_list.find(handle);
@@ -8356,7 +8475,7 @@ void record(Loader& l, VkCommandBuffer cb, vk_wire::Reader& r) {
     VkBuffer src = from_u64<VkBuffer>(real_buffer(r.u64()));
     VkImage dst = from_u64<VkImage>(real_handle(r.u64()));
     const uint32_t layout = r.u32();
-    const uint32_t n = r.u32();
+    const uint32_t n = r.count();
     std::vector<VkBufferImageCopy> regions(n);
     for (auto& c : regions) {
         c.bufferOffset = r.u64();
@@ -8737,7 +8856,8 @@ void destroy_device(Loader& l, uint64_t handle) {
                         "left behind, before destroying the device that owns them\n",
                         l.live_memory.size());
             std::fflush(stdout);
-            for (uint64_t m : l.live_memory) {
+            for (const auto& allocation : l.live_memory) {
+                const uint64_t m = allocation.first;
                 auto lz = lazy_memory().find(m);
                 if (lz == lazy_memory().end()) {
                     l.vk.vkFreeMemory(l.device, from_u64<VkDeviceMemory>(m), nullptr);
@@ -8770,6 +8890,10 @@ void destroy_device(Loader& l, uint64_t handle) {
             exported_fds().clear();
         }
         forget_all_client_handles();
+        {
+            std::lock_guard<std::mutex> lock(known_handles_mutex());
+            known_queues().clear();
+        }
         {
             std::lock_guard<std::mutex> lock(pool_command_buffers_mutex());
             pool_command_buffers().clear();
@@ -8825,7 +8949,6 @@ void destroy_device(Loader& l, uint64_t handle) {
         // Anything sent over the fd channel and never claimed.
         forget_shared_fds();
         l.mapped.clear();
-        l.mapped_size.clear();
         g_swapchain_extents.clear();
         l.retired_images.clear();
         {
@@ -9724,6 +9847,17 @@ uint64_t vk_update_descriptor_set_with_template(uint64_t set, uint64_t tmpl,
     const VkDescriptorSet resolved = resolve_descriptor_set(set);
     if (resolved == VK_NULL_HANDLE) return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
     std::vector<uint8_t> data(in.begin(), in.end());
+    // The driver reads the blob by the template, not by its length. The
+    // client sizes it the same way, with the largest descriptor as the last.
+    if (auto it = l.template_entries.find(tmpl); it != l.template_entries.end()) {
+        for (const auto& e : it->second) {
+            if (e.descriptorCount == 0) continue;
+            const uint64_t last = uint64_t{e.offset} + uint64_t{e.stride} * (e.descriptorCount - 1);
+            if (last + sizeof(VkDescriptorBufferInfo) > data.size()) {
+                return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
+            }
+        }
+    }
     // Samplers the client numbered, inside the blob: a VkDescriptorImageInfo
     // starts with its sampler.
     if (g_any_client_handles.load(std::memory_order_relaxed)) {
@@ -10731,7 +10865,7 @@ uint64_t vk_allocate_command_buffers(uint64_t pool, uint32_t level, uint32_t cou
 
 uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags,
                                  const CommandBufferInheritance& inherited) {
-    cb = real_handle(cb);
+    cb = real_command_buffer(cb);
     framebuffer_lifetimes::begin(cb);
     Loader& l = loader();
     if (l.vk.vkBeginCommandBuffer == nullptr) {
@@ -10756,7 +10890,7 @@ uint64_t vk_begin_command_buffer(uint64_t cb, uint32_t flags,
 }
 
 uint64_t vk_end_command_buffer(uint64_t cb) {
-    cb = real_handle(cb);
+    cb = real_command_buffer(cb);
     Loader& l = loader();
     if (l.vk.vkEndCommandBuffer == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
@@ -11313,6 +11447,7 @@ void signal_fences_the_engine_reset(VkQueue queue) {
 }  // namespace
 
 uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8_t>& in) {
+    require_known_queue(queue);
     fence = real_handle(fence);
     Loader& l = loader();
     if (l.vk.vkQueueSubmit == nullptr) {
@@ -11332,7 +11467,9 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
         for (uint32_t j = 0; j < nw; ++j) stages[i][j] = r.u32();
         const uint32_t nc = r.count();
         buffers[i].resize(nc);
-        for (uint32_t j = 0; j < nc; ++j) buffers[i][j] = from_u64<VkCommandBuffer>(real_handle(r.u64()));
+        for (uint32_t j = 0; j < nc; ++j) {
+            buffers[i][j] = from_u64<VkCommandBuffer>(real_command_buffer(r.u64()));
+        }
         const uint32_t ns = r.count();
         signals[i].resize(ns);
         for (uint32_t j = 0; j < ns; ++j) signals[i][j] = from_u64<VkSemaphore>(real_handle(r.u64()));
@@ -11432,10 +11569,11 @@ uint64_t vk_queue_submit(uint64_t queue, uint64_t fence, const std::vector<uint8
     if (feedback_number != 0) {
         if (res == VK_SUCCESS) {
             submit_feedback::submitted(feedback, feedback_number);
-        } else {
+        } else if (!g_device_lost.load(std::memory_order_relaxed)) {
             // The number still has to be signalled, or the count stops
             // there. A batch that only signals it; if even that fails the
             // count simply stays behind, which only means slower answers.
+            // Not after device loss: see g_device_lost.
             const uint64_t value = feedback_number;
             VkTimelineSemaphoreSubmitInfo only_info{};
             only_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
@@ -11709,12 +11847,16 @@ bool rebuild_real_swapchain(uint64_t engine_handle) {
         return false;
     }
 
+    bool old_held_by_chain = false;
     if (chain != g_upscale_chains.end()) {
+        const size_t retired_before = retired_chain_count();
         destroy_upscale_chain_keeping_offscreen(chain->second);
-        chain->second.present = extent;
-        build_upscale_chain(chain->second, fresh, ci, /*reuse_offscreen=*/true);
+        old_held_by_chain = retired_chain_keeps(retired_before, old);
+        UpscaleChain pending = std::move(chain->second);
+        pending.present = extent;
+        build_upscale_chain(pending, fresh, engine_handle, ci, /*reuse_offscreen=*/true);
     }
-    if (l.vk.vkDestroySwapchainKHR != nullptr && old != VK_NULL_HANDLE) {
+    if (!old_held_by_chain && l.vk.vkDestroySwapchainKHR != nullptr && old != VK_NULL_HANDLE) {
         settle_present_fences(old);
         l.vk.vkDestroySwapchainKHR(l.device, old, nullptr);
     }
@@ -11919,7 +12061,10 @@ uint64_t vk_acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t se
                        .count()));
     // A retry that succeeded really did acquire an image, so the present
     // that follows is the engine's own and must not be dropped.
-    if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) note_acquire_failed(swapchain, false);
+    if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) {
+        note_acquire_failed(swapchain, false);
+        note_fence_submitted(fence);
+    }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         // Still failed, so nothing signalled the semaphore or the fence
         // the engine handed in -- and it submits its frame regardless.
@@ -12450,6 +12595,7 @@ void report_holdings() {
 
 uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
     STUD_ZONE();
+    require_known_queue(queue);
     const uint64_t present_seq = preacquire::count_present();
     Loader& l = loader();
     if (l.vk.vkQueuePresentKHR == nullptr) {
@@ -12501,8 +12647,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
 
     // The index came off the wire, and nothing had checked it.
     //
-    // Process B is not hostile, so this is not a security boundary -- but
-    // the wire is also how a stale index from a swapchain that has since
+    // The wire is also how a stale index from a swapchain that has since
     // been rebuilt reaches the driver, and vkQueuePresentKHR with an index
     // it never handed out is undefined behaviour inside the WSI rather
     // than an error it reports. The pass already checked the index against
@@ -12519,7 +12664,7 @@ uint64_t vk_queue_present(uint64_t queue, const std::vector<uint8_t>& in) {
         const auto known = g_upscale_chains.find(to_u64(chains[i]));
         if (known == g_upscale_chains.end()) continue;
         const size_t count = known->second.real_images.size();
-        if (count == 0 || indices[i] < count) continue;
+        if (indices[i] < count) continue;
         static int said = 0;
         if (said < 8) {
             ++said;
@@ -13107,7 +13252,11 @@ uint64_t vk_get_query_pool_results(uint64_t pool, uint32_t first, uint32_t count
     if (l.vk.vkGetQueryPoolResults == nullptr) {
         return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_INITIALIZATION_FAILED));
     }
-    const size_t size = static_cast<size_t>(stride) * count;
+    // A reply's length is 32 bits.
+    const uint64_t size = uint64_t{stride} * count;
+    if (size > UINT32_MAX) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_ERROR_OUT_OF_HOST_MEMORY));
+    }
     out.assign(size, 0);
     VkResult r = l.vk.vkGetQueryPoolResults(l.device, from_u64<VkQueryPool>(pool), first, count, size,
                                            out.data(), stride, flags);
@@ -13419,13 +13568,13 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
             break;
         }
         case K::ClearAttachments: {
-            std::vector<VkClearAttachment> attachments(r.u32());
+            std::vector<VkClearAttachment> attachments(r.count());
             for (auto& a : attachments) {
                 a.aspectMask = r.u32();
                 a.colorAttachment = r.u32();
                 a.clearValue = r.scalar<VkClearValue>();
             }
-            std::vector<VkClearRect> rects(r.u32());
+            std::vector<VkClearRect> rects(r.count());
             for (auto& c : rects) c = r.scalar<VkClearRect>();
             l.vk.vkCmdClearAttachments(cb, static_cast<uint32_t>(attachments.size()),
                                        attachments.data(), static_cast<uint32_t>(rects.size()),
@@ -13437,7 +13586,7 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
             const auto image = from_u64<VkImage>(real_handle(r.u64()));
             const auto layout = static_cast<VkImageLayout>(r.u32());
             const auto value = r.scalar<VkClearValue>();
-            std::vector<VkImageSubresourceRange> ranges(r.u32());
+            std::vector<VkImageSubresourceRange> ranges(r.count());
             for (auto& c : ranges) c = r.scalar<VkImageSubresourceRange>();
             const auto n = static_cast<uint32_t>(ranges.size());
             if (kind == K::ClearColorImage) {
@@ -13515,12 +13664,12 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
             l.vk.vkCmdNextSubpass(cb, static_cast<VkSubpassContents>(r.u32()));
             break;
         case K::ExecuteCommands: {
-            std::vector<VkCommandBuffer> buffers(r.u32());
+            std::vector<VkCommandBuffer> buffers(r.count());
             for (auto& b : buffers) {
                 const uint64_t number = r.u64();
                 // Its End may still be on another pool's worker.
                 replay::wait_for_command_buffer(number);
-                b = from_u64<VkCommandBuffer>(real_handle(number));
+                b = from_u64<VkCommandBuffer>(real_command_buffer(number));
             }
             l.vk.vkCmdExecuteCommands(cb, static_cast<uint32_t>(buffers.size()), buffers.data());
             break;
@@ -13532,16 +13681,16 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
             break;
         }
         case K::WaitEvents: {
-            std::vector<VkEvent> events(r.u32());
+            std::vector<VkEvent> events(r.count());
             for (auto& e : events) e = from_u64<VkEvent>(real_handle(r.u64()));
             const uint32_t src = r.u32(), dst = r.u32();
-            std::vector<VkMemoryBarrier> mem(r.u32());
+            std::vector<VkMemoryBarrier> mem(r.count());
             for (auto& b : mem) {
                 b.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
                 b.srcAccessMask = r.u32();
                 b.dstAccessMask = r.u32();
             }
-            std::vector<VkBufferMemoryBarrier> buf(r.u32());
+            std::vector<VkBufferMemoryBarrier> buf(r.count());
             for (auto& b : buf) {
                 b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
                 b.srcAccessMask = r.u32();
@@ -13552,7 +13701,7 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
                 b.offset = r.u64();
                 b.size = r.u64();
             }
-            std::vector<VkImageMemoryBarrier> img(r.u32());
+            std::vector<VkImageMemoryBarrier> img(r.count());
             for (auto& b : img) {
                 b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 b.srcAccessMask = r.u32();
@@ -13580,7 +13729,7 @@ void record_core_command(vk_wire::CmdKind kind, Loader& l, VkCommandBuffer cb, v
 }
 
 uint64_t vk_reset_command_buffer(uint64_t cb, uint32_t flags) {
-    cb = real_handle(cb);
+    cb = real_command_buffer(cb);
     Loader& l = loader();
     return static_cast<uint64_t>(static_cast<int32_t>(
         l.vk.vkResetCommandBuffer(from_u64<VkCommandBuffer>(cb), flags)));
@@ -13593,6 +13742,7 @@ uint64_t vk_free_command_buffers(uint64_t pool, const std::vector<uint8_t>& in) 
     for (size_t i = 0; i < buffers.size(); ++i) {
         uint64_t number = 0;
         std::memcpy(&number, in.data() + i * sizeof(number), sizeof(number));
+        real_command_buffer(number);
         buffers[i] = from_u64<VkCommandBuffer>(forget_client_handle(number));
     }
     l.vk.vkFreeCommandBuffers(l.device, from_u64<VkCommandPool>(pool),
@@ -13609,7 +13759,7 @@ uint64_t vk_update_descriptor_sets(const std::vector<uint8_t>& in) {
         std::vector<VkDescriptorBufferInfo> buffers;
         std::vector<VkBufferView> texels;
     };
-    std::vector<Write> writes(r.u32());
+    std::vector<Write> writes(r.count());
     std::vector<VkWriteDescriptorSet> vk_writes;
     for (Write& e : writes) {
         VkWriteDescriptorSet& w = e.w;
@@ -13619,26 +13769,31 @@ uint64_t vk_update_descriptor_sets(const std::vector<uint8_t>& in) {
         w.dstArrayElement = r.u32();
         w.descriptorCount = r.u32();
         w.descriptorType = static_cast<VkDescriptorType>(r.u32());
-        e.images.resize(r.u32());
+        e.images.resize(r.count());
         for (auto& i : e.images) {
             i.sampler = from_u64<VkSampler>(real_handle(r.u64()));
             i.imageView = from_u64<VkImageView>(real_handle(r.u64()));
             i.imageLayout = static_cast<VkImageLayout>(r.u32());
         }
-        e.buffers.resize(r.u32());
+        e.buffers.resize(r.count());
         for (auto& b : e.buffers) {
             b.buffer = from_u64<VkBuffer>(real_buffer(r.u64()));
             b.offset = r.u64();
             b.range = r.u64();
         }
-        e.texels.resize(r.u32());
+        e.texels.resize(r.count());
         for (auto& t : e.texels) t = from_u64<VkBufferView>(real_handle(r.u64()));
         w.pImageInfo = e.images.data();
         w.pBufferInfo = e.buffers.data();
         w.pTexelBufferView = e.texels.data();
+        // Exactly one list carries the descriptors; the driver reads
+        // descriptorCount of them whatever the lists hold.
+        const size_t images = e.images.size(), buffers = e.buffers.size(), texels = e.texels.size();
+        const bool counted = images + buffers + texels == w.descriptorCount &&
+                             std::max({images, buffers, texels}) == w.descriptorCount;
         // A set that never resolved is not handed to the driver; see
         // vk_update_descriptor_set_with_template.
-        if (w.dstSet != VK_NULL_HANDLE) vk_writes.push_back(w);
+        if (w.dstSet != VK_NULL_HANDLE && counted) vk_writes.push_back(w);
     }
     // The Windows shaders' textures, as for a template: each set's writes
     // laid out the way desktop_fill reads them, and copied back.
@@ -13664,7 +13819,7 @@ uint64_t vk_update_descriptor_sets(const std::vector<uint8_t>& in) {
                         sizeof(VkDescriptorImageInfo));
         }
     }
-    std::vector<VkCopyDescriptorSet> copies(r.u32());
+    std::vector<VkCopyDescriptorSet> copies(r.count());
     std::vector<VkCopyDescriptorSet> vk_copies;
     for (auto& c : copies) {
         c.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
@@ -13816,7 +13971,7 @@ uint64_t vk_get_physical_device_chained(uint32_t query, uint64_t device, uint32_
                                         std::vector<uint8_t>& out, uint32_t* out_len) {
     std::vector<std::vector<uint8_t>> storage;
     void* chain = rebuild_chain(in.data(), in.size(), node_count, storage);
-    const auto pd = reinterpret_cast<VkPhysicalDevice>(static_cast<uintptr_t>(device));
+    const auto pd = wire_physical_device(device);
     uint32_t base = 0;
     const void* fixed = nullptr;
     VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, chain};
@@ -13894,7 +14049,7 @@ uint8_t pipeline_point_of(vk_wire::CmdKind kind) {
 uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, size_t size) {
     STUD_ZONE();
     Loader& l = loader();
-    cb_handle = real_handle(cb_handle);
+    cb_handle = real_command_buffer(cb_handle);
     VkCommandBuffer cb = from_u64<VkCommandBuffer>(cb_handle);
     vk_wire::Reader r(data, size, kind);
     using K = vk_wire::CmdKind;
@@ -13999,7 +14154,7 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
             bi.renderArea.extent.width = r.u32();
             bi.renderArea.extent.height = r.u32();
             framebuffer_lifetimes::use(cb_handle, to_u64(bi.framebuffer));
-            const uint32_t nc = r.u32();
+            const uint32_t nc = r.count();
             // Reused across render passes rather than allocated per pass.
             thread_local std::vector<VkClearValue> clears;
             clears.assign(nc, VkClearValue{});
@@ -14363,19 +14518,9 @@ uint64_t vk_cmd_record(uint64_t cb_handle, uint32_t kind, const uint8_t* data, s
                     }
                 }
             }
-            {
-                char note[160];
-                int at = std::snprintf(note, sizeof(note),
-                                       "PipelineBarrier cb=%llx mem=%u buf=%u img=%u:",
-                                       static_cast<unsigned long long>(cb_handle), nm, nb,
-                                       static_cast<unsigned>(img.size()));
-                for (const auto& b : img) {
-                    if (at < 0 || at >= static_cast<int>(sizeof(note))) break;
-                    at += std::snprintf(note + at, sizeof(note) - static_cast<size_t>(at), " %llx",
-                                        static_cast<unsigned long long>(to_u64(b.image)));
-                }
-                stud::logging::set_crash_note(note);
-            }
+            stud::logging::set_crash_fields("PipelineBarrier cb images first-image", cb_handle,
+                                            img.size(),
+                                            img.empty() ? 0 : to_u64(img.front().image));
             // STUD_VK_TRACE_PASSES also reports layout transitions on the
             // swapchain images. A swapchain image presented in the wrong
             // layout shows as black, and the transition is the engine's
