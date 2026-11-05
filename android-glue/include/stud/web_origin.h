@@ -12,6 +12,9 @@ namespace stud::web {
 inline constexpr char kLoginPageUrl[] = "https://www.roblox.com/login";
 inline constexpr char kSignUpPageUrl[] = "https://www.roblox.com/CreateAccount";
 inline constexpr char kLoginRequest[] = "login";
+// The same, ready and hidden, waiting for "load <url>" on its stdin: starting a
+// viewer takes long enough to see, so it is started before it is needed.
+inline constexpr char kLoginPreparedRequest[] = "login-hidden";
 inline constexpr char kLoginSessionPrefix[] = "session ";
 
 struct LoginField {

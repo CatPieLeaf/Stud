@@ -1,5 +1,7 @@
 #include "stud/webview_cookies.h"
 
+#include "stud/webview_bridge.h"
+
 #include <functional>
 #include <map>
 #include <mutex>
@@ -74,7 +76,15 @@ void seed_current_session_cookie(const std::string& name, const std::string& val
     current()[name] = value;
 }
 
-void note_engine_cookies(const std::string& /*url*/, const std::vector<std::string>& headers) {
+void note_engine_cookies(const std::string& url, const std::vector<std::string>& headers) {
+    // The app reads this list when its account switcher opens, seconds before
+    // "add account" can be pressed.
+    struct PrepareOnReturn {
+        bool switcher;
+        ~PrepareOnReturn() {
+            if (switcher) prepare_login_page();
+        }
+    } prepare{url.find("/account-switcher/") != std::string::npos};
     for (const auto& header : headers) {
         const std::string name = cookie_name(header);
         if (name != ".ROBLOSECURITY" && name != "rbxas") continue;

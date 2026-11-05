@@ -521,8 +521,8 @@ bool store_web_login_field(const std::string& field) {
 // reaches the same place it always did. Only the viewer opened for a login
 // can report a session, and that line never reaches the log.
 //
-// A login takes the game window's place: "ready" is the page on screen, which
-// is when the window goes, and it comes back unless the login worked, in which
+// A login takes the game window's place: "ready" is its window up, which is
+// when the game window goes, and it comes back unless the login worked, in which
 // case this session is about to end anyway.
 void read_web_view_output(int fd, bool login) {
     bool signed_in = false;
@@ -1256,8 +1256,8 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                                            ? std::string::npos
                                            : payload.find('\n', first_newline + 1);
             const bool login = agent_start != std::string::npos &&
-                               payload.compare(agent_start + 1, payload.find('\n', agent_start + 1) -
-                                                                    agent_start - 1,
+                               payload.compare(agent_start + 1,
+                                               std::strlen(stud::web::kLoginRequest),
                                                stud::web::kLoginRequest) == 0;
             int login_width = 0;
             int login_height = 0;

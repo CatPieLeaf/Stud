@@ -71,6 +71,13 @@ void open_security_check(const std::string& payload);
 // The app keeps switching accounts and logging out; see stud/web_origin.h.
 // Does nothing with the webLogin setting off.
 void open_login_page(const char* url, const char* title);
+// Starts the login window hidden, for when one is about to be wanted: no
+// session, or the account switcher open. open_login_page() then only shows it.
+void prepare_login_page();
+// For opening any other panel: a hidden window would take that panel's place.
+void discard_prepared_login();
+// How a hidden login window is told to show, given the page it is to show.
+void set_login_page_shower(std::function<void(const std::string&)> shower);
 void set_web_login_enabled(bool enabled);
 
 // Hands the engine one message a web view's page sent through its

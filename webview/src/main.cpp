@@ -23,10 +23,8 @@
 #include <QApplication>
 #include <QIcon>
 #include <QDir>
-#include <QFile>
 #include <QMainWindow>
 #include <QNetworkCookie>
-#include <QTextStream>
 #include <QWebEngineSettings>
 #include <QSet>
 #include <QTimer>
@@ -60,14 +58,27 @@ struct Request {
 
 Request read_request() {
     Request request;
-    QFile input;
-    if (!input.open(stdin, QIODevice::ReadOnly | QIODevice::Text)) return request;
-    QTextStream stream(&input);
-    request.url = stream.readLine();
-    request.title = stream.readLine();
-    request.userAgent = stream.readLine();
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine();
+    // A byte at a time and unbuffered: what follows the request on this pipe
+    // is for the thread that reads it later, and a buffer here would swallow it.
+    bool open = true;
+    const auto read_line = [&open]() {
+        QByteArray line;
+        char c = 0;
+        for (;;) {
+            if (::read(STDIN_FILENO, &c, 1) != 1) {
+                open = false;
+                break;
+            }
+            if (c == '\n') break;
+            line.append(c);
+        }
+        return QString::fromUtf8(line);
+    };
+    request.url = read_line();
+    request.title = read_line();
+    request.userAgent = read_line();
+    while (open) {
+        const QString line = read_line();
         // The request ends here and the pipe stays open: the answer to a
         // navigation this viewer blocked arrives on the same stdin
         // later, so reading to EOF would wait forever. Run by hand with
@@ -245,7 +256,8 @@ int main(int argc, char** argv) {
     // Off-the-record: the app owns the session, so this window keeps no
     // profile of its own on disk to drift out of sync with it.
     auto* profile = new QWebEngineProfile(&app);
-    const bool login = request.userAgent == QLatin1String(stud::web::kLoginRequest);
+    const bool login = request.userAgent.startsWith(QLatin1String(stud::web::kLoginRequest));
+    const bool prepared = request.userAgent == QLatin1String(stud::web::kLoginPreparedRequest);
 
     // Ask Roblox for its mobile layout, which is what makes these panels
     // show the requested thing and nothing else.
@@ -359,19 +371,44 @@ int main(int argc, char** argv) {
     auto* page = new BridgePage(profile, view);
     view->setPage(page);
     if (login) {
+        // The bare page the app's panels get, without the agent that gets it
+        // for them: that agent is what sends a login to the app's own check.
+        // A constructed sheet, because at this point there is no document
+        // element to add one to; in the viewer's own script world, which the
+        // site's policy on styles does not reach.
+        QWebEngineScript bare;
+        bare.setName(QStringLiteral("stud-login-bare-page"));
+        bare.setInjectionPoint(QWebEngineScript::DocumentCreation);
+        bare.setWorldId(QWebEngineScript::ApplicationWorld);
+        bare.setRunsOnSubFrames(false);
+        bare.setSourceCode(QStringLiteral(
+            "const css = new CSSStyleSheet();"
+            "css.replaceSync('#navigation-container, #footer-container, #downloadInstallerIFrame"
+            " { display: none !important; }"
+            " #content { padding-top: 0 !important; }"
+            " body { margin-bottom: 0 !important; }');"
+            "document.adoptedStyleSheets = [css];"));
+        profile->scripts()->insert(bare);
         page->beAPlainBrowser();
         page->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
         page->settings()->setAttribute(QWebEngineSettings::PdfViewerEnabled, true);
 #endif
     }
+    int login_fullscreen = 0;
+    const auto reveal = [&window, &login_fullscreen]() {
+        login_fullscreen != 0 ? window.showFullScreen() : window.show();
+        // This window is up: the game window can go.
+        std::printf("ready\n");
+        std::fflush(stdout);
+    };
     // The rest of the conversation with Stud: an answer to a navigation
     // this viewer blocked. One line, "load <url>", meaning the engine
     // did not want it after all. A thread rather than a socket notifier
     // because stdin here is an ordinary pipe and this reads whole lines;
     // the load itself is posted to the GUI thread, which is the only one
     // allowed to touch the page.
-    std::thread([page]() {
+    std::thread([page, prepared, reveal]() {
         std::string pending;
         char buffer[4096];
         for (;;) {
@@ -391,8 +428,11 @@ int main(int argc, char** argv) {
                 const QString url = QString::fromStdString(line.substr(sizeof(kLoad) - 1));
                 QMetaObject::invokeMethod(
                     page,
-                    [page, url, load]() {
-                        if (load) {
+                    [page, url, load, prepared, reveal]() {
+                        if (prepared && load) {
+                            if (page->url() != QUrl(url)) page->setUrl(QUrl(url));
+                            reveal();
+                        } else if (load) {
                             page->loadAllowed(url);
                         } else {
                             // The app took it: no page load, and the
@@ -429,7 +469,7 @@ int main(int argc, char** argv) {
     // suits that rather than filling the screen.
     window.resize(720, 620);
     // A login stands in for the game window, at its size and under its name.
-    int login_width = 0, login_height = 0, login_fullscreen = 0;
+    int login_width = 0, login_height = 0;
     if (login) {
         QGuiApplication::setDesktopFileName(QStringLiteral(STUD_APP_ID));
         if (std::sscanf(qgetenv("STUD_LOGIN_WINDOW").constData(), "%d %d %d", &login_width,
@@ -448,18 +488,12 @@ int main(int argc, char** argv) {
     // the outside, to one that loads and then cannot finish, so say
     // which it is.
     QObject::connect(view, &QWebEngineView::loadFinished, view,
-                     [view, login, login_fullscreen, &window, &session_cookie](bool ok) {
+                     [view, login, &session_cookie](bool ok) {
         std::printf("stud-webview: page load %s\n", ok ? "finished" : "FAILED");
         std::fflush(stdout);
         // The site moves on to its home page once it has signed the user in.
         if (login) {
             if (!session_cookie.isEmpty()) QApplication::quit();
-            if (!window.isVisible()) {
-                login_fullscreen != 0 ? window.showFullScreen() : window.show();
-                // The page is on screen: the game window can go.
-                std::printf("ready\n");
-                std::fflush(stdout);
-            }
             return;
         }
         if (!ok) return;
@@ -511,7 +545,13 @@ int main(int argc, char** argv) {
                          std::fflush(stdout);
                      });
     view->setUrl(url);
-    // A login shows once there is a page to show, see loadFinished above.
-    if (!login) window.show();
+    if (login) {
+        // Not waiting for the page, which takes seconds. Black until it paints,
+        // as the game window is, rather than a flash of white.
+        page->setBackgroundColor(Qt::black);
+        if (!prepared) reveal();
+    } else {
+        window.show();
+    }
     return app.exec();
 }

@@ -2935,7 +2935,10 @@ int main(int argc, char** argv) {
             // add to it. Domain-wide, because the login itself is posted to
             // auth.roblox.com.
             if (url == stud::web::kLoginPageUrl || url == stud::web::kSignUpPageUrl) {
-                std::string request = url + "\n" + title + "\n" + stud::web::kLoginRequest + "\n";
+                std::string request = url + "\n" + title + "\n" +
+                                      (title.empty() ? stud::web::kLoginPreparedRequest
+                                                     : stud::web::kLoginRequest) +
+                                      "\n";
                 for (const auto& header : stud::jni_bridge::current_session_cookies()) {
                     if (header.rfind("rbxas=", 0) == 0) request += header + "\n";
                 }
@@ -2945,6 +2948,7 @@ int main(int argc, char** argv) {
                     static_cast<uint32_t>(request.size()), nullptr, 0, nullptr);
                 return;
             }
+            stud::jni_bridge::discard_prepared_login();
             // url \n title \n app token \n cookie..., the viewer reads
             // this on its stdin.
             //
@@ -3042,6 +3046,13 @@ int main(int argc, char** argv) {
             stud::render_client::connection().call(
                 stud::render_host::CallId::CloseWebView, args, nullptr, 0, nullptr, 0, nullptr);
         });
+    stud::jni_bridge::set_login_page_shower([](const std::string& url) {
+        uint64_t args[8] = {};
+        stud::render_client::connection().call(
+            stud::render_host::CallId::WebViewLoadUrl, args, url.data(),
+            static_cast<uint32_t>(url.size()), nullptr, 0, nullptr);
+    });
+    if (!stud::jni_bridge::has_session_cookie()) stud::jni_bridge::prepare_login_page();
 
     // gameActivity_onExperienceStart() is deliberately NOT used to start
     // the game any more; see start_game_for_launch_request above for why

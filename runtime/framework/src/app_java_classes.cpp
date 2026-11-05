@@ -745,6 +745,8 @@ void NativeHelperJava::gameActivity_onAppReady(std::shared_ptr<FakeJni::JString>
     experience_loaded_storage().store(false);
     // Landing also shows for a moment on the way to Home with a session
     // restored; LoginV2 is asked for, by Log In or by adding an account.
+    // Landing also shows for a moment on the way to Home with a session
+    // restored; LoginV2 is asked for, by Log In or by adding an account.
     if (screen == "LoginV2" || (screen == "Landing" && !has_session_cookie())) {
         open_login_page(stud::web::kLoginPageUrl, "Log in to Roblox");
     } else if (screen == "SinglePageSignUp") {

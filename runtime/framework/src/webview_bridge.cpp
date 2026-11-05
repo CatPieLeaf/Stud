@@ -4,6 +4,7 @@
 #include "stud/hybrid_command.h"
 #include "stud/json_field.h"
 #include "stud/web_origin.h"
+#include "stud/webview_cookies.h"
 #include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
@@ -69,6 +70,15 @@ std::function<void(const std::string&, const std::string&)>& panel_opener() {
 }
 std::atomic<bool> g_security_check_open{false};
 std::atomic<bool> g_login_open{false};
+std::atomic<bool> g_login_prepared{false};
+std::function<void(const std::string&)>& login_page_shower() {
+    static std::function<void(const std::string&)> shower;
+    return shower;
+}
+std::function<void()>& panel_closer() {
+    static std::function<void()> closer;
+    return closer;
+}
 std::atomic<bool> g_web_login_enabled{true};
 
 std::mutex& ids_mutex() {
@@ -137,6 +147,7 @@ bool run_webview_protocol_bootstrap(
     std::function<void(const std::string& url, const std::string& title)> on_open,
     std::function<void()> on_close) {
     panel_opener() = on_open;
+    panel_closer() = on_close;
     const WebViewProtocolIds ids = read_webview_protocol_ids(jvm, lib);
     if (!ids.valid) {
         std::fprintf(stderr, "stud: webview: protocol identifiers unavailable, not registering\n");
@@ -247,15 +258,36 @@ void open_security_check(const std::string& payload) {
 
 void set_web_login_enabled(bool enabled) { g_web_login_enabled.store(enabled); }
 
+void set_login_page_shower(std::function<void(const std::string&)> shower) {
+    login_page_shower() = std::move(shower);
+}
+
+void prepare_login_page() {
+    if (!g_web_login_enabled.load() || !panel_opener() || g_login_open.load() ||
+        g_login_prepared.exchange(true)) {
+        return;
+    }
+    panel_opener()(stud::web::kLoginPageUrl, "");
+}
+
+void discard_prepared_login() {
+    if (g_login_prepared.exchange(false) && panel_closer()) panel_closer()();
+}
+
 void open_login_page(const char* url, const char* title) {
     // Landing and the form behind its button both ask, so one window answers.
-    if (g_web_login_enabled.load() && panel_opener() && !g_login_open.exchange(true)) {
+    if (!g_web_login_enabled.load() || !panel_opener() || g_login_open.exchange(true)) return;
+    if (g_login_prepared.exchange(false) && login_page_shower()) {
+        login_page_shower()(url);
+    } else {
         panel_opener()(url, title);
     }
 }
 
 void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib) {
     g_login_open.store(false);
+    g_login_prepared.store(false);
+    if (!has_session_cookie()) prepare_login_page();
     if (g_security_check_open.exchange(false)) {
         static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
         FakeJni::LocalFrame frame(jvm);
