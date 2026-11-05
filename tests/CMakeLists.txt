@@ -38,6 +38,14 @@ add_executable(stud_socket_reader_test socket_reader_test.cpp)
 target_include_directories(stud_socket_reader_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/src)
 add_test(NAME socket_reader_test COMMAND stud_socket_reader_test)
 
+add_executable(stud_discord_rpc_test discord_rpc_test.cpp
+               ${PROJECT_SOURCE_DIR}/render-host/src/discord_rpc.cpp)
+target_include_directories(stud_discord_rpc_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
+find_package(Threads REQUIRED)
+target_link_libraries(stud_discord_rpc_test PRIVATE Threads::Threads)
+add_test(NAME discord_rpc_test COMMAND stud_discord_rpc_test
+         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 add_executable(stud_range_inside_test range_inside_test.cpp)
 target_include_directories(stud_range_inside_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
 add_test(NAME range_inside_test COMMAND stud_range_inside_test)

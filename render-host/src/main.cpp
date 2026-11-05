@@ -4166,8 +4166,7 @@ int main(int argc, char** argv) {
     stud::render_host::audio_start_output_device();
 
     // Discord rich presence, if the user enabled it. Connecting when
-    // Discord is not running is not an error; it retries on the next
-    // presence change.
+    // Discord is not running is not an error; it keeps retrying.
     if (g_discord_enabled) {
         stud::render_host::discord_rpc_start(stud::render_host::kDiscordApplicationId);
     }

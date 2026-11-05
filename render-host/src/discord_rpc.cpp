@@ -6,11 +6,13 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace stud::render_host {
@@ -26,6 +28,9 @@ int g_fd = -1;
 std::string g_application_id;
 std::mutex g_mutex;
 int64_t g_nonce = 0;
+// What should be showing, so a Discord that appears later gets it too.
+GamePresence g_presence;
+bool g_has_presence = false;
 
 std::string runtime_dir() {
     if (const char* xdg = std::getenv("XDG_RUNTIME_DIR")) return xdg;
@@ -145,7 +150,7 @@ bool connect_locked() {
                 close_connection();
                 return false;
             }
-            std::printf("stud-render-host: Discord rich presence connected\n");
+            std::printf("stud-render-host: Discord rich presence connected: %s\n", path.c_str());
             std::fflush(stdout);
             return true;
         }
@@ -154,22 +159,8 @@ bool connect_locked() {
     return false;
 }
 
-}  // namespace
-
-void discord_rpc_start(const std::string& application_id) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_application_id = application_id;
-    if (g_application_id.empty()) return;
-    // Discord not running is an ordinary condition, not an error: the
-    // connection is retried the next time the presence changes.
-    connect_locked();
-}
-
-void discord_rpc_set_game(const GamePresence& presence) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_application_id.empty()) return;
-    if (!connect_locked()) return;
-
+void send_presence_locked() {
+    const GamePresence& presence = g_presence;
     std::string activity = "{";
     if (presence.universe_name.empty()) {
         // Not in an experience. The presence stays, showing Stud itself
@@ -203,14 +194,51 @@ void discord_rpc_set_game(const GamePresence& presence) {
                                  std::to_string(::getpid()) + ",\"activity\":" + activity +
                                  "},\"nonce\":\"" + std::to_string(++g_nonce) + "\"}";
     if (!send_frame(kOpFrame, payload)) {
-        // Discord went away. Drop the connection so the next update
+        // Discord went away. Drop the connection so keep_connected()
         // reconnects rather than writing into a dead socket forever.
         close_connection();
     }
 }
 
+// Discord can open after Stud, and restart under it. Equibop and Vesktop do
+// this the most: their RPC server lives and dies with the app and replaces
+// its socket each time. Retrying only on a presence change left someone who
+// stays in one game with nothing, so this watches the connection and shows
+// the current presence on every new one.
+void keep_connected() {
+    constexpr auto kRetryInterval = std::chrono::seconds(5);
+    for (;;) {
+        std::this_thread::sleep_for(kRetryInterval);
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_application_id.empty()) return;
+        if (g_fd >= 0 && drain_replies()) continue;
+        close_connection();
+        if (connect_locked() && g_has_presence) send_presence_locked();
+    }
+}
+
+}  // namespace
+
+void discord_rpc_start(const std::string& application_id) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_application_id = application_id;
+    if (g_application_id.empty()) return;
+    // Discord not running is an ordinary condition, not an error.
+    connect_locked();
+    std::thread(keep_connected).detach();
+}
+
+void discord_rpc_set_game(const GamePresence& presence) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_application_id.empty()) return;
+    g_presence = presence;
+    g_has_presence = true;
+    if (connect_locked()) send_presence_locked();
+}
+
 void discord_rpc_stop() {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_application_id.clear();
     if (g_fd < 0) return;
     const std::string payload = "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" +
                                  std::to_string(::getpid()) + "},\"nonce\":\"" +
