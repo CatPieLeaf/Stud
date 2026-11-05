@@ -7975,12 +7975,6 @@ bool upload(Loader& l, const std::string& path, Texture& t, bool repeat) {
     vci.image = t.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = format;
-    // A DXT5nm normal keeps x in alpha; the material shaders, rewritten to
-    // read RGB normal maps, take x from red.
-    if (block) {
-        vci.components = {VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B,
-                          VK_COMPONENT_SWIZZLE_R};
-    }
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
     if (l.vk.vkCreateImageView(l.device, &vci, nullptr, &t.view) != VK_SUCCESS) return false;
     VkSamplerCreateInfo sci{};
