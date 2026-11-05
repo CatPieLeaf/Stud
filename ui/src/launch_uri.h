@@ -37,7 +37,10 @@ namespace stud::ui {
 struct LaunchUri {
     std::string launch_mode;          // e.g. "play", "app"
     std::string game_info;            // the real, opaque join ticket
-    std::string place_launcher_url;   // real PlaceLauncher.ashx URL (see its own real-404 caveat, ui/src/main.cpp's fetch_place_launcher_info())
+    // Read for its query string and nothing else. It comes from a link
+    // anyone can write, so it is never requested: the session cookie on
+    // that request would go to whatever host the link names.
+    std::string place_launcher_url;
     std::string launch_time;
     std::string browser_tracker_id;
     std::string roblox_locale;

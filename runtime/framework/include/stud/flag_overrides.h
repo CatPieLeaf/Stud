@@ -52,7 +52,8 @@ public:
     // Loads overrides from a Stud config JSON file: flat
     // {"FlagName": <bool|int|string>, ...}. Throws std::runtime_error on a
     // malformed file (missing file is not an error, returns empty
-    // overrides, since having no override file is the common case).
+    // overrides, since having no override file is the common case). One
+    // value of any other type is logged and skipped, the rest still load.
     static FlagOverrides load_from_file(const std::string& path);
 
     // The payload for nativePreloadFlagOverrides; see wire-format note

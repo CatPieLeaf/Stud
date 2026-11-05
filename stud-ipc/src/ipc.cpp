@@ -42,7 +42,6 @@ nlohmann::json to_json(const LaunchPayload& payload) {
         {"baseUrl", payload.base_url},
         {"apiBaseUrl", payload.api_base_url},
         {"gameInfo", payload.game_info},
-        {"placeLauncherUrl", payload.place_launcher_url},
         {"clientSettingsBody", payload.client_settings_body},
         {"clientSettingsHttpStatus", payload.client_settings_http_status},
         {"authenticatedUserId", payload.authenticated_user_id},
@@ -50,7 +49,6 @@ nlohmann::json to_json(const LaunchPayload& payload) {
         {"authenticatedDisplayName", payload.authenticated_display_name},
         {"freshLogin", payload.fresh_login},
         {"webLogin", payload.web_login},
-        {"placeLauncherResponse", payload.place_launcher_response},
         {"deepLinkPlaceId", payload.deep_link_place_id},
         {"deepLinkJoinAttemptId", payload.deep_link_join_attempt_id},
         {"deepLinkReferredByPlayerId", payload.deep_link_referred_by_player_id},
@@ -66,9 +64,9 @@ LaunchPayload from_json(const nlohmann::json& doc) {
     LaunchPayload payload;
     if (doc.contains("sessionCookie") && doc.at("sessionCookie").is_string()) {
         payload.session_cookie = doc.at("sessionCookie").get<std::string>();
-        if (doc.contains("systemDarkMode")) {
-            payload.system_dark_mode = doc.at("systemDarkMode").get<bool>();
-        }
+    }
+    if (doc.contains("systemDarkMode") && doc.at("systemDarkMode").is_boolean()) {
+        payload.system_dark_mode = doc.at("systemDarkMode").get<bool>();
     }
     if (doc.contains("baseUrl") && doc.at("baseUrl").is_string()) {
         payload.base_url = doc.at("baseUrl").get<std::string>();
@@ -78,9 +76,6 @@ LaunchPayload from_json(const nlohmann::json& doc) {
     }
     if (doc.contains("gameInfo") && doc.at("gameInfo").is_string()) {
         payload.game_info = doc.at("gameInfo").get<std::string>();
-    }
-    if (doc.contains("placeLauncherUrl") && doc.at("placeLauncherUrl").is_string()) {
-        payload.place_launcher_url = doc.at("placeLauncherUrl").get<std::string>();
     }
     if (doc.contains("clientSettingsBody") && doc.at("clientSettingsBody").is_string()) {
         payload.client_settings_body = doc.at("clientSettingsBody").get<std::string>();
@@ -102,9 +97,6 @@ LaunchPayload from_json(const nlohmann::json& doc) {
     }
     if (doc.contains("freshLogin") && doc.at("freshLogin").is_boolean()) {
         payload.fresh_login = doc.at("freshLogin").get<bool>();
-    }
-    if (doc.contains("placeLauncherResponse") && doc.at("placeLauncherResponse").is_string()) {
-        payload.place_launcher_response = doc.at("placeLauncherResponse").get<std::string>();
     }
     if (doc.contains("deepLinkPlaceId") && doc.at("deepLinkPlaceId").is_number()) {
         payload.deep_link_place_id = doc.at("deepLinkPlaceId").get<long long>();
@@ -196,10 +188,15 @@ void serve_launch_payload_once(const std::string& socket_path, const LaunchPaylo
         throw IpcError(std::string("stud::ipc: accept() failed: ") + std::strerror(errno));
     }
 
-    std::string body = to_json(payload).dump();
+    // client_settings_body is whatever the network sent, and a plain dump()
+    // throws on bytes that are not UTF-8.
+    std::string body =
+        to_json(payload).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     size_t total_written = 0;
     while (total_written < body.size()) {
-        ssize_t written = ::write(conn_fd, body.data() + total_written, body.size() - total_written);
+        // A client that died mid-handoff is an error here, not a SIGPIPE.
+        ssize_t written = ::send(conn_fd, body.data() + total_written,
+                                 body.size() - total_written, MSG_NOSIGNAL);
         if (written <= 0) {
             ::close(conn_fd);
             throw IpcError(std::string("stud::ipc: write() failed: ") + std::strerror(errno));

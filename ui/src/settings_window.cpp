@@ -877,7 +877,7 @@ void SettingsWindow::onSaveClicked() {
         // The engine checked above is this APK's; it becomes the cache.
         const std::string so_path = stud::android_glue::default_libroblox_cache_path();
         if (std::rename(candidate_so.c_str(), so_path.c_str()) == 0) {
-            std::ofstream(so_path + ".source", std::ios::trunc)
+            std::ofstream(stud::paths::engine_source_stamp_path(), std::ios::trunc)
                 << stud::android_glue::apk_source_fingerprint(stored.toStdString()) << "\n";
         }
     }
@@ -898,7 +898,7 @@ void SettingsWindow::onSaveClicked() {
     // same path after replacing the file with a newer build has to
     // re-extract, and it silently did not.
     const std::string apk_fingerprint = stud::android_glue::apk_source_fingerprint(apk);
-    const std::string fingerprint_path = cache_path + ".source";
+    const std::string fingerprint_path = stud::paths::engine_source_stamp_path();
     std::string cached_fingerprint;
     if (std::ifstream stamp{fingerprint_path}) std::getline(stamp, cached_fingerprint);
     if (QFile::exists(stored) &&

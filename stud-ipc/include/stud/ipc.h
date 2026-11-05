@@ -34,14 +34,13 @@ struct LaunchPayload {
     // Present when the UI process was invoked via a real
     // roblox-player:/roblox: launch URI (see ui/src/launch_uri.h),
     // empty otherwise (e.g. a normal, non-magnet-link launch). The real
-    // per-game auth ticket and join-info URL, once M9 can actually use
-    // them to join a specific game rather than just boot the engine.
+    // per-game auth ticket, once M9 can actually use it to join a specific
+    // game rather than just boot the engine.
     std::string game_info;
-    std::string place_launcher_url;
-    // Real fields parsed out of place_launcher_url's own query string
+    // Real fields parsed out of the link's placelauncherurl query string
     // (see ui/src/launch_uri.h's own doc comment), map directly onto
     // real StartGameParams fields (start_game_params.h, traced through the app's own code).
-    // Zero/empty if there was no place_launcher_url or it didn't carry
+    // Zero/empty if there was no such URL or it didn't carry
     // that field.
     long long deep_link_place_id = 0;
     std::string deep_link_join_attempt_id;
@@ -97,22 +96,6 @@ struct LaunchPayload {
     bool fresh_login = false;
     // The webLogin setting; see stud/settings.h.
     bool web_login = true;
-
-    // Raw response body from GET-ing place_launcher_url above (with
-    // the real session cookie): Roblox's own public, real,
-    // community-documented PlaceLauncher.ashx?request=RequestGame
-    // endpoint, the same one third-party Roblox launchers use to turn a
-    // deep-link's opaque join ticket into real server-join info (place,
-    // access ticket, server address). Deliberately NOT parsed into
-    // individual fields yet: this project has no live-captured real
-    // response to ground-truth the current exact JSON schema against
-    // (Roblox has changed it before), so this is evidence-gathering:
-    // real, honest raw text, logged and carried through so a real
-    // response can actually be inspected, not a guessed field mapping
-    // into StartGameParams that could silently be wrong. Empty if there
-    // was no place_launcher_url, the fetch failed, or no cookie was
-    // available, same honest-degradation pattern as client_settings_body.
-    std::string place_launcher_response;
 };
 
 class IpcError : public std::runtime_error {

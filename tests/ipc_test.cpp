@@ -45,14 +45,12 @@ int main(int argc, char** argv) {
     sent.base_url = "https://www.roblox.com";
     sent.api_base_url = "https://apis.roblox.com";
     sent.game_info = "FAKE_AUTH_TICKET_VALUE";
-    sent.place_launcher_url = "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame";
     sent.client_settings_body = R"({"applicationSettings":{"FakeFlag":"true"}})";
     sent.client_settings_http_status = 200;
     sent.deep_link_place_id = 1818;
     sent.deep_link_join_attempt_id = "f923ce81-874a-4ce8-af0d-bc365d3a2153";
     sent.deep_link_referred_by_player_id = 42;
     sent.deep_link_join_attempt_origin = "PlayButton";
-    sent.place_launcher_response = R"({"status":404,"note":"real endpoint 404s; see the engineering notes"})";
 
     std::thread server_thread(
         [&]() { stud::ipc::serve_launch_payload_once(socket_path, sent, /*timeout_ms=*/5000); });
@@ -79,8 +77,6 @@ int main(int argc, char** argv) {
     check(received.api_base_url == sent.api_base_url, "API base URL round-trips exactly");
     check(received.game_info == sent.game_info,
           "gameInfo (the real per-launch auth ticket) round-trips exactly");
-    check(received.place_launcher_url == sent.place_launcher_url,
-          "placeLauncherUrl round-trips exactly");
     check(received.client_settings_body == sent.client_settings_body,
           "clientSettingsBody (the UI process's own pre-fetched ClientSettings content) round-trips "
           "exactly");
@@ -94,8 +90,26 @@ int main(int argc, char** argv) {
           "deepLinkReferredByPlayerId round-trips exactly");
     check(received.deep_link_join_attempt_origin == sent.deep_link_join_attempt_origin,
           "deepLinkJoinAttemptOrigin round-trips exactly");
-    check(received.place_launcher_response == sent.place_launcher_response,
-          "placeLauncherResponse round-trips exactly");
+
+    // Bytes that are not UTF-8: a settings body is whatever the network sent,
+    // and this runs on a thread nothing else would catch a throw on.
+    stud::ipc::LaunchPayload invalid = sent;
+    invalid.client_settings_body = "before \xff after";
+    std::thread invalid_server(
+        [&]() { stud::ipc::serve_launch_payload_once(socket_path, invalid, /*timeout_ms=*/5000); });
+    stud::ipc::LaunchPayload repaired;
+    connected = false;
+    for (int attempt = 0; attempt < 50 && !connected; ++attempt) {
+        try {
+            repaired = stud::ipc::receive_launch_payload(socket_path);
+            connected = true;
+        } catch (const stud::ipc::IpcError&) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+    invalid_server.join();
+    check(connected && repaired.session_cookie == sent.session_cookie,
+          "a payload with invalid UTF-8 still arrives");
 
     // Timeout path: a server with no client ever connecting throws
     // IpcError instead of hanging forever.

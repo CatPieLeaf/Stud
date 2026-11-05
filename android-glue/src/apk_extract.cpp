@@ -4,10 +4,11 @@
 #include <miniz.h>
 #include <miniz_zip.h>
 
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,6 +40,29 @@ std::string parent_directory(const std::string& path) {
 std::string base_name(const std::string& path) {
     size_t pos = path.find_last_of('/');
     return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+// Writes a zip entry as a new file at `dest`.
+//
+// miniz's own extract_to_file is a plain fopen, and these destinations are
+// in directories the sandbox can write, with stud-ui on the other side of
+// it: a name there can be a symlink to anything of the user's, and the
+// bytes come from an APK the sandbox can rewrite as well. So the name is
+// taken away first and the new file refuses to be anything else.
+bool extract_as_new_file(mz_zip_archive& zip, mz_uint index, const std::string& dest) {
+    ::unlink(dest.c_str());
+    const int fd = ::open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666);
+    if (fd < 0) return false;
+    FILE* file = ::fdopen(fd, "wb");
+    if (file == nullptr) {
+        ::close(fd);
+        return false;
+    }
+    const bool extracted = mz_zip_reader_extract_to_cfile(&zip, index, file, 0);
+    const bool closed = std::fclose(file) == 0;
+    if (extracted && closed) return true;
+    ::unlink(dest.c_str());
+    return false;
 }
 
 // Whether a zip entry's relative path stays under the directory it is
@@ -162,8 +186,7 @@ std::vector<std::string> unpack_bundle_members(const std::string& bundle_path,
         const bool already_extracted =
             ::stat(dest_path.c_str(), &existing) == 0 &&
             static_cast<mz_uint64>(existing.st_size) == stat.m_uncomp_size;
-        if (!already_extracted &&
-            !mz_zip_reader_extract_to_file(&zip, i, dest_path.c_str(), 0)) {
+        if (!already_extracted && !extract_as_new_file(zip, i, dest_path)) {
             std::string error = mz_zip_get_error_string(mz_zip_get_last_error(&zip));
             throw stud::android_glue::ExtractError("stud: failed to extract '" + std::string(name) + "' from bundle '" +
                                 bundle_path + "': " + error);
@@ -328,7 +351,7 @@ void extract_assets_from_single_apk(const std::string& apk_path, const std::stri
         std::string dest_path = dest_dir + "/" + relative;
         make_directories(parent_directory(dest_path));
 
-        if (!mz_zip_reader_extract_to_file(&zip, i, dest_path.c_str(), 0)) {
+        if (!extract_as_new_file(zip, i, dest_path)) {
             std::string error = mz_zip_get_error_string(mz_zip_get_last_error(&zip));
             mz_zip_reader_end(&zip);
             throw ExtractError("stud: failed to extract '" + std::string(name) + "' from APK '" +
@@ -359,7 +382,7 @@ void extract_native_library_from_single_apk(const std::string& apk_path,
 
     make_directories(parent_directory(dest_path));
 
-    if (!mz_zip_reader_extract_to_file(&zip, static_cast<mz_uint>(file_index), dest_path.c_str(), 0)) {
+    if (!extract_as_new_file(zip, static_cast<mz_uint>(file_index), dest_path)) {
         std::string error = mz_zip_get_error_string(mz_zip_get_last_error(&zip));
         mz_zip_reader_end(&zip);
         throw ExtractError("stud: failed to extract '" + entry_name + "' from APK '" + apk_path +
@@ -383,20 +406,8 @@ std::string apk_source_fingerprint(const std::string& apk_path) {
            std::to_string(static_cast<long long>(st.st_mtime));
 }
 
-std::string default_libroblox_cache_path() {
-    if (const char* xdg_cache_home = std::getenv("XDG_CACHE_HOME")) {
-        return std::string(xdg_cache_home) + "/stud/libroblox.so";
-    }
-    const char* home = std::getenv("HOME");
-    return std::string(home ? home : "") + "/.cache/stud/libroblox.so";
-}
+std::string default_libroblox_cache_path() { return cache_root() + "/libroblox.so"; }
 
-std::string default_assets_cache_dir() {
-    if (const char* xdg_cache_home = std::getenv("XDG_CACHE_HOME")) {
-        return std::string(xdg_cache_home) + "/stud/assets";
-    }
-    const char* home = std::getenv("HOME");
-    return std::string(home ? home : "") + "/.cache/stud/assets";
-}
+std::string default_assets_cache_dir() { return cache_root() + "/assets"; }
 
 }  // namespace stud::android_glue

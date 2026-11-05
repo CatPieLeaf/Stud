@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fstream>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -88,6 +89,23 @@ int main(int argc, char** argv) {
           "AAsset_getBuffer's zero-copy mapping shows the real cacert.pem bytes");
 
     AAsset_close(asset);
+
+    // The extraction directory is writable from the sandbox, so a symlink
+    // planted at the destination must be replaced, never written through.
+    {
+        const std::string victim = dest_dir + "/symlink_victim";
+        const std::string planted = dest_dir + "/planted_libroblox.so";
+        std::ofstream(victim) << "untouched";
+        ::unlink(planted.c_str());
+        check(::symlink(victim.c_str(), planted.c_str()) == 0, "symlink planted");
+        stud::android_glue::extract_apk_native_library(apk_path, "libroblox.so", planted);
+        std::ifstream f(victim);
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        check(content == "untouched", "extraction does not write through a planted symlink");
+        struct stat info {};
+        check(::lstat(planted.c_str(), &info) == 0 && S_ISREG(info.st_mode),
+              "the planted symlink is replaced by a real file");
+    }
 
     // M8: real native-library extraction (lib/x86_64/<name>).
     std::string so_dest = dest_dir + "/extracted_libroblox.so";

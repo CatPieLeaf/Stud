@@ -44,8 +44,10 @@ FlagOverrides FlagOverrides::load_from_file(const std::string& path) {
         } else if (value.is_string()) {
             result.set(name, value.get<std::string>());
         } else {
-            throw std::runtime_error("stud: FFlag override '" + name + "' in '" + path +
-                                      "' has an unsupported value type (must be bool, int, or string)");
+            std::fprintf(stderr,
+                         "stud: !!! FFlag override '%s' in '%s' skipped: its value must be a "
+                         "bool, int or string\n",
+                         name.c_str(), path.c_str());
         }
     }
 

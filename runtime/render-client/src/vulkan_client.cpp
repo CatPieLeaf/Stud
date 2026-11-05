@@ -2538,8 +2538,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
     std::unique_lock<std::recursive_mutex> lock(mapped_mutex());
     // A map's entries stay put, so this holds across the unlock below. Only the
     // caller can free this memory, and it hasn't got its pointer yet.
+    mapped_ranges().erase(to_u64(memory));
     auto& slot = mapped_ranges()[to_u64(memory)];
-    slot = MappedRange{};
     slot.offset = offset;
     slot.device = device;
     // Prefer the write barrier; fall back to a plain buffer if it cannot

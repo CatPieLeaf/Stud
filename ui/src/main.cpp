@@ -803,43 +803,6 @@ void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
                 payload.authenticated_user_id, payload.authenticated_username.c_str());
 }
 
-// Public, community-documented Roblox endpoint
-// (PlaceLauncher.ashx?request=RequestGame) that every real third-party
-// Roblox launcher uses to turn a deep link's opaque join ticket into
-// real server-join info, confirmed real this session from a real,
-// live roblox-player:// URI's own placelauncherurl field (a complete,
-// ready-to-call URL Roblox's own client embeds in the deep link).
-// Deliberately just fetches and logs the raw response rather than
-// parsing it into StartGameParams fields: this project has no
-// live-captured real response to ground-truth the current exact JSON
-// schema against (Roblox has changed it before, and guessing field
-// names risks silently feeding wrong data into a real game-join call
-// rather than an honest placeholder). No-ops if there's no
-// place_launcher_url or no cookie, same honest-degradation pattern as
-// fetch_client_settings()/fetch_authenticated_user() above.
-void fetch_place_launcher_info(stud::ipc::LaunchPayload& payload) {
-    if (payload.place_launcher_url.empty() || payload.session_cookie.empty()) {
-        return;
-    }
-    QNetworkAccessManager manager;
-    QNetworkRequest request(QUrl(QString::fromStdString(payload.place_launcher_url)));
-    request.setRawHeader("Cookie",
-                          QByteArray::fromStdString(".ROBLOSECURITY=" + payload.session_cookie));
-    std::unique_ptr<QNetworkReply> reply(manager.get(request));
-    QEventLoop loop;
-    QObject::connect(reply.get(), &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        std::fprintf(stderr, "stud: place-launcher fetch failed: %s\n",
-                     reply->errorString().toUtf8().constData());
-        return;
-    }
-    payload.place_launcher_response = reply->readAll().toStdString();
-    std::printf("stud: real place-launcher response (%zu bytes): %s\n",
-                payload.place_launcher_response.size(), payload.place_launcher_response.c_str());
-}
-
 // Real launch flow: extracts the native library + assets from the
 // user's configured APK (already done once, in Settings), launches
 // stud-render-host (Process C: real glibc, hosts the GPU driver; see
@@ -1044,7 +1007,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // points Stud at a newer build has to actually get that build.
     const std::string launch_fingerprint =
         stud::android_glue::apk_source_fingerprint(apk_path);
-    const std::string launch_stamp_path = so_path + ".source";
+    const std::string launch_stamp_path = stud::paths::engine_source_stamp_path();
     std::string launch_cached_fingerprint;
     {
         std::ifstream stamp{launch_stamp_path};
@@ -1221,7 +1184,6 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
                 payload.system_dark_mode ? "dark" : "light");
     if (launch_uri) {
         payload.game_info = launch_uri->game_info;
-        payload.place_launcher_url = launch_uri->place_launcher_url;
         payload.deep_link_place_id = launch_uri->place_id;
         payload.deep_link_join_attempt_id = launch_uri->join_attempt_id;
         payload.deep_link_referred_by_player_id = launch_uri->referred_by_player_id;
@@ -1233,7 +1195,6 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     }
     fetch_client_settings(payload);
     fetch_authenticated_user(payload);
-    fetch_place_launcher_info(payload);
 
     std::string socket_path = stud::ipc::default_socket_path();
 
@@ -1265,7 +1226,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     std::thread payload_thread([socket_path, payload]() {
         try {
             stud::ipc::serve_launch_payload_once(socket_path, payload);
-        } catch (const stud::ipc::IpcError&) {
+        } catch (const std::exception&) {
             // Best-effort handoff, if Process B never connects (e.g.
             // it failed to start), there's nothing further to report
             // here; its own stderr already carries the failure if it

@@ -128,7 +128,10 @@ std::vector<std::string> current_session_cookies() {
     std::vector<std::string> headers;
     headers.reserve(current().size());
     for (const auto& [name, value] : current()) {
-        headers.push_back(name + "=" + value + "; Domain=.roblox.com; Path=/; Secure");
+        // HttpOnly as the site sets it: without it, script on a panel's page
+        // can read the session through document.cookie.
+        headers.push_back(name + "=" + value + "; Domain=.roblox.com; Path=/; Secure" +
+                          (name == ".ROBLOSECURITY" ? "; HttpOnly" : ""));
     }
     return headers;
 }

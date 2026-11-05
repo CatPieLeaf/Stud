@@ -183,8 +183,7 @@ void prune_once() {
 // The cache trades a decode for a file read, and that trade is only
 // worth anything when the read is fast. On a spinning disk a random read
 // costs a seek and the writes compete with the engine's own asset writes,
-// so it is off there by default. So it is off there
-// unless the config file says otherwise.
+// so it is off there unless the config file says otherwise.
 //
 // The kernel answers this directly: a block device reports whether it
 // rotates. The cache directory's device is found by its st_dev, and for
@@ -298,6 +297,10 @@ bool load(uint64_t key_high, uint64_t key_low, void* dst, uint64_t bytes) {
         }
         done += static_cast<uint64_t>(n);
     }
+    // Said outright, for prune_once(): a read barely moves the access time
+    // on a relatime mount and never does on a noatime one.
+    const timespec used[2] = {{0, UTIME_NOW}, {0, UTIME_OMIT}};
+    ::futimens(fd, used);
     ::close(fd);
     return true;
 }

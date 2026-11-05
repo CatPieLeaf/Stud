@@ -81,6 +81,17 @@ int main(int argc, char** argv) {
     }
     check(threw, "malformed override file throws instead of silently misbehaving");
 
+    // One value of an unsupported type costs that flag, not the file.
+    std::string mixed_path = dir + "/mixed.json";
+    {
+        std::ofstream out(mixed_path);
+        out << R"({"FFlagGood": true, "FIntBad": 1.5, "FStringAlsoGood": "x"})";
+    }
+    auto mixed = stud::jni_bridge::FlagOverrides::load_from_file(mixed_path);
+    check(mixed.size() == 2 && mixed.has("FFlagGood") && mixed.has("FStringAlsoGood") &&
+              !mixed.has("FIntBad"),
+          "an unsupported value skips that flag and keeps the others");
+
     std::printf("all flag-overrides checks passed\n");
     return 0;
 }

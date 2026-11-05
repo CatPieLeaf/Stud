@@ -20,10 +20,12 @@ std::size_t page_size() {
     return sz;
 }
 
-// Fixed-capacity registry. A signal handler must not take a lock that
-// ordinary code could already hold, and must not allocate, so this is
-// a flat array of atomics scanned linearly. The engine keeps a handful
-// of mappings live at a time, so the scan is short.
+// Fixed-capacity registry. A signal handler must not allocate or wait on
+// another barrier's lock, so this is a flat array of atomics scanned
+// linearly. The engine keeps a handful of mappings live at a time, so the
+// scan is short. The one lock on the path is the faulting barrier's own,
+// in handle_write_fault(): nothing holding it writes to a protected page,
+// so a thread that faulted can never already be holding it.
 constexpr int kMaxBarriers = 256;
 std::atomic<MappedWriteBarrier*> g_barriers[kMaxBarriers];
 
@@ -48,35 +50,6 @@ bool dispatch_write_fault(void* addr) {
 }  // namespace
 
 MappedWriteBarrier::~MappedWriteBarrier() { release(); }
-
-MappedWriteBarrier& MappedWriteBarrier::operator=(MappedWriteBarrier&& other) noexcept {
-    if (this == &other) return *this;
-    release();
-    base_ = other.base_;
-    size_ = other.size_;
-    pages_ = other.pages_;
-    dirty_ = other.dirty_;
-    speculative_ = other.speculative_;
-    armed_ = other.armed_;
-    dirty_pages_.store(other.dirty_pages_.load(std::memory_order_acquire),
-                       std::memory_order_release);
-    next_page_ = other.next_page_;
-    window_pages_ = other.window_pages_;
-    other.base_ = nullptr;
-    other.size_ = 0;
-    other.pages_ = 0;
-    other.dirty_ = nullptr;
-    other.speculative_ = nullptr;
-    other.armed_ = false;
-    other.dirty_pages_.store(0, std::memory_order_release);
-    other.next_page_ = 0;
-    other.window_pages_ = 1;
-    if (base_ != nullptr) {
-        unregister_barrier(&other);
-        register_barrier(this);
-    }
-    return *this;
-}
 
 void MappedWriteBarrier::release() {
     if (base_ == nullptr) return;
@@ -205,8 +178,8 @@ std::vector<std::pair<std::size_t, std::size_t>> MappedWriteBarrier::take_dirty_
 
 void MappedWriteBarrier::mark_clean_and_protect_locked(std::size_t offset, std::size_t len) {
     if (base_ == nullptr) return;
-    // Clear before protecting, paired with the handler's protect-then-
-    // record order above: a write landing in the gap re-arms its own
+    // Protect before clearing, paired with the handler's unprotect-then-
+    // record order below: a write landing in the gap re-marks its own
     // page and is sent by the next flush. A write that races a submit
     // is already undefined for the application under Vulkan's own
     // host-write visibility rules, so bounding it to "one flush late"

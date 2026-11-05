@@ -38,8 +38,6 @@ public:
 
     MappedWriteBarrier(const MappedWriteBarrier&) = delete;
     MappedWriteBarrier& operator=(const MappedWriteBarrier&) = delete;
-    MappedWriteBarrier(MappedWriteBarrier&& other) noexcept { *this = std::move(other); }
-    MappedWriteBarrier& operator=(MappedWriteBarrier&& other) noexcept;
 
     // Page-aligned allocation the engine writes into. False on failure,
     // in which case the caller must fall back to sending everything.

@@ -95,6 +95,10 @@ inline std::string private_dir() {
 // running session sees it and restarts, and that launch takes it away.
 inline std::string web_login_marker_path() { return private_dir() + "/web-login"; }
 
+// Which APK the extracted engine came from. Not beside the engine: that
+// directory is the sandbox's to write, so a name in it can be a symlink.
+inline std::string engine_source_stamp_path() { return private_dir() + "/libroblox.source"; }
+
 inline bool valid_secret_name(const std::string& name) {
     if (name.empty()) return false;
     for (const char c : name) {

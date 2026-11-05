@@ -42,119 +42,78 @@ void announce(const char* kind, const stud::render_host::Client& c) {
 
 namespace stud::render_client {
 
+// The connect has to finish before any other thread is handed the client,
+// so every caller runs this as a function-local static's initialiser, the
+// one construct the language already serialises for exactly this. A plain
+// `tried` flag is set before connect_to() runs, and a second thread arriving
+// in that window would get a Client whose socket is not open yet.
+//
+// Not fatal: each caller without its own socket falls back as `consequence`
+// says.
+static bool open_client(stud::render_host::Client& client, const char* kind,
+                        const char* consequence) {
+    const std::string path = stud::render_host::default_socket_path();
+    const bool opened = client.connect_to(path);
+    if (!opened) {
+        std::fprintf(stderr, "stud: render-client: %s could not open its own connection to %s%s\n",
+                     kind, path.c_str(), consequence);
+    }
+    announce(kind, client);
+    return opened;
+}
+
 stud::render_host::Client& connection() {
     static stud::render_host::Client client;
-    // The connect has to finish before any other thread is handed this
-    // client. A plain `tried` flag is set before connect_to() runs, so a
-    // second thread arriving in that window gets a Client whose socket is
-    // not open yet. A function-local static's initialiser is the one
-    // construct the language already serialises for exactly this.
-    static const bool tried = [&] {
-        std::string path = stud::render_host::default_socket_path();
-        if (!client.connect_to(path)) {
-            std::fprintf(stderr,
-                         "stud: render-client: failed to connect to stud-render-host at %s "
-                         "(is it running?)\n",
-                         path.c_str());
-        } else if (std::getenv("STUD_IPC_NO_WRITER") == nullptr) {
-            // One thread owns this socket from here on.
-            //
-            // This is the connection the engine drives from many threads
-            // at once, and the only one that had a second producer
-            // (submit and present ran on a queue of their own). That is
-            // what made "is my work on the wire yet" a question worth
-            // blocking on: measured in a real game, the engine's Main
-            // thread spent 13.1% of its wall clock waiting for that other
-            // producer to drain. With one writer the question cannot be
-            // asked, so it cannot be waited on. See Client::start_writer.
-            //
-            // Audio and input keep the plain synchronous path below: each
-            // is driven by one thread and would gain nothing but a thread.
-            client.start_writer();
-        }
-        announce("render", client);
-        return true;
+    static const bool opened = [] {
+        const bool ok = open_client(client, "render", " (is stud-render-host running?)");
+        // One thread owns this socket from here on.
+        //
+        // This is the connection the engine drives from many threads
+        // at once, and the only one that had a second producer
+        // (submit and present ran on a queue of their own). That is
+        // what made "is my work on the wire yet" a question worth
+        // blocking on: measured in a real game, the engine's Main
+        // thread spent 13.1% of its wall clock waiting for that other
+        // producer to drain. With one writer the question cannot be
+        // asked, so it cannot be waited on. See Client::start_writer.
+        //
+        // Audio and input keep the plain synchronous path below: each
+        // is driven by one thread and would gain nothing but a thread.
+        if (ok && std::getenv("STUD_IPC_NO_WRITER") == nullptr) client.start_writer();
+        return ok;
     }();
-    (void)tried;
+    (void)opened;
     return client;
 }
 
 stud::render_host::Client& audio_connection() {
     static stud::render_host::Client client;
-    // The connect has to finish before any other thread is handed this
-    // client. A plain `tried` flag is set before connect_to() runs, so a
-    // second thread arriving in that window gets a Client whose socket is
-    // not open yet. A function-local static's initialiser is the one
-    // construct the language already serialises for exactly this.
-    static const bool tried = [&] {
-        std::string path = stud::render_host::default_socket_path();
-        if (!client.connect_to(path)) {
-            // Not fatal: the caller falls back to the shared connection,
-            // which works but competes with GL for it.
-            std::fprintf(stderr,
-                         "stud: render-client: audio could not open its own connection to %s, "
-                         "sharing the render connection instead\n",
-                         path.c_str());
-        }
-        announce("audio", client);
-        return true;
-    }();
-    (void)tried;
+    static const bool opened =
+        open_client(client, "audio", ", sharing the render connection instead");
+    (void)opened;
     return client;
 }
 
 stud::render_host::Client& readback_connection() {
     static stud::render_host::Client client;
-    static const bool tried = [&] {
-        std::string path = stud::render_host::default_socket_path();
-        if (!client.connect_to(path)) {
-            std::fprintf(stderr,
-                         "stud: render-client: readback could not open its own connection to %s\n",
-                         path.c_str());
-        }
-        announce("readback", client);
-        return true;
-    }();
-    (void)tried;
+    static const bool opened = open_client(client, "readback", "");
+    (void)opened;
     return client;
 }
 
 stud::render_host::Client& video_connection() {
     static stud::render_host::Client client;
-    static const bool tried = [&] {
-        std::string path = stud::render_host::default_socket_path();
-        if (!client.connect_to(path)) {
-            std::fprintf(stderr,
-                         "stud: render-client: video could not open its own connection to %s, "
-                         "sharing the render connection instead\n",
-                         path.c_str());
-        }
-        announce("video", client);
-        return true;
-    }();
-    (void)tried;
+    static const bool opened =
+        open_client(client, "video", ", sharing the render connection instead");
+    (void)opened;
     return client;
 }
 
 stud::render_host::Client& input_connection() {
     static stud::render_host::Client client;
-    // The connect has to finish before any other thread is handed this
-    // client. A plain `tried` flag is set before connect_to() runs, so a
-    // second thread arriving in that window gets a Client whose socket is
-    // not open yet. A function-local static's initialiser is the one
-    // construct the language already serialises for exactly this.
-    static const bool tried = [&] {
-        std::string path = stud::render_host::default_socket_path();
-        if (!client.connect_to(path)) {
-            std::fprintf(stderr,
-                         "stud: render-client: input could not open its own connection to %s, "
-                         "sharing the render connection instead\n",
-                         path.c_str());
-        }
-        announce("input", client);
-        return true;
-    }();
-    (void)tried;
+    static const bool opened =
+        open_client(client, "input", ", sharing the render connection instead");
+    (void)opened;
     return client;
 }
 
