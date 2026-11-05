@@ -558,12 +558,21 @@ jobs:
           podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
           cat cpak-image-digest.txt
 
+      # On its own under an obvious name: a manual run's artifacts are what
+      # testers install from, and `packages` holds a look-alike tar.zst that
+      # pacman refuses with "missing package metadata".
       - uses: actions/upload-artifact@v7
         with:
+          name: arch
+          path: "*.pkg.tar.zst"
+          if-no-files-found: error
+
+      # Only a release pushes the image, so only a release has this file.
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'release'
+        with:
           name: containers
-          path: |
-            *.pkg.tar.zst
-            cpak-image-digest.txt
+          path: cpak-image-digest.txt
           if-no-files-found: error
 
   appimage:
