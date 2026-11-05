@@ -73,6 +73,14 @@ int main() {
     assert(captcha_view_url(R"({"captchaType":"login","cvalueType":"other","cvalue":"1"})").empty());
     assert(captcha_view_url("{}").empty());
 
+    using stud::web::parse_login_field;
+    assert(parse_login_field("roblosecurity abc")->secret == "roblosecurity");
+    assert(parse_login_field("rbxas a b")->value == "a b");
+    assert(!parse_login_field("localstorage abc"));
+    assert(!parse_login_field("../roblosecurity abc"));
+    assert(!parse_login_field("roblosecurity "));
+    assert(!parse_login_field("roblosecurity"));
+
     assert(stud::paths::valid_secret_name("roblosecurity"));
     assert(stud::paths::valid_secret_name("safe-storage_2"));
     assert(!stud::paths::valid_secret_name(""));

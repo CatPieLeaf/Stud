@@ -123,6 +123,11 @@ std::vector<std::string> current_session_cookies() {
     return headers;
 }
 
+bool has_session_cookie() {
+    std::lock_guard<std::mutex> lock(current_mutex());
+    return current().count(".ROBLOSECURITY") != 0;
+}
+
 std::string cookie_names(const std::vector<std::string>& headers) {
     std::string names;
     for (const auto& header : headers) {

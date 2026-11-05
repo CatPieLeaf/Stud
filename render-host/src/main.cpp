@@ -29,6 +29,7 @@
 #include "stud/clipboard.h"
 #include "stud/material_slots.h"
 #include "stud/stud_paths.h"
+#include "stud/web_origin.h"
 #include "stud/ndk_types.h"
 #include <set>
 #include <string>
@@ -491,10 +492,40 @@ void queue_web_view_message(std::string message) {
     g_webview_messages.push_back(std::move(message));
 }
 
+bool run_ui_secret_helper(const char* mode, const std::string& name, const std::string& input,
+                           std::string* capture);
+
+// One field of a finished web login, into the same storage the engine's own
+// session goes to. Waits for each store, because the marker is what ends this
+// session and the next launch reads what was stored. The value is never logged.
+// True once the session itself is stored.
+bool store_web_login_field(const std::string& field) {
+    const auto parsed = stud::web::parse_login_field(field);
+    if (!parsed) return false;
+    std::string ignored;
+    const bool ok = run_ui_secret_helper("--store-secret", parsed->secret, parsed->value + "\n",
+                                         &ignored);
+    std::printf("stud-render-host: web login stored \"%s\" (%zu bytes)%s\n",
+                parsed->secret.c_str(), parsed->value.size(), ok ? "" : ", FAILED");
+    if (ok && parsed->secret == "roblosecurity") {
+        const int marker = ::open(stud::paths::web_login_marker_path().c_str(),
+                                  O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+        if (marker >= 0) ::close(marker);
+        return true;
+    }
+    return false;
+}
+
 // Reads the viewer's own stdout, forwarding the lines its bridge writes
 // and passing everything else through so the viewer's logging still
-// reaches the same place it always did.
-void read_web_view_output(int fd) {
+// reaches the same place it always did. Only the viewer opened for a login
+// can report a session, and that line never reaches the log.
+//
+// A login takes the game window's place: "ready" is the page on screen, which
+// is when the window goes, and it comes back unless the login worked, in which
+// case this session is about to end anyway.
+void read_web_view_output(int fd, bool login) {
+    bool signed_in = false;
     std::string pending;
     char buffer[4096];
     for (;;) {
@@ -508,7 +539,16 @@ void read_web_view_output(int fd) {
             pending.erase(0, newline + 1);
             static constexpr char kNavigate[] = "navigate ";
             static constexpr char kPrefix[] = "hybrid ";
-            if (line.rfind(kNavigate, 0) == 0) {
+            if (login && line == "ready") {
+                std::scoped_lock lock(wayland_mutex(), dispatch_mutex());
+                stud::android_glue::native_window_detach();
+                continue;
+            }
+            if (login && line.rfind(stud::web::kLoginSessionPrefix, 0) == 0) {
+                signed_in = store_web_login_field(
+                                line.substr(std::strlen(stud::web::kLoginSessionPrefix))) ||
+                            signed_in;
+            } else if (line.rfind(kNavigate, 0) == 0) {
                 const std::string url = line.substr(sizeof(kNavigate) - 1);
                 queue_web_view_navigation(url);
                 // The query can carry a one-time join ticket.
@@ -526,6 +566,10 @@ void read_web_view_output(int fd) {
             }
             std::fflush(stdout);
         }
+    }
+    if (login && !signed_in) {
+        std::scoped_lock lock(wayland_mutex(), dispatch_mutex());
+        stud::android_glue::native_window_reattach();
     }
     ::close(fd);
 }
@@ -1208,6 +1252,19 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 std::fflush(stdout);
                 return 0;
             }
+            const size_t agent_start = first_newline == std::string::npos
+                                           ? std::string::npos
+                                           : payload.find('\n', first_newline + 1);
+            const bool login = agent_start != std::string::npos &&
+                               payload.compare(agent_start + 1, payload.find('\n', agent_start + 1) -
+                                                                    agent_start - 1,
+                                               stud::web::kLoginRequest) == 0;
+            int login_width = 0;
+            int login_height = 0;
+            stud::android_glue::native_window_logical_size(&login_width, &login_height);
+            const std::string login_window =
+                std::to_string(login_width) + " " + std::to_string(login_height) + " " +
+                (stud::android_glue::native_window_is_fullscreen() ? "1" : "0");
             int pipe_fds[2] = {-1, -1};
             if (::pipe2(pipe_fds, O_CLOEXEC) != 0) return 0;
             // A second pipe, the other way: the page's JavaScript bridge
@@ -1222,6 +1279,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             }
             const pid_t pid = ::fork();
             if (pid == 0) {
+                if (login) ::setenv("STUD_LOGIN_WINDOW", login_window.c_str(), 1);
                 ::close(pipe_fds[1]);
                 ::close(out_fds[0]);
                 ::dup2(pipe_fds[0], STDIN_FILENO);
@@ -1302,7 +1360,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 ::close(out_fds[0]);
                 return 0;
             }
-            std::thread(read_web_view_output, out_fds[0]).detach();
+            std::thread(read_web_view_output, out_fds[0], login).detach();
             // The sentinel ends the request; the pipe itself stays open,
             // because a blocked navigation is answered down it later.
             // Without the sentinel the viewer would read its cookies

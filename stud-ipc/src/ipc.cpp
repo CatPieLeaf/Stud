@@ -48,6 +48,8 @@ nlohmann::json to_json(const LaunchPayload& payload) {
         {"authenticatedUserId", payload.authenticated_user_id},
         {"authenticatedUsername", payload.authenticated_username},
         {"authenticatedDisplayName", payload.authenticated_display_name},
+        {"freshLogin", payload.fresh_login},
+        {"webLogin", payload.web_login},
         {"placeLauncherResponse", payload.place_launcher_response},
         {"deepLinkPlaceId", payload.deep_link_place_id},
         {"deepLinkJoinAttemptId", payload.deep_link_join_attempt_id},
@@ -94,6 +96,12 @@ LaunchPayload from_json(const nlohmann::json& doc) {
     }
     if (doc.contains("authenticatedDisplayName") && doc.at("authenticatedDisplayName").is_string()) {
         payload.authenticated_display_name = doc.at("authenticatedDisplayName").get<std::string>();
+    }
+    if (doc.contains("webLogin") && doc.at("webLogin").is_boolean()) {
+        payload.web_login = doc.at("webLogin").get<bool>();
+    }
+    if (doc.contains("freshLogin") && doc.at("freshLogin").is_boolean()) {
+        payload.fresh_login = doc.at("freshLogin").get<bool>();
     }
     if (doc.contains("placeLauncherResponse") && doc.at("placeLauncherResponse").is_string()) {
         payload.place_launcher_response = doc.at("placeLauncherResponse").get<std::string>();

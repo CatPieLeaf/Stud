@@ -2439,6 +2439,85 @@ const libdecor_interface kDecorInterface = [] {
 
 extern "C" {
 
+
+// What makes the surface a window on the desktop, as opposed to a surface.
+// The surface outlives it: see native_window_detach().
+static void create_window_role(ANativeWindow* window) {
+    auto& state = wayland_state();
+    // Client-side decorations, when and only when nobody better is
+    // going to draw them. See decoration_mode() above.
+    const bool want_client_side =
+        decoration_mode() == DecorationMode::Client ||
+        (decoration_mode() == DecorationMode::Auto && state.decoration_manager == nullptr);
+    if (want_client_side && libdecor_api().handle != nullptr) {
+        Libdecor& decor = libdecor_api();
+        if (state.decor_context == nullptr) {
+            state.decor_context = decor.create(state.display, &kDecorInterface);
+        }
+        if (state.decor_context != nullptr) {
+            window->decor_frame = decor.decorate(state.decor_context, window->surface,
+                                                 &kDecorFrameInterface, window);
+        }
+        if (window->decor_frame != nullptr) {
+            g_toplevel_window.store(window);
+            decor.frame_set_title(window->decor_frame, "Stud");
+            decor.frame_set_app_id(window->decor_frame, STUD_APP_ID);
+            decor.frame_map(window->decor_frame);
+            // libdecor's objects are on the DEFAULT queue, so this is
+            // the roundtrip that lets its first configure through;
+            // the queue-specific one below would never see it.
+            wl_display_roundtrip(state.display);
+            // "managing", not "drawing": libdecor binds
+            // zxdg_decoration_manager_v1 itself, so on a compositor
+            // that offers server-side decorations it asks for those
+            // and draws nothing. Saying it draws would send anyone
+            // reading this log looking for a bug when KWin's own
+            // titlebar appears, which is the correct outcome.
+            std::printf("stud: android-glue: libdecor is managing this window's "
+                        "decorations\n");
+            std::fflush(stdout);
+        } else {
+            std::fprintf(stderr,
+                         "stud: android-glue: libdecor could not decorate this window, "
+                         "leaving it to the compositor\n");
+        }
+    }
+    if (window->decor_frame == nullptr && state.wm_base != nullptr) {
+        window->shell_surface = xdg_wm_base_get_xdg_surface(state.wm_base, window->surface);
+        xdg_surface_add_listener(window->shell_surface, &kShellSurfaceListener, window);
+        window->toplevel = xdg_surface_get_toplevel(window->shell_surface);
+        xdg_toplevel_add_listener(window->toplevel, &kToplevelListener, window);
+        g_toplevel_window.store(window);
+        xdg_toplevel_set_title(window->toplevel, "Stud");
+        // Must match StartupWMClass in packaging/stud.desktop: on Wayland
+        // this app_id is the only thing a compositor can use to tie this
+        // window back to a desktop entry, and therefore to an icon.
+        xdg_toplevel_set_app_id(window->toplevel, STUD_APP_ID);
+        std::printf("stud: android-glue: xdg_toplevel app_id=\"%s\" title=\"Stud\"\n",
+                     STUD_APP_ID);
+        std::fflush(stdout);
+        // Explicit request for a server-side (compositor-drawn)
+        // titlebar (the engineering notes, real user report: "must have
+        // titlebar"). Stud draws no client-side decorations of its
+        // own, so without this the compositor is free to leave the
+        // window fully undecorated (observed on this real
+        // compositor). Honest degradation if the global isn't
+        // advertised, same pattern as every other optional Wayland
+        // feature here.
+        if (state.decoration_manager != nullptr) {
+            window->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+                state.decoration_manager, window->toplevel);
+            zxdg_toplevel_decoration_v1_set_mode(
+                window->decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        }
+        // Triggers the compositor's first xdg_surface.configure,
+        // handled by xdg_surface_configure() above, which acks it
+        // and commits again, completing the real map sequence.
+        wl_surface_commit(window->surface);
+        wl_display_roundtrip_queue(state.display, state.queue);
+    }
+}
+
 ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
     // No real Java Surface object exists in Stud's model (Stud's own
     // process owns the window, not a Java-side Surface), the jobject
@@ -2596,78 +2675,7 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject surface) {
         window->logical_width.store(g_default_logical_width.load());
         window->logical_height.store(g_default_logical_height.load());
 
-        // Client-side decorations, when and only when nobody better is
-        // going to draw them. See decoration_mode() above.
-        const bool want_client_side =
-            decoration_mode() == DecorationMode::Client ||
-            (decoration_mode() == DecorationMode::Auto && state.decoration_manager == nullptr);
-        if (want_client_side && libdecor_api().handle != nullptr) {
-            Libdecor& decor = libdecor_api();
-            if (state.decor_context == nullptr) {
-                state.decor_context = decor.create(state.display, &kDecorInterface);
-            }
-            if (state.decor_context != nullptr) {
-                window->decor_frame = decor.decorate(state.decor_context, window->surface,
-                                                     &kDecorFrameInterface, window);
-            }
-            if (window->decor_frame != nullptr) {
-                g_toplevel_window.store(window);
-                decor.frame_set_title(window->decor_frame, "Stud");
-                decor.frame_set_app_id(window->decor_frame, STUD_APP_ID);
-                decor.frame_map(window->decor_frame);
-                // libdecor's objects are on the DEFAULT queue, so this is
-                // the roundtrip that lets its first configure through;
-                // the queue-specific one below would never see it.
-                wl_display_roundtrip(state.display);
-                // "managing", not "drawing": libdecor binds
-                // zxdg_decoration_manager_v1 itself, so on a compositor
-                // that offers server-side decorations it asks for those
-                // and draws nothing. Saying it draws would send anyone
-                // reading this log looking for a bug when KWin's own
-                // titlebar appears, which is the correct outcome.
-                std::printf("stud: android-glue: libdecor is managing this window's "
-                            "decorations\n");
-                std::fflush(stdout);
-            } else {
-                std::fprintf(stderr,
-                             "stud: android-glue: libdecor could not decorate this window, "
-                             "leaving it to the compositor\n");
-            }
-        }
-        if (window->decor_frame == nullptr && state.wm_base != nullptr) {
-            window->shell_surface = xdg_wm_base_get_xdg_surface(state.wm_base, window->surface);
-            xdg_surface_add_listener(window->shell_surface, &kShellSurfaceListener, window);
-            window->toplevel = xdg_surface_get_toplevel(window->shell_surface);
-            xdg_toplevel_add_listener(window->toplevel, &kToplevelListener, window);
-            g_toplevel_window.store(window);
-            xdg_toplevel_set_title(window->toplevel, "Stud");
-            // Must match StartupWMClass in packaging/stud.desktop: on Wayland
-            // this app_id is the only thing a compositor can use to tie this
-            // window back to a desktop entry, and therefore to an icon.
-            xdg_toplevel_set_app_id(window->toplevel, STUD_APP_ID);
-            std::printf("stud: android-glue: xdg_toplevel app_id=\"%s\" title=\"Stud\"\n",
-                         STUD_APP_ID);
-            std::fflush(stdout);
-            // Explicit request for a server-side (compositor-drawn)
-            // titlebar (the engineering notes, real user report: "must have
-            // titlebar"). Stud draws no client-side decorations of its
-            // own, so without this the compositor is free to leave the
-            // window fully undecorated (observed on this real
-            // compositor). Honest degradation if the global isn't
-            // advertised, same pattern as every other optional Wayland
-            // feature here.
-            if (state.decoration_manager != nullptr) {
-                window->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
-                    state.decoration_manager, window->toplevel);
-                zxdg_toplevel_decoration_v1_set_mode(
-                    window->decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
-            }
-            // Triggers the compositor's first xdg_surface.configure,
-            // handled by xdg_surface_configure() above, which acks it
-            // and commits again, completing the real map sequence.
-            wl_surface_commit(window->surface);
-            wl_display_roundtrip_queue(state.display, state.queue);
-        }
+        create_window_role(window);
     }
     if (surface != nullptr) {
         window->surface_key = surface;
@@ -3118,6 +3126,57 @@ float native_window_device_px_from_pointer(float pointer_px) {
     return static_cast<float>(static_cast<double>(pointer_px) *
                               static_cast<double>(display_scale_120()) /
                               static_cast<double>(render));
+}
+
+void native_window_logical_size(int* width, int* height) {
+    const float device = native_window_device_px_from_pointer(1.0f);
+    const float scale = 120.0f / static_cast<float>(display_scale_120());
+    *width = static_cast<int>(std::lround(static_cast<float>(g_window_width.load()) * device * scale));
+    *height =
+        static_cast<int>(std::lround(static_cast<float>(g_window_height.load()) * device * scale));
+}
+
+bool native_window_is_fullscreen() { return g_window_fullscreen.load(); }
+
+void native_window_detach() {
+    if (display_backend() == DisplayBackend::X11) {
+        x11::set_window_mapped(false);
+        return;
+    }
+    ANativeWindow* window = g_toplevel_window.load();
+    // ponytail: the OpenGL path presents to this surface itself, which would
+    // make it impossible to give a role again, so that window stays up.
+    if (window == nullptr || window->content_surface == nullptr) return;
+    if (window->decor_frame != nullptr) libdecor_api().frame_unref(window->decor_frame);
+    if (window->decoration != nullptr) zxdg_toplevel_decoration_v1_destroy(window->decoration);
+    if (window->toplevel != nullptr) xdg_toplevel_destroy(window->toplevel);
+    if (window->shell_surface != nullptr) xdg_surface_destroy(window->shell_surface);
+    window->decor_frame = nullptr;
+    window->decoration = nullptr;
+    window->toplevel = nullptr;
+    window->shell_surface = nullptr;
+    window->configured = false;
+    window->background_attached.store(false);
+    wl_surface_attach(window->surface, nullptr, 0, 0);
+    wl_surface_commit(window->surface);
+    if (wl_display* display = wayland_state().display) wl_display_flush(display);
+}
+
+void native_window_reattach() {
+    if (display_backend() == DisplayBackend::X11) {
+        x11::set_window_mapped(true);
+        return;
+    }
+    ANativeWindow* window = g_toplevel_window.load();
+    if (window == nullptr || window->decor_frame != nullptr || window->shell_surface != nullptr) {
+        return;
+    }
+    // A role may only be given to a surface with no buffer, and a swapchain
+    // made meanwhile leaves its last frame on this one.
+    wl_surface_attach(window->surface, nullptr, 0, 0);
+    wl_surface_commit(window->surface);
+    create_window_role(window);
+    if (g_window_fullscreen.exchange(false)) toggle_fullscreen();
 }
 
 void native_window_set_egl_at_display_size(bool on) { g_egl_at_display_size.store(on); }

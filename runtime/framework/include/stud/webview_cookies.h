@@ -65,6 +65,9 @@ void note_engine_cookies(const std::string& url, const std::vector<std::string>&
 // any.
 std::vector<std::string> current_session_cookies();
 
+// Whether a session is held at all. A logout erases it, see note_engine_cookies().
+bool has_session_cookie();
+
 // Seeds the current values at bring-up from whatever was restored from
 // safe storage, so the first panel of a session is signed in even before
 // the engine reissues anything.

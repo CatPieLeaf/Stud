@@ -1,8 +1,33 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 namespace stud::web {
+
+// Signing in happens on Roblox's own website, in Stud's own viewer: the app's
+// login screen depends on the Roblox version, the website does not. The viewer
+// is told by this word in place of a user agent, runs as a plain browser, and
+// reports the session it ends up with on stdout as "session <secret> <value>".
+inline constexpr char kLoginPageUrl[] = "https://www.roblox.com/login";
+inline constexpr char kSignUpPageUrl[] = "https://www.roblox.com/CreateAccount";
+inline constexpr char kLoginRequest[] = "login";
+inline constexpr char kLoginSessionPrefix[] = "session ";
+
+struct LoginField {
+    std::string secret;
+    std::string value;
+};
+
+// One reported field, after the prefix. Only these two names exist, so a viewer
+// can never choose what else gets written to Stud's storage.
+inline std::optional<LoginField> parse_login_field(const std::string& field) {
+    const auto space = field.find(' ');
+    if (space == std::string::npos || space + 1 == field.size()) return std::nullopt;
+    LoginField parsed{field.substr(0, space), field.substr(space + 1)};
+    if (parsed.secret != "roblosecurity" && parsed.secret != "rbxas") return std::nullopt;
+    return parsed;
+}
 
 // Whether a URL is served by Roblox itself, over TLS. This is what stands
 // between the signed-in session and any other site, so anything that does

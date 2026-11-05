@@ -1896,6 +1896,7 @@ int main(int argc, char** argv) {
     }
 
     restore_local_storage();
+    if (launch_payload) stud::jni_bridge::set_web_login_enabled(launch_payload->web_login);
     if (launch_payload && launch_payload->authenticated_user_id != 0) {
         stud::jni_bridge::set_native_user_identity(launch_payload->authenticated_user_id,
                                                     launch_payload->authenticated_username,
@@ -1908,7 +1909,8 @@ int main(int argc, char** argv) {
         // in (IPlatformLocalStorageHandler.getCurrentUser); returning 0
         // is what made it route to the logged-out `Landing` screen.
         stud::jni_bridge::LocalStoragePlatformJava::set_real_current_user(
-            static_cast<long long>(launch_payload->authenticated_user_id));
+            static_cast<long long>(launch_payload->authenticated_user_id),
+            launch_payload->fresh_login);
         if (!launch_payload->session_cookie.empty()) {
             // Seeded under the real cookie name the engine itself
             // sanity-checks for (`.ROBLOSECURITY`, per the app's own HTTP/cookie layer). Any
@@ -1917,7 +1919,7 @@ int main(int argc, char** argv) {
             // can be learned from evidence rather than guessed at.
             stud::jni_bridge::LocalStoragePlatformJava::seed_secure_value(
                 static_cast<long long>(launch_payload->authenticated_user_id), ".ROBLOSECURITY",
-                launch_payload->session_cookie);
+                launch_payload->session_cookie, launch_payload->fresh_login);
         }
     }
     std::string cache_dir = cache_subdir("cache");
@@ -2927,6 +2929,22 @@ int main(int argc, char** argv) {
         jvm, lib,
         [&jvm, &lib, web_view_agent = stud::jni_bridge::build_web_view_user_agent()](
             const std::string& url, const std::string& title) {
+            // A login gets the account list and nothing else: with the
+            // session as well, the site says the user is already signed in
+            // and "add account" goes nowhere. The list is what makes the site
+            // add to it. Domain-wide, because the login itself is posted to
+            // auth.roblox.com.
+            if (url == stud::web::kLoginPageUrl || url == stud::web::kSignUpPageUrl) {
+                std::string request = url + "\n" + title + "\n" + stud::web::kLoginRequest + "\n";
+                for (const auto& header : stud::jni_bridge::current_session_cookies()) {
+                    if (header.rfind("rbxas=", 0) == 0) request += header + "\n";
+                }
+                uint64_t args[8] = {};
+                stud::render_client::connection().call(
+                    stud::render_host::CallId::OpenWebView, args, request.data(),
+                    static_cast<uint32_t>(request.size()), nullptr, 0, nullptr);
+                return;
+            }
             // url \n title \n app token \n cookie..., the viewer reads
             // this on its stdin.
             //
@@ -2935,8 +2953,7 @@ int main(int argc, char** argv) {
             // the user switch between several signed-in accounts inside
             // the app, and a switch replaces the session in that jar,
             // so asking at open time is what makes a panel show the
-            // account the user is actually on. Stud never logs in
-            // anywhere itself.
+            // account the user is actually on.
             // Line 3 is the whole User-Agent the panel sends, the
             // real app's own web-view agent, built from this machine's
             // own measurements (app_bridge.h's

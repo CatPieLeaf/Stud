@@ -1191,6 +1191,8 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     if (auto cookie = stud::ui::load_secret(kSessionCookieKey)) {
         payload.session_cookie = cookie->toStdString();
     }
+    payload.web_login = settings.web_login;
+    payload.fresh_login = QFile::remove(QString::fromStdString(stud::paths::web_login_marker_path()));
     // The desktop's light/dark setting, from the process that has a
     // desktop to ask. Qt reads the same freedesktop appearance setting
     // (`org.freedesktop.appearance color-scheme`) that every other
@@ -1779,6 +1781,14 @@ void watch_for_a_crash() {
     timer->setInterval(1000);
     QObject::connect(timer, &QTimer::timeout, qApp, [marker, clean, shown, timer,
                                                      read_unsupported]() {
+        // A web login was stored: the launch path is what picks a session up.
+        if (QFile::exists(QString::fromStdString(stud::paths::web_login_marker_path()))) {
+            timer->stop();
+            hold_for_relaunch();
+            terminate_stud_session();
+            relaunch_stud();
+            return;
+        }
         // Cancelled from the loading screen: the session was stopped on
         // purpose and Stud is closing, which is no crash.
         if (stud::ui::loading_cancelled()) {

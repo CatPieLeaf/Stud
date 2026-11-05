@@ -11,6 +11,8 @@
 #include "stud/startup_throttle.h"
 #include "stud/trap_recovery.h"
 #include "stud/webview_bridge.h"
+#include "stud/web_origin.h"
+#include "stud/webview_cookies.h"
 
 #include <nlohmann/json.hpp>
 
@@ -732,6 +734,24 @@ void NativeGLJavaInterfaceJava::onLuaTextBoxChangedCallback(std::shared_ptr<Fake
         std::fflush(stdout);
     }
 }
+void NativeHelperJava::gameActivity_onAppReady(std::shared_ptr<FakeJni::JString> data) {
+    const std::string screen = data ? data->asStdString() : std::string();
+    std::printf("stud: NativeHelper.gameActivity_onAppReady: data=%s\n", screen.c_str());
+    // Back in the app shell, so no experience is on screen any more.
+    // Without this the flag stays set for the rest of the session
+    // after a single game, and the home screen keeps the in-experience
+    // input behaviour, live-caught as the avatar editor jumping
+    // again once a game had been played.
+    experience_loaded_storage().store(false);
+    // Landing also shows for a moment on the way to Home with a session
+    // restored; LoginV2 is asked for, by Log In or by adding an account.
+    if (screen == "LoginV2" || (screen == "Landing" && !has_session_cookie())) {
+        open_login_page(stud::web::kLoginPageUrl, "Log in to Roblox");
+    } else if (screen == "SinglePageSignUp") {
+        open_login_page(stud::web::kSignUpPageUrl, "Create a Roblox account");
+    }
+}
+
 void NativeHelperJava::gameActivity_onLuaTextBoxChanged(std::shared_ptr<FakeJni::JString> value) {
     NativeGLJavaInterfaceJava::onLuaTextBoxChangedCallback(std::move(value));
 }

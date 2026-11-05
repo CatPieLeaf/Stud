@@ -491,7 +491,18 @@ public:
     // is the record of that. Letting the seed win would silently drag the
     // app back to the earlier account on every launch, and would
     // overwrite that account's stored session with an older copy.
-    static void set_real_current_user(long long user_id) {
+    //
+    // A fresh web login is the exception: it just stored this account's
+    // session, with the store still naming the account it was added from.
+    static void set_real_current_user(long long user_id, bool fresh_login) {
+        if (fresh_login) {
+            current_user() = user_id;
+            persist();
+            std::printf("stud: LocalStorage switched to the account just signed in id=%lld\n",
+                        user_id);
+            std::fflush(stdout);
+            return;
+        }
         if (current_user() != 0) {
             std::printf("stud: LocalStorage keeping the restored current user id=%lld (launch "
                         "identity id=%lld)\n",
@@ -526,9 +537,9 @@ public:
     }
 
     static void seed_secure_value(long long user_id, const std::string& key,
-                                   const std::string& value) {
+                                   const std::string& value, bool fresh_login) {
         auto& slot = store()[user_id][key];
-        if (!slot.empty()) {
+        if (!slot.empty() && !fresh_login) {
             std::printf("stud: LocalStorage already has key=\"%s\" for user=%lld, keeping it\n",
                         key.c_str(), user_id);
             std::fflush(stdout);

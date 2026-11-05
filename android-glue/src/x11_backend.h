@@ -106,6 +106,7 @@ void ensure_mapped();
 
 void present_text_overlay(const void* argb, int width, int height, int x, int y);
 void hide_text_overlay();
+void set_window_mapped(bool mapped);
 
 // The desktop's scale, in 120ths, from X11's own answer: the Xft.dpi
 // resource against a 96-dpi baseline. X11 has no fractional-scale

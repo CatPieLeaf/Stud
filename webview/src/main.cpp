@@ -5,11 +5,13 @@
 // in a WebView inside the app; Stud has no WebView, so the app's request
 // went unanswered and left a dead grey panel with no way back.
 //
-// This is a viewer, never a login window. Stud's session is established
-// inside the real Roblox app exactly as before; this process is handed
-// the cookies the engine itself produced (see webview_cookies.h) so the
-// page opens already signed in as that same session. It never asks for
-// credentials and has no way to.
+// A panel is handed the cookies the engine itself produced (see
+// webview_cookies.h), so the page opens signed in as that same session.
+//
+// Sign-in is the one exception: the app's login screen opens Roblox's own
+// website here instead, as a plain browser with no app token and no bridge.
+// The session the site sets goes back to Stud on stdout, and the app's account
+// list comes in as a cookie, so the site adds to it. See stud/web_origin.h.
 //
 // Input arrives on stdin rather than argv: a session cookie is a real
 // credential and /proc/<pid>/cmdline is readable by anything running as
@@ -25,6 +27,7 @@
 #include <QMainWindow>
 #include <QNetworkCookie>
 #include <QTextStream>
+#include <QWebEngineSettings>
 #include <QSet>
 #include <QTimer>
 #include <QUrl>
@@ -111,6 +114,7 @@ public:
     // a reload, and this process's own initial load are the page working
     // as intended, not a request aimed at the app.
     bool acceptNavigationRequest(const QUrl& url, NavigationType type, bool isMainFrame) override {
+        if (m_plain_browser) return true;
         const QString scheme = url.scheme();
         const bool web = scheme == QLatin1String("http") || scheme == QLatin1String("https");
         const bool page_initiated =
@@ -158,6 +162,9 @@ public:
     // load it either.
     void markHandled(const QString& url) { m_answered.insert(url); }
 
+    // No app to offer navigations to: a login is the site and the browser.
+    void beAPlainBrowser() { m_plain_browser = true; }
+
 private:
     // The engine hears a command through the bridge, and the page waits to be
     // told it was heard: it stops at "Verification complete" until its
@@ -176,6 +183,7 @@ private:
 
     QString m_allowed;
     QSet<QString> m_answered;
+    bool m_plain_browser = false;
 
 protected:
     void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message,
@@ -237,6 +245,7 @@ int main(int argc, char** argv) {
     // Off-the-record: the app owns the session, so this window keeps no
     // profile of its own on disk to drift out of sync with it.
     auto* profile = new QWebEngineProfile(&app);
+    const bool login = request.userAgent == QLatin1String(stud::web::kLoginRequest);
 
     // Ask Roblox for its mobile layout, which is what makes these panels
     // show the requested thing and nothing else.
@@ -262,12 +271,49 @@ int main(int argc, char** argv) {
     // The fallback is a plain Android web-view agent (Chrome on
     // Android), for the case this process is run by hand with no agent
     // on its stdin.
-    const QString agent = request.userAgent.trimmed().startsWith(QLatin1String("Mozilla/"))
-                              ? request.userAgent.trimmed()
-                              : QString::fromStdString(stud::webview::user_agent(std::string()));
-    profile->setHttpUserAgent(agent);
-    std::printf("stud-webview: user agent: %s\n", agent.toUtf8().constData());
+    //
+    // A login keeps QtWebEngine's own agent: it is a browser on this desktop
+    // and says so.
+    if (!login) {
+        const QString agent = request.userAgent.trimmed().startsWith(QLatin1String("Mozilla/"))
+                                  ? request.userAgent.trimmed()
+                                  : QString::fromStdString(stud::webview::user_agent(std::string()));
+        profile->setHttpUserAgent(agent);
+    }
+    std::printf("stud-webview: user agent: %s\n", profile->httpUserAgent().toUtf8().constData());
     std::fflush(stdout);
+
+    // The session a login ends with. Reported once, and at exit rather than
+    // when it appears, so the cookies of the response that signed in have all
+    // arrived; closing the window right after signing in reports it too.
+    QByteArray session_cookie;
+    QByteArray account_cookie;
+    if (login) {
+        QObject::connect(profile->cookieStore(), &QWebEngineCookieStore::cookieAdded, &app,
+                         [&session_cookie, &account_cookie](const QNetworkCookie& cookie) {
+                             const std::string domain = cookie.domain().toStdString();
+                             const auto host = domain.find_first_not_of('.');
+                             if (host == std::string::npos ||
+                                 !stud::web::is_roblox_https_url("https://" + domain.substr(host)) ||
+                                 !stud::jni_bridge::hybrid_text_is_plain(cookie.value().toStdString())) {
+                                 return;
+                             }
+                             if (cookie.name() == ".ROBLOSECURITY") session_cookie = cookie.value();
+                             if (cookie.name() == "rbxas") account_cookie = cookie.value();
+                         });
+        QObject::connect(&app, &QCoreApplication::aboutToQuit, &app,
+                         [&session_cookie, &account_cookie]() {
+                             if (session_cookie.isEmpty()) return;
+                             // The session last: it is what says the login is complete.
+                             if (!account_cookie.isEmpty()) {
+                                 std::printf("%srbxas %s\n", stud::web::kLoginSessionPrefix,
+                                             account_cookie.constData());
+                             }
+                             std::printf("%sroblosecurity %s\n", stud::web::kLoginSessionPrefix,
+                                         session_cookie.constData());
+                             std::fflush(stdout);
+                         });
+    }
     const QUrl url(request.url);
     for (const QNetworkCookie& cookie : request.cookies) {
         profile->cookieStore()->setCookie(cookie, url);
@@ -296,7 +342,7 @@ int main(int argc, char** argv) {
     // already gives every page, it needs no extra scheme, socket or
     // QWebChannel transport, and it carries a whole JSON document
     // without the length limits a URL has.
-    {
+    if (!login) {
         QWebEngineScript bridge;
         bridge.setName(QStringLiteral("stud-hybrid-bridge"));
         bridge.setInjectionPoint(QWebEngineScript::DocumentCreation);
@@ -312,6 +358,13 @@ int main(int argc, char** argv) {
     }
     auto* page = new BridgePage(profile, view);
     view->setPage(page);
+    if (login) {
+        page->beAPlainBrowser();
+        page->settings()->setAttribute(QWebEngineSettings::PluginsEnabled, true);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+        page->settings()->setAttribute(QWebEngineSettings::PdfViewerEnabled, true);
+#endif
+    }
     // The rest of the conversation with Stud: an answer to a navigation
     // this viewer blocked. One line, "load <url>", meaning the engine
     // did not want it after all. A thread rather than a socket notifier
@@ -375,6 +428,16 @@ int main(int argc, char** argv) {
     // settings section), not a browser, so they open at a size that
     // suits that rather than filling the screen.
     window.resize(720, 620);
+    // A login stands in for the game window, at its size and under its name.
+    int login_width = 0, login_height = 0, login_fullscreen = 0;
+    if (login) {
+        QGuiApplication::setDesktopFileName(QStringLiteral(STUD_APP_ID));
+        if (std::sscanf(qgetenv("STUD_LOGIN_WINDOW").constData(), "%d %d %d", &login_width,
+                        &login_height, &login_fullscreen) == 3 &&
+            login_width > 0 && login_height > 0) {
+            window.resize(login_width, login_height);
+        }
+    }
     // The page's own title is better than the one the app guessed, when
     // it has one.
     QObject::connect(view, &QWebEngineView::titleChanged, &window,
@@ -384,9 +447,21 @@ int main(int argc, char** argv) {
     // A challenge page that fails to load at all looks identical, from
     // the outside, to one that loads and then cannot finish, so say
     // which it is.
-    QObject::connect(view, &QWebEngineView::loadFinished, view, [view](bool ok) {
+    QObject::connect(view, &QWebEngineView::loadFinished, view,
+                     [view, login, login_fullscreen, &window, &session_cookie](bool ok) {
         std::printf("stud-webview: page load %s\n", ok ? "finished" : "FAILED");
         std::fflush(stdout);
+        // The site moves on to its home page once it has signed the user in.
+        if (login) {
+            if (!session_cookie.isEmpty()) QApplication::quit();
+            if (!window.isVisible()) {
+                login_fullscreen != 0 ? window.showFullScreen() : window.show();
+                // The page is on screen: the game window can go.
+                std::printf("ready\n");
+                std::fflush(stdout);
+            }
+            return;
+        }
         if (!ok) return;
         // What the page has to talk to the app with. A Roblox page picks
         // its transport from what exists on the window: the Android
@@ -436,6 +511,7 @@ int main(int argc, char** argv) {
                          std::fflush(stdout);
                      });
     view->setUrl(url);
-    window.show();
+    // A login shows once there is a page to show, see loadFinished above.
+    if (!login) window.show();
     return app.exec();
 }

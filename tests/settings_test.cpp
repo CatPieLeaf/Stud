@@ -39,6 +39,7 @@ int main(int argc, char** argv) {
     check(defaults.background_fps == 30, "missing config file defaults the background frame rate to 30");
     check(defaults.windows_materials, "missing config file defaults Windows Graphical Parity to on");
     check(!defaults.hq_textures, "missing config file defaults HQ Textures to off");
+    check(defaults.web_login, "missing config file defaults web login to on");
 
     std::string path = dir + "/config.json";
 

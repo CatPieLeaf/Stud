@@ -1845,16 +1845,7 @@ public:
     void gameActivity_hideKeyboard() {
         std::printf("stud: NativeHelper.gameActivity_hideKeyboard()\n");
     }
-    void gameActivity_onAppReady(std::shared_ptr<FakeJni::JString> data) {
-        std::printf("stud: NativeHelper.gameActivity_onAppReady: data=%s\n",
-                    data ? data->asStdString().c_str() : "");
-        // Back in the app shell, so no experience is on screen any more.
-        // Without this the flag stays set for the rest of the session
-        // after a single game, and the home screen keeps the in-experience
-        // input behaviour, live-caught as the avatar editor jumping
-        // again once a game had been played.
-        experience_loaded_storage().store(false);
-    }
+    void gameActivity_onAppReady(std::shared_ptr<FakeJni::JString> data);
     // The Lua app's account report: userId, isUnder13, username,
     // displayName, membershipType, hasRobloxSubscription, countryCode.
     // The app's SessionManager keeps these and NativeUserJavaInterface

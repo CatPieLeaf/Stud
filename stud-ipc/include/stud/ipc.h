@@ -92,6 +92,11 @@ struct LaunchPayload {
     long long authenticated_user_id = 0;
     std::string authenticated_username;
     std::string authenticated_display_name;
+    // A web login has just stored this session: this account is the one to
+    // be on, whichever one the local-storage document last recorded.
+    bool fresh_login = false;
+    // The webLogin setting; see stud/settings.h.
+    bool web_login = true;
 
     // Raw response body from GET-ing place_launcher_url above (with
     // the real session cookie): Roblox's own public, real,

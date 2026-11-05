@@ -67,6 +67,12 @@ void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary
 // publish_webview_closed() also tells the engine it has focus back.
 void open_security_check(const std::string& payload);
 
+// The app reached its login or sign-up screen: use Roblox's own site instead.
+// The app keeps switching accounts and logging out; see stud/web_origin.h.
+// Does nothing with the webLogin setting off.
+void open_login_page(const char* url, const char* title);
+void set_web_login_enabled(bool enabled);
+
 // Hands the engine one message a web view's page sent through its
 // JavaScript bridge (`__globalRobloxAndroidBridge__.executeRoblox`).
 // This is how a login challenge reports that it is finished: without it

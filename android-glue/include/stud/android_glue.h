@@ -358,6 +358,16 @@ void native_window_resolve_x11_key(uint32_t evdev_code, bool pressed, uint32_t x
 float native_window_pointer_px_from_device(float device_px);
 float native_window_device_px_from_pointer(float pointer_px);
 
+// The window's size in logical units and whether it fills the screen.
+void native_window_logical_size(int* width, int* height);
+bool native_window_is_fullscreen();
+// Takes the window off the desktop and puts it back, with no window manager's
+// help in either direction: the toplevel is destroyed and made again. The
+// surface stays and so does the swapchain on it, so the engine carries on
+// unaware, as it does behind a minimised window. Caller holds the Wayland locks.
+void native_window_detach();
+void native_window_reattach();
+
 // An xdg-activation token for launching another application from this
 // window. A Wayland compositor deliberately will not let an arbitrary
 // process steal focus; handing the launched program a token minted

@@ -201,6 +201,10 @@ struct StudSettings {
     // own servers, only while it is on, and only for a Windows version that
     // matches the APK (see ui/src/desktop_materials.cpp).
     bool windows_materials = true;
+    // Sign in and create accounts on Roblox's own website, in Stud's viewer,
+    // in place of the app's own screens. In the settings file only, on
+    // purpose: Stud settings does not show it.
+    bool web_login = true;
     // HQ Textures: the engine asks Roblox for no transcoded texture format,
     // so every image comes as its original instead of the downsized mobile
     // copy. Materials lose their normal maps while it is on. Off, the

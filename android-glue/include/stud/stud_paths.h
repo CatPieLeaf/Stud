@@ -91,6 +91,10 @@ inline std::string private_dir() {
 }
 
 // A secret's name becomes a file name, and it comes from the sandbox.
+// Exists from a web login being stored until the launch that uses it: the
+// running session sees it and restarts, and that launch takes it away.
+inline std::string web_login_marker_path() { return private_dir() + "/web-login"; }
+
 inline bool valid_secret_name(const std::string& name) {
     if (name.empty()) return false;
     for (const char c : name) {

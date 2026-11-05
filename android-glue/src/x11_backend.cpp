@@ -2118,6 +2118,14 @@ void present_text_overlay(const void* argb, int width, int height, int x_pos, in
     if (x.Flush != nullptr) x.Flush(g_display);
 }
 
+void set_window_mapped(bool mapped) {
+    if (g_display == nullptr || g_window == 0) return;
+    Xlib& x = xlib();
+    if (mapped && x.MapWindow != nullptr) x.MapWindow(g_display, g_window);
+    if (!mapped && x.UnmapWindow != nullptr) x.UnmapWindow(g_display, g_window);
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
 void hide_text_overlay() {
     if (g_display == nullptr || g_overlay_window == 0) return;
     Xlib& x = xlib();

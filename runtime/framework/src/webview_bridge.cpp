@@ -3,6 +3,7 @@
 #include "stud/bionic_jvm.h"
 #include "stud/hybrid_command.h"
 #include "stud/json_field.h"
+#include "stud/web_origin.h"
 #include "stud/app_java_classes.h"
 #include "stud/trap_recovery.h"
 
@@ -67,6 +68,8 @@ std::function<void(const std::string&, const std::string&)>& panel_opener() {
     return opener;
 }
 std::atomic<bool> g_security_check_open{false};
+std::atomic<bool> g_login_open{false};
+std::atomic<bool> g_web_login_enabled{true};
 
 std::mutex& ids_mutex() {
     static std::mutex m;
@@ -242,7 +245,17 @@ void open_security_check(const std::string& payload) {
     panel_opener()(url, "Roblox verification");
 }
 
+void set_web_login_enabled(bool enabled) { g_web_login_enabled.store(enabled); }
+
+void open_login_page(const char* url, const char* title) {
+    // Landing and the form behind its button both ask, so one window answers.
+    if (g_web_login_enabled.load() && panel_opener() && !g_login_open.exchange(true)) {
+        panel_opener()(url, title);
+    }
+}
+
 void publish_webview_closed(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib) {
+    g_login_open.store(false);
     if (g_security_check_open.exchange(false)) {
         static_cast<BionicAwareJvm&>(jvm).ensure_env_for_current_thread();
         FakeJni::LocalFrame frame(jvm);
