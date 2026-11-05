@@ -2262,8 +2262,14 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
         floating = !fullscreen && !maximized && !tiled;
         note_window_state(suspended, activated);
     }
+    // No size means "yours". After leaving maximized that is the only word the
+    // compositor has for a window that opened maximized: it never saw any other
+    // size. Keeping the current one would turn the maximized size into the
+    // user's own.
     if (width <= 0 || height <= 0) {
-        return;
+        if (!floating || g_floating_width.load() <= 0) return;
+        width = g_floating_width.load();
+        height = g_floating_height.load();
     }
     if (floating) {
         g_floating_width.store(width);
@@ -2350,8 +2356,9 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
     const Libdecor& decor = libdecor_api();
     int width = 0;
     int height = 0;
-    if (!decor.configuration_get_content_size(configuration, frame, &width, &height) ||
-        width <= 0 || height <= 0) {
+    const bool sized = decor.configuration_get_content_size(configuration, frame, &width, &height) &&
+                       width > 0 && height > 0;
+    if (!sized) {
         // A configure carrying no size means "stay as you are", which on
         // the first one is the size this window was created at.
         width = window->logical_width.load();
@@ -2385,6 +2392,11 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
         constexpr int kWindowStateSuspended = 1 << 7;
         note_window_state((static_cast<int>(window_state) & kWindowStateSuspended) != 0,
                           (window_state & LIBDECOR_WINDOW_STATE_ACTIVE) != 0);
+    }
+    // See xdg_toplevel_configure().
+    if (floating && !sized && g_floating_width.load() > 0) {
+        width = g_floating_width.load();
+        height = g_floating_height.load();
     }
     if (floating) {
         g_floating_width.store(width);
