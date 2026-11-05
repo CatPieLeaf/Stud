@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <vector>
 #include <type_traits>
 
 #include <X11/Xatom.h>
@@ -225,6 +226,10 @@ std::atomic<bool> g_visible{true};
 // FocusIn/FocusOut: X11's answer to whether this is the window being
 // used, which is a different question from whether it can be seen.
 std::atomic<bool> g_focused{true};
+// Whether the game window itself is mapped; g_visible alone follows it late.
+std::atomic<bool> g_window_mapped{true};
+void sync_text_overlay();
+void sync_text_overlay_locked();
 std::atomic<int32_t> g_width{0};
 std::atomic<int32_t> g_height{0};
 
@@ -1794,6 +1799,7 @@ void pump() {
         switch (event.type) {
             case ConfigureNotify: {
                 const auto& configure = event.xconfigure;
+                sync_text_overlay();
                 if (configure.width > 0 && configure.height > 0) {
                     const bool resized = configure.width != g_width.load() ||
                                          configure.height != g_height.load();
@@ -1833,10 +1839,15 @@ void pump() {
                     std::printf("stud: android-glue: window %s\n",
                                  visible ? "visible again" : "no longer visible (obscured)");
                     std::fflush(stdout);
+                    sync_text_overlay();
                 }
                 break;
             }
             case UnmapNotify:
+                if (event.xunmap.window == g_window) {
+                    g_window_mapped.store(false);
+                    sync_text_overlay();
+                }
                 // Minimised: hide the driver's window and ask for a frame
                 // to show on the restore; see set_restore_frame().
                 if (event.xunmap.window == g_window && g_content_window != 0) {
@@ -1913,6 +1924,10 @@ void pump() {
                 g_clipboard_owned.clear();
                 break;
             case MapNotify:
+                if (event.xmap.window == g_window) {
+                    g_window_mapped.store(true);
+                    sync_text_overlay();
+                }
                 push_window_redraw_needed();
                 if (!g_visible.exchange(true)) {
                     std::printf("stud: android-glue: window visible again\n");
@@ -1942,6 +1957,7 @@ void pump() {
                 // Roblox draws its own cursor; the desktop's goes while
                 // the window has focus, and comes back without it.
                 if (g_blank_cursor != 0) xlib().DefineCursor(g_display, g_window, g_blank_cursor);
+                sync_text_overlay();
                 push_window_focus(true);
                 break;
             case FocusOut:
@@ -1954,6 +1970,7 @@ void pump() {
                 // be released somewhere this window cannot hear.
                 release_all_held_input();
                 if (g_blank_cursor != 0) xlib().DefineCursor(g_display, g_window, 0);
+                sync_text_overlay();
                 push_window_focus(false);
                 break;
             case ClientMessage:
@@ -2012,6 +2029,11 @@ GC g_overlay_gc = nullptr;
 XImage* g_overlay_image = nullptr;
 int g_overlay_w = 0;
 int g_overlay_h = 0;
+std::mutex g_overlay_mutex;
+std::vector<char> g_overlay_pixels;
+bool g_overlay_wanted = false;
+int g_overlay_x = 0;
+int g_overlay_y = 0;
 Visual* g_overlay_visual = nullptr;
 int g_overlay_depth = 0;
 
@@ -2067,6 +2089,46 @@ bool ensure_overlay_window() {
     return g_overlay_gc != nullptr;
 }
 
+// An override-redirect window sits above everything and the window manager
+// never hears of it, so nothing ties it to the game window: left alone it stays
+// on screen over other programs when the game window is minimised, covered or
+// moved. So it is shown only while that window is on screen with focus, when
+// nothing is above it, and placed again every time. In root coordinates,
+// because a top-level window is placed in them.
+void sync_text_overlay_locked() {
+    if (g_display == nullptr || g_overlay_window == 0) return;
+    Xlib& x = xlib();
+    const bool show = g_overlay_wanted && g_visible.load() && g_focused.load() && g_window_mapped;
+    if (!show) {
+        if (x.UnmapWindow != nullptr) x.UnmapWindow(g_display, g_overlay_window);
+        if (x.Flush != nullptr) x.Flush(g_display);
+        return;
+    }
+    if (g_overlay_image == nullptr) return;
+    int root_x = g_overlay_x;
+    int root_y = g_overlay_y;
+    if (x.TranslateCoordinates != nullptr) {
+        Window child = 0;
+        x.TranslateCoordinates(g_display, g_window, RootWindow(g_display, DefaultScreen(g_display)),
+                               g_overlay_x, g_overlay_y, &root_x, &root_y, &child);
+    }
+    if (x.MoveResizeWindow != nullptr) {
+        x.MoveResizeWindow(g_display, g_overlay_window, root_x, root_y,
+                           static_cast<unsigned int>(g_overlay_w),
+                           static_cast<unsigned int>(g_overlay_h));
+    }
+    x.MapWindow(g_display, g_overlay_window);
+    if (x.RaiseWindow != nullptr) x.RaiseWindow(g_display, g_overlay_window);
+    x.PutImage(g_display, g_overlay_window, g_overlay_gc, g_overlay_image, 0, 0, 0, 0,
+               static_cast<unsigned int>(g_overlay_w), static_cast<unsigned int>(g_overlay_h));
+    if (x.Flush != nullptr) x.Flush(g_display);
+}
+
+void sync_text_overlay() {
+    std::lock_guard<std::mutex> lock(g_overlay_mutex);
+    sync_text_overlay_locked();
+}
+
 }  // namespace
 
 void present_text_overlay(const void* argb, int width, int height, int x_pos, int y_pos) {
@@ -2074,9 +2136,14 @@ void present_text_overlay(const void* argb, int width, int height, int x_pos, in
         return;
     }
     Xlib& x = xlib();
+    std::lock_guard<std::mutex> lock(g_overlay_mutex);
     if (!ensure_overlay_window()) return;
     if (x.CreateImage == nullptr || x.PutImage == nullptr) return;
 
+    // A copy of its own: the window comes back on a focus change, long after
+    // the caller's buffer has moved on.
+    const auto* bytes = static_cast<const char*>(argb);
+    g_overlay_pixels.assign(bytes, bytes + static_cast<size_t>(width) * height * 4);
     if (g_overlay_image == nullptr || g_overlay_w != width || g_overlay_h != height) {
         if (g_overlay_image != nullptr) {
             // Created with XCreateImage over a buffer this code does not
@@ -2087,35 +2154,17 @@ void present_text_overlay(const void* argb, int width, int height, int x_pos, in
         }
         g_overlay_image =
             x.CreateImage(g_display, g_overlay_visual, static_cast<unsigned int>(g_overlay_depth),
-                          ZPixmap, 0, const_cast<char*>(static_cast<const char*>(argb)),
-                          static_cast<unsigned int>(width), static_cast<unsigned int>(height), 32,
-                          0);
+                          ZPixmap, 0, g_overlay_pixels.data(), static_cast<unsigned int>(width),
+                          static_cast<unsigned int>(height), 32, 0);
         if (g_overlay_image == nullptr) return;
         g_overlay_w = width;
         g_overlay_h = height;
     }
-    g_overlay_image->data = const_cast<char*>(static_cast<const char*>(argb));
-
-    // A top-level window is placed in ROOT coordinates, so where the box
-    // is inside the game window has to be translated first, and again
-    // on every update, because the game window can be moved or resized
-    // under it.
-    int root_x = x_pos;
-    int root_y = y_pos;
-    if (x.TranslateCoordinates != nullptr) {
-        Window child = 0;
-        x.TranslateCoordinates(g_display, g_window, RootWindow(g_display, DefaultScreen(g_display)),
-                               x_pos, y_pos, &root_x, &root_y, &child);
-    }
-    if (x.MoveResizeWindow != nullptr) {
-        x.MoveResizeWindow(g_display, g_overlay_window, root_x, root_y,
-                           static_cast<unsigned int>(width), static_cast<unsigned int>(height));
-    }
-    x.MapWindow(g_display, g_overlay_window);
-    if (x.RaiseWindow != nullptr) x.RaiseWindow(g_display, g_overlay_window);
-    x.PutImage(g_display, g_overlay_window, g_overlay_gc, g_overlay_image, 0, 0, 0, 0,
-               static_cast<unsigned int>(width), static_cast<unsigned int>(height));
-    if (x.Flush != nullptr) x.Flush(g_display);
+    g_overlay_image->data = g_overlay_pixels.data();
+    g_overlay_x = x_pos;
+    g_overlay_y = y_pos;
+    g_overlay_wanted = true;
+    sync_text_overlay_locked();
 }
 
 void set_window_mapped(bool mapped) {
@@ -2127,10 +2176,9 @@ void set_window_mapped(bool mapped) {
 }
 
 void hide_text_overlay() {
-    if (g_display == nullptr || g_overlay_window == 0) return;
-    Xlib& x = xlib();
-    if (x.UnmapWindow != nullptr) x.UnmapWindow(g_display, g_overlay_window);
-    if (x.Flush != nullptr) x.Flush(g_display);
+    std::lock_guard<std::mutex> lock(g_overlay_mutex);
+    g_overlay_wanted = false;
+    sync_text_overlay_locked();
 }
 
 
