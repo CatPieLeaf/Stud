@@ -2404,11 +2404,11 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
     {
         std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
         allocation_sizes()[handle] = pAllocateInfo->allocationSize;
-    }
-    // Recorded now, while the type index is still in hand: the flush path
-    // only ever sees the memory handle. See non_coherent_memory_types().
-    if (non_coherent_memory_types().count(pAllocateInfo->memoryTypeIndex) != 0) {
-        non_coherent_allocations().insert(handle);
+        // Recorded now, while the type index is still in hand: the flush path
+        // only ever sees the memory handle. See non_coherent_memory_types().
+        if (non_coherent_memory_types().count(pAllocateInfo->memoryTypeIndex) != 0) {
+            non_coherent_allocations().insert(handle);
+        }
     }
     // Share it only if the host says it really imported those pages. When
     // the driver refuses the import the host allocates ordinary memory
@@ -2432,6 +2432,14 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkAllocateMemory(VkDevice device,
                          static_cast<unsigned long long>(handle), std::strerror(errno));
             std::fflush(stderr);
             release_shared_allocation(shared);
+            // The engine is told this failed, so it will never free it.
+            {
+                std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+                allocation_sizes().erase(handle);
+                non_coherent_allocations().erase(handle);
+            }
+            uint64_t free_args[8] = {to_u64(device), handle};
+            stud::render_client::connection().call_void(CallId::VkFreeMemory, free_args);
             return VK_ERROR_OUT_OF_DEVICE_MEMORY;
         }
         ::munmap(shared.address, shared.length);
@@ -2527,7 +2535,9 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
                                                          0, nullptr);
     VkResult result = static_cast<VkResult>(static_cast<int32_t>(r));
     if (result != VK_SUCCESS) return result;
-    std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+    std::unique_lock<std::recursive_mutex> lock(mapped_mutex());
+    // A map's entries stay put, so this holds across the unlock below. Only the
+    // caller can free this memory, and it hasn't got its pointer yet.
     auto& slot = mapped_ranges()[to_u64(memory)];
     slot = MappedRange{};
     slot.offset = offset;
@@ -2554,12 +2564,17 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkMapMemory(VkDevice device, VkDeviceMemory 
         if (create_shared_allocation(size, bounce, /*hand_to_host=*/false)) {
             // The barrier maps the same memfd itself, and only once it has
             // does the host get its descriptor, claimed by the call below.
-            if (slot.barrier.allocate_backed_by(static_cast<size_t>(size), bounce.fd) &&
-                stud::render_client::send_shared_fd(bounce.id, bounce.fd)) {
-                uint64_t sa[8] = {to_u64(device), to_u64(memory), bounce.id, size};
-                const uint64_t sr = stud::render_client::connection().call(
-                    CallId::VkShareMappedMemory, sa, nullptr, 0, nullptr, 0, nullptr);
-                landed_shared = static_cast<VkResult>(static_cast<int32_t>(sr)) == VK_SUCCESS;
+            if (slot.barrier.allocate_backed_by(static_cast<size_t>(size), bounce.fd)) {
+                // A round trip behind everything queued, and every other
+                // thread's flush, unmap and free waits on this lock.
+                lock.unlock();
+                if (stud::render_client::send_shared_fd(bounce.id, bounce.fd)) {
+                    uint64_t sa[8] = {to_u64(device), to_u64(memory), bounce.id, size};
+                    const uint64_t sr = stud::render_client::connection().call(
+                        CallId::VkShareMappedMemory, sa, nullptr, 0, nullptr, 0, nullptr);
+                    landed_shared = static_cast<VkResult>(static_cast<int32_t>(sr)) == VK_SUCCESS;
+                }
+                lock.lock();
                 slot.shared_with_host = landed_shared;
             }
             // The client's own mapping and descriptor are not needed: the
@@ -2624,19 +2639,35 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkInvalidateMappedMemoryRanges(
         uint8_t* dst = nullptr;
         uint64_t start = 0;
         uint64_t length = 0;
+        bool shared_with_engine = false;
         {
             std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
             auto it = mapped_ranges().find(key);
-            if (it == mapped_ranges().end()) continue;
-            MappedRange& range = it->second;
-            if (r.offset < range.offset) continue;
-            const uint64_t local = r.offset - range.offset;
-            if (local >= range.length()) continue;
-            const uint64_t avail = range.length() - local;
-            length = r.size == VK_WHOLE_SIZE ? avail : std::min<uint64_t>(r.size, avail);
-            dst = range.bytes() + local;
-            start = r.offset;
+            if (it == mapped_ranges().end()) {
+                // Shared memory has no entry here: the engine reads the pages
+                // themselves, so all that is left is the driver's invalidate,
+                // and only non-coherent memory needs one.
+                shared_with_engine = non_coherent_allocations().count(key) != 0;
+            } else {
+                MappedRange& range = it->second;
+                if (r.offset < range.offset) continue;
+                const uint64_t local = r.offset - range.offset;
+                if (local >= range.length()) continue;
+                const uint64_t avail = range.length() - local;
+                length = r.size == VK_WHOLE_SIZE ? avail : std::min<uint64_t>(r.size, avail);
+                dst = range.bytes() + local;
+                start = r.offset;
+            }
         }
+        if (shared_with_engine) {
+            uint64_t a[8] = {to_u64(device), key, r.offset, r.size};
+            const uint64_t res = stud::render_client::connection().call(
+                CallId::VkInvalidateMappedMemoryRanges, a, nullptr, 0, nullptr, 0, nullptr);
+            const VkResult vr = static_cast<VkResult>(static_cast<int32_t>(res));
+            if (vr != VK_SUCCESS) return vr;
+            continue;
+        }
+        if (length == 0) continue;
         for (uint64_t done = 0; done < length;) {
             const uint64_t want = std::min<uint64_t>(kChunk, length - done);
             bytes.assign(static_cast<size_t>(want), 0);
@@ -2650,6 +2681,21 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkInvalidateMappedMemoryRanges(
             if (written == 0) break;
             std::memcpy(dst + done, bytes.data(), std::min<size_t>(written, static_cast<size_t>(want)));
             done += written;
+        }
+        // Those bytes came from the device, and the write above made them look
+        // like the engine's. Left dirty they would go back at the next flush,
+        // over whatever the GPU has written since. Whole pages only: the rest
+        // of a page at either end may hold writes that still have to go.
+        std::lock_guard<std::recursive_mutex> lock(mapped_mutex());
+        auto it = mapped_ranges().find(key);
+        if (it == mapped_ranges().end() || !it->second.barrier.valid()) continue;
+        const uint64_t page = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
+        const uint64_t local = start - it->second.offset;
+        const uint64_t first = (local + page - 1) / page * page;
+        const uint64_t last = (local + length) / page * page;
+        if (last > first) {
+            it->second.barrier.mark_clean_and_protect(static_cast<size_t>(first),
+                                                      static_cast<size_t>(last - first));
         }
     }
     return VK_SUCCESS;

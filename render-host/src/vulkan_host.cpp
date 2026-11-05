@@ -4385,6 +4385,20 @@ uint64_t vk_unmap_memory(uint64_t memory) {
     return 0;
 }
 
+uint64_t vk_invalidate_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size) {
+    Loader& l = loader();
+    if (l.vk.vkInvalidateMappedMemoryRanges == nullptr || l.mapped.count(memory) == 0) {
+        return static_cast<uint64_t>(static_cast<int32_t>(VK_SUCCESS));
+    }
+    VkMappedMemoryRange range{};
+    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    range.memory = from_u64<VkDeviceMemory>(memory);
+    range.offset = offset;
+    range.size = size;
+    return static_cast<uint64_t>(
+        static_cast<int32_t>(l.vk.vkInvalidateMappedMemoryRanges(l.device, 1, &range)));
+}
+
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size) {
     Loader& l = loader();
     if (l.vk.vkFlushMappedMemoryRanges == nullptr) {

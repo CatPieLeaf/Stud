@@ -278,6 +278,8 @@ void prepare_login_page() {
 
 bool preparing_login() { return t_preparing_login; }
 
+void panel_open_failed() { g_panel_open.store(false); }
+
 void login_window_failed() {
     g_login_open.store(false);
     g_login_prepared.store(false);

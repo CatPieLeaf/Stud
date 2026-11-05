@@ -130,23 +130,27 @@ bool MappedWriteBarrier::allocate_backed_by(std::size_t bytes, int fd) {
     // uffd-scan first: the kernel tracks the writes, so no page is ever
     // protected against the engine and no fault handler is involved. The
     // fault barrier stays as the fallback, unchanged.
-    if (UffdScan::available() && UffdScan::register_range(base_, pages_ * ps) &&
-        UffdScan::protect(base_, pages_ * ps)) {
-        uffd_ = true;
-        armed_ = true;
-        // Everything starts written, as it does for the fault barrier: the
-        // host has never seen this memory. The first scan reports it all.
-        return true;
+    if (UffdScan::available() && UffdScan::register_range(base_, pages_ * ps)) {
+        if (UffdScan::protect(base_, pages_ * ps)) {
+            uffd_ = true;
+            armed_ = true;
+            // Everything starts written, as it does for the fault barrier: the
+            // host has never seen this memory. The first scan reports it all.
+            return true;
+        }
+        UffdScan::unregister_range(base_, pages_ * ps);
     }
     if (!register_barrier(this)) {
         // Unprotected and unregistered is safe; protected and
         // unregistered is a crash on the first write.
         ::munmap(base_, pages_ * ps);
         delete[] dirty_;
+        delete[] speculative_;
         base_ = nullptr;
         size_ = 0;
         pages_ = 0;
         dirty_ = nullptr;
+        speculative_ = nullptr;
         dirty_pages_.store(0, std::memory_order_release);
         return false;
     }

@@ -1023,9 +1023,11 @@ static void start_claimed_experience(FakeJni::Jvm& jvm, const stud::linker::Load
                 clear_pending_jni_exception(jni_env, "nativeAppBridgeV2StartGameWithParam");
                 return ok;
             });
-        // The in-flight flag says a start is running, so it stays up until
-        // this one really has finished, however long past the bound. This
-        // thread has nothing else to do.
+        // Past the bound the flag goes, as it would for any call this file
+        // gives up on: this one may never return, and the alternative is every
+        // join after it refused. This thread still waits for it, because
+        // whether to tell the engine a game is up depends on how it ended.
+        if (outcome.still_running) g_experience_start_in_flight.store(false);
         while (!outcome.completed->load()) {
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(stud::engine_teardown::kBoundedCallPollMs));
@@ -1039,7 +1041,7 @@ static void start_claimed_experience(FakeJni::Jvm& jvm, const stud::linker::Load
         // Refused for want of a place id, or it trapped: there is no game to
         // tell the engine is on screen.
         if (!started) {
-            g_experience_start_in_flight.store(false);
+            if (!outcome.still_running) g_experience_start_in_flight.store(false);
             return;
         }
 
@@ -1087,7 +1089,7 @@ static void start_claimed_experience(FakeJni::Jvm& jvm, const stud::linker::Load
             });
         }
 
-        g_experience_start_in_flight.store(false);
+        if (!outcome.still_running) g_experience_start_in_flight.store(false);
     }).detach();
 }
 

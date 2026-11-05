@@ -622,7 +622,8 @@ public:
     // Reads this name's file, if there is one. Called once, by get_or_create().
     void load();
     // Writes this name's file, whole, replacing the last one atomically.
-    void save();
+    // False if it could not be written; commit() reports that.
+    bool save();
 
 private:
     std::string name_;
@@ -652,10 +653,7 @@ public:
     void apply() {
         if (prefs_) prefs_->save();
     }
-    FakeJni::JBoolean commit() {
-        if (prefs_) prefs_->save();
-        return true;
-    }
+    FakeJni::JBoolean commit() { return prefs_ != nullptr && prefs_->save(); }
 
 private:
     std::shared_ptr<SharedPreferencesJava> prefs_;

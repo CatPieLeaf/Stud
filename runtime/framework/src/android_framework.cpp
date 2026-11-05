@@ -4,6 +4,7 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <cctype>
@@ -15,6 +16,7 @@
 // forward-declare it, app_java_classes.h includes that header).
 #include "stud/app_java_classes.h"
 #include "stud/stud_paths.h"
+#include "stud/trap_recovery.h"
 
 #include <nlohmann/json.hpp>
 
@@ -228,6 +230,8 @@ void LooperJava::post(std::shared_ptr<FakeJni::JObject> runnable) {
     if (!runnable) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // A looper that has quit is never drained again, as on Android.
+        if (quit_) return;
         queue_.push_back(std::move(runnable));
     }
     cv_.notify_one();
@@ -243,7 +247,13 @@ void LooperJava::quit() {
 
 void LooperJava::stop() {
     quit();
-    if (thread_.joinable()) thread_.join();
+    if (!thread_.joinable()) return;
+    // A runnable can stop its own looper, and a thread can't join itself.
+    if (thread_.get_id() == std::this_thread::get_id()) {
+        thread_.detach();
+    } else {
+        thread_.join();
+    }
 }
 
 void LooperJava::dispatch_one(FakeJni::Jvm& jvm, std::shared_ptr<FakeJni::JObject> runnable) {
@@ -266,6 +276,7 @@ void LooperJava::dispatch_one(FakeJni::Jvm& jvm, std::shared_ptr<FakeJni::JObjec
         return;
     }
     jni_env->CallVoidMethod(obj, run_id);
+    clear_pending_jni_exception(jni_env, "Looper runnable");
 }
 
 void LooperJava::pump(FakeJni::Jvm& jvm) {
@@ -586,13 +597,14 @@ BEGIN_NATIVE_DESCRIPTOR(ResourcesJava)
 END_NATIVE_DESCRIPTOR
 
 namespace {
-int g_display_width = 800;
-int g_display_height = 600;
-float g_display_density = 1.0f;
-int g_display_phys_mm_w = 0;
-int g_display_phys_mm_h = 0;
-int g_display_output_px_w = 0;
-int g_display_output_px_h = 0;
+// Set from the window's side and read by whatever asks the engine's questions.
+std::atomic<int> g_display_width{800};
+std::atomic<int> g_display_height{600};
+std::atomic<float> g_display_density{1.0f};
+std::atomic<int> g_display_phys_mm_w{0};
+std::atomic<int> g_display_phys_mm_h{0};
+std::atomic<int> g_display_output_px_w{0};
+std::atomic<int> g_display_output_px_h{0};
 }  // namespace
 
 // Real total system memory in MB, the quantity the app's device-info helper reads from
@@ -680,8 +692,6 @@ std::string real_device_name() {
     std::string name;
     if (model.rfind(manufacturer, 0) == 0) {
         name = model;
-    } else if (manufacturer.empty()) {
-        name = model;
     } else {
         name = manufacturer + " " + model;
     }
@@ -767,22 +777,12 @@ std::shared_ptr<DisplayMetricsJava> ResourcesJava::getDisplayMetrics() {
     metrics->density = g_display_density;
     metrics->densityDpi = static_cast<FakeJni::JInt>(160.0f * g_display_density);
     metrics->scaledDensity = g_display_density;
-    // Real dots-per-inch, from the display's own physical size when the
-    // compositor reported one. Note this is the whole OUTPUT's dpi, not
-    // the window's, which is exactly right: dpi is a property of the
-    // panel, and a window occupying part of it has the same pixel pitch.
-    // Falls back to the old density-derived synthesis only when the
-    // compositor reported no physical size at all.
-    if (g_display_phys_mm_w > 0 && g_display_phys_mm_h > 0 && g_display_output_px_w > 0 &&
-        g_display_output_px_h > 0) {
-        metrics->xdpi =
-            static_cast<float>(g_display_output_px_w) / (static_cast<float>(g_display_phys_mm_w) / 25.4f);
-        metrics->ydpi =
-            static_cast<float>(g_display_output_px_h) / (static_cast<float>(g_display_phys_mm_h) / 25.4f);
-    } else {
-        metrics->xdpi = 160.0f * g_display_density;
-        metrics->ydpi = 160.0f * g_display_density;
-    }
+    // The whole OUTPUT's dpi, not the window's, which is exactly right: dpi is
+    // a property of the panel, and a window on part of it has the same pixel
+    // pitch.
+    const DisplayFacts facts = real_display_facts();
+    metrics->xdpi = facts.xdpi;
+    metrics->ydpi = facts.ydpi;
     return metrics;
 }
 
@@ -831,7 +831,11 @@ void SharedPreferencesJava::load() {
     }
 }
 
-void SharedPreferencesJava::save() {
+bool SharedPreferencesJava::save() {
+    // One temp file, so one save at a time. Two threads writing it together
+    // would rename a mix of both.
+    static std::mutex save_mutex;
+    std::lock_guard<std::mutex> save_lock(save_mutex);
     nlohmann::json doc = nlohmann::json::object();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -845,15 +849,17 @@ void SharedPreferencesJava::save() {
     const std::string temp = path + ".tmp." + std::to_string(::getpid());
     {
         std::ofstream out(temp, std::ios::trunc);
-        if (!out.is_open()) return;
+        if (!out.is_open()) return false;
         out << doc.dump();
         if (!out.good()) {
             std::filesystem::remove(temp, ec);
-            return;
+            return false;
         }
     }
     std::filesystem::rename(temp, path, ec);
-    if (ec) std::filesystem::remove(temp, ec);
+    if (!ec) return true;
+    std::filesystem::remove(temp, ec);
+    return false;
 }
 
 std::shared_ptr<SharedPreferencesEditorJava> SharedPreferencesJava::edit() {

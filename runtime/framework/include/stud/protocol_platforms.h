@@ -452,13 +452,14 @@ public:
     // Every account this install knows about. This is how the app's own
     // account switcher enumerates them, an empty set means "no other
     // accounts", so a second sign-in would appear to replace the first
-    // rather than sit alongside it. The store is already keyed by user
-    // id and persisted that way, so the real answer is simply its keys.
+    // rather than sit alongside it. Only the current account: the store also
+    // keeps accounts the app switched away from, and which of those are still
+    // signed in is the app's own list to answer, not this one.
     std::shared_ptr<JavaUtilHashSetJava> getUsers() {
         auto users = std::make_shared<JavaUtilHashSetJava>();
-        for (const auto& [user, values] : store()) {
-            if (user == 0 || values.empty()) continue;
-            users->add(std::make_shared<JavaLangLongJava>(static_cast<FakeJni::JLong>(user)));
+        const auto current = store().find(current_user());
+        if (current != store().end() && current->first != 0 && !current->second.empty()) {
+            users->add(std::make_shared<JavaLangLongJava>(static_cast<FakeJni::JLong>(current->first)));
         }
         std::printf("stud: LocalStorage.getUsers() -> %d account(s)\n",
                     static_cast<int>(users->size()));

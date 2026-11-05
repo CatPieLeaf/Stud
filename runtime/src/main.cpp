@@ -2929,7 +2929,11 @@ int main(int argc, char** argv) {
         jvm, lib,
         [&jvm, &lib, web_view_agent = stud::jni_bridge::build_web_view_user_agent()](
             const std::string& url, const std::string& raw_title) {
-            if (url.find_first_of("\r\n") != std::string::npos) return;
+            if (url.find_first_of("\r\n") != std::string::npos) {
+                std::printf("stud: web view: refused a panel whose address has a line break\n");
+                std::fflush(stdout);
+                return;
+            }
             const std::string title = stud::web::single_line(raw_title);
             // A login gets the account list and nothing else: with the
             // session as well, the site says the user is already signed in
@@ -3037,9 +3041,10 @@ int main(int argc, char** argv) {
                         cookies.size(), stud::jni_bridge::cookie_names(cookies).c_str());
             std::fflush(stdout);
             uint64_t args[8] = {};
-            stud::render_client::connection().call(
+            const uint64_t opened = stud::render_client::connection().call(
                 stud::render_host::CallId::OpenWebView, args, payload.data(),
                 static_cast<uint32_t>(payload.size()), nullptr, 0, nullptr);
+            if (opened == 0) stud::jni_bridge::panel_open_failed();
         },
         [] {
             // The engine is finished with the panel, a login challenge

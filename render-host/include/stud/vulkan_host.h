@@ -216,6 +216,7 @@ void wait_for_command_buffer(uint64_t cb);
 void wait_all();
 }  // namespace replay
 uint64_t vk_unmap_memory(uint64_t memory);
+uint64_t vk_invalidate_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size);
 uint64_t vk_flush_mapped_memory_ranges(uint64_t memory, uint64_t offset, uint64_t size);
 uint64_t vk_get_surface_formats(uint64_t physical_device, uint64_t surface, uint32_t capacity,
                                  std::vector<uint8_t>& out, uint32_t* out_len);

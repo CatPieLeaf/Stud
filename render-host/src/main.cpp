@@ -452,6 +452,7 @@ void raise_through_kwin();
 // Viewer windows that have exited and not yet been reported to
 // Process B, which is what tells the app its web view is gone.
 std::atomic<uint32_t> g_webview_closed{0};
+std::mutex g_webview_stdin_mutex;
 
 // Messages a web view's page sent through its JavaScript bridge, waiting
 // for Process B to collect them. A login challenge (an OTP, a captcha)
@@ -1385,6 +1386,7 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 left -= static_cast<size_t>(written);
             }
             {
+                std::lock_guard<std::mutex> stdin_lock(g_webview_stdin_mutex);
                 const int previous = g_webview_stdin.exchange(pipe_fds[1]);
                 if (previous >= 0) ::close(previous);
             }
@@ -1398,8 +1400,11 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                 forget_web_view(pid);
                 // Only its own: a later viewer may hold this by now, and the
                 // viewer that replaced this one already closed this end.
-                int expected = own_stdin;
-                if (g_webview_stdin.compare_exchange_strong(expected, -1)) ::close(own_stdin);
+                {
+                    std::lock_guard<std::mutex> stdin_lock(g_webview_stdin_mutex);
+                    int expected = own_stdin;
+                    if (g_webview_stdin.compare_exchange_strong(expected, -1)) ::close(own_stdin);
+                }
                 if (shown->load()) {
                     g_webview_closed.fetch_add(1, std::memory_order_relaxed);
                     std::printf("stud-render-host: web-view window closed\n");
@@ -1554,6 +1559,9 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             return out.size();
         }
         case CallId::WebViewLoadUrl: {
+            // Held through the write: the reaper closes this descriptor, and
+            // written to after that, its number may be someone else's by then.
+            std::lock_guard<std::mutex> stdin_lock(g_webview_stdin_mutex);
             const int fd = g_webview_stdin.load();
             if (fd < 0 || in.empty()) return 0;
             std::string url(reinterpret_cast<const char*>(in.data()), in.size());
@@ -2855,6 +2863,8 @@ std::optional<uint64_t> dispatch_vk_call(const Header& hdr, RealWindow& window,
             return stud::render_host::vk_write_shared_mapped_memory(a[1], a[2], a[3]);
         case CallId::VkUnmapMemory:
             return stud::render_host::vk_unmap_memory(a[1]);
+        case CallId::VkInvalidateMappedMemoryRanges:
+            return stud::render_host::vk_invalidate_mapped_memory_ranges(a[1], a[2], a[3]);
         case CallId::VkFlushMappedMemoryRanges: {
             const uint64_t r = stud::render_host::vk_flush_mapped_memory_ranges(a[1], a[2], a[3]);
             report_reply_free_failure(hdr.call_id, r);

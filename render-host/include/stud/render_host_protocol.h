@@ -630,6 +630,10 @@ enum class CallId : uint32_t {
     VkMergePipelineCaches,
     VkCreateSamplerYcbcrConversion,
     VkGetPhysicalDeviceChained,
+
+    // A range of non-coherent memory the engine reads directly, through pages
+    // it shares with this process: nothing else makes the driver invalidate.
+    VkInvalidateMappedMemoryRanges,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -822,9 +826,10 @@ inline const char* call_id_name(CallId id) {
         "VkMergePipelineCaches",
         "VkCreateSamplerYcbcrConversion",
         "VkGetPhysicalDeviceChained",
+        "VkInvalidateMappedMemoryRanges",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VkGetPhysicalDeviceChained) + 1,
+                      static_cast<size_t>(CallId::VkInvalidateMappedMemoryRanges) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

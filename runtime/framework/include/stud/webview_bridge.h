@@ -81,6 +81,8 @@ void login_window_failed();
 // A panel other than the login window is opening. A hidden window would take
 // its place, and none is prepared while it is open.
 void note_panel_opening();
+// That panel was refused, so no closed event will come for it either.
+void panel_open_failed();
 // How a hidden login window is told to show, given the page it is to show;
 // false if there turned out to be no such window.
 void set_login_page_shower(std::function<bool(const std::string&)> shower);
