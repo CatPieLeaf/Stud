@@ -23,8 +23,6 @@
 // final shape directly, same simplification already made for
 // PlatformParams/DeviceParams.
 //
-// See the engineering notes, milestone M4.
-//
 // Real bug found and fixed via a real run against the real libroblox.so
 // (the engineering notes, the "InitParams.platformParams reads null" chain):
 // AutoValue-generated classes expose their properties as zero-arg GETTER
@@ -88,6 +86,8 @@ public:
     FakeJni::JBoolean isVrDevice() { return isVrDevice_; }
     std::shared_ptr<FakeJni::JString> buildVariant() { return buildVariant_; }
     std::shared_ptr<ActivityJava> vrContext() { return vrContext_; }
+    // Newer builds ask for this. Stud has no such place to name.
+    FakeJni::JLong pioneerPlaceId() { return 0; }
 };
 
 // Builds the InitParams Stud hands to nativeAppBridgeSetInitParams.

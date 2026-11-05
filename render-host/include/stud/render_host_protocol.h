@@ -1169,7 +1169,7 @@ private:
     // host had exited (e.g. the user closing the real window) short of
     // every individual call() already having failed. A failed write/read
     // here now marks the connection dead for real, so connected()
-    // reflects live state and a caller (process-b's own render loop) can
+    // reflects live state and a caller (the runtime's own render loop) can
     // treat "render-host is gone" as its own real shutdown signal.
     void mark_dead() {
         if (fd_ >= 0) ::close(fd_);

@@ -64,10 +64,8 @@ ClientSettingsBridgeResult run_client_settings_bridge(FakeJni::Jvm& jvm,
     result.init_client_settings_result = init_result;
     clear_pending_jni_exception(jni_env, "nativeInitClientSettings");
 
-    // Real sequence, confirmed via Sober's own working logs: only on
-    // success (result == 0, matching the app's own app-shell manager's own real
-    // `f.onPostExecute()` check) does a real device call
-    // nativePostClientSettingsLoadedInitialization3 next.
+    // Only on success (0), as the app itself checks, does a device go on to
+    // nativePostClientSettingsLoadedInitialization3.
     if (!result.init_client_settings_trapped_abort && init_result == 0) {
         void* post_addr = lib.find_symbol(
             "Java_com_roblox_engine_jni_NativeGLInterface_"

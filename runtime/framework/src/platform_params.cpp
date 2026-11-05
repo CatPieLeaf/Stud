@@ -17,35 +17,11 @@ std::shared_ptr<PlatformParams> build_desktop_platform_params(const std::string&
                                                                 int viewport_height_mm) {
     auto params = std::make_shared<PlatformParams>();
     params->assetFolderPath = std::make_shared<FakeJni::JString>(asset_folder_path);
-    // Real Android values, read straight off the app's own builder
-    // (the app's own device-params builder):
-    //   isTouchDevice = hasSystemFeature("android.hardware.touchscreen")
-    //   isMouseDevice = hasSystemFeature("android.hardware.type.pc")
-    //   isKeyboardDevice = hasSystemFeature("android.hardware.type.pc")
-    // On a real phone or tablet that is touch=true, mouse=false,
-    // keyboard=false, and such a device with an OTG mouse attached still
-    // shows Roblox's own in-frame cursor, so the cursor is NOT gated on
-    // these flags; it follows from real SOURCE_MOUSE input events.
-    //
-    // Stud used to claim the exact opposite (touch=false, mouse=true), i.e.
-    // "I am a PC". That is a real behavioural difference, not a cosmetic
-    // one: on a PC the engine delegates the cursor to the host window
-    // system instead of drawing one itself, and Stud's surface has no
-    // system pointer (the real app's own SurfaceView asks Android for
-    // PointerIcon TYPE_NULL), so nothing was drawn at all. Report what a
-    // real Android device reports.
-    // Stud runs on a real Linux desktop: it genuinely has a real mouse and a
-    // real keyboard, and no touchscreen. That is exactly what a desktop-class
-    // Android device (`hasSystemFeature("android.hardware.type.pc")`, the
-    // real source of these two flags in the app's own device-params builder) reports, so this
-    // is the honest description of the machine rather than a spoof.
-    //
-    // Live-caught regression this pass: these were briefly flipped to a
-    // phone's values (touch=true, mouse/keyboard=false) while chasing the
-    // missing cursor. It did not affect the cursor, but it DID break
-    // keyboard input, because `isKeyboardDevice` is what makes the engine
-    // treat a keyboard as present at all; with it false, keys are delivered
-    // and then ignored. Do not flip these to mimic a phone again.
+    // No touchscreen, with a real mouse and keyboard: what a desktop-class
+    // Android device reports (`android.hardware.type.pc`, the source of both
+    // flags). The in-frame cursor doesn't depend on these; it follows from
+    // SOURCE_MOUSE input events. isKeyboardDevice does matter: with it false,
+    // the engine ignores delivered keys. Do not flip these to mimic a phone.
     params->isTouchDevice = false;
     params->isMouseDevice = true;
     params->isKeyboardDevice = true;
@@ -67,35 +43,7 @@ std::shared_ptr<PlatformParamsWithLuaFlags> build_desktop_platform_params_with_l
     int viewport_height_mm) {
     auto params = std::make_shared<PlatformParamsWithLuaFlags>();
     params->assetFolderPath = std::make_shared<FakeJni::JString>(asset_folder_path);
-    // Real Android values, read straight off the app's own builder
-    // (the app's own device-params builder):
-    //   isTouchDevice = hasSystemFeature("android.hardware.touchscreen")
-    //   isMouseDevice = hasSystemFeature("android.hardware.type.pc")
-    //   isKeyboardDevice = hasSystemFeature("android.hardware.type.pc")
-    // On a real phone or tablet that is touch=true, mouse=false,
-    // keyboard=false, and such a device with an OTG mouse attached still
-    // shows Roblox's own in-frame cursor, so the cursor is NOT gated on
-    // these flags; it follows from real SOURCE_MOUSE input events.
-    //
-    // Stud used to claim the exact opposite (touch=false, mouse=true), i.e.
-    // "I am a PC". That is a real behavioural difference, not a cosmetic
-    // one: on a PC the engine delegates the cursor to the host window
-    // system instead of drawing one itself, and Stud's surface has no
-    // system pointer (the real app's own SurfaceView asks Android for
-    // PointerIcon TYPE_NULL), so nothing was drawn at all. Report what a
-    // real Android device reports.
-    // Stud runs on a real Linux desktop: it genuinely has a real mouse and a
-    // real keyboard, and no touchscreen. That is exactly what a desktop-class
-    // Android device (`hasSystemFeature("android.hardware.type.pc")`, the
-    // real source of these two flags in the app's own device-params builder) reports, so this
-    // is the honest description of the machine rather than a spoof.
-    //
-    // Live-caught regression this pass: these were briefly flipped to a
-    // phone's values (touch=true, mouse/keyboard=false) while chasing the
-    // missing cursor. It did not affect the cursor, but it DID break
-    // keyboard input, because `isKeyboardDevice` is what makes the engine
-    // treat a keyboard as present at all; with it false, keys are delivered
-    // and then ignored. Do not flip these to mimic a phone again.
+    // See build_desktop_platform_params().
     params->isTouchDevice = false;
     params->isMouseDevice = true;
     params->isKeyboardDevice = true;

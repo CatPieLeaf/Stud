@@ -18,11 +18,6 @@ void register_canonical_java_vm(void* vm) { g_canonical_java_vm = vm; }
 
 extern "C" {
 
-int stud_is_bionic_address(const void*) { return 0; }
-void stud_enter_bionic_context() {}
-void stud_leave_bionic_context() {}
-void* stud_wrap_native_for_bionic_caller(void* fn) { return fn; }
-
 // The engine asked for a Java method or field Stud does not define. Usually
 // harmless, and the first thing to look at when a new Roblox misbehaves:
 // each is said once, and `!!!` finds them all in a log.

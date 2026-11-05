@@ -441,10 +441,13 @@ BEGIN_NATIVE_DESCRIPTOR(NativeGLInterfaceJava)
 END_NATIVE_DESCRIPTOR
 
 namespace {
+constexpr const char* kNoUserName = "StudPlayer";
 std::string g_native_user_interface_files_dir;
+// Written at launch and on every login report, read from engine threads.
+std::mutex g_native_user_mutex;
 long long g_native_user_id = 0;
-std::string g_native_username = "StudPlayer";
-std::string g_native_display_name = "StudPlayer";
+std::string g_native_username = kNoUserName;
+std::string g_native_display_name = kNoUserName;
 }  // namespace
 
 void set_native_user_interface_files_dir(std::string path) {
@@ -452,28 +455,38 @@ void set_native_user_interface_files_dir(std::string path) {
 }
 
 void set_native_user_identity(long long user_id, std::string username, std::string display_name) {
+    std::lock_guard<std::mutex> lock(g_native_user_mutex);
     g_native_user_id = user_id;
     if (!username.empty()) g_native_username = std::move(username);
     if (!display_name.empty()) g_native_display_name = std::move(display_name);
 }
 
-long long native_user_id() { return g_native_user_id; }
-std::string native_username() { return g_native_username; }
-std::string native_display_name() { return g_native_display_name; }
+long long native_user_id() {
+    std::lock_guard<std::mutex> lock(g_native_user_mutex);
+    return g_native_user_id;
+}
+std::string native_username() {
+    std::lock_guard<std::mutex> lock(g_native_user_mutex);
+    return g_native_username;
+}
+std::string native_display_name() {
+    std::lock_guard<std::mutex> lock(g_native_user_mutex);
+    return g_native_display_name;
+}
 std::string native_user_interface_files_dir() { return g_native_user_interface_files_dir; }
 
 std::shared_ptr<FakeJni::JString> NativeUserJavaInterfaceJava::getFilesDir() {
     return std::make_shared<FakeJni::JString>(g_native_user_interface_files_dir);
 }
 
-FakeJni::JLong NativeUserJavaInterfaceJava::getUserId() { return g_native_user_id; }
+FakeJni::JLong NativeUserJavaInterfaceJava::getUserId() { return native_user_id(); }
 
 std::shared_ptr<FakeJni::JString> NativeUserJavaInterfaceJava::getUsername() {
-    return std::make_shared<FakeJni::JString>(g_native_username);
+    return std::make_shared<FakeJni::JString>(native_username());
 }
 
 std::shared_ptr<FakeJni::JString> NativeUserJavaInterfaceJava::getDisplayName() {
-    return std::make_shared<FakeJni::JString>(g_native_display_name);
+    return std::make_shared<FakeJni::JString>(native_display_name());
 }
 
 BEGIN_NATIVE_DESCRIPTOR(NativeUserJavaInterfaceJava)
@@ -550,32 +563,12 @@ void NativeGLJavaInterfaceJava::onAppBridgeNotification(std::shared_ptr<FakeJni:
                                                           std::shared_ptr<FakeJni::JString> data) {
     std::string type_str = type ? type->asStdString() : "";
     std::string data_str = data ? data->asStdString() : "";
-    // Names the account being signed in to, so its payload stays out of the log.
-    if (type_str == "OPEN_CAPTCHA_VIEW") {
-        std::printf("stud: onAppBridgeNotification: OPEN_CAPTCHA_VIEW (%zu bytes)\n",
-                    data_str.size());
-        std::fflush(stdout);
-        open_security_check(data_str);
-        return;
-    }
-    std::printf("stud: onAppBridgeNotification: type=\"%s\" data=%s\n", type_str.c_str(),
-                data_str.c_str());
-    // Confirmed shape for the one payload this project knows
-    // about (InitHelper's own inner callback, the AppBridge-BrowserTracker flow;
-    // see this class's own header doc comment). Parsed and logged, not
-    // yet acted on; see that comment for why acting on it is deferred
-    // until a real payload has actually been observed.
-    try {
-        nlohmann::json doc = nlohmann::json::parse(data_str);
-        if (doc.contains("btid")) {
-            std::printf("stud: onAppBridgeNotification: real browserTrackerId=%s result=%s\n",
-                        doc.value("btid", nlohmann::json()).dump().c_str(),
-                        doc.value("result", nlohmann::json()).dump().c_str());
-        }
-    } catch (const nlohmann::json::parse_error&) {
-        // Not every real notification is this JSON shape, honest no-op,
-        // not an error worth surfacing.
-    }
+    // Type and size only: this log gets shared, and these payloads carry a
+    // tracking id or name the account being signed in to.
+    std::printf("stud: onAppBridgeNotification: type=\"%s\" (%zu bytes)\n", type_str.c_str(),
+                data_str.size());
+    std::fflush(stdout);
+    if (type_str == "OPEN_CAPTCHA_VIEW") open_security_check(data_str);
 }
 
 std::shared_ptr<DeviceStaticParamsJava> NativeGLJavaInterfaceJava::s_device_static_params;
@@ -636,7 +629,7 @@ void NativeGLJavaInterfaceJava::showKeyboard(FakeJni::JLong text_box,
             g_active_text_box_style.y_alignment = static_cast<int>(info->yAlignment);
             // Roblox's own TextInputType: 5 and 9 are the password kinds
             // (the real app maps exactly those onto Android's password
-            // input types in RbxKeyboard.l).
+            // input types).
             const int input_type = static_cast<int>(info->textInputType);
             g_active_text_box_style.password = input_type == 5 || input_type == 9;
         }
@@ -877,6 +870,11 @@ void NativeGLJavaInterfaceJava::promptNativePurchaseWithPaymentSessionId3(
     purchase_unavailable("promptNativePurchaseWithPaymentSessionId() (no billing)", user_id,
                          product);
 }
+void NativeGLJavaInterfaceJava::promptNativePurchaseWithContext(
+    FakeJni::JLong user_id, std::shared_ptr<FakeJni::JString> product,
+    std::shared_ptr<NativePurchaseContextJava>) {
+    purchase_unavailable("promptNativePurchaseWithContext() (no billing)", user_id, product);
+}
 
 void NativeGLJavaInterfaceJava::hideKeyboard() {
     std::lock_guard<std::mutex> lock(g_text_box_mutex);
@@ -1082,6 +1080,10 @@ BEGIN_NATIVE_DESCRIPTOR(MemStorageConnectionJava)
 { FakeJni::Constructor<MemStorageConnectionJava, FakeJni::JLong>{} },
 END_NATIVE_DESCRIPTOR
 
+BEGIN_NATIVE_DESCRIPTOR(NativePurchaseContextJava)
+{ FakeJni::Function<&NativePurchaseContextJava::create>{}, "create", kStaticPublic },
+END_NATIVE_DESCRIPTOR
+
 BEGIN_NATIVE_DESCRIPTOR(NativeGLJavaInterfaceJava)
 { FakeJni::Function<&NativeGLJavaInterfaceJava::onAppBridgeNotification>{}, "onAppBridgeNotification", kStaticPublic },
 { FakeJni::Function<&NativeGLJavaInterfaceJava::getDeviceStaticParams>{}, "getDeviceStaticParams", kStaticPublic },
@@ -1108,6 +1110,7 @@ BEGIN_NATIVE_DESCRIPTOR(NativeGLJavaInterfaceJava)
 { FakeJni::Function<&NativeGLJavaInterfaceJava::promptNativePurchaseWithPayload>{}, "promptNativePurchaseWithPayload", kStaticPublic },
 { FakeJni::Function<&NativeGLJavaInterfaceJava::promptNativePurchaseWithPaymentSessionId>{}, "promptNativePurchaseWithPaymentSessionId", kStaticPublic },
 { FakeJni::Function<&NativeGLJavaInterfaceJava::promptNativePurchaseWithPaymentSessionId3>{}, "promptNativePurchaseWithPaymentSessionId", kStaticPublic },
+{ FakeJni::Function<&NativeGLJavaInterfaceJava::promptNativePurchaseWithContext>{}, "promptNativePurchaseWithContext", kStaticPublic },
 END_NATIVE_DESCRIPTOR
 
 void NativeObjectManagerJava::nativeObjectRegister(std::shared_ptr<FakeJni::JObject> obj,
@@ -1276,6 +1279,7 @@ void register_app_java_classes(FakeJni::Jvm& jvm) {
     jvm.registerClass<MessageBusRequestHandlerRawJava>();
     jvm.registerClass<WebViewProtocolJava>();
     jvm.registerClass<MemStorageConnectionJava>();
+    jvm.registerClass<NativePurchaseContextJava>();
     jvm.registerClass<NativeGLJavaInterfaceJava>();
     jvm.registerClass<NativeObjectManagerJava>();
     jvm.registerClass<NativeGLInterfaceJava>();
@@ -1388,6 +1392,15 @@ void record_account_info(const std::string& json) {
         if (id->is_number_integer()) user_id = id->get<long long>();
         if (id->is_string()) user_id = std::strtoll(id->get<std::string>().c_str(), nullptr, 10);
     }
+    // The engine asks NativeUserJavaInterface who is signed in, and every
+    // join sends the name, so a switch inside the app has to reach both.
+    if (user_id != 0) {
+        const auto text = [&doc](const char* key) {
+            const auto it = doc.find(key);
+            return it != doc.end() && it->is_string() ? it->get<std::string>() : std::string();
+        };
+        set_native_user_identity(user_id, text("username"), text("displayName"));
+    }
     if (const std::string session = current_session_value(); user_id != 0 && !session.empty()) {
         LocalStoragePlatformJava::note_signed_in(user_id, session);
     }
@@ -1395,6 +1408,17 @@ void record_account_info(const std::string& json) {
                 info.under_13 ? "yes" : "no", info.membership_type,
                 info.has_subscription ? "yes" : "no");
     std::fflush(stdout);
+}
+
+void clear_account_info() {
+    {
+        std::lock_guard<std::mutex> lock(account_mutex());
+        account_info() = {};
+    }
+    std::lock_guard<std::mutex> lock(g_native_user_mutex);
+    g_native_user_id = 0;
+    g_native_username = kNoUserName;
+    g_native_display_name = kNoUserName;
 }
 
 FakeJni::JBoolean NativeUserJavaInterfaceJava::getIsUnder13() {

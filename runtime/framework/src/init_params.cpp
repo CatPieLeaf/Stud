@@ -16,6 +16,7 @@ BEGIN_NATIVE_DESCRIPTOR(InitParams)
 { FakeJni::Function<&InitParams::isVrDevice>{}, "isVrDevice" },
 { FakeJni::Function<&InitParams::buildVariant>{}, "buildVariant" },
 { FakeJni::Function<&InitParams::vrContext>{}, "vrContext" },
+{ FakeJni::Function<&InitParams::pioneerPlaceId>{}, "pioneerPlaceId" },
 END_NATIVE_DESCRIPTOR
 
 std::shared_ptr<InitParams> build_desktop_init_params(std::shared_ptr<PlatformParams> platform_params,

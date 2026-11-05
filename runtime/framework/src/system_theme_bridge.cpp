@@ -2,10 +2,10 @@
 
 #include "stud/bionic_jvm.h"
 #include "stud/app_java_classes.h"
+#include "stud/json_field.h"
 #include "stud/trap_recovery.h"
 
 #include <atomic>
-#include <cctype>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -23,7 +23,7 @@ using PublishRawFn = void (*)(JNIEnv*, jobject, jstring, jstring);
 constexpr const char* kProtocolClass = "com/roblox/universalapp/systemtheme/JNISystemThemeProtocol";
 constexpr const char* kSymbolPrefix = "Java_com_roblox_universalapp_systemtheme_JNISystemThemeProtocol_";
 
-// The real enum from SystemThemeProtocol.a, confirmed against the app's own code.
+// The real enum, confirmed against the app's own code.
 constexpr int kThemeError = 0;
 constexpr int kThemeLight = 1;
 constexpr int kThemeDark = 2;
@@ -92,21 +92,7 @@ std::string message_id(FakeJni::Env& env, const stud::linker::LoadedLibrary& lib
 // is accepted too rather than depending on which of the two the app
 // happens to send.
 int theme_value_field(const std::string& json, const std::string& key) {
-    const std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return kThemeError;
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return kThemeError;
-    ++pos;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '"')) ++pos;
-    int value = 0;
-    bool any = false;
-    while (pos < json.size() && std::isdigit(static_cast<unsigned char>(json[pos]))) {
-        value = value * 10 + (json[pos] - '0');
-        ++pos;
-        any = true;
-    }
-    return any ? value : kThemeError;
+    return static_cast<int>(json_number_field(json, key, kThemeError));
 }
 
 // The real enum's own themeName: LIGHT and SYSTEM_LIGHT are "light",

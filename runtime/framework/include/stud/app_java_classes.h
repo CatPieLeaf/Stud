@@ -28,9 +28,7 @@
 // GetFieldID's during GameActivity_initializeNativeCode(), plus the small
 // number of other classes Roblox's own code has been found (via real
 // crashes, see each class's own comment) to FindClass and dereference
-// unconditionally. Promoted here, out of tools/try_bootstrap.cpp, once
-// proven against the real libroblox.so, shared by the diagnostic tool
-// and the real stud-runtime binary so both stay in sync automatically.
+// unconditionally.
 //
 // Field layouts and signatures throughout this file are ground-truth, not
 // guessed, each class's own comment documents its real source (AOSP
@@ -449,7 +447,7 @@ public:
 
 // Real paths Stud already computes and hands to libroblox.so directly
 // via nativeSetFilesDirectory/nativeSetCacheDirectory (native_settings.
-// cpp), set once at boot (process-b/src/main.cpp) so ActivityJava's
+// cpp), set once at boot (runtime/src/main.cpp) so ActivityJava's
 // own getFilesDir()/getCacheDir() can hand back the SAME real paths
 // through the real Context API real AGDK/native code also commonly
 // uses, instead of leaving it unregistered.
@@ -735,15 +733,7 @@ public:
     std::shared_ptr<FakeJni::JObject> get(FakeJni::JInt /*index*/) { return nullptr; }
 };
 
-// com.roblox.audio.AppRtcDeviceWrapper and org.fmod.MediaCodec, the two real
-// audio classes the engine resolves and never finds
-// (`FindClass(...) -> raw jclass=0x0`, every run). Stud has no audio path at
-// all yet, so these are deliberately registered EMPTY rather than guessed at:
-// the class resolving turns a silent null into precise
-// `GetMethodID MISS class=... method=...` lines naming exactly which methods
-// the engine actually wants, which is the evidence needed to implement them
-// honestly instead of inventing a surface.
-// AppRtcDeviceWrapper is no longer empty: the engine constructs it with a
+// com.roblox.audio.AppRtcDeviceWrapper: the engine constructs it with a
 // pointer back to itself and asks which audio route is in use and to mute
 // the microphone at the system level. On a desktop the route is whatever
 // the audio server chose, so the honest answer is the wired one, not an
@@ -868,8 +858,7 @@ public:
     // that could never complete.
     FakeJni::JBoolean isAvailable() { return false; }
     // Real: stores the native listener pointer for later onComplete/
-    // onCancel/onError callbacks. Stud records it so a future real
-    // implementation has it, and so the call is not silently dropped.
+    // onCancel/onError callbacks. Stud has none to make, so it only logs.
     void setListener(FakeJni::JLong native_listener_ptr);
     // Real: launches the Persona inquiry UI. Unreachable in practice
     // while isAvailable() is false; logged rather than faked, since
@@ -1339,6 +1328,19 @@ public:
     explicit MemStorageConnectionJava(FakeJni::JLong ptr) : nativePtr(ptr) {}
 };
 
+// com.roblox.engine.jni.autovalue.NativePurchaseContext: the last argument of
+// promptNativePurchaseWithContext. The engine builds one through create(), and
+// nothing here reads it, so it holds nothing.
+class NativePurchaseContextJava : public FakeJni::JObject {
+public:
+    DEFINE_CLASS_NAME("com/roblox/engine/jni/autovalue/NativePurchaseContext")
+    static std::shared_ptr<NativePurchaseContextJava> create(std::shared_ptr<FakeJni::JString>,
+                                                             std::shared_ptr<FakeJni::JString>,
+                                                             FakeJni::JBoolean) {
+        return std::make_shared<NativePurchaseContextJava>();
+    }
+};
+
 class NativeGLJavaInterfaceJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/engine/jni/NativeGLJavaInterface")
@@ -1391,10 +1393,9 @@ public:
     // the call is silently dropped and whatever depended on it never happens.
     // Signatures are the ones the engine itself asked for, verbatim.
     //
-    // Bodies are honest: Stud logs what it was told and does nothing where it
-    // genuinely has nothing to do (no billing, no WebView, no photo album, no
-    // VR, no ad id). Claiming otherwise would make the engine follow a path
-    // that cannot work.
+    // Stud logs what it was told and does nothing where it has nothing to do
+    // (no billing, no VR, no ad id). Claiming otherwise would make the engine
+    // follow a path that cannot work.
     static void gameLoadedCallback(FakeJni::JLong placeId);
     static void gameDidLeave();
     static void exitGameWithError(FakeJni::JInt error);
@@ -1435,6 +1436,9 @@ public:
                                                            std::shared_ptr<FakeJni::JString> a,
                                                            std::shared_ptr<FakeJni::JString> b,
                                                            std::shared_ptr<FakeJni::JString> c);
+    static void promptNativePurchaseWithContext(FakeJni::JLong id,
+                                                std::shared_ptr<FakeJni::JString> a,
+                                                std::shared_ptr<NativePurchaseContextJava> context);
 
     // Live handle of the focused TextBox, or 0 when none. Read by the
     // input bridge (runtime/src/input_bridge.cpp).
@@ -1507,42 +1511,14 @@ public:
     static void nativeObjectStop();
 };
 
-// Direct evidence (this session): running the full real bootstrap
-// end-to-end: real stud-render-host, real fetched ClientSettings, a
-// real stored Roblox session cookie; every one of these static
-// method lookups fails with jnivm's own "class is null" (i.e. the
-// FindClass() for whatever class declares them was never registered,
-// so there was nothing to look the method up on), for the entire
-// lifetime of every real run so far, cookie or no cookie. The
-// four-call V2 app-bridge sequence (engine_v2_bridge.cpp) never
-// signals completion in any of those runs either. Not proven causally
-// linked yet (no the app's own code available this session to independently confirm
-// the Java-side call graph, flagged honestly, matching this file's
-// own established practice for inferred-not-confirmed pieces), but a
-// real, concrete, previously-overlooked gap either way: this is Stud
-// failing to "house" Roblox as a real Android app the way real Android
-// does; these are real user/device/locale/analytics accessor
-// methods Roblox's native engine calls INTO Java for (the reverse
-// direction from GameActivityJava et al above, which Java calls INTO
-// native for), and until now none of their declaring classes existed
-// in this FakeJni environment at all.
-//
-// Class names are real, confirmed against the embedded strings of the actual
-// extracted libroblox.so (checked): com/roblox/engine/jni/user/
-// NativeUserJavaInterface, com/roblox/engine/jni/locale/
-// NativeLocaleJavaInterface, com/roblox/engine/jni/reporter/
-// SessionReporterJavaInterface. Method-to-class assignment is inferred
-// from name semantics (locale methods on the locale interface, session
-// reporting on the reporter interface, everything else on the user
-// interface), plausible and internally consistent, but not
-// independently verified against the app's own code against real Java source the way this
-// file's other classes' method signatures are. Return values are
-// deliberately conservative, real-looking placeholders (empty/zero/
-// false where no real value is knowable locally), not an attempt to
-// impersonate a real Roblox account's actual data.
+// The user, locale and reporting accessors the engine calls into Java for.
+// Class names come from libroblox.so itself. Which class holds which method is
+// inferred from the names, where the method is not confirmed elsewhere.
 // Records the account facts from the Lua app's login report; see
 // NativeHelperJava::gameActivity_onDidLogInReceived.
 void record_account_info(const std::string& json);
+// Nobody is signed in any more: the account facts and identity above go too.
+void clear_account_info();
 
 class NativeUserJavaInterfaceJava : public FakeJni::JObject {
 public:
@@ -1609,8 +1585,8 @@ public:
                                                  std::shared_ptr<FakeJni::JString>, FakeJni::JLong) {}
 };
 
-// Writable files-dir path threaded in from main() (process-b's
-// own already-computed cache_subdir("files")), called once, before
+// Writable files-dir path threaded in from main() (its own
+// already-computed cache_subdir("files")), called once, before
 // register_app_java_classes()'s classes can be queried.
 void set_native_user_interface_files_dir(std::string path);
 
@@ -1826,13 +1802,10 @@ public:
 // project's own framework-completeness sweep keeps finding (see
 // NetworkUtilsJava, NativeGLJavaInterfaceJava, etc.).
 //
-// All 23 real @Keep methods below (confirmed against the app's own code method signatures,
-// checked) are honest no-ops beyond a log line, their real Java
-// bodies mostly just marshal into other, deeper app subsystems (push
-// notifications, purchase prompts, keyboard/IME, screenshot saving,
-// app-store update flow) Stud has no equivalent of and doesn't need for
-// "the engine can call this without hitting a null class/method ID"
-// (this file's own standing goal, see NetworkUtilsJava's doc comment).
+// The @Keep methods below are the engine's callbacks into the app. Most only
+// log, since their real bodies marshal into subsystems Stud has no equivalent
+// of. The ones that matter here, such as login, experience start and stop and
+// screenshots, have hooks of their own.
 // A 24th real @Keep method, `onCodeParsedFromSMS`, is deliberately
 // NOT included here. Its real dispatch mechanism is a Java EventBus
 // (a main-thread subscriber, greenrobot-style `post()`),
@@ -1858,11 +1831,13 @@ public:
     void gameActivity_onDidLogOutReceived() {
         std::printf("stud: NativeHelper.gameActivity_onDidLogOutReceived()\n");
         std::fflush(stdout);
+        clear_account_info();
         if (on_account_changed) on_account_changed("logout");
     }
     void gameActivity_onDidSignUp(std::shared_ptr<FakeJni::JString> data) {
-        std::printf("stud: NativeHelper.gameActivity_onDidSignUp: data=%s\n",
-                    data ? data->asStdString().c_str() : "");
+        // Size only, this is an account report.
+        std::printf("stud: NativeHelper.gameActivity_onDidSignUp (%zu bytes)\n",
+                    data ? data->asStdString().size() : 0u);
     }
     void gameActivity_onDidSwitchAccountReceived() {
         std::printf("stud: NativeHelper.gameActivity_onDidSwitchAccountReceived()\n");
@@ -2008,11 +1983,12 @@ public:
         return launch_request_storage();
     }
     static void set_last_launch_request(LaunchRequest request) {
+        const long long place_id = request.place_id;
         {
             std::lock_guard<std::mutex> lock(launch_request_mutex());
             launch_request_storage() = std::move(request);
         }
-        set_last_place_id(launch_request_storage().place_id);
+        set_last_place_id(place_id);
     }
     void gameActivity_onGameStreamingStatusChanged(std::shared_ptr<FakeJni::JString> data) {
         std::printf("stud: NativeHelper.gameActivity_onGameStreamingStatusChanged: data=%s\n",
@@ -2140,8 +2116,8 @@ public:
     }
     static void sendSessionReport(std::shared_ptr<FakeJni::JString> str,
                                    std::shared_ptr<FakeJni::JString> /*str2*/) {
-        std::printf("stud: SessionReporterJavaInterface.sendSessionReport: %s\n",
-                    str ? str->asStdString().c_str() : "");
+        std::printf("stud: SessionReporterJavaInterface.sendSessionReport (%zu bytes)\n",
+                    str ? str->asStdString().size() : 0u);
     }
     static void setEventTrackingGoogleAnalytics(std::shared_ptr<FakeJni::JString> /*str*/,
                                                  std::shared_ptr<FakeJni::JString> /*str2*/,
@@ -2253,33 +2229,6 @@ public:
     DEFINE_CLASS_NAME("org/webrtc/voiceengine/WebRtcAudioTrack")
 };
 
-// android.view.MotionEvent / android.view.KeyEvent; real, confirmed
-// FindClass targets: Roblox's own input-handling init code looks these
-// up and calls GetMethodID(getDeviceId, "()I") /
-// GetMethodID(getHistoricalAxisValue, "(III)F") on the result
-// unconditionally, without a null check, confirmed via jnivm's own
-// FindClass tracing (JNIVM_ENABLE_TRACE=ON), which showed the exact
-// class names right before the crash (jnivm's default "class is null"
-// log doesn't include the class name itself, only the method/signature,
-// so this needed the extra trace pass to pin down). No real touch/mouse/
-// key event data flows through these yet (Stud has no input-forwarding
-// path built). This looks like Roblox caching jmethodIDs up front for
-// later use, not processing a live event, so real getter BEHAVIOR isn't
-// needed yet, only that these two specific methods RESOLVE (an empty
-// class, unlike the WebRTC classes above, is not enough here, jnivm's
-// GetMethodID needs an actual matching method declared, or it returns
-// null too and the same crash recurs one level later). getDeviceId()
-// returns 0 (real Android's own convention for "no specific input
-// device," matching e.g. KeyCharacterMap.VIRTUAL_KEYBOARD's use of 0 as
-// a similar sentinel); getHistoricalAxisValue() returns 0.0f (no
-// historical samples buffered). Grow further only against real evidence
-// (another crash), matching this file's own established discipline.
-// MotionEventJava / KeyEventJava used to live here as near-empty
-// placeholders (getDeviceId + getHistoricalAxisValue only). They now have
-// real, fully-populated implementations in android_framework.h,
-// AGDK's own GameActivity hands these objects to onTouchEventNative/
-// onKeyDownNative and the engine reads a dozen more methods off each.
-
 // com.roblox.client.flags.NativeFlagsInitResult; real class, real
 // field/method layout confirmed against the app's own code (), not
 // guessed. `Java_..._nativeInitializeNativeFlags` constructs one of
@@ -2329,10 +2278,7 @@ private:
 // exports a registration entry point, real DEX would normally call it
 // once, Stud calls it itself instead" shape as the Djinni
 // setPlatformImpl protocols (protocol_platforms.h) and
-// `NativeGLJavaInterface.setAppBridgeNotificationListener`. Stud has no
-// real WebView to actually sync cookies into yet, honest no-op body,
-// just logs, matching this file's own "satisfy the real call shape now,
-// grow the real behavior against real evidence later" convention.
+// `NativeGLJavaInterface.setAppBridgeNotificationListener`.
 class CookieOnSetHandlerJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("com/roblox/universalapp/cookie/CookieProtocol$OnSetCookieHandlerImpl")
@@ -2353,8 +2299,10 @@ public:
             if (entry) headers.push_back(static_cast<std::string>(*entry));
         }
         note_engine_cookies(url_str, headers);
+        // Without its query, which can carry a tracking id.
         std::printf("stud: CookieProtocol.onSetCookie: %zu cookie(s) for url=%s (names: %s)\n",
-                    count, url_str.c_str(), cookie_names(headers).c_str());
+                    count, url_str.substr(0, url_str.find('?')).c_str(),
+                    cookie_names(headers).c_str());
     }
 };
 

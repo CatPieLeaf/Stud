@@ -15,8 +15,6 @@
 // for the full trace. This is a clean-room reimplementation of the *shape*
 // of that object as observed from the real APK's bytecode, not copied
 // from any of the app's source.
-//
-// See the engineering notes, milestone M4.
 
 namespace stud::jni_bridge {
 

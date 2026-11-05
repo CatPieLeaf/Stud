@@ -121,9 +121,9 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
 
     // Permanent: Stud plays the "Java side" role directly, calling
     // AGDK's own real, RegisterNatives()-installed lifecycle methods via
-    // ordinary JNI reflection; see game_engine_boot.h's doc comment for
-    // the two real jnivm bugs (patched permanently in
-    // jni-bridge/patches/patch_libjnivm.cmake) this depends on.
+    // ordinary JNI reflection, which needs two jnivm fixes from
+    // runtime/framework/patches/patch_libjnivm.cmake: RegisterNatives
+    // methods have to be findable and callable.
     jclass game_activity_class = env.GetObjectClass(game_activity_instance);
 
     // Gap found in testing (the engineering notes, "GameActivity_

@@ -6,35 +6,11 @@
 
 #include "stud/linker.h"
 
-// Real fix for task #8 (the engineering notes): confirmed via a real, working
-// Sober install's own logs (`data/sober/sober_logs/*.log`,
-// `[FLog::AndroidGLView] nativeInitClientSettings` firing at t=2.44s
-// into a real cold boot, immediately followed by
-// `nativePostClientSettingsLoadedInitialization3`) that a real device's
-// JAVA side fetches ClientSettings content over HTTP itself (via
-// the app's own app-shell manager's real AsyncTask, ground-truth-traced from the app
-// itself many sessions ago) and hands the ALREADY-FETCHED content to
-// nativeInitClientSettings(). Roblox's own native code never does
-// this fetch itself.
-//
-// Stud's architecture deliberately bypasses all Java/Kotlin (the
-// locked "Universal App" decision; see the engineering notes' M1 section), so
-// there's no Java AsyncTask to do this fetch.
-//
-// Ground-truth-traced endpoint (the app's own HTTP/cookie layer,
-// methods, `BuildConfig.CLIENT_SETTINGS_GROUPNAME = "GoogleAndroidApp"`):
-//   https://clientsettingscdn.roblox.com/v2/settings/application/GoogleAndroidApp
-//
-// The actual HTTP GET no longer happens here: it's done once by the UI
-// process (a real glibc process, already doing other network-adjacent
-// work for the login flow) before the runtime process even starts, and
-// handed over via stud::ipc::LaunchPayload; see that struct's own doc
-// comment for why (this used to be a libcurl call directly in this
-// module, cross-building curl for bionic being the alternative, ruled
-// out as substantial standalone work for a single fixed-URL GET that's
-// needed at a fixed, early point in boot anyway). This module just
-// calls nativeInitClientSettings() with whatever body/status it's
-// given.
+// On a device the Java side fetches ClientSettings over HTTP and hands the
+// content to nativeInitClientSettings(); the engine never fetches it itself.
+// Stud runs no Java, so Process A fetches it before the runtime starts and hands
+// it over through stud::ipc::LaunchPayload. This module only calls the engine
+// with the body and status it's given.
 
 namespace stud::jni_bridge {
 
@@ -68,13 +44,9 @@ struct ClientSettingsBridgeResult {
 // `jvm` supplies the JNIEnv*. `lib` must already be successfully
 // loaded. `body`/`http_status` come from the UI process's own pre-boot
 // fetch (stud::ipc::LaunchPayload). If `http_status` isn't 200, this is
-// a no-op (matches the old fetch-failed path: don't call
-// nativeInitClientSettings with no real content). Otherwise calls
-// nativeInitClientSettings(body, "{}", "GoogleAndroidApp"), if that
-// returns 0 (success, matching the app's own app-shell manager's own real
-// `f.onPostExecute()` check), also calls
-// nativePostClientSettingsLoadedInitialization3(null), matching the
-// exact real sequence observed in Sober's own working logs.
+// a no-op. Otherwise calls nativeInitClientSettings(body, "{}",
+// client_settings_group()), and if that returns 0, as the app itself checks,
+// nativePostClientSettingsLoadedInitialization3 with an empty list.
 ClientSettingsBridgeResult run_client_settings_bridge(FakeJni::Jvm& jvm,
                                                        const stud::linker::LoadedLibrary& lib,
                                                        const std::string& body, long http_status);

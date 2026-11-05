@@ -75,8 +75,7 @@ public:
 
 // Real fields parsed out of a real roblox-player:// deep link's own
 // place_launcher_url query string (see ui/src/launch_uri.h's own doc
-// comment), passed in explicitly, rather than this file taking a
-// stud-ipc dependency, since jni-bridge doesn't otherwise depend on it.
+// comment), passed in explicitly, so this file needs no stud-ipc dependency.
 // Zero/empty fields (the default, e.g. a bare, non-deep-link launch)
 // are passed straight through to StartGameParams' own matching fields
 // as honest zero/empty placeholders, same as before this existed.
@@ -85,17 +84,8 @@ struct DeepLinkJoinInfo {
     std::string join_attempt_id;
     long long referred_by_player_id = 0;
     std::string join_attempt_origin;
-    // The real, opaque `gameinfo:` ticket from the deep link itself
-    // (LaunchUri::game_info / LaunchPayload::game_info), a real,
-    // structurally plausible try for StartGameParams' own launchData_
-    // field (matching AutoValue's real naming convention for "extra
-    // launch payload data"), not yet live-confirmed correct. The
-    // plaintext fields above (place_id etc.) alone were already live-
-    // tested this session and did NOT trigger a real join; this is
-    // the next real, cheap, honest thing to try, not fabricated schema
-    // guessing (a wrong string here is a no-op, same as the empty
-    // placeholder it replaces, not something that could corrupt a real
-    // join attempt).
+    // The opaque `gameinfo:` ticket from the deep link
+    // (LaunchUri::game_info / LaunchPayload::game_info).
     std::string launch_data;
     // The rest of the real launch request. the app's own launch-request parser reads every one of
     // these out of the same JSON and the app's own app-shell helper feeds them to
@@ -126,14 +116,7 @@ int join_request_type_for(const DeepLinkJoinInfo& join);
 // Builds a real, honest StartGameParams. `launch_data`/`game_join_context`
 // are the two real fields AutoValue_StartGameParams.Builder() itself
 // pre-seeds with "" on a real device (see StartGameParams's own
-// builder() factory). `deep_link` (see DeepLinkJoinInfo above) feeds
-// placeId/joinAttemptId/referredByPlayerId/joinAttemptOrigin when a
-// real deep link supplied them; real, structurally-confirmed fields,
-// checked (this project has NOT yet live-confirmed these alone are
-// sufficient for the real engine to complete a real join; see this
-// function's own .cpp doc comment for the reasoning behind trying this
-// over reimplementing Roblox's own internal join-ticket resolution
-// host-side). Every field of the launch request the app itself reads is
+// builder() factory). Every field of the launch request the app itself reads is
 // carried, and joinRequestType is derived from them as the app derives
 // it (join_request_type_for). `surface` must be
 // the SAME Surface object already handed to GameActivity's own

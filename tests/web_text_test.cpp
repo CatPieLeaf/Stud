@@ -11,6 +11,7 @@
 #include "stud/web_origin.h"
 
 using stud::jni_bridge::json_escaped;
+using stud::jni_bridge::json_number_field;
 using stud::jni_bridge::json_string_field;
 using stud::jni_bridge::json_true_field;
 using stud::jni_bridge::utf16_offset;
@@ -40,6 +41,10 @@ int main() {
     assert(json_string_field(R"({"name":"ç😀"})", "name") ==
            "\xC3\xA7\xF0\x9F\x98\x80");
     assert(json_string_field(R"({"url":null,"other":"x"})", "url").empty());
+    assert(json_number_field(R"({"intensity":"0.5"})", "intensity", -1.0) == 0.5);
+    assert(json_number_field(R"({"theme": 4})", "theme", 0.0) == 4.0);
+    assert(json_number_field(R"({"theme":"none"})", "theme", 7.0) == 7.0);
+    assert(json_number_field(R"({"other":1})", "theme", 7.0) == 7.0);
     assert(json_string_field(R"({"a":"url","url":"real"})", "url") == "real");
     assert(json_string_field(R"({"a":"b"})", "").empty());
     assert(json_true_field(R"({"on": true})", "on"));

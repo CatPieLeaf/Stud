@@ -17,10 +17,8 @@
 // symbols" reasoning already established for the whole JNI bridge (see
 // the engineering notes' "libroblox.so native symbol survey").
 //
-// Ground-truth call order (the engineering notes, "Sober does not
-// patch libroblox.so either" entry, corrects the earlier, guessed
-// order this file previously documented), traced from the actual
-// the real MainGameActivity.onCreate() and setInitParamsForEngine:
+// Call order, traced from the real MainGameActivity.onCreate() and
+// setInitParamsForEngine:
 //
 //   1. nativeSetAssetPath(String)            , BEFORE GameActivity's
 //      own native init (called before super.onCreate() in
@@ -38,19 +36,8 @@
 //      Java calls proactively. See run_init_params_bootstrap() and
 //      app_java_classes.h's MainGameActivityJava::bootstrapTheApp().
 //
-// run_bootstrap() below is kept as a combined convenience wrapper (used by
-// tests/tools that don't need the split) with the SAME corrected order;
-// production code (runtime/main.cpp) uses the two split functions directly
-// so nativeAppBridgeSetInitParams genuinely only fires from inside the
-// real callback, not eagerly.
-//
-// tests/bootstrap_test.cpp tests the orchestration logic (argument
-// shapes, call order, JNIEnv* validity) against a synthetic fixture;
-// runtime/main.cpp is what actually calls this against the real,
-// patched libroblox.so.
-//
-// See the engineering notes, milestones M4 and the "Sober does not patch
-// libroblox.so either" / boot-sequence-rework entries.
+// runtime/src/main.cpp uses the two split functions, so
+// nativeAppBridgeSetInitParams only fires from inside the real callback.
 
 namespace stud::jni_bridge {
 

@@ -31,9 +31,7 @@ PreloadBootstrapResult run_preload_bootstrap(FakeJni::Jvm& jvm, const stud::link
 
     PreloadBootstrapResult result;
 
-    // Real order (the engineering notes, "Sober does not patch libroblox.so
-    // either" entry): nativeSetAssetPath BEFORE nativePreloadFlagOverrides
-    // reversed from this project's earlier, guessed order. Each call is
+    // nativeSetAssetPath BEFORE nativePreloadFlagOverrides. Each call is
     // a direct, same-ABI call into Roblox's own bionic-compiled native
     // code, wrapped only in call_trapping_abort()'s abort/trap recovery
     // (see trap_recovery.h), not any ABI-crossing bracket, since

@@ -7,23 +7,9 @@
 #include <functional>
 #include <string>
 
-// General infrastructure for driving a loaded libroblox.so through
-// its actual post-load boot sequence, promoted out of
-// tools/try_bootstrap.cpp once proven against the real binary, shared by
-// the diagnostic tool and the real stud-runtime binary so both stay in
-// sync. See the engineering notes, "run_bootstrap() completes end-to-end" and
-// "GameActivity's real lifecycle driven end-to-end" entries, for the full
-// history and the real bugs (bionic %fs-context handling, two jnivm
-// GetMethodID/RegisterNatives bugs) this depends on.
-//
-// Deliberately NOT included here: any Roblox-build-specific byte offset
-// or address. Every function in this header works the same way regardless
-// of which Roblox APK version produced the loaded library, matching the
-// project's locked "works with any given Roblox APK" requirement. (One
-// real, known limitation of the *diagnostic tool*, not promoted here: an
-// exploratory direct call to one specific build's internal flag-registry
-// constructor at a hardcoded address, kept local to
-// tools/try_bootstrap.cpp and never wired into this shared module.)
+// Drives a loaded libroblox.so through its boot after the load: JNI_OnLoad and
+// the GameActivity lifecycle. Nothing here depends on a Roblox build's byte
+// offsets or addresses, so it works with whichever APK is configured.
 namespace stud::jni_bridge {
 
 struct JniOnLoadResult {
@@ -89,9 +75,8 @@ struct GameActivityLifecycleResult {
 // still in it and the rest of the frame showing straight through to the
 // desktop.
 //
-// Runs on its own detached thread with a bounded wait, for the same reason
-// every other lifecycle call here does (a real one can block), and refuses to
-// overlap itself, a drag delivers a configure per pixel.
+// Runs inline on the caller's thread, unlike the boot-time lifecycle calls; see
+// the definition for why.
 bool dispatch_surface_changed(FakeJni::Jvm& jvm, const GameActivityLifecycleResult& lifecycle,
                               int32_t width, int32_t height);
 

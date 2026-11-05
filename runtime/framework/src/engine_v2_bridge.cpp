@@ -180,8 +180,8 @@ bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
     // `nativeAppBridgeV2Init` arriving AFTER the surface had already been
     // handed over, and it precedes this call rather than following from it.
     // Fixed separately by splitting the V2 sequence so app setup and
-    // InitWithParams run BEFORE the surface (the real `ASMA.E -> j -> F`
-    // order); see run_engine_v2_early_init(). Geometry now draws.
+    // InitWithParams run BEFORE the surface (the real app-shell order); see
+    // run_engine_v2_early_init(). Geometry now draws.
     //
     // The Game variant is still correctly skipped on a bare launch, for the
     // reason below, which was always the sound one.
@@ -221,10 +221,9 @@ bool call_update_surface_pair(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
 
 }  // namespace
 
-// Real app-shell order (the app's own app-shell manager, the "ASMA" class): `E(context)`
-// does nativeGameGlobalInit/nativeUpdateAdapterInit, `j(d)` does
-// nativeAppBridgeV2InitWithParams, and only then does `F(surface)`
-// hand over a real Surface. Extracted here so both the normal sequence
+// Real app-shell order: nativeGameGlobalInit and nativeUpdateAdapterInit, then
+// nativeAppBridgeV2InitWithParams, and only then a real Surface. Extracted here
+// so both the normal sequence
 // and the early, pre-surface path can run exactly the same calls,
 // live evidence for why that matters is in run_engine_v2_early_init()'s
 // own doc comment.
@@ -307,8 +306,7 @@ void perform_early_init(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& li
 // (`setStage: LuaApp`, `userDidLogin`), and only THEN did Stud's
 // `nativeAppBridgeV2Init` arrive, which reset `setStage: (stage:Native)`
 // and destroyed the live SurfaceController/RenderView underneath it.
-// A real device does the reverse: init first, surface last
-// (`ASMA.E` -> `ASMA.j` -> `ASMA.F(surface)`).
+// A real device does the reverse: init first, surface last.
 EngineV2BridgeResult run_engine_v2_early_init(FakeJni::Jvm& jvm,
                                                 const stud::linker::LoadedLibrary& lib,
                                                 std::shared_ptr<InitParams> init_params) {
@@ -384,7 +382,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     if (skip_early_init) {
         std::fprintf(stderr,
                      "stud: v2: app setup + InitWithParams already ran before the surface was "
-                     "handed over (real ASMA order), not repeating them\n");
+                     "handed over (the real app-shell order), not repeating them\n");
         result.init_with_params_called = true;
     } else {
         perform_early_init(jvm, lib, init_params, result);
@@ -428,7 +426,7 @@ EngineV2BridgeResult run_engine_v2_sequence(FakeJni::Jvm& jvm, const stud::linke
     // submitted start-game task never produced a DataModel,
     // `stepDataModelJob: No DM yet. Continue...` forever.
     //
-    // So this is unconditional on a bare launch now, in the real ASMA
+    // So this is unconditional on a bare launch now, in the real app-shell
     // order (after the UpdateSurface pair, not before it).
     // `STUD_DISABLE_V2_STARTAPP=1` skips it, for bisecting only.
     bool bare_launch = deep_link.place_id == 0;
@@ -773,7 +771,7 @@ EngineV2TeardownResult run_engine_v2_teardown(FakeJni::Jvm& jvm, const stud::lin
     // Process B's own shutdown path doesn't wait further on, not a
     // guess.
 
-    // Real order (see engine_v2_bridge.h's own UPDATE 2 doc comment):
+    // The order on a real close:
     // LeaveGame always first, even if no game was ever joined; real,
     // confirmed harmless no-op in that case ("leaveUGCGame: ... no-op,
     // not in-game").

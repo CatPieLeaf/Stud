@@ -1136,8 +1136,8 @@ void dispatch_gamepad_event(const stud::android_glue::HostInputEvent& ev, const 
             return;
         }
         // What the pad can do, announced BEFORE it is said to have
-        // arrived, the real app does the same (`E(deviceId, type)` runs
-        // immediately before the connect call). A pad that reports no
+        // arrived, the real app does the same immediately before the
+        // connect call. A pad that reports no
         // keys is a pad with no bindings, which looks exactly like a
         // controller that does nothing.
         //

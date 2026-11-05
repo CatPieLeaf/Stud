@@ -28,15 +28,6 @@
 // Stud's job is to CALL them, replacing the Java bootstrap code that
 // normally would, not to implement them.
 //
-// Deliberately NOT included: nativeGetCookiesForDomain. Confirmed (grepped
-// the whole app) to have zero Java-side callers anywhere in
-// this build, same dead-code pattern already documented for
-// nativeIsLuaLoginEnabled in the engineering notes' M4 section. Real,
-// implemented-in-libroblox.so function Stud would only ever call, never
-// needs to for the real boot/play path.
-//
-// See the engineering notes, milestone M7.
-
 namespace stud::jni_bridge {
 
 struct NativeSettingsConfig {
@@ -46,13 +37,10 @@ struct NativeSettingsConfig {
     std::string base_url = "https://www.roblox.com";
     std::string api_base_url = "https://apis.roblox.com";
     // Empty/0 matches Java's own System.getProperty(key, "") default when
-    // no proxy is configured. Stud has no proxy-config UI yet (M8).
+    // no proxy is configured.
     std::string http_proxy_host;
     int64_t http_proxy_port = 0;
-    // Empty: honest "not logged in" state. Stud has no real WebView/
-    // CookieManager yet (M8's QtWebEngine + QtKeychain work), once that
-    // exists, the real post-login cookie string goes here instead of a
-    // fabricated one.
+    // The session cookies a launch starts with; empty when not logged in.
     std::string cookies;
     // Persistent per-app data directory (matches Android's
     // Context.getFilesDir()). Roblox's own engine caches its fetched

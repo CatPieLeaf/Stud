@@ -29,8 +29,8 @@ struct Event {
         // THIRD float, as the app's own `onGenericMotion` sends it.
         kAxis = 4,
         // What this pad actually has, answered before it is announced,
-        // the real device does the same thing (`E(deviceId, type)` runs
-        // before `nativeGamepadConnectEventWithGamepadType`), and a pad
+        // the real device does the same thing, before
+        // `nativeGamepadConnectEventWithGamepadType`, and a pad
         // that reports no keys is a pad with no bindings.
         // v0 != 0 => the pad really has it; v1 carries the gamepad type,
         // because these are sent before the connect event that would

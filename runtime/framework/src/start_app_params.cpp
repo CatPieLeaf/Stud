@@ -26,6 +26,8 @@ std::shared_ptr<StartAppParams> build_desktop_start_app_params(
     // why this matters: UserController::didLogin()'s own real compiled
     // body reads these fields directly off this exact object).
     params->appUserId_ = native_user_id();
+    // Built before the app's account report arrives, so these two are the
+    // defaults: nothing keeps them between launches.
     params->isUnder13_ = false;
     params->membershipType_ = 0;
     params->platformParams_ = std::move(platform_params);

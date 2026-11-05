@@ -33,7 +33,7 @@ END_NATIVE_DESCRIPTOR
 
 namespace {
 
-// What the app's own network-type helper (rh.a2.g in the app) reports, for
+// What the app's own network-type helper reports, for
 // the connection this machine is actually using.
 //
 // Its answers are "" with no active network, "WiFi" for Wi-Fi, a mobile

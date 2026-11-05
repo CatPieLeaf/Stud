@@ -85,6 +85,10 @@ void ensure_sigaltstack_for_current_thread() {
     ::sigaltstack(&ss, nullptr);
 }
 
+// Where a fault counts as a read or write through a null pointer: anything a
+// large struct's member offset can reach from address 0.
+constexpr uintptr_t kNearNullLimit = 1u << 20;
+
 // In-process diagnostic that doesn't depend on a debugger ever attaching
 // correctly to this process: this session's own investigation found
 // that an external debugger never catches this binary's own exec, because
@@ -154,11 +158,12 @@ void describe_address(const char* label, uintptr_t addr) {
     ::syscall(SYS_write, 2, small, len > 0 ? len : 0);
 }
 
-// Same real /proc/self/maps parse as describe_address(), but just a
-// yes/no answer, used to gate a real memory dump (below) to only
-// addresses already confirmed real and mapped, never a blind
-// dereference of stack garbage.
-bool addr_is_mapped(uintptr_t addr) {
+// Same /proc/self/maps parse as describe_address(), but a yes/no answer:
+// whether reading this address is safe, which is what gates every memory
+// read in this handler. Mapped is not enough. A guard page or an allocator's
+// reserved range is mapped with no access, and a fault in here is the end of
+// the process.
+bool addr_is_readable(uintptr_t addr) {
     static char buf[1 << 20];
     int fd = ::open("/proc/self/maps", O_RDONLY);
     if (fd < 0) return false;
@@ -174,8 +179,9 @@ bool addr_is_mapped(uintptr_t addr) {
     while (line != nullptr && *line != '\0') {
         const char* eol = std::strchr(line, '\n');
         unsigned long start = 0, end = 0;
-        std::sscanf(line, "%lx-%lx", &start, &end);
-        if (addr >= start && addr < end) return true;
+        char perms[5] = {};
+        std::sscanf(line, "%lx-%lx %4s", &start, &end, perms);
+        if (addr >= start && addr < end) return perms[0] == 'r';
         line = eol != nullptr ? eol + 1 : nullptr;
     }
     return false;
@@ -202,9 +208,9 @@ void print_backtrace(uintptr_t start_rbp) {
         // crash-handler notification for exactly this call site on a
         // corrupted-past-some-depth frame chain (the LuaAppDM/
         // initializeLuaAppWithLoggedInUser crash's own real stack
-        // shape). addr_is_mapped() (already used elsewhere in this
+        // shape). addr_is_readable() (already used elsewhere in this
         // file for the identical reason) makes this safe.
-        if (!addr_is_mapped(rbp) || !addr_is_mapped(rbp + sizeof(uintptr_t))) break;
+        if (!addr_is_readable(rbp) || !addr_is_readable(rbp + sizeof(uintptr_t))) break;
         volatile uintptr_t* p = reinterpret_cast<uintptr_t*>(rbp);
         uintptr_t saved_rbp = p[0];
         uintptr_t return_addr = p[1];
@@ -298,7 +304,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
         // heap/ASLR pointer in this process sits at 0x7xxx_xxxx_xxxx or
         // above, so there's no real risk of misclassifying a genuine
         // wild pointer this way.
-        bool near_null = fault_addr < (1u << 20);
+        bool near_null = fault_addr < kNearNullLimit;
         {
             char buf[192];
             int n = std::snprintf(
@@ -334,10 +340,15 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             if (page >= 0x10000) {
                 static std::atomic<uintptr_t> mapped_pages[16];
                 bool already = false;
+                bool room = false;
                 for (auto& slot : mapped_pages) {
-                    if (slot.load(std::memory_order_relaxed) == page) already = true;
+                    const uintptr_t held = slot.load(std::memory_order_relaxed);
+                    if (held == page) already = true;
+                    if (held == 0) room = true;
                 }
-                if (!already) {
+                // A page that cannot be remembered is not mapped: a write to
+                // it would fault, find no record and map it again for ever.
+                if (!already && room) {
                     long r = ::syscall(SYS_mmap, reinterpret_cast<void*>(page), page_size,
                                        PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
                     if (r == static_cast<long>(page)) {
@@ -378,9 +389,9 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             // site. The rbp chain below cannot show this (the callee
             // never got to build a frame), so read it directly. This is
             // the only way to name which indirect call went through a
-            // null pointer; guarded by addr_is_mapped() like every
+            // null pointer; guarded by addr_is_readable() like every
             // other dereference in this signal handler.
-            if (fault_pc == 0 && addr_is_mapped(fault_rsp)) {
+            if (fault_pc == 0 && addr_is_readable(fault_rsp)) {
                 auto pushed_return = *reinterpret_cast<uintptr_t*>(fault_rsp);
                 describe_address("null-call-site (return addr at *rsp)", pushed_return);
             }
@@ -405,7 +416,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             // Bug found in testing (the engineering notes): this loop used
             // to dereference `stack_addr` with no bounds check at all,
             // unlike the `value` read a few lines below it, which
-            // already correctly gates on addr_is_mapped(). If `rbp`
+            // already correctly gates on addr_is_readable(). If `rbp`
             // itself was corrupted by the original fault, this raw read
             // could fault a SECOND time while still inside the signal
             // handler, and a second SIGSEGV while the first is being
@@ -421,7 +432,7 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
             auto rbp = static_cast<uintptr_t>(uctx2->uc_mcontext.gregs[REG_RBP]);
             for (int slot = 1; slot <= 8; ++slot) {
                 uintptr_t stack_addr = rbp - static_cast<uintptr_t>(slot) * 8;
-                if (!addr_is_mapped(stack_addr)) continue;
+                if (!addr_is_readable(stack_addr)) continue;
                 auto value = *reinterpret_cast<uintptr_t*>(stack_addr);
                 char label[32];
                 std::snprintf(label, sizeof(label), "rbp-%d", slot * 8);
@@ -506,15 +517,12 @@ extern "C" void stud_trap_handler(int sig, siginfo_t* info, void* ucontext_raw) 
     // device survives losing one internal worker thread; it does not
     // survive this process dying outright.
     if (sig == SIGSEGV) {
-        auto* uctx3 = static_cast<ucontext_t*>(ucontext_raw);
-        auto fault_addr3 = reinterpret_cast<uintptr_t>(info->si_addr);
-        if (fault_addr3 < (1u << 12)) {
+        if (reinterpret_cast<uintptr_t>(info->si_addr) < kNearNullLimit) {
             char buf[128];
             int n = std::snprintf(buf, sizeof(buf),
                                    "STUD_TRAP: no checkpoint on this thread for a near_null "
                                    "fault, exiting only this thread, not the process\n");
             ::syscall(SYS_write, 2, buf, n > 0 ? n : 0);
-            (void)uctx3;
             ::pthread_exit(nullptr);
         }
     }
@@ -585,21 +593,20 @@ void ensure_trap_handler_installed() {
 
 }  // namespace
 
-TrapArm arm_abort_trap(sigjmp_buf& checkpoint) {
+TrapArm current_abort_trap() { return {g_armed_checkpoint, g_tolerate_wild_sigsegv}; }
+
+void arm_abort_trap(sigjmp_buf& checkpoint) {
     ensure_trap_handler_installed();
     ensure_sigaltstack_for_current_thread();
-    const TrapArm previous{g_armed_checkpoint, g_tolerate_wild_sigsegv};
     g_armed_checkpoint = &checkpoint;
     // An inner call decides for itself; the outer bracket's tolerance
     // comes back with it at disarm.
     g_tolerate_wild_sigsegv = false;
-    return previous;
 }
 
-TrapArm arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint) {
-    const TrapArm previous = arm_abort_trap(checkpoint);
+void arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint) {
+    arm_abort_trap(checkpoint);
     g_tolerate_wild_sigsegv = true;
-    return previous;
 }
 
 void disarm_abort_trap(TrapArm previous) {

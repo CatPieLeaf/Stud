@@ -12,39 +12,17 @@
 // of `com.roblox.engine.jni.NativeAppBridgeInterface` and its one real
 // caller, `InitHelper.startAppBridge()`.
 //
-// UPDATE (this session): the real param names below were a first-pass
-// guess from an earlier session with no the app's own code available, corrected now
-// against `InitHelper.startAppBridge()`'s own real call
-// site, `NativeAppBridgeInterface`'s own five-argument call. None of these five are launch-intent
-// data at all. They're real, mundane app/device config values:
+// The six arguments are app and device configuration, not launch data:
 //
-//   nativeAppBridgeAppStart(String baseUrl,        // base URL: "https://" + real configured host
-//                            String userAgent,      // user agent: a real, built Android User-Agent string
-//                            boolean someFlag,       // flag: a real compiled-in resources.arsc bool (rarely true)
-//                            String androidId,       // android id: real Settings.Secure.ANDROID_ID
-//                            String appUpgradeKey,   // upgrade key: BuildConfig.APP_UPGRADE_KEY, a real per-package build constant
-//                            String /* unused, always "" */)
+//   nativeAppBridgeAppStart(String baseUrl,
+//                            String userAgent,      // build_real_user_agent()
+//                            boolean someFlag,      // a compiled-in bool, false
+//                            String androidId,      // generated once, then kept
+//                            String appUpgradeKey,  // the build's "AppAndroidV"
+//                            String /* always "" */)
 //
-// Called once, unconditionally, on every real launch regardless of
-// whether it's a deep-link launch (per startAppBridge()'s own real call
-// site). Real Application-level engine bring-up, ahead of
-// MainGameActivity's own onCreate-style flow (run_bootstrap()) and
-// GameActivity's lifecycle. See the engineering notes, the entry connecting
-// this to the "Create a new NativeEngine" real engine log line.
-//
-// Previously called with ALL FIVE real params as empty/false
-// placeholders, an honest-at-the-time choice (real values weren't
-// traced yet), but a real, confirmed-wrong input regardless: a real
-// device never calls this with an empty base URL, empty Android ID, or
-// empty app-upgrade-key. Now supplies real values for baseUrl, the
-// flag's real compiled-in default, androidId (see
-// stud::config::real_persistent_android_id()'s own doc comment for how
-// this is honestly sourced, not fabricated), and appUpgradeKey (the
-// real, confirmed against the app's own code constant "AppAndroidV"; see
-// com.roblox.client.personasdk.BuildConfig, checked). userAgent
-// is the one remaining honest empty placeholder: its real construction
-// (built several real calls deep in the app's own HTTP layer) wasn't traced this
-// session, left honestly empty rather than fabricated.
+// Called once on every launch, ahead of the MainGameActivity and GameActivity
+// bring-up.
 
 namespace stud::jni_bridge {
 

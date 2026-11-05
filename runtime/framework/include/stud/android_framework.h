@@ -130,9 +130,8 @@ private:
 
 // android.os.HandlerThread, a named thread with its own real,
 // running Looper, matching the real API's start()/getLooper()/quit()/
-// quitSafely() surface (quit and quitSafely are not distinguished here
-// no real caller found that depends on quitSafely draining pending
-// work before stopping; both just stop the pump).
+// quitSafely() surface. Both behave as quitSafely: pending work drains, then
+// the pump stops.
 class HandlerThreadJava : public FakeJni::JObject {
 public:
     DEFINE_CLASS_NAME("android/os/HandlerThread")
@@ -206,34 +205,11 @@ std::shared_ptr<ClassLoaderJava> shared_class_loader();
 // real class name. Called from register_android_framework().
 void register_java_lang_class_methods(FakeJni::Jvm& jvm);
 
-// Live-tested, negative result, deliberately NOT registering a
-// stub for `com/snapchat/djinni/NativeObjectManager`, despite it being
-// a real, confirmed embedded class name (Snap's open-source
-// Djinni C++/Java interop framework, bundled by Roblox; see this
-// file's own doc history for the classloader-idiom root-cause trace
-// through this exact class). Tried explicit registration (an empty
-// stub, same shape as every other signature-matching-only class in
-// this codebase) and live-tested it: it changes libroblox.so's own
-// internal Djinni bootstrap control flow, the usual `[JNIVM]:
-// GetMethodID class is null getClassLoader` diagnostic pair disappears,
-// replaced by a real, differently-shaped `RBXCRASH: UnhandledException
-// (N6djinni13jni_exceptionE std::exception)` (recovered cleanly by
-// trap_recovery.cpp, sig=5), but the whole bring-up sequence then
-// takes 100+ real seconds to reach the same `onAppBridgeNotification`
-// milestone instead of the usual ~10-15s, confirmed via a real,
-// bisected A/B test (reverting only this one registration restored the
-// fast path). Tested, negative result: leaving this class
-// to jnivm's own auto-vivification path (an unregistered `FindClass()`
-// target silently gets an empty stub `Class` under this build's
-// `JNI_DEBUG`) is the actually-correct behavior here, not a gap to
-// fix, do not re-attempt explicit registration without new evidence
-// explaining *why* the slow path happens.
-
 // android.os.Build: real, standard, static-field-only class. Values
 // match this project's own established desktop-spoof convention
 // (device_params.cpp's build_desktop_device_params(): manufacturer/
 // device name "Stud", real API level "34" passed as os_version at every
-// real call site in process-b/src/main.cpp) rather than inventing new,
+// real call site in runtime/src/main.cpp) rather than inventing new,
 // inconsistent values, a real caller cross-referencing Build.MODEL
 // against DeviceParams.deviceName would see the same identity either
 // way. FINGERPRINT is a real, correctly-shaped (not fabricated-looking)

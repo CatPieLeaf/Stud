@@ -155,7 +155,7 @@ bool run_local_storage_manager_bootstrap(FakeJni::Jvm& jvm, const stud::linker::
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
     // Real `AssetManagerJava` instance rather than a placeholder string:
-    // the real call is `LocalStorageManager.a(context)` ->
+    // the real call is
     // `initStorageManagerNativeV3(context.getAssets(), filesDir,
     // cacheDir)`, so the first argument really is an
     // `android.content.res.AssetManager`.
@@ -249,7 +249,7 @@ bool run_set_task_scheduler_foreground(FakeJni::Jvm& jvm, const stud::linker::Lo
     auto& env = frame.getJniEnv();
     auto* jni_env = static_cast<JNIEnv*>(&env);
     // Real reason-string argument, matching the real call sites' own
-    // convention ("ASMA.start", "ES.onSurfaceCreated"), honest about
+    // convention (a class and step name), honest about
     // being Stud's own bring-up, not impersonating a real Java caller.
     jstring reason = env.NewStringUTF("stud.start");
     using SchedulerModeFn = void (*)(JNIEnv*, jclass, jboolean, jstring);

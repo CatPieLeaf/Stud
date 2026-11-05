@@ -2,9 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 # Standalone bionic-toolchain project, built as a nested configure/build
 # via ExternalProject_Add from the top-level (host/glibc) CMakeLists.txt.
-# Real bionic ELF executable + real bionic .so's, same reasoning as the
-# pre-reset process-b (the engineering notes' "nuke stud, recreate sober 1:1"
-# entry): CMake can't mix two compilers/ABIs in one configure, and
+# Real bionic ELF executable + real bionic .so's: CMake can't mix two
+# compilers/ABIs in one configure, and
 # libroblox.so's own real bionic-ABI JNI calls need same-ABI, same-thread
 # calls with zero %fs-swapping trampoline.
 project(StudRuntime LANGUAGES CXX C)

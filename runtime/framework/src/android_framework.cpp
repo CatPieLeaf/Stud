@@ -851,7 +851,10 @@ bool SharedPreferencesJava::save() {
         std::ofstream out(temp, std::ios::trunc);
         if (!out.is_open()) return false;
         out << doc.dump();
-        if (!out.good()) {
+        // Closed before it is judged: a small file only reaches the disk
+        // here, and a write that failed must not replace the last good one.
+        out.close();
+        if (out.fail()) {
             std::filesystem::remove(temp, ec);
             return false;
         }

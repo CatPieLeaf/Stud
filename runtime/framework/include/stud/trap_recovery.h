@@ -4,26 +4,17 @@
 #include <cstdint>
 #include <jni.h>
 
-// Independent-of-ABI signal-based recovery: makes one direct call
-// into Roblox's own bionic-compiled code, catching two things instead of
-// letting them kill the whole process:
+// Signal-based recovery around a call into the engine's own code, so one
+// abort or fault doesn't take the whole process with it:
 //
-//   - SIGABRT/SIGTRAP: Roblox's own native bootstrap code calling
-//     abort() (or hitting a debug trap) on an unmet precondition during
-//     Stud's still-imperfect bring-up (a missing flag, unexpected state,
-//     ...), lets a caller observe "did this call complete or trigger
-//     an abort" as a diagnostic signal instead of losing the whole
-//     process to one bootstrap call's internal assertion.
-//   - SIGSEGV, narrowly: only a fault landing within ~1MB of the current
-//     stack pointer (a real, previously-characterized stack-overflow
-//     guard-page hit inside Roblox's own code, not a null/wild-pointer
-//     bug. That shape falls straight through to the normal, fatal
-//     default disposition, unaffected by this).
+//   - SIGABRT and SIGTRAP: the engine calling abort() or hitting a trap on an
+//     unmet precondition.
+//   - SIGSEGV, on three shapes: a fault within 1 MB of the stack pointer (a
+//     stack overflow's guard page), one within 1 MB of address 0 (a null
+//     pointer), and anything at all inside a tolerant bracket. Other faults
+//     stay fatal, so they get root-caused.
 //
-// This is orthogonal to the old glibc/bionic ABI-crossing problem this
-// project used to have (deleted along with tls-compat); it's plain
-// POSIX sigsetjmp/siglongjmp plus a per-thread alt signal stack, and
-// applies identically to Process B's real, single-ABI bionic execution.
+// It's plain POSIX sigsetjmp/siglongjmp plus a per-thread alt signal stack.
 namespace stud::jni_bridge {
 
 // What was armed on this thread before, so an inner call can give it
@@ -35,11 +26,16 @@ struct TrapArm {
     bool tolerate_wild_sigsegv = false;
 };
 
+// What is armed on the calling thread now. Read it BEFORE sigsetjmp() and
+// keep it const: a local changed between sigsetjmp() and siglongjmp() has no
+// defined value once the jump lands, and an optimised build makes it zero,
+// which takes the outer bracket away on the one path that needs it back.
+TrapArm current_abort_trap();
+
 // Arms a checkpoint on the calling thread for the sigsetjmp() the caller
-// is about to perform, and returns whatever was armed before it. See
-// call_trapping_abort()'s implementation for the required call order
-// (sigsetjmp() first, then arm).
-TrapArm arm_abort_trap(sigjmp_buf& checkpoint);
+// has just performed. See call_trapping_abort()'s implementation for the
+// required order (read current_abort_trap(), sigsetjmp(), then arm).
+void arm_abort_trap(sigjmp_buf& checkpoint);
 
 // Same as arm_abort_trap(), but also disables the ~1MB-of-RSP
 // recoverability heuristic for this one armed call: ANY SIGSEGV during
@@ -49,7 +45,7 @@ TrapArm arm_abort_trap(sigjmp_buf& checkpoint);
 // (see call_trapping_abort_tolerating_wild_sigsegv()'s doc comment),
 // using this elsewhere would hide real, unrelated null/wild-pointer
 // bugs that should stay fatal so they get root-caused.
-TrapArm arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint);
+void arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint);
 
 // Puts back what an arm displaced, so the bracket around an inner call
 // cannot disarm the one around an outer one.
@@ -61,8 +57,8 @@ TrapArm arm_abort_trap_tolerating_wild_sigsegv(sigjmp_buf& checkpoint);
 // thread then ran the rest of its life unprotected, which is what a
 // crash dump saying `armed=0` inside
 // call_trapping_abort_tolerating_wild_sigsegv is: the arm was real, an
-// inner call took it away. Pass what the matching arm returned; a
-// default-constructed TrapArm means "nothing was armed".
+// inner call took it away. Pass what current_abort_trap() said before the
+// arm; a default-constructed TrapArm means "nothing was armed".
 void disarm_abort_trap(TrapArm previous = {});
 
 // Makes one real call into Roblox's own code, trapping any int3/abort()
@@ -77,9 +73,9 @@ bool call_trapping_abort(Fn fn, Args... args) {
     // initialized `checkpoint`, not before, arming first leaves a real
     // window where a signal firing between the arm and the sigsetjmp
     // call itself would siglongjmp into an uninitialized buffer.
-    TrapArm previous;
+    const TrapArm previous = current_abort_trap();
     if (sigsetjmp(checkpoint, 1) == 0) {
-        previous = arm_abort_trap(checkpoint);
+        arm_abort_trap(checkpoint);
         fn(args...);
     } else {
         completed = false;
@@ -94,9 +90,9 @@ template <typename Result, typename Fn, typename... Args>
 bool call_trapping_abort_with_result(Fn fn, Result& result, Args... args) {
     sigjmp_buf checkpoint;
     bool completed = true;
-    TrapArm previous;
+    const TrapArm previous = current_abort_trap();
     if (sigsetjmp(checkpoint, 1) == 0) {
-        previous = arm_abort_trap(checkpoint);
+        arm_abort_trap(checkpoint);
         result = fn(args...);
     } else {
         completed = false;
@@ -125,9 +121,9 @@ template <typename Fn, typename... Args>
 bool call_trapping_abort_tolerating_wild_sigsegv(Fn fn, Args... args) {
     sigjmp_buf checkpoint;
     bool completed = true;
-    TrapArm previous;
+    const TrapArm previous = current_abort_trap();
     if (sigsetjmp(checkpoint, 1) == 0) {
-        previous = arm_abort_trap_tolerating_wild_sigsegv(checkpoint);
+        arm_abort_trap_tolerating_wild_sigsegv(checkpoint);
         fn(args...);
     } else {
         completed = false;

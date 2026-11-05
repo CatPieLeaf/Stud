@@ -2,6 +2,7 @@
 
 #include "stud/bionic_jvm.h"
 #include "stud/app_java_classes.h"
+#include "stud/json_field.h"
 #include "stud/trap_recovery.h"
 
 #include <atomic>
@@ -51,32 +52,10 @@ std::string read_jstring(FakeJni::Env& env, jstring value) {
     return as_string ? as_string->asStdString() : std::string();
 }
 
-// The engine's payloads here are flat and small: one number, or one
-// object holding a number and an array of numbers. Reading them directly
-// keeps this layer free of a parser dependency, the same way the
-// web-view bridge already does for its two string fields.
-double json_number_field(const std::string& json, const std::string& key, double fallback) {
-    const std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return fallback;
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return fallback;
-    ++pos;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '"')) ++pos;
-    try {
-        return std::stod(json.substr(pos));
-    } catch (const std::exception&) {
-        return fallback;
-    }
-}
-
 std::vector<float> json_number_array(const std::string& json, const std::string& key) {
     std::vector<float> out;
-    const std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return out;
-    pos = json.find('[', pos + needle.size());
-    if (pos == std::string::npos) return out;
+    auto pos = json_value_position(json, key);
+    if (pos == std::string::npos || json[pos] != '[') return out;
     const auto end = json.find(']', pos);
     if (end == std::string::npos) return out;
     ++pos;

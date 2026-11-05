@@ -22,8 +22,6 @@
 // desktop-appropriate defaults. Stud's own construction isn't bound by
 // the real app's conditional logic, so there's no reason to omit fields
 // libroblox.so's native getters might still probe for.
-//
-// See the engineering notes, milestone M4.
 
 namespace stud::jni_bridge {
 
@@ -72,8 +70,7 @@ public:
 
 // Builds a DeviceParams reporting plausible desktop Linux values.
 // `os_version` should be whatever Android API level Stud reports elsewhere
-// (see libc-shim's __system_property_get "ro.build.version.sdk" table,
-// keep these consistent if either changes).
+// (keep it consistent with BuildVersionJava if either changes).
 std::shared_ptr<DeviceParams> build_desktop_device_params(
     const std::string& os_version, const std::string& device_name, const std::string& app_version,
     const std::string& display_resolution, int display_width_px, int display_height_px,

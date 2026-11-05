@@ -10,19 +10,13 @@
 // handled (own SIGSEGV handler installed before dlopen() runs; see
 // the call site's own doc comment for why bionic's own fatal-signal
 // path can't be trusted to surface it). Drives its JNI bootstrap and
-// GameActivity lifecycle (jni-bridge/, ported to bionic this session),
+// GameActivity lifecycle (runtime/framework/),
 // and renders through Stud's libvulkan.so.1, or in OpenGL mode gfxstream's
 // libEGL.so/libGLESv2.so, both reaching stud-render-host: a separate, real
 // glibc process hosting the GPU driver, see render-host/src/main.cpp's own
 // doc comment for why.
 //
-// Reproduces the real, hard-won bring-up sequence and ordering already
-// proven (across many sessions, under the old architecture) in
-// runtime/src/main.cpp, with everything that was only needed for the
-// old dual-ABI-same-process design removed: no stud::linker::
-// load_library() (real dlopen() instead), no stud::render::resolve(),
-// no tls-compat trampolines
-// (same-ABI calls throughout).
+// Bring-up uses real dlopen() and same-ABI calls throughout.
 //
 // run_client_settings_bridge() IS called (below, gated on a real
 // launch_payload being present), resolved differently than this
@@ -1490,7 +1484,7 @@ int main(int argc, char** argv) {
     // exported by the real, extracted liblog.so (the library's exported symbols liblog.so).
     // Resolved via dlsym rather than declared/called directly: both
     // symbols are __INTRODUCED_IN(30) in the NDK headers, but
-    // process-b targets ANDROID_PLATFORM=26 to match Roblox's own
+    // the runtime targets ANDROID_PLATFORM=26 to match Roblox's own
     // minSdkVersion - the real symbols exist in the bound liblog.so
     // regardless (bionic doesn't strip newer symbols from older-target
     // binaries at runtime, only the compile-time header declares them
@@ -1525,7 +1519,7 @@ int main(int argc, char** argv) {
     // (real reason for dlsym over a direct call: this project's own
     // NDK headers guard newer API-level symbols behind
     // __INTRODUCED_IN, but the real symbol exists in the bound libc.so
-    // regardless of process-b's ANDROID_PLATFORM=26 build target).
+    // regardless of the runtime's ANDROID_PLATFORM=26 build target).
     using SystemPropertiesInitFn = int (*)(void);
     if (void* init_sym = ::dlsym(RTLD_DEFAULT, "__system_properties_init")) {
         int rc = reinterpret_cast<SystemPropertiesInitFn>(init_sym)();
@@ -2205,9 +2199,7 @@ int main(int argc, char** argv) {
         stud::jni_bridge::set_native_user_identity(launch_payload->authenticated_user_id,
                                                     launch_payload->authenticated_username,
                                                     launch_payload->authenticated_display_name);
-        std::printf("stud: real authenticated user identity available: id=%lld username=%s\n",
-                    launch_payload->authenticated_user_id,
-                    launch_payload->authenticated_username.c_str());
+        std::printf("stud: the launch names the signed-in user\n");
         // Seed the real local-storage platform protocol with the same
         // real identity. The Lua app asks *this* protocol who is signed
         // in (IPlatformLocalStorageHandler.getCurrentUser); returning 0
@@ -2387,7 +2379,7 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
         std::fprintf(stderr, "stud: run_asset_manager_setup_bridge() failed: %s\n", e.what());
     }
-    // Confirmed against the app's own code (LocalStorageManager.a(context)): real storage
+    // Confirmed against the app's own code: real storage
     // subsystem bring-up, separate from the AssetManager-only call above.
     try {
         bool storage_ok = stud::jni_bridge::run_local_storage_manager_bootstrap(jvm, lib, files_dir,
@@ -2603,10 +2595,9 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
         return fail_startup(std::string("run_preload_bootstrap() failed: ") + e.what());
     }
-    // Real ASMA order (the app's own app-shell manager, the real app-shell manager class):
-    // E(context) = nativeGameGlobalInit/nativeUpdateAdapterInit, then
-    // j(d)/initializeDataModel = nativeAppBridgeV2InitWithParams, and
-    // only THEN F(surface) = StartAppWithParams. Stud used to run the
+    // The real app-shell order: nativeGameGlobalInit and
+    // nativeUpdateAdapterInit, then nativeAppBridgeV2InitWithParams, and
+    // only THEN the Surface and StartAppWithParams. Stud used to run the
     // whole V2 sequence after drive_game_activity_lifecycle() had
     // already handed the engine a surface via onSurfaceCreatedNative,
     // live-caught in the engine's own FLog (logd sink): the Lua app
@@ -2790,7 +2781,7 @@ int main(int argc, char** argv) {
     // not theoretical (a real user report: "stud is not responding,
     // and its only a black window" was exactly this). STUD_ENABLE_V2=0
     // to disable, for isolating a regression.
-    // Real "ASMA.start" step (see activity_lifecycle_bridge.h): put the
+    // The app shell's start step (see activity_lifecycle_bridge.h): put the
     // engine's own internal task scheduler into foreground mode BEFORE
     // the V2 sequence below posts any real work to it.
     // Real ActivityNativeMain.onStart() pair, and a hard precondition for
@@ -3416,9 +3407,8 @@ int main(int argc, char** argv) {
         ::_exit(0);
     }
 
-    // Real graceful shutdown pair (see engine_v2_bridge.h's own UPDATE 2
-    // doc comment: four real Sober journalctl captures all show this as
-    // the real titlebar-close sequence), LeaveGame then DestroyApp,
+    // The shutdown pair on a real close (see engine_v2_bridge.h),
+    // LeaveGame then DestroyApp,
     // both real, confirmed-safe to call even if no game was ever
     // joined. Previously this process just exited raw here.
     // From here the engine is being destroyed under its own still-running

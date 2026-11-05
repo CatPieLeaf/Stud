@@ -14,6 +14,7 @@
 #include <functional>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <system_error>
 
@@ -422,28 +423,40 @@ public:
     // seed_secure_value() below, called from main.cpp). Every key the
     // engine asks for is logged BY NAME ONLY, never the value, which
     // is a real credential.
+    //
+    // Every thread the engine calls from, the login report and a logout all
+    // reach this store, so store_mutex() guards it; see persist() for saving.
     FakeJni::JBoolean deleteCurrentUserValues() {
-        store().erase(current_user());
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            store().erase(current_user());
+        }
         persist();
         return true;
     }
     FakeJni::JBoolean deleteSecureValue(std::shared_ptr<FakeJni::JString> key) {
-        if (key) store()[current_user()].erase(key->asStdString());
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            if (key) store()[current_user()].erase(key->asStdString());
+        }
         persist();
         return true;
     }
     FakeJni::JBoolean deleteUserValues(FakeJni::JLong userId) {
-        store().erase(static_cast<long long>(userId));
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            store().erase(static_cast<long long>(userId));
+        }
         persist();
         return true;
     }
-    FakeJni::JLong getCurrentUser() { return static_cast<FakeJni::JLong>(current_user()); }
+    FakeJni::JLong getCurrentUser() { return static_cast<FakeJni::JLong>(signed_in_user()); }
     std::shared_ptr<FakeJni::JString> getSecureValue(std::shared_ptr<FakeJni::JString> key) {
-        return lookup(current_user(), key, "getSecureValue");
+        return lookup(signed_in_user(), key, "getSecureValue");
     }
     std::shared_ptr<FakeJni::JString> getSecureValueForCurrentUser(
         std::shared_ptr<FakeJni::JString> key) {
-        return lookup(current_user(), key, "getSecureValueForCurrentUser");
+        return lookup(signed_in_user(), key, "getSecureValueForCurrentUser");
     }
     std::shared_ptr<FakeJni::JString> getSecureValueForUser(std::shared_ptr<FakeJni::JString> key,
                                                              FakeJni::JLong userId) {
@@ -457,9 +470,12 @@ public:
     // signed in is the app's own list to answer, not this one.
     std::shared_ptr<JavaUtilHashSetJava> getUsers() {
         auto users = std::make_shared<JavaUtilHashSetJava>();
-        const auto current = store().find(current_user());
-        if (current != store().end() && current->first != 0 && !current->second.empty()) {
-            users->add(std::make_shared<JavaLangLongJava>(static_cast<FakeJni::JLong>(current->first)));
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            const auto current = store().find(current_user());
+            if (current != store().end() && current->first != 0 && !current->second.empty()) {
+                users->add(std::make_shared<JavaLangLongJava>(static_cast<FakeJni::JLong>(current->first)));
+            }
         }
         std::printf("stud: LocalStorage.getUsers() -> %d account(s)\n",
                     static_cast<int>(users->size()));
@@ -467,19 +483,22 @@ public:
         return users;
     }
     FakeJni::JBoolean setCurrentUser(FakeJni::JLong userId) {
-        current_user() = static_cast<long long>(userId);
-        std::printf("stud: LocalStorage.setCurrentUser(%lld)\n", current_user());
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            current_user() = static_cast<long long>(userId);
+        }
+        std::printf("stud: LocalStorage.setCurrentUser()\n");
         std::fflush(stdout);
         persist();
         return true;
     }
     FakeJni::JBoolean setSecureValue(std::shared_ptr<FakeJni::JString> key,
                                       std::shared_ptr<FakeJni::JString> value) {
-        return store_value(current_user(), key, value, "setSecureValue");
+        return store_value(signed_in_user(), key, value, "setSecureValue");
     }
     FakeJni::JBoolean setSecureValueForCurrentUser(std::shared_ptr<FakeJni::JString> key,
                                                     std::shared_ptr<FakeJni::JString> value) {
-        return store_value(current_user(), key, value, "setSecureValueForCurrentUser");
+        return store_value(signed_in_user(), key, value, "setSecureValueForCurrentUser");
     }
 
     // Seeding hooks, called once at bring-up from main.cpp with Stud's
@@ -497,22 +516,20 @@ public:
     // session, with the store still naming the account it was added from.
     static void set_real_current_user(long long user_id, bool fresh_login) {
         if (fresh_login) {
-            current_user() = user_id;
+            {
+                std::lock_guard<std::mutex> lock(store_mutex());
+                current_user() = user_id;
+            }
             persist();
-            std::printf("stud: LocalStorage switched to the account just signed in id=%lld\n",
-                        user_id);
+            std::printf("stud: LocalStorage switched to the account just signed in\n");
             std::fflush(stdout);
             return;
         }
-        if (current_user() != 0) {
-            std::printf("stud: LocalStorage keeping the restored current user id=%lld (launch "
-                        "identity id=%lld)\n",
-                        current_user(), user_id);
-            std::fflush(stdout);
-            return;
-        }
-        current_user() = user_id;
-        std::printf("stud: LocalStorage seeded current user id=%lld\n", user_id);
+        std::lock_guard<std::mutex> lock(store_mutex());
+        const bool restored = current_user() != 0;
+        if (!restored) current_user() = user_id;
+        std::printf("stud: LocalStorage %s\n",
+                    restored ? "keeping the restored current user" : "seeded the current user");
         std::fflush(stdout);
     }
     // The app says who is signed in, after every login and every switch inside
@@ -520,12 +537,15 @@ public:
     // logout would forget the account switched away from and keep no session
     // for the one switched to.
     static void note_signed_in(long long user_id, const std::string& session) {
-        auto& slot = store()[user_id][".ROBLOSECURITY"];
-        if (current_user() == user_id && slot == session) return;
-        current_user() = user_id;
-        slot = session;
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            auto& slot = store()[user_id][".ROBLOSECURITY"];
+            if (current_user() == user_id && slot == session) return;
+            current_user() = user_id;
+            slot = session;
+        }
         persist();
-        std::printf("stud: LocalStorage current account is now id=%lld\n", user_id);
+        std::printf("stud: LocalStorage current account changed\n");
         std::fflush(stdout);
     }
 
@@ -541,28 +561,34 @@ public:
     // once and each has its own entry here, so signing out of one must
     // leave the others exactly as they were.
     static void forget_current_user_values() {
-        const long long user = current_user();
-        if (user == 0) return;
-        const size_t erased = store().erase(user);
-        current_user() = 0;
+        size_t erased = 0;
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            const long long user = current_user();
+            if (user == 0) return;
+            erased = store().erase(user);
+            current_user() = 0;
+        }
         persist();
-        std::printf("stud: LocalStorage forgot the signed-out account id=%lld (%s)\n", user,
+        std::printf("stud: LocalStorage forgot the signed-out account (%s)\n",
                     erased != 0 ? "its stored values are gone" : "it had no stored values");
         std::fflush(stdout);
     }
 
     static void seed_secure_value(long long user_id, const std::string& key,
                                    const std::string& value, bool fresh_login) {
-        auto& slot = store()[user_id][key];
-        if (!slot.empty() && !fresh_login) {
-            std::printf("stud: LocalStorage already has key=\"%s\" for user=%lld, keeping it\n",
-                        key.c_str(), user_id);
-            std::fflush(stdout);
-            return;
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            auto& slot = store()[user_id][key];
+            if (!slot.empty() && !fresh_login) {
+                std::printf("stud: LocalStorage already has key=\"%s\", keeping it\n", key.c_str());
+                std::fflush(stdout);
+                return;
+            }
+            slot = value;
         }
-        slot = value;
-        std::printf("stud: LocalStorage seeded secure value key=\"%s\" for user=%lld (%zu bytes)\n",
-                    key.c_str(), user_id, value.size());
+        std::printf("stud: LocalStorage seeded secure value key=\"%s\" (%zu bytes)\n", key.c_str(),
+                    value.size());
         std::fflush(stdout);
         persist();
     }
@@ -608,7 +634,11 @@ public:
             return;
         }
         if (!doc.is_object()) return;
-        current_user() = doc.value("currentUser", 0LL);
+        std::lock_guard<std::mutex> lock(store_mutex());
+        const auto saved_user = doc.find("currentUser");
+        current_user() = saved_user != doc.end() && saved_user->is_number_integer()
+                             ? saved_user->get<long long>()
+                             : 0;
         size_t restored = 0;
         if (doc.contains("users") && doc["users"].is_object()) {
             for (auto& [user_key, values] : doc["users"].items()) {
@@ -626,9 +656,8 @@ public:
                 }
             }
         }
-        std::printf("stud: LocalStorage restored: current user=%lld, %zu value(s) across %zu "
-                    "account(s)\n",
-                    current_user(), restored, store().size());
+        std::printf("stud: LocalStorage restored: %zu value(s) across %zu account(s)\n", restored,
+                    store().size());
         std::fflush(stdout);
     }
 
@@ -642,21 +671,38 @@ private:
         return f;
     }
 
+    // Takes store_mutex() itself, so call it without holding that. The save
+    // reaches the keyring and is not done under it, and its own lock keeps
+    // the newest document from being overtaken by an older one.
     static void persist() {
         auto& save = saver();
         if (!save) return;
+        static std::mutex persist_mutex;
+        std::lock_guard<std::mutex> persist_lock(persist_mutex);
         nlohmann::json doc;
-        doc["currentUser"] = current_user();
-        nlohmann::json users = nlohmann::json::object();
-        for (const auto& [user, values] : store()) {
-            nlohmann::json entry = nlohmann::json::object();
-            for (const auto& [k, v] : values) entry[k] = v;
-            users[std::to_string(user)] = std::move(entry);
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            doc["currentUser"] = current_user();
+            nlohmann::json users = nlohmann::json::object();
+            for (const auto& [user, values] : store()) {
+                nlohmann::json entry = nlohmann::json::object();
+                for (const auto& [k, v] : values) entry[k] = v;
+                users[std::to_string(user)] = std::move(entry);
+            }
+            doc["users"] = std::move(users);
         }
-        doc["users"] = std::move(users);
         save(doc.dump());
     }
 
+    static std::mutex& store_mutex() {
+        static std::mutex m;
+        return m;
+    }
+    static long long signed_in_user() {
+        std::lock_guard<std::mutex> lock(store_mutex());
+        return current_user();
+    }
+    // Call these two with store_mutex() held.
     static long long& current_user() {
         static long long id = 0;
         return id;
@@ -670,14 +716,22 @@ private:
                                                      const char* what) {
         if (!key) return nullptr;
         std::string k = key->asStdString();
-        auto user_it = store().find(user);
-        bool found = user_it != store().end() && user_it->second.count(k) != 0;
+        std::shared_ptr<FakeJni::JString> value;
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            const auto user_it = store().find(user);
+            if (user_it != store().end()) {
+                const auto value_it = user_it->second.find(k);
+                if (value_it != user_it->second.end()) {
+                    value = std::make_shared<FakeJni::JString>(value_it->second);
+                }
+            }
+        }
         // Key name only, the value is a real credential.
-        std::printf("stud: LocalStorage.%s(key=\"%s\", user=%lld) -> %s\n", what, k.c_str(), user,
-                    found ? "hit" : "MISS");
+        std::printf("stud: LocalStorage.%s(key=\"%s\") -> %s\n", what, k.c_str(),
+                    value ? "hit" : "MISS");
         std::fflush(stdout);
-        if (!found) return nullptr;
-        return std::make_shared<FakeJni::JString>(user_it->second[k]);
+        return value;
     }
     static FakeJni::JBoolean store_value(long long user,
                                           const std::shared_ptr<FakeJni::JString>& key,
@@ -685,18 +739,21 @@ private:
                                           const char* what) {
         if (!key) return false;
         std::string k = key->asStdString();
-        store()[user][k] = value ? value->asStdString() : std::string();
-        std::printf("stud: LocalStorage.%s(key=\"%s\", user=%lld) stored\n", what, k.c_str(), user);
+        {
+            std::lock_guard<std::mutex> lock(store_mutex());
+            store()[user][k] = value ? value->asStdString() : std::string();
+        }
+        std::printf("stud: LocalStorage.%s(key=\"%s\") stored\n", what, k.c_str());
         std::fflush(stdout);
         persist();
         return true;
     }
 
 public:
-    FakeJni::JBoolean setSecureValueForUser(std::shared_ptr<FakeJni::JString> /*key*/,
-                                             std::shared_ptr<FakeJni::JString> /*value*/,
-                                             FakeJni::JLong /*userId*/) {
-        return false;
+    FakeJni::JBoolean setSecureValueForUser(std::shared_ptr<FakeJni::JString> key,
+                                             std::shared_ptr<FakeJni::JString> value,
+                                             FakeJni::JLong userId) {
+        return store_value(static_cast<long long>(userId), key, value, "setSecureValueForUser");
     }
 };
 
@@ -725,8 +782,7 @@ public:
 
 // Registers every protocol-platform class above onto `jvm`, same
 // timing requirement as register_android_framework()/
-// register_app_java_classes() (before dlopen(), see
-// process-b/src/main.cpp's own doc comment on why).
+// register_app_java_classes() (before dlopen(), see runtime/src/main.cpp).
 void register_protocol_platforms(FakeJni::Jvm& jvm);
 
 struct ProtocolPlatformBootstrapResult {

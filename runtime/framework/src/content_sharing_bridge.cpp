@@ -2,6 +2,7 @@
 
 #include "stud/bionic_jvm.h"
 #include "stud/app_java_classes.h"
+#include "stud/json_field.h"
 #include "stud/trap_recovery.h"
 
 #include <cstdio>
@@ -48,34 +49,6 @@ std::string call_string_getter(FakeJni::Env& env, const stud::linker::LoadedLibr
 constexpr const char* kSetClipboardTextMethod = "setClipboardText";
 constexpr const char* kFallbackProtocol = "ExternalContentSharing";
 constexpr const char* kTextKey = "text";
-
-// The payloads here are the engine's own and small; one string field out
-// of a flat object does not justify a parser in this layer, same as the
-// other MessageBus bridges.
-std::string json_string_field(const std::string& json, const std::string& key) {
-    const std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return {};
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return {};
-    pos = json.find('"', pos);
-    if (pos == std::string::npos) return {};
-    ++pos;
-    std::string out;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) {
-            ++pos;
-            switch (json[pos]) {
-                case 'n': out.push_back('\n'); ++pos; continue;
-                case 't': out.push_back('\t'); ++pos; continue;
-                case 'r': ++pos; continue;
-                default: break;
-            }
-        }
-        out.push_back(json[pos++]);
-    }
-    return out;
-}
 
 }  // namespace
 

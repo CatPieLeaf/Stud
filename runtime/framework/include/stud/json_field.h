@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 // Reading one field out of a flat MessageBus payload. These are small
@@ -104,6 +105,18 @@ inline std::string json_string_field(const std::string& json, const std::string&
         }
     }
     return out;
+}
+
+// The number value of `key`, written bare or inside a string, as the engine
+// does both; `fallback` when it is missing or is not a number.
+inline double json_number_field(const std::string& json, const std::string& key, double fallback) {
+    size_t pos = json_value_position(json, key);
+    if (pos == std::string::npos) return fallback;
+    if (json[pos] == '"') ++pos;
+    const char* start = json.c_str() + pos;
+    char* end = nullptr;
+    const double value = std::strtod(start, &end);
+    return end == start ? fallback : value;
 }
 
 inline bool json_true_field(const std::string& json, const std::string& key) {

@@ -30,14 +30,8 @@
 // across the Roblox FFlag/client-modding community for years (a flat JSON
 // object, flag name -> value, values serialized as JSON strings
 // regardless of the flag's actual bool/int/string type), not invented
-// from nothing. `nativePreloadFlagOverrides` has since been called many
-// times against the real, patched libroblox.so with no crash (see
-// the engineering notes), confirms the call itself is well-formed, but
-// whether Roblox's own flag-parsing logic actually reads/applies the
-// overridden values correctly (not just tolerates receiving the string)
-// remains unconfirmed.
-//
-// See the engineering notes, milestone M4.
+// from nothing. report_flag_override_state() below is what shows whether a
+// value really applied.
 
 namespace stud::jni_bridge {
 

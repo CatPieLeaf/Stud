@@ -29,7 +29,7 @@
 namespace {
 
 // Real android/log.h priority levels (public NDK header values),
-// duplicated here rather than included since process-b's headers target
+// duplicated here rather than included since the runtime's headers target
 // ANDROID_PLATFORM=26 and some of the real symbols below are guarded by
 // __INTRODUCED_IN in a way that's easier to sidestep entirely, same
 // reasoning as main.cpp's own dlsym-based __android_log_set_logger use.

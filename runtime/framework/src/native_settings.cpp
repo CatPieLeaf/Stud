@@ -89,8 +89,7 @@ NativeSettingsResult run_native_settings_bootstrap(FakeJni::Jvm& jvm,
     }
 
     // Optional, called first when a real files directory is
-    // configured, matches try_bootstrap.cpp's own established probe
-    // ordering ("nativeSetFilesDirectory, early"). Skipped (not just a
+    // configured. Skipped (not just a
     // no-op empty-string call) when files_directory is empty, since an
     // empty path isn't a real directory Roblox's engine could actually
     // write into, callers without a real persistent directory yet get

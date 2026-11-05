@@ -96,7 +96,7 @@ bool run_app_lifecycle_native_adapter_set_active(FakeJni::Jvm& jvm,
 
 // Separate finding in the app's own code (the engineering notes):
 // RobloxApplication.onCreate() also calls
-// `JNIAAssetManagerSetup.a(context)` -> `initNative(context.getAssets())`
+// `JNIAAssetManagerSetup.initNative(context.getAssets())`
 // a real native entry point (confirmed against the library's exported symbols) that hands
 // libroblox.so a real Java `AssetManager` object, separate from and
 // earlier than anything Stud's own `AAssetManager_open()`
@@ -110,7 +110,7 @@ bool run_app_lifecycle_native_adapter_set_active(FakeJni::Jvm& jvm,
 bool run_asset_manager_setup_bridge(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib);
 
 // Confirmed (`com.roblox.client.LocalStorageManager`):
-// `LocalStorageManager.a(context)` -> `initStorageManagerNativeV3(
+// `LocalStorageManager.initStorageManagerNativeV3(
 // context.getAssets(), context.getFilesDir().getAbsolutePath(),
 // context.getCacheDir().getAbsolutePath())`, a real, separate native
 // entry point (confirmed against the library's exported symbols:
@@ -186,21 +186,13 @@ bool run_set_is_first_install(FakeJni::Jvm& jvm, const stud::linker::LoadedLibra
 // Confirmed against the app's own code, from the same systematic exported-symbol diff:
 // `NativeGLInterface.setTaskSchedulerBackgroundMode(boolean, String)`
 // (the real app
-// shell manager's own "ASMA.start") puts the engine's own real
+// shell manager's own start step) puts the engine's own real
 // internal task scheduler into FOREGROUND mode (`false`) as part of
 // real app-shell startup; the real code only ever passes `true`
 // (background) on real pause/stop/end-game paths
-// (`ES.endGameInBackground`, `ASMA.pause`, `ASMA.stop`). Stud never
-// called it in either direction, so the scheduler has only ever run in
-// whatever mode it defaults to at construction. This matters directly:
-// every still-blocked V2 call in this project (`InitWithParams`,
-// `StartLuaAppDM`, the `UpdateSurface` pair) posts its real work to
-// that same internal scheduler and waits for a completion signal that
-// never arrives; see the engineering notes' own hardware-watchpoint
-// closure on that futex. A scheduler parked in background mode not
-// running foreground work is a real, concrete, testable explanation
-// for all of them at once. Real second arg is a plain reason/tag
-// string used for the engine's own logging.
+// (ending a game in the background, pausing, stopping). The V2 calls post
+// their work to that scheduler, so it has to be in foreground mode first. The
+// second argument is a reason string for the engine's own logging.
 bool run_set_task_scheduler_foreground(FakeJni::Jvm& jvm, const stud::linker::LoadedLibrary& lib);
 
 }  // namespace stud::jni_bridge
