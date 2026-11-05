@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -155,6 +156,10 @@ struct Device {
     bool can_rumble = false;
     int death_errno = 0;
 };
+
+// Rumble arrives on a dispatch thread and poll() runs on input's own, and
+// both walk the pads, which poll() also adds to and removes from.
+std::mutex g_devices_mutex;
 
 std::map<std::string, Device>& devices() {
     static std::map<std::string, Device> d;
@@ -499,6 +504,7 @@ std::vector<Event>& pending() {
 }
 
 void init() {
+    std::lock_guard<std::mutex> lock(g_devices_mutex);
     scan(pending());
     if (!devices().empty()) return;
     if (g_unreadable_nodes > 0) {
@@ -519,6 +525,7 @@ void init() {
 // and re-uploaded (same id) whenever the strength changes, which is what
 // the API is for. Playing it is an ordinary write of an EV_FF event.
 bool set_rumble(int device_id, float strong, float weak, int duration_ms) {
+    std::lock_guard<std::mutex> lock(g_devices_mutex);
     Device* found = nullptr;
     for (auto& [path, candidate] : devices()) {
         (void)path;
@@ -564,6 +571,7 @@ bool set_rumble(int device_id, float strong, float weak, int duration_ms) {
 }
 
 void poll(std::vector<Event>& out) {
+    std::lock_guard<std::mutex> lock(g_devices_mutex);
     if (!pending().empty()) {
         out.insert(out.end(), pending().begin(), pending().end());
         pending().clear();
@@ -604,6 +612,9 @@ void poll(std::vector<Event>& out) {
     }
 }
 
-int device_count() { return static_cast<int>(devices().size()); }
+int device_count() {
+    std::lock_guard<std::mutex> lock(g_devices_mutex);
+    return static_cast<int>(devices().size());
+}
 
 }  // namespace stud::render_host::gamepad

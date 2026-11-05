@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -244,7 +245,8 @@ std::vector<std::string> resolve_apk_sources_impl(const std::string& path) {
 namespace stud::android_glue {
 
 namespace {
-void extract_assets_from_single_apk(const std::string& apk_path, const std::string& dest_dir);
+void extract_assets_from_single_apk(const std::string& apk_path, const std::string& dest_dir,
+                                     const std::vector<std::string>* prefixes = nullptr);
 void extract_native_library_from_single_apk(const std::string& apk_path,
                                              const std::string& library_name,
                                              const std::string& dest_path, bool* found);
@@ -255,6 +257,13 @@ void extract_apk_assets(const std::string& apk_path, const std::string& dest_dir
     // that is the same precedence a real device's split loader applies.
     for (const std::string& source : resolve_apk_sources_impl(apk_path)) {
         extract_assets_from_single_apk(source, dest_dir);
+    }
+}
+
+void extract_apk_assets_under(const std::string& apk_path, const std::string& dest_dir,
+                              const std::vector<std::string>& prefixes) {
+    for (const std::string& source : resolve_apk_sources_impl(apk_path)) {
+        extract_assets_from_single_apk(source, dest_dir, &prefixes);
     }
 }
 
@@ -313,7 +322,8 @@ std::vector<uint8_t> read_apk_asset(const std::string& apk_path, const std::stri
 
 namespace {
 
-void extract_assets_from_single_apk(const std::string& apk_path, const std::string& dest_dir) {
+void extract_assets_from_single_apk(const std::string& apk_path, const std::string& dest_dir,
+                                     const std::vector<std::string>* prefixes) {
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_file(&zip, apk_path.c_str(), 0)) {
         throw ExtractError("stud: failed to open APK '" + apk_path +
@@ -340,6 +350,12 @@ void extract_assets_from_single_apk(const std::string& apk_path, const std::stri
         }
 
         std::string relative(name.substr(kPrefix.size()));
+        if (prefixes != nullptr &&
+            std::none_of(prefixes->begin(), prefixes->end(), [&relative](const std::string& p) {
+                return relative.rfind(p, 0) == 0;
+            })) {
+            continue;
+        }
         // An entry may name any path, and an APK is often a download from
         // a mirror: `assets/../../x` would land outside dest_dir. A real
         // APK has neither an absolute name nor a ".." in one.

@@ -2,6 +2,7 @@
 
 #ifdef STUD_HAVE_GFXSTREAM
 
+#include <fcntl.h>
 #include <linux/memfd.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -113,8 +114,12 @@ void serve_ring(int fd) {
     uint64_t layout[2] = {};  // ring storage size, write buffer size
     gfxstream_asg_layout(&layout[0], &layout[1]);
     const size_t size = static_cast<size_t>(layout[0] + layout[1]);
-    const int mem = static_cast<int>(::syscall(SYS_memfd_create, "stud-gfxstream-ring", MFD_CLOEXEC));
-    if (mem < 0 || ::ftruncate(mem, static_cast<off_t>(size)) != 0) {
+    const int mem = static_cast<int>(
+        ::syscall(SYS_memfd_create, "stud-gfxstream-ring", MFD_CLOEXEC | MFD_ALLOW_SEALING));
+    // Sealed, because the guest gets this descriptor, and shrinking the file
+    // under gfxstream's render thread would be SIGBUS here.
+    if (mem < 0 || ::ftruncate(mem, static_cast<off_t>(size)) != 0 ||
+        ::fcntl(mem, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW) != 0) {
         if (mem >= 0) ::close(mem);
         return;
     }

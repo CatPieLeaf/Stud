@@ -6,6 +6,7 @@
 #include <linux/memfd.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -86,7 +87,9 @@ bool TransportRing::create(size_t min_bytes) {
     size_t bytes = 1;
     while (bytes < min_bytes) bytes <<= 1;
     // Through syscall(): bionic only declares memfd_create() from API 30.
-    memory_fd_ = static_cast<int>(::syscall(SYS_memfd_create, "stud-transport-ring", MFD_CLOEXEC));
+    // Sealing allowed: the consumer seals it against shrinking before it maps it.
+    memory_fd_ = static_cast<int>(
+        ::syscall(SYS_memfd_create, "stud-transport-ring", MFD_CLOEXEC | MFD_ALLOW_SEALING));
     wake_consumer_fd_ = ::eventfd(0, EFD_CLOEXEC);
     wake_producer_fd_ = ::eventfd(0, EFD_CLOEXEC);
     if (memory_fd_ < 0 || wake_consumer_fd_ < 0 || wake_producer_fd_ < 0) return false;
@@ -109,6 +112,15 @@ bool TransportRing::attach(int memory_fd, int wake_consumer_fd, int wake_produce
     wake_producer_fd_ = wake_producer_fd;
     // Anything but the power of two create() makes is not this protocol.
     if (data_bytes == 0 || (data_bytes & (data_bytes - 1)) != 0) return false;
+    // The ring's positions are 32 bits.
+    if (data_bytes > UINT32_MAX) return false;
+    // A page past the end of the file is SIGBUS on touch, here where the
+    // other side only loses its connection.
+    struct stat st {};
+    if (::fcntl(memory_fd, F_ADD_SEALS, F_SEAL_SHRINK) != 0 || ::fstat(memory_fd, &st) != 0 ||
+        static_cast<uint64_t>(st.st_size) < data_offset() + data_bytes) {
+        return false;
+    }
     return map(data_bytes);
 }
 

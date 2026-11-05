@@ -5,6 +5,7 @@
 
 #include "stud/material_slots.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -164,6 +165,9 @@ uint64_t vk_host_has_proc(const std::vector<uint8_t>& in);
 uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vector<uint8_t>& in,
                              uint32_t node_count, std::vector<uint8_t>& out, uint32_t* out_len,
                              uint64_t shared_id = 0, uint64_t client = 0);
+// Maps a file the client sent, sealed against shrinking, and closes the fd.
+// MAP_FAILED if it cannot be sealed or is shorter than `length`.
+void* map_client_file(int fd, size_t length);
 // The shared-memory fd channel's two ends. register_shared_fd() keeps an
 // fd the client sent under the id it chose; take_shared_fd() hands it to
 // whichever call names that id, exactly once, and -1 if there is none.

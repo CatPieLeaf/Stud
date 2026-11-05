@@ -77,7 +77,8 @@ inline std::string runtime_dir() {
 // The sandbox can write the data, cache, log and runtime directories, so
 // nothing outside it can trust what is in them: a file there can be swapped
 // after it is written, and a name there can be a symlink to anything of the
-// user's. This one is never bound in. It is a real host path, under Flatpak
+// user's. This one is never bound in, and it is where anything an unsandboxed
+// process parses belongs. It is a real host path, under Flatpak
 // as well, where the runtime directory is private and KWin could not read a
 // file left in it.
 inline std::string private_dir() {

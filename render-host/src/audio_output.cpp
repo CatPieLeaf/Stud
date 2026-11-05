@@ -61,7 +61,6 @@ namespace {
 // and holds the connection to whichever sound server answered, and both
 // the output device and the microphone are opened from it.
 struct Audio {
-    bool tried = false;
     bool ready = false;
     ma_context context{};
 };
@@ -137,10 +136,7 @@ void silence_alsa_probe_noise() {
     if (set_handler != nullptr) set_handler(collect_alsa_message);
 }
 
-Audio& audio_context() {
-    static Audio a;
-    if (a.tried) return a;
-    a.tried = true;
+void start_audio_context(Audio& a) {
     // Present this stream as "Stud", with Stud's icon, in the desktop's
     // volume mixer.
     //
@@ -251,11 +247,20 @@ Audio& audio_context() {
                     ma_result_description(result));
         std::fflush(stdout);
         report_alsa_messages("initialising audio");
-        return a;
+        return;
     }
     a.ready = true;
     std::printf("stud-render-host: audio: %s\n", ma_get_backend_name(a.context.backend));
     std::fflush(stdout);
+}
+
+// Set up once, and a second caller waits for the answer: it is the opener
+// thread at launch, and a stream opened meanwhile would otherwise read "no
+// audio" and stay silent for the session.
+Audio& audio_context() {
+    static Audio a;
+    static std::once_flag once;
+    std::call_once(once, [] { start_audio_context(a); });
     return a;
 }
 
@@ -334,10 +339,14 @@ struct Device {
     // This lives in a function-local static, so its destructor really does
     // run at exit, and destroying a joinable std::thread calls
     // std::terminate(). Live-caught as `terminate called without an active
-    // exception` on every shutdown that had started audio. The thread only
-    // opens the device and returns, so joining is a genuine wait for it to
-    // finish rather than a cancellation.
+    // exception` on every shutdown that had started audio. The thread stays
+    // for the session, so it is told to go first.
     ~Device() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            closing = true;
+        }
+        cv.notify_all();
         if (opener.joinable()) opener.join();
     }
 };
@@ -560,8 +569,7 @@ uint64_t audio_share_state(uint64_t id) {
     const int fd = take_shared_fd(id);
     if (fd < 0) return 0;
     const auto length = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
-    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
+    void* p = map_client_file(fd, length);
     if (p == MAP_FAILED) return 0;
     auto* page = static_cast<std::atomic<uint64_t>*>(p);
     Device& d = device();

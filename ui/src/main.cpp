@@ -930,6 +930,31 @@ void open_settings_for_launch_failure(const QString& reason) {
     stud::ui::SettingsWindow::showSingleton(reason);
 }
 
+// The fonts render-host draws the text overlay with, and their table, out of
+// the APK itself. Process B extracts its assets where it can write, and
+// render-host is not sandboxed, so what it parses has to be somewhere the
+// engine cannot reach. Extracted again when the APK changes.
+std::string prepare_host_assets(const std::string& apk_path) {
+    const std::string dir = stud::paths::private_dir() + "/host-assets";
+    const std::string stamp_path = dir + ".stamp";
+    const std::string fingerprint = stud::android_glue::apk_source_fingerprint(apk_path);
+    std::string stamp;
+    std::ifstream stamp_file(stamp_path);
+    std::getline(stamp_file, stamp);
+    if (stamp == fingerprint && std::filesystem::exists(dir)) return dir;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    try {
+        stud::android_glue::extract_apk_assets_under(apk_path, dir,
+                                                     {"android/fonts/", "content/fonts/", "fonts/"});
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "stud: the text overlay has no fonts: %s\n", e.what());
+        return dir;
+    }
+    std::ofstream(stamp_path, std::ios::trunc) << fingerprint << "\n";
+    return dir;
+}
+
 // False when nothing was started; Settings is then open saying why.
 bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     stud::config::StudSettings settings;
@@ -1094,11 +1119,9 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     render_host_args << "--background-fps" << QString::number(settings.background_fps);
     render_host_args << "--discord-presence" << (settings.discord_rich_presence ? "on" : "off");
     render_host_args << "--discord-join-button" << (settings.discord_join_button ? "on" : "off");
-    // Where Roblox's own assets were extracted. Process C draws the text
-    // overlay for a focused TextBox and needs the engine's real fonts to
-    // draw it in. Process B is sandboxed and sees a different path, so
-    // the host-side one has to come from here.
-    render_host_args << "--assets-dir" << QString::fromStdString(stud::android_glue::default_assets_cache_dir());
+    // Process C draws the text overlay for a focused TextBox and needs the
+    // engine's real fonts to draw it in; see prepare_host_assets().
+    render_host_args << "--assets-dir" << QString::fromStdString(prepare_host_assets(apk_path));
     if (!desktop_materials.empty()) {
         render_host_args << "--desktop-materials" << QString::fromStdString(desktop_materials);
     }
@@ -1413,6 +1436,12 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         }
     }
     config.stdout_fd = stud::logging::passthrough_stdout_fd();
+    // Read-only over the writable binds above, and last so they win. Both are
+    // read outside the sandbox: the APK by this process, and the materials by
+    // render-host, which parses them.
+    for (const std::string& dir : {stud::paths::apk_dir(), stud::paths::cache_dir() + "/desktop-materials"}) {
+        if (QFile::exists(QString::fromStdString(dir))) extra_binds.push_back({dir, /*writable=*/false});
+    }
     config.extra_binds = std::move(extra_binds);
     // Writable, already-bound (see extra_binds above) cwd for
     // Process B; see ProcessBConfig::working_directory's own doc

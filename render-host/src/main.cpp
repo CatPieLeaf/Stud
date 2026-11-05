@@ -165,7 +165,7 @@ void throttle_while_hidden() {
 // Defined far below, next to the frame caps themselves. Declared here
 // because the command-batch loop has to run it for each sub-call, and
 // that loop sits well above the definition.
-void throttle_before_dispatch(stud::render_host::CallId id, const std::vector<uint8_t>& in);
+void throttle_before_dispatch(stud::render_host::CallId id);
 
 namespace {
 
@@ -1577,6 +1577,15 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                     url.resize(newline);
                 }
             }
+            // The viewer reads these a line at a time, and the rule below only
+            // sees the start of this one: a line break in it would be a
+            // command of the sender's choosing, sent past that rule.
+            const auto one_line = [](const std::string& text) {
+                return std::none_of(text.begin(), text.end(), [](unsigned char c) {
+                    return c < 0x20 || c == 0x7f;
+                });
+            };
+            if (!one_line(url) || !one_line(cookie)) return 0;
             // The viewer loads what it is told to, past its own checks, so
             // the rule for opening a panel holds here too. Anything else
             // that reached this point is simply left unloaded.
@@ -2029,12 +2038,14 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             // sandbox has a synthetic /dev by design. They ride the same
             // queue so there is one path in and one drain.
             if (n < capacity) {
+                // Kept across polls: what does not fit goes in the next one,
+                // and a pad's arrival is more events than one reply may hold.
                 static std::vector<stud::render_host::gamepad::Event> pad_events;
-                pad_events.clear();
                 stud::render_host::gamepad::poll(pad_events);
                 auto* slots = reinterpret_cast<HostInputEvent*>(out.data());
-                for (const auto& pad : pad_events) {
-                    if (n >= capacity) break;  // the rest arrive next poll
+                size_t sent = 0;
+                for (; sent < pad_events.size() && n < capacity; ++sent) {
+                    const auto& pad = pad_events[sent];
                     HostInputEvent& slot = slots[n++];
                     slot = HostInputEvent{};
                     switch (pad.type) {
@@ -2066,6 +2077,8 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
                                                                                   : pad.v0;
                     slot.b = static_cast<float>(pad.device_id);
                 }
+                pad_events.erase(pad_events.begin(),
+                                 pad_events.begin() + static_cast<std::ptrdiff_t>(sent));
             }
             out.resize(n * sizeof(HostInputEvent));
             *out_len = static_cast<uint32_t>(out.size());
@@ -2482,8 +2495,7 @@ uint64_t share_window_state(uint64_t id) {
     const int fd = stud::render_host::take_shared_fd(id);
     if (fd < 0) return 0;
     const auto length = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
-    void* p = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
+    void* p = stud::render_host::map_client_file(fd, length);
     if (p == MAP_FAILED) return 0;
     auto* page = static_cast<std::atomic<uint64_t>*>(p);
     // A page an earlier client was given stays mapped: a publish may still
@@ -3042,6 +3054,9 @@ uint64_t dispatch(const Header& hdr, const RealFns& fns, RealWindow& window,
                 std::memcpy(&id16, p, sizeof(id16));
                 p += sizeof(id16);
                 if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) break;
+                // call_void() never nests one, and sub_in below is what a
+                // nested one would be reading.
+                if (static_cast<CallId>(id16) == CallId::VoidCallBatch) break;
 
                 Header sub{};
                 sub.call_id = static_cast<CallId>(id16);
@@ -3563,49 +3578,9 @@ void pump_wayland(wl_display* display, bool fd_readable) {
 // and stutters if its writes are made to wait; the point of the setting
 // is to stop drawing a window nobody is looking at, not to slow the
 // process down.
-//
-// A present can also arrive inside a VoidCallBatch: it is sent reply-free,
-// and reply-free calls travel packed into batches. The batch's own id is
-// all the dispatch loop sees, so the present inside one was never paced
-// and the background cap did nothing at all. A batch is looked through,
-// in the same record format VoidCallBatch's handler reads, for a present
-// among its calls.
-bool batch_carries_present(const std::vector<uint8_t>& in) {
-    const uint8_t* p = in.data();
-    const uint8_t* end = in.data() + in.size();
-    while (end - p >= 4) {
-        const uint8_t argc = *p++;
-        const uint8_t bits = *p++;
-        uint16_t id16 = 0;
-        std::memcpy(&id16, p, sizeof(id16));
-        p += sizeof(id16);
-        const auto id = static_cast<stud::render_host::CallId>(id16);
-        if (id == stud::render_host::CallId::VkQueuePresentKHR ||
-            id == stud::render_host::CallId::GlPresentColorBuffer) {
-            return true;
-        }
-        if (argc > 8 || end - p < static_cast<ptrdiff_t>(argc) * 8) return false;
-        p += static_cast<size_t>(argc) * sizeof(uint64_t);
-        if ((bits & 1u) != 0) {
-            if (end - p < 4) return false;
-            uint32_t len = 0;
-            std::memcpy(&len, p, sizeof(len));
-            p += sizeof(len);
-            if (end - p < static_cast<ptrdiff_t>(len)) return false;
-            p += len;
-        }
-        if ((bits & 2u) != 0) {
-            if (end - p < 8) return false;
-            p += sizeof(uint64_t);
-        }
-    }
-    return false;
-}
-
-void throttle_before_dispatch(stud::render_host::CallId id, const std::vector<uint8_t>& in) {
+void throttle_before_dispatch(stud::render_host::CallId id) {
     if (id == stud::render_host::CallId::VkQueuePresentKHR ||
-        id == stud::render_host::CallId::GlPresentColorBuffer ||
-        (id == stud::render_host::CallId::VoidCallBatch && batch_carries_present(in))) {
+        id == stud::render_host::CallId::GlPresentColorBuffer) {
         throttle_while_hidden();
     }
 }
@@ -3915,7 +3890,7 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         out_scratch.clear();
         uint32_t out_len = 0;
         uint64_t result = 0;
-        throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id), in_scratch);
+        throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id));
         if (hdr.call_id == CallId::TransportRing && !ring) {
             // The last request this socket carries: the client writes
             // nothing more to it until it has this answer, and nothing
@@ -3938,73 +3913,6 @@ void serve_connection_thread(int conn_fd, const RealFns& fns, RealWindow& real_w
         } else {
             std::lock_guard<std::mutex> lock(dispatch_mutex());
             result = dispatch(hdr, fns, real_window, in_scratch, out_scratch, &out_len);
-        }
-        // Pump Wayland here, off this thread's own back, right after the
-        // dispatch mutex is released.
-        //
-        // Presentation runs on THIS thread: the engine's Vulkan client is
-        // a secondary connection, so vkQueuePresentKHR is handled here,
-        // not on the main loop. A Wayland-backed driver needs the display
-        // dispatched to finish presenting, and the main loop, the only
-        // thing that pumped it, spends its time blocked on the same
-        // dispatch mutex this thread just held. So buffers were attached
-        // and committed, every call returned VK_SUCCESS, and nothing was
-        // ever shown.
-        //
-        // Live-caught by printing the presenting thread id: presents ran
-        // on a secondary connection thread while the main loop sat
-        // elsewhere. The standalone stud_try_vulkan_window test, which
-        // does everything on one thread, presented 300 frames correctly
-        // on the same GPU and window. That is what narrowed it here.
-        //
-        // The `true` is fd_readable, and it is deliberate rather than an
-        // oversight, which is worth writing down because it reads as one:
-        // the main loop below asks poll() and passes the answer, and this
-        // caller asserts it on every present.
-        //
-        // It is safe. libwayland reads the socket with MSG_DONTWAIT, so
-        // wl_display_read_events() on an empty socket returns instead of
-        // blocking -- and a present path that blocked on an empty socket
-        // would have wedged Stud on its first frame rather than rarely.
-        // Asking poll() here instead was tried on paper and is worse: it
-        // costs the same syscall it saves, and it opens a window where
-        // data arriving between the poll and the read is left for the
-        // next pump, which delays exactly the buffer-release events this
-        // call exists to dispatch.
-        //
-        // STUD_WL_NO_PRESENT_PUMP=1 leaves this out, and it is the last
-        // thing Stud does that no ordinary game does.
-        //
-        // A normal Vulkan game does not share its Wayland connection
-        // with the driver: the toolkit owns the display and the driver's
-        // WSI is the only other reader. Stud reads it HERE, with
-        // prepare_read / read_events / dispatch, on the very thread that
-        // just returned from vkQueuePresentKHR, after every present --
-        // and the driver then enters the next present and reads the same
-        // connection itself. libwayland coordinates reads per
-        // connection, so a read or a cancel from Stud lands in the
-        // middle of the driver's own.
-        //
-        // The freeze is a 12006ms spin inside the driver's present
-        // (thread in state R, wchan 0,
-        // GPU idle, no Xid), and on Stud's side the frame it happens on
-        // is indistinguishable from the eighty healthy frames before it
-        // -- same barriers, same two command buffers, every other
-        // present in that window under 247us. Nothing in what Stud
-        // SUBMITS explains it, which leaves what Stud does to the
-        // connection the driver is using.
-        //
-        // A switch rather than a deletion: this pump exists because
-        // presents once did not complete without it (the main loop was
-        // blocked on the same dispatch mutex, so nothing serviced the
-        // display and every frame returned VK_SUCCESS while showing
-        // nothing). The main loop still pumps on its own cadence, so
-        // removing this should cost latency rather than correctness --
-        // should, which is why it is measured and not assumed.
-        static const bool no_present_pump =
-            std::getenv("STUD_WL_NO_PRESENT_PUMP") != nullptr;
-        if (hdr.call_id == CallId::VkQueuePresentKHR && !no_present_pump) {
-            pump_display(real_window, true);
         }
         if ((hdr.flags & Header::kNoReply) != 0) continue;
         ResponseHeader resp{result, out_len};
@@ -4217,12 +4125,6 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
     }
 
-    // Open the audio device now, not when a sound first plays: Stud should
-    // appear in the desktop's volume mixer from launch, like any other
-    // application, so its volume can be set before anything makes noise.
-    // Opening talks to the audio server and can block, so it happens on
-    // its own thread, never on the dispatch loop.
-    stud::render_host::audio_start_output_device();
     // Caught in testing: diagnostic bug: this process's stdout is a
     // redirected file (stud-ui starts it detached, inheriting stdout),
     // so libc block-buffers it and nothing written after the first
@@ -4241,6 +4143,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "stud-render-host: another instance is already running\n");
         return 0;
     }
+
+    // Open the audio device now, not when a sound first plays: Stud should
+    // appear in the desktop's volume mixer from launch, like any other
+    // application, so its volume can be set before anything makes noise.
+    // Opening talks to the audio server and can block, so it happens on
+    // its own thread, never on the dispatch loop.
+    stud::render_host::audio_start_output_device();
 
     // Discord rich presence, if the user enabled it. Connecting when
     // Discord is not running is not an error; it retries on the next
@@ -4466,6 +4375,10 @@ int main(int argc, char** argv) {
         // The first connection never carries the shared-fd channel, which only
         // ever arrives on a socket of its own; see serve_connection_thread().
         stud::render_host::SocketReader reader(conn_fd);
+        // Whether this is the engine. A second launch handing over a link
+        // connects here too, and if the engine has not connected yet it is
+        // the first one; its leaving must not end the session.
+        bool engine_seen = false;
         // As on the other connections: once the client asks for it, its
         // requests come out of shared memory; replies stay on the socket.
         std::unique_ptr<stud::render_host::TransportRing> ring;
@@ -4561,8 +4474,7 @@ int main(int argc, char** argv) {
             // Same exemption as the connection threads: a blocking
             // driver wait must not hold the dispatch lock, or the two
             // wait on each other.
-            throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id),
-                                     g_in_scratch);
+            throttle_before_dispatch(static_cast<stud::render_host::CallId>(hdr.call_id));
             if (hdr.call_id == CallId::TransportRing && !ring) {
                 // The last request this socket carries, as on the other
                 // connections.
@@ -4585,12 +4497,17 @@ int main(int argc, char** argv) {
                 std::lock_guard<std::mutex> lock(dispatch_mutex());
                 result = dispatch(hdr, fns, real_window, g_in_scratch, g_out_scratch, &out_len);
             }
+            if (hdr.call_id != CallId::DeliverDeepLink) engine_seen = true;
             // A pipelined request wants no answer, writing one would desync
             // the stream, since the client is not going to read it.
             if ((hdr.flags & Header::kNoReply) != 0) continue;
             ResponseHeader resp{result, out_len};
             if (!write_all(conn_fd, &resp, sizeof(resp))) break;
             if (out_len > 0 && !write_all(conn_fd, g_out_scratch.data(), out_len)) break;
+        }
+        if (!engine_seen) {
+            ::close(conn_fd);
+            continue;
         }
         // The engine's connection is gone, so the session is over.
         //

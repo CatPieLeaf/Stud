@@ -91,6 +91,9 @@ public:
 // carries assets is extracted, base first. Splits for ABIs Stud cannot
 // run are skipped.
 void extract_apk_assets(const std::string& apk_path, const std::string& dest_dir);
+// The same, for only the assets under these prefixes of "assets/".
+void extract_apk_assets_under(const std::string& apk_path, const std::string& dest_dir,
+                              const std::vector<std::string>& prefixes);
 
 // Real APK native-library extraction (M8): pulls a single named native
 // library (e.g. "libroblox.so") out of the APK's real "lib/x86_64/"

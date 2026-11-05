@@ -95,6 +95,7 @@ struct Image {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;    // the last copy out of it
+    bool copy_pending = false;         // `fence` belongs to a submit that was accepted
     VkSemaphore copied = VK_NULL_HANDLE;  // exportable: the same, as a sync_file
     int done_fd = -1;  // sync_file of the last copy out of it; -1 = nothing pending
     bool acquired = false;
@@ -822,7 +823,7 @@ void destroy_swapchain_objects(Swapchain* sc) {
         if (im.fence != VK_NULL_HANDLE) {
             // Stud's own copy, GPU work only: nothing here waits on the
             // compositor.
-            d.vk.vkWaitForFences(d.device, 1, &im.fence, VK_TRUE, UINT64_MAX);
+            if (im.copy_pending) d.vk.vkWaitForFences(d.device, 1, &im.fence, VK_TRUE, UINT64_MAX);
             d.vk.vkDestroyFence(d.device, im.fence, nullptr);
         }
         if (im.copied != VK_NULL_HANDLE) d.vk.vkDestroySemaphore(d.device, im.copied, nullptr);
@@ -1042,8 +1043,10 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     static bool said = false;
     if (!said) {
         said = true;
+        // presentMode is not read here: frames are shown as they finish and
+        // the latest wins, whatever the swapchain was asked for.
         std::printf("stud-render-host: Stud presents its own frames: %u images, %s buffers on "
-                    "the %s GPU, %s sync\n",
+                    "the %s GPU, %s sync, present mode not applied\n",
                     count, sc->same_gpu ? "device-memory" : "system-memory (another GPU)",
                     sc->target.x != nullptr ? "X server's" : "compositor's",
                     sc->target.x != nullptr ? "implicit" : "explicit");
@@ -1216,7 +1219,9 @@ VkResult present_one(State& s, VkQueue queue, Swapchain* sc, uint32_t index,
 
     // Stud's own copy out of this image, GPU work only, long finished in
     // practice: the engine waited on it before drawing into the image.
-    d.vk.vkWaitForFences(d.device, 1, &im.fence, VK_TRUE, UINT64_MAX);
+    // A fence whose submit was refused never signals, so only an accepted
+    // one is waited for.
+    if (im.copy_pending) d.vk.vkWaitForFences(d.device, 1, &im.fence, VK_TRUE, UINT64_MAX);
     d.vk.vkResetFences(d.device, 1, &im.fence);
 
     VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -1266,6 +1271,7 @@ VkResult present_one(State& s, VkQueue queue, Swapchain* sc, uint32_t index,
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &im.copied;
     VkResult r = d.vk.vkQueueSubmit(queue, 1, &si, im.fence);
+    im.copy_pending = r == VK_SUCCESS;
     if (r != VK_SUCCESS) return r;
 
     VkSemaphoreGetFdInfoKHR gi{};

@@ -445,6 +445,12 @@ int main(int argc, char** argv) {
                 if (newline == std::string::npos) break;
                 const std::string line = pending.substr(0, newline);
                 pending.erase(0, newline + 1);
+                // What comes down here is loaded past every check the page
+                // gets, so it is held to the rule for opening a panel.
+                const auto is_http = [](const QString& text) {
+                    const QString scheme = QUrl(text).scheme();
+                    return scheme == QLatin1String("https") || scheme == QLatin1String("http");
+                };
                 static constexpr char kCookie[] = "cookie ";
                 static constexpr char kShow[] = "show ";
                 if (prepared && line.rfind(kCookie, 0) == 0) {
@@ -468,6 +474,7 @@ int main(int argc, char** argv) {
                     }
                     const QString url = QString::fromStdString(
                         line.substr(sizeof(kShow) - 1 + static_cast<size_t>(consumed)));
+                    if (!is_http(url)) continue;
                     QMetaObject::invokeMethod(
                         page,
                         [page, url, width, height, fullscreen, reveal, &window, &login_fullscreen]() {
@@ -485,6 +492,7 @@ int main(int argc, char** argv) {
                 const bool drop = line.rfind(kDrop, 0) == 0;
                 if (!load && !drop) continue;
                 const QString url = QString::fromStdString(line.substr(sizeof(kLoad) - 1));
+                if (load && !is_http(url)) continue;
                 QMetaObject::invokeMethod(
                     page,
                     [page, url, load]() {

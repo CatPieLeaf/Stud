@@ -4437,8 +4437,8 @@ VKAPI_ATTR VkResult VKAPI_CALL stud_vkQueuePresentKHR(VkQueue queue,
         // all "the same ordered thread" ever bought. Its result is
         // reported on the next present rather than this one, a frame late,
         // which is the price of not blocking the engine here.
-        stud::render_client::connection().call_void(CallId::VkQueuePresentKHR, a, in.data(),
-                                                     static_cast<uint32_t>(in.size()));
+        stud::render_client::connection().call_void_alone(CallId::VkQueuePresentKHR, a, in.data(),
+                                                           static_cast<uint32_t>(in.size()));
         r = VK_SUCCESS;  // as above: reply-free, so the host is the only reporter
 
     }

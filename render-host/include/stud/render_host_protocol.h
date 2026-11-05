@@ -1092,6 +1092,8 @@ public:
         // there, and nothing queued behind it makes anyone wait. This is
         // the path that replaced draining a second producer.
         if (writer_started_) {
+            // The writer has gone, or is going, and nothing would answer.
+            if (fd_ < 0) return kNullHandle;
             Completion c;
             c.out = out_buffer;
             c.cap = out_capacity;
@@ -1373,6 +1375,29 @@ public:
         }
     }
 
+    // Reply-free, as a request of its own rather than inside a batch, and on
+    // its way at once. For a call that can block in the driver: render-host
+    // decides whether to hold its dispatch lock per request, and a batch is
+    // held for all of it.
+    void call_void_alone(CallId id, const uint64_t (&args)[8], const void* in_buffer,
+                         uint32_t in_len) {
+        std::lock_guard<std::mutex> lock(call_mutex_);
+        if (fd_ < 0) return;
+        emit_command_batch_locked();
+        emit_void_batch_locked();
+        Header hdr{};
+        hdr.call_id = id;
+        for (int i = 0; i < 8; ++i) hdr.args[i] = args[i];
+        hdr.flags = Header::kNoReply;
+        hdr.in_buffer_len = in_len;
+        const size_t at = queue_.size();
+        queue_.resize(at + sizeof(hdr) + in_len);
+        std::memcpy(queue_.data() + at, &hdr, sizeof(hdr));
+        if (in_len > 0) std::memcpy(queue_.data() + at + sizeof(hdr), in_buffer, in_len);
+        if (ipc_stats_enabled() && id == CallId::VkQueuePresentKHR) report_frame_stats();
+        hand_off_locked();
+    }
+
     // Best-effort variant for a caller that would rather skip this round than
     // wait: takes the connection only if it is free. PollInputEvents uses it,
     // because it runs on its own timer and blocking there is actively harmful
@@ -1616,8 +1641,11 @@ public:
 
 private:
     void writer_loop() {
+        // Swapped with `queue_` each time round, so the two buffers take turns
+        // and neither is ever allocated again.
+        std::vector<uint8_t> bytes;
         for (;;) {
-            std::vector<uint8_t> bytes;
+            bytes.clear();
             std::deque<Mark> marks;
             {
                 std::unique_lock<std::mutex> lock(call_mutex_);
@@ -1631,7 +1659,6 @@ private:
                 emit_command_batch_locked();
                 emit_void_batch_locked();
                 bytes.swap(queue_);
-                queue_.clear();
                 reserve_queue_once();
                 marks.swap(marks_);
             }
@@ -1703,8 +1730,10 @@ private:
             c.result = resp.result;
             c.written = resp.out_buffer_len;
             c.done = true;
+            // Under the lock: the waiter owns `c`, on its stack, and once
+            // this is released it may return and take it away.
+            c.cv.notify_one();
         }
-        c.cv.notify_one();
         return true;
     }
 
@@ -1715,8 +1744,9 @@ private:
             c.written = 0;
             c.failed = true;
             c.done = true;
+            // Under the lock, as in read_reply_into().
+            c.cv.notify_one();
         }
-        c.cv.notify_one();
     }
 
     // Nobody may be left waiting on a reply that can no longer come: a
