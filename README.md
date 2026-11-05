@@ -308,8 +308,28 @@ cpak install github.com/catpieleaf/stud
 
 ## ❄️ N I X
 
+These commands need flakes, which Nix keeps behind a setting. On NixOS, add this to `configuration.nix` and rebuild:
+
+```nix
+nix.settings.experimental-features = [ "nix-command" "flakes" ];
+```
+
+On any other distro, add this line to `~/.config/nix/nix.conf`:
+
+```
+experimental-features = nix-command flakes
+```
+
+Try it without installing:
+
 ```bash
 nix run github:CatPieLeaf/Stud
+```
+
+Or install it for your user (`nix profile install` on Nix older than 2.30):
+
+```bash
+nix profile add github:CatPieLeaf/Stud
 ```
 
 Or on NixOS, add the flake as an input and install it system-wide:
