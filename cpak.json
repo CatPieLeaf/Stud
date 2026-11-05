@@ -4,7 +4,7 @@
   "name": "Stud",
   "description": "An Unofficial Open-Source Roblox Launcher for Linux",
   "version": "1.2.10",
-  "image": "ghcr.io/catpieleaf/stud@sha256:c568d373d1f97c5bc7ebde98b35d243b0165799ebea5ecc254842ae63dea8466",
+  "image": "ghcr.io/catpieleaf/stud@sha256:ef5bb6ed4c72320bfbf2d90f5acf5174662e0076ae38e6abdc405a6a8eaea703",
   "binaries": [
     "/usr/bin/stud"
   ],

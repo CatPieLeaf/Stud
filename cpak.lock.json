@@ -1,17 +1,17 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/1c560a5b19d19b9e",
-    "manifest_sha256": "1c560a5b19d19b9e4a8403b9cb1021f32472a3680d19273450883baa838ac33e",
-    "image": "ghcr.io/catpieleaf/stud@sha256:c568d373d1f97c5bc7ebde98b35d243b0165799ebea5ecc254842ae63dea8466",
-    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:c568d373d1f97c5bc7ebde98b35d243b0165799ebea5ecc254842ae63dea8466",
+    "origin": "local.cpak/package/ddd8a0d3bb482ebc",
+    "manifest_sha256": "ddd8a0d3bb482ebc7cd93270f2bbc37f60e9c091bf7a017de0547d04c0f346e7",
+    "image": "ghcr.io/catpieleaf/stud@sha256:ef5bb6ed4c72320bfbf2d90f5acf5174662e0076ae38e6abdc405a6a8eaea703",
+    "resolved_image": "ghcr.io/catpieleaf/stud@sha256:ef5bb6ed4c72320bfbf2d90f5acf5174662e0076ae38e6abdc405a6a8eaea703",
     "manifest": {
       "$schema": "https://raw.githubusercontent.com/Containerpak/cpak/v2/schema/manifest-v3.json",
       "manifest_version": "3.0",
       "name": "Stud",
       "description": "An Unofficial Open-Source Roblox Launcher for Linux",
       "version": "1.2.10",
-      "image": "ghcr.io/catpieleaf/stud@sha256:c568d373d1f97c5bc7ebde98b35d243b0165799ebea5ecc254842ae63dea8466",
+      "image": "ghcr.io/catpieleaf/stud@sha256:ef5bb6ed4c72320bfbf2d90f5acf5174662e0076ae38e6abdc405a6a8eaea703",
       "binaries": [
         "/usr/bin/stud"
       ],
