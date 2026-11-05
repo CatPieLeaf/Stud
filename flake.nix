@@ -18,13 +18,13 @@
 
           src = pkgs.fetchurl {
             url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.11.tar.gz";
-            sha256 = "f3feb8730f10a20188b833080fcb63bf3d0b32e92305010d2c16f9bc877c0420";
+            sha256 = "bbeb1016733ae0d89704b27b0f1d55b4327b9c03e01385b06556b055c589e8f8";
           };
 
           # The Android runtime and render-host, which need the NDK and AOSP to build.
           prebuilt = pkgs.fetchurl {
             url = "https://github.com/CatPieLeaf/Stud/releases/download/1.2.11/stud-1.2.11-x86_64.tar.zst";
-            sha256 = "8173720bcd89111316860920853cceaea795f79ad94d08e347ffccd4644abd5d";
+            sha256 = "8668a0833eb3b7c8dba51b5add2aee4b364bb71e458aacce4943c37861b15344";
           };
 
           libjnivm = pkgs.fetchFromGitHub {
