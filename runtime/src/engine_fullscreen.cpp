@@ -80,6 +80,8 @@ const uint8_t* method_named(const uint8_t* name_lea) {
 using SettingsGetter = uint8_t* (*)();
 SettingsGetter g_settings = nullptr;
 int32_t g_value_offset = 0;
+using SettingsSetter = void (*)(void*, bool);
+SettingsSetter g_setter = nullptr;
 std::atomic<bool> g_wanted{false};
 
 // InFullScreen, whole:  push rbp; mov rbp,rsp; call getter;
@@ -101,6 +103,40 @@ bool decode_value(const uint8_t* fn) {
     g_settings = reinterpret_cast<SettingsGetter>(const_cast<uint8_t*>(fn + kCallEnd + call));
     std::memcpy(&g_value_offset, fn + kOffsetAt, sizeof(g_value_offset));
     return true;
+}
+
+// The value's own setter, which is what tells the menu: the only function that
+// calls the getter, compares the value with its bool, and stores it:
+//     call getter; mov [rbp-n],bl; cmp [rax+offset],bl; je +n; mov [rax+offset],bl
+// Null if this build has none, or several. The menu then shows the value only
+// when it is next built.
+SettingsSetter find_setter(const Code& code) {
+    uint8_t shape[14] = {0x38, 0x98, 0, 0, 0, 0, 0x74, 0, 0x88, 0x98, 0, 0, 0, 0};
+    std::memcpy(shape + 2, &g_value_offset, sizeof(g_value_offset));
+    std::memcpy(shape + 10, &g_value_offset, sizeof(g_value_offset));
+    constexpr size_t kJumpSize = 1;  // the je's distance, which varies
+    constexpr size_t kCallToCompare = 8;  // call rel32, then the three-byte store
+    constexpr size_t kMostPrologue = 64;
+    constexpr uint8_t kPrologue[] = {0x55, 0x48, 0x89, 0xe5};
+    SettingsSetter found = nullptr;
+    const uint8_t* const end = code.begin + code.size - sizeof(shape);
+    for (const uint8_t* at = code.begin + kMostPrologue + kCallToCompare; at < end; ++at) {
+        at = static_cast<const uint8_t*>(std::memchr(at, shape[0], static_cast<size_t>(end - at)));
+        if (at == nullptr) break;
+        if (std::memcmp(at, shape, 7) != 0 || std::memcmp(at + 7 + kJumpSize, shape + 8, 6) != 0) {
+            continue;
+        }
+        const uint8_t* call = at - kCallToCompare;
+        if (call[0] != 0xe8) continue;
+        int32_t rel = 0;
+        std::memcpy(&rel, call + 1, sizeof(rel));
+        if (reinterpret_cast<SettingsGetter>(const_cast<uint8_t*>(call + 5 + rel)) != g_settings) continue;
+        const uint8_t* start = call;
+        while (start > call - kMostPrologue && std::memcmp(start, kPrologue, sizeof(kPrologue)) != 0) --start;
+        if (std::memcmp(start, kPrologue, sizeof(kPrologue)) != 0 || found != nullptr) return nullptr;
+        found = reinterpret_cast<SettingsSetter>(const_cast<uint8_t*>(start));
+    }
+    return found;
 }
 
 // ToggleFullscreen looks up the action "ToggleFullScreen" within its first few
@@ -138,7 +174,12 @@ int sync_value() {
     uint8_t* settings = g_settings();
     if (settings == nullptr) return 0;
     const bool wanted = g_wanted.load();
-    if ((settings[g_value_offset] != 0) != wanted) settings[g_value_offset] = wanted ? 1 : 0;
+    if ((settings[g_value_offset] != 0) == wanted) return 1;
+    if (g_setter != nullptr) {
+        g_setter(settings, wanted);
+    } else {
+        settings[g_value_offset] = wanted ? 1 : 0;
+    }
     return 1;
 }
 
@@ -159,6 +200,12 @@ void init_engine_fullscreen(const void* inside_engine) {
     if (g_settings == nullptr) {
         std::printf("stud: the in-game Fullscreen option will not follow the window: this build's "
                     "InFullScreen has an unknown shape\n");
+    } else {
+        g_setter = find_setter(code);
+        if (g_setter == nullptr) {
+            std::printf("stud: the in-game Fullscreen option follows the window only when the menu "
+                        "is next built: this build's setter has an unknown shape\n");
+        }
     }
     const uint8_t* action = find_name(code, "ToggleFullScreen");
     const uint8_t* lea = found("ToggleFullscreen");
