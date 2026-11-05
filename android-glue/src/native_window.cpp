@@ -2255,7 +2255,9 @@ void xdg_toplevel_configure(void* data, xdg_toplevel*, int32_t width, int32_t he
                 tiled = true;
             }
         }
-        g_window_fullscreen.store(fullscreen);
+        if (g_window_fullscreen.exchange(fullscreen) != fullscreen) {
+            stud::android_glue::window_state_changed();
+        }
         g_window_maximized.store(maximized);
         floating = !fullscreen && !maximized && !tiled;
         note_window_state(suspended, activated);
@@ -2374,7 +2376,9 @@ void decor_frame_configure(libdecor_frame* frame, libdecor_configuration* config
         constexpr int kTiled = LIBDECOR_WINDOW_STATE_TILED_LEFT | LIBDECOR_WINDOW_STATE_TILED_RIGHT |
                                LIBDECOR_WINDOW_STATE_TILED_TOP | LIBDECOR_WINDOW_STATE_TILED_BOTTOM;
         floating = !fullscreen && !maximized && (window_state & kTiled) == 0;
-        g_window_fullscreen.store(fullscreen);
+        if (g_window_fullscreen.exchange(fullscreen) != fullscreen) {
+            stud::android_glue::window_state_changed();
+        }
         g_window_maximized.store(maximized);
         // By value: older headers lack this name, and an older library
         // simply never sets the bit.
@@ -3132,13 +3136,23 @@ void native_window_logical_size(int* width, int* height) {
         static_cast<int>(std::lround(static_cast<float>(g_window_height.load()) * device * scale));
 }
 
-bool native_window_is_fullscreen() { return g_window_fullscreen.load(); }
+bool native_window_is_fullscreen() {
+    return display_backend() == DisplayBackend::X11 ? x11::fullscreen() : g_window_fullscreen.load();
+}
+
+void native_window_toggle_fullscreen() {
+    if (display_backend() == DisplayBackend::X11) {
+        x11::request_fullscreen_toggle();
+    } else {
+        ::toggle_fullscreen();
+    }
+}
 
 void native_window_save_state() {
     if (!g_window_made.load()) return;
-    const bool on_x11 = display_backend() == DisplayBackend::X11;
-    const bool fullscreen = on_x11 ? x11::fullscreen() : g_window_fullscreen.load();
-    const bool maximized = on_x11 ? x11::maximized() : g_window_maximized.load();
+    const bool fullscreen = native_window_is_fullscreen();
+    const bool maximized =
+        display_backend() == DisplayBackend::X11 ? x11::maximized() : g_window_maximized.load();
     WindowMemory memory;
     memory.mode = fullscreen  ? WindowMode::Fullscreen
                   : maximized ? WindowMode::Maximized

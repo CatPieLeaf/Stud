@@ -318,6 +318,7 @@ target_include_directories(stud_runtime_ipc PRIVATE "${ANDROID_GLUE_SRC}/include
 target_link_libraries(stud_runtime_ipc PUBLIC nlohmann_json::nlohmann_json)
 
 add_executable(stud-runtime-bionic src/main.cpp src/input_bridge.cpp src/mouse_behavior.cpp
+               src/engine_fullscreen.cpp
                                     src/fmod_audio_output.cpp
                                     src/pthread_create_interpose.cpp
                                     src/android_log_interpose.cpp

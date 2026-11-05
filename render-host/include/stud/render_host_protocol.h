@@ -637,6 +637,8 @@ enum class CallId : uint32_t {
     // A range of non-coherent memory the engine reads directly, through pages
     // it shares with this process: nothing else makes the driver invalidate.
     VkInvalidateMappedMemoryRanges,
+    // The in-game Fullscreen option was used: the same as pressing F11.
+    ToggleFullscreen,
 };
 
 // What VideoEncoderDequeue returns ahead of a packet's bytes. `flags` are
@@ -831,9 +833,10 @@ inline const char* call_id_name(CallId id) {
         "VkCreateSamplerYcbcrConversion",
         "VkGetPhysicalDeviceChained",
         "VkInvalidateMappedMemoryRanges",
+        "ToggleFullscreen",
     };
     static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
-                      static_cast<size_t>(CallId::VkInvalidateMappedMemoryRanges) + 1,
+                      static_cast<size_t>(CallId::ToggleFullscreen) + 1,
                   "a CallId was added without its name, append it to kNames");
     const int i = static_cast<int>(id);
     if (i < 0 || i >= static_cast<int>(sizeof(kNames) / sizeof(kNames[0]))) return "<unknown>";

@@ -370,6 +370,8 @@ float native_window_device_px_from_pointer(float pointer_px);
 // The window's size in logical units and whether it fills the screen.
 void native_window_logical_size(int* width, int* height);
 bool native_window_is_fullscreen();
+// The same as pressing F11. Takes the Wayland lock's side, as the pumps do.
+void native_window_toggle_fullscreen();
 // Keeps how the game window is now for the next launch; see window_memory.h.
 // Does nothing if no window was ever made.
 void native_window_save_state();

@@ -31,6 +31,8 @@ bool create_window(int32_t width, int32_t height, WindowMode mode);
 // What the window manager says the window is now.
 bool maximized();
 bool fullscreen();
+// Asks it for the other one.
+void request_fullscreen_toggle();
 
 // The real X display and window, for EGL and for Vulkan's WSI. Null/0
 // before create_window() succeeds.

@@ -27,6 +27,7 @@
 // launch_payload at all) skips it, same degrade-gracefully treatment
 // every other launch_payload-derived value gets in this file.
 
+#include "engine_fullscreen.h"
 #include "stud/session_log.h"
 #include "stud/activity_lifecycle_bridge.h"
 #include "stud/activity_thread.h"
@@ -1902,6 +1903,7 @@ int main(int argc, char** argv) {
     }
     std::printf("stud: loaded %s successfully (handle=%p)\n", so_path.c_str(), lib_handle);
     stud::linker::LoadedLibrary lib(lib_handle);
+    stud::runtime::init_engine_fullscreen(lib.find_symbol("JNI_OnLoad"));
 
     jvm.attachLibrary("");
 
@@ -3359,6 +3361,19 @@ int main(int argc, char** argv) {
                 std::fflush(stdout);
                 g_should_keep_running.store(false, std::memory_order_relaxed);
                 break;
+            }
+        }
+        // Roblox's own Fullscreen option and Stud's window: see
+        // engine_fullscreen.h.
+        {
+            uint64_t window_fullscreen = 0;
+            if (window_state_from_page(3, &window_fullscreen) &&
+                stud::runtime::engine_fullscreen_tick(window_fullscreen != 0)) {
+                std::printf("stud: the in-game Fullscreen option was used\n");
+                std::fflush(stdout);
+                uint64_t toggle_args[8] = {};
+                stud::render_client::connection().call(stud::render_host::CallId::ToggleFullscreen,
+                                                       toggle_args, nullptr, 0, nullptr, 0, nullptr);
             }
         }
         // Everything a web-view panel or a second launcher hands back.

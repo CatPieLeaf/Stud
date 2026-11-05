@@ -1861,6 +1861,11 @@ std::optional<uint64_t> dispatch_platform_call(const Header& hdr, RealWindow& wi
             };
             return (pack(px_w) << 48) | (pack(px_h) << 32) | (pack(mm_w) << 16) | pack(mm_h);
         }
+        case CallId::ToggleFullscreen: {
+            std::lock_guard<std::mutex> lock(wayland_mutex());
+            stud::android_glue::native_window_toggle_fullscreen();
+            return 1;
+        }
         case CallId::EndSession: {
             // Exits inside the handler, so nothing is written back. The
             // caller is quitting anyway and wants the window gone before
@@ -2500,6 +2505,8 @@ void publish_window_state() {
     if (page == nullptr) return;
     page[0].store(current_window_size(), std::memory_order_release);
     page[1].store(stud::android_glue::window_close_requested() ? 1u : 0u,
+                  std::memory_order_release);
+    page[3].store(stud::android_glue::native_window_is_fullscreen() ? 1u : 0u,
                   std::memory_order_release);
 }
 

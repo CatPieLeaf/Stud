@@ -634,7 +634,7 @@ void read_wm_state() {
     }
     if (data != nullptr) x.Free(data);
     g_maximized.store(vert && horz);
-    g_fullscreen.store(full);
+    if (g_fullscreen.exchange(full) != full) window_state_changed();
 }
 
 bool create_window(int32_t width, int32_t height, WindowMode mode) {
@@ -1805,6 +1805,8 @@ void on_key(unsigned int keycode, unsigned int state, bool pressed) {
 }
 
 }  // namespace
+
+void request_fullscreen_toggle() { toggle_fullscreen(); }
 
 void set_input_method_target(bool active, bool sensitive, int x, int y, int height) {
     // A password box keeps the input method out, as the Wayland side asks
