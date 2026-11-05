@@ -38,13 +38,14 @@ inline constexpr int kBackgroundFpsUnlimited = 240;
 inline constexpr int kBackgroundFpsNoLimit = 0;
 
 struct GpuSelection {
-    // Index into vkEnumeratePhysicalDevices()'s own result order.
-    // That's the real, stable-for-a-given-driver-state identifier the
-    // settings window enumerates against; deviceName is stored purely
-    // for human-readable display (e.g. showing a saved choice without
-    // needing to re-enumerate), never used to re-resolve the index.
+    // Index into vkEnumeratePhysicalDevices()'s own result order, which
+    // only holds for one driver state. device_uuid is what names the GPU
+    // (ui/src/gpu_enum.h, chosen_gpu_index()); the index stands in when
+    // there is none. deviceName is for showing the choice, and being empty
+    // says nobody has made one.
     uint32_t device_index = 0;
     std::string device_name;
+    std::string device_uuid;
 };
 
 struct StudSettings {

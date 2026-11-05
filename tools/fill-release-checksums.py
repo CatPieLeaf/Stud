@@ -245,7 +245,8 @@ def main() -> int:
         PKGBUILD_BIN.write_text(pair.sub(
             f"sha256sums=('{archive_sha}'\n{match.group(2)}'{source_sha}')", text, count=1))
     else:
-        print(f"{PKGBUILD_BIN.name}: already filled, left alone")
+        print(f"{PKGBUILD_BIN.name}: no pair of sha256sums found", file=sys.stderr)
+        return 1
 
     # cpak wants the image itself pinned: a tag can be moved, a digest
     # cannot, and `cpak lock` refuses a manifest that only names a tag

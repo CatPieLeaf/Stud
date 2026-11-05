@@ -62,6 +62,7 @@ Requires:       libGLESv2.so.2()(64bit)
 # server publishes.
 Recommends:     libxkbcommon-x11.so.0()(64bit)
 Recommends:     libX11-xcb.so.1()(64bit)
+Recommends:     libXrandr.so.2()(64bit)
 # Everything else Stud links is found by rpm itself from the ELFs: Qt, Wayland,
 # libxkbcommon, freetype, OpenSSL, libX11 and libXext.
 

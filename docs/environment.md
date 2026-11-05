@@ -151,8 +151,7 @@ Off by default. All of these print per call or per frame — **perf**, every one
 | `STUD_PRESENT_PACING` | on | `0` stops Stud waiting for the display before letting the engine run further ahead. On, no more than two frames are ever in flight, which is what bounds input lag: it is the half of the default that keeps `fifo` from queueing frames up to the swapchain's depth. Set `STUD_PRESENT_MODE=mailbox` and you almost certainly want this `0`, since waiting on the display caps the rate that mailbox exists to exceed. Needs a driver with `VK_KHR_present_wait`; where there is none this does nothing either way. |
 | `STUD_VK_VALIDATION` | off | Turns on the system's Vulkan validation layers (vulkan-validation-layers), when installed. `1` for the standard checks, `sync` for those plus synchronization validation, which finds the missing or too-narrow barriers that show up as a texture flickering on one machine and not another. **perf** — the layers cost real time on every call, so this is for chasing a bug, not for playing. |
 | `STUD_WL_DISPATCH_DEFAULT_QUEUE` | off | Puts back Stud's dispatch of the Vulkan driver's own default Wayland queue. Off because a client has no business dispatching another component's queue from a foreign thread; the black window this once caused did not return without it. |
-| `STUD_DEBUG_VALIDATION` | off | Adds the Khronos validation layer with synchronization validation to `tools/debug-session.sh`. **perf** — the heaviest switch here; it changes the timing it is used to measure. |
-| `STUD_DEBUG_CHECKPOINTS` | off | Adds a GPU checkpoint per engine command to `tools/debug-session.sh`, so a device loss names the failing command. **perf** — thousands of extra recorded commands per frame. |
+| `STUD_DEBUG` | off | Stud's own debug output: the session log's debug lines, the web view's console (which can carry login tokens, so it stays out of logs meant for sharing), texture cache pruning, and GPU checkpoints on a device that has them, so a device loss says where the GPU stopped. **perf** — checkpoints are recorded per pass. |
 | `STUD_FLIGHT_RECORDER` | off | Records submits, fence waits, presents, acquires and barriers into a ring in memory and dumps the recent history whenever the device is lost, a fence sticks, or a wait or present runs long. Nothing is printed until a trigger fires. |
 | `STUD_FLIGHT_RECORDER_PATH` | stdout only | Also append each flight-recorder dump to this file, which survives a terminal that scrolled away. |
 | `STUD_VK_ENGINE_CHECKPOINTS` | off | Marks the engine's own commands with GPU checkpoints, so a device loss names which command the GPU died in rather than only that Stud's pass finished. **perf** — one extra recorded command per engine command. |
@@ -170,5 +169,4 @@ Each of these makes Stud do something incorrect, to find out what depends on it.
 
 ## Only used by the standalone tools
 
-`STUD_DIAG_RUNTIME_BINARY`, `STUD_DIAG_COOKIE`, `STUD_DIAG_COOKIE_FILE` (`tools/diag_launch_direct.cpp`),
 `STUD_VK_GPU` (`tools/try_vulkan_window.cpp`), `STUD_VK_UFFD_SCAN` (the write-barrier test).

@@ -59,13 +59,6 @@ release fails without them.
   `libexec/stud` to `lib/stud`, and that one mapping is applied before
   comparing.
 
-- **`diag_launch_direct.cpp`** (`stud_diag_launch_direct`): launches
-  Process B directly against a real extracted `libroblox.so`, skipping
-  Process A's login and config entirely. Useful for bring-up questions
-  that do not need a real session. It takes the cookie from
-  `STUD_DIAG_COOKIE_FILE`/`STUD_DIAG_COOKIE` and never from a literal,
-  and it deliberately does not deep-link into a place.
-
 Nothing here inspects or unpacks the Roblox app; the tools used to work
 out how it behaves are not part of this repository and are not build
 prerequisites.

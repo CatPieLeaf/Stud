@@ -14,7 +14,7 @@ RUN pacman -Syu --noconfirm --needed \
         base-devel cmake ninja meson git python curl unzip zstd e2fsprogs \
         pkgconf wayland-protocols libdrm vulkan-headers ffmpeg \
         qt6-base qt6-webengine qt6-wayland qtkeychain-qt6 breeze \
-        vulkan-icd-loader libglvnd libx11 libxext libxi libxrender \
+        vulkan-icd-loader libglvnd libx11 libxext libxi libxrender libxrandr \
         freetype2 wayland libxkbcommon libxkbcommon-x11 libdecor \
         openssl libpulse alsa-lib \
         patchelf strace xorg-server-xvfb desktop-file-utils zsync wget \

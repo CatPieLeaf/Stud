@@ -304,6 +304,8 @@ void write_diagnostics() {
     } catch (const std::exception& e) {
         settings_error = e.what();
     }
+    // What the launch will really run on, not what the file says.
+    settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
     if (!settings_error.empty()) {
         line("settings", "unreadable: " + settings_error);
     } else {

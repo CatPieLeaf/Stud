@@ -98,6 +98,16 @@ Request read_request() {
 
 }  // namespace
 
+// stdout is the command channel: render-host reads it a line at a time, and a
+// line starting "hybrid " or "navigate " is a command. Anything a page has a say
+// in goes through here first, or a line break in it starts a command of the
+// page's choosing.
+QByteArray one_line(QString text) {
+    text.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    text.replace(QLatin1Char('\r'), QLatin1Char(' '));
+    return text.toUtf8();
+}
+
 // What the injected bridge prefixes its console lines with, so an
 // ordinary console.log from the page is not mistaken for one.
 constexpr char kHybridPrefix[] = "__STUD_HYBRID__";
@@ -221,14 +231,9 @@ protected:
                 std::fflush(stdout);
                 return;
             }
-            // One message, one line: this is the command channel, and a
-            // line break in the page's text would start a command of the
-            // page's choosing. JSON loses nothing, a raw break in it is
-            // only ever whitespace.
-            QString payload = message.mid(int(sizeof(kHybridPrefix)) - 1);
-            payload.replace(QLatin1Char('\n'), QLatin1Char(' '));
-            payload.replace(QLatin1Char('\r'), QLatin1Char(' '));
-            const QByteArray utf8 = payload.toUtf8();
+            // JSON loses nothing: a raw line break in it is only ever
+            // whitespace.
+            const QByteArray utf8 = one_line(message.mid(int(sizeof(kHybridPrefix)) - 1));
             // One line, so the reader never has to guess where a message
             // ends. A JSON document has no raw newlines in it.
             std::printf("hybrid %s\n", utf8.constData());
@@ -249,8 +254,8 @@ protected:
             return v != nullptr && *v != '\0' && !(v[0] == '0' && v[1] == '\0');
         }();
         if (!debug) return;
-        const QByteArray text = message.toUtf8();
-        const QByteArray where = source.toUtf8();
+        const QByteArray text = one_line(message);
+        const QByteArray where = one_line(source);
         std::printf("stud-webview: js [%d] %s (%s:%d)\n", static_cast<int>(level),
                     text.constData(), where.constData(), line);
         std::fflush(stdout);
@@ -565,6 +570,8 @@ int main(int argc, char** argv) {
         // its transport from what exists on the window: the Android
         // bridge object, or Roblox.Hybrid's own navigation helper. Names
         // and types only, never any page content.
+        // In the page's own world, because that is where these names live,
+        // which also means the page can answer anything it likes here.
         view->page()->runJavaScript(
             QStringLiteral(
                 "(function(){var r=window.Roblox||{};return JSON.stringify({"
@@ -598,7 +605,7 @@ int main(int argc, char** argv) {
                 "});})()"),
             [](const QVariant& result) {
                 std::printf("stud-webview: page bridge state: %s\n",
-                            result.toString().toUtf8().constData());
+                            one_line(result.toString()).constData());
                 std::fflush(stdout);
             });
     });

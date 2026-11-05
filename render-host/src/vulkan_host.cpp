@@ -1667,10 +1667,9 @@ uint64_t vk_create_device(uint64_t physical_device, const std::vector<uint8_t>& 
     // A debugging aid, so only under STUD_DEBUG, or when
     // STUD_VK_ENGINE_CHECKPOINTS asks for markers on the engine's commands:
     // what ships creates the device the engine asked for, with nothing
-    // diagnostic added to it. The second condition is what
-    // tools/debug-session.sh's STUD_DEBUG_CHECKPOINTS=1 sets. It never set
-    // STUD_DEBUG, so it used to request engine markers on a device with
-    // no checkpoint extension, and silently record nothing.
+    // diagnostic added to it. The second condition is there because the
+    // variable alone, without STUD_DEBUG, used to request engine markers on
+    // a device with no checkpoint extension, and silently record nothing.
     const bool want_checkpoints = stud::logging::debug_enabled() ||
                                   std::getenv("STUD_VK_ENGINE_CHECKPOINTS") != nullptr;
     if (want_checkpoints &&

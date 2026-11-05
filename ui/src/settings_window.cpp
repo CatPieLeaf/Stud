@@ -118,6 +118,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     for (const auto& gpu : enumerate_gpus()) {
         gpuCombo_->addItem(QString::fromStdString(gpu.name), gpu.device_index);
         gpuCombo_->setItemData(gpuCombo_->count() - 1, gpu.vendor_id, Qt::UserRole + 1);
+        gpuCombo_->setItemData(gpuCombo_->count() - 1, QString::fromStdString(gpu.uuid),
+                               Qt::UserRole + 2);
     }
     if (gpuCombo_->count() == 0) {
         gpuCombo_->addItem("No GPUs found");
@@ -430,12 +432,7 @@ void SettingsWindow::loadFromDisk() {
         return;
     }
 
-    // An empty name means nobody has ever picked one, which is not the
-    // same as having picked device 0; see default_gpu_index().
-    const uint32_t wanted = settings.gpu.device_name.empty()
-                                ? default_gpu_index()
-                                : settings.gpu.device_index;
-    int index = gpuCombo_->findData(wanted);
+    int index = gpuCombo_->findData(chosen_gpu_index(settings.gpu));
     if (index >= 0) {
         gpuCombo_->setCurrentIndex(index);
     }
@@ -718,9 +715,21 @@ void SettingsWindow::onRestartClicked() {
 }
 
 void SettingsWindow::onSaveClicked() {
+    // From what is on disk: the file holds settings this window does not show
+    // (textureCache, webLogin and more), and a default here would overwrite
+    // every one of them. A file that cannot be read is not overwritten at all.
     stud::config::StudSettings settings;
+    try {
+        settings = stud::config::load_settings(stud::config::default_config_path());
+    } catch (const stud::config::SettingsError& e) {
+        statusLabel_->setText(
+            QString("Nothing was saved. Fix or delete the settings file first: %1")
+                .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
+        return;
+    }
     settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
+    settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
     settings.hidpi = hidpiCheck_->isChecked();
     settings.follow_dpi = followDpiCheck_->isChecked();
     settings.windows_materials = windowsMaterialsCheck_->isChecked();

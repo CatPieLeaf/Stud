@@ -90,7 +90,10 @@ public:
 
 std::optional<QByteArray> fetch(const QString& url) {
     QNetworkAccessManager manager;
-    std::unique_ptr<QNetworkReply> reply(manager.get(QNetworkRequest(QUrl(url))));
+    QNetworkRequest request{QUrl(url)};
+    // Qt's limit on a transfer that has stopped moving, not on a slow one.
+    request.setTransferTimeout();
+    std::unique_ptr<QNetworkReply> reply(manager.get(request));
     QEventLoop loop;
     QObject::connect(reply.get(), &QNetworkReply::finished, &loop, &QEventLoop::quit);
     loop.exec();
@@ -163,9 +166,9 @@ bool complete(const fs::path& dir) {
 }
 
 // What was prepared, and for which APK: {"apk" (the file), "apkVersion",
-// "windows", "ready", "stud" (the version that combined the pack)}, plus
-// "refused": the last APK file found to have no Windows build to match,
-// kept beside the pack rather than over it.
+// "windows" (the upload), "windowsVersion", "ready", "stud" (the version that
+// combined the pack)}, plus "refused": the last APK file and Windows upload
+// found not to fit each other, kept beside the pack rather than over it.
 QJsonObject read_state(const fs::path& path) {
     QFile file(QString::fromStdString(path.string()));
     if (!file.open(QIODevice::ReadOnly)) return {};
@@ -173,10 +176,11 @@ QJsonObject read_state(const fs::path& path) {
 }
 
 void write_state(const fs::path& path, const std::string& apk, const QString& apk_version,
-                 const QString& windows, bool ready) {
+                 const QString& windows, const QString& windows_version, bool ready) {
     const QByteArray json = QJsonDocument(QJsonObject{{"apk", QString::fromStdString(apk)},
                                                       {"apkVersion", apk_version},
                                                       {"windows", windows},
+                                                      {"windowsVersion", windows_version},
                                                       {"ready", ready},
                                                       {"stud", QStringLiteral(STUD_VERSION)}})
                                 .toJson();
@@ -307,6 +311,10 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
     // of the same version (the same APK imported again, or from elsewhere)
     // reuses it as it is. Asking Roblox again could only make it worse,
     // once Windows has moved on to a release whose files no longer fit.
+    //
+    // The exception is a pack built from an older Windows release because
+    // the APK got there first. That is the newest there was, and when Windows
+    // catches up the files that really match replace it.
     const QJsonObject state = read_state(state_path);
     const fs::path prepared = root / state.value("windows").toString().toStdString();
     const bool same_version =
@@ -319,19 +327,22 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
         const bool current = state.value("stud").toString() == QStringLiteral(STUD_VERSION) &&
                              fs::exists(prepared / kCombinedGlPack) &&
                              fs::exists(prepared / stud::shader_pack::kMaterialSlotsFile);
+        const QString built_from = state.value("windowsVersion").toString();
+        const bool behind_apk = !built_from.isEmpty() && release_of(built_from) != release_of(apk_version);
         if (current || rebuild(apk_path, prepared)) {
             if (!current || state.value("apk").toString().toStdString() != fingerprint) {
-                write_state(state_path, fingerprint, apk_version, state.value("windows").toString(), true);
+                write_state(state_path, fingerprint, apk_version, state.value("windows").toString(),
+                            built_from, true);
                 say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
             }
-            return prepared.string();
+            if (!behind_apk) return prepared.string();
         }
     }
     // Prepared by a Stud that kept no Windows pack: fetched again, and
     // what it prepared still used if that does not work out.
     const std::string fresh = prepare_from_windows(apk_path, root, state_path, fingerprint, apk_version, state);
     if (fresh.empty() && reusable) {
-        say(QStringLiteral("using what an earlier Stud prepared for %1").arg(apk_version));
+        say(QStringLiteral("using what was prepared for %1").arg(apk_version));
         return prepared.string();
     }
     return fresh;
@@ -342,11 +353,6 @@ namespace {
 std::string prepare_from_windows(const std::string& apk_path, const fs::path& root, const fs::path& state_path,
                                  const std::string& fingerprint, const QString& apk_version,
                                  const QJsonObject& state) {
-    // This exact file was already found to have no Windows build to match.
-    if (!fingerprint.empty() && state.value("refused").toString().toStdString() == fingerprint) {
-        return {};
-    }
-
     LoadingScreen loading;
     try {
         const auto version_json = fetch(kWindowsVersionUrl);
@@ -358,21 +364,28 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
             say(QStringLiteral("Roblox did not say which Windows version is current"));
             return {};
         }
-        // The two clients are built from the same release, and the shader
-        // packs only fit each other within one. Older Windows builds are
-        // not published by version any more, so a mismatch waits for an
-        // APK of the same release.
-        if (release_of(apk_version) != release_of(windows_version)) {
-            say(QStringLiteral("the Windows client is on %1 and the APK is %2, a different release: "
-                               "materials look as on Android until an APK of the same release")
+        // Windows ahead of the APK: older Windows builds are not published by
+        // version any more, so this waits for an APK of that release or
+        // newer. An APK ahead of Windows, which is what happens when Android
+        // ships first, gets the newest there is, and combining says below
+        // whether it fits. It is replaced once Windows reaches the APK.
+        const int apk_release = release_of(apk_version).toInt();
+        const int windows_release = release_of(windows_version).toInt();
+        if (windows_release > apk_release) {
+            say(QStringLiteral("the Windows client is on %1 and the APK is %2, an older release: "
+                               "materials look as on Android until an APK of that release")
                     .arg(windows_version, apk_version));
-            // Noted beside what was prepared, not over it: going back to
-            // the version it was built for finds it still there.
-            QJsonObject refused = state;
-            refused["refused"] = QString::fromStdString(fingerprint);
-            const QByteArray json = QJsonDocument(refused).toJson();
-            write_file(state_path, json.constData(), static_cast<size_t>(json.size()));
             return {};
+        }
+        // What is here already is this upload's, or it did not fit.
+        const QString pairing = QString::fromStdString(fingerprint) + QLatin1Char('|') + upload;
+        const bool have_it = state.value("ready").toBool() && state.value("windows").toString() == upload &&
+                             state.value("apkVersion").toString() == apk_version;
+        if (have_it || state.value("refused").toString() == pairing) return {};
+        if (windows_release < apk_release) {
+            say(QStringLiteral("the APK %1 is ahead of the Windows client: using the newest there "
+                               "is, %2")
+                    .arg(apk_version, windows_version));
         }
 
         say(QStringLiteral("downloading the Windows client's %1 files from Roblox").arg(windows_version));
@@ -424,10 +437,10 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
         bool unusable = false;
         const bool built = build_combined(apk_path, *desktop_pack, *desktop_gl_pack, partial, "", &unusable);
         if (unusable) {
-            // As for a Windows client on another release: this exact file
-            // is not tried again, and what was prepared before stays.
+            // Not tried again until one of the two changes, and what was
+            // prepared before stays.
             QJsonObject refused = state;
-            refused["refused"] = QString::fromStdString(fingerprint);
+            refused["refused"] = pairing;
             const QByteArray json = QJsonDocument(refused).toJson();
             write_file(state_path, json.constData(), static_cast<size_t>(json.size()));
             return {};
@@ -451,7 +464,7 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
         for (const auto& entry : fs::directory_iterator(root, ec)) {
             if (entry.is_directory() && entry.path() != dir) fs::remove_all(entry.path(), ec);
         }
-        write_state(state_path, fingerprint, apk_version, upload, true);
+        write_state(state_path, fingerprint, apk_version, upload, windows_version, true);
         say(QStringLiteral("ready"));
         return dir.string();
     } catch (const std::exception& e) {

@@ -77,7 +77,7 @@ set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, wl-clipboard, libdecor")
 # for the same reason libxkbcommon is. The keymap pair is weak, without
 # it Stud falls back to the layout names the X server publishes.
 string(APPEND CPACK_RPM_PACKAGE_SUGGESTS
-    ", libxkbcommon-x11.so.0()(64bit), libX11-xcb.so.1()(64bit)")
+    ", libxkbcommon-x11.so.0()(64bit), libX11-xcb.so.1()(64bit), libXrandr.so.2()(64bit)")
 # FFmpeg, for the engine's video playback and screen recording. The render
 # host loads it at runtime by the major version of the headers it was built
 # against (render-host/src/video_codec.cpp), so the dependency is exactly
@@ -200,7 +200,7 @@ libwayland-client0, libxkbcommon0, libxi6, libegl1, libgles2, libdrm2")
 # (ui/src/tray.cpp explains it at the call site). Recommended rather than
 # required, without it that one menu entry says what is missing, and
 # everything else works.
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0, libxkbcommon-x11-0, libx11-xcb1, libxcb-dri3-0, libxcb-present0")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, wl-clipboard, libdecor-0-0, libxkbcommon-x11-0, libx11-xcb1, libxrandr2, libxcb-dri3-0, libxcb-present0")
 # The same FFmpeg major the render host was built for; see the rpm half.
 if(StudPackagedFfmpeg_FOUND)
     string(APPEND CPACK_DEBIAN_PACKAGE_RECOMMENDS

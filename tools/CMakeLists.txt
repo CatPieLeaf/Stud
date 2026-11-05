@@ -17,14 +17,6 @@ add_executable(stud_try_render_window try_render_window.cpp)
 target_link_libraries(stud_try_render_window PRIVATE stud_render stud_android_glue
                        PkgConfig::WaylandEgl PkgConfig::Egl PkgConfig::GlesV2)
 
-# Real, temporary diagnostic driver; see diag_launch_direct.cpp's own
-# doc comment. Not meant to survive long-term; remove once the
-# trap_recovery.cpp live-verification it exists for is done.
-add_executable(stud_diag_launch_direct diag_launch_direct.cpp)
-target_link_libraries(stud_diag_launch_direct PRIVATE stud_bionic_runtime stud_ipc)
-target_include_directories(stud_diag_launch_direct PRIVATE
-                           ${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include)
-
 # Ground truth for the software texture decoder: decodes the same blocks on
 # a GPU that implements ETC2 in hardware and compares. See the file's own
 # header for what it settled and how to run it.

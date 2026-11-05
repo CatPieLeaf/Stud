@@ -51,9 +51,9 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications
   # No filesystem access: the APK is picked through the file chooser portal.
   # Screenshots and screen recordings are the exception: they are saved
-  # into the user's own Pictures and Videos folders.
-  - --filesystem=xdg-pictures
-  - --filesystem=xdg-videos
+  # into a Stud folder inside the user's own Pictures and Videos.
+  - --filesystem=xdg-pictures/Stud:create
+  - --filesystem=xdg-videos/Stud:create
 
 # FFmpeg for the engine's video playback and screen recording. The runtime's
 # own FFmpeg is cut down; the render host loads libavcodec at runtime, by the

@@ -92,6 +92,7 @@ std::vector<GpuInfo> enumerate_gpus() {
             vk.vkGetPhysicalDeviceProperties(devices[i], &props);
 
             bool duplicate = false;
+            std::string uuid_hex;
             if (have_device_uuid) {
                 VkPhysicalDeviceIDProperties id_props{};
                 id_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
@@ -104,6 +105,11 @@ std::vector<GpuInfo> enumerate_gpus() {
                 duplicate = std::find(seen_uuids.begin(), seen_uuids.end(), uuid) !=
                             seen_uuids.end();
                 if (!duplicate) seen_uuids.push_back(uuid);
+                static constexpr char kHex[] = "0123456789abcdef";
+                for (const uint8_t byte : uuid) {
+                    uuid_hex += kHex[byte >> 4];
+                    uuid_hex += kHex[byte & 0xf];
+                }
             } else {
                 std::string key = std::string(props.deviceName) + "|" +
                                   std::to_string(props.vendorID) + "|" +
@@ -130,7 +136,7 @@ std::vector<GpuInfo> enumerate_gpus() {
             }
             result.push_back(GpuInfo{i, std::string(props.deviceName), props.vendorID,
                                      props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
-                                     device_local});
+                                     device_local, uuid_hex});
         }
     }
 
@@ -199,6 +205,16 @@ uint32_t default_gpu_index() {
         if (gpu.discrete) return gpu.device_index;
     }
     return 0;
+}
+
+uint32_t chosen_gpu_index(const stud::config::GpuSelection& selection) {
+    if (selection.device_name.empty()) return default_gpu_index();
+    if (!selection.device_uuid.empty()) {
+        for (const auto& gpu : enumerate_gpus()) {
+            if (gpu.uuid == selection.device_uuid) return gpu.device_index;
+        }
+    }
+    return selection.device_index;
 }
 
 }  // namespace stud::ui

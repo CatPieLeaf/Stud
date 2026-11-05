@@ -1250,8 +1250,8 @@ void install_engine_callbacks(stud::jni_bridge::BionicAwareJvm& jvm,
         }
     });
 
-    // Screenshots and screen recordings go to the user's own Pictures and
-    // Videos folders, which stud-ui resolves (XDG user dirs) and binds
+    // Screenshots and screen recordings go to a Stud folder in the user's own
+    // Pictures and Videos, which stud-ui resolves (XDG user dirs) and binds
     // into this sandbox; see album_bridge.h.
     {
         stud::jni_bridge::AlbumFolders folders;

@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
     stud::config::StudSettings settings;
     settings.gpu.device_index = 2;
     settings.gpu.device_name = "Test GPU 9000";
+    settings.gpu.device_uuid = "00112233445566778899aabbccddeeff";
     settings.hidpi = false;
     settings.follow_dpi = true;
     settings.graphics_mode = stud::config::GraphicsMode::kOpenGL;
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
     auto loaded = stud::config::load_settings(path);
     check(loaded.gpu.device_index == 2, "gpu.deviceIndex round-trips");
     check(loaded.gpu.device_name == "Test GPU 9000", "gpu.deviceName round-trips");
+    check(loaded.gpu.device_uuid == "00112233445566778899aabbccddeeff", "gpu.deviceUuid round-trips");
     check(loaded.hidpi == false, "hidpi round-trips as false");
     check(loaded.follow_dpi == true, "followDpi round-trips as true");
     check(loaded.graphics_mode == stud::config::GraphicsMode::kOpenGL, "graphicsMode round-trips as opengl");

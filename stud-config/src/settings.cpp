@@ -62,6 +62,9 @@ StudSettings load_settings(const std::string& path) {
         if (gpu.contains("deviceName") && gpu.at("deviceName").is_string()) {
             result.gpu.device_name = gpu.at("deviceName").get<std::string>();
         }
+        if (gpu.contains("deviceUuid") && gpu.at("deviceUuid").is_string()) {
+            result.gpu.device_uuid = gpu.at("deviceUuid").get<std::string>();
+        }
     }
 
     if (doc.contains("hidpi")) {
@@ -255,7 +258,9 @@ void save_settings(const std::string& path, const StudSettings& settings) {
         }
     }
 
-    doc["gpu"] = {{"deviceIndex", settings.gpu.device_index}, {"deviceName", settings.gpu.device_name}};
+    doc["gpu"] = {{"deviceIndex", settings.gpu.device_index},
+                  {"deviceName", settings.gpu.device_name},
+                  {"deviceUuid", settings.gpu.device_uuid}};
     doc["hidpi"] = settings.hidpi;
 
     doc["followDpi"] = settings.follow_dpi;

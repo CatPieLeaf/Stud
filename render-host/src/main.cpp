@@ -4029,6 +4029,8 @@ int main(int argc, char** argv) {
 
     // Real Stud-level graphics-mode selection, from Process A's Settings
     // (never an FFlag; see the call site in ui/src/main.cpp).
+    uint32_t gpu_index_from_ui = 0;
+    bool have_gpu_index = false;
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string_view(argv[i]) == "--background-fps" && i + 1 < argc) {
             // Settings' own slider. STUD_BACKGROUND_FPS still wins, since
@@ -4039,6 +4041,9 @@ int main(int argc, char** argv) {
         }
         if (std::string_view(argv[i]) == "--graphics-mode") {
             g_prefer_vulkan = std::string_view(argv[i + 1]) != "opengl";
+        } else if (std::string_view(argv[i]) == "--gpu-index") {
+            gpu_index_from_ui = std::strtoul(argv[i + 1], nullptr, 10);
+            have_gpu_index = true;
         } else if (std::string_view(argv[i]) == "--assets-dir") {
             // Roblox's own extracted assets: where the text overlay finds
             // the engine's real fonts and their mapping table.
@@ -4170,13 +4175,17 @@ int main(int argc, char** argv) {
     stud::render_host::vk_set_vulkan_enabled(g_prefer_vulkan);
     std::printf("stud-render-host: graphics mode: %s\n", g_prefer_vulkan ? "vulkan" : "opengl");
 
-    // The GPU chosen in Settings, which nothing read back until now, so
-    // picking a GPU there changed nothing on either path.
-    uint32_t preferred_gpu = 0;
-    try {
-        preferred_gpu = stud::config::load_settings(stud::config::default_config_path()).gpu.device_index;
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "stud-render-host: ignoring the saved GPU choice: %s\n", e.what());
+    // The GPU chosen in Settings, as stud-ui resolved it for this launch: the
+    // saved index alone can name another card by now. Started by hand there
+    // is no such answer, and the file is what there is.
+    uint32_t preferred_gpu = gpu_index_from_ui;
+    if (!have_gpu_index) {
+        try {
+            preferred_gpu =
+                stud::config::load_settings(stud::config::default_config_path()).gpu.device_index;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "stud-render-host: ignoring the saved GPU choice: %s\n", e.what());
+        }
     }
     stud::render_host::vk_set_preferred_device_index(preferred_gpu);
 

@@ -76,7 +76,7 @@ target_include_directories(stud_ui_gpu_enum PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 # Headers only: the loader is opened at run time through volk, so the
 # launcher starts on a machine with no Vulkan and Settings lists no GPUs
 # there instead of failing to start with "libvulkan.so.1: cannot open".
-target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers ${CMAKE_DL_LIBS})
+target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAKE_DL_LIBS})
 
 # Real QtKeychain-backed credential storage; its own small library,
 # same reasoning as stud_ui_gpu_enum (independently testable, see

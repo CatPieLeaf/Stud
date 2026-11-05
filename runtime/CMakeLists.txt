@@ -136,7 +136,7 @@ include(FetchContent)
 FetchContent_Declare(
     libjnivm
     GIT_REPOSITORY https://github.com/ChristopherHX/libjnivm.git
-    GIT_TAG        f24b98c198fcc5c59a68d1efadd3f5791eb01c2e
+    GIT_TAG        main
     PATCH_COMMAND  ${CMAKE_COMMAND} -Djni_h_path=${CMAKE_BINARY_DIR}/_deps/libjnivm-src/include/jni.h
                    -Dvm_cpp_path=${CMAKE_BINARY_DIR}/_deps/libjnivm-src/src/jnivm/vm.cpp
                    -Dvm_h_path=${CMAKE_BINARY_DIR}/_deps/libjnivm-src/include/jnivm/vm.h
@@ -220,7 +220,7 @@ target_include_directories(stud_runtime_framework PUBLIC
 )
 target_link_libraries(stud_runtime_framework PUBLIC fake-jni nlohmann_json::nlohmann_json)
 
-# A real PVRTC decoder, fetched at configure time from one commit with a
+# A real PVRTC decoder, fetched at configure time with a
 # pinned hash, same "vendor it, do not hand-roll it" reasoning as miniz
 # and libjnivm elsewhere in this tree. A block decoder that is subtly wrong
 # produces textures that look plausible and are quietly corrupt, which is
@@ -230,13 +230,13 @@ target_link_libraries(stud_runtime_framework PUBLIC fake-jni nlohmann_json::nloh
 set(TexDecodeDir "${CMAKE_CURRENT_BINARY_DIR}/texdec")
 file(MAKE_DIRECTORY "${TexDecodeDir}")
 file(DOWNLOAD
-    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/fa7396af369a3c803be43545504f82c7d5cfa4a9/framework/PVRCore/texture/PVRTDecompress.h"
+    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/master/framework/PVRCore/texture/PVRTDecompress.h"
     "${TexDecodeDir}/PVRTDecompress.h"
     EXPECTED_HASH SHA256=67123a36b99df380af76a65f3dfa3a7f368a153f5401b36a9ff1ed233cee6f5f
     TLS_VERIFY ON
 )
 file(DOWNLOAD
-    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/fa7396af369a3c803be43545504f82c7d5cfa4a9/framework/PVRCore/texture/PVRTDecompress.cpp"
+    "https://raw.githubusercontent.com/powervr-graphics/Native_SDK/master/framework/PVRCore/texture/PVRTDecompress.cpp"
     "${TexDecodeDir}/PVRTDecompress.cpp"
     EXPECTED_HASH SHA256=74559c5a4b8161aafce1ebe984bf8060896feaa81276b614491dbee755d6e4c7
     TLS_VERIFY ON

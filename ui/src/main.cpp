@@ -744,6 +744,9 @@ void fetch_client_settings(stud::ipc::LaunchPayload& payload) {
     QNetworkRequest request(
         QUrl(QStringLiteral("https://clientsettingscdn.roblox.com/v2/settings/application/%1")
                  .arg(client_settings_group_name())));
+    // Qt's own limit on a transfer that has stopped moving. Without one a
+    // stalled connection holds the launch for ever.
+    request.setTransferTimeout();
     std::unique_ptr<QNetworkReply> reply(manager.get(request));
     QEventLoop loop;
     QObject::connect(reply.get(), &QNetworkReply::finished, &loop, &QEventLoop::quit);
@@ -782,6 +785,7 @@ void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
     // cookie name prefixed back on for a real Cookie header.
     request.setRawHeader("Cookie",
                           QByteArray::fromStdString(".ROBLOSECURITY=" + payload.session_cookie));
+    request.setTransferTimeout();
     std::unique_ptr<QNetworkReply> reply(manager.get(request));
     QEventLoop loop;
     QObject::connect(reply.get(), &QNetworkReply::finished, &loop, &QEventLoop::quit);
@@ -801,8 +805,8 @@ void fetch_authenticated_user(stud::ipc::LaunchPayload& payload) {
     payload.authenticated_user_id = static_cast<long long>(obj.value("id").toDouble());
     payload.authenticated_username = obj.value("name").toString().toStdString();
     payload.authenticated_display_name = obj.value("displayName").toString().toStdString();
-    std::printf("stud: authenticated as real user id=%lld username=%s\n",
-                payload.authenticated_user_id, payload.authenticated_username.c_str());
+    // Not who: these logs get attached to public issues.
+    std::printf("stud: the stored login is signed in\n");
 }
 
 // Real launch flow: extracts the native library + assets from the
@@ -968,12 +972,8 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         std::fprintf(stderr, "%s; launching with default settings\n", e.what());
     }
 
-    // A launch that has never seen the settings window still gets a real
-    // GPU choice rather than whatever the driver enumerated first,
-    // same rule the window applies, see default_gpu_index().
-    if (settings.gpu.device_name.empty()) {
-        settings.gpu.device_index = stud::ui::default_gpu_index();
-    }
+    // Which device that choice is now; see chosen_gpu_index().
+    settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
 
     // Stud's own copy, always. Nothing points at wherever the user
     // picked it from, so nothing breaks when that file moves.
@@ -1108,6 +1108,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     // process that can honour the compositor's scale; this toggle had
     // round-tripped through settings.json and been read by nothing.
     render_host_args << "--hidpi" << (settings.hidpi ? "on" : "off");
+    render_host_args << "--gpu-index" << QString::number(settings.gpu.device_index);
     // Stud's own upscaler and how far below the screen the engine renders
     // for it. The output is never passed: it is always the window's real
     // size, which only render-host can know.
@@ -1165,6 +1166,7 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     stud::ui::set_render_host_pid(render_host_pid);
     if (settings.gamemode) register_with_gamemode(render_host_pid);
     if (!wait_for_render_host_socket()) {
+        terminate_stale_processes();
         QMessageBox::critical(nullptr, "Stud",
                                "stud-render-host did not become ready in time (no real Wayland "
                                "compositor reachable, or EGL failed to load, check its stderr).");
@@ -1223,6 +1225,11 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
     }
     fetch_client_settings(payload);
     fetch_authenticated_user(payload);
+    // Cancelled during those: the session the engine would talk to has gone.
+    if (stud::ui::loading_cancelled()) {
+        terminate_stale_processes();
+        return false;
+    }
 
     std::string socket_path = stud::ipc::default_socket_path();
 
@@ -1312,19 +1319,23 @@ bool launch_game(const std::optional<stud::ui::LaunchUri>& launch_uri) {
         }
     }
 
-    // Where screenshots and screen recordings land: the user's own
-    // Pictures and Videos folders, as their desktop names them
-    // (user-dirs.dirs, which is what QStandardPaths reads). Created here,
-    // by the process with the real HOME, and bound in writable, because
-    // Process B is the one that copies the engine's capture out; see
-    // album_bridge.h.
+    // Where screenshots and screen recordings land: a Stud folder inside the
+    // user's own Pictures and Videos, as their desktop names them
+    // (user-dirs.dirs, which is what QStandardPaths reads). Created here, by
+    // the process with the real HOME, and bound in writable, because Process B
+    // is the one that copies the engine's capture out; see album_bridge.h.
+    //
+    // The Stud folder and nothing above it. The engine has no business with
+    // the rest of someone's photos, and XDG_PICTURES_DIR="$HOME/" is a common
+    // way to turn the folder off: Qt answers with the home directory, and
+    // binding that hands the sandbox everything in it.
     std::string pictures_dir;
     std::string videos_dir;
     {
         const auto resolve = [](QStandardPaths::StandardLocation where, const char* fallback) {
             QString dir = QStandardPaths::writableLocation(where);
             if (dir.isEmpty()) dir = QDir::homePath() + QStringLiteral("/") + fallback;
-            return dir.toStdString();
+            return dir.toStdString() + "/Stud";
         };
         pictures_dir = resolve(QStandardPaths::PicturesLocation, "Pictures");
         videos_dir = resolve(QStandardPaths::MoviesLocation, "Videos");
@@ -1635,10 +1646,11 @@ bool crash_dialog_is_open() { return g_crash_dialog_open; }
 // asked to. Read by the tray watchdog, which must not quit out from
 // under a crash report that has not appeared yet.
 bool session_ended_cleanly() {
-    // Nobody to ask, or nothing decided yet that says otherwise: let the
-    // tray do what it always did. Only a decided crash holds Stud open.
+    // Nobody to ask: the tray does what it always did. Otherwise only a
+    // session the watcher has called clean counts. It answers within a second,
+    // and quitting before it has would take the crash report with it.
     if (!g_watcher_active) return true;
-    return g_session_end != SessionEnd::Crashed;
+    return g_session_end == SessionEnd::Clean;
 }
 
 void set_render_host_pid(qint64 pid) { g_render_host_pid = pid; }
@@ -1847,6 +1859,7 @@ void watch_for_a_crash() {
         }
         if (QFile::exists(marker)) {
             timer->stop();
+            g_session_end = SessionEnd::Crashed;
             stud::ui::close_loading_screen();
             // Whatever is left of the session cannot do anything now.
             stud::ui::terminate_stud_session();
@@ -1926,7 +1939,7 @@ int main(int argc, char** argv) {
     // plain socket.
     if (argc > 1 && std::string(argv[1]) != "--settings" && argv[1][0] != '-') {
         const auto link = stud::ui::parse_launch_uri(argv[1]);
-        if (link && link->place_id != 0 && another_instance_is_running() &&
+        if (link && another_instance_is_running() &&
             stud::ui::hand_deep_link_to_running_stud(*link)) {
             std::printf("stud: already running, handed the link to the running session\n");
             std::fflush(stdout);
@@ -2306,9 +2319,17 @@ int main(int argc, char** argv) {
         }
     }();
     auto proceed = [launch_uri, tray_wanted]() {
-        // Settings is open saying why; it is what keeps Stud running now.
         if (!launch_game(launch_uri)) {
             stud::ui::close_loading_screen();
+            // Settings being open saying why is what keeps Stud running. A
+            // refused launch that only showed a message, or a cancelled one,
+            // has nothing left on screen, and Qt quits on the last window
+            // only inside app.exec(): this is what reaches it there.
+            const QWidgetList windows = QApplication::topLevelWidgets();
+            if (std::none_of(windows.begin(), windows.end(),
+                             [](const QWidget* w) { return w->isVisible(); })) {
+                QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
+            }
             return;
         }
         // Real magnet-link behavior: hand off and get out of the way,

@@ -130,6 +130,7 @@ dlopened=(
     /usr/lib/libEGL.so.1 /usr/lib/libGLESv2.so.2
     /usr/lib/libxcb-dri3.so.0 /usr/lib/libxcb-present.so.0
     /usr/lib/libX11-xcb.so.1 /usr/lib/libXext.so.6 /usr/lib/libXi.so.6 /usr/lib/libXrender.so.1
+    /usr/lib/libXrandr.so.2
     /usr/lib/libxkbcommon-x11.so.0 /usr/lib/libdecor-0.so.0
     /usr/lib/libasound.so.2 /usr/lib/libpulse.so.0
     "$qt_plugins"/kf6/kwindowsystem/*.so

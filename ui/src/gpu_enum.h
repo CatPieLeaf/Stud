@@ -1,5 +1,7 @@
 #pragma once
 
+#include "stud/settings.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -29,6 +31,9 @@ struct GpuInfo {
     // Its largest DEVICE_LOCAL heap, in bytes: the video memory the
     // engine is told it has (see FIntRenderForceVideoMemorySize).
     uint64_t device_local_bytes = 0;
+    // VkPhysicalDeviceIDProperties::deviceUUID in hex, which stays the same
+    // when the enumeration order does not. Empty on a Vulkan 1.0 loader.
+    std::string uuid;
 };
 
 // Not stubbed: creates a throwaway VkInstance, enumerates real
@@ -48,6 +53,12 @@ std::vector<GpuInfo> enumerate_gpus();
 // device, with nothing on screen to say so. A discrete device wins when
 // one exists; otherwise this is 0 and nothing changes.
 uint32_t default_gpu_index();
+
+// The device a saved choice names today. An index is only a position, and a
+// driver update or an external GPU can reorder the list, so the UUID decides
+// and the index stands in when it cannot. Nothing chosen yet means
+// default_gpu_index().
+uint32_t chosen_gpu_index(const stud::config::GpuSelection& selection);
 
 // Which compressed texture formats a device can sample natively.
 //
