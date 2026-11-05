@@ -361,18 +361,22 @@ std::atomic<ANativeWindow*> g_content_window{nullptr};
 // See native_window_set_egl_at_display_size().
 std::atomic<bool> g_egl_at_display_size{false};
 int32_t display_scale_120();
+// Nearest, as the fractional-scale protocol specifies, and as the compositor
+// sizes the window on screen. Rounding up made the buffer a pixel larger than
+// that for many window sizes on a fractional scale, so the compositor
+// resampled the whole picture to fit and the window went soft.
+int32_t scaled_px(int32_t logical, int32_t scale_120) {
+    return static_cast<int32_t>(
+        (static_cast<int64_t>(logical) * scale_120 + kScaleUnit / 2) / kScaleUnit);
+}
 // The wl_egl_window's own size: the engine's buffer, or the display's
 // pixels when the render host scales into the window itself.
 int32_t egl_px_from_logical(int32_t logical) {
-    const int32_t scale = g_egl_at_display_size.load() ? display_scale_120()
-                                                       : g_render_scale_120.load();
-    return static_cast<int32_t>((static_cast<int64_t>(logical) * scale + kScaleUnit - 1) /
-                                kScaleUnit);
+    return scaled_px(logical, g_egl_at_display_size.load() ? display_scale_120()
+                                                           : g_render_scale_120.load());
 }
 int32_t buffer_px_from_logical(int32_t logical) {
-    const int64_t scaled =
-        (static_cast<int64_t>(logical) * g_render_scale_120.load() + kScaleUnit - 1) / kScaleUnit;
-    return static_cast<int32_t>(scaled);
+    return scaled_px(logical, g_render_scale_120.load());
 }
 
 WaylandConnectionState& wayland_state() {
@@ -2537,12 +2541,8 @@ ANativeWindow* ANativeWindow_fromSurface(JNIEnv* /*env*/, jobject /*surface*/) {
         // logical one (native_window_pump_x11) lands on the number it
         // started from. Rounding up here and up again there differed by a
         // pixel, and a pixel is a swapchain rebuild.
-        const int32_t device_w =
-            static_cast<int32_t>((static_cast<int64_t>(w) * g_display_scale_120.load() +
-                                  kScaleUnit / 2) / kScaleUnit);
-        const int32_t device_h =
-            static_cast<int32_t>((static_cast<int64_t>(h) * g_display_scale_120.load() +
-                                  kScaleUnit / 2) / kScaleUnit);
+        const int32_t device_w = scaled_px(w, g_display_scale_120.load());
+        const int32_t device_h = scaled_px(h, g_display_scale_120.load());
         if (!stud::android_glue::x11::create_window(device_w, device_h)) {
             delete window;
             return nullptr;
@@ -3201,14 +3201,8 @@ void native_window_display_pixel_size(int32_t* width, int32_t* height) {
         if (height != nullptr) *height = 0;
         return;
     }
-    if (width != nullptr) {
-        *width = static_cast<int32_t>((static_cast<int64_t>(logical_w) * scale + kScaleUnit - 1) /
-                                      kScaleUnit);
-    }
-    if (height != nullptr) {
-        *height = static_cast<int32_t>((static_cast<int64_t>(logical_h) * scale + kScaleUnit - 1) /
-                                      kScaleUnit);
-    }
+    if (width != nullptr) *width = scaled_px(logical_w, scale);
+    if (height != nullptr) *height = scaled_px(logical_h, scale);
 }
 
 int32_t native_window_wait_for_display_scale_120() {
