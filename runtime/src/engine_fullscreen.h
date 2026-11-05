@@ -10,9 +10,9 @@ namespace stud::runtime {
 //
 // Both are found in the loaded engine by what they are, and nothing of the
 // engine's changes: not one byte of its code, and it never calls into Stud.
-//  - The value is one byte of a settings object. Stud reads it and sets it to
-//    what the window really is, through the engine's own setter, so the menu
-//    tells the truth and hears about a change.
+//  - The value belongs to a settings object. Stud reads it and, when it differs
+//    from what the window really is, calls the engine's own setter, so the menu
+//    tells the truth and hears about a change. Stud never writes the value.
 //  - The option is noticed by counting how many times that function has run,
 //    which the CPU's debug registers do from outside, through perf_event_open.
 //    Stud reads the count and asks for the window to change.

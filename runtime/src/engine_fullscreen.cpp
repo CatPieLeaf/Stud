@@ -108,8 +108,7 @@ bool decode_value(const uint8_t* fn) {
 // The value's own setter, which is what tells the menu: the only function that
 // calls the getter, compares the value with its bool, and stores it:
 //     call getter; mov [rbp-n],bl; cmp [rax+offset],bl; je +n; mov [rax+offset],bl
-// Null if this build has none, or several. The menu then shows the value only
-// when it is next built.
+// Null if this build has none, or several.
 SettingsSetter find_setter(const Code& code) {
     uint8_t shape[14] = {0x38, 0x98, 0, 0, 0, 0, 0x74, 0, 0x88, 0x98, 0, 0, 0, 0};
     std::memcpy(shape + 2, &g_value_offset, sizeof(g_value_offset));
@@ -174,12 +173,7 @@ int sync_value() {
     uint8_t* settings = g_settings();
     if (settings == nullptr) return 0;
     const bool wanted = g_wanted.load();
-    if ((settings[g_value_offset] != 0) == wanted) return 1;
-    if (g_setter != nullptr) {
-        g_setter(settings, wanted);
-    } else {
-        settings[g_value_offset] = wanted ? 1 : 0;
-    }
+    if ((settings[g_value_offset] != 0) != wanted) g_setter(settings, wanted);
     return 1;
 }
 
@@ -203,8 +197,8 @@ void init_engine_fullscreen(const void* inside_engine) {
     } else {
         g_setter = find_setter(code);
         if (g_setter == nullptr) {
-            std::printf("stud: the in-game Fullscreen option follows the window only when the menu "
-                        "is next built: this build's setter has an unknown shape\n");
+            std::printf("stud: the in-game Fullscreen option will not follow the window: this "
+                        "build's setter has an unknown shape\n");
         }
     }
     const uint8_t* action = find_name(code, "ToggleFullScreen");
@@ -220,11 +214,11 @@ void init_engine_fullscreen(const void* inside_engine) {
 }
 
 bool engine_fullscreen_tick(bool window_fullscreen) {
-    if (g_settings != nullptr) {
+    if (g_setter != nullptr) {
         g_wanted.store(window_fullscreen);
         int ok = 0;
         if (!stud::jni_bridge::call_trapping_abort_with_result(&sync_value, ok)) {
-            g_settings = nullptr;
+            g_setter = nullptr;
             std::printf("stud: reading the engine's fullscreen value trapped, disabled for this "
                         "run\n");
             std::fflush(stdout);
