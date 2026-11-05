@@ -74,7 +74,15 @@ GameActivityLifecycleResult drive_game_activity_lifecycle(
     auto main_game_activity = std::make_shared<MainGameActivityJava>();
     main_game_activity->on_bootstrap_the_app = std::move(on_bootstrap_the_app);
     jobject game_activity_instance = env.createLocalReference(main_game_activity);
-    jobject configuration_instance = env.createLocalReference(std::make_shared<ConfigurationJava>());
+    auto configuration = std::make_shared<ConfigurationJava>();
+    configuration->describe_window(surface_width, surface_height, engine_layout_density());
+    std::printf("stud: Configuration: %dx%d dp, orientation %d, %d dpi\n",
+                static_cast<int>(configuration->screenWidthDp),
+                static_cast<int>(configuration->screenHeightDp),
+                static_cast<int>(configuration->orientation),
+                static_cast<int>(configuration->densityDpi));
+    std::fflush(stdout);
+    jobject configuration_instance = env.createLocalReference(configuration);
 
     const ALooper* looper_on_this_thread = ALooper_forThread();
     if (looper_on_this_thread == nullptr) {

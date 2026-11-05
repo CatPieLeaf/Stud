@@ -145,25 +145,43 @@ public:
     FakeJni::JInt screenLayout = 0;
     FakeJni::JInt fontWeightAdjustment = 0;
     FakeJni::JInt touchscreen = 1;    // TOUCHSCREEN_NOTOUCH, matches the desktop spoof
-    FakeJni::JInt keyboard = 2;       // KEYBOARDHIDDEN_NO analog; real value: KEYBOARD_QWERTY
+    FakeJni::JInt keyboard = 2;       // KEYBOARD_QWERTY
     FakeJni::JInt keyboardHidden = 1; // KEYBOARDHIDDEN_NO
     FakeJni::JInt hardKeyboardHidden = 1;
     FakeJni::JInt navigation = 1;   // NAVIGATION_NONAV
     FakeJni::JInt navigationHidden = 1;
-    FakeJni::JInt orientation = 1;  // ORIENTATION_PORTRAIT-adjacent default; real value TBD
+    // These describe the window; see describe_window(). 0 is Android's own
+    // "undefined" for each.
+    FakeJni::JInt orientation = 0;
     FakeJni::JInt uiMode = 1;       // UI_MODE_TYPE_NORMAL
-    FakeJni::JInt screenWidthDp = 1920;
-    FakeJni::JInt screenHeightDp = 1080;
-    FakeJni::JInt smallestScreenWidthDp = 1080;
-    FakeJni::JInt densityDpi = 160;  // DENSITY_DEFAULT
-    FakeJni::JInt compatScreenWidthDp = 1920;
-    FakeJni::JInt compatScreenHeightDp = 1080;
-    FakeJni::JInt compatSmallestScreenWidthDp = 1080;
+    FakeJni::JInt screenWidthDp = 0;
+    FakeJni::JInt screenHeightDp = 0;
+    FakeJni::JInt smallestScreenWidthDp = 0;
+    FakeJni::JInt densityDpi = 0;
+    FakeJni::JInt compatScreenWidthDp = 0;
+    FakeJni::JInt compatScreenHeightDp = 0;
+    FakeJni::JInt compatSmallestScreenWidthDp = 0;
     FakeJni::JInt assetsSeq = 0;
     FakeJni::JInt seq = 0;
     std::shared_ptr<LocaleJava> locale = std::make_shared<LocaleJava>();
 
     std::shared_ptr<LocaleListJava> getLocales() { return std::make_shared<LocaleListJava>(); }
+
+    // The window in the engine's own layout units, by the same rule as
+    // libandroid's AConfiguration (android-glue/src/configuration.cpp).
+    void describe_window(int width_px, int height_px, float density) {
+        if (width_px <= 0 || height_px <= 0 || density <= 0.0f) return;
+        screenWidthDp = static_cast<FakeJni::JInt>(static_cast<float>(width_px) / density);
+        screenHeightDp = static_cast<FakeJni::JInt>(static_cast<float>(height_px) / density);
+        smallestScreenWidthDp = std::min(screenWidthDp, screenHeightDp);
+        compatScreenWidthDp = screenWidthDp;
+        compatScreenHeightDp = screenHeightDp;
+        compatSmallestScreenWidthDp = smallestScreenWidthDp;
+        densityDpi = static_cast<FakeJni::JInt>(160.0f * density);
+        constexpr FakeJni::JInt kPortrait = 1;
+        constexpr FakeJni::JInt kLandscape = 2;
+        orientation = width_px >= height_px ? kLandscape : kPortrait;
+    }
 };
 
 // Real AGDK GameActivity_initializeNativeCode calls FindClass on its own
