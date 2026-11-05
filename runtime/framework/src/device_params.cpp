@@ -93,11 +93,10 @@ std::shared_ptr<DeviceParams> build_desktop_device_params(const std::string& os_
     params->displayPhysicalWidthPixels = display_width_px;
     params->displayPhysicalHeightPixels = display_height_px;
     params->networkType = std::make_shared<FakeJni::JString>(active_network_type());
-    // Matches the ChromeOS the User-Agent already reports. On a device
-    // this comes from hasSystemFeature("org.chromium.arc.device_management")
-    // the same real ARC check, and it was left false here, so the
-    // agent and the params described different machines.
-    params->isChrome = true;
+    // On a device this comes from
+    // hasSystemFeature("org.chromium.arc.device_management"). False, matching
+    // the default User-Agent, which carries no " ChromeOS" (see app_bridge.cpp).
+    params->isChrome = false;
     params->appBuildVariant = std::make_shared<FakeJni::JString>("release");
     params->cpu64Bit = true;
     params->memoryClass = 512;
