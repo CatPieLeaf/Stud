@@ -391,7 +391,6 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
         {"DFFlagInferredCrashReportToBacktraceRegister", "False"},
         {"DFFlagObtainAndroidInferredCrashExitLog", "False"},
         {"FFlagLuaAppInferredCrashReportOnStateChange", "False"},
-        {"DFIntContentProviderPreloadHangTelemetryHundredthsPercentage", "0"},
         {"DFIntCrashMetricStorageHundredthPercentageSent", "0"},
         {"DFIntSessionReportCrashErrorEventIngestThrottleHundredthsPercent", "0"},
         {"DFIntSessionReportCrashErrorPointsThrottleHundredthsPercent", "0"},
@@ -407,7 +406,6 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     // too.
     const int cores = available_physical_cores();
     flags["FIntTaskSchedulerThreadMin"] = std::to_string(cores);
-    flags["FIntTaskSchedulerAsyncTasksMinimumThreadCount"] = std::to_string(cores);
     flags["FIntSmoothClusterTaskQueueMaxParallelTasks"] = std::to_string(cores);
     flags["FIntOcclusionWorkerThreadCount"] = std::to_string(std::max(1, cores / 2));
     // The GPU's real video memory (its largest device-local heap, read by
@@ -455,7 +453,6 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     flags["FFlagAnimationClipMemCacheEnabled"] = "True";
     flags["DFIntParallelNarrowPhaseSerialCutoff"] = "50";
     flags["DFIntRbxTransportConnectionTxQueueSize"] = "256";
-    flags["DFIntPredictedOOMPercent"] = "5";
     flags["DFIntHttpCacheCleanMinFilesRequired"] = "10000";
     flags["FIntSQLiteBusyTimeoutMs"] = "30000";
     flags["DFIntFreeSpaceRequiredForHttpKiloBytes"] = "4194304";
