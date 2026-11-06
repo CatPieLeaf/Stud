@@ -456,6 +456,10 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     flags["DFIntParallelNarrowPhaseSerialCutoff"] = "50";
     flags["DFIntRbxTransportConnectionTxQueueSize"] = "256";
     flags["DFIntPredictedOOMPercent"] = "5";
+    flags["DFIntHttpCacheCleanMinFilesRequired"] = "10000";
+    flags["FIntSQLiteBusyTimeoutMs"] = "30000";
+    flags["DFIntFreeSpaceRequiredForHttpKiloBytes"] = "4194304";
+    flags["DFIntThirdPartyVideoAdFetchHundredthsPercent"] = "0";
     // Android overrides these and Windows is sent nothing, so they go back
     // to the engine's own defaults. Android frees empty Vulkan pages at once
     // and pools only small allocations, and every allocation here is a real
