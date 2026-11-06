@@ -379,12 +379,9 @@ chmod +x Stud-x86_64.AppImage
 
 Stud doesn't include Roblox, so you bring your own copy, and you choose when it updates. It must be the **x86_64** build: Stud refuses one without it. `.apk`, `.apkm`, `.apks` and `.xapk` all work, and a bundle has to be complete, not just the x86_64 split on its own.
 
-Two ways to get one. Neither is run by or affiliated with Stud:
+Two places to get one. Neither is run by or affiliated with Stud:
 
- - **[apk-fetch](https://github.com/8LWXpg/apk-fetch)**, a command-line downloader. Ask for x86_64, because its default is arm64:
-   ```bash
-   apk-fetch get com.roblox.client --arch x86_64
-   ```
+ - **[Uptodown](https://roblox.en.uptodown.com/android/download)**
  - **[APKMirror](https://www.apkmirror.com/apk/roblox-corporation/roblox/)**: pick a release, then a variant that lists x86_64.
 
 Then open Settings in Stud, pick the file and save. It's copied in, so you can delete the download.
