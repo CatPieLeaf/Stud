@@ -439,11 +439,23 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
         flags["DFIntUIShadowHighTessellationRadiusThreshold"] = "50";
     }
     // Android's phone limits have no place on a desktop in any mode: its
-    // render throttle, its texture compositing jobs and its orphan budget
-    // go back to the values Windows runs with.
+    // render throttle, dynamic resolution and frame time target, and its
+    // texture, content, disk, physics, network and memory limits go back to
+    // the values Windows runs with.
     flags["FFlagSlowDownRendering"] = "False";
     flags["DFIntTextureCompositorActiveJobs"] = "8";
     flags["FIntRenderTextureOrphanMinBudgetMB"] = "64";
+    flags["FIntAutomaticDRSHundredthPercent"] = "0";
+    flags["FFlagFRMUseConstantFrameTimeTarget"] = "False";
+    flags["DFIntFRMConstantFrameTimeTargetMs"] = "0";
+    flags["FIntWrapContentProviderMaxBundleCount"] = "64";
+    flags["DFIntWrapContentProviderHotCacheSize"] = "20000000";
+    flags["DFIntRbxStorageCapacityHighMB"] = "3072";
+    flags["DFIntRbxStorageCapacityLowMB"] = "3072";
+    flags["FFlagAnimationClipMemCacheEnabled"] = "True";
+    flags["DFIntParallelNarrowPhaseSerialCutoff"] = "50";
+    flags["DFIntRbxTransportConnectionTxQueueSize"] = "256";
+    flags["DFIntPredictedOOMPercent"] = "5";
     // HQ Textures. The engine asks Roblox for textures in the formats this
     // list names, and Android's list is the downsized mobile transcode. An
     // empty list asks for none, so every image comes as its original. A
