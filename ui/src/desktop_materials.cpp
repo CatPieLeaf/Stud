@@ -312,9 +312,10 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
     // reuses it as it is. Asking Roblox again could only make it worse,
     // once Windows has moved on to a release whose files no longer fit.
     //
-    // The exception is a pack built from an older Windows release because
-    // the APK got there first. That is the newest there was, and when Windows
-    // catches up the files that really match replace it.
+    // The exception is a pack built from another Windows release, because
+    // that was the newest there was. It follows the newest Windows files
+    // that fit, and for an APK ahead of Windows the ones that really match
+    // replace it when Windows catches up.
     const QJsonObject state = read_state(state_path);
     const fs::path prepared = root / state.value("windows").toString().toStdString();
     const bool same_version =
@@ -328,14 +329,14 @@ std::string prepare_desktop_materials(const std::string& apk_path) {
                              fs::exists(prepared / kCombinedGlPack) &&
                              fs::exists(prepared / stud::shader_pack::kMaterialSlotsFile);
         const QString built_from = state.value("windowsVersion").toString();
-        const bool behind_apk = !built_from.isEmpty() && release_of(built_from) != release_of(apk_version);
+        const bool other_release = !built_from.isEmpty() && release_of(built_from) != release_of(apk_version);
         if (current || rebuild(apk_path, prepared)) {
             if (!current || state.value("apk").toString().toStdString() != fingerprint) {
                 write_state(state_path, fingerprint, apk_version, state.value("windows").toString(),
                             built_from, true);
                 say(QStringLiteral("reusing what was prepared for %1").arg(apk_version));
             }
-            if (!behind_apk) return prepared.string();
+            if (!other_release) return prepared.string();
         }
     }
     // Prepared by a Stud that kept no Windows pack: fetched again, and
@@ -364,27 +365,18 @@ std::string prepare_from_windows(const std::string& apk_path, const fs::path& ro
             say(QStringLiteral("Roblox did not say which Windows version is current"));
             return {};
         }
-        // Windows ahead of the APK: older Windows builds are not published by
-        // version any more, so this waits for an APK of that release or
-        // newer. An APK ahead of Windows, which is what happens when Android
-        // ships first, gets the newest there is, and combining says below
-        // whether it fits. It is replaced once Windows reaches the APK.
-        const int apk_release = release_of(apk_version).toInt();
-        const int windows_release = release_of(windows_version).toInt();
-        if (windows_release > apk_release) {
-            say(QStringLiteral("the Windows client is on %1 and the APK is %2, an older release: "
-                               "materials look as on Android until an APK of that release")
-                    .arg(windows_version, apk_version));
-            return {};
-        }
+        // Older Windows builds are not published by version any more, so the
+        // newest is the only one there is. An APK of another release, older
+        // or ahead of Windows, gets that, and combining says below whether
+        // it fits.
         // What is here already is this upload's, or it did not fit.
         const QString pairing = QString::fromStdString(fingerprint) + QLatin1Char('|') + upload;
         const bool have_it = state.value("ready").toBool() && state.value("windows").toString() == upload &&
                              state.value("apkVersion").toString() == apk_version;
         if (have_it || state.value("refused").toString() == pairing) return {};
-        if (windows_release < apk_release) {
-            say(QStringLiteral("the APK %1 is ahead of the Windows client: using the newest there "
-                               "is, %2")
+        if (release_of(windows_version) != release_of(apk_version)) {
+            say(QStringLiteral("the APK %1 is another release from the Windows client: using the "
+                               "newest there is, %2")
                     .arg(apk_version, windows_version));
         }
 

@@ -14,12 +14,12 @@ namespace stud::ui {
 //   shaders_vulkan_desktop.pack  the Windows pack, combined again by a
 //                  newer Stud without fetching it
 //
-// or an empty string, for the Android look. Nothing is fetched while the
-// APK is one it has already prepared for; a new or updated APK is looked
-// at again. Every failure, offline, no Windows build for the APK's
-// version, a package that does not match its published checksum, a pack
-// that does not combine, is reported in the log and means the Android
-// look, never a broken one.
+// or an empty string, for the Android look. Windows files of the APK's own
+// release are kept for as long as the APK is, with nothing fetched; an APK
+// of another release uses the newest Windows files and follows them. Every
+// failure, offline, a package that does not match its published checksum,
+// a pack that does not combine, is reported in the log and means the
+// Android look, never a broken one.
 std::string prepare_desktop_materials(const std::string& apk_path);
 
 }  // namespace stud::ui
