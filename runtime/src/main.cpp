@@ -431,10 +431,12 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     // leave it off, though both of its shader packs have what it needs.
     if (desktop_materials) flags["FFlagTerrainShadowSkirtMainCamera"] = "True";
     // The rest of what Windows runs with where Android's settings differ:
-    // more mesh detail levels and its shadow chart order.
+    // more mesh detail levels, its shadow chart order and its UI shadow
+    // tessellation threshold.
     if (desktop_materials) {
         flags["DFIntMeshNLoDs"] = "5";
         flags["DFFlagRenderShadowMapInvertChartProcessingOrder"] = "True";
+        flags["DFIntUIShadowHighTessellationRadiusThreshold"] = "50";
     }
     // Android's phone limits have no place on a desktop in any mode: its
     // render throttle, its texture compositing jobs and its orphan budget
