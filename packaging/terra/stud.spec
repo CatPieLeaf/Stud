@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.11
+Version:        1.2.12
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -123,6 +123,16 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Nov 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.12-1
+- <details>
+- <summary>Full changelog</summary>
+- Fixed: Plastic surfaces in Windows Graphical Parity could break up into big flat triangles, and looked wrong up close
+- New: Stud reopens the way you left it: windowed, maximized or fullscreen, at the same size
+- New: Roblox's own Fullscreen option in the in-game menu now works
+- F11 and the in-game Fullscreen option now stay in step
+- Better: Windows Graphical Parity looks closer to Windows
+- Better: Stud no longer runs with limits meant for phones
+
 * Thu Nov 05 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.11-1
 - Fixed: the game could look blurry in a window on a scaled display (125%%, 130%%...)
 - Fixed: Discord Rich Presence didn't show if Equibop, Vesktop or Discord opened or restarted after Stud

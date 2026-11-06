@@ -98,6 +98,20 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.12" date="2026-11-06">
+      <description>
+        <p>&lt;details&gt;</p>
+        <p>&lt;summary&gt;Full changelog&lt;/summary&gt;</p>
+        <ul>
+          <li>Fixed: Plastic surfaces in Windows Graphical Parity could break up into big flat triangles, and looked wrong up close</li>
+          <li>New: Stud reopens the way you left it: windowed, maximized or fullscreen, at the same size</li>
+          <li>New: Roblox's own Fullscreen option in the in-game menu now works</li>
+          <li>F11 and the in-game Fullscreen option now stay in step</li>
+          <li>Better: Windows Graphical Parity looks closer to Windows</li>
+          <li>Better: Stud no longer runs with limits meant for phones</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.11" date="2026-11-05">
       <description>
         <ul>
