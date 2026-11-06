@@ -457,6 +457,11 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     flags["FIntSQLiteBusyTimeoutMs"] = "30000";
     flags["DFIntFreeSpaceRequiredForHttpKiloBytes"] = "4194304";
     flags["DFIntThirdPartyVideoAdFetchHundredthsPercent"] = "0";
+    // How much of a frame the engine may spend on pending parts and on
+    // terrain on the render thread: back to its own defaults, so neither
+    // can take a whole frame.
+    flags["FIntSceneUpdaterProcessPendingPartsBudgetMs"] = "4";
+    flags["DFIntVoxelJobManagerRenderThreadJobTimeMicroSeconds"] = "1000";
     // Android overrides these and Windows is sent nothing, so they go back
     // to the engine's own defaults. Android frees empty Vulkan pages at once
     // and pools only small allocations, and every allocation here is a real
