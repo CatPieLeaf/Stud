@@ -430,6 +430,18 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     // camera, so they line up with the skirts on screen. Android's settings
     // leave it off, though both of its shader packs have what it needs.
     if (desktop_materials) flags["FFlagTerrainShadowSkirtMainCamera"] = "True";
+    // The rest of what Windows runs with where Android's settings differ:
+    // more mesh detail levels and its shadow chart order.
+    if (desktop_materials) {
+        flags["DFIntMeshNLoDs"] = "5";
+        flags["DFFlagRenderShadowMapInvertChartProcessingOrder"] = "True";
+    }
+    // Android's phone limits have no place on a desktop in any mode: its
+    // render throttle, its texture compositing jobs and its orphan budget
+    // go back to the values Windows runs with.
+    flags["FFlagSlowDownRendering"] = "False";
+    flags["DFIntTextureCompositorActiveJobs"] = "8";
+    flags["FIntRenderTextureOrphanMinBudgetMB"] = "64";
     // HQ Textures. The engine asks Roblox for textures in the formats this
     // list names, and Android's list is the downsized mobile transcode. An
     // empty list asks for none, so every image comes as its original. A
