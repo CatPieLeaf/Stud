@@ -456,6 +456,15 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     flags["DFIntParallelNarrowPhaseSerialCutoff"] = "50";
     flags["DFIntRbxTransportConnectionTxQueueSize"] = "256";
     flags["DFIntPredictedOOMPercent"] = "5";
+    // Android overrides these and Windows is sent nothing, so they go back
+    // to the engine's own defaults. Android frees empty Vulkan pages at once
+    // and pools only small allocations, and every allocation here is a real
+    // call across processes.
+    flags["FFlagVulkanAllocatorEmptyPageBudget"] = "False";
+    flags["FFlagVulkanAllocatorPoolSmallOnly"] = "False";
+    flags["FIntRenderTextureProcessingBudgetMilliseconds"] = "4";
+    flags["FIntRenderTextureOrphanBudgetMB"] = "64";
+    flags["DFFlagPredictedOOM"] = "False";
     // HQ Textures. The engine asks Roblox for textures in the formats this
     // list names, and Android's list is the downsized mobile transcode. An
     // empty list asks for none, so every image comes as its original. A
