@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.12
+Version:        1.2.13
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -123,6 +123,12 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Nov 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.13-1
+- <details>
+- <summary>Full changelog</summary>
+- Fixed: Windows Graphical Parity turned off without saying so when your APK was older than the Windows client
+- Changed: the README now points to Uptodown and APKMirror for getting an APK
+
 * Fri Nov 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.12-1
 - <details>
 - <summary>Full changelog</summary>

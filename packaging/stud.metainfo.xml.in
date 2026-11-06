@@ -98,6 +98,16 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="1.2.13" date="2026-11-06">
+      <description>
+        <p>&lt;details&gt;</p>
+        <p>&lt;summary&gt;Full changelog&lt;/summary&gt;</p>
+        <ul>
+          <li>Fixed: Windows Graphical Parity turned off without saying so when your APK was older than the Windows client</li>
+          <li>Changed: the README now points to Uptodown and APKMirror for getting an APK</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.12" date="2026-11-06">
       <description>
         <p>&lt;details&gt;</p>
