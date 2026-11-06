@@ -42,6 +42,6 @@ pkgbase = stud
 	optdepends = libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)
 	optdepends = libxrandr: the refresh rate and monitor size under X11 (loaded at runtime)
 	source = stud-1.2.13.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.13.tar.gz
-	sha256sums = 79d16878a8e8174d8df8bd92c5d0036b1ff55862090efedd08c0273806d6f831
+	sha256sums = ed84b95d43fdc13e442e4e3180bac534d1ba50bc30b6df0876831afde9c95700
 
 pkgname = stud
