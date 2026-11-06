@@ -426,6 +426,10 @@ std::map<std::string, std::string> stud_default_flags(bool desktop_materials, bo
     // outline passes into the shader pack; the engine only draws them
     // with this on, which the Android settings leave off.
     if (desktop_materials) flags["FFlagHighlightOutlinesOnMobile"] = "True";
+    // On Windows, terrain's shadow pass offsets its skirts from the real
+    // camera, so they line up with the skirts on screen. Android's settings
+    // leave it off, though both of its shader packs have what it needs.
+    if (desktop_materials) flags["FFlagTerrainShadowSkirtMainCamera"] = "True";
     // HQ Textures. The engine asks Roblox for textures in the formats this
     // list names, and Android's list is the downsized mobile transcode. An
     // empty list asks for none, so every image comes as its original. A
