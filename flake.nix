@@ -14,16 +14,16 @@
       packages.${system} = rec {
         stud = pkgs.stdenv.mkDerivation rec {
           pname = "stud";
-          version = "1.2.13";
+          version = "1.2.14";
 
           src = pkgs.fetchurl {
-            url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.13.tar.gz";
+            url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.14.tar.gz";
             sha256 = "ed84b95d43fdc13e442e4e3180bac534d1ba50bc30b6df0876831afde9c95700";
           };
 
           # The Android runtime and render-host, which need the NDK and AOSP to build.
           prebuilt = pkgs.fetchurl {
-            url = "https://github.com/CatPieLeaf/Stud/releases/download/1.2.13/stud-1.2.13-x86_64.tar.zst";
+            url = "https://github.com/CatPieLeaf/Stud/releases/download/1.2.14/stud-1.2.14-x86_64.tar.zst";
             sha256 = "73a8a028cabeb043f2c1eadfe913c9edf2432e1ed2c2e8f404b5773f731ce87f";
           };
 

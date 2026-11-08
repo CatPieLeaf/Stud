@@ -22,7 +22,7 @@
 %global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
-Version:        1.2.13
+Version:        1.2.14
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -123,6 +123,15 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Sun Nov 08 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.14-1
+- <details>
+- <summary>Full changelog</summary>
+- Fixed: Stud froze for about 8 seconds at every launch, on every GPU
+- Fixed: voice chat stayed on "connecting" forever, or timed out saying it couldn't use the microphone
+- Fixed: Roblox could make every other application's sound crackle or clip
+- Improved: faster loading on AMD GPUs
+- Improved: many more controllers are recognised and mapped correctly
+
 * Fri Nov 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.13-1
 - <details>
 - <summary>Full changelog</summary>
