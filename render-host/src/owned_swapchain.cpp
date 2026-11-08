@@ -139,6 +139,13 @@ struct State {
     std::map<xcb_connection_t*, XServer> x_servers;
     std::map<VkSurfaceKHR, Target> targets;
     std::map<wl_surface*, wp_linux_drm_syncobj_surface_v1*> syncobj_surfaces;
+    // Surfaces a driver's swapchain has presented on. Its WSI attaches a
+    // syncobj surface of its own there, which Stud cannot see or destroy,
+    // so asking for Stud's again would be the protocol error above
+    // ("Surface already has a syncobj attached"), live-reported on NVIDIA
+    // as the window vanishing after a resize. The driver keeps presenting
+    // there until the wl_surface is forgotten.
+    std::set<wl_surface*> driver_surfaces;
     // By dispatch key, which a device shares with its queues.
     std::map<void*, Device> devices;
     std::set<Swapchain*> swapchains;
@@ -921,6 +928,7 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
         VkSwapchainCreateInfoKHR plain = *ci;
         if (ours(ci->oldSwapchain) != nullptr) plain.oldSwapchain = VK_NULL_HANDLE;
         if (target != s.targets.end() && target->second.surface != nullptr) {
+            s.driver_surfaces.insert(target->second.surface);
             const auto sync = s.syncobj_surfaces.find(target->second.surface);
             if (sync != s.syncobj_surfaces.end()) {
                 wp_linux_drm_syncobj_surface_v1_destroy(sync->second);
@@ -931,6 +939,17 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
         lock.unlock();
         return d.vk.vkCreateSwapchainKHR(device, &plain, alloc, out);
     };
+    if (target != s.targets.end() && target->second.surface != nullptr &&
+        s.driver_surfaces.count(target->second.surface) != 0) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            std::printf("stud-render-host: the driver has presented on this window, so it keeps "
+                        "presenting there; Stud's own swapchain returns with a new window\n");
+            std::fflush(stdout);
+        }
+        return driver_presents();
+    }
     if (modifiers.empty()) {
         static int said = 0;
         if (said++ < 4) {
@@ -952,12 +971,19 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     sc->depth = depth;
     const uint32_t count = ci->minImageCount > 0 ? ci->minImageCount : 1;
     bool ok = true;
+    // The first step that failed, for the fallback's message.
+    const char* failed = nullptr;
+    const auto step = [&failed](bool r, const char* what) {
+        if (!r && failed == nullptr) failed = what;
+        return r;
+    };
 
     VkCommandPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pci.queueFamilyIndex = d.queue_family;
-    ok = d.vk.vkCreateCommandPool(d.device, &pci, nullptr, &sc->pool) == VK_SUCCESS;
+    ok = step(d.vk.vkCreateCommandPool(d.device, &pci, nullptr, &sc->pool) == VK_SUCCESS,
+              "command pool");
 
     sc->images.resize(count);
     for (Image& im : sc->images) {
@@ -982,26 +1008,28 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
         ii.queueFamilyIndexCount = ci->queueFamilyIndexCount;
         ii.pQueueFamilyIndices = ci->pQueueFamilyIndices;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        ok = d.vk.vkCreateImage(d.device, &ii, nullptr, &im.image) == VK_SUCCESS &&
-             bind_new_memory(d, im.image, true, false, &im.memory);
+        ok = step(d.vk.vkCreateImage(d.device, &ii, nullptr, &im.image) == VK_SUCCESS, "image") &&
+             step(bind_new_memory(d, im.image, true, false, &im.memory), "image memory");
 
         VkCommandBufferAllocateInfo cbai{};
         cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         cbai.commandPool = sc->pool;
         cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbai.commandBufferCount = 1;
-        ok = ok && d.vk.vkAllocateCommandBuffers(d.device, &cbai, &im.cmd) == VK_SUCCESS;
+        ok = ok && step(d.vk.vkAllocateCommandBuffers(d.device, &cbai, &im.cmd) == VK_SUCCESS,
+                        "command buffer");
         VkFenceCreateInfo fci{};
         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-        ok = ok && d.vk.vkCreateFence(d.device, &fci, nullptr, &im.fence) == VK_SUCCESS;
+        ok = ok && step(d.vk.vkCreateFence(d.device, &fci, nullptr, &im.fence) == VK_SUCCESS, "fence");
         VkExportSemaphoreCreateInfo esci{};
         esci.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
         esci.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
         VkSemaphoreCreateInfo sci{};
         sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         sci.pNext = &esci;
-        ok = ok && d.vk.vkCreateSemaphore(d.device, &sci, nullptr, &im.copied) == VK_SUCCESS;
+        ok = ok && step(d.vk.vkCreateSemaphore(d.device, &sci, nullptr, &im.copied) == VK_SUCCESS,
+                        "semaphore");
     }
     // As many buffers as the engine has images: the count the surface's
     // own minimum and the engine's request settled on, not one invented
@@ -1010,8 +1038,11 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
     for (Buffer& b : sc->buffers) {
         if (!ok) break;
         Exported e;
-        ok = export_buffer_image(d, *sc, buffer_format, modifiers, b, e);
-        if (ok) ok = sc->target.x != nullptr ? make_x11_buffer(*sc, b, e) : make_wayland_buffer(*sc, b, e);
+        ok = step(export_buffer_image(d, *sc, buffer_format, modifiers, b, e), "shared buffer");
+        if (ok) {
+            ok = step(sc->target.x != nullptr ? make_x11_buffer(*sc, b, e) : make_wayland_buffer(*sc, b, e),
+                      sc->target.x != nullptr ? "X server pixmap" : "compositor buffer");
+        }
         if (e.fd >= 0) close(e.fd);
     }
     if (ok && sc->target.x != nullptr) {
@@ -1023,7 +1054,7 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
         xcb_generic_error_t* error = f.request_check(
             conn, f.select_input_checked(conn, sc->eid, sc->target.window,
                                          XCB_PRESENT_EVENT_MASK_IDLE_NOTIFY));
-        ok = error == nullptr;
+        ok = step(error == nullptr, "present events");
         std::free(error);
         if (ok) sc->events = f.register_special(conn, f.present_id, sc->eid, nullptr);
     } else if (ok && s.syncobj_surfaces.count(sc->target.surface) == 0) {
@@ -1031,8 +1062,10 @@ VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device,
             sc->target.compositor->syncobj, sc->target.surface);
     }
     if (!ok) {
-        std::printf("stud-render-host: could not build Stud's own swapchain; the driver "
-                    "presents this one\n");
+        std::printf("stud-render-host: could not build Stud's own swapchain (%s failed, "
+                    "%ux%u, %u images); the driver presents this one\n",
+                    failed != nullptr ? failed : "a step", ci->imageExtent.width,
+                    ci->imageExtent.height, count);
         std::fflush(stdout);
         destroy_swapchain_objects(sc);
         return driver_presents();
@@ -1433,6 +1466,7 @@ void forget_surface(VkSurfaceKHR surface) {
     for (const auto& t : s.targets) {
         if (t.second.surface == gone.surface) return;
     }
+    s.driver_surfaces.erase(gone.surface);
     const auto sync = s.syncobj_surfaces.find(gone.surface);
     if (sync == s.syncobj_surfaces.end()) return;
     wp_linux_drm_syncobj_surface_v1_destroy(sync->second);
