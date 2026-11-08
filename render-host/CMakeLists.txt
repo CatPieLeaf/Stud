@@ -215,6 +215,23 @@ endif()
 # The decode test compiles the same shader; see tests/CMakeLists.txt.
 add_custom_target(stud_etc_decode_spv DEPENDS "${EtcDecodeShaderHeader}")
 
+# SDL's controller database (third_party/SDL_GameControllerDB), compiled in
+# so no package has to find a data file at runtime: stud/gamepad_db.h reads
+# it. Written only when its text changes, so a reconfigure alone does not
+# rebuild it.
+set(StudGameControllerDb "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/SDL_GameControllerDB/gamecontrollerdb.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${StudGameControllerDb}")
+file(READ "${StudGameControllerDb}" _stud_gcdb_text)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/gamecontrollerdb.cpp.new"
+     "#include \"stud/gamepad_db.h\"\nnamespace stud::render_host::gamepad {\n"
+     "const char* const kGameControllerDb = R\"studgcdb(${_stud_gcdb_text})studgcdb\";\n}\n")
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/generated/gamecontrollerdb.cpp.new"
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/gamecontrollerdb.cpp" COPYONLY)
+unset(_stud_gcdb_text)
+add_library(stud_gamepad_db STATIC src/gamepad_db.cpp
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/gamecontrollerdb.cpp")
+target_include_directories(stud_gamepad_db PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+
 add_executable(stud-render-host "${EtcDecodeShaderHeader}" "${SharpenShaderHeader}" "${SgsrEdShaderHeader}" "${RavuArShaderHeader}" "${RavuLutHeader}" "${RavuLutArHeader}" src/main.cpp src/audio_output.cpp src/vulkan_host.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/miniaudio/miniaudio.c" src/vulkan_chain.cpp src/discord_rpc.cpp src/gamepad.cpp src/flight_recorder.cpp src/video_codec.cpp
@@ -234,7 +251,7 @@ target_include_directories(stud-render-host PRIVATE
     "${StudGfxstreamSource}/common/logging/include"
     "${StudGfxstreamHostBuild}/host/features/include")
 target_link_libraries(stud-render-host PRIVATE
-    "${StudGfxstreamHostBuild}/host/libgfxstream_backend.so")
+    "${StudGfxstreamHostBuild}/host/libgfxstream_backend.so" stud_gamepad_db)
 add_dependencies(stud-render-host gfxstream_host)
 file(RELATIVE_PATH StudLibFromLibexec "/${STUD_LIBEXEC_DIR}" "/${STUD_PRIVATE_LIB_DIR}")
 set_target_properties(stud-render-host PROPERTIES

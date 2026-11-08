@@ -125,6 +125,7 @@ installed to `/usr/share/licenses/stud/` too:
  - volk, the Vulkan entry-point loader (MIT)
  - xxHash, the texture cache key (BSD-2-Clause)
  - miniaudio, the audio device (Unlicense or MIT-0)
+ - SDL_GameControllerDB, the controller layouts (Zlib)
  - Zydis and its Zycore library, the runtime's x86-64 decoder (MIT)
 
 Stud's present layer (`libstud_present_layer.so`) carries code generated

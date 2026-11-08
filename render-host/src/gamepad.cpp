@@ -1,4 +1,6 @@
 #include "stud/gamepad.h"
+#include "stud/gamepad_db.h"
+#include "stud/gamepad_layout.h"
 
 #include <cctype>
 #include <chrono>
@@ -7,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -36,7 +39,8 @@ constexpr int kAxisLTrigger = 17, kAxisRTrigger = 18;
 
 // evdev code -> Android keycode, matching Android's own key layout
 // (`Generic.kl`, and every vendor .kl for an Xbox-layout pad) rather than
-// the positional NAMES in `linux/input-event-codes.h`.
+// the positional NAMES in `linux/input-event-codes.h`. Used for a pad the
+// SDL database does not know.
 //
 // This is the one trap in the whole file: `BTN_NORTH` is 0x133 and
 // `BTN_WEST` is 0x134, but every kernel driver for an Xbox-layout pad
@@ -68,40 +72,6 @@ int android_button_for(uint16_t code) {
     }
 }
 
-// The eight axis slots the real caller keeps, in its own order
-// (a `float[8]`): left stick, right stick, the two triggers,
-// then the hat. Indices are load-bearing, the emission below pairs
-// 0 with 1 and 2 with 3 because the engine takes a stick as a vector.
-enum Slot { kSlotX = 0, kSlotY, kSlotZ, kSlotRZ, kSlotLT, kSlotRT, kSlotHatX, kSlotHatY,
-            kSlotCount };
-
-int slot_for(uint16_t code) {
-    switch (code) {
-        case ABS_X: return kSlotX;
-        case ABS_Y: return kSlotY;
-        case ABS_RX: return kSlotZ;   // Android calls the right stick Z/RZ
-        case ABS_RY: return kSlotRZ;
-        case ABS_Z: return kSlotLT;
-        case ABS_RZ: return kSlotRT;
-        case ABS_HAT0X: return kSlotHatX;
-        case ABS_HAT0Y: return kSlotHatY;
-        default: return -1;
-    }
-}
-
-uint16_t evdev_code_for_slot(int slot) {
-    switch (slot) {
-        case kSlotX: return ABS_X;
-        case kSlotY: return ABS_Y;
-        case kSlotZ: return ABS_RX;
-        case kSlotRZ: return ABS_RY;
-        case kSlotLT: return ABS_Z;
-        case kSlotRT: return ABS_RZ;
-        case kSlotHatX: return ABS_HAT0X;
-        default: return ABS_HAT0Y;
-    }
-}
-
 // Which Android axis id each slot is reported under.
 constexpr int kSlotAxisId[kSlotCount] = {kAxisX,        kAxisY,        kAxisZ,
                                          kAxisRZ,       kAxisLTrigger, kAxisRTrigger,
@@ -125,6 +95,69 @@ int gamepad_type_for_name(const std::string& name) {
     return 0;
 }
 
+// What a rule drives: an Android button, one of the eight axis slots, or
+// one direction of the d-pad.
+struct Output {
+    enum Kind { kButton, kSlot, kDpad } kind = kButton;
+    int key = -1;
+    int slot = -1;
+    int dpad = -1;          // 0 up, 1 right, 2 down, 3 left
+    float low = -1.0f;      // a slot's value at the start of its input's range ...
+    float high = 1.0f;      // ... and at the end
+};
+
+// One input of the pad wired to one output. Every pad's inputs are turned
+// into these when it connects, from the SDL database when it is in there
+// and from its evdev axes otherwise, so reading it is the same either way.
+struct Rule {
+    DbBinding in;
+    Output out;
+};
+
+// SDL's control names -> what Stud drives. Positional, like SDL's: "a" is
+// the bottom face button, "x" the left one, which are Android's BUTTON_A and
+// BUTTON_X.
+bool output_for(const DbBinding& b, Output& out) {
+    static const std::map<std::string, int> buttons = {
+        {"a", kBtnA},          {"b", kBtnB},          {"x", kBtnX},
+        {"y", kBtnY},          {"back", kBtnSelect},  {"start", kBtnStart},
+        {"guide", kBtnMode},   {"leftshoulder", kBtnL1}, {"rightshoulder", kBtnR1},
+        {"leftstick", kBtnThumbL}, {"rightstick", kBtnThumbR}};
+    static const std::map<std::string, int> dpad = {
+        {"dpup", 0}, {"dpright", 1}, {"dpdown", 2}, {"dpleft", 3}};
+    static const std::map<std::string, int> slots = {
+        {"leftx", kSlotX},  {"lefty", kSlotY},  {"rightx", kSlotZ},
+        {"righty", kSlotRZ}, {"lefttrigger", kSlotLT}, {"righttrigger", kSlotRT}};
+    if (auto it = buttons.find(b.target); it != buttons.end()) {
+        out.kind = Output::kButton;
+        out.key = it->second;
+        return true;
+    }
+    if (auto it = dpad.find(b.target); it != dpad.end()) {
+        out.kind = Output::kDpad;
+        out.dpad = it->second;
+        return true;
+    }
+    if (auto it = slots.find(b.target); it != slots.end()) {
+        out.kind = Output::kSlot;
+        out.slot = it->second;
+        // SDL's output ranges: a trigger runs 0..1, a stick -1..1, and
+        // one half of a stick 0..1 or 0..-1.
+        if (out.slot == kSlotLT || out.slot == kSlotRT) {
+            out.low = 0.0f;
+            out.high = 1.0f;
+        } else if (b.target_half == '+') {
+            out.low = 0.0f;
+            out.high = 1.0f;
+        } else if (b.target_half == '-') {
+            out.low = 0.0f;
+            out.high = -1.0f;
+        }
+        return true;
+    }
+    return false;  // paddles, touchpad, misc: nothing on Android to send them to
+}
+
 struct Axis {
     int32_t minimum = 0;
     int32_t maximum = 0;
@@ -136,13 +169,22 @@ struct Device {
     int id = 0;
     int type = 0;
     std::string name;
+    std::string guid;
+    bool from_db = false;
     std::map<uint16_t, Axis> axes;
+    std::vector<Rule> rules;
     // Current normalised value of each of the eight axis slots, and which
     // of them changed since the last SYN_REPORT. A stick is sent as a
     // vector, so its two components have to be emitted together from one
     // consistent snapshot, which is what a report boundary is.
     float slot[kSlotCount] = {0.0f};
     bool slot_dirty[kSlotCount] = {false};
+    // A digital hat's position on each axis (-1, 0, 1), and the d-pad the
+    // rules drive from it or from buttons.
+    int hat_position[4][2] = {};
+    bool dpad[4] = {false, false, false, false};
+    // Buttons currently held, so two inputs driving one button press it once.
+    std::map<int, bool> key_down;
     // The d-pad reported as a hat also has to reach the engine as DPAD
     // key presses: real Android synthesises them, and Roblox's own UI
     // navigation listens for the keys.
@@ -194,21 +236,149 @@ int next_device_id() {
     return next++;
 }
 
-// Normalises to -1..1, or 0..1 for a trigger, and applies the driver's
-// own flat/dead zone so a resting stick reads as exactly zero rather than
-// as a small permanent drift.
-float normalise(const Axis& axis, uint16_t code, int32_t raw) {
+// The SDL database, then SDL_GAMECONTROLLERCONFIG, SDL's own variable for
+// mappings of one's own (Steam sets it from its controller settings).
+// Later lines win, so those come after the database.
+const std::string& mapping_source() {
+    static const std::string source = [] {
+        std::string s = kGameControllerDb;
+        if (const char* extra = std::getenv("SDL_GAMECONTROLLERCONFIG")) {
+            s += "\n";
+            s += extra;
+        }
+        return s;
+    }();
+    return source;
+}
+
+// -1..1 over the axis's whole range. A stick also gets the driver's own
+// flat/dead zone, so a resting stick reads as exactly zero rather than as a
+// small permanent drift.
+float normalise(const Axis& axis, int32_t raw, bool dead_zone) {
     const float minimum = static_cast<float>(axis.minimum);
     const float maximum = static_cast<float>(axis.maximum);
     if (maximum <= minimum) return 0.0f;
-    const bool trigger = (code == ABS_Z || code == ABS_RZ);
     const float centre = (minimum + maximum) * 0.5f;
-    if (!trigger && axis.flat > 0 && std::abs(static_cast<float>(raw) - centre) <=
-                                          static_cast<float>(axis.flat)) {
+    if (dead_zone && axis.flat > 0 &&
+        std::abs(static_cast<float>(raw) - centre) <= static_cast<float>(axis.flat)) {
         return 0.0f;
     }
-    if (trigger) return (static_cast<float>(raw) - minimum) / (maximum - minimum);
     return ((static_cast<float>(raw) - minimum) / (maximum - minimum)) * 2.0f - 1.0f;
+}
+
+bool is_stick(int slot) { return slot == kSlotX || slot == kSlotY || slot == kSlotZ || slot == kSlotRZ; }
+
+// Drives one output from how far along its input's range the input is
+// (`t`, 0..1; a button or hat direction is 0 or 1). `out` null sets the
+// state quietly, for the values a pad already has when it connects.
+void drive(Device& device, const Output& o, float t, bool in_range, std::vector<Event>* out) {
+    if (o.kind == Output::kSlot) {
+        const float value = in_range ? o.low + t * (o.high - o.low) : 0.0f;
+        if (value == device.slot[o.slot]) return;
+        device.slot[o.slot] = value;
+        if (out != nullptr) device.slot_dirty[o.slot] = true;
+        return;
+    }
+    const bool down = in_range && t >= 0.5f;
+    if (o.kind == Output::kButton) {
+        bool& was = device.key_down[o.key];
+        if (was == down) return;
+        was = down;
+        if (out != nullptr) out->push_back(Event{Event::kButton, device.id, o.key, down ? 1.0f : 0.0f});
+        return;
+    }
+    // The d-pad goes out as the hat, from which flush_axes() also makes
+    // the DPAD key presses, as it does for a pad with a real hat.
+    device.dpad[o.dpad] = down;
+    const float x = static_cast<float>(device.dpad[1]) - static_cast<float>(device.dpad[3]);
+    const float y = static_cast<float>(device.dpad[2]) - static_cast<float>(device.dpad[0]);
+    for (auto [slot, value] : {std::pair{static_cast<int>(kSlotHatX), x}, std::pair{static_cast<int>(kSlotHatY), y}}) {
+        if (device.slot[slot] == value) continue;
+        device.slot[slot] = value;
+        if (out != nullptr) device.slot_dirty[slot] = true;
+    }
+}
+
+void apply_key(Device& device, uint16_t code, bool down, std::vector<Event>* out) {
+    for (const Rule& rule : device.rules) {
+        if (rule.in.kind == DbBinding::kKey && rule.in.code == code) {
+            drive(device, rule.out, down ? 1.0f : 0.0f, true, out);
+        }
+    }
+}
+
+void apply_abs(Device& device, uint16_t code, int32_t raw, std::vector<Event>* out) {
+    // A digital hat: SDL's own reading of each axis (its HandleHat), then
+    // the directions the rules on that hat ask for.
+    if (code >= ABS_HAT0X && code <= ABS_HAT3Y) {
+        const int hat = (code - ABS_HAT0X) / 2;
+        const int which = (code - ABS_HAT0X) % 2;
+        bool hat_rules = false;
+        for (const Rule& rule : device.rules) hat_rules |= rule.in.kind == DbBinding::kHat && rule.in.hat == hat;
+        if (hat_rules) {
+            const auto axis = device.axes.find(code);
+            const int32_t minimum = axis == device.axes.end() ? -1 : axis->second.minimum;
+            const int32_t maximum = axis == device.axes.end() ? 1 : axis->second.maximum;
+            int position = 0;
+            if (raw < 0 && (raw <= minimum || raw < minimum / 3)) position = -1;
+            if (raw > 0 && (raw >= maximum || raw > maximum / 3)) position = 1;
+            device.hat_position[hat][which] = position;
+            const int x = device.hat_position[hat][0], y = device.hat_position[hat][1];
+            const int mask = (y < 0 ? 1 : 0) | (x > 0 ? 2 : 0) | (y > 0 ? 4 : 0) | (x < 0 ? 8 : 0);
+            for (const Rule& rule : device.rules) {
+                if (rule.in.kind == DbBinding::kHat && rule.in.hat == hat) {
+                    drive(device, rule.out, (mask & rule.in.mask) != 0 ? 1.0f : 0.0f, true, out);
+                }
+            }
+        }
+    }
+    const auto axis = device.axes.find(code);
+    if (axis == device.axes.end()) return;
+    for (const Rule& rule : device.rules) {
+        if (rule.in.kind != DbBinding::kAbs || rule.in.code != code) continue;
+        const bool stick = rule.out.kind == Output::kSlot && is_stick(rule.out.slot);
+        const float v = normalise(axis->second, raw, stick);
+        const float span = rule.in.high - rule.in.low;
+        const float t = span == 0.0f ? 0.0f : (v - rule.in.low) / span;
+        // Outside a half axis's range the output it drives goes back to
+        // rest, as SDL does when another binding takes the axis over.
+        const bool in_range = t >= 0.0f && t <= 1.0f;
+        drive(device, rule.out, t, in_range, out);
+    }
+}
+
+// The rules for a pad the SDL database does not know: Android's own key
+// layout for its buttons, and its axes by the conventions in
+// gamepad_layout.h.
+std::vector<Rule> evdev_rules(const PadDescription& pad) {
+    std::vector<Rule> rules;
+    for (uint16_t code : pad.keys) {
+        const int key = android_button_for(code);
+        if (key < 0) continue;
+        Rule rule;
+        rule.in.kind = DbBinding::kKey;
+        rule.in.code = code;
+        rule.out.kind = Output::kButton;
+        rule.out.key = key;
+        rules.push_back(rule);
+    }
+    std::set<uint16_t> has;
+    for (const auto& [code, info] : pad.abs) {
+        if (!(info.minimum == 0 && info.maximum == 0)) has.insert(code);
+    }
+    for (const auto& [code, slot] : axis_layout(has)) {
+        Rule rule;
+        rule.in.kind = DbBinding::kAbs;
+        rule.in.code = code;
+        rule.out.kind = Output::kSlot;
+        rule.out.slot = slot;
+        if (slot == kSlotLT || slot == kSlotRT) {
+            rule.out.low = 0.0f;
+            rule.out.high = 1.0f;
+        }
+        rules.push_back(rule);
+    }
+    return rules;
 }
 
 int g_unreadable_nodes = 0;
@@ -269,62 +439,102 @@ void open_device(const std::string& path, std::vector<Event>& out) {
         }
     }
 
-    for (uint16_t code : {ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ, ABS_HAT0X, ABS_HAT0Y}) {
+    // Everything the pad reports, for the database's numbering of it.
+    PadDescription pad;
+    pad.name = device.name;
+    input_id id{};
+    if (::ioctl(fd, EVIOCGID, &id) >= 0) {
+        pad.bus = id.bustype;
+        pad.vendor = id.vendor;
+        pad.product = id.product;
+        pad.version = id.version;
+    }
+    unsigned long keys[(KEY_MAX / (8 * sizeof(unsigned long))) + 1]{};
+    ::ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys);
+    for (int code = 0; code < KEY_MAX; ++code) {
+        if (bit_set(keys, code)) pad.keys.push_back(static_cast<uint16_t>(code));
+    }
+    unsigned long abs[(ABS_MAX / (8 * sizeof(unsigned long))) + 1]{};
+    ::ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs)), abs);
+    std::map<uint16_t, int32_t> initial;
+    for (int code = 0; code < ABS_MAX; ++code) {
+        if (!bit_set(abs, code)) continue;
         input_absinfo info{};
         if (::ioctl(fd, EVIOCGABS(code), &info) < 0) continue;
-        if (info.minimum == 0 && info.maximum == 0) continue;
-        device.axes[code] = Axis{info.minimum, info.maximum, info.flat};
-        const int slot = slot_for(code);
-        if (slot >= 0) device.slot[slot] = normalise(device.axes[code], code, info.value);
+        pad.abs[static_cast<uint16_t>(code)] =
+            AbsInfo{info.minimum, info.maximum, info.fuzz, info.flat, info.resolution};
+        device.axes[static_cast<uint16_t>(code)] = Axis{info.minimum, info.maximum, info.flat};
+        initial[static_cast<uint16_t>(code)] = info.value;
     }
+    device.guid = sdl_guid(pad);
 
-    std::printf("stud-render-host: gamepad connected: %s (id %d, type %d, %zu axes, rumble %s)\n",
+    // The SDL database first: it knows this exact pad, if it is in there.
+    const std::string mapping = find_mapping(mapping_source(), pad);
+    for (const DbBinding& binding : parse_mapping(mapping, pad)) {
+        Rule rule;
+        rule.in = binding;
+        if (output_for(binding, rule.out)) device.rules.push_back(rule);
+    }
+    device.from_db = !device.rules.empty();
+    if (!device.from_db) device.rules = evdev_rules(pad);
+    for (const auto& [code, value] : initial) apply_abs(device, code, value, nullptr);
+
+    std::printf("stud-render-host: gamepad connected: %s (id %d, type %d, SDL id %s, layout from %s, "
+                "rumble %s)\n",
                 device.name.empty() ? "unnamed" : device.name.c_str(), device.id, device.type,
-                device.axes.size(), device.can_rumble ? "yes" : "no");
+                device.guid.c_str(), device.from_db ? "the SDL database" : "its evdev axes",
+                device.can_rumble ? "yes" : "no");
     std::fflush(stdout);
 
     // What this pad really has, before it is announced, the same order
-    // the real app uses. Answered from evdev rather than assumed, so a
+    // the real app uses. Answered from the rules rather than assumed, so a
     // pad without (say) stick clicks does not advertise them.
-    unsigned long keys[(KEY_MAX / (8 * sizeof(unsigned long))) + 1]{};
-    ::ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys);
-    const bool has_hat = device.axes.count(ABS_HAT0X) != 0 || device.axes.count(ABS_HAT0Y) != 0;
-    // Exactly the key list the real caller queries. No L2/R2 and no MODE, because a real device never reports
-    // those here either.
+    const auto drives = [&](Output::Kind kind, int which) {
+        for (const Rule& rule : device.rules) {
+            if (rule.out.kind != kind) continue;
+            if (kind == Output::kButton && rule.out.key == which) return true;
+            if (kind == Output::kSlot && rule.out.slot == which) return true;
+            if (kind == Output::kDpad) return true;
+        }
+        return false;
+    };
+    // A d-pad reaches the engine as DPAD keys either way, because this
+    // file synthesises them from the hat. Reporting them supported is
+    // therefore honest about what Stud actually sends.
+    const bool has_dpad = drives(Output::kDpad, 0) || drives(Output::kSlot, kSlotHatX) ||
+                          drives(Output::kSlot, kSlotHatY);
     const std::pair<int, bool> supported_keys[] = {
-        {kBtnA, bit_set(keys, BTN_SOUTH)},
-        {kBtnB, bit_set(keys, BTN_EAST)},
-        {kBtnX, bit_set(keys, BTN_NORTH)},
-        {kBtnY, bit_set(keys, BTN_WEST)},
-        // A hat-only d-pad still reaches the engine as DPAD keys, because
-        // this file synthesises them below. Reporting them supported is
-        // therefore honest about what Stud actually sends.
-        {kDpadUp, has_hat || bit_set(keys, BTN_DPAD_UP)},
-        {kDpadDown, has_hat || bit_set(keys, BTN_DPAD_DOWN)},
-        {kDpadLeft, has_hat || bit_set(keys, BTN_DPAD_LEFT)},
-        {kDpadRight, has_hat || bit_set(keys, BTN_DPAD_RIGHT)},
-        {kBtnR1, bit_set(keys, BTN_TR)},
-        {kBtnL1, bit_set(keys, BTN_TL)},
-        {kBtnThumbL, bit_set(keys, BTN_THUMBL)},
-        {kBtnThumbR, bit_set(keys, BTN_THUMBR)},
-        {kBtnSelect, bit_set(keys, BTN_SELECT)},
-        {kBtnStart, bit_set(keys, BTN_START)},
+        {kBtnA, drives(Output::kButton, kBtnA)},
+        {kBtnB, drives(Output::kButton, kBtnB)},
+        {kBtnX, drives(Output::kButton, kBtnX)},
+        {kBtnY, drives(Output::kButton, kBtnY)},
+        {kDpadUp, has_dpad || drives(Output::kButton, kDpadUp)},
+        {kDpadDown, has_dpad || drives(Output::kButton, kDpadDown)},
+        {kDpadLeft, has_dpad || drives(Output::kButton, kDpadLeft)},
+        {kDpadRight, has_dpad || drives(Output::kButton, kDpadRight)},
+        {kBtnR1, drives(Output::kButton, kBtnR1)},
+        {kBtnL1, drives(Output::kButton, kBtnL1)},
+        {kBtnThumbL, drives(Output::kButton, kBtnThumbL)},
+        {kBtnThumbR, drives(Output::kButton, kBtnThumbR)},
+        {kBtnSelect, drives(Output::kButton, kBtnSelect)},
+        {kBtnStart, drives(Output::kButton, kBtnStart)},
         // L2/R2 are not in the real app's own query list, because on a
         // real device an Xbox-layout pad reports them only as the analog
         // trigger AXES and `hasKeys()` therefore answers false for both.
-        // Stud reports them present when the trigger axes exist, since
-        // that is what Stud genuinely delivers; Roblox binds vehicle
-        // throttle to ButtonR2/ButtonL2, and a pad that reports neither
-        // has nothing for that binding to attach to.
-        {kBtnL2, bit_set(keys, BTN_TL2) || device.axes.count(ABS_Z) != 0},
-        {kBtnR2, bit_set(keys, BTN_TR2) || device.axes.count(ABS_RZ) != 0},
+        // Stud reports them present when the triggers exist, since that
+        // is what Stud genuinely delivers; Roblox binds vehicle throttle
+        // to ButtonR2/ButtonL2, and a pad that reports neither has nothing
+        // for that binding to attach to.
+        {kBtnL2, drives(Output::kButton, kBtnL2) || drives(Output::kSlot, kSlotLT)},
+        {kBtnR2, drives(Output::kButton, kBtnR2) || drives(Output::kSlot, kSlotRT)},
     };
     for (const auto& [key, present] : supported_keys) {
         out.push_back(Event{Event::kSupportedKey, device.id, key, present ? 1.0f : 0.0f,
                             static_cast<float>(device.type)});
     }
     for (int slot = 0; slot < kSlotCount; ++slot) {
-        const bool present = device.axes.count(evdev_code_for_slot(slot)) != 0;
+        const bool present = drives(Output::kSlot, slot) ||
+                             ((slot == kSlotHatX || slot == kSlotHatY) && drives(Output::kDpad, 0));
         out.push_back(Event{Event::kSupportedAxis, device.id, kSlotAxisId[slot],
                             present ? 1.0f : 0.0f, static_cast<float>(device.type)});
     }
@@ -448,24 +658,11 @@ void read_device(Device& device, std::vector<Event>& out, bool& died) {
             if (e.type == EV_SYN && e.code == SYN_REPORT) {
                 flush_axes(device, out);
             } else if (e.type == EV_KEY) {
-                const int key = android_button_for(e.code);
                 // Value 2 is the kernel's auto-repeat; the engine wants
                 // edges, and a held button is not a new press.
-                if (key >= 0 && e.value != 2) {
-                    out.push_back(Event{Event::kButton, device.id, key,
-                                        e.value != 0 ? 1.0f : 0.0f});
-                }
+                if (e.value != 2) apply_key(device, e.code, e.value != 0, &out);
             } else if (e.type == EV_ABS) {
-                auto axis_it = device.axes.find(e.code);
-                if (axis_it == device.axes.end()) continue;
-                const int slot = slot_for(e.code);
-                if (slot < 0) continue;
-                const float value = normalise(axis_it->second, e.code, e.value);
-                // A pad streams ABS events continuously; only a real
-                // change is worth an IPC slot and a JNI call.
-                if (value == device.slot[slot]) continue;
-                device.slot[slot] = value;
-                device.slot_dirty[slot] = true;
+                apply_abs(device, e.code, e.value, &out);
             }
         }
     }

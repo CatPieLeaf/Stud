@@ -78,6 +78,10 @@ third_party/*
 # PulseAudio, JACK and OSS directly rather than through another
 # library.
 !third_party/miniaudio/
+# And SDL's controller database, which the render host compiles in to know
+# which button and axis is which on hundreds of controllers. One text file
+# and its licence, Zlib.
+!third_party/SDL_GameControllerDB/
 # And libdecor's header, for types only: native_window.cpp resolves every
 # entry point with dlopen, so nothing links it and a machine without the
 # library keeps the behaviour it has. Vendored rather than required as a

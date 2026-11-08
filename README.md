@@ -417,6 +417,7 @@ Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commerc
  - [Snapdragon Game Super Resolution](https://github.com/SnapdragonStudios/snapdragon-gsr): the SGSR upscaler (BSD-3-Clause)
  - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): RCAS, the sharpening pass after RAVU (MIT)
  - [miniaudio](https://github.com/mackron/miniaudio): the audio device (public domain or MIT-0)
+ - [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB): which button and stick is which on hundreds of controllers (Zlib)
  - [Zydis](https://github.com/zyantific/zydis) and [Zycore](https://github.com/zyantific/zycore-c): read the engine's code to find what Stud needs, instead of byte patterns that change every build (MIT)
  - [volk](https://github.com/zeux/volk): Vulkan entry points (MIT)
  - [xxHash](https://github.com/Cyan4973/xxHash): the texture cache's key (BSD-2-Clause)

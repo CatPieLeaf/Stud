@@ -50,6 +50,10 @@ add_executable(stud_window_memory_test window_memory_test.cpp)
 target_include_directories(stud_window_memory_test PRIVATE ${PROJECT_SOURCE_DIR}/android-glue/include)
 add_test(NAME window_memory_test COMMAND stud_window_memory_test)
 
+add_executable(stud_gamepad_db_test gamepad_db_test.cpp)
+target_link_libraries(stud_gamepad_db_test PRIVATE stud_gamepad_db)
+add_test(NAME gamepad_db_test COMMAND stud_gamepad_db_test)
+
 add_executable(stud_audio_limiter_test audio_limiter_test.cpp)
 target_include_directories(stud_audio_limiter_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
 add_test(NAME audio_limiter_test COMMAND stud_audio_limiter_test)

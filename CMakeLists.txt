@@ -391,6 +391,9 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash/LICENSE"
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/miniaudio"
         RENAME "LICENSE-miniaudio.txt")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_GameControllerDB/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/SDL_GameControllerDB"
+        RENAME "LICENSE-SDL_GameControllerDB.txt")
 
 # The dependency setup.sh fetched. It is not Stud's own code, but a
 # package has to carry it or the application cannot start: the bionic set
