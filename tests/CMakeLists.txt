@@ -50,6 +50,10 @@ add_executable(stud_window_memory_test window_memory_test.cpp)
 target_include_directories(stud_window_memory_test PRIVATE ${PROJECT_SOURCE_DIR}/android-glue/include)
 add_test(NAME window_memory_test COMMAND stud_window_memory_test)
 
+add_executable(stud_audio_limiter_test audio_limiter_test.cpp)
+target_include_directories(stud_audio_limiter_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
+add_test(NAME audio_limiter_test COMMAND stud_audio_limiter_test)
+
 add_executable(stud_range_inside_test range_inside_test.cpp)
 target_include_directories(stud_range_inside_test PRIVATE ${PROJECT_SOURCE_DIR}/render-host/include)
 add_test(NAME range_inside_test COMMAND stud_range_inside_test)

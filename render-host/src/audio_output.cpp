@@ -29,6 +29,7 @@
 // app the instant a game started, the engine opens its device exactly
 // then, and every GL call queued behind it. Live-caught, twice.
 
+#include "stud/audio_limiter.h"
 #include "stud/audio_output.h"
 #include "stud/session_log.h"
 #include "stud/vulkan_host.h"
@@ -327,6 +328,8 @@ struct Device {
     std::atomic<size_t> ring_read{0};   // monotonic byte counters, not indices
     std::atomic<size_t> ring_write{0};
     std::atomic<uint64_t> underruns{0};
+    // The callback's alone, like the read position.
+    AudioLimiter limiter;
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -411,6 +414,9 @@ void playback_callback(ma_device* dev, void* output, const void* /*input*/, ma_u
     // An atomic store: safe on the realtime thread, and what keeps the
     // feeder's view of the fill current between its writes.
     publish(kRead, read + take);
+    if (s->bytes_per_sample == 4) {
+        s->limiter.process(reinterpret_cast<float*>(out), frames, s->channels);
+    }
 }
 
 void open_device(Device* s) {
@@ -435,7 +441,11 @@ void open_device(Device* s) {
         // them per period. miniaudio sets the buffer itself and cannot
         // leave it to the server. The ring above holds far more than one
         // request, so the larger reads do not starve it.
-        config.periodSizeInMilliseconds = 4 * 20;
+        const ma_uint32 period_ms = 4 * 20;
+        config.periodSizeInMilliseconds = period_ms;
+        // The limiter recovers over one period: about as slow as a read
+        // from the server, so it never flutters within one.
+        s->limiter.set_release_frames(static_cast<double>(s->rate) * period_ms / 1000.0);
         config.dataCallback = playback_callback;
         config.pUserData = s;
         // Do NOT let miniaudio clip the buffer.
@@ -449,10 +459,11 @@ void open_device(Device* s) {
         // "deepfried" on precisely those passages, the same defect the
         // old 16-bit conversion produced and for the same reason.
         //
-        // The sound server is the right place for this. PulseAudio and
-        // PipeWire both take float samples outside [-1, 1] and resolve
-        // them after volume, so nothing downstream needs Stud to have
-        // flattened them first.
+        // The sound server is not the right place for it either: it adds
+        // Stud's samples to every other application's and clamps only the
+        // sum, so a peak left over full scale clipped everything playing at
+        // that moment. The callback's limiter turns such peaks down
+        // instead (see audio_limiter.h).
         config.noClip = MA_TRUE;
         // The per-stream label, beside the application name set on the
         // context.
