@@ -3317,10 +3317,42 @@ std::unordered_map<uint64_t, SharedMapping>& shared_memory() {
     return m;
 }
 
+// Memory types whose host-pointer import the driver has refused once.
+//
+// A driver can list a type as importable and then refuse every import into
+// it. amdgpu always does, for Stud: Mesa imports a host pointer through
+// libdrm's amdgpu_create_bo_from_user_mem(), which always asks the kernel
+// for AMDGPU_GEM_USERPTR_ANONONLY, and the kernel then refuses any page
+// backed by a file (amdgpu_ttm.c: `vma->vm_file` -> -EPERM). The engine's
+// pages are a memfd, a file by definition, so on every AMD GPU each import
+// fails, VK_ERROR_INVALID_EXTERNAL_HANDLE, and is not worth trying again.
+std::mutex& refused_import_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::set<uint32_t>& refused_import_types() {
+    static std::set<uint32_t> s;
+    return s;
+}
+bool import_refused(uint32_t type) {
+    std::lock_guard<std::mutex> lock(refused_import_mutex());
+    return refused_import_types().count(type) != 0;
+}
+void refuse_import(uint32_t type) {
+    std::lock_guard<std::mutex> lock(refused_import_mutex());
+    refused_import_types().insert(type);
+}
+
 // The host-visible memory type an imported host pointer can back. Prefers
 // the plainest one: coherent, uncached, so the engine's writes reach the
 // device without anything having to be flushed by hand.
 uint32_t importable_host_visible_type(uint32_t allowed_bits) {
+    {
+        std::lock_guard<std::mutex> lock(refused_import_mutex());
+        for (uint32_t type : refused_import_types()) {
+            if (type < 32) allowed_bits &= ~(1u << type);
+        }
+    }
     Loader& l = loader();
     if (l.physical_device == VK_NULL_HANDLE || vkGetPhysicalDeviceMemoryProperties == nullptr) {
         return UINT32_MAX;
@@ -3903,23 +3935,23 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
             const char* v = std::getenv("STUD_SHARE_ALL_HOST_MEMORY");
             return v == nullptr || std::strcmp(v, "0") != 0;
         }();
-        // Design C: the BAR itself, exported to the engine's process.
-        if (g_bar_export.load() && pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 &&
-            vkGetPhysicalDeviceMemoryProperties != nullptr) {
-            VkPhysicalDeviceMemoryProperties mp{};
+        // Importable in name, and not one the driver has refused already.
+        const bool importable = pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) != 0 &&
+                                !import_refused(type_index);
+        VkPhysicalDeviceMemoryProperties mp{};
+        if (vkGetPhysicalDeviceMemoryProperties != nullptr) {
             vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
-            const VkMemoryPropertyFlags bar =
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-            if (type_index < mp.memoryTypeCount &&
-                (mp.memoryTypes[type_index].propertyFlags & bar) == bar) {
-                export_bar = true;
-            }
+        }
+        const VkMemoryPropertyFlags type_flags =
+            type_index < mp.memoryTypeCount ? mp.memoryTypes[type_index].propertyFlags : 0;
+        // Design C: the BAR itself, exported to the engine's process.
+        const VkMemoryPropertyFlags bar =
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        if (g_bar_export.load() && pr == VK_SUCCESS && !importable && (type_flags & bar) == bar) {
+            export_bar = true;
         }
         uint32_t use_type = type_index;
-        if (export_bar) {
-            // Nothing of the client's memfd is used; the dma-buf replaces it.
-            unmap_shared_memory(mapping);
-        } else if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << type_index)) == 0 && share_all) {
+        if (!export_bar && pr == VK_SUCCESS && !importable && share_all) {
             const uint32_t substitute = importable_host_visible_type(props.memoryTypeBits);
             if (substitute != UINT32_MAX) {
                 static std::set<uint32_t> reported;
@@ -3931,14 +3963,24 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
                 }
                 use_type = substitute;
                 ai.memoryTypeIndex = substitute;
+            } else if (g_bar_export.load() && (type_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+                // Nothing left that imports: the device's own memory,
+                // exported like the BAR, rather than a stand-in copied on
+                // every submit. See refuse_import().
+                export_bar = true;
             }
+        }
+        if (export_bar) {
+            // Nothing of the client's memfd is used; the dma-buf replaces it.
+            unmap_shared_memory(mapping);
         }
         if (export_bar) {
             export_info.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
             export_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
             export_info.pNext = ai.pNext;
             ai.pNext = &export_info;
-        } else if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << use_type)) != 0) {
+        } else if (pr == VK_SUCCESS && (props.memoryTypeBits & (1u << use_type)) != 0 &&
+                   !import_refused(use_type)) {
             // An imported host pointer carries its own size rule: the
             // allocation must be a whole number of the driver's import
             // alignment, and the engine's size is whatever it asked for.
@@ -3977,6 +4019,61 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         ai.pNext = chain;
         r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
     }
+    if (r != VK_SUCCESS && import.pHostPointer != nullptr) {
+        // The driver said this memory type can back an imported host
+        // pointer and then refused the import anyway, live-caught on
+        // Intel, which answers VK_ERROR_INVALID_EXTERNAL_HANDLE
+        // (-1000072003) for a type its own
+        // vkGetMemoryHostPointerPropertiesEXT had just allowed, and certain
+        // on AMD (see refuse_import()). The engine takes a failed
+        // allocation as fatal (RBXCRASH: OutOfMemoryGraphics) and the
+        // process wedges, so sharing is an optimisation that must never be
+        // the reason an allocation fails.
+        //
+        // Not tried again for this type, and this allocation is exported
+        // to the engine instead where the device can: the copying path it
+        // used to take write-protects every page the engine writes and
+        // scans them on every submit, which for a device where no import
+        // ever works is all of its host memory, and stalls it badly while
+        // it loads.
+        const VkResult refused = r;
+        const uint32_t attempted = ai.memoryTypeIndex;
+        refuse_import(attempted);
+        unmap_shared_memory(mapping);
+        import.pHostPointer = nullptr;
+        ai.pNext = chain;
+        ai.memoryTypeIndex = type_index;
+        ai.allocationSize = size;
+        VkPhysicalDeviceMemoryProperties mp{};
+        if (vkGetPhysicalDeviceMemoryProperties != nullptr) {
+            vkGetPhysicalDeviceMemoryProperties(l.physical_device, &mp);
+        }
+        const bool visible = type_index < mp.memoryTypeCount &&
+                             (mp.memoryTypes[type_index].propertyFlags &
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+        if (g_bar_export.load() && visible) {
+            export_info.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+            export_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+            export_info.pNext = chain;
+            ai.pNext = &export_info;
+            r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
+            export_bar = r == VK_SUCCESS;
+            if (!export_bar) {
+                ai.pNext = chain;
+                r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
+            }
+        } else {
+            r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
+        }
+        static std::set<uint32_t> reported;
+        if (reported.insert(attempted).second) {
+            std::printf("stud-render-host: memory type %u was allowed for import and then "
+                        "refused it (%d); %s\n",
+                        attempted, static_cast<int>(refused),
+                        export_bar ? "exported to the engine instead" : "this one is copied");
+            std::fflush(stdout);
+        }
+    }
     int exported_fd = -1;
     if (r == VK_SUCCESS && export_bar && l.vk.vkGetMemoryFdKHR != nullptr) {
         VkMemoryGetFdInfoKHR gi{};
@@ -3998,34 +4095,11 @@ uint64_t vk_allocate_memory(uint64_t size, uint32_t type_index, const std::vecto
         static bool said = false;
         if (!said) {
             said = true;
-            std::printf("stud-render-host: BAR memory is exported to the engine as a dma-buf "
-                        "(STUD_VK_BAR_EXPORT); it writes straight into VRAM\n");
+            std::printf("stud-render-host: host-visible memory is exported to the engine as a "
+                        "dma-buf (STUD_VK_BAR_EXPORT); it writes straight into the device's "
+                        "memory\n");
             std::fflush(stdout);
         }
-    }
-    if (r != VK_SUCCESS && import.pHostPointer != nullptr) {
-        // The driver said this memory type can back an imported host
-        // pointer and then refused the import anyway, live-caught on
-        // Intel, which answers VK_ERROR_INVALID_EXTERNAL_HANDLE
-        // (-1000072003) for a type its own
-        // vkGetMemoryHostPointerPropertiesEXT had just allowed. The
-        // engine takes a failed allocation as fatal
-        // (RBXCRASH: OutOfMemoryGraphics) and the process wedges, so
-        // sharing is an optimisation that must never be the reason an
-        // allocation fails: drop the import and allocate ordinarily,
-        // which puts this one allocation back on the copying path.
-        static std::set<uint32_t> reported;
-        if (reported.insert(type_index).second) {
-            std::printf("stud-render-host: memory type %u was allowed for import and then "
-                        "refused it (%d); this one is copied\n",
-                        type_index, static_cast<int>(r));
-            std::fflush(stdout);
-        }
-        unmap_shared_memory(mapping);
-        import.pHostPointer = nullptr;
-        ai.pNext = chain;
-        ai.memoryTypeIndex = type_index;
-        r = l.vk.vkAllocateMemory(l.device, &ai, nullptr, &memory);
     }
     if (r != VK_SUCCESS) {
         std::printf("stud-render-host: vkAllocateMemory -> %d (%llu bytes, type %u)\n",
