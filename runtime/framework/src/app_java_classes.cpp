@@ -1153,7 +1153,13 @@ BEGIN_NATIVE_DESCRIPTOR(WebRtcAudioManagerJava)
   "isCommunicationModeEnabled" },
 { FakeJni::Function<&WebRtcAudioManagerJava::isDeviceBlacklistedForOpenSLESUsage>{},
   "isDeviceBlacklistedForOpenSLESUsage" },
+{ FakeJni::Function<&WebRtcAudioManagerJava::setMicrophoneMute>{}, "setMicrophoneMute" },
 END_NATIVE_DESCRIPTOR
+
+void WebRtcAudioManagerJava::setMicrophoneMute(FakeJni::JBoolean muted) {
+    std::printf("stud: voice chat: engine set microphone mute = %d\n", muted ? 1 : 0);
+    std::fflush(stdout);
+}
 
 // Hands the engine's audio device module what the platform can do, through the
 // native it registers on this class. Mono at 48 kHz in 10 ms frames both ways,

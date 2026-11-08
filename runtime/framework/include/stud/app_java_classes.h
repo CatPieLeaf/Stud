@@ -2227,6 +2227,11 @@ public:
     FakeJni::JBoolean isCommunicationModeEnabled() { return false; }
     // Stud's libOpenSLES is an empty stand-in, so OpenSL ES is ruled out.
     FakeJni::JBoolean isDeviceBlacklistedForOpenSLESUsage() { return true; }
+    // Looked up with the others when voice chat starts; a missing method is
+    // a fatal error inside WebRTC, and voice never connected. Reported, not
+    // acted on, as AppRtcDeviceWrapper's mute: Stud has no system-level
+    // microphone mute, and the engine stops reading the stream when it mutes.
+    void setMicrophoneMute(FakeJni::JBoolean muted);
 };
 
 // org.webrtc.voiceengine.WebRtcAudioRecord / WebRtcAudioTrack, same
