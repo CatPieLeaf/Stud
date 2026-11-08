@@ -420,9 +420,22 @@ void open_device(Device* s) {
         config.playback.format = s->bytes_per_sample == 4 ? ma_format_f32 : ma_format_s16;
         config.playback.channels = static_cast<ma_uint32>(s->channels);
         config.sampleRate = static_cast<ma_uint32>(s->rate);
-        // 10 ms, which is the burst size the engine feeds in, so a
-        // callback consumes exactly what one write produced.
-        config.periodSizeInFrames = 480;
+        // The size the sound server asks Stud for each time is what sets
+        // how often the WHOLE system's audio runs: PipeWire runs every
+        // application at the smallest request any of them makes. Through
+        // pipewire-pulse that request is a quarter of this period, and
+        // asking for 10 ms here (the engine's burst size) came out as
+        // 256/48000, the floor pipewire-pulse allows, which on a stock
+        // setup pulled every other application down to 5 ms buffers with
+        // it: crackling and distortion system-wide while a game loads the
+        // CPU, reported as Roblox ruining everything's sound.
+        //
+        // So the request is the one pipewire-pulse gives any ordinary
+        // client that leaves it alone (pulse.default.req, 20 ms), four of
+        // them per period. miniaudio sets the buffer itself and cannot
+        // leave it to the server. The ring above holds far more than one
+        // request, so the larger reads do not starve it.
+        config.periodSizeInMilliseconds = 4 * 20;
         config.dataCallback = playback_callback;
         config.pUserData = s;
         // Do NOT let miniaudio clip the buffer.
