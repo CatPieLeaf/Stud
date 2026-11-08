@@ -20,12 +20,18 @@ bool g_render_job_up = false;
 
 void note_startup_throttle_log_line(const char* text, size_t length) {
     if (text == nullptr) return;
-    // Logged at the engine's default level, as a warning, in the render
-    // job's constructor.
-    if (std::string_view(text, length).find("RenderJob::setStartupThrottle: true") ==
-        std::string_view::npos) {
-        return;
-    }
+    // Either line means the render job exists. Older engines log the
+    // throttle being set in its constructor; current ones log only the
+    // constructor itself ("SurfaceController::RenderJob[_:1]::RenderJob"),
+    // and waiting for the throttle line alone held every launch for the
+    // full bound, with the engine thread and so its frames stopped.
+    std::string_view line(text, length);
+    while (!line.empty() && (line.back() == '\n' || line.back() == ' ')) line.remove_suffix(1);
+    const bool throttle_line = line.find("RenderJob::setStartupThrottle: true") != line.npos;
+    const size_t job = line.find("SurfaceController::RenderJob[");
+    const bool constructor_line = job != line.npos && line.size() >= 12 &&
+                                  line.substr(line.size() - 12) == "]::RenderJob";
+    if (!throttle_line && !constructor_line) return;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_render_job_up = true;
