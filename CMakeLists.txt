@@ -1,71 +1,29 @@
 cmake_minimum_required(VERSION 3.20)
-project(Stud VERSION 1.2.14 LANGUAGES CXX C ASM)
+project(Stud VERSION 1.2.14 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# RelWithDebInfo, not Debug. Stud is a renderer: every GL and Vulkan call
-# the engine makes crosses this codebase, hundreds of times a frame, so
-# an unoptimised build is not merely slower to develop against; it is
-# the frame rate. Profiling the render thread in a real game with a Debug
-# build put a third of the frame inside std::vector's own iterator
-# machinery in Stud's Vulkan client, code that vanishes entirely at -O2.
-#
-# Debug info is kept because this project genuinely depends on it: the
-# sandbox blocks perf, so profiles come from attaching and resolving
-# addresses against these binaries (see tmp prof.sh in the frame-rate
-# section of the engineering notes).
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type" FORCE)
 endif()
 
 option(STUD_BUILD_TESTS "Build Stud tests" ON)
 option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
-# Build ONLY the parts that link Qt, against whatever Qt is present, and
-# take everything else from an existing install tree.
-#
-# This exists for the Flatpak. Copying a binary built on one distribution
-# into a runtime carrying a different Qt is what made the Flatpak crash
-# inside Qt's own startup before a line of Stud ran, so there, the Qt
-# side is compiled in the runtime and the rest (the bionic runtime, the
-# render host) is installed prebuilt, which needs no Qt.
-option(STUD_BUILD_QT_ONLY
-       "Build only the Qt executables; skip the render host and the bionic runtime" OFF)
+# Rosemary, which runs the macOS client, built from upstream with cargo.
+# Off for a package that takes Rosemary from elsewhere (STUD_ROSEMARY, or
+# `rosemary` on PATH).
+option(STUD_BUILD_ROSEMARY "Build Rosemary from github.com/microlift/rosemary" ON)
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
-# Tracy, the frame profiler, OFF and not fetched unless asked for.
-#
-# For the bugs that a log cannot catch: a stall every few seconds, a hang
-# on joining, a frame that takes 200ms once a minute. Statistical
-# profilers average those away; Tracy shows the actual frame it happened
-# in, on every thread at once, with the GPU timeline beside it.
-#
-# Never in a shipped build. The client opens a listening socket and
-# keeps a buffer per thread, which is not something a released Stud
-# should carry. This also replaces adding printf timers by hand, which
-# is how most of this project's measurements have been taken so far and
-# which perturbs the thing being measured.
-option(STUD_TRACY "Build the render host with the Tracy profiler client" OFF)
-# Whether a missing shader compiler is an error rather than a warning.
-#
-# Without glslc the upscaler is built with an empty shader array: FSR is
-# offered in Settings and does nothing. That is a reasonable degrade for
-# someone who only wants the rest of Stud, and unacceptable in a package
-# so the release workflow turns this on and a plain build does not.
-option(STUD_REQUIRE_SHADERS
-       "Fail the configure if glslc is missing, instead of building without the upscaler" OFF)
-
-# Hardening for the glibc-side binaries.
+# Hardening.
 #
 # Position-independent executables and immediate binding with a read-only
 # GOT are what a distribution's own build flags supply by default, and an
 # Arch packaging analyser reports their absence (`lacks PIE`, `lacks FULL
 # RELRO`) on binaries built without them, which a prebuilt release is,
 # since it never passes through makepkg's flags.
-#
-# Deliberately NOT applied to the bionic sub-build: that one is compiled
-# with the Android NDK toolchain against a real bionic, and its linker
-# flags are its own business.
+
 # POSITION_INDEPENDENT_CODE alone only reaches the COMPILER (-fPIE); the
 # link needs -pie as well, which CMP0083 is what makes CMake add. Without
 # the policy the binaries still come out ET_EXEC and the analyser is
@@ -79,8 +37,8 @@ add_link_options($<$<LINK_LANGUAGE:CXX>:-Wl,-z,relro,-z,now>)
 # The application's identity, in one place.
 #
 # This is what a desktop entry is named, what AppStream keys its
-# component on, and what both of Stud's windows report as their Wayland
-# app_id, a compositor ties a window back to its launcher by matching
+# component on, and what Stud's windows and the client's report as their
+# Wayland app_id, a compositor ties a window back to its launcher by matching
 # those, and a store lists an application by it. They have to agree, so
 # they all come from here.
 set(STUD_APP_ID "io.github.catpieleaf.Stud" CACHE STRING
@@ -106,86 +64,18 @@ include(GNUInstallDirs)
 set(STUD_LIBEXEC_DIR "${CMAKE_INSTALL_LIBEXECDIR}/stud")
 set(STUD_PRIVATE_LIB_DIR "lib/stud")
 
-# Third-party dependencies Stud does not vendor: the Android NDK and a
-# real extracted bionic (libc/linker64/...). tools/setup.sh puts both here.
-#
-# One root, overridable, defaulting INSIDE the repo, an earlier layout
-# resolved these relative to the parent directory of the checkout, which
-# only worked on the one machine the tree was developed in.
-set(STUD_THIRD_PARTY_DIR "${CMAKE_SOURCE_DIR}/third_party" CACHE PATH
-    "Where setup.sh puts the NDK and the extracted bionic")
-
 if(STUD_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
-# Real, proven, generic infra kept as-is across the 2026-09-02 reset
-# (the engineering notes' own "nuke stud, recreate sober 1:1" entry): real
-# bionic ELF loading/sandboxing, real render-host + its IPC
-# transport, real asset/APK extraction, real login/settings UI. None of
-# this is "wiring libroblox"; it's OS/rendering plumbing, proven
-# working via extensive live testing before the reset, and rebuilding
-# it from scratch would be pure waste.
-
-# Host-side jni.h only (JNIEnv/jobject types used by AAssetManager_
-# fromJava/ANativeWindow_fromSurface's signatures in android-glue and
-# render-host), the real jnivm/FakeJni JNIEnv *implementation* now
-# lives only in runtime/'s own separate bionic-toolchain FetchContent
-# (runtime/CMakeLists.txt), never built for the host. This host-side
-# fetch exists purely so android-glue/render-host/tools can see the
-# real jni.h type declarations; nothing here links jnivm's actual
-# runtime code.
-include(FetchContent)
-FetchContent_Declare(
-    libjnivm
-    GIT_REPOSITORY https://github.com/ChristopherHX/libjnivm.git
-    GIT_TAG        main
-)
-set(JNIVM_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-set(JNIVM_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-FetchContent_MakeAvailable(libjnivm)
-unset(CMAKE_POLICY_VERSION_MINIMUM)
-
-# Stud's own code is warning-clean under -Wextra; this dependency is not,
-# and its headers are included by nearly every target here. Marking them
-# SYSTEM keeps the raised floor below pointed at Stud rather than at
-# somebody else's tree, and stops a dependency update from failing a build
-# that turns warnings into errors.
-foreach(jnivm_target jnivm fake-jni)
-    if(TARGET ${jnivm_target})
-        get_target_property(jnivm_includes ${jnivm_target} INTERFACE_INCLUDE_DIRECTORIES)
-        if(jnivm_includes)
-            set_target_properties(${jnivm_target} PROPERTIES
-                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${jnivm_includes}")
-        endif()
-    endif()
-endforeach()
-
 # The warning floor for Stud's own targets.
 #
-# Deliberately added here rather than per target: every directory below
-# inherits it, and the bionic sub-build under runtime/ is a separate CMake
-# project that does not, which is correct -- it compiles against a real
-# bionic with the NDK's own flags.
+# Added here rather than per target, so every directory below inherits it.
 add_compile_options(-Wextra)
 
-# Defined BEFORE the subdirectories, because render-host looks for the
-# NDK's own glslc through it to compile the upscale shaders. Declared
-# after add_subdirectory(render-host) it was still empty at the point
-# that search ran, so a FRESH configure never found glslc and silently
-# built an upscaler with no shader in it, while an incremental
-# reconfigure found it in the cache and worked. That is why every locally
-# built package had FSR and the one CI produced did not.
-set(STUD_ANDROID_NDK_ROOT "${STUD_THIRD_PARTY_DIR}/android-ndk-r28c" CACHE PATH
-    "Path to the Android NDK used to build Stud's bionic runtime process")
-
-# nlohmann_json, once, for every host-side target that wants it
-# (stud-config, stud-ipc and render's dev toggle). Those three each used to
-# declare it themselves, guarded, which is three places to bump a version
-# in. The bionic sub-build under runtime/ is a separate CMake project and
-# keeps its own declaration by necessity.
+# nlohmann_json for stud-config, and miniz for the client download and the
+# log export.
 include(FetchContent)
 FetchContent_Declare(
     nlohmann_json
@@ -194,62 +84,54 @@ FetchContent_Declare(
 )
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
+FetchContent_Declare(
+    miniz
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG        3.1.2
+)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+# The amalgamated miniz.h repeats its own declarations at this tag; the
+# plain headers (miniz.h, miniz_zip.h) do not.
+set(AMALGAMATE_SOURCES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(miniz)
 
-# gfxstream for OpenGL mode, before render-host, which links its host side.
-if(NOT STUD_BUILD_QT_ONLY)
-    include(cmake/StudGfxstream.cmake)
-endif()
-
-add_subdirectory(bionic-runtime)
-add_subdirectory(cpu-compat)
-add_subdirectory(android-glue)
-add_subdirectory(render)
 add_subdirectory(stud-config)
-add_subdirectory(stud-ipc)
-add_subdirectory(shader-pack)
-if(NOT STUD_BUILD_QT_ONLY)
-    add_subdirectory(render-host)
-    add_subdirectory(tools)
-endif()
 
-# runtime/: the real replacement for the old jni-bridge+process-b pair.
-# Real bionic ELF output, built with the Android NDK's own toolchain,
-# same real reason as before (Process B's own code must be real
-# bionic-ABI code to call directly into libroblox.so's real bionic JNI
-# exports on the same thread/ABI, no glibc-forwarding trampoline).
-if(STUD_BUILD_QT_ONLY)
-    # Supplied prebuilt; see STUD_BUILD_QT_ONLY.
-elseif(EXISTS "${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
+# Rosemary, from its own repository's default branch, with cargo. Into
+# rosemary/rosemary in the build tree, where a stud-ui run from the build
+# finds it, and libexec/stud/ on install. Its licence is GPL-3.0, which
+# Stud's AGPL-3.0 combines with; its source is upstream, unmodified.
+if(STUD_BUILD_ROSEMARY)
+    find_program(STUD_CARGO cargo REQUIRED)
     include(ExternalProject)
-    ExternalProject_Add(runtime
-        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime"
-        CMAKE_ARGS
-            "-DCMAKE_TOOLCHAIN_FILE=${STUD_ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake"
-            "-DANDROID_ABI=x86_64"
-            "-DANDROID_PLATFORM=26"
-            "-DMINIZ_SRC_DIR=${miniz_SOURCE_DIR}"
-            "-DMINIZ_BIN_DIR=${miniz_BINARY_DIR}"
-            "-DSTUD_BIONIC_DIR=${STUD_THIRD_PARTY_DIR}/android-bionic"
-            # The engine's libEGL/libGLESv2, so the NDK fallback leaves
-            # their symbols to them.
-            "-DSTUD_GFXSTREAM_GUEST_DIR=${StudGfxstreamGuestBuild}"
-            "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+    set(STUD_ROSEMARY_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rosemary-target")
+    ExternalProject_Add(rosemary
+        GIT_REPOSITORY https://github.com/microlift/rosemary.git
+        GIT_TAG        main
+        GIT_SHALLOW    ON
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND "${STUD_CARGO}" build --release --bin rosemary
+                      --manifest-path <SOURCE_DIR>/Cargo.toml
+                      --target-dir "${STUD_ROSEMARY_TARGET_DIR}"
         BUILD_ALWAYS ON
-        INSTALL_COMMAND ""
-        DEPENDS stud_android_glue gfxstream_guest
+        INSTALL_COMMAND "${CMAKE_COMMAND}" -E copy
+                        "${STUD_ROSEMARY_TARGET_DIR}/release/rosemary"
+                        "${CMAKE_CURRENT_BINARY_DIR}/rosemary/rosemary"
+                COMMAND "${CMAKE_COMMAND}" -E copy <SOURCE_DIR>/LICENSE
+                        "${CMAKE_CURRENT_BINARY_DIR}/rosemary/LICENSE"
+        USES_TERMINAL_BUILD ON
     )
-else()
-    message(WARNING "Stud: NDK not found at ${STUD_ANDROID_NDK_ROOT}, "
-                     "the real bionic runtime process will not be built. "
-                     "Set -DSTUD_ANDROID_NDK_ROOT=<path> to fix.")
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/rosemary/rosemary"
+            DESTINATION "${STUD_LIBEXEC_DIR}")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rosemary/LICENSE"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/rosemary"
+            RENAME "LICENSE-Rosemary.txt")
 endif()
 
 if(STUD_BUILD_UI)
     add_subdirectory(ui)
-    # The web-view panel. Gated with the UI because it is the same kind
-    # of thing, a desktop window built on Qt, and a headless build
-    # wants neither.
-    add_subdirectory(webview)
 endif()
 
 if(STUD_BUILD_TESTS)
@@ -265,16 +147,12 @@ endif()
 # packaging exactly what `cmake --install` lays down, and the AppImage is
 # quick-sharun bundling the same layout (packaging/build-appimage.sh).
 #
-# The layout is deliberately relocatable; every binary finds bionic and
-# its sibling processes relative to its own path, because an
-# AppImage is mounted somewhere different on every run, so nothing may be
-# compiled in as absolute.
+# The layout is relocatable: the launcher finds Rosemary relative to its
+# own path, because an AppImage is mounted somewhere different on every
+# run, so nothing may be compiled in as absolute.
 #
 #   <prefix>/bin/stud                      the launcher
-#   <prefix>/libexec/stud/                 the other two processes, the
-#                                          viewer, and Process B's own
-#                                          lib64/ overlay beside it
-#   <prefix>/lib/stud/android-bionic/      the real linker and libc
+#   <prefix>/libexec/stud/rosemary         Rosemary
 #   <prefix>/share/...                     desktop entry, icon, AppStream
 # The desktop entry and AppStream component, named by the application id.
 # An installed entry runs the plain command, since the launcher is the one
@@ -326,11 +204,9 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian-copyright"
 
 # The man page. @STUD_VERSION@ in its header is the only substitution.
 #
-# It is compressed here rather than left to the packaging tools: rpm's own
-# brp scripts would do it, but Stud switches every one of them off
-# (__os_install_post) to keep them from stripping a bionic ELF, so the
-# page would ship uncompressed. Doing it once suits every format, man
-# reads a .gz directly, and dpkg and makepkg both expect one.
+# Compressed here rather than left to the packaging tools, so every format
+# gets the same file: man reads a .gz directly, and dpkg and makepkg both
+# expect one.
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/man/stud.1"
                "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1" @ONLY)
 find_program(STUD_GZIP gzip)
@@ -351,104 +227,12 @@ else()
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
             DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 endif()
-# The three shader references Stud's upscalers are built from. All three
-# notices travel with the build output, not just with the source tree,
-# because what ships is compiled SPIR-V: a user who has the package has
-# the work without having the repository.
-#
-# The mpv one is the one that must not be missed. FSR1 is MIT and SGSR
-# is BSD-3-Clause, both of which ask only that the notice accompany the
-# distribution; RAVU-Zoom is LGPL-3.0-or-later, which is copyleft, and
-# AGPLv3 section 13 -- the clause that lets Stud combine with it at all
-# -- requires the Corresponding Source to travel too. The hook the
-# shader and its weight tables are generated from is that source, and it
-# is installed here beside the licence rather than only living in the
-# repository.
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/fidelityfx-fsr1"
-        RENAME "LICENSE-FidelityFX-FSR1.txt")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/snapdragon-gsr/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/snapdragon-gsr"
-        RENAME "LICENSE-Snapdragon-GSR.txt")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/mpv-prescalers"
-        RENAME "LICENSE-mpv-prescalers.txt")
-install(FILES
-            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/ravu-zoom-ar-r2-rgb.hook"
-            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv-prescalers/ravu-zoom-r2-rgb.hook"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/mpv-prescalers")
-
-# The three libraries compiled into Stud's own binaries. Nothing in the
-# package is a separate file for any of them, which is exactly why their
-# notices have to be installed: a user with the package has the code
-# without having this tree.
+# volk and miniz are compiled into the launcher; their notices travel with it.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/volk/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/volk"
         RENAME "LICENSE-volk.txt")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xxhash/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/xxhash"
-        RENAME "LICENSE-xxHash.txt")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/miniaudio"
-        RENAME "LICENSE-miniaudio.txt")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_GameControllerDB/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/SDL_GameControllerDB"
-        RENAME "LICENSE-SDL_GameControllerDB.txt")
-
-# The dependency setup.sh fetched. It is not Stud's own code, but a
-# package has to carry it or the application cannot start: the bionic set
-# is the real linker and libc that load Roblox's engine. It is
-# redistributable, BSD and Apache-2.0 from AOSP, and both licences require
-# their text and copyright to travel with the binaries.
-#
-# `tools/setup.sh` puts them in a `licenses/` directory beside the set,
-# so installing the directory carries them; they are ALSO installed under
-# share/licenses/stud/, which is where a distribution looks. If setup
-# could not fetch them it says so loudly, a package built from a tree
-# without them is one that cannot legally be distributed.
-set(STUD_PREBUILT_DEPS android-bionic)
-if(STUD_BUILD_QT_ONLY)
-    set(STUD_PREBUILT_DEPS)  # supplied prebuilt, so nothing to install here
-endif()
-if(NOT STUD_BUILD_QT_ONLY AND EXISTS "${STUD_THIRD_PARTY_DIR}/android-bionic")
-    install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/android-bionic/"
-            DESTINATION "${STUD_PRIVATE_LIB_DIR}/android-bionic"
-            USE_SOURCE_PERMISSIONS)
-endif()
-foreach(stud_dep ${STUD_PREBUILT_DEPS})
-    if(EXISTS "${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses")
-        install(DIRECTORY "${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses/"
-                DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/${stud_dep}")
-    else()
-        message(WARNING
-            "no ${STUD_THIRD_PARTY_DIR}/${stud_dep}/licenses, a package built from "
-            "this tree would redistribute ${stud_dep} with no licence text. "
-            "Run tools/setup.sh to fetch them.")
-    endif()
-endforeach()
-
-# Process B and the overlay libraries it binds over /system/lib64. Built
-# by the nested NDK sub-build, so they are installed from its output
-# directory rather than as CMake targets of this project.
-set(STUD_RUNTIME_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/runtime-prefix/src/runtime-build")
-if(NOT STUD_BUILD_QT_ONLY)
-install(PROGRAMS "${STUD_RUNTIME_BUILD_DIR}/stud-runtime-bionic"
-        DESTINATION "${STUD_LIBEXEC_DIR}" OPTIONAL)
-# Zydis and Zycore are compiled into it, fetched by that sub-build; their
-# notices travel with it for the same reason volk's and xxHash's do.
-install(FILES "${STUD_RUNTIME_BUILD_DIR}/_deps/zydis-src/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/zydis"
-        RENAME "LICENSE-Zydis.txt" OPTIONAL)
-install(FILES "${STUD_RUNTIME_BUILD_DIR}/_deps/zydis-src/dependencies/zycore/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/zydis"
-        RENAME "LICENSE-Zycore.txt" OPTIONAL)
-install(DIRECTORY "${STUD_RUNTIME_BUILD_DIR}/lib64/"
-        DESTINATION "${STUD_LIBEXEC_DIR}/lib64"
-        FILE_PERMISSIONS
-            OWNER_READ OWNER_WRITE OWNER_EXECUTE
-            GROUP_READ GROUP_EXECUTE
-            WORLD_READ WORLD_EXECUTE
-        FILES_MATCHING PATTERN "*.so*")
-endif()
+install(FILES "${miniz_SOURCE_DIR}/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/miniz"
+        RENAME "LICENSE-miniz.txt")
 
 include(packaging/Packaging.cmake)

@@ -5,7 +5,6 @@
 #include "cube_view.h"
 #include "gpu_enum.h"
 #include "notifications.h"
-#include "stud/android_glue.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
 
@@ -20,21 +19,18 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
-#include <QSlider>
-#include <QLineEdit>
+#include <QSpinBox>
 #include <QPushButton>
 #include <QVBoxLayout>
-#include <QSignalBlocker>
 #include <QTabWidget>
 #include <QPixmap>
 #include <QEvent>
 #include <QPainter>
 
 #include <cstdio>
-#include <fstream>
+#include <limits>
 
 #include <unistd.h>
 
@@ -44,20 +40,20 @@ namespace stud::ui {
 void terminate_stud_session();
 bool stud_session_is_running();
 void relaunch_stud();
-void hold_for_relaunch();
 }  // namespace stud::ui
 
 namespace stud::ui {
 
 namespace {
-// Entry order of the render-path list.
-// How large the app draws everything. Position 0 is "follow the
-// display"; 1..kUiScaleSteps map linearly onto 0.5x..3.0x in 0.05x steps.
-//
-constexpr int kRenderPathVulkan = 0;
-constexpr int kRenderPathOpenGL = 1;
-// The status line's "Roblox is outdated" link: opens the APK picker.
-constexpr const char* kBrowseApkLink = "stud:browse-apk";
+// Selects the entry whose data is `value`, or the first one.
+void select_data(QComboBox* combo, const std::string& value) {
+    const int index = combo->findData(QString::fromStdString(value));
+    combo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+std::string selected_data(const QComboBox* combo) {
+    return combo->currentData().toString().toStdString();
+}
 }  // namespace
 
 SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
@@ -78,47 +74,36 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     // ---- General -------------------------------------------------------
     auto* general = add_tab("General");
-    general->addWidget(new QLabel("Roblox APK or bundle"));
-    auto* apkRow = new QHBoxLayout();
-    apkPathEdit_ = new QLineEdit(this);
-    apkPathEdit_->setPlaceholderText("No APK loaded");
-    apkPathEdit_->setReadOnly(true);
-    auto* browseButton = new QPushButton("Browse...", this);
-    // A folder of split APKs, as a download tool leaves it (gplaydl's
-    // `-o <dir>`): packed into one bundle when picked.
-    auto* folderButton = new QPushButton("Folder...", this);
-    folderButton->setToolTip("Pick a folder holding a split APK set (a base APK and its splits)");
-    apkRow->addWidget(apkPathEdit_);
-    apkRow->addWidget(browseButton);
-    apkRow->addWidget(folderButton);
-    general->addLayout(apkRow);
-    connect(browseButton, &QPushButton::clicked, this, &SettingsWindow::onBrowseApkClicked);
-    connect(folderButton, &QPushButton::clicked, this, &SettingsWindow::onBrowseApkFolderClicked);
-
     trayCheck_ = new QCheckBox("Show in system tray", this);
     general->addWidget(trayCheck_);
-    closeOnLeaveCheck_ = new QCheckBox("Close Stud when leaving a game", this);
-    general->addWidget(closeOnLeaveCheck_);
-    serverRegionCheck_ = new QCheckBox("Notify the server region on join", this);
-    general->addWidget(serverRegionCheck_);
-    smoothZoomCheck_ = new QCheckBox("Smooth zoom", this);
-    general->addWidget(smoothZoomCheck_);
     gamemodeCheck_ = new QCheckBox("GameMode", this);
     gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
     general->addWidget(gamemodeCheck_);
+    controlEditKeysCheck_ = new QCheckBox("Ctrl for copy, cut and paste", this);
+    controlEditKeysCheck_->setToolTip(
+        "Roblox's macOS client expects Command for copy, cut, paste and select all.\n"
+        "On, Ctrl does it, as everywhere else on Linux.");
+    general->addWidget(controlEditKeysCheck_);
+
+    general->addWidget(new QLabel("macOS menu bar"));
+    menuBarCombo_ = new QComboBox(this);
+    menuBarCombo_->addItem("Hidden", QStringLiteral("none"));
+    menuBarCombo_->addItem("In the title bar", QStringLiteral("titlebar"));
+    menuBarCombo_->addItem("Strip above the game", QStringLiteral("strip"));
+    general->addWidget(menuBarCombo_);
+
+    general->addWidget(new QLabel("Display server"));
+    displayBackendCombo_ = new QComboBox(this);
+    displayBackendCombo_->addItem("Automatic", QStringLiteral("auto"));
+    displayBackendCombo_->addItem("Wayland", QStringLiteral("wayland"));
+    displayBackendCombo_->addItem("X11", QStringLiteral("x11"));
+    displayBackendCombo_->setToolTip("Automatic is Wayland when the desktop has it, X11 otherwise.");
+    general->addWidget(displayBackendCombo_);
 
     general->addStretch();
 
     // ---- Graphics ------------------------------------------------------
     auto* graphics = add_tab("Graphics");
-    graphics->addWidget(new QLabel("Render path"));
-    renderPathCombo_ = new QComboBox(this);
-    // OpenGL is the system's own GLES driver, for hardware Vulkan does not
-    // run on.
-    renderPathCombo_->addItem("Vulkan (recommended)");
-    renderPathCombo_->addItem("OpenGL");
-    graphics->addWidget(renderPathCombo_);
-
     graphics->addWidget(new QLabel("GPU"));
     gpuCombo_ = new QComboBox(this);
     for (const auto& gpu : enumerate_gpus()) {
@@ -133,135 +118,33 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     }
     graphics->addWidget(gpuCombo_);
 
-    // Sharpness only: how many pixels are drawn, never how big anything
-    // looks. The size the app lays out against is fixed at 1.0 and is
-    // not offered here, because the engine drops SSAO and its softer
-    // shadows above that (see runtime/src/main.cpp, where it is set).
-    hidpiCheck_ = new QCheckBox("HiDPI", this);
-    hidpiCheck_->setToolTip("Render at the display's own scale. Sharper on a scaled screen; "
-                             "off is blurrier and cheaper to draw.");
-    graphics->addWidget(hidpiCheck_);
+    graphics->addWidget(new QLabel("Frame rate limit"));
+    frameCapSpin_ = new QSpinBox(this);
+    frameCapSpin_->setRange(0, std::numeric_limits<int>::max());
+    // 0 leaves it to Roblox's own Maximum Frame Rate setting.
+    frameCapSpin_->setSpecialValueText("Roblox's setting");
+    frameCapSpin_->setSuffix(" FPS");
+    graphics->addWidget(frameCapSpin_);
 
-    // Size, not sharpness: lay the app out at the display's own scale so
-    // it matches the rest of the desktop. The warning is not decoration
-    // the engine reads this same scale to pick its render technique
-    // and drops SSAO above 1.0, which is measured and unavoidable from
-    // here (runtime/src/main.cpp says why).
-    followDpiCheck_ = new QCheckBox("Follow DPI", this);
-    followDpiCheck_->setToolTip(
-        "Draw the app at your display's scale, so it is the same size as the rest of the "
-        "desktop.\nWarning: the engine turns off ambient occlusion and its softer shadows "
-        "above 1.0x.");
-    graphics->addWidget(followDpiCheck_);
-    // Only means anything while the buffer is being scaled: with HiDPI
-    // off the compositor does the scaling and the engine stays at 1.0,
-    // so the control would claim to do something it cannot.
-    connect(hidpiCheck_, &QCheckBox::toggled, followDpiCheck_, &QWidget::setEnabled);
+    vsyncCheck_ = new QCheckBox("VSync", this);
+    vsyncCheck_->setToolTip("Wait for the display's refresh. Off presents frames as soon as "
+                            "they are ready.");
+    graphics->addWidget(vsyncCheck_);
 
-    windowsMaterialsCheck_ = new QCheckBox("Windows Graphical Parity (Beta)", this);
-    windowsMaterialsCheck_->setToolTip(
-        "Render with the Windows client's material shaders: its reflections, shine and normal "
-        "maps. The Windows files this needs come from Roblox's own servers, for the Windows "
-        "version that matches your APK; without one, or with this off, Stud renders as the "
-        "Android client does.");
-    graphics->addWidget(windowsMaterialsCheck_);
-
-    hqTexturesCheck_ = new QCheckBox("HQ Textures (Unstable)", this);
-    hqTexturesCheck_->setToolTip(
-        "Full-quality textures and cursors. Disables normal maps; still being investigated.");
-    graphics->addWidget(hqTexturesCheck_);
-
-    // Stud's own upscaler. The engine renders at the window's logical size
-    // what HiDPI off already does, at scale 1.0, so its UI size,
-    // rounded corners and SSAO are all untouched, and Stud builds the
-    // presented frame from that image instead of letting the compositor
-    // stretch it.
-    //
-    // So it belongs to HiDPI being OFF: with HiDPI on the engine already
-    // draws every real pixel and there is nothing to upscale from.
-    upscalingCheck_ = new QCheckBox("Upscaling", this);
-    upscalingCheck_->setToolTip(
-        "Rebuild the frame at full resolution instead of letting the compositor stretch it.\n"
-        "Needs HiDPI off, which is where the game renders below the screen's resolution.\n"
-        "\n"
-        "Which filter does the rebuilding is the setting below.");
-    graphics->addWidget(upscalingCheck_);
-
-    // There is no sharpness control. Both upscalers are pinned to
-    // maximum and neither reads one: RAVU because below maximum its
-    // picture stops being worth its cost and lands where SGSR already
-    // is, SGSR because softening the edges it exists to reconstruct
-    // only makes it worse. A slider whose whole travel makes the result
-    // worse is a way to get a bad result by accident.
-
-    // Which filter does the upscaling. The data on each item is the
-    // name choose_upscaler() parses, so adding one means a line here and
-    // a line there, and nothing in between has to know about it.
-    auto* upscalerRow = new QHBoxLayout();
-    upscalerRow->addWidget(new QLabel("Upscaler", this));
-    upscalerCombo_ = new QComboBox(this);
-    upscalerCombo_->addItem("RAVU-Zoom AR", QStringLiteral("ravu-ar"));
-    upscalerCombo_->addItem("SGSR1 ED", QStringLiteral("sgsr-ed"));
-    upscalerRow->addWidget(upscalerCombo_);
-    // Only a choice the user makes is remembered; updateUpscalerControls()
-    // blocks this while it shows the GL paths' fixed answer.
-    connect(upscalerCombo_, &QComboBox::currentIndexChanged, this, [this]() {
-        upscalerWanted_ = upscalerCombo_->currentData().toString();
-    });
-    upscalerRow->addStretch();
-    graphics->addLayout(upscalerRow);
-
-    // The output resolution only means anything while the upscaler is the
-    // thing producing the frame.
-    auto sync_upscale_controls = [this]() { updateUpscalerControls(); };
-    connect(hidpiCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
-        sync_upscale_controls();
-    });
-    connect(upscalingCheck_, &QCheckBox::toggled, this, [sync_upscale_controls]() {
-        sync_upscale_controls();
-    });
+    graphics->addWidget(new QLabel("Presentation mode"));
+    presentationCombo_ = new QComboBox(this);
+    presentationCombo_->addItem("Rosemary's choice", QString());
+    presentationCombo_->addItem("FIFO", QStringLiteral("fifo"));
+    presentationCombo_->addItem("FIFO relaxed", QStringLiteral("fifo_relaxed"));
+    presentationCombo_->addItem("Mailbox", QStringLiteral("mailbox"));
+    presentationCombo_->addItem("Immediate", QStringLiteral("immediate"));
+    graphics->addWidget(presentationCombo_);
 
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
-    mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Stud's own window.");
+    mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Roblox.");
     graphics->addWidget(mangohudCheck_);
-    // Connected only once the controls the slot updates exist.
-    connect(renderPathCombo_, &QComboBox::currentIndexChanged, this,
-            &SettingsWindow::onRenderPathChanged);
-    // Frame rate while Stud is in the background.
-    //
-    // Background means both halves of it: hidden (minimised, another
-    // workspace, covered) and merely unfocused. A slider rather than a
-    // checkbox because the useful answer is a number: a few frames a
-    // second keeps the game alive and costs almost nothing, while someone
-    // recording, waiting on a download, or watching it on a second
-    // monitor wants it left alone. One step past the top reads as
-    // Unlimited, so "do not throttle" is a position on the same control
-    // rather than a second one.
-    backgroundFpsLabel_ = new QLabel(this);
-    graphics->addWidget(backgroundFpsLabel_);
-    backgroundFpsSlider_ = new QSlider(Qt::Horizontal, this);
-    backgroundFpsSlider_->setRange(1, stud::config::kBackgroundFpsUnlimited + 1);
-    backgroundFpsSlider_->setSingleStep(1);
-    backgroundFpsSlider_->setPageStep(10);
-    backgroundFpsSlider_->setToolTip(
-        "Frames per second while Stud is not the window you are using, minimised,\n"
-        "on another workspace, covered, or simply alt-tabbed away. Rendering a game\n"
-        "at full rate for a window nobody is looking at wastes GPU and CPU.\n"
-        "All the way right is Unlimited.");
-    graphics->addWidget(backgroundFpsSlider_);
-    connect(backgroundFpsSlider_, &QSlider::valueChanged, this,
-            &SettingsWindow::onBackgroundFpsChanged);
 
     graphics->addStretch();
-
-    // ---- Discord RPC ---------------------------------------------------
-    auto* discord = add_tab("Discord RPC");
-    discordCheck_ = new QCheckBox("Discord Rich Presence", this);
-    discord->addWidget(discordCheck_);
-    discordJoinCheck_ = new QCheckBox("Show a Join server button", this);
-    discord->addWidget(discordJoinCheck_);
-    connect(discordCheck_, &QCheckBox::toggled, discordJoinCheck_, &QWidget::setEnabled);
-    discord->addStretch();
 
     // ---- About ---------------------------------------------------------
     auto* about = add_tab("About");
@@ -285,8 +168,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     auto* aboutText = new QLabel(
         "<div style='text-align:center'>"
         "<p><b>Version " STUD_VERSION "</b></p>"
-        "<p>A Linux desktop wrapper that runs the real, unmodified<br>"
-        "Roblox Android app.</p>"
+        "<p>Runs Roblox's real, unmodified macOS client<br>"
+        "on Linux.</p>"
         "<p><a href=\"https://github.com/CatPieLeaf/Stud\">"
         "CatPieLeaf/Stud</a></p>"
         "</div>",
@@ -325,25 +208,15 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     statusLabel_ = new QLabel(this);
     // The status line doubles as where an available update is announced,
-    // so it has to render a link and open it. The Roblox one opens the APK
-    // picker here rather than a page, so links are handled, not opened.
+    // so it has to render a link and open it.
     statusLabel_->setTextFormat(Qt::RichText);
     statusLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    connect(statusLabel_, &QLabel::linkActivated, this, [this](const QString& link) {
-        if (link == QLatin1String(kBrowseApkLink)) {
-            onBrowseApkClicked();
-        } else {
-            QDesktopServices::openUrl(QUrl(link));
-        }
-    });
+    statusLabel_->setOpenExternalLinks(true);
     layout->addWidget(statusLabel_);
 
-    // Ask GitHub whether there is a newer Stud, and Roblox whether the
-    // imported build is current. The tray may have asked already, in which
+    // Ask GitHub whether there is a newer Stud. The tray may have asked already, in which
     // case this costs nothing and the answer is remembered; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this,
-            [this] { showIdleStatus(); });
-    connect(UpdateCheck::instance(), &UpdateCheck::robloxOutdatedFound, this,
             [this] { showIdleStatus(); });
     UpdateCheck::start();
 
@@ -362,10 +235,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 // The defaults come from a default-constructed StudSettings, which is
 // where they are already defined, writing them out again here would be a
 // second copy to drift out of step with the first.
-//
-// The APK picker is deliberately absent: its "default" is having no APK,
-// and a stray right-click that throws away the imported build is not a
-// convenience. Changing it is what the Browse button is for.
 void SettingsWindow::installResets() {
     const stud::config::StudSettings d;
     auto add = [this](QWidget* widget, std::function<void()> reset) {
@@ -380,38 +249,15 @@ void SettingsWindow::installResets() {
         const int index = gpuCombo_->findData(default_gpu_index());
         gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
-    add(hidpiCheck_, [this, d] { hidpiCheck_->setChecked(d.hidpi); });
-    add(followDpiCheck_, [this, d] { followDpiCheck_->setChecked(d.follow_dpi); });
-    add(windowsMaterialsCheck_, [this, d] { windowsMaterialsCheck_->setChecked(d.windows_materials); });
-    add(hqTexturesCheck_, [this, d] { hqTexturesCheck_->setChecked(d.hq_textures); });
-    add(upscalingCheck_, [this, d] { upscalingCheck_->setChecked(d.upscaling); });
-    // TEMPORARY, with the rest of the filter comparison.
-    add(upscalerCombo_, [this, d] {
-        const int index = upscalerCombo_->findData(QString::fromStdString(d.upscaler_choice));
-        upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
-    });
-    add(smoothZoomCheck_, [this, d] { smoothZoomCheck_->setChecked(d.smooth_zoom); });
+    add(frameCapSpin_, [this, d] { frameCapSpin_->setValue(d.frame_cap); });
+    add(vsyncCheck_, [this, d] { vsyncCheck_->setChecked(d.vsync); });
+    add(presentationCombo_, [this, d] { select_data(presentationCombo_, d.presentation_mode); });
+    add(menuBarCombo_, [this, d] { select_data(menuBarCombo_, d.menu_bar); });
+    add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
+    add(controlEditKeysCheck_, [this, d] { controlEditKeysCheck_->setChecked(d.control_edit_keys); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
-    add(backgroundFpsSlider_, [this, d] {
-        // Unlimited is stored as 0 and lives at the far end of the slider,
-        // the same conversion loadFromDisk does.
-        const int position = d.background_fps <= stud::config::kBackgroundFpsNoLimit
-                                 ? stud::config::kBackgroundFpsUnlimited + 1
-                                 : d.background_fps;
-        backgroundFpsSlider_->setValue(position);
-        onBackgroundFpsChanged(position);
-    });
     add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
-    add(closeOnLeaveCheck_, [this, d] { closeOnLeaveCheck_->setChecked(d.close_on_leave); });
     add(trayCheck_, [this, d] { trayCheck_->setChecked(d.system_tray); });
-    add(serverRegionCheck_,
-        [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
-    add(discordCheck_, [this, d] { discordCheck_->setChecked(d.discord_rich_presence); });
-    add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
-    add(renderPathCombo_, [this] {
-        // Vulkan: the engine's own path, and the first entry.
-        renderPathCombo_->setCurrentIndex(0);
-    });
 }
 
 bool SettingsWindow::eventFilter(QObject* watched, QEvent* event) {
@@ -442,48 +288,15 @@ void SettingsWindow::loadFromDisk() {
     if (index >= 0) {
         gpuCombo_->setCurrentIndex(index);
     }
-    hidpiCheck_->setChecked(settings.hidpi);
-    followDpiCheck_->setChecked(settings.follow_dpi);
-    followDpiCheck_->setEnabled(settings.hidpi);
-    windowsMaterialsCheck_->setChecked(settings.windows_materials);
-    hqTexturesCheck_->setChecked(settings.hq_textures);
-    upscalingCheck_->setChecked(settings.upscaling);
-    upscalingCheck_->setEnabled(!settings.hidpi);
-    {
-        // TEMPORARY, with the rest of the filter comparison. An
-        // unrecognised name leaves the box on its first entry rather
-        // than adding one nothing can render.
-        upscalerWanted_ = QString::fromStdString(settings.upscaler_choice);
-        updateUpscalerControls();
-    }
-    smoothZoomCheck_->setChecked(settings.smooth_zoom);
-    // Unlimited is stored as 0 and lives at the far end of the slider.
-    const int fps_position = settings.background_fps <= stud::config::kBackgroundFpsNoLimit
-                                 ? stud::config::kBackgroundFpsUnlimited + 1
-                                 : settings.background_fps;
-    backgroundFpsSlider_->setValue(fps_position);
-    onBackgroundFpsChanged(fps_position);
+    frameCapSpin_->setValue(settings.frame_cap);
+    vsyncCheck_->setChecked(settings.vsync);
+    select_data(presentationCombo_, settings.presentation_mode);
+    select_data(menuBarCombo_, settings.menu_bar);
+    select_data(displayBackendCombo_, settings.display_backend);
+    controlEditKeysCheck_->setChecked(settings.control_edit_keys);
     mangohudCheck_->setChecked(settings.mangohud);
     gamemodeCheck_->setChecked(settings.gamemode);
-    closeOnLeaveCheck_->setChecked(settings.close_on_leave);
     trayCheck_->setChecked(settings.system_tray);
-    serverRegionCheck_->setChecked(settings.server_region_notification);
-    discordCheck_->setChecked(settings.discord_rich_presence);
-    discordJoinCheck_->setChecked(settings.discord_join_button);
-    discordJoinCheck_->setEnabled(settings.discord_rich_presence);
-    // Carried through untouched: the window offers no field for it, but a
-    // hand-edited id must survive a save.
-    // The version of the APK Stud actually has, read out of its own
-    // manifest, not a path, and not the name of whatever file it was
-    // copied from. That name is shown only while the user is picking;
-    // after import the useful fact is which Roblox build this is.
-    pickedApkPath_.clear();
-    apkPathEdit_->setText(storedApkLabel());
-
-    const int path_index =
-        settings.graphics_mode == stud::config::GraphicsMode::kVulkan ? kRenderPathVulkan : kRenderPathOpenGL;
-    renderPathCombo_->setCurrentIndex(path_index);
-    onRenderPathChanged(path_index);
 }
 
 namespace {
@@ -568,103 +381,7 @@ void SettingsWindow::showIdleStatus() {
     if (UpdateCheck::updateAvailable()) {
         lines << link.arg(UpdateCheck::releasesUrl(), QStringLiteral("Your Stud version is outdated!"));
     }
-    if (UpdateCheck::robloxOutdated()) {
-        lines << link.arg(QLatin1String(kBrowseApkLink),
-                          QStringLiteral("Your Roblox version is outdated!"));
-    }
     statusLabel_->setText(lines.join(QStringLiteral("<br>")));
-}
-
-void SettingsWindow::onRenderPathChanged(int) { updateUpscalerControls(); }
-
-// The upscaler box follows the render path. RAVU is a Vulkan compute
-// shader; the GL paths scale with SGSR's own GLES shader whatever is
-// chosen, so there the box shows that and is greyed out. The user's own
-// choice is kept aside and comes back on Vulkan, and it is what is saved.
-void SettingsWindow::updateUpscalerControls() {
-    const bool available = !hidpiCheck_->isChecked();
-    upscalingCheck_->setEnabled(available);
-    const bool upscaling = available && upscalingCheck_->isChecked();
-    const bool vulkan = renderPathCombo_->currentIndex() == kRenderPathVulkan;
-    const QSignalBlocker block(upscalerCombo_);
-    if (vulkan) {
-        const int index = upscalerCombo_->findData(upscalerWanted_);
-        upscalerCombo_->setCurrentIndex(index >= 0 ? index : 0);
-        upscalerCombo_->setEnabled(upscaling);
-        upscalerCombo_->setToolTip(
-            "Which filter rebuilds the frame at full resolution.\n"
-            "\n"
-            "RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
-            "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
-            "\n"
-            "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
-            "The one to pick on a laptop or an integrated GPU.");
-    } else {
-        upscalerCombo_->setCurrentIndex(upscalerCombo_->findData(QStringLiteral("sgsr-ed")));
-        upscalerCombo_->setEnabled(false);
-        upscalerCombo_->setToolTip(
-            "This render path always upscales with SGSR1 ED.\n"
-            "RAVU-Zoom AR is a Vulkan compute shader and runs on the Vulkan path only.");
-    }
-}
-
-
-// What the picker shows when it is not mid-pick: which Roblox build
-// Stud has, read out of the stored APK's own manifest. Empty when there
-// is no APK or its manifest cannot be read, so the field falls back to
-// its placeholder rather than claiming a version.
-QString SettingsWindow::storedApkLabel() const {
-    const std::string version =
-        stud::android_glue::apk_version_name(stud::paths::stored_apk_path());
-    if (version.empty()) return {};
-    return QStringLiteral("Loaded version: %1").arg(QString::fromStdString(version));
-}
-
-void SettingsWindow::onBackgroundFpsChanged(int value) {
-    backgroundFpsLabel_->setText(
-        value > stud::config::kBackgroundFpsUnlimited
-            ? QStringLiteral("Background frame rate: Unlimited")
-            : QStringLiteral("Background frame rate: %1 FPS").arg(value));
-}
-
-void SettingsWindow::onBrowseApkClicked() {
-    // Bundles too: Google Play ships Roblox as a split-APK bundle, so an
-    // .apkm (APKMirror) or .apks (SAI) is easier to obtain than a merged
-    // .apk and is what most people will actually have. Stud detects which
-    // it was given by content, not extension.
-    QString path = QFileDialog::getOpenFileName(
-        this, "Select Roblox APK or bundle", QString(),
-        "Roblox APK or bundle (*.apk *.apkm *.apks *.xapk);;APK files (*.apk);;"
-        "Split-APK bundles (*.apkm *.apks *.xapk)");
-    if (!path.isEmpty()) {
-        pickedApkPath_ = path;
-        apkPathEdit_->setText(QFileInfo(path).fileName());
-    }
-}
-
-// A folder of split APKs: packed into one bundle in Stud's APK directory,
-// which then goes through the same checks and import as a picked bundle.
-// The import keeps only the stored APK there, so the packed bundle goes
-// away with the first successful import.
-void SettingsWindow::onBrowseApkFolderClicked() {
-    const QString dir = QFileDialog::getExistingDirectory(this, "Select the folder holding Roblox's split APKs");
-    if (dir.isEmpty()) return;
-    if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
-        statusLabel_->setText("Could not create Stud's APK directory.");
-        return;
-    }
-    statusLabel_->setText("Packing the folder's APKs...");
-    QApplication::processEvents();
-    const QString bundle = QString::fromStdString(stud::paths::apk_dir()) + "/picked-folder.apks";
-    try {
-        stud::android_glue::bundle_split_folder(dir.toStdString(), bundle.toStdString());
-    } catch (const stud::android_glue::ExtractError& e) {
-        statusLabel_->setText(QString("That folder is not a Roblox split APK set Stud can use: %1").arg(e.what()));
-        return;
-    }
-    pickedApkPath_ = bundle;
-    apkPathEdit_->setText(QFileInfo(dir).fileName() + "/");
-    statusLabel_->setText("Folder packed. Save to import it.");
 }
 
 // Save, stop the running session, start it again. The whole point is the
@@ -730,9 +447,8 @@ void SettingsWindow::onRestartClicked() {
     // ones and look like the change did nothing.
     onSaveClicked();
     if (!stud_session_is_running()) {
-        // Save already started one (it does that when the APK changed), or
-        // there was nothing running to begin with.
-        statusLabel_->setText("Settings saved. Stud started.");
+        // Nothing running: the next launch reads what was saved.
+        statusLabel_->setText("Settings saved.");
         return;
     }
     statusLabel_->setText("Restarting Stud...");
@@ -746,9 +462,8 @@ void SettingsWindow::onRestartClicked() {
 }
 
 void SettingsWindow::onSaveClicked() {
-    // From what is on disk: the file holds settings this window does not show
-    // (textureCache, webLogin and more), and a default here would overwrite
-    // every one of them. A file that cannot be read is not overwritten at all.
+    // From what is on disk: the file may hold keys this window does not
+    // show. A file that cannot be read is not overwritten at all.
     stud::config::StudSettings settings;
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
@@ -761,219 +476,22 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
-    settings.hidpi = hidpiCheck_->isChecked();
-    settings.follow_dpi = followDpiCheck_->isChecked();
-    settings.windows_materials = windowsMaterialsCheck_->isChecked();
-    settings.hq_textures = hqTexturesCheck_->isChecked();
-    settings.upscaling = upscalingCheck_->isChecked();
-    // TEMPORARY, with the rest of the filter comparison.
-    settings.upscaler_choice = upscalerWanted_.toStdString();
-    settings.smooth_zoom = smoothZoomCheck_->isChecked();
-    settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
-                                  ? stud::config::kBackgroundFpsNoLimit
-                                  : backgroundFpsSlider_->value();
+    settings.frame_cap = frameCapSpin_->value();
+    settings.vsync = vsyncCheck_->isChecked();
+    settings.presentation_mode = selected_data(presentationCombo_);
+    settings.menu_bar = selected_data(menuBarCombo_);
+    settings.display_backend = selected_data(displayBackendCombo_);
+    settings.control_edit_keys = controlEditKeysCheck_->isChecked();
     settings.mangohud = mangohudCheck_->isChecked();
     settings.gamemode = gamemodeCheck_->isChecked();
-    settings.close_on_leave = closeOnLeaveCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
-    settings.server_region_notification = serverRegionCheck_->isChecked();
-    settings.discord_rich_presence = discordCheck_->isChecked();
-    settings.discord_join_button = discordJoinCheck_->isChecked();
-    const int render_path = renderPathCombo_->currentIndex();
-    settings.graphics_mode = render_path == kRenderPathVulkan ? stud::config::GraphicsMode::kVulkan
-                                                               : stud::config::GraphicsMode::kOpenGL;
-    // Take a copy, and use the copy.
-    //
-    // The window is a picker: a user who picks an APK out of ~/Downloads
-    // and then clears Downloads should not discover weeks later that
-    // Stud will no longer launch. Stud keeps exactly one APK of its own,
-    // under one fixed name in its data directory, and importing another
-    // overwrites it, so nothing points at the user's own file and
-    // there is never a second copy quietly aging on disk.
-    const QString stored = QString::fromStdString(stud::paths::stored_apk_path());
-    bool imported = false;
-    bool restart_session = false;
-    // A session stopped for the import comes back even when the import
-    // fails, on whichever APK is in place by then.
-    const auto put_back_session = [&restart_session] {
-        if (restart_session) relaunch_stud();
-    };
-    if (!pickedApkPath_.isEmpty() &&
-        QFileInfo(pickedApkPath_).absoluteFilePath() != QFileInfo(stored).absoluteFilePath()) {
-        // Refuse an APK Stud cannot run before anything is replaced: the
-        // engine is taken out of it now, into a file beside the cache,
-        // and only a picked APK that yields one gets imported. Importing
-        // first stored the bad APK over the good one, and every launch
-        // after that failed.
-        statusLabel_->setText("Checking the APK...");
-        QApplication::processEvents();
-        const std::string candidate_so =
-            stud::android_glue::default_libroblox_cache_path() + ".next";
-        try {
-            stud::android_glue::extract_apk_native_library(pickedApkPath_.toStdString(),
-                                                            "libroblox.so", candidate_so);
-        } catch (const stud::android_glue::ExtractError&) {
-            QFile::remove(QString::fromStdString(candidate_so));
-            statusLabel_->setText(
-                "That file is not a Roblox APK Stud can run (it has no x86_64 Roblox engine). "
-                "Nothing was changed.");
-            return;
-        }
-        // The engine alone is not enough. Its x86_64 split of a Google Play
-        // bundle carries the engine and nothing else: no manifest version,
-        // no assets, no CA bundle. Imported on its own it starts, makes no
-        // network connection at all and draws nothing -- live-reported as
-        // a window the desktop showed through.
-        bool complete = false;
-        try {
-            complete = !stud::android_glue::apk_version_name(pickedApkPath_.toStdString()).empty() &&
-                       stud::android_glue::apk_has_asset(pickedApkPath_.toStdString(),
-                                                         "ssl/cacert.pem");
-        } catch (const stud::android_glue::ExtractError&) {
-            complete = false;
-        }
-        if (!complete) {
-            QFile::remove(QString::fromStdString(candidate_so));
-            statusLabel_->setText(
-                "That file is only part of Roblox: it has the engine but not the base APK "
-                "(it is probably one split out of a bundle). Pick the whole bundle (.apkm, "
-                ".apks, .xapk) or a full APK. Nothing was changed.");
-            return;
-        }
-        // What this version would need from this Stud. One it cannot start
-        // is turned down while the one already imported still works.
-        try {
-            const auto report = stud::android_glue::check_apk(pickedApkPath_.toStdString(), candidate_so);
-            if (!report.blocking.empty()) {
-                QFile::remove(QString::fromStdString(candidate_so));
-                statusLabel_->setText(
-                    QString("This version of Roblox isn't supported by this Stud yet (%1). Nothing "
-                            "was changed.")
-                        .arg(QString::fromStdString(report.blocking.front())));
-                return;
-            }
-            for (const std::string& line : report.warnings) {
-                std::printf("stud: !!! this APK: %s\n", line.c_str());
-            }
-            std::fflush(stdout);
-        } catch (const std::exception& e) {
-            // The check found the file unreadable; the engine itself decides.
-            std::printf("stud: could not check this APK: %s\n", e.what());
-            std::fflush(stdout);
-        }
-        // Stop the session BEFORE replacing anything underneath it.
-        //
-        // A running Stud has the extracted libroblox.so mapped and the
-        // engine's caches open; importing over them while it runs takes
-        // it down, live-reported as "if someone loads Stud's APK while
-        // Stud is open, Stud crashes". The runtime also clears everything
-        // derived from the previous build on the next launch, which is
-        // not a thing to do to a live process either.
-        //
-        // Put back afterwards only if there was one: replacing the APK
-        // from a closed Stud should not start a game.
-        if (stud_session_is_running()) {
-            statusLabel_->setText("Stopping Stud to replace the APK...");
-            QApplication::processEvents();
-            // Before the stop: the end of a session is otherwise the
-            // signal to quit, and the import below takes long enough for
-            // the tray to act on it.
-            hold_for_relaunch();
-            terminate_stud_session();
-            restart_session = true;
-        }
-        if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
-            QFile::remove(QString::fromStdString(candidate_so));
-            statusLabel_->setText("Could not create Stud's APK directory.");
-            put_back_session();
-            return;
-        }
-        statusLabel_->setText("Importing the APK...");
-        QApplication::processEvents();
-        // Written beside the real file and renamed over it, so an
-        // interrupted import cannot leave half an APK in place of a
-        // working one.
-        const QString partial = stored + ".part";
-        QFile::remove(partial);
-        if (!QFile::copy(pickedApkPath_, partial) ||
-            (QFile::exists(stored) && !QFile::remove(stored)) ||
-            !QFile::rename(partial, stored)) {
-            QFile::remove(partial);
-            QFile::remove(QString::fromStdString(candidate_so));
-            statusLabel_->setText(QString("Could not copy the APK into %1, is there room?")
-                                       .arg(QString::fromStdString(stud::paths::apk_dir())));
-            put_back_session();
-            return;
-        }
-        // Anything else in there is not Stud's: an earlier build kept
-        // the picked file under its own name, and leaving a second
-        // 230MB copy behind is exactly what keeping one APK is meant to
-        // avoid.
-        QDir store(QString::fromStdString(stud::paths::apk_dir()));
-        for (const QString& name : store.entryList(QDir::Files | QDir::NoDotAndDotDot)) {
-            if (name != QFileInfo(stored).fileName()) store.remove(name);
-        }
-        imported = true;
-        // The engine checked above is this APK's; it becomes the cache.
-        const std::string so_path = stud::android_glue::default_libroblox_cache_path();
-        if (std::rename(candidate_so.c_str(), so_path.c_str()) == 0) {
-            std::ofstream(stud::paths::engine_source_stamp_path(), std::ios::trunc)
-                << stud::android_glue::apk_source_fingerprint(stored.toStdString()) << "\n";
-        }
-    }
-    const std::string apk = stored.toStdString();
-
-    // Once-per-import work: extract libroblox.so from the chosen
-    // APK, once, right here at APK-selection time, not on every game
-    // launch. Only runs when the APK path actually changed (or no
-    // cached extraction exists yet at all); an unrelated settings
-    // change (GPU, HiDPI, ...) with the same APK re-saves without
-    // touching this. No patching. Real bionic Process B loads the
-    // extracted file completely unmodified (confirmed this session:
-    // real bionic dlopen() resolves libroblox.so's entire real
-    // dependency graph natively, zero byte patches needed).
-    std::string cache_path = stud::android_glue::default_libroblox_cache_path();
-    bool cache_exists = std::ifstream(cache_path).good();
-    // Compare the APK's own identity, not just its path: re-saving the
-    // same path after replacing the file with a newer build has to
-    // re-extract, and it silently did not.
-    const std::string apk_fingerprint = stud::android_glue::apk_source_fingerprint(apk);
-    const std::string fingerprint_path = stud::paths::engine_source_stamp_path();
-    std::string cached_fingerprint;
-    if (std::ifstream stamp{fingerprint_path}) std::getline(stamp, cached_fingerprint);
-    if (QFile::exists(stored) &&
-        (imported || !cache_exists || cached_fingerprint != apk_fingerprint)) {
-        try {
-            stud::android_glue::extract_apk_native_library(apk, "libroblox.so", cache_path);
-            std::ofstream(fingerprint_path, std::ios::trunc) << apk_fingerprint << "\n";
-        } catch (const stud::android_glue::ExtractError& e) {
-            statusLabel_->setText(QString("Failed to extract libroblox.so from the selected APK: %1").arg(e.what()));
-            put_back_session();
-            return;
-        }
-    }
-
     try {
         stud::config::save_settings(stud::config::default_config_path(), settings);
-        // Back to the version, now that the picked name has served its
-        // purpose (saying what was about to be imported).
-        pickedApkPath_.clear();
-        apkPathEdit_->setText(storedApkLabel());
-        if (restart_session) {
-            // As a new process, the way closing and reopening Stud does it;
-            // see relaunch_stud().
-            statusLabel_->setText("Starting Stud again...");
-            QApplication::processEvents();
-            relaunch_stud();
-        } else {
-            statusLabel_->setText("Settings saved.");
-        }
+        statusLabel_->setText(stud_session_is_running()
+                                  ? "Settings saved. They apply the next time Roblox starts."
+                                  : "Settings saved.");
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(QString("Failed to save settings: %1").arg(e.what()));
-        put_back_session();
-    } catch (const std::runtime_error& e) {
-        statusLabel_->setText(QString("Failed to save render backend setting: %1").arg(e.what()));
-        put_back_session();
     }
 }
 

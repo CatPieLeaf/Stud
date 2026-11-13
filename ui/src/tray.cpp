@@ -9,24 +9,15 @@
 // Ends a running session, defined in main.cpp, declared here because
 // the tray is the only other caller.
 namespace stud::ui { void terminate_stud_session(); }
-// Defined in main.cpp: whether a crash report is on screen right now.
-namespace stud::ui { bool crash_dialog_is_open(); }
-namespace stud::ui { bool relaunch_is_pending(); }
-// Defined in main.cpp: whether the session that just ended said it
-// meant to. See note_clean_exit().
-namespace stud::ui { bool session_ended_cleanly(); }
-
 #include "update_check.h"
 
 #include <QApplication>
-#include <QClipboard>
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusReply>
 #include <QDBusVariant>
 
 #include <cstdio>
-#include <QFile>
 #include <QDir>
 #include <QDateTime>
 #include <QFileDialog>
@@ -39,14 +30,9 @@ namespace stud::ui { bool session_ended_cleanly(); }
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPointer>
-#include <QProcess>
 #include <QSystemTrayIcon>
-#include <QTextStream>
 #include <QTimer>
 
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
 
 #include <cstdlib>
 #include <string>
@@ -54,39 +40,6 @@ namespace stud::ui { bool session_ended_cleanly(); }
 namespace stud::ui {
 
 namespace {
-
-// Where render-host records the link to the server the player is
-// currently in, so the tray can offer it without needing to speak the
-// render protocol. A real https link to that one server, not an
-// invite: minting one of those needs the Lua SocialService inside an
-// experience (see ui/src/main.cpp's --game-info). Written on every presence change and removed on the
-// way back to the app shell, so its absence means "not in a game".
-QString server_link_path() {
-    return QString::fromStdString(stud::paths::private_dir() + "/invite");
-}
-
-QString read_server_link() {
-    QFile file(server_link_path());
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
-    return QTextStream(&file).readAll().trimmed();
-}
-
-// The session is render-host: it lives exactly as long as the game does.
-//
-// Tested with the same flock render-host holds for its whole life, not by
-// looking for its socket file. A socket file outlives a SIGKILLed process
-// nothing unlinks it, so the tray would have sat there forever
-// believing a dead session was alive. The kernel releases a lock however
-// the holder dies, so this cannot go stale.
-bool session_is_running() {
-    const std::string path = stud::paths::runtime_dir() + "/stud.lock";
-    const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (fd < 0) return true;  // Cannot tell: do not kill the tray over it.
-    const bool free_to_take = ::flock(fd, LOCK_EX | LOCK_NB) == 0;
-    if (free_to_take) ::flock(fd, LOCK_UN);
-    ::close(fd);
-    return !free_to_take;
-}
 
 // Whether a system tray exists, as Qt sees it.
 //
@@ -126,8 +79,8 @@ bool Tray::show() {
     // for the rest of the session, while the game carried on running with
     // no way back to the menu.
     //
-    // The session's own lifetime is what ends this process (see
-    // checkSessionAlive), not whether a window happens to be open.
+    // The client's exit is what ends this process (main.cpp), not whether
+    // a window happens to be open.
     QApplication::setQuitOnLastWindowClosed(false);
 
     icon_ = new QSystemTrayIcon(QIcon(":/stud-logo-color.png"), this);
@@ -138,7 +91,6 @@ bool Tray::show() {
     // check comes back saying there is one.
     menu_ = menu;
     menu->addAction(QStringLiteral("Stud settings"), this, &Tray::openSettings);
-    menu->addAction(QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
     menu->addAction(QStringLiteral("Export logs"), this, &Tray::exportLogs);
     menu->addSeparator();
     menu->addAction(QStringLiteral("About Stud"), this, &Tray::showAbout);
@@ -187,18 +139,9 @@ bool Tray::show() {
     // Ask GitHub whether there is a newer Stud, once, in the background.
     // Nothing appears unless there is; see UpdateCheck.
     connect(UpdateCheck::instance(), &UpdateCheck::updateFound, this, &Tray::showUpdateAvailable);
-    connect(UpdateCheck::instance(), &UpdateCheck::robloxOutdatedFound, this,
-            &Tray::showRobloxOutdated);
     if (UpdateCheck::updateAvailable()) showUpdateAvailable(UpdateCheck::latestVersion());
-    if (UpdateCheck::robloxOutdated()) showRobloxOutdated();
     UpdateCheck::start();
 
-    // The tray must not outlive the session it belongs to: once the game
-    // is gone there is nothing for it to be a menu for, and an icon left
-    // behind is worse than no icon.
-    auto* watchdog = new QTimer(this);
-    connect(watchdog, &QTimer::timeout, this, &Tray::checkSessionAlive);
-    watchdog->start(2000);
     return true;
 }
 
@@ -217,97 +160,19 @@ void Tray::showUpdateAvailable(const QString& latestVersion) {
     addUpdateEntry(updateAction_, QStringLiteral("Stud: version %1 is available").arg(latestVersion));
 }
 
-// There is nowhere official to download the Android app from, so the entry
-// opens Settings, where a newer APK is imported.
-void Tray::showRobloxOutdated() {
-    if (icon_ == nullptr || menu_ == nullptr || robloxAction_ != nullptr) return;
-    robloxAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Roblox"), menu_);
-    connect(robloxAction_, &QAction::triggered, this, &Tray::openSettings);
-    addUpdateEntry(robloxAction_, QStringLiteral("Stud: your Roblox version is outdated"));
-}
-
 void Tray::addUpdateEntry(QAction* action, const QString& toolTip) {
     icon_->setIcon(QIcon(QStringLiteral(":/stud-logo-update.png")));
     icon_->setToolTip(toolTip);
-    // At the top, above Settings: these are the only entries here that are
-    // news rather than a thing the user came to do. One separator below
-    // them, whether there is one entry or two.
-    const bool first = updateAction_ == nullptr || robloxAction_ == nullptr;
+    // At the top, above Settings: the only entry here that is news rather
+    // than a thing the user came to do.
     menu_->insertAction(menu_->actions().value(0), action);
-    if (first) menu_->insertSeparator(menu_->actions().value(1));
-}
-
-void Tray::checkSessionAlive() {
-    if (session_is_running()) return;
-    // A crash is exactly when the session stops running, so this watchdog
-    // and the crash report fire together -- and quitting here closes the
-    // report before it can be read. Live-caught: the dialog appeared for
-    // a split second on every crash, which looked like a Qt modality
-    // problem and was really this. The report owns the shutdown while it
-    // is up; closing it quits.
-    if (stud::ui::crash_dialog_is_open()) return;
-    // Settings stopped the session to put it back; relaunch_stud() quits.
-    if (stud::ui::relaunch_is_pending()) return;
-    // And defer BEFORE it is up, too. Waiting for the dialog to exist is
-    // a race between two one-second timers: this one noticing the
-    // session is gone, and the crash watcher deciding to report it. The
-    // clean-exit note settles it without racing -- if the session ended
-    // without one, a report is coming, and quitting now would eat it.
-    if (!stud::ui::session_ended_cleanly()) return;
-    if (icon_ != nullptr) icon_->hide();
-    QApplication::quit();
+    menu_->insertSeparator(menu_->actions().value(1));
 }
 
 void Tray::openSettings() {
     // One window, whether the request came from here or from the desktop
     // entry's own Settings action; see SettingsWindow::showSingleton().
     SettingsWindow::showSingleton();
-}
-
-void Tray::copyServerLink() {
-    const QString link = read_server_link();
-    if (link.isEmpty()) {
-        icon_->showMessage(QStringLiteral("Stud"),
-                            QStringLiteral("Not in a game, so there is no server to link to."),
-                            QSystemTrayIcon::Information, 4000);
-        return;
-    }
-    // On Wayland a clipboard offer is only accepted with the serial of a
-    // real input event on one of the application's own surfaces, and
-    // this application has no window at all while it sits in the tray
-    // (the menu is the desktop's, over D-Bus, not a Qt surface). So
-    // QClipboard::setText was silently ignored and the entry copied
-    // nothing, which is exactly what was reported.
-    //
-    // wl-copy owns the selection in its own short-lived process, which
-    // is the normal way a windowless program copies on Wayland. Qt's own
-    // clipboard is still set as well: it is what works on X11, and it
-    // costs nothing where it does not.
-    const bool wayland = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
-    if (wayland) {
-        QProcess copier;
-        copier.setProgram(QStringLiteral("wl-copy"));
-        copier.setArguments({QStringLiteral("--type"), QStringLiteral("text/plain")});
-        copier.setStandardOutputFile(QProcess::nullDevice());
-        copier.setStandardErrorFile(QProcess::nullDevice());
-        copier.start();
-        if (copier.waitForStarted(2000)) {
-            copier.write(link.toUtf8());
-            copier.closeWriteChannel();
-            // wl-copy forks and keeps serving the selection, so this
-            // returns as soon as the text has been handed over.
-            copier.waitForFinished(2000);
-        } else {
-            icon_->showMessage(
-                QStringLiteral("Stud"),
-                QStringLiteral("Could not copy: this desktop needs wl-clipboard installed."),
-                QSystemTrayIcon::Warning, 5000);
-            return;
-        }
-    }
-    QApplication::clipboard()->setText(link);
-    icon_->showMessage(QStringLiteral("Stud"), QStringLiteral("Server link copied."),
-                        QSystemTrayIcon::Information, 3000);
 }
 
 void Tray::exportLogs() {
@@ -369,8 +234,8 @@ void Tray::showAbout() {
     if (about.isNull()) {
         about = new QMessageBox(QMessageBox::NoIcon, QStringLiteral("About Stud"),
                                 QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
-                                               "A Linux desktop wrapper that runs the real, "
-                                               "unmodified Roblox Android app.<br><br>"
+                                               "Runs Roblox's real, unmodified macOS "
+                                               "client on Linux.<br><br>"
                                                "<a href=\"https://github.com/CatPieLeaf/Stud\">"
                                                "CatPieLeaf/Stud</a>"),
                                 QMessageBox::Ok);

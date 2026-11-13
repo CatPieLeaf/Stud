@@ -12,16 +12,16 @@
   <img src="https://img.shields.io/github/downloads/CatPieLeaf/Stud/total?label=Downloads&logo=github&logoColor=000000&style=for-the-badge&color=179299&labelColor=D3F6F8" alt="Downloads">
 </p>
 
-  <p align="center">Play Roblox on Linux: the real Android app, running on your desktop.</p>
+  <p align="center">Play Roblox on Linux: the real macOS client, running on your desktop.</p>
 </div>
 
-<p align="center">Stud is a <b>launcher</b>. It takes the real Roblox Android app and gives it what it needs to run on a Linux desktop: the Android framework, a window, a mouse and keyboard, and a graphics stack. The engine is never patched, and Roblox is never shipped from here.</p>
+<p align="center">Stud is a <b>launcher</b>. It downloads Roblox's real macOS client from Roblox's own servers and runs it on Linux with <a href="https://github.com/microlift/rosemary">Rosemary</a>. The client is never patched, and Roblox is never shipped from here.</p>
 
 <div align="center">
 
 [Screenshots](#screenshots) · [Why?](#why) · [Features](#features) · [Status](#status) · [What Stud is not](#not)
 
-[How it works](#how) · [Building](#building) · [Installation](#installation) · [Getting an APK](#getting-a-roblox-apk) · [Where things live](#files) · [Credits](#credits)
+[How it works](#how) · [Building](#building) · [Installation](#installation) · [Where things live](#files) · [Credits](#credits)
 
 </div>
 
@@ -77,46 +77,16 @@ It's a one-person project, built because I wanted a launcher that stays out of t
   <h4 id="features"><img src=".github/headers/features.png" width="800" alt="Features"></h4>
 </div>
 
- - Runs the **real** Roblox Android app, with the engine unpatched
- - Separate processes, as in a browser, so the GPU driver never shares a process with the engine
- - **Vulkan** by default, or **OpenGL** in Settings for hardware Vulkan doesn't run on. OpenGL runs on [gfxstream](https://github.com/google/gfxstream), with MSAA, outlines and Windows Graphical Parity just as on Vulkan
- - **Upscaling**, on by default: the game renders below your screen's resolution and Stud rebuilds the frame at full size. **RAVU-Zoom AR** is the default on Vulkan. **SGSR1 ED** is the lightweight one, for laptops and integrated GPUs, and the default on OpenGL
- - **Sound with nothing to install**: the audio device is built in, and speaks PulseAudio (which reaches PipeWire), ALSA, JACK and OSS. Voice chat is wired up, but hasn't been confirmed in a live session yet
- - Runs on **Wayland and X11**. Stud presents its own frames with no driver swapchain in between, so a late compositor costs a dropped frame instead of holding up the game
- - Controllers, with rumble
- - Smooth zoom, like the Windows client
- - Your login is encrypted on disk with AES-256-GCM, and only the key lives in the system keyring
+ - Runs the **real** Roblox macOS client, unpatched: the desktop client, with desktop graphics
+ - Downloads and updates the client from Roblox's own servers before each launch, so there is nothing to fetch by hand
+ - Two processes: Stud's launcher, and the client on Rosemary
+ - Runs on **Wayland and X11**, with Stud's own icon and taskbar entry
+ - Hides the macOS menu bar, or puts it in the title bar or a strip above the game
+ - Ctrl for copy, cut and paste, where the macOS client expects Command
+ - Frame rate limit, VSync and presentation mode in Settings
  - `roblox://` links from a browser open straight into the experience
- - In-app web panels (Messages, account pages, login challenges), and private servers from the server list
- - Copy Link puts the real invite link on your clipboard
- - Screenshots and recordings land in a `Stud` folder inside your Pictures and Videos
- - Discord Rich Presence, with an optional join button
- - Optional notification of which country the game server is in
- - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, HiDPI, GPU picker, system tray
- - Caps the frame rate while the window can't be seen
- - Export every session log as one tarball, for when you file a bug
- - Ships as an **rpm** (also in [Terra](https://terra.fyralabs.com)), a **deb**, an Arch **pkg.tar.zst**, a universal **AppImage**, a **Flatpak** and a [cpak](https://github.com/Containerpak/cpak)
-
-## Windows Graphical Parity
-
-Games look the way they do on Windows: real reflections, shine on every material, and surface detail on bricks, wood, metal and the rest, on Vulkan and OpenGL alike.
-
-It's in beta, and on by default. Turn it off in Settings and games look as they do on Android.
-
-<table align="center">
-  <tr>
-    <td><img src="https://github.com/user-attachments/assets/a73be2ce-b215-4102-b1a6-0970ee673ce3" width="260"></td>
-    <td><img src="https://github.com/user-attachments/assets/5163e1a1-f815-467d-b58c-d40e34b0ba7a" width="260"></td>
-  </tr>
-  <tr>
-    <td><img src="https://github.com/user-attachments/assets/202da4d0-a6cf-4a4c-b41a-1ffae8aeae6e" width="260"></td>
-    <td><img src="https://github.com/user-attachments/assets/f0ae93bf-f3de-4534-9256-c77818ab25c2" width="260"></td>
-  </tr>
-  <tr>
-    <td><img src="https://github.com/user-attachments/assets/dc2d82cf-8588-4751-903e-8740477c6857" width="260"></td>
-    <td><img src="https://github.com/user-attachments/assets/7ed7f751-380d-484e-a097-3aba5ead554c" width="260"></td>
-  </tr>
-</table>
+ - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, GPU picker, system tray
+ - Export every session log as one tarball, for when you file a bug; join tickets are kept out of them
 
 <br>
 
@@ -136,10 +106,10 @@ It's in beta, and on by default. Turn it off in Settings and games look as they 
 </div>
 
  - **Not affiliated with Roblox.** Stud is an independent project, not endorsed, supported or approved by Roblox Corporation.
- - **Not a distributor.** No Roblox APK is included here, mirrored here, or downloaded by anything here. You supply your own copy, and Roblox remains subject to its own terms.
+ - **Not a distributor.** No Roblox client is included or mirrored here. Stud downloads it from Roblox's own servers onto your machine, and Roblox remains subject to its own terms.
  - **Not a modding tool.** Stud does not inject code, patch the client, alter game behaviour or give you anything you would not have on a regular client, and it will not gain support for doing so. Requests for that will be ignored and closed.
  - **Not borrowed.** Stud shares no code with Sober or anything like it.
- - **Not an emulator.** There is no Android system image and no virtual machine. The app's own code runs directly, with the pieces it expects supplied around it.
+ - **Not an emulator.** There is no virtual machine. Rosemary runs the client's own x86_64 code directly, with the macOS interfaces it expects supplied around it.
 
 <br>
 
@@ -147,14 +117,12 @@ It's in beta, and on by default. Turn it off in Settings and games look as they 
   <h4 id="how"><img src=".github/headers/howitworks.png" width="800" alt="How it works"></h4>
 </div>
 
-| process | runs as | does |
-|---|---|---|
-| `stud-ui` | glibc, Qt6 | settings, deep links, starting the others, then gets out of the way |
-| `stud-runtime-bionic` | real bionic, inside `bwrap` | the engine, the JNI bridge, the Android framework stand-in |
-| `stud-render-host` | glibc | Wayland or X11, the GPU driver, Stud's own swapchain, audio |
-| `stud-webview` | glibc, Qt WebEngine | web panels and login pages, started when one opens |
+| process | does |
+|---|---|
+| `stud` | settings, deep links, downloading and updating the client, starting it, the tray, reporting a crash |
+| `rosemary` | Roblox's macOS client: its window through SDL3, Metal on Vulkan, its input and sound |
 
-Every Vulkan call the engine makes goes from the bionic process to the render host through shared-memory rings, with a Unix socket beside them. In OpenGL mode the engine uses gfxstream's guest libraries and the render host decodes them.
+The launcher stays for the whole session as the client's parent, so there is always a process left to say what happened if the client goes down.
 
 <br>
 
@@ -162,46 +130,25 @@ Every Vulkan call the engine makes goes from the bionic process to the render ho
   <h4 id="building"><img src=".github/headers/building.png" width="800" alt="Building"></h4>
 </div>
 
-> [!NOTE]
-> The dependencies need roughly **2.5 GB** of free space, almost all of it Google's NDK.
-
 ### 1 - Install the system packages
 
 ```bash
-sudo dnf install cmake ninja-build meson gcc-c++ python3 qt6-qtbase-devel qt6-qtwebengine-devel \
-  qtkeychain-qt6-devel wayland-devel wayland-protocols-devel libxkbcommon-devel \
-  libdrm-devel libXi-devel libglvnd-devel vulkan-loader-devel vulkan-headers \
-  freetype-devel openssl-devel 'pkgconfig(libavcodec)' 'pkgconfig(libavutil)' \
-  'pkgconfig(libswscale)' bubblewrap wl-clipboard
+sudo dnf install cmake ninja-build gcc-c++ cargo qt6-qtbase-devel vulkan-headers \
+  libcurl-devel libxkbcommon-devel SDL3
 ```
 
 <details>
 <summary>Debian / Ubuntu</summary>
 
 ```bash
-sudo apt install cmake ninja-build meson build-essential python3 qt6-base-dev libqt6opengl6-dev \
-  qt6-webengine-dev qtkeychain-qt6-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
-  libdrm-dev libxkbcommon-dev libxi-dev libxcb-dri3-dev libxcb-present-dev \
-  libegl1-mesa-dev libgles2-mesa-dev libvulkan-dev libfreetype-dev libssl-dev \
-  libavcodec-dev libavutil-dev libswscale-dev bubblewrap wl-clipboard
+sudo apt install cmake ninja-build build-essential cargo qt6-base-dev libqt6opengl6-dev \
+  libvulkan-dev libcurl4-openssl-dev libxkbcommon-dev libsdl3-0
 ```
 </details>
 
-FFmpeg's headers are optional: without them, in-game video has no decoders. `wl-clipboard` (or `xclip` on X11) is what Copy Link uses.
+Rosemary needs Rust 1.99 or newer and SDL 3.4.0 at runtime; see [its README](https://github.com/microlift/rosemary#building).
 
-### 2 - Dependencies
-
-Google's NDK and a real bionic from AOSP can't live in this repository. This puts both in `third_party/`:
-
-```bash
-tools/setup.sh --plan   # what it would fetch, and from where
-tools/setup.sh          # actually fetch it
-```
-
-> [!TIP]
-> Already have an NDK? Skip the download with `STUD_NDK_SRC=/path/to/android-ndk-r28c tools/setup.sh`.
-
-### 3 - Build and run
+### 2 - Build and run
 
 ```bash
 cmake -S . -B build -G Ninja
@@ -209,7 +156,9 @@ cmake --build build
 ./build/ui/stud-ui
 ```
 
-The first launch opens Settings, because Stud has no Roblox APK yet. [Get one](#getting-a-roblox-apk), point Stud at it and save. Every launch after that goes straight to Roblox.
+The build fetches Rosemary's source from its repository and compiles it. To use a Rosemary you already have, configure with `-DSTUD_BUILD_ROSEMARY=OFF` and put it on `PATH` or in `STUD_ROSEMARY`.
+
+The first launch downloads the macOS client and Rosemary's base system, a few hundred megabytes, then goes straight to Roblox.
 
 <details>
 <summary>Making packages</summary>
@@ -232,15 +181,13 @@ None of them contains Roblox. The AppImage builds inside a container, so it need
 ctest --test-dir build
 ```
 
-Tests that need a GPU, a keychain or a notification service report skipped without one. On a desktop, one real "Stud test" notification pops up.
+Tests that need a GPU or a notification service report skipped without one. On a desktop, one real "Stud test" notification pops up.
 </details>
 
 <details>
 <summary>Profiling and debugging</summary>
 
 Every debugging switch is listed in [`docs/environment.md`](docs/environment.md).
-
-For a stall a log can't explain, `-DSTUD_TRACY=ON` builds the render host with the [Tracy](https://github.com/wolfpld/tracy) client, which collects nothing until a profiler connects. It's off by default, and not even downloaded then.
 </details>
 
 <br>
@@ -249,7 +196,7 @@ For a stall a log can't explain, `-DSTUD_TRACY=ON` builds the render host with t
   <h4 id="installation"><img src=".github/headers/installation.png" width="800" alt="Installation"></h4>
 </div>
 
-Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/releases) page. Whichever you pick, you'll also need [a Roblox APK](#getting-a-roblox-apk).
+Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/releases) page.
 
 ## 🔵 R P M  ( F E D O R A )
 
@@ -304,7 +251,7 @@ Not on Flathub yet, so it's a file attached to each release rather than a remote
 cpak install github.com/catpieleaf/stud
 ```
 
-[cpak](https://github.com/Containerpak/cpak) installs from an OCI image and runs it rootless. Stud is in the [cpak store](https://cpak.it/store/apps/stud). Only your Downloads folder is visible to it, so keep your APK there.
+[cpak](https://github.com/Containerpak/cpak) installs from an OCI image and runs it rootless. Stud is in the [cpak store](https://cpak.it/store/apps/stud).
 
 ## ❄️ N I X
 
@@ -371,42 +318,7 @@ chmod +x Stud-x86_64.AppImage
 > ```
 
 > [!NOTE]
-> Install `bubblewrap` from your package manager: the AppImage deliberately doesn't bundle it, because it needs your distribution's AppArmor or SELinux policy. The other packages take care of it for you.
->
 > The rpm and Arch package need glibc 2.43: Fedora 44+ or a current rolling release. The AppImage carries its own glibc, so it's the one to use on anything older.
-
-## Getting a Roblox APK
-
-Stud doesn't include Roblox, so you bring your own copy, and you choose when it updates. It must be the **x86_64** build: Stud refuses one without it. `.apk`, `.apkm`, `.apks` and `.xapk` all work, and so does a folder of split APKs. A bundle has to be complete, not just the x86_64 split on its own.
-
-### Recommended: gplaydl
-
-[gplaydl](https://github.com/rehmatworks/gplaydl) downloads the current release straight from Google Play, through a Google account you add yourself. Set it up once:
-
-1. Install gplaydl: `pip install gplaydl`.
-2. On an Android phone, install their Authenticator app from [dispenser.gplaydl.com](https://dispenser.gplaydl.com/) and sign in with a spare Google account. Google sometimes restricts accounts it sees on unofficial clients, so don't use your main one.
-3. Open **Link gplaydl** in the app, then run this and type in the code it shows:
-
-```sh
-gplaydl link
-```
-
-Then download Roblox:
-
-```sh
-gplaydl download com.roblox.client -a x86_64 -o ./roblox
-```
-
-In Stud's Settings, click **Folder...**, choose the `roblox` folder and save.
-
-### Other sources
-
-None of these, gplaydl included, is run by or affiliated with Stud:
-
- - **[Uptodown](https://roblox.en.uptodown.com/android/download)**
- - **[APKMirror](https://www.apkmirror.com/apk/roblox-corporation/roblox/)**: pick a release, then a variant that lists x86_64.
-
-Open Settings in Stud, click **Browse...**, pick the file and save. Whichever way you pick it, the APK is copied in, so you can delete the download.
 
 <br>
 
@@ -416,10 +328,10 @@ Open Settings in Stud, click **Browse...**, pick the file and save. Whichever wa
 
 | path | what |
 |---|---|
-| `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides. `"webLogin": false` in `config.json` goes back to the app's own login screens; it isn't in Settings |
-| `~/.local/share/stud/` | your APK, the encrypted login, and the engine's own data |
-| `~/.cache/stud/` | the extracted engine, assets and caches, safe to delete |
-| `~/.local/state/stud/logs/` | one log per session, from every process. This is the file to read when something goes wrong, and the one to attach to a bug report |
+| `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides; Stud writes them into the client's `ClientAppSettings.json` at launch |
+| `~/.local/share/stud/client/` | the macOS client, as Roblox's servers ship it |
+| `~/.local/share/stud/prefix/` | Rosemary's prefix: Roblox's own settings, login and data |
+| `~/.local/state/stud/logs/` | one log per session, Stud's and the client's. This is the file to read when something goes wrong, and the one to attach to a bug report |
 
 In a Flatpak these live under the sandbox's own home, so `~/.config/stud/` becomes `~/.var/app/io.github.catpieleaf.Stud/config/stud/` and the rest follow.
 
@@ -431,26 +343,14 @@ In a Flatpak these live under the sandbox's own home, so `~/.config/stud/` becom
 
 Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
 
- - [bionic](https://android.googlesource.com/platform/bionic/): Android's C library, from AOSP's prebuilt Runtime APEX (BSD / Apache-2.0)
- - [libjnivm](https://github.com/ChristopherHX/libjnivm): the JNI virtual machine under Stud's Java layer (MIT)
- - [gfxstream](https://github.com/google/gfxstream): OpenGL mode, the ring that carries Vulkan commands, and the ETC2/EAC texture decoders, patched by `third_party/gfxstream/stud.patch` (Apache-2.0)
- - [Mesa](https://gitlab.freedesktop.org/mesa/mesa): gfxstream's guest ring stream (MIT)
- - [mpv-prescalers](https://github.com/bjin/mpv-prescalers): the RAVU-Zoom upscaler (LGPL-3.0-or-later)
- - [Snapdragon Game Super Resolution](https://github.com/SnapdragonStudios/snapdragon-gsr): the SGSR upscaler (BSD-3-Clause)
- - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): RCAS, the sharpening pass after RAVU (MIT)
- - [miniaudio](https://github.com/mackron/miniaudio): the audio device (public domain or MIT-0)
- - [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB): which button and stick is which on hundreds of controllers (Zlib)
- - [Zydis](https://github.com/zyantific/zydis) and [Zycore](https://github.com/zyantific/zycore-c): read the engine's code to find what Stud needs, instead of byte patterns that change every build (MIT)
- - [volk](https://github.com/zeux/volk): Vulkan entry points (MIT)
- - [xxHash](https://github.com/Cyan4973/xxHash): the texture cache's key (BSD-2-Clause)
- - [libdecor](https://gitlab.freedesktop.org/libdecor/libdecor): window decorations where the compositor has none, optional at runtime (MIT)
- - [wayland-protocols](https://gitlab.freedesktop.org/wayland/wayland-protocols) and [libdrm](https://gitlab.freedesktop.org/mesa/drm): Stud's present layer (MIT)
- - [nlohmann/json](https://github.com/nlohmann/json), [miniz](https://github.com/richgel999/miniz), [detex](https://github.com/hglm/detex), [PVRTDecompress](https://github.com/powervr-graphics/Native_SDK) (MIT)
+ - [Rosemary](https://github.com/microlift/rosemary): runs the macOS client on Linux (GPL-3.0)
+ - [volk](https://github.com/zeux/volk): Vulkan entry points, for the GPU picker (MIT)
+ - [nlohmann/json](https://github.com/nlohmann/json) and [miniz](https://github.com/richgel999/miniz) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Anylinux AppImages](https://github.com/pkgforge-dev/Anylinux-AppImages), [uruntime](https://github.com/VHSgunzo/uruntime) and [sharun](https://github.com/VHSgunzo/sharun): how the AppImage is built and run (MIT)
  - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The font itself is not shipped
 
-Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox engine Stud loads but never distributes. Stud is and always will be Open Source.
+Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LICENSE.exception`](LICENSE.exception)) covering the Roblox client Stud runs but never distributes. Stud is and always will be Open Source.
 
 [`NOTICE.md`](NOTICE.md) covers the rest: every third-party licence, trademarks, your Roblox account, and what does and does not leave your machine. A package installs each licence to `/usr/share/licenses/stud/`.
 

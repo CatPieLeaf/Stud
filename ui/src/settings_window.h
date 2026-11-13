@@ -9,19 +9,13 @@
 class QComboBox;
 class QCheckBox;
 class QLabel;
-class QLineEdit;
 class QPushButton;
-class QSlider;
+class QSpinBox;
 
 namespace stud::ui {
 
-// Real settings window (M8): GPU picker, HiDPI toggle, graphics mode,
-// the first real, non-placeholder piece of Stud's Qt6 UI. Backed
-// directly by stud-config's JSON file ("UI is a front-end over the JSON
-// config file, not a separate model", locked decision): loads on
-// construction, writes on Save. Plain Qt6 Widgets, no libplasma (see
-// the engineering notes' locked-decisions table for why that decision was
-// revised at M8).
+// Stud's settings window, a front-end over stud-config's JSON file: loads on
+// construction, writes on Save.
 class SettingsWindow : public QWidget {
     Q_OBJECT
 
@@ -32,9 +26,7 @@ public:
     //
     // Two of these can disagree, both loaded the same file, both write
     // the whole of it on Save, so whichever is saved last silently undoes
-    // the other. It is also the window that stops and restarts the
-    // session to replace the APK, which two of cannot do at once. So
-    // there is exactly one: in this process, and (see below) across
+    // the other. So there is exactly one: in this process, and (see below) across
     // processes too.
     static SettingsWindow* showSingleton(const QString& status = QString());
 
@@ -73,11 +65,6 @@ public:
 private slots:
     void onSaveClicked();
     void onRestartClicked();
-    void onBrowseApkClicked();
-    void onBrowseApkFolderClicked();
-    void onRenderPathChanged(int index);
-    void updateUpscalerControls();
-    void onBackgroundFpsChanged(int value);
 
 protected:
     // Right-click resets the control under the pointer; see
@@ -87,46 +74,21 @@ protected:
 private:
     void loadFromDisk();
     void installResets();
-    QString storedApkLabel() const;
-
-    // The file the user just picked, until Save imports it. The field
-    // beside the button shows a name, not a path, so it cannot be the
-    // place the choice is kept.
-    QString pickedApkPath_;
 
     QComboBox* gpuCombo_;
-    // Sharpness: whether the buffer is rendered at the display's own
-    // scale. Its off state used to write 1.0 over the display's real
-    // scale as well as the buffer's, which is why it appeared to do
-    // nothing but stretch the window; those are separate values now.
-    QCheckBox* hidpiCheck_;
-    QCheckBox* followDpiCheck_;
-    QCheckBox* upscalingCheck_;
-    // TEMPORARY, comes out with the comparison. See StudSettings::upscaler_choice.
-    QComboBox* upscalerCombo_;
-    // The upscaler the user chose, which the Vulkan path uses. The box
-    // shows SGSR on the GL paths without changing this.
-    QString upscalerWanted_;
+    QSpinBox* frameCapSpin_;
+    QCheckBox* vsyncCheck_;
+    QComboBox* presentationCombo_;
+    QComboBox* menuBarCombo_;
+    QComboBox* displayBackendCombo_;
+    QCheckBox* controlEditKeysCheck_;
+    QCheckBox* gamemodeCheck_;
+    QCheckBox* mangohudCheck_;
+    QCheckBox* trayCheck_;
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also
     // called on a palette change, hence keeping it around.
     void paintRestartIcon();
-    QCheckBox* smoothZoomCheck_;
-    QCheckBox* windowsMaterialsCheck_;
-    QCheckBox* hqTexturesCheck_;
-    QCheckBox* gamemodeCheck_;
-    QSlider* backgroundFpsSlider_;
-    QLabel* backgroundFpsLabel_;
-    QCheckBox* mangohudCheck_;
-    QCheckBox* closeOnLeaveCheck_;
-    QCheckBox* trayCheck_;
-    QCheckBox* serverRegionCheck_;
-    QCheckBox* discordCheck_;
-    QCheckBox* discordJoinCheck_;
-    QLineEdit* apkPathEdit_;
-
-    // Vulkan or OpenGL: the one choice, saved as graphics_mode.
-    QComboBox* renderPathCombo_;
 
     QLabel* statusLabel_;
 

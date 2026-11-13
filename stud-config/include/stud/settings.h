@@ -4,45 +4,18 @@
 #include <stdexcept>
 #include <string>
 
-// General settings storage (M8): the real, user-facing settings from the
-// locked decisions table (the engineering notes), GPU selection, HiDPI,
-// graphics mode (Vulkan/OpenGL). Deliberately plain C++, no Qt dependency,
-// so both `ui` (reads/writes via the settings window) and `runtime`
-// (reads the saved choice to set env vars before launching, per the
-// locked "GPU selection... sets the appropriate env var... before
-// launching the runtime process" decision) can use it without runtime
-// linking Qt.
+// Stud's settings: ~/.config/stud/config.json (XDG), which the Settings window
+// reads and writes. Plain C++, no Qt, so anything can read it.
 //
-// Same JSON file every other Stud setting lives in
-// (~/.config/stud/config.json, XDG convention), coexists with the
-// "devRenderBackend" key render/dev_backend_config.h already owns
-// (prototype-only, not part of this schema) as a sibling top-level key,
-// not a competing config path. "UI is a front-end over the JSON config
-// file, not a separate model" (locked decision); this struct's fields
-// are exactly what the settings UI reads/writes, no separate model.
+// Stud 2.0 runs Roblox's macOS client on Rosemary, so these are the choices
+// that shape how that process is started; Roblox's own settings stay in
+// Roblox's own menu.
 
 namespace stud::config {
 
-enum class GraphicsMode {
-    kVulkan,  // default on first launch, per the locked decision
-    kOpenGL,
-};
-
-// The top of the background-frame-rate range. A slider set above this
-// reads as unlimited rather than as a number.
-inline constexpr int kBackgroundFpsUnlimited = 240;
-
-// ...and how "unlimited" is stored. A number one past the top of a
-// slider is a UI detail, not a setting: it wrote `241` into a file meant
-// to be read by a person. Zero says the thing itself; no limit.
-inline constexpr int kBackgroundFpsNoLimit = 0;
-
 struct GpuSelection {
-    // Index into vkEnumeratePhysicalDevices()'s own result order, which
-    // only holds for one driver state. device_uuid is what names the GPU
-    // (ui/src/gpu_enum.h, chosen_gpu_index()); the index stands in when
-    // there is none. deviceName is for showing the choice, and being empty
-    // says nobody has made one.
+    // Index into vkEnumeratePhysicalDevices' order when it was chosen. The
+    // name and UUID find the same device again if that order changes.
     uint32_t device_index = 0;
     std::string device_name;
     std::string device_uuid;
@@ -50,175 +23,37 @@ struct GpuSelection {
 
 struct StudSettings {
     GpuSelection gpu;
-    // On by default: the buffer is the window's logical size multiplied
-    // by the display's real scale, so the compositor maps it 1:1 to
-    // physical pixels and the image is sharp. The scale comes from the
-    // compositor's fractional-scale protocol, never a guess, and is read
-    // exactly once so nothing can change it mid-session.
-    // Two independent things, deliberately.
-    //
-    // HiDPI is sharpness: whether the buffer is rendered at the display's
-    // own scale (sharp, 1:1 with the panel) or at the window's logical
-    // size and upscaled by the compositor (blurry, cheaper). It changes
-    // how many pixels are drawn, never how big anything looks.
-    //
-    // It used to be a checkbox that could not do this, because one
-    // variable held both the display's scale and the buffer's, turning
-    // it off erased the monitor's real scale and the engine was told it
-    // was on an unscaled display. Those are separate now (see
-    // android-glue's g_display_scale_120 / g_render_scale_120), so the
-    // checkbox finally means what it says.
-    bool hidpi = false;
-    // Lay the app out at the display's own scale, so it is the same
-    // physical size as the rest of the desktop.
-    //
-    // Off by default, and that is a real trade rather than a taste: the
-    // engine reads this one number to pick its render technique, and
-    // above 1.0 it takes the simplified path; no SSAO, flatter
-    // shadows. Measured at 1.00 (SSAO), 1.10 (none) and 1.25 (none), so
-    // the boundary is exactly 1.0 and no quality setting overrides it.
-    // See runtime/src/main.cpp, where the scale is decided.
-    //
-    // Only means anything with HiDPI on: with it off the buffer is
-    // already the window's logical size, where 1.0 is the size that
-    // matches the desktop.
-    bool follow_dpi = false;
-    // Stud's own upscaler: the engine renders at the window's logical
-    // size, exactly as it does with HiDPI off, and Stud builds the
-    // presented frame from that image instead of letting the compositor
-    // stretch it.
-    //
-    // Only meaningful with HiDPI off, and that is not a limitation so much
-    // as the whole design: the engine's own scale cannot be moved (below
-    // 1.0 it draws square corners, above it drops SSAO, both measured),
-    // so the engine is left believing nothing changed and the scaling
-    // happens entirely inside Stud.
-    //
-    // On by default, with HiDPI off: RAVU on Vulkan, SGSR on OpenGL.
-    bool upscaling = true;
-    // NOTE: there is no target-resolution knob either. What the upscaler
-    // writes is the window's own size in the display's pixels, which the
-    // compositor then shows 1:1, anything else means a second resample
-    // on the way to the screen.
-    // Which upscaler runs.
-    //
-    // There is deliberately no sharpness setting beside it. Both
-    // upscalers are pinned to maximum and neither reads one: RAVU
-    // because below maximum its picture stops being worth its cost and
-    // lands where SGSR already is, SGSR because softening the edges it
-    // exists to reconstruct only makes it worse. A control whose whole
-    // travel makes the result worse is a way to get a bad result by
-    // accident, and both shaders now hold their strength as a constant.
-    //
-    // A string rather than an enum: it is passed straight through to
-    // STUD_UPSCALER, so the set of valid names lives in one place
-    // (choose_upscaler in vulkan_host.cpp) beside the shaders it picks
-    // between, and nothing here has to be kept in step with it. An
-    // unrecognised name falls back to the default there, saying so.
-    std::string upscaler_choice = "ravu-ar";    // Smooth zoom: the wheel eases the camera toward the new distance
-    // instead of stepping straight to it. Off is the Android build's own
-    // behaviour, which is what Sober does.
-    bool smooth_zoom = true;
-    // What one point of Roblox TextSize is, in em, for the overlay Stud
-    // draws over a focused TextBox.
-    //
-    // While a box has focus the engine stops drawing its text and Stud
-    // draws it instead, so the two renderings have to agree or the text
-    // visibly changes size as the box is clicked. The engine's own number
-    // is not discoverable from the font: Roblox's mapping and the file
-    // both say 0.7936507937 for BuilderSans (upem 1000 over an
-    // ascender-to-descender span of 1260), and that draws visibly smaller
-    // than the engine does, while treating TextSize as the em outright
-    // draws visibly larger. The truth sits between the two and was
-    // settled by looking at it, which is why it is a setting rather than
-    // a constant: a display, a font or a Roblox update can move it, and
-    // nobody should need a rebuild to put it back.
-    float text_overlay_font_ratio = 0.85f;
-    // Frames per second while nobody can see the window, minimised, on
-    // another workspace, or fully covered.
-    //
-    // Rendering a game at full rate into a window nobody is looking at is
-    // pure waste of GPU and CPU, and on a laptop it is the difference
-    // between a warm machine and a hot one. Anything above
-    // kBackgroundFpsUnlimited means "do not throttle at all", which is
-    // what a recording or a download inside the client wants.
-    int background_fps = 30;
-    // MangoHud's performance overlay over Stud's own window. It is a
-    // Vulkan implicit layer, so it belongs on render-host: that is the
-    // process holding the real driver and the real swapchain, on both
-    // render paths (on OpenGL through its GL hook).
+
+    // A frame-rate limit Stud asks Roblox for (DFIntTaskSchedulerTargetFps),
+    // 0 to leave it to Roblox's own Maximum Frame Rate setting.
+    int frame_cap = 0;
+
+    // Whether frames wait for the display's refresh. Off, the client is told
+    // a refresh rate it never reaches (it paces itself to the rate it is
+    // told) and presents without waiting.
+    bool vsync = false;
+
+    // How frames are handed to the display: "" for Rosemary's choice, or
+    // "fifo", "fifo_relaxed", "mailbox", "immediate".
+    std::string presentation_mode;
+
+    // The macOS menu bar Rosemary draws: "none" (hidden), "titlebar" or
+    // "strip".
+    std::string menu_bar = "none";
+
+    // Where the window goes: "auto" (Wayland when there is one), "wayland"
+    // or "x11".
+    std::string display_backend = "auto";
+
+    // Ctrl for copy, cut, paste and select-all, where the macOS client
+    // expects Command (which most Linux desktops keep for themselves).
+    bool control_edit_keys = true;
+
     bool mangohud = false;
-    // Register the session with Feral GameMode, which switches the system
-    // into its performance settings while it runs. Off unless chosen.
     bool gamemode = false;
-    // Discord rich presence: what game is being played, its thumbnail,
-    // and how long for. On by default: it reaches only a Discord client
-    // already running on this machine, shows what a Roblox client on any
-    // other platform would show, and is off entirely for anyone without
-    // Discord open.
-    bool discord_rich_presence = true;
-    // A "Join server" button carrying the experience's own deep link.
-    // Separate, because sharing a joinable link is a bigger step than
-    // saying what you are playing.
-    bool discord_join_button = false;
-    // A tray icon for as long as the session runs. It is why Process A
-    // outlives a launch at all, with this off it hands off and exits, as
-    // it always did.
+
+    // A tray icon for the session: Settings, and stopping Roblox.
     bool system_tray = true;
-    // Whether Roblox's own in-game leave button ends Stud instead of
-    // returning to the app's home screen. Off by default: leaving a game
-    // to pick another one is the ordinary thing to do, and quitting
-    // instead would be a surprise.
-    bool close_on_leave = false;
-    // A notification naming the game server's region on every join.
-    // Sober calls this the server location indicator.
-    //
-    // Off by default, for the same reason Discord presence is: answering
-    // it means one HTTPS request per join to a third-party geolocation
-    // service (the datacenter's IP leaves the machine, never the user's).
-    // Anything that talks to someone else is asked for, not assumed,
-    // and Sober ships this off too.
-    bool server_region_notification = false;
-    // The transcoded-texture cache: whether to keep one at all, and how
-    // much disk it may use.
-    //
-    // Both are config-file only, deliberately absent from the settings
-    // window: this is a disk-space trade, and the honest reason to change
-    // it is knowing your own disk rather than judging it by feel.
-    //
-    // It is turned off automatically on a spinning disk, where a random
-    // read with a seek is close enough to the cost of re-encoding not to
-    // be worth the space. On an SSD it is a clear win and on an NVMe an
-    // enormous one. Setting `textureCache` false, or `textureCacheMB` to
-    // 0, disables it anywhere.
-    bool texture_cache = true;
-    int texture_cache_mb = 500;
-    GraphicsMode graphics_mode = GraphicsMode::kVulkan;
-    // Windows Graphical Parity (Beta): render with the Windows client's
-    // builds of the material shaders in place of the Android ones, so parts
-    // get the Windows client's reflections, shine and normal maps; off,
-    // Stud renders as the Android client does. Nothing of Roblox's ships
-    // with Stud: the Windows files this needs are downloaded from Roblox's
-    // own servers, only while it is on, and only for a Windows version that
-    // matches the APK (see ui/src/desktop_materials.cpp).
-    bool windows_materials = true;
-    // Sign in and create accounts on Roblox's own website, in Stud's viewer,
-    // in place of the app's own screens. In the settings file only, on
-    // purpose: Stud settings does not show it.
-    bool web_login = true;
-    // HQ Textures: the engine asks Roblox for no transcoded texture format,
-    // so every image comes as its original instead of the downsized mobile
-    // copy. Materials lose their normal maps while it is on. Off, the
-    // engine downloads what the Android client does.
-    bool hq_textures = false;
-    // The APK is deliberately NOT here.
-    //
-    // Stud keeps its own copy at one fixed path (stud_paths.h's
-    // stored_apk_path) and always uses that one, so there is nothing for
-    // a config file to point at and nothing for a hand edit to break.
-    // The settings window is a picker: it copies what is chosen into
-    // that path. The name of the file that was picked is shown in the
-    // window while it is open and is not written anywhere.
 };
 
 class SettingsError : public std::runtime_error {
@@ -226,34 +61,17 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Missing file -> default-constructed StudSettings (not an error; no
-// settings file yet is the normal first-run state). Malformed file or
-// an invalid field value -> throws SettingsError clearly, same
-// no-silent-misbehavior policy as FlagOverrides::load_from_file.
+// Defaults for anything the file does not have, including no file at all.
+// Throws SettingsError when the file is not valid JSON or a value has the
+// wrong type, rather than silently running on defaults.
 StudSettings load_settings(const std::string& path);
 
-// Writes the full settings object as the "gpu"/"hidpi"/"graphicsMode"
-// top-level keys, preserving any other top-level keys already in the
-// file (e.g. "devRenderBackend") rather than clobbering them; this
-// file is shared, not exclusively owned by this module. Creates the
-// file (and its parent directory) if it doesn't exist yet.
+// Writes `settings`, keeping any other keys in the file.
 void save_settings(const std::string& path, const StudSettings& settings);
 
-// XDG-compliant path every Stud process should use for this shared file
-// ($XDG_CONFIG_HOME/stud/config.json, or ~/.config/stud/config.json),
-// the one real config-path helper, shared so `ui` and `runtime` can't
-// silently drift onto two different paths for what's meant to be one
-// file.
 std::string default_config_path();
 
-// XDG-compliant path for the real, raw FFlag-overrides JSON file
-// (see jni-bridge/include/stud/flag_overrides.h's own doc comment,
-// "the locked decision": FFlag overrides live ONLY here, hand-edited
-// by the user, never generated from Settings UI toggles). Sibling to
-// default_config_path() ($XDG_CONFIG_HOME/stud/flags.json, or
-// ~/.config/stud/flags.json). A missing file is the common case, not
-// an error, FlagOverrides::load_from_file() already treats it that
-// way.
+// Hand-edited FastFlags, merged into ClientAppSettings.json at launch.
 std::string default_flag_overrides_path();
 
 }  // namespace stud::config

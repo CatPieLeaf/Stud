@@ -19,7 +19,7 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
-#include "stud/android_glue.h"
+#include "mac_client.h"
 #include "gpu_enum.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -41,29 +41,8 @@ std::string exists_size(const std::string& path) {
     return "present (" + std::to_string(info.size()) + " bytes)";
 }
 
-// The allocator a distribution preloads matters here in a way it does
-// not for an ordinary application: Process B runs real bionic code with
-// its own allocator, and libroblox links mimalloc statically. A
-// replacement allocator forced in through LD_PRELOAD applies to the
-// glibc processes only, which is a real difference between two machines
-// running the same build and is worth stating rather than guessing at.
-std::string preloaded_allocators() {
-    const QString preload = qEnvironmentVariable("LD_PRELOAD");
-    if (preload.isEmpty()) return {};
-    QString found;
-    for (const QString& part : preload.split(QLatin1Char(':'), Qt::SkipEmptyParts)) {
-        const QString base = QFileInfo(part).fileName();
-        if (base.contains(QLatin1String("malloc")) || base.contains(QLatin1String("jemalloc")) ||
-            base.contains(QLatin1String("tcmalloc")) || base.contains(QLatin1String("mimalloc"))) {
-            if (!found.isEmpty()) found += QLatin1String(", ");
-            found += base;
-        }
-    }
-    return found.toStdString();
-}
-
-// Controllers, read the same way render-host reads them, so the report
-// says what Stud itself would find rather than what the desktop shows.
+// Controllers as the kernel lists them, and whether this user can read
+// them.
 void report_controllers() {
     DIR* dir = ::opendir("/dev/input");
     if (dir == nullptr) {
@@ -208,52 +187,6 @@ void report_gpus(const stud::config::StudSettings& settings) {
     line("drm nodes", nodes);
 }
 
-// Which compressed texture formats this GPU can sample, and what that
-// costs when it cannot.
-//
-// Roblox ships its Android content in ETC2/EAC, which no desktop GPU can
-// sample. Stud decodes those blocks on the CPU (detex) and re-encodes
-// them into a BC format the device does support, so this line explains
-// both a chunk of CPU use and any complaint about texture quality,
-// BC7 keeps normal maps clean where BC1 turns them blocky.
-void report_texture_formats(const stud::config::StudSettings& settings) {
-    const auto support = stud::ui::query_texture_formats(settings.gpu.device_index);
-    if (!support.queried) {
-        line("texture formats", "could not query the selected device");
-        return;
-    }
-    const auto join = [](std::initializer_list<std::pair<const char*, bool>> items, bool want) {
-        std::string out;
-        for (const auto& [name, present] : items) {
-            if (present != want) continue;
-            if (!out.empty()) out += " ";
-            out += name;
-        }
-        return out;
-    };
-    const std::initializer_list<std::pair<const char*, bool>> all = {
-        {"ETC2", support.etc2},   {"EAC", support.eac},   {"ASTC", support.astc_ldr},
-        {"PVRTC", support.pvrtc}, {"BC1", support.bc1},   {"BC3", support.bc3},
-        {"BC4/BC5", support.bc4_bc5}, {"BC7", support.bc7}};
-    line("gpu texture formats", join(all, true));
-    line("not supported", join(all, false));
-    // What Stud actually does about it, which is the part worth reading.
-    const bool content_native = support.etc2 && support.eac;
-    if (content_native) {
-        line("texture handling", "the APK's own ETC2/EAC formats upload directly");
-    } else if (support.bc7) {
-        line("texture handling",
-             "ETC2/EAC decoded on the CPU, re-encoded to BC7 (colour) and BC4/BC5");
-    } else if (support.bc1) {
-        line("texture handling",
-             "ETC2/EAC decoded on the CPU, re-encoded to BC1/BC3; no BC7 on this device");
-    } else {
-        line("texture handling",
-             "ETC2/EAC decoded on the CPU and stored UNCOMPRESSED; no BC support, expect "
-             "high texture memory use");
-    }
-}
-
 }  // namespace
 
 void write_diagnostics() {
@@ -270,20 +203,6 @@ void write_diagnostics() {
     line("wayland display", qEnvironmentVariable("WAYLAND_DISPLAY").toStdString());
     line("x11 display", qEnvironmentVariable("DISPLAY").toStdString());
     report_cpu();
-    const std::string allocator = preloaded_allocators();
-    line("preloaded allocator", allocator);
-    if (!allocator.empty()) {
-        // Worth stating rather than leaving to be noticed: a replacement
-        // allocator forced in through LD_PRELOAD applies to Stud's glibc
-        // processes but not to Process B, which runs real bionic with
-        // its own allocator and an engine that links mimalloc
-        // statically. Two machines running the same build can behave
-        // differently because of this, and hardened_malloc in
-        // particular is strict enough to matter.
-        std::printf("  %-22s %s\n", "",
-                    "note: this replaces the allocator in Stud's glibc processes only, "
-                    "Process B keeps bionic's");
-    }
     line("appimage", qEnvironmentVariable("APPIMAGE").toStdString());
     std::printf("\n");
 
@@ -309,43 +228,36 @@ void write_diagnostics() {
     if (!settings_error.empty()) {
         line("settings", "unreadable: " + settings_error);
     } else {
-        line("render path",
-             settings.graphics_mode == stud::config::GraphicsMode::kVulkan ? "vulkan" : "opengl");
         line("gpu", settings.gpu.device_name);
-        line("hidpi", yes_no(settings.hidpi));
-        line("background fps", std::to_string(settings.background_fps));
+        line("frame cap", settings.frame_cap > 0 ? std::to_string(settings.frame_cap) : "roblox's");
+        line("vsync", yes_no(settings.vsync));
+        line("presentation mode", settings.presentation_mode);
+        line("menu bar", settings.menu_bar);
+        line("display backend", settings.display_backend);
+        line("ctrl edit keys", yes_no(settings.control_edit_keys));
         line("mangohud", yes_no(settings.mangohud));
         line("gamemode", yes_no(settings.gamemode));
         line("system tray", yes_no(settings.system_tray));
-        line("discord presence", yes_no(settings.discord_rich_presence));
-        const std::string apk = stud::paths::stored_apk_path();
-        line("apk", apk);
-        line("apk file", exists_size(apk));
-        line("apk version", stud::android_glue::apk_version_name(apk));
-        line("apk min api", std::to_string(stud::android_glue::apk_min_sdk(apk)));
     }
     std::printf("\n");
 
     std::printf("graphics\n");
     report_gpus(settings);
-    report_texture_formats(settings);
     std::printf("\n");
 
-    std::printf("engine\n");
-    line("extracted libroblox", exists_size(stud::paths::cache_dir() + "/libroblox.so"));
-    line("engine files", exists_size(stud::paths::engine_files_dir()));
-    line("engine cache", exists_size(stud::paths::engine_cache_dir()));
+    std::printf("client\n");
+    const auto build = stud::ui::client::installed();
+    line("roblox", build ? (build->version + " (" + build->upload + ")").toStdString() : "");
+    line("rosemary", stud::ui::client::find_rosemary().toStdString());
+    line("prefix", exists_size(stud::ui::client::prefix_dir().toStdString() + "/root"));
     std::printf("\n");
 
     std::printf("input\n");
     report_controllers();
     std::printf("\n");
 
-    // The login is reported as present or absent only. The value is a
-    // real credential and has no business in a report meant to be
-    // pasted into an issue.
     std::printf("Logs from the last few sessions are in %s, the Settings window's\n"
-                "\"Export logs\" button packs them into a single archive.\n",
+                "\"Export logs\" entry packs them into a single archive.\n",
                 stud::paths::log_dir().c_str());
     std::printf("\n=== end of diagnostics ===\n\n");
     std::fflush(stdout);

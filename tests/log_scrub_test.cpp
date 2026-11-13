@@ -8,7 +8,7 @@
 #include <string>
 
 int main() {
-    using stud::runtime::scrub_engine_log_line;
+    using stud::ui::scrub_engine_log_line;
     const std::string join = R"(doTeleport: joinScriptUrl https://x/Join.ashx?ticketVersion=2&ticket={"UserId"%3a1}&a=b c)";
     const std::string scrubbed = scrub_engine_log_line(join);
     check(scrubbed == "doTeleport: joinScriptUrl https://x/Join.ashx?ticketVersion=2&ticket=<removed>",

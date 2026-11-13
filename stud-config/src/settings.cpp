@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <initializer_list>
 
 namespace {
 
@@ -67,169 +68,48 @@ StudSettings load_settings(const std::string& path) {
         }
     }
 
-    if (doc.contains("hidpi")) {
-        if (!doc.at("hidpi").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"hidpi\"");
+    // A key with the wrong type is an error, said out loud; a missing key
+    // keeps its default.
+    const auto read_bool = [&](const char* key, bool& out) {
+        if (!doc.contains(key)) return;
+        if (!doc.at(key).is_boolean()) {
+            throw SettingsError("stud: config '" + path + "' has a non-boolean \"" + key + "\"");
         }
-        result.hidpi = doc.at("hidpi").get<bool>();
-    }
+        out = doc.at(key).get<bool>();
+    };
+    const auto read_string = [&](const char* key, std::string& out,
+                                 std::initializer_list<const char*> allowed) {
+        if (!doc.contains(key)) return;
+        if (!doc.at(key).is_string()) {
+            throw SettingsError("stud: config '" + path + "' has a non-string \"" + key + "\"");
+        }
+        const std::string value = doc.at(key).get<std::string>();
+        for (const char* option : allowed) {
+            if (value == option) {
+                out = value;
+                return;
+            }
+        }
+        throw SettingsError("stud: config '" + path + "' has an unrecognized \"" + key +
+                            "\" \"" + value + "\"");
+    };
 
-    if (doc.contains("followDpi")) {
-        if (!doc.at("followDpi").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"followDpi\"");
-        }
-        result.follow_dpi = doc.at("followDpi").get<bool>();
-    }
-    // "uiScale" is read by nothing now: the density the engine lays out
-    // against is fixed at 1.0, because anything above that turns off its
-    // full render path (runtime/src/main.cpp says why). An older file
-    // that still carries the key simply loses it on the next save.
-    if (doc.contains("renderScale") && doc.at("renderScale").is_number()) {
-        // Migration: renderScale briefly meant the buffer scale and the
-        // layout scale at once. Only the buffer half still exists.
-        const double scale = doc.at("renderScale").get<double>();
-        result.hidpi = scale <= 0.0 || scale > 1.0;
-    }
-    if (doc.contains("upscaling")) {
-        if (!doc.at("upscaling").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"upscaling\"");
-        }
-        result.upscaling = doc.at("upscaling").get<bool>();
-    }
-    if (doc.contains("upscalerChoice")) {
-        if (!doc.at("upscalerChoice").is_string()) {
-            throw SettingsError("stud: config '" + path + "' has a non-string \"upscalerChoice\"");
-        }
-        // Not validated against a list here: the names are
-        // choose_upscaler()'s, in the render host, and an unknown one
-        // falls back to fsr there rather than refusing to start.
-        result.upscaler_choice = doc.at("upscalerChoice").get<std::string>();
-    }
-    if (doc.contains("textOverlayFontRatio")) {
-        if (!doc.at("textOverlayFontRatio").is_number()) {
+    if (doc.contains("frameCap")) {
+        if (!doc.at("frameCap").is_number_integer() || doc.at("frameCap").get<int>() < 0) {
             throw SettingsError("stud: config '" + path +
-                                "' has a non-numeric \"textOverlayFontRatio\"");
+                                "' has a \"frameCap\" that is not a non-negative integer");
         }
-        const double ratio = doc.at("textOverlayFontRatio").get<double>();
-        // Clamped to the range either side of which the overlay is
-        // obviously wrong rather than merely off: below the font's own
-        // metric ratio it is smaller than anything the engine draws, and
-        // above 1.0 the em exceeds the TextSize itself.
-        const double clamped = ratio < 0.5 ? 0.5 : (ratio > 1.5 ? 1.5 : ratio);
-        result.text_overlay_font_ratio = static_cast<float>(clamped);
+        result.frame_cap = doc.at("frameCap").get<int>();
     }
-    if (doc.contains("windowsMaterials")) {
-        if (!doc.at("windowsMaterials").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"windowsMaterials\"");
-        }
-        result.windows_materials = doc.at("windowsMaterials").get<bool>();
-    }
-    if (doc.contains("webLogin")) {
-        if (!doc.at("webLogin").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"webLogin\"");
-        }
-        result.web_login = doc.at("webLogin").get<bool>();
-    }
-    if (doc.contains("hqTextures")) {
-        if (!doc.at("hqTextures").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"hqTextures\"");
-        }
-        result.hq_textures = doc.at("hqTextures").get<bool>();
-    }
-    if (doc.contains("smoothZoom")) {
-        if (!doc.at("smoothZoom").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"smoothZoom\"");
-        }
-        result.smooth_zoom = doc.at("smoothZoom").get<bool>();
-    }
-    if (doc.contains("backgroundFps")) {
-        if (!doc.at("backgroundFps").is_number_integer()) {
-            throw SettingsError("stud: config '" + path +
-                                "' has a non-integer \"backgroundFps\"");
-        }
-        // Clamped rather than rejected: a hand-edited file is allowed to
-        // be out of range, and the honest reading of 5000 is "unlimited"
-        // rather than an error that stops Stud starting.
-        const int value = doc.at("backgroundFps").get<int>();
-        // 0 means no limit. Anything above the top of the range means
-        // the same thing, including the `241` older builds wrote,
-        // which is why that is read back as unlimited rather than
-        // clamped to a number.
-        result.background_fps =
-            (value <= 0 || value > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : value;
-    }
-    if (doc.contains("mangohud")) {
-        if (!doc.at("mangohud").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"mangohud\"");
-        }
-        result.mangohud = doc.at("mangohud").get<bool>();
-    }
-    if (doc.contains("gamemode")) {
-        if (!doc.at("gamemode").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"gamemode\"");
-        }
-        result.gamemode = doc.at("gamemode").get<bool>();
-    }
-    if (doc.contains("discordRichPresence")) {
-        if (!doc.at("discordRichPresence").is_boolean()) {
-            throw SettingsError("stud: config '" + path +
-                                 "' has a non-boolean \"discordRichPresence\"");
-        }
-        result.discord_rich_presence = doc.at("discordRichPresence").get<bool>();
-    }
-    if (doc.contains("discordJoinButton")) {
-        if (!doc.at("discordJoinButton").is_boolean()) {
-            throw SettingsError("stud: config '" + path +
-                                 "' has a non-boolean \"discordJoinButton\"");
-        }
-        result.discord_join_button = doc.at("discordJoinButton").get<bool>();
-    }
-    if (doc.contains("systemTray")) {
-        if (!doc.at("systemTray").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"systemTray\"");
-        }
-        result.system_tray = doc.at("systemTray").get<bool>();
-    }
-    if (doc.contains("closeOnLeave")) {
-        if (!doc.at("closeOnLeave").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"closeOnLeave\"");
-        }
-        result.close_on_leave = doc.at("closeOnLeave").get<bool>();
-    }
-    if (doc.contains("serverRegionNotification")) {
-        if (!doc.at("serverRegionNotification").is_boolean()) {
-            throw SettingsError("stud: config '" + path +
-                                 "' has a non-boolean \"serverRegionNotification\"");
-        }
-        result.server_region_notification = doc.at("serverRegionNotification").get<bool>();
-    }
-    if (doc.contains("textureCache")) {
-        if (!doc.at("textureCache").is_boolean()) {
-            throw SettingsError("stud: config '" + path + "' has a non-boolean \"textureCache\"");
-        }
-        result.texture_cache = doc.at("textureCache").get<bool>();
-    }
-    if (doc.contains("textureCacheMB")) {
-        if (!doc.at("textureCacheMB").is_number_integer()) {
-            throw SettingsError("stud: config '" + path + "' has a non-integer \"textureCacheMB\"");
-        }
-        const int value = doc.at("textureCacheMB").get<int>();
-        result.texture_cache_mb = value < 0 ? 0 : value;
-    }
-    if (doc.contains("graphicsMode")) {
-        if (!doc.at("graphicsMode").is_string()) {
-            throw SettingsError("stud: config '" + path + "' has a non-string \"graphicsMode\"");
-        }
-        std::string mode = doc.at("graphicsMode").get<std::string>();
-        if (mode == "vulkan") {
-            result.graphics_mode = GraphicsMode::kVulkan;
-        } else if (mode == "opengl") {
-            result.graphics_mode = GraphicsMode::kOpenGL;
-        } else {
-            throw SettingsError("stud: config '" + path + "' has an unrecognized \"graphicsMode\" \"" +
-                                 mode + "\" (expected \"vulkan\" or \"opengl\")");
-        }
-    }
+    read_bool("vsync", result.vsync);
+    read_string("presentationMode", result.presentation_mode,
+                {"", "fifo", "fifo_relaxed", "mailbox", "immediate"});
+    read_string("menuBar", result.menu_bar, {"none", "titlebar", "strip"});
+    read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
+    read_bool("controlEditKeys", result.control_edit_keys);
+    read_bool("mangohud", result.mangohud);
+    read_bool("gamemode", result.gamemode);
+    read_bool("systemTray", result.system_tray);
 
     return result;
 }
@@ -237,8 +117,7 @@ StudSettings load_settings(const std::string& path) {
 void save_settings(const std::string& path, const StudSettings& settings) {
     nlohmann::json doc = nlohmann::json::object();
 
-    // Preserve any other top-level keys already in the file (e.g.
-    // render/dev_backend_config.h's "devRenderBackend"); this file is
+    // Preserve any other top-level keys already in the file; this file is
     // shared, not exclusively owned by this module. A missing or
     // malformed existing file is not fatal here, start fresh rather
     // than blocking a save on an unrelated pre-existing problem.
@@ -261,45 +140,27 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["gpu"] = {{"deviceIndex", settings.gpu.device_index},
                   {"deviceName", settings.gpu.device_name},
                   {"deviceUuid", settings.gpu.device_uuid}};
-    doc["hidpi"] = settings.hidpi;
-
-    doc["followDpi"] = settings.follow_dpi;
-    // Written as a plain multiplier rather than 120ths: this file is meant
-    // to be hand-editable, and "1.25" is what a person means.
-    doc.erase("renderScale");
-    doc["upscaling"] = settings.upscaling;
-    doc.erase("upscaleOutputPercent");
-    // Removed: it could only work by moving the engine's own render size.
-    doc.erase("upscaleQualityPercent");
-    doc.erase("upscaleTargetPercent");
-    doc["upscalerChoice"] = settings.upscaler_choice;
-    doc["textOverlayFontRatio"] = settings.text_overlay_font_ratio;
-    doc["smoothZoom"] = settings.smooth_zoom;
-    doc["windowsMaterials"] = settings.windows_materials;
-    doc["webLogin"] = settings.web_login;
-    doc["hqTextures"] = settings.hq_textures;
-    doc["backgroundFps"] = settings.background_fps;
+    doc["frameCap"] = settings.frame_cap;
+    doc["vsync"] = settings.vsync;
+    doc["presentationMode"] = settings.presentation_mode;
+    doc["menuBar"] = settings.menu_bar;
+    doc["displayBackend"] = settings.display_backend;
+    doc["controlEditKeys"] = settings.control_edit_keys;
     doc["mangohud"] = settings.mangohud;
     doc["gamemode"] = settings.gamemode;
-    doc["discordRichPresence"] = settings.discord_rich_presence;
-    doc["discordJoinButton"] = settings.discord_join_button;
     doc["systemTray"] = settings.system_tray;
-    doc["closeOnLeave"] = settings.close_on_leave;
-    doc["serverRegionNotification"] = settings.server_region_notification;
-    doc["textureCache"] = settings.texture_cache;
-    doc["textureCacheMB"] = settings.texture_cache_mb;
-    doc["graphicsMode"] = settings.graphics_mode == GraphicsMode::kVulkan ? "vulkan" : "opengl";
-    // Keys that are nobody's setting any more. Erased rather than left
-    // alone, because a file that still lists them reads as if they do
-    // something: apkPath/apkName (Stud keeps one APK of its own, at a
-    // fixed path; see settings.h), uiScale (there is no such control;
-    // the layout density is fixed at 1.0), needsBionicFallback (from an
-    // architecture that no longer exists), and renderScale (split into
-    // hidpi and followDpi).
-    doc.erase("apkPath");
-    doc.erase("apkName");
-    doc.erase("uiScale");
-    doc.erase("needsBionicFallback");
+    // Settings of Stud 1.x's Android engine, which Stud 2.0 does not have.
+    // Erased rather than kept, so the file never lists something that does
+    // nothing.
+    for (const char* gone :
+         {"hidpi", "followDpi", "renderScale", "upscaling", "upscaleOutputPercent",
+          "upscaleQualityPercent", "upscaleTargetPercent", "upscalerChoice",
+          "textOverlayFontRatio", "smoothZoom", "windowsMaterials", "webLogin", "hqTextures",
+          "backgroundFps", "discordRichPresence", "discordJoinButton", "closeOnLeave",
+          "serverRegionNotification", "textureCache", "textureCacheMB", "graphicsMode",
+          "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback"}) {
+        doc.erase(gone);
+    }
 
     make_directories(parent_directory(path));
 

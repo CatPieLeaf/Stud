@@ -1,11 +1,5 @@
-# M8. Plain Qt6 Widgets (revised from the original "Qt6 + libplasma"
-# decision, libplasma is the Plasma shell/plasmoid framework, not a
-# general KDE app toolkit; see the engineering notes' locked-decisions table
-# for the full reasoning). No GTK, no WebKitGTK, no libplasma dependency
-# runs on any DE, matching the AppImage run-anywhere goal.
-# QtWebEngine is deliberately NOT required any more: Stud logs in the
-# way Sober does, inside the real Roblox app's own login screen, so
-# there is no web view to host and no session cookie to scrape.
+# The launcher: plain Qt6 Widgets, which runs on any desktop. Network
+# downloads Roblox's macOS client from Roblox's CDN.
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets DBus Network)
 # Headers only (see stud_ui_gpu_enum below). The headers' own package is
 # enough; FindVulkan, the fallback where that is not installed, also
@@ -14,7 +8,6 @@ find_package(VulkanHeaders CONFIG QUIET)
 if(NOT TARGET Vulkan::Headers)
     find_package(Vulkan REQUIRED)
 endif()
-find_package(Qt6Keychain REQUIRED)
 
 # Real freedesktop.org Notifications via QtDBus; its own small
 # library, no other Qt module needed beyond Core+DBus, independently
@@ -48,21 +41,6 @@ add_library(stud_ui_launch_uri STATIC
 target_include_directories(stud_ui_launch_uri PUBLIC src)
 target_link_libraries(stud_ui_launch_uri PUBLIC Qt6::Core)
 
-# Handing a deep link to a Stud that is already playing. Header-only
-# protocol, so this needs render-host's include directory and nothing
-# else. No Qt, and no link against render-host itself.
-add_library(stud_ui_deep_link_handoff STATIC
-    src/deep_link_handoff.cpp
-    # default_socket_path() lives here, and both other processes already
-    # compile this same file for the same reason, the three of them have
-    # to agree on where the socket is.
-    "${CMAKE_CURRENT_SOURCE_DIR}/../render-host/src/render_host_protocol.cpp"
-)
-target_include_directories(stud_ui_deep_link_handoff PUBLIC src
-                            "${CMAKE_CURRENT_SOURCE_DIR}/../render-host/include"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include")
-
-
 # Real GPU enumeration (vkEnumeratePhysicalDevices); no Qt dependency,
 # kept as its own small library so it's independently testable (see
 # tests/gpu_enum_test.cpp) rather than only reachable through the full
@@ -78,40 +56,22 @@ target_include_directories(stud_ui_gpu_enum PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 # there instead of failing to start with "libvulkan.so.1: cannot open".
 target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAKE_DL_LIBS})
 
-# Real QtKeychain-backed credential storage; its own small library,
-# same reasoning as stud_ui_gpu_enum (independently testable, see
-# tests/credential_store_test.cpp).
-add_library(stud_ui_credential_store STATIC
-    src/credential_store.cpp
-    src/safe_storage.cpp
-)
-# src for its own headers, android-glue's for stud/stud_paths.h, the
-# secrets directory has to agree with the other two processes.
-target_include_directories(stud_ui_credential_store PUBLIC src
-                            "${CMAKE_CURRENT_SOURCE_DIR}/../android-glue/include")
-find_package(OpenSSL REQUIRED)
-target_link_libraries(stud_ui_credential_store PUBLIC Qt6::Core Qt6Keychain::Qt6Keychain
-                                                     OpenSSL::Crypto)
-
 add_executable(stud-ui
     src/main.cpp
     src/desktop_entry.cpp
     src/diagnose.cpp
-    src/log_collector.cpp
+    src/mac_client.cpp
     src/settings_window.cpp
     src/cube_view.cpp
     src/cube_gl.cpp
     src/update_check.cpp
     src/tray.cpp
-    src/desktop_materials.cpp
     src/loading_screen.cpp
     resources/resources.qrc
 )
-target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::DBus stud_ui_gpu_enum stud_config stud_ui_credential_store
-                                       stud_shader_pack
-                                       stud_ui_notifications stud_ui_launch_uri stud_ui_log_archive
-                                       stud_ipc stud_android_glue stud_render stud_bionic_runtime
-                      stud_ui_deep_link_handoff)
+target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::DBus
+                                       stud_ui_gpu_enum stud_config stud_ui_notifications
+                                       stud_ui_launch_uri stud_ui_log_archive miniz)
 
 # The About tab's cube is the GL smoke test's own (tools/spinning_cube.h).
 target_include_directories(stud-ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../tools")
@@ -126,6 +86,6 @@ set_target_properties(stud-ui PROPERTIES
 target_compile_definitions(stud-ui PRIVATE STUD_APP_ID="${STUD_APP_ID}" STUD_VERSION="${STUD_VERSION}")
 
 # The launcher is the only binary a user runs, so it is the only one on
-# PATH. The others live in libexec and are found relative to it.
+# PATH. Rosemary lives in libexec and is found relative to it.
 install(PROGRAMS "$<TARGET_FILE:stud-ui>"
         DESTINATION "${CMAKE_INSTALL_BINDIR}" RENAME stud)

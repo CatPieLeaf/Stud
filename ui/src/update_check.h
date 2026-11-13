@@ -5,8 +5,9 @@
 
 namespace stud::ui {
 
-// Whether a newer Stud has been released, asked of GitHub once per run,
-// and whether the imported Roblox build is behind the one Roblox ships.
+// Whether a newer Stud has been released, asked of GitHub once per run.
+// Roblox itself needs no check here: the client is brought up to date from
+// Roblox's CDN before every launch (mac_client.h).
 //
 // One GET to the releases API, at startup, in the background. It sends
 // nothing about the machine or the user, the request carries no
@@ -32,19 +33,12 @@ public:
     static bool updateAvailable();
     static QString latestVersion();
 
-    // Whether the imported Roblox build is older than the one Roblox ships
-    // now. Read against the stored APK each time, so importing a newer
-    // one clears it without asking the network again.
-    static bool robloxOutdated();
-
     // The one instance, so both the tray and Settings can connect.
     static UpdateCheck* instance();
 
 signals:
     // Emitted once, if and only if a newer version exists.
     void updateFound(const QString& latestVersion);
-    // Emitted once, if and only if the imported Roblox build is outdated.
-    void robloxOutdatedFound();
 
 private:
     explicit UpdateCheck(QObject* parent = nullptr);

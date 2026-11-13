@@ -1,7 +1,7 @@
 # Stud legal notice
 
 Stud is a free, unofficial, non-commercial project that runs the real
-Roblox Android application on a Linux desktop. It is experimental
+Roblox macOS client on a Linux desktop. It is experimental
 software and it earns nobody any money.
 
 **This is a notice, not a licence agreement.** Stud's licence is the GNU
@@ -16,24 +16,25 @@ what it is not, and what you should know before you use it.
 - Stud is **not affiliated with Roblox Corporation**, and is not endorsed,
   sponsored, supported or approved by them. It is not an official Roblox
   product.
-- Stud is **not affiliated with Google, Android, or the Android Open
-  Source Project**, nor with Khronos, the Vulkan working group, or any
-  other project whose software it uses.
-- Stud **contains no Roblox code and distributes none**. It does not ship,
-  mirror, host or download the Roblox application package. You supply that
-  file yourself, from a source of your own choosing, and your use of it is
-  between you and Roblox.
-- Stud **does not modify the Roblox engine**. It loads the application
-  exactly as published and supplies the Android interfaces it expects.
-  Refusing to patch that binary is a rule the project holds itself to, not
-  an accident of how it turned out.
-- Stud is a launcher and a runtime. It is not a distributor, not a modding
-  tool, and not an emulator.
+- Stud is **not affiliated with Apple**, nor with Khronos, the Vulkan
+  working group, or any other project whose software it uses. It runs the
+  client on Rosemary, an independent project Stud is not affiliated with
+  either.
+- Stud **contains no Roblox code and distributes none**. It downloads the
+  macOS client from Roblox's own servers, onto your machine, the build
+  Roblox itself serves; your use of it is between you and Roblox.
+- Stud **does not modify the Roblox client**. It runs the application
+  exactly as published. Refusing to patch it is a rule the project holds
+  itself to, not an accident of how it turned out. The one file Stud writes
+  inside it is `ClientAppSettings.json`, the file Roblox reads local
+  settings from.
+- Stud is a launcher. It is not a distributor, not a modding tool, and not
+  an emulator.
 
 ## 2. Trademarks
 
-Roblox is a trademark of Roblox Corporation. Android and Google are
-trademarks of Google LLC. Vulkan is a trademark of the Khronos Group.
+Roblox is a trademark of Roblox Corporation. Apple and macOS are
+trademarks of Apple Inc. Vulkan is a trademark of the Khronos Group.
 Other names are the property of their owners. They are used here only to
 say truthfully what Stud works with. No endorsement is claimed or implied,
 and Stud uses no logo, artwork or branding belonging to any of them.
@@ -75,99 +76,46 @@ Stud sends nothing to its author, and there is no telemetry, no analytics
 and no crash reporting of any kind.
 
 - Requests to `roblox.com` and its subdomains are made by Stud and by
-  Roblox's own engine, to run the application: sign-in, settings, the
+  Roblox's own client, to run the application: sign-in, settings, the
   experiences you open.
-- With Windows Graphical Parity on, which is the default, Stud downloads
-  some of the Windows client's shader and texture files from Roblox's own
-  servers (`clientsettingscdn.roblox.com` and `setup.rbxcdn.com`), without
-  your login. They are combined with your APK's on your machine, in Stud's
-  extracted copy of its assets; the engine itself is not changed, and
-  nothing is redistributed. Turning the setting off in Settings stops it.
-- Your login is stored on disk, encrypted with AES-256-GCM. Only the
-  encryption key is held in the system keyring, through the Secret
-  Service interface, the same arrangement Chromium calls safe storage.
-  The keyring therefore holds one opaque application key rather than a
-  readable `.ROBLOSECURITY` value, and deleting that entry makes the
-  stored cookie permanently unreadable.
-- If, and only if, you switch on the server-region notification in
-  Settings, off by default, the address of the **game server** you
-  joined is sent over HTTPS to `ipwho.is` to name its country. Your own address is
-  not sent. Leaving the setting off means the request never happens.
+- Before each launch Stud asks `clientsettingscdn.roblox.com` which macOS
+  build Roblox serves, and downloads it from `setup.rbxcdn.com` when it is
+  not the one installed. Neither request carries your login.
+- On first use, Rosemary downloads its MiniDarwin base system from
+  `github.com/microlift/minidarwin`'s releases.
+- Your login is kept by Roblox's own client, inside Stud's Rosemary prefix
+  (`~/.local/share/stud/prefix`). Stud never reads it.
 - Logs are written under `~/.local/state/stud/logs/` and stay on your
-  machine. Nothing uploads them.
+  machine. Nothing uploads them. Join tickets are removed from them.
 
 ## 7. No warranty, and no liability
 
 Stud is provided **as is**, with no warranty of any kind. Sections 15, 16
 and 17 of the AGPL say this in full and in the terms that bind; in plain
-words: this is experimental software, running an application it was never
-designed to run, and you use it at your own risk. The author is not liable
+words: this is experimental software, running an application on a system it
+was never designed for, and you use it at your own risk. The author is not liable
 for damage, data loss, or anything Roblox or any other service does in
 response to your use of it.
 
 ## 8. If a rights holder objects
 
-If Roblox Corporation, Google, or any other rights holder sends a
+If Roblox Corporation, Apple, or any other rights holder sends a
 verifiable, direct communication asking this project to stop or to change
 something, it will be honoured. Write to catpieleaf@proton.me, or open an
 issue at https://github.com/CatPieLeaf/Stud/issues.
 
 ## 9. Third-party software
 
-Stud redistributes Android's own libc, libm, libdl and dynamic linker
-from AOSP. They are under permissive licences and ship with their own
-licence text and copyright notices, installed to
-`/usr/share/licenses/stud/` and kept beside the libraries themselves.
+Stud runs the client on Rosemary (https://github.com/microlift/rosemary,
+GPL-3.0), built from its upstream source unmodified and installed beside
+Stud's launcher. AGPLv3 section 13 permits combining a covered work with a
+GPLv3 work and conveying the result; Rosemary's source is its upstream
+repository, and its licence is installed to `/usr/share/licenses/stud/`.
 
-Five more are compiled into Stud's own binaries, so their notices are
-installed to `/usr/share/licenses/stud/` too:
+Two more are compiled into Stud's launcher, so their notices are installed
+there too:
 
- - volk, the Vulkan entry-point loader (MIT)
- - xxHash, the texture cache key (BSD-2-Clause)
- - miniaudio, the audio device (Unlicense or MIT-0)
- - SDL_GameControllerDB, the controller layouts (Zlib)
- - Zydis and its Zycore library, the runtime's x86-64 decoder (MIT)
-
-Stud's present layer (`libstud_present_layer.so`) carries code generated
-from wayland-protocols' `linux-dmabuf-v1` and `linux-drm-syncobj-v1`
-(MIT) and links libdrm (MIT), which the rpm, deb and Arch packages take
-from the system and the AppImage bundles. On X11 it
-opens libxcb's DRI3 and Present libraries by name at runtime (MIT); they
-are not redistributed.
-
-libdecor's header is vendored for types only (MIT); the library itself is
-opened by name at runtime and is not redistributed.
-
-The AppImage alone also carries uruntime, its runtime, and sharun, the
-launcher every program in it starts through, both by VHSgunzo (MIT); the
-AppRun scripts of the Anylinux AppImages project's quick-sharun, which
-builds it (MIT); and Mesa's drivers, from that project's debloated Mesa
-(MIT).
-
-The three upscale shaders are built from vendored references: RAVU-Zoom
-from mpv-prescalers (LGPL-3.0-or-later), SGSR (BSD-3-Clause) and FSR1's
-RCAS (MIT).
-
-The texture decode shader is built around gfxstream's ETC2 and EAC block
-decoders, and the engine's Vulkan commands reach the render host through
-gfxstream's shared-memory ring (both Apache-2.0), fetched at build time from
-a pinned commit.
-
-OpenGL mode runs on gfxstream itself (Apache-2.0), fetched at build time
-from a pinned commit and changed by Stud, every change set out in
-`third_party/gfxstream/stud.patch` in Stud's source: its host library,
-`libgfxstream_backend.so.0`, ships beside the render host, and its guest
-libraries, `libEGL.so` and `libGLESv2.so` in `gfxstream-guest/`, are the
-ones the engine loads in that mode. Those also carry Mesa's guest ring
-stream (MIT), unchanged. Both licences are installed to
-`/usr/share/licenses/stud/`.
-
-RAVU-Zoom is the one copyleft item, so it is worth setting out why it is
-allowed here. LGPLv3 incorporates the terms of GPLv3, and its section
-2(b) permits conveying a copy under the GPL with none of the LGPL's
-additional permissions applying to that copy. AGPLv3 section 13 grants
-permission to combine a covered work with a GPLv3 work and to convey the
-result. The hooks the shaders are generated from ship in `third_party/`,
-as the Corresponding Source that section requires.
+ - volk, the Vulkan entry-point loader that lists the GPUs (MIT)
+ - miniz, which unpacks the client and writes the log export (MIT)
 
 The full credits are in the README.
