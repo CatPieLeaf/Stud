@@ -48,6 +48,10 @@ QString find_rosemary();
 // downloads the Darwin base system). False, with `error` set, on failure.
 bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* error);
 
+// The bundle's executable, as its Info.plist names it (CFBundleExecutable).
+// Empty when the bundle has none.
+QString executable(const Build& build);
+
 // Writes ClientAppSettings.json inside the build: `flags` as given, an empty
 // object removing every override.
 bool write_app_settings(const Build& build, const QJsonObject& flags, QString* error);

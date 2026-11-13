@@ -13,6 +13,7 @@
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTimer>
@@ -275,6 +276,17 @@ bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* e
         return false;
     }
     return true;
+}
+
+QString executable(const Build& build) {
+    QFile plist(build.app + QStringLiteral("/Contents/Info.plist"));
+    if (!plist.open(QIODevice::ReadOnly)) return {};
+    static const QRegularExpression name(
+        QStringLiteral("<key>CFBundleExecutable</key>\\s*<string>([^<]+)</string>"));
+    const QRegularExpressionMatch match = name.match(QString::fromUtf8(plist.readAll()));
+    if (!match.hasMatch()) return {};
+    const QString path = build.app + QStringLiteral("/Contents/MacOS/") + match.captured(1);
+    return QFileInfo(path).isFile() ? path : QString();
 }
 
 bool write_app_settings(const Build& build, const QJsonObject& flags, QString* error) {

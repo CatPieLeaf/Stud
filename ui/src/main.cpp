@@ -396,7 +396,17 @@ bool launch_game(const std::optional<QString>& deep_link) {
     if (stud::ui::loading_cancelled()) return false;
     stud::ui::clear_loading_text();
 
-    QStringList args{QStringLiteral("run"), build->app};
+    // The executable, not the bundle: Rosemary opens a bundle the way
+    // LaunchServices does, under its own services and handed to any instance
+    // it believes is running, while an executable runs here, as this
+    // process's child, so its exit is Roblox's.
+    const QString program = stud::ui::client::executable(*build);
+    if (program.isEmpty()) {
+        open_settings_for_launch_failure(
+            QStringLiteral("The Roblox client in %1 has no executable.").arg(build->app));
+        return false;
+    }
+    QStringList args{QStringLiteral("run"), program};
     if (deep_link) args << QStringLiteral("-protocolString") << *deep_link;
 
     g_client = new QProcess(qApp);
