@@ -111,6 +111,17 @@ void extract_apk_assets_under(const std::string& apk_path, const std::string& de
 void extract_apk_native_library(const std::string& apk_path, const std::string& library_name,
                                  const std::string& dest_path);
 
+// A folder holding a split-APK set, as split-APK download tools leave it
+// (gplaydl's `download ... -o <dir>`, or any folder of a base and its
+// config splits), packed into one bundle at `out_path` that every other
+// function here reads as it reads an .apks. The split carrying the app's
+// assets becomes base.apk whatever it was called, since tools name it
+// after the package and a feature split can look the same by name; every
+// other .apk goes in under a split_ prefix, and splits for other ABIs are
+// left out. Throws ExtractError if the folder has no base split or no
+// x86_64 split, or the bundle cannot be written.
+void bundle_split_folder(const std::string& dir, const std::string& out_path);
+
 // Whether the APK, or any APK in a bundle, carries `assets/<asset>`
 // (e.g. "ssl/cacert.pem"). Throws ExtractError if it cannot be opened.
 bool apk_has_asset(const std::string& apk_path, const std::string& asset);

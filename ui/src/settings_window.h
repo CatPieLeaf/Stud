@@ -74,6 +74,7 @@ private slots:
     void onSaveClicked();
     void onRestartClicked();
     void onBrowseApkClicked();
+    void onBrowseApkFolderClicked();
     void onRenderPathChanged(int index);
     void updateUpscalerControls();
     void onBackgroundFpsChanged(int value);

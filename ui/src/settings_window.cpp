@@ -84,10 +84,16 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     apkPathEdit_->setPlaceholderText("No APK loaded");
     apkPathEdit_->setReadOnly(true);
     auto* browseButton = new QPushButton("Browse...", this);
+    // A folder of split APKs, as a download tool leaves it (gplaydl's
+    // `-o <dir>`): packed into one bundle when picked.
+    auto* folderButton = new QPushButton("Folder...", this);
+    folderButton->setToolTip("Pick a folder holding a split APK set (a base APK and its splits)");
     apkRow->addWidget(apkPathEdit_);
     apkRow->addWidget(browseButton);
+    apkRow->addWidget(folderButton);
     general->addLayout(apkRow);
     connect(browseButton, &QPushButton::clicked, this, &SettingsWindow::onBrowseApkClicked);
+    connect(folderButton, &QPushButton::clicked, this, &SettingsWindow::onBrowseApkFolderClicked);
 
     trayCheck_ = new QCheckBox("Show in system tray", this);
     general->addWidget(trayCheck_);
@@ -634,6 +640,31 @@ void SettingsWindow::onBrowseApkClicked() {
         pickedApkPath_ = path;
         apkPathEdit_->setText(QFileInfo(path).fileName());
     }
+}
+
+// A folder of split APKs: packed into one bundle in Stud's APK directory,
+// which then goes through the same checks and import as a picked bundle.
+// The import keeps only the stored APK there, so the packed bundle goes
+// away with the first successful import.
+void SettingsWindow::onBrowseApkFolderClicked() {
+    const QString dir = QFileDialog::getExistingDirectory(this, "Select the folder holding Roblox's split APKs");
+    if (dir.isEmpty()) return;
+    if (!QDir().mkpath(QString::fromStdString(stud::paths::apk_dir()))) {
+        statusLabel_->setText("Could not create Stud's APK directory.");
+        return;
+    }
+    statusLabel_->setText("Packing the folder's APKs...");
+    QApplication::processEvents();
+    const QString bundle = QString::fromStdString(stud::paths::apk_dir()) + "/picked-folder.apks";
+    try {
+        stud::android_glue::bundle_split_folder(dir.toStdString(), bundle.toStdString());
+    } catch (const stud::android_glue::ExtractError& e) {
+        statusLabel_->setText(QString("That folder is not a Roblox split APK set Stud can use: %1").arg(e.what()));
+        return;
+    }
+    pickedApkPath_ = bundle;
+    apkPathEdit_->setText(QFileInfo(dir).fileName() + "/");
+    statusLabel_->setText("Folder packed. Save to import it.");
 }
 
 // Save, stop the running session, start it again. The whole point is the

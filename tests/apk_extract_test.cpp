@@ -17,6 +17,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <miniz.h>
+#include <miniz_zip.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -172,6 +174,60 @@ int main(int argc, char** argv) {
         check(!file_exists(gone.front()), "any other bundle is removed");
         stud::android_glue::keep_only_apk_bundle(apk_path);
         check(!file_exists(kept.front()), "a plain APK leaves no bundle behind");
+    }
+
+    // A folder of splits, as gplaydl leaves it: the base named after the
+    // package, a feature split that looks just as base-like by name, the
+    // x86_64 split, a split for another ABI and a stray metadata file.
+    {
+        const std::string folder = dest_dir + "/split_folder";
+        fresh_dir(folder);
+        auto make_apk = [&](const std::string& name, const char* entry, const char* text) {
+            mz_zip_archive zip{};
+            const std::string path = folder + "/" + name;
+            check(mz_zip_writer_init_file(&zip, path.c_str(), 0) &&
+                      mz_zip_writer_add_mem(&zip, entry, text, std::strlen(text), MZ_NO_COMPRESSION) &&
+                      mz_zip_writer_finalize_archive(&zip),
+                  "a split for the folder fixture is written: " + name);
+            mz_zip_writer_end(&zip);
+        };
+        make_apk("com.roblox.client-1-pgs.apk", "res/feature.txt", "feature");
+        make_apk("com.roblox.client-1.apk", "assets/ssl/cacert.pem", "certificates");
+        make_apk("com.roblox.client-1-config.x86_64.apk", "lib/x86_64/libroblox.so", "engine");
+        make_apk("com.roblox.client-1-config.arm64_v8a.apk", "lib/arm64-v8a/libroblox.so", "arm");
+        std::ofstream(folder + "/metadata.json") << "{}";
+
+        const std::string bundle = dest_dir + "/folder.apks";
+        stud::android_glue::bundle_split_folder(folder, bundle);
+        mz_zip_archive zip{};
+        check(mz_zip_reader_init_file(&zip, bundle.c_str(), 0), "the folder's bundle opens as a zip");
+        check(mz_zip_reader_locate_file(&zip, "base.apk", nullptr, 0) >= 0,
+              "the split with the app's assets becomes base.apk");
+        check(mz_zip_reader_locate_file(&zip, "split_com.roblox.client-1-config.x86_64.apk", nullptr, 0) >= 0,
+              "the x86_64 split is in the bundle");
+        check(mz_zip_reader_locate_file(&zip, "split_com.roblox.client-1-pgs.apk", nullptr, 0) >= 0,
+              "the base-looking feature split is in, as a split");
+        check(mz_zip_reader_locate_file(&zip, "split_com.roblox.client-1-config.arm64_v8a.apk", nullptr, 0) < 0,
+              "the other ABI's split is left out");
+        check(mz_zip_reader_get_num_files(&zip) == 3, "nothing but the three splits is in the bundle");
+        mz_zip_reader_end(&zip);
+        check(stud::android_glue::apk_has_asset(bundle, "ssl/cacert.pem"),
+              "the bundle reads like any .apks: the base's assets are found");
+        const std::string so = dest_dir + "/folder_libroblox.so";
+        stud::android_glue::extract_apk_native_library(bundle, "libroblox.so", so);
+        check(file_exists(so), "and the engine comes out of its x86_64 split");
+
+        // No x86_64 split: refused, and no bundle left behind.
+        std::filesystem::remove(folder + "/com.roblox.client-1-config.x86_64.apk");
+        const std::string refused = dest_dir + "/refused.apks";
+        bool no_engine = false;
+        try {
+            stud::android_glue::bundle_split_folder(folder, refused);
+        } catch (const stud::android_glue::ExtractError&) {
+            no_engine = true;
+        }
+        check(no_engine && !file_exists(refused) && !file_exists(refused + ".part"),
+              "a folder with no x86_64 split is refused and leaves nothing behind");
     }
 
     std::printf("all apk-extract checks passed\n");

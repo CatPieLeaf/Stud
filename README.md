@@ -377,14 +377,36 @@ chmod +x Stud-x86_64.AppImage
 
 ## Getting a Roblox APK
 
-Stud doesn't include Roblox, so you bring your own copy, and you choose when it updates. It must be the **x86_64** build: Stud refuses one without it. `.apk`, `.apkm`, `.apks` and `.xapk` all work, and a bundle has to be complete, not just the x86_64 split on its own.
+Stud doesn't include Roblox, so you bring your own copy, and you choose when it updates. It must be the **x86_64** build: Stud refuses one without it. `.apk`, `.apkm`, `.apks` and `.xapk` all work, and so does a folder of split APKs. A bundle has to be complete, not just the x86_64 split on its own.
 
-Two places to get one. Neither is run by or affiliated with Stud:
+### Recommended: gplaydl
+
+[gplaydl](https://github.com/rehmatworks/gplaydl) downloads the current release straight from Google Play, through a Google account you add yourself. Set it up once:
+
+1. Install gplaydl: `pip install gplaydl`.
+2. On an Android phone, install their Authenticator app from [dispenser.gplaydl.com](https://dispenser.gplaydl.com/) and sign in with a spare Google account. Google sometimes restricts accounts it sees on unofficial clients, so don't use your main one.
+3. Open **Link gplaydl** in the app, then run this and type in the code it shows:
+
+```sh
+gplaydl link
+```
+
+Then download Roblox:
+
+```sh
+gplaydl download com.roblox.client -a x86_64 -o ./roblox
+```
+
+In Stud's Settings, click **Folder...**, choose the `roblox` folder and save.
+
+### Other sources
+
+None of these, gplaydl included, is run by or affiliated with Stud:
 
  - **[Uptodown](https://roblox.en.uptodown.com/android/download)**
  - **[APKMirror](https://www.apkmirror.com/apk/roblox-corporation/roblox/)**: pick a release, then a variant that lists x86_64.
 
-Then open Settings in Stud, pick the file and save. It's copied in, so you can delete the download.
+Open Settings in Stud, click **Browse...**, pick the file and save. Whichever way you pick it, the APK is copied in, so you can delete the download.
 
 <br>
 

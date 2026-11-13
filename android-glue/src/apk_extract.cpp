@@ -443,6 +443,68 @@ std::string apk_source_fingerprint(const std::string& apk_path) {
            std::to_string(static_cast<long long>(st.st_mtime));
 }
 
+namespace {
+
+// Whether one plain .apk carries `entry`, without reading it.
+bool zip_has_entry(const std::string& path, const char* entry) {
+    mz_zip_archive zip{};
+    if (!mz_zip_reader_init_file(&zip, path.c_str(), 0)) return false;
+    const bool found = mz_zip_reader_locate_file(&zip, entry, nullptr, 0) >= 0;
+    mz_zip_reader_end(&zip);
+    return found;
+}
+
+}  // namespace
+
+void bundle_split_folder(const std::string& dir, const std::string& out_path) {
+    namespace fs = std::filesystem;
+    struct Split {
+        std::string path, name;
+        uintmax_t size = 0;
+    };
+    std::vector<Split> splits;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        const std::string name = entry.path().filename().string();
+        if (name.size() < 5 || name.substr(name.size() - 4) != ".apk") continue;
+        if (is_foreign_abi_split(name)) continue;
+        splits.push_back({entry.path().string(), name, entry.file_size(ec)});
+    }
+    if (ec && splits.empty()) throw ExtractError("stud: cannot read the folder '" + dir + "'");
+    // The base is the split with the app's assets; of several, the largest.
+    const Split* base = nullptr;
+    bool engine = false;
+    for (const Split& s : splits) {
+        if (zip_has_entry(s.path, "assets/ssl/cacert.pem") && (base == nullptr || s.size > base->size)) base = &s;
+        if (zip_has_entry(s.path, "lib/x86_64/libroblox.so")) engine = true;
+    }
+    if (base == nullptr) {
+        throw ExtractError("stud: '" + dir + "' has no base APK (none of its .apk files carries the app's assets)");
+    }
+    if (!engine) {
+        throw ExtractError("stud: '" + dir + "' has no x86_64 split (no .apk in it carries lib/x86_64/libroblox.so)");
+    }
+    // Written beside the destination and renamed over it, so a failure
+    // never leaves half a bundle under the real name.
+    const std::string partial = out_path + ".part";
+    std::remove(partial.c_str());
+    mz_zip_archive zip{};
+    bool ok = mz_zip_writer_init_file(&zip, partial.c_str(), 0);
+    for (const Split& s : splits) {
+        if (!ok) break;
+        // Stored, not compressed: an APK is already a zip, and this is a copy.
+        const std::string name = &s == base ? std::string("base.apk") : "split_" + s.name;
+        ok = mz_zip_writer_add_file(&zip, name.c_str(), s.path.c_str(), nullptr, 0, MZ_NO_COMPRESSION);
+    }
+    ok = ok && mz_zip_writer_finalize_archive(&zip);
+    mz_zip_writer_end(&zip);
+    if (!ok || std::rename(partial.c_str(), out_path.c_str()) != 0) {
+        std::remove(partial.c_str());
+        throw ExtractError("stud: could not write a bundle of '" + dir + "' to '" + out_path + "'");
+    }
+}
+
 std::string default_libroblox_cache_path() { return cache_root() + "/libroblox.so"; }
 
 std::string default_assets_cache_dir() { return cache_root() + "/assets"; }
