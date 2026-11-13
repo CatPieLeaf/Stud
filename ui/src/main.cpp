@@ -57,6 +57,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
@@ -431,6 +432,26 @@ bool launch_game(const std::optional<QString>& deep_link) {
     return true;
 }
 
+// Every Rosemary process running Stud's copy of the client, found through
+// /proc: an executable named rosemary with an argument inside clients_dir().
+std::vector<pid_t> client_process_ids() {
+    std::vector<pid_t> pids;
+    const std::string clients = stud::ui::client::clients_dir().toStdString() + "/";
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
+        const std::string name = entry.path().filename().string();
+        if (name.empty() || !std::all_of(name.begin(), name.end(), ::isdigit)) continue;
+        std::ifstream file(entry.path() / "cmdline", std::ios::binary);
+        const std::string cmdline((std::istreambuf_iterator<char>(file)),
+                                  std::istreambuf_iterator<char>());
+        const std::string program = cmdline.substr(0, cmdline.find('\0'));
+        if (std::filesystem::path(program).filename() != "rosemary") continue;
+        if (cmdline.find(clients) == std::string::npos) continue;
+        pids.push_back(static_cast<pid_t>(std::stol(name)));
+    }
+    return pids;
+}
+
 }  // namespace
 
 namespace stud::ui {
@@ -438,10 +459,25 @@ namespace stud::ui {
 // Ends a running session: the tray's Exit, and Settings before it starts
 // Roblox again.
 void terminate_stud_session() {
-    if (g_client == nullptr || g_client->state() == QProcess::NotRunning) return;
+    if (g_client == nullptr) return;
     g_stop_requested = true;
+    // `rosemary run` only asks Rosemary's own services to open the app; the
+    // client itself runs under them, not under this process. So the client
+    // is found by what it runs, Stud's copy of Roblox, and stopped with the
+    // process this one started.
+    std::vector<pid_t> pids = client_process_ids();
+    for (const pid_t pid : pids) ::kill(pid, SIGTERM);
     g_client->terminate();
-    if (!g_client->waitForFinished(5000)) {
+    const auto all_gone = [&pids] {
+        return std::none_of(pids.begin(), pids.end(), [](pid_t pid) { return ::kill(pid, 0) == 0; });
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline &&
+           (g_client->state() != QProcess::NotRunning || !all_gone())) {
+        g_client->waitForFinished(100);
+    }
+    for (const pid_t pid : pids) ::kill(pid, SIGKILL);
+    if (g_client->state() != QProcess::NotRunning) {
         g_client->kill();
         g_client->waitForFinished(2000);
     }
