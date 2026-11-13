@@ -85,12 +85,12 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "On, Ctrl does it, as everywhere else on Linux.");
     general->addWidget(controlEditKeysCheck_);
 
-    general->addWidget(new QLabel("macOS menu bar"));
-    menuBarCombo_ = new QComboBox(this);
-    menuBarCombo_->addItem("Hidden", QStringLiteral("none"));
-    menuBarCombo_->addItem("In the title bar", QStringLiteral("titlebar"));
-    menuBarCombo_->addItem("Strip above the game", QStringLiteral("strip"));
-    general->addWidget(menuBarCombo_);
+    general->addWidget(new QLabel("MacOS title bar"));
+    titleBarCombo_ = new QComboBox(this);
+    titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
+    titleBarCombo_->addItem("MacOS title bar only", QStringLiteral("macos-no-menu"));
+    titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
+    general->addWidget(titleBarCombo_);
 
     general->addWidget(new QLabel("Display server"));
     displayBackendCombo_ = new QComboBox(this);
@@ -252,7 +252,7 @@ void SettingsWindow::installResets() {
     add(frameCapSpin_, [this, d] { frameCapSpin_->setValue(d.frame_cap); });
     add(vsyncCheck_, [this, d] { vsyncCheck_->setChecked(d.vsync); });
     add(presentationCombo_, [this, d] { select_data(presentationCombo_, d.presentation_mode); });
-    add(menuBarCombo_, [this, d] { select_data(menuBarCombo_, d.menu_bar); });
+    add(titleBarCombo_, [this, d] { select_data(titleBarCombo_, d.title_bar); });
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
     add(controlEditKeysCheck_, [this, d] { controlEditKeysCheck_->setChecked(d.control_edit_keys); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
@@ -291,7 +291,7 @@ void SettingsWindow::loadFromDisk() {
     frameCapSpin_->setValue(settings.frame_cap);
     vsyncCheck_->setChecked(settings.vsync);
     select_data(presentationCombo_, settings.presentation_mode);
-    select_data(menuBarCombo_, settings.menu_bar);
+    select_data(titleBarCombo_, settings.title_bar);
     select_data(displayBackendCombo_, settings.display_backend);
     controlEditKeysCheck_->setChecked(settings.control_edit_keys);
     mangohudCheck_->setChecked(settings.mangohud);
@@ -479,7 +479,7 @@ void SettingsWindow::onSaveClicked() {
     settings.frame_cap = frameCapSpin_->value();
     settings.vsync = vsyncCheck_->isChecked();
     settings.presentation_mode = selected_data(presentationCombo_);
-    settings.menu_bar = selected_data(menuBarCombo_);
+    settings.title_bar = selected_data(titleBarCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
     settings.control_edit_keys = controlEditKeysCheck_->isChecked();
     settings.mangohud = mangohudCheck_->isChecked();

@@ -81,7 +81,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Downloads and updates the client from Roblox's own servers before each launch, so there is nothing to fetch by hand
  - Two processes: Stud's launcher, and the client on Rosemary
  - Runs on **Wayland and X11**, with Stud's own icon and taskbar entry
- - Hides the macOS menu bar, or puts it in the title bar or a strip above the game
+ - Your desktop's own title bar, or the macOS one, with or without its menu bar
  - Ctrl for copy, cut and paste, where the macOS client expects Command
  - Frame rate limit, VSync and presentation mode in Settings
  - `roblox://` links from a browser open straight into the experience

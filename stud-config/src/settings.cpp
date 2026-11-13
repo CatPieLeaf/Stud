@@ -104,7 +104,7 @@ StudSettings load_settings(const std::string& path) {
     read_bool("vsync", result.vsync);
     read_string("presentationMode", result.presentation_mode,
                 {"", "fifo", "fifo_relaxed", "mailbox", "immediate"});
-    read_string("menuBar", result.menu_bar, {"none", "titlebar", "strip"});
+    read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
     read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
     read_bool("controlEditKeys", result.control_edit_keys);
     read_bool("mangohud", result.mangohud);
@@ -143,7 +143,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["frameCap"] = settings.frame_cap;
     doc["vsync"] = settings.vsync;
     doc["presentationMode"] = settings.presentation_mode;
-    doc["menuBar"] = settings.menu_bar;
+    doc["titleBar"] = settings.title_bar;
     doc["displayBackend"] = settings.display_backend;
     doc["controlEditKeys"] = settings.control_edit_keys;
     doc["mangohud"] = settings.mangohud;
@@ -158,7 +158,8 @@ void save_settings(const std::string& path, const StudSettings& settings) {
           "textOverlayFontRatio", "smoothZoom", "windowsMaterials", "webLogin", "hqTextures",
           "backgroundFps", "discordRichPresence", "discordJoinButton", "closeOnLeave",
           "serverRegionNotification", "textureCache", "textureCacheMB", "graphicsMode",
-          "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback"}) {
+          "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback",
+          "menuBar"}) {
         doc.erase(gone);
     }
 

@@ -246,7 +246,14 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     } else if (settings.display_backend == "wayland" || wayland_available) {
         env.insert(QStringLiteral("SDL_VIDEO_DRIVER"), QStringLiteral("wayland"));
     }
-    env.insert(QStringLiteral("ROSEMARY_MENU"), QString::fromStdString(settings.menu_bar));
+    // Rosemary draws the macOS title bar itself ("client"), or leaves the
+    // window to the desktop's own ("server").
+    const bool native_title_bar = settings.title_bar == "native";
+    env.insert(QStringLiteral("ROSEMARY_DECORATIONS"),
+               native_title_bar ? QStringLiteral("server") : QStringLiteral("client"));
+    env.insert(QStringLiteral("ROSEMARY_MENU"), settings.title_bar == "macos"
+                                                    ? QStringLiteral("titlebar")
+                                                    : QStringLiteral("none"));
     if (settings.control_edit_keys) {
         env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
     }

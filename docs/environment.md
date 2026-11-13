@@ -25,7 +25,8 @@ always runs with what Settings says.
 | variable | from | value |
 |---|---|---|
 | `ROSEMARY_PREFIX` | always | Stud's prefix, `~/.local/share/stud/prefix`. |
-| `ROSEMARY_MENU` | macOS menu bar | `none`, `titlebar` or `strip`. |
+| `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
+| `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
 | `ROSEMARY_CONTROL_EDIT_KEYS` | Ctrl for copy, cut and paste | `1` when on. |
 | `ROSEMARY_SWAP_INTERVAL`, `ROSEMARY_SCREEN_REFRESH_RATE` | VSync | `0` and `9999` when off: the client paces itself to the refresh rate it is told. |
 | `ROSEMARY_METAL_PRESENTATION_MODE` | Presentation mode | `fifo`, `fifo_relaxed`, `mailbox` or `immediate`; unset for Rosemary's choice. |

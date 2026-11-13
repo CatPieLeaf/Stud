@@ -37,9 +37,10 @@ struct StudSettings {
     // "fifo", "fifo_relaxed", "mailbox", "immediate".
     std::string presentation_mode;
 
-    // The macOS menu bar Rosemary draws: "none" (hidden), "titlebar" or
-    // "strip".
-    std::string menu_bar = "none";
+    // The window's title bar: "macos" (the macOS title bar with the menu bar
+    // in it), "macos-no-menu" (the macOS title bar alone) or "native" (the
+    // desktop's own title bar, no menu bar).
+    std::string title_bar = "native";
 
     // Where the window goes: "auto" (Wayland when there is one), "wayland"
     // or "x11".

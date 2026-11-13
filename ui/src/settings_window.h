@@ -79,7 +79,7 @@ private:
     QSpinBox* frameCapSpin_;
     QCheckBox* vsyncCheck_;
     QComboBox* presentationCombo_;
-    QComboBox* menuBarCombo_;
+    QComboBox* titleBarCombo_;
     QComboBox* displayBackendCombo_;
     QCheckBox* controlEditKeysCheck_;
     QCheckBox* gamemodeCheck_;
