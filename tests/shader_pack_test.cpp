@@ -144,6 +144,57 @@ void test_not_a_pack() {
     check(threw, "something that is not a pack is refused");
 }
 
+// A pack of one shader: per variant key, the (set, binding)s its module
+// decorates. Laid out as the RBXS container is: header, the name record,
+// the permutation records, then the blobs (a 24-byte header, SPIR-V).
+std::vector<uint8_t> tiny_pack(const char* name,
+                               const std::vector<std::pair<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>>>& variants) {
+    std::vector<uint8_t> out(0x54 + 68, 0);
+    std::memcpy(out.data(), "RBXS", 4);
+    const uint16_t names = 1, perms = static_cast<uint16_t>(variants.size());
+    std::memcpy(out.data() + 12, &names, 2);
+    std::memcpy(out.data() + 14, &perms, 2);
+    std::memcpy(out.data() + 0x54, name, std::strlen(name));
+    std::vector<std::vector<uint8_t>> blobs;
+    for (const auto& [key, bindings] : variants) {
+        std::vector<uint32_t> w{0x07230203, 0x10000, 0, 100 + 2 * static_cast<uint32_t>(bindings.size()), 0};
+        uint32_t var = 100;
+        for (const auto& [set, binding] : bindings) {
+            w.insert(w.end(), {op(71, 4), var, 34, set, op(71, 4), var, 33, binding});
+            ++var;
+        }
+        std::vector<uint8_t> blob(24, 0);
+        blob.insert(blob.end(), reinterpret_cast<const uint8_t*>(w.data()),
+                    reinterpret_cast<const uint8_t*>(w.data() + w.size()));
+        blobs.push_back(std::move(blob));
+    }
+    uint32_t offset = static_cast<uint32_t>(out.size() + variants.size() * 64);
+    for (size_t i = 0; i < variants.size(); ++i) {
+        uint8_t rec[64] = {};
+        const uint32_t size = static_cast<uint32_t>(blobs[i].size());
+        std::memcpy(rec + 16, &offset, 4);
+        std::memcpy(rec + 20, &size, 4);
+        std::memcpy(rec + 24, &variants[i].first, 4);
+        out.insert(out.end(), rec, rec + 64);
+        offset += size;
+    }
+    for (const auto& b : blobs) out.insert(out.end(), b.begin(), b.end());
+    return out;
+}
+
+// Windows-only variants are anchored on the closest variant both packs
+// build, whatever keys a release has: here neither builds key 0.
+void test_graft_anchor() {
+    const auto mobile = tiny_pack("DefaultUnifiedPlasticFS", {{0x80000000, {{0, 0}}}});
+    const auto desktop = tiny_pack("DefaultUnifiedPlasticFS", {{0x80000000, {{0, 0}}},
+                                                               {0x80000200, {{0, 0}, {1, 10}}},
+                                                               {0x00000200, {{0, 0}}}});
+    stud::shader_pack::BuildReport report;
+    stud::shader_pack::build_desktop_materials(mobile, desktop, {}, &report);
+    check(report.grafted == 1, "a Windows-only variant is added through the closest shared variant");
+    check(report.refused_graft == 1, "a variant no shared variant's key is a subset of is refused");
+}
+
 }  // namespace
 
 // A hand-written GLSL 150 fragment shader shaped like the desktop
@@ -219,6 +270,7 @@ int main() {
     test_detail();
     test_material_slots();
     test_not_a_pack();
+    test_graft_anchor();
     test_glsl_conversion();
     return 0;
 }

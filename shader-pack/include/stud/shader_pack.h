@@ -40,6 +40,7 @@ struct BuildReport {
     size_t refused_image = 0;     // a binding both declare, as a different kind of image
     size_t refused_vertex_io = 0; // vertex shaders whose stage interface differs
     size_t grafted = 0;           // desktop-only variants added
+    size_t refused_graft = 0;     // desktop-only variants with no anchor that fits
     size_t aliases = 0;           // two-sided lit keys answered with the one-sided blob
     size_t normal_reads = 0;      // .wy normal-map reads rewritten to .xy
     size_t normal_z = 0;          // normal z taken from the map

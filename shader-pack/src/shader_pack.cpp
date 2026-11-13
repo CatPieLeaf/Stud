@@ -1,6 +1,7 @@
 #include "stud/shader_pack.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cstring>
 #include <map>
@@ -635,6 +636,24 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
         return std::includes(mobile_capabilities.begin(), mobile_capabilities.end(), c.capabilities.begin(),
                              c.capabilities.end());
     };
+    // A binding both declare, as a different kind of image.
+    auto image_kind_differs = [](const Contract& mi, const Contract& di) {
+        return std::any_of(di.bindings.begin(), di.bindings.end(), [&](const auto& b) {
+            const auto m = mi.bindings.find(b.first);
+            return m != mi.bindings.end() && m->second != b.second &&
+                   (b.second.find("image") != std::string::npos || m->second.find("image") != std::string::npos);
+        });
+    };
+    // A desktop blob adapted to what the Android engine binds.
+    auto adapt = [&](const std::string& name, const std::string& blob) {
+        auto words = spirv_words(blob);
+        r.normal_reads += rewrite_normal_reads(words, static_cast<uint32_t>(slots.normal));
+        r.normal_z += take_normal_z_from_map(words, static_cast<uint32_t>(slots.normal));
+        if (!is_plastic(name)) {
+            r.detail_dropped += drop_detail_normal(words, static_cast<uint32_t>(slots.detail_normal));
+        }
+        return with_words(blob, words);
+    };
 
     // Where both packs build a variant, the desktop blob replaces the
     // mobile one when their descriptor contracts differ (the material
@@ -687,25 +706,11 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
             ++r.refused_capability;
             continue;
         }
-        const bool image_kind_differs =
-            std::any_of(di.bindings.begin(), di.bindings.end(), [&](const auto& b) {
-                const auto m = mi.bindings.find(b.first);
-                return m != mi.bindings.end() && m->second != b.second &&
-                       (b.second.find("image") != std::string::npos ||
-                        m->second.find("image") != std::string::npos);
-            });
-        if (image_kind_differs) {
+        if (image_kind_differs(mi, di)) {
             ++r.refused_image;
             continue;
         }
-        std::string blob = desktop.blob(d->second);
-        auto words = spirv_words(blob);
-        r.normal_reads += rewrite_normal_reads(words, static_cast<uint32_t>(slots.normal));
-        r.normal_z += take_normal_z_from_map(words, static_cast<uint32_t>(slots.normal));
-        if (!is_plastic(name)) {
-            r.detail_dropped += drop_detail_normal(words, static_cast<uint32_t>(slots.detail_normal));
-        }
-        blobs[k] = with_words(blob, words);
+        blobs[k] = adapt(name, desktop.blob(d->second));
         ++r.substituted;
         if (drop_in) {
             ++r.drop_in;
@@ -717,35 +722,45 @@ std::vector<uint8_t> build_desktop_materials(const std::vector<uint8_t>& mobile_
     for (size_t k = 0; k < mobile.perms(); ++k) perms.emplace_back(mobile.perm(k), mobile.perm(k) + kPermRecord);
 
     // Desktop-only variants of shaders the mobile pack has (the outline
-    // passes among them), where both packs agree on that shader's base
-    // variant's bindings: then they were built against the same engine
-    // contract, and what a variant adds is what the engine sets up when
-    // it asks for that variant.
+    // passes among them). Each is anchored on the closest variant of that
+    // shader both packs build whose key bits are a subset of its own: which
+    // keys a release builds changes (some have no key 0 at all), so no one
+    // key is assumed. Where both packs agree on the anchor's bindings, or
+    // its desktop build already replaced the mobile one, the variant was
+    // built against the same engine contract, and what it adds is what the
+    // engine sets up when it asks for that variant. Terrain stays mobile
+    // throughout, as above.
     const auto& names = mobile.name_list();
     for (const auto& [key, k] : dk) {
-        if (mk.count(key)) continue;
+        if (mk.count(key) || key.first.rfind("SmoothCluster", 0) == 0) continue;
         const auto name_at = std::find(names.begin(), names.end(), key.first);
         if (name_at == names.end()) continue;
-        const auto mbase = mk.find({key.first, 0}), dbase = dk.find({key.first, 0});
-        if (mbase == mk.end() || dbase == dk.end()) continue;
-        if (contract(mobile, mbase->second, mobile_contracts).binding_list !=
-            contract(desktop, dbase->second, desktop_contracts).binding_list) {
+        std::optional<std::pair<size_t, size_t>> anchor;  // mobile, desktop permutation
+        int anchor_bits = -1;
+        for (auto m = mk.lower_bound({key.first, 0}); m != mk.end() && m->first.first == key.first; ++m) {
+            const uint32_t bits = m->first.second;
+            if ((bits & key.second) != bits) continue;
+            const auto d = dk.find(m->first);
+            if (d == dk.end() || std::popcount(bits) <= anchor_bits) continue;
+            anchor_bits = std::popcount(bits);
+            anchor = {m->second, d->second};
+        }
+        if (!anchor) {
+            ++r.refused_graft;
             continue;
         }
-        if (!only_known_capabilities(contract(desktop, k, desktop_contracts))) continue;
+        const Contract& ma = contract(mobile, anchor->first, mobile_contracts);
+        const Contract& dv = contract(desktop, k, desktop_contracts);
+        if ((ma.bindings != contract(desktop, anchor->second, desktop_contracts).bindings &&
+             !blobs.count(anchor->first)) ||
+            image_kind_differs(ma, dv) || !only_known_capabilities(dv)) {
+            ++r.refused_graft;
+            continue;
+        }
         std::vector<uint8_t> rec(desktop.perm(k), desktop.perm(k) + kPermRecord);
         write16(rec.data() + kPermName, static_cast<uint16_t>(name_at - names.begin()));
         perms.push_back(std::move(rec));
-        std::string blob = desktop.blob(k);
-        if (!is_plastic(key.first)) {
-            auto words = spirv_words(blob);
-            if (const size_t dropped =
-                    drop_detail_normal(words, static_cast<uint32_t>(slots.detail_normal))) {
-                r.detail_dropped += dropped;
-                blob = with_words(blob, words);
-            }
-        }
-        blobs[perms.size() - 1] = std::move(blob);
+        blobs[perms.size() - 1] = adapt(key.first, desktop.blob(k));
         ++r.grafted;
     }
 

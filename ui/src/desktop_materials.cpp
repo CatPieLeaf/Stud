@@ -223,11 +223,12 @@ bool build_combined(const std::string& apk_path, const QByteArray& desktop_pack,
         say(QStringLiteral("could not write the combined shader pack"));
         return false;
     }
-    say(QStringLiteral("%1 shaders from Windows, %2 of them drop-in, %3 added, %4 normal-map reads adapted, "
-                       "%5 detail normals outside Plastic removed")
+    say(QStringLiteral("%1 shaders from Windows, %2 of them drop-in, %3 added (%4 refused), %5 normal-map reads "
+                       "adapted, %6 detail normals outside Plastic removed")
             .arg(report.substituted)
             .arg(report.drop_in)
             .arg(report.grafted)
+            .arg(report.refused_graft)
             .arg(report.normal_reads)
             .arg(report.detail_dropped));
     for (const auto& [name, count] : report.drop_in_by_shader) {
