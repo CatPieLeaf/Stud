@@ -37,6 +37,16 @@ Screen& screen() {
     return s;
 }
 
+// The window's width, as it always was; its height is what the contents need
+// at that width, so lines wrap rather than widen it, and it cannot be resized.
+constexpr int kWidth = 360;
+
+void fit() {
+    Screen& s = screen();
+    if (s.window == nullptr) return;
+    s.window->setFixedSize(kWidth, s.window->layout()->totalHeightForWidth(kWidth));
+}
+
 void next_line() {
     Screen& s = screen();
     if (s.lines.isEmpty() || s.text_on) return;
@@ -45,6 +55,7 @@ void next_line() {
     if (s.lines.size() > 1 && i == s.last) i = (i + 1) % s.lines.size();
     s.last = i;
     s.label->setText(s.lines.at(i));
+    fit();
 }
 
 void raise() {
@@ -80,9 +91,7 @@ void raise() {
             });
         });
         layout->addWidget(s.cancel, 0, Qt::AlignHCenter);
-        // Square, at the width it always had; lines wrap rather than widen it.
-        constexpr int kSide = 360;
-        s.window->setFixedSize(kSide, kSide);
+        fit();
         s.timer = new QTimer(s.window.get());
         s.timer->setInterval(2000);
         QObject::connect(s.timer, &QTimer::timeout, s.window.get(), next_line);
@@ -110,6 +119,7 @@ void show_loading_lines(std::function<void()> on_cancel) {
     s.lines_on = true;
     raise();
     s.cancel->setVisible(s.on_cancel != nullptr);
+    fit();
     next_line();
     s.timer->start();
 }
@@ -121,6 +131,7 @@ void show_loading_text(const QString& text) {
     s.text_on = true;
     raise();
     s.label->setText(text);
+    fit();
     QCoreApplication::processEvents();
 }
 
