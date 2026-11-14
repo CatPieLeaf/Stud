@@ -61,6 +61,8 @@ add_executable(stud-ui
     src/desktop_entry.cpp
     src/diagnose.cpp
     src/mac_client.cpp
+    src/discord_rpc.cpp
+    src/game_activity.cpp
     src/settings_window.cpp
     src/cube_view.cpp
     src/cube_gl.cpp

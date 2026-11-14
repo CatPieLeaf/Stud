@@ -15,6 +15,7 @@
 
 #include "desktop_entry.h"
 #include "diagnose.h"
+#include "game_activity.h"
 #include "gpu_enum.h"
 #include "launch_uri.h"
 #include "loading_screen.h"
@@ -91,6 +92,8 @@ bool g_relaunch_pending = false;
 // neither it nor a ticket the client prints gets written.
 QByteArray g_client_output;
 QByteArray g_deep_link;
+// Discord presence and the server region notification, fed the same lines.
+stud::ui::GameActivity* g_activity = nullptr;
 
 void forward_client_output(bool flush_partial) {
     g_client_output += g_client->readAll();
@@ -99,6 +102,7 @@ void forward_client_output(bool flush_partial) {
         const qsizetype end = g_client_output.indexOf('\n', start);
         if (end < 0 && !(flush_partial && start < g_client_output.size())) break;
         QByteArray line = g_client_output.mid(start, end < 0 ? -1 : end - start);
+        if (g_activity != nullptr) g_activity->line(line);
         if (!g_deep_link.isEmpty()) line.replace(g_deep_link, "<deep link>");
         const std::string scrubbed =
             stud::ui::scrub_engine_log_line(std::string_view(line.constData(), line.size()));
@@ -435,6 +439,9 @@ bool launch_game(const std::optional<QString>& deep_link) {
     QStringList args{QStringLiteral("run"), program};
     if (deep_link) args << QStringLiteral("-protocolString") << *deep_link;
 
+    g_activity = new stud::ui::GameActivity(settings.discord_rich_presence,
+                                            settings.discord_join_button,
+                                            settings.server_region_notification, qApp);
     g_client = new QProcess(qApp);
     g_client->setProgram(rosemary);
     g_client->setArguments(args);
