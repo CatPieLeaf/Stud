@@ -45,6 +45,8 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QProcess>
+#include <QSaveFile>
+#include <QRegularExpression>
 #include <QProcessEnvironment>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -221,6 +223,57 @@ bool loads_code(const QString& name) {
            kNames.contains(name);
 }
 
+// NVIDIA's Vulkan driver manifest, where its packages install it.
+QString nvidia_vulkan_driver() {
+    for (const char* path : {"/usr/share/vulkan/icd.d/nvidia_icd.x86_64.json",
+                             "/usr/share/vulkan/icd.d/nvidia_icd.json",
+                             "/etc/vulkan/icd.d/nvidia_icd.json"}) {
+        if (QFileInfo(QString::fromLatin1(path)).isFile()) return QString::fromLatin1(path);
+    }
+    return {};
+}
+
+// Whether the machine has an NVIDIA graphics card, as the kernel lists PCI
+// devices: vendor 0x10de, display class 0x03.
+bool has_nvidia_card() {
+    const QDir devices(QStringLiteral("/sys/bus/pci/devices"));
+    for (const QString& device : devices.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        QFile vendor(devices.filePath(device) + QStringLiteral("/vendor"));
+        QFile cls(devices.filePath(device) + QStringLiteral("/class"));
+        if (vendor.open(QIODevice::ReadOnly) && cls.open(QIODevice::ReadOnly) &&
+            vendor.readAll().trimmed() == "0x10de" && cls.readAll().trimmed().startsWith("0x03")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Roblox's own frame rate cap, in its settings file in the prefix: its menu
+// stops at 240, so with VSync off it is lifted to the value it reads as no
+// cap. Only an element already there is changed; Roblox writes the file.
+void lift_roblox_frame_cap() {
+    const QDir users(stud::ui::client::prefix_dir() + QStringLiteral("/root/Users"));
+    static const QRegularExpression cap(
+        QStringLiteral(R"((?<=<int name="FramerateCap">)[^<]*(?=</int>))"));
+    for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QDir roblox(users.filePath(user) + QStringLiteral("/Library/Roblox"));
+        for (const QString& name :
+             roblox.entryList({QStringLiteral("GlobalBasicSettings_*.xml")}, QDir::Files)) {
+            QFile in(roblox.filePath(name));
+            if (!in.open(QIODevice::ReadOnly)) continue;
+            QString text = QString::fromUtf8(in.readAll());
+            in.close();
+            const QString lifted = QString(text).replace(cap, QStringLiteral("9999"));
+            if (lifted == text) continue;
+            QSaveFile out(roblox.filePath(name));
+            if (out.open(QIODevice::WriteOnly)) {
+                out.write(lifted.toUtf8());
+                out.commit();
+            }
+        }
+    }
+}
+
 // The chosen GPU, for a laptop with two: NVIDIA's PRIME offload for their
 // driver, DRI_PRIME for Mesa. Both are the documented way and both are
 // ignored on a machine with one GPU.
@@ -236,6 +289,12 @@ void apply_gpu_selection(QProcessEnvironment& env, const stud::config::StudSetti
         env.insert(QStringLiteral("__NV_PRIME_RENDER_OFFLOAD"), QStringLiteral("1"));
         env.insert(QStringLiteral("__GLX_VENDOR_LIBRARY_NAME"), QStringLiteral("nvidia"));
         env.insert(QStringLiteral("__VK_LAYER_NV_optimus"), QStringLiteral("NVIDIA_only"));
+        // Only NVIDIA's Vulkan driver, so Mesa's are not loaded beside it, and
+        // its shader cache kept whole: a pipeline compiled once stays compiled.
+        if (const QString icd = nvidia_vulkan_driver(); !icd.isEmpty()) {
+            env.insert(QStringLiteral("VK_DRIVER_FILES"), icd);
+        }
+        env.insert(QStringLiteral("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"), QStringLiteral("1"));
     } else {
         env.insert(QStringLiteral("DRI_PRIME"), QStringLiteral("1"));
     }
@@ -337,6 +396,11 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
 
     // VSync: on Vulkan the presentation mode, FIFO waiting for the display
     // and Rosemary's default (MAILBOX) not; on OpenGL the swap interval.
+    // Without VSync, uncapped: the client paces itself to the refresh rate it
+    // is told, so it is told one no display has.
+    if (!settings.vsync) {
+        env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"), QStringLiteral("9999"));
+    }
     if (settings.renderer == "opengl") {
         if (!settings.vsync) env.insert(QStringLiteral("ROSEMARY_SWAP_INTERVAL"), QStringLiteral("0"));
     } else if (settings.vsync) {
@@ -484,6 +548,13 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     if (!stud::ui::client::ensure_prefix(rosemary, progress, &error)) {
         open_settings_for_launch_failure(error);
         return false;
+    }
+    if (player && !settings.vsync) lift_roblox_frame_cap();
+    if (has_nvidia_card() && nvidia_vulkan_driver().isEmpty()) {
+        std::printf("stud: an NVIDIA card without NVIDIA's Vulkan driver\n");
+        stud::ui::send_notification(
+            QStringLiteral("NVIDIA's Vulkan driver is missing"),
+            QStringLiteral("Roblox runs on another GPU until NVIDIA's Vulkan driver is installed."));
     }
     // Mods, over a build put back as it came.
     if (!stud::ui::mods::apply(*build, product, &error)) {

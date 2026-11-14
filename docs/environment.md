@@ -32,6 +32,8 @@ log.
 | `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
 | `ROSEMARY_CONTROL_EDIT_KEYS` | always | `1`: Ctrl for copy, cut and paste. |
+| `ROSEMARY_SCREEN_REFRESH_RATE` | VSync | `9999` when off: the client paces itself to the refresh rate it is told, so off is uncapped. Roblox's own `FramerateCap` is lifted to match. |
+| `VK_DRIVER_FILES`, `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP` | an NVIDIA GPU | Only NVIDIA's Vulkan driver, and its shader cache never cleaned up. |
 | `ROSEMARY_METAL_PRESENTATION_MODE` | VSync, on Vulkan | `fifo` when on; unset (Rosemary's `mailbox`) when off. |
 | `ROSEMARY_SWAP_INTERVAL` | VSync, on OpenGL | `0` when off. |
 | `SDL_VIDEO_DRIVER` | Display server | `wayland` on a Wayland desktop, or `x11` when chosen there and XWayland runs. |
