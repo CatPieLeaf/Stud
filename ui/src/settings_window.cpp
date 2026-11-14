@@ -21,7 +21,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
-#include <QSpinBox>
+#include <QFileDialog>
+#include <QFontDatabase>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPlainTextEdit>
+#include <QSaveFile>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QTabWidget>
@@ -30,7 +35,6 @@
 #include <QPainter>
 
 #include <cstdio>
-#include <limits>
 
 #include <unistd.h>
 
@@ -79,12 +83,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     gamemodeCheck_ = new QCheckBox("GameMode", this);
     gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
     general->addWidget(gamemodeCheck_);
-    controlEditKeysCheck_ = new QCheckBox("Ctrl for copy, cut and paste", this);
-    controlEditKeysCheck_->setToolTip(
-        "Roblox's macOS client expects Command for copy, cut, paste and select all.\n"
-        "On, Ctrl does it, as everywhere else on Linux.");
-    general->addWidget(controlEditKeysCheck_);
-
     general->addWidget(new QLabel("MacOS title bar"));
     titleBarCombo_ = new QComboBox(this);
     titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
@@ -92,13 +90,18 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
     general->addWidget(titleBarCombo_);
 
-    general->addWidget(new QLabel("Display server"));
+    // A choice only on a Wayland desktop that also runs XWayland: anywhere
+    // else there is one way to open a window.
+    auto* displayBackendLabel = new QLabel("Display server", this);
+    general->addWidget(displayBackendLabel);
     displayBackendCombo_ = new QComboBox(this);
-    displayBackendCombo_->addItem("Automatic", QStringLiteral("auto"));
     displayBackendCombo_->addItem("Wayland", QStringLiteral("wayland"));
-    displayBackendCombo_->addItem("X11", QStringLiteral("x11"));
-    displayBackendCombo_->setToolTip("Automatic is Wayland when the desktop has it, X11 otherwise.");
+    displayBackendCombo_->addItem("X11 (XWayland)", QStringLiteral("x11"));
     general->addWidget(displayBackendCombo_);
+    const bool backend_choice = !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") &&
+                                !qEnvironmentVariableIsEmpty("DISPLAY");
+    displayBackendLabel->setVisible(backend_choice);
+    displayBackendCombo_->setVisible(backend_choice);
 
     general->addStretch();
 
@@ -118,33 +121,30 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     }
     graphics->addWidget(gpuCombo_);
 
-    graphics->addWidget(new QLabel("Frame rate limit"));
-    frameCapSpin_ = new QSpinBox(this);
-    frameCapSpin_->setRange(0, std::numeric_limits<int>::max());
-    // 0 leaves it to Roblox's own Maximum Frame Rate setting.
-    frameCapSpin_->setSpecialValueText("Roblox's setting");
-    frameCapSpin_->setSuffix(" FPS");
-    graphics->addWidget(frameCapSpin_);
-
     vsyncCheck_ = new QCheckBox("VSync", this);
     vsyncCheck_->setToolTip("Wait for the display's refresh. Off presents frames as soon as "
                             "they are ready.");
     graphics->addWidget(vsyncCheck_);
-
-    graphics->addWidget(new QLabel("Presentation mode"));
-    presentationCombo_ = new QComboBox(this);
-    presentationCombo_->addItem("Rosemary's choice", QString());
-    presentationCombo_->addItem("FIFO", QStringLiteral("fifo"));
-    presentationCombo_->addItem("FIFO relaxed", QStringLiteral("fifo_relaxed"));
-    presentationCombo_->addItem("Mailbox", QStringLiteral("mailbox"));
-    presentationCombo_->addItem("Immediate", QStringLiteral("immediate"));
-    graphics->addWidget(presentationCombo_);
 
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
     mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Roblox.");
     graphics->addWidget(mangohudCheck_);
 
     graphics->addStretch();
+
+    // ---- FFlags --------------------------------------------------------
+    // flags.json in Stud's config directory, as JSON: written into the
+    // client's ClientAppSettings.json at every launch.
+    auto* fflags = add_tab("FFlags");
+    flagsEdit_ = new QPlainTextEdit(this);
+    flagsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    flagsEdit_->setPlaceholderText("{\n    \"FFlagExample\": true\n}");
+    fflags->addWidget(flagsEdit_, 1);
+    auto* importButton = new QPushButton("Import JSON...", this);
+    importButton->setToolTip("Add the flags of a JSON file to these; a flag both have takes the "
+                             "imported value.");
+    fflags->addWidget(importButton, 0, Qt::AlignLeft);
+    connect(importButton, &QPushButton::clicked, this, &SettingsWindow::onImportFlagsClicked);
 
     // ---- About ---------------------------------------------------------
     auto* about = add_tab("About");
@@ -249,12 +249,9 @@ void SettingsWindow::installResets() {
         const int index = gpuCombo_->findData(default_gpu_index());
         gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
-    add(frameCapSpin_, [this, d] { frameCapSpin_->setValue(d.frame_cap); });
     add(vsyncCheck_, [this, d] { vsyncCheck_->setChecked(d.vsync); });
-    add(presentationCombo_, [this, d] { select_data(presentationCombo_, d.presentation_mode); });
     add(titleBarCombo_, [this, d] { select_data(titleBarCombo_, d.title_bar); });
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
-    add(controlEditKeysCheck_, [this, d] { controlEditKeysCheck_->setChecked(d.control_edit_keys); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
     add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
     add(trayCheck_, [this, d] { trayCheck_->setChecked(d.system_tray); });
@@ -275,7 +272,67 @@ bool SettingsWindow::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched, event);
 }
 
+namespace {
+
+QString flags_path() { return QString::fromStdString(stud::config::default_flag_overrides_path()); }
+
+// The editor's text as a JSON object; an empty editor is no flags. Empty
+// with `error` set when it is not one.
+std::optional<QJsonObject> parse_flags(const QString& text, QString* error) {
+    if (text.trimmed().isEmpty()) return QJsonObject();
+    QJsonParseError parse{};
+    const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &parse);
+    if (parse.error != QJsonParseError::NoError) {
+        *error = QStringLiteral("%1 (at character %2)").arg(parse.errorString()).arg(parse.offset);
+        return std::nullopt;
+    }
+    if (!doc.isObject()) {
+        *error = QStringLiteral("it is not a JSON object");
+        return std::nullopt;
+    }
+    return doc.object();
+}
+
+QString format_flags(const QJsonObject& flags) {
+    return flags.isEmpty() ? QString()
+                           : QString::fromUtf8(QJsonDocument(flags).toJson(QJsonDocument::Indented));
+}
+
+}  // namespace
+
+void SettingsWindow::onImportFlagsClicked() {
+    const QString path = QFileDialog::getOpenFileName(this, "Import FFlags", QString(),
+                                                      "JSON files (*.json);;All files (*)");
+    if (path.isEmpty()) return;
+    QFile file(path);
+    QString error;
+    if (!file.open(QIODevice::ReadOnly)) {
+        statusLabel_->setText(QString("Could not read %1.").arg(path).toHtmlEscaped());
+        return;
+    }
+    const auto imported = parse_flags(QString::fromUtf8(file.readAll()), &error);
+    if (!imported) {
+        statusLabel_->setText(QString("%1 is not usable: %2").arg(path, error).toHtmlEscaped());
+        return;
+    }
+    const auto current = parse_flags(flagsEdit_->toPlainText(), &error);
+    if (!current) {
+        statusLabel_->setText(
+            QString("Fix the flags above before importing: %1").arg(error).toHtmlEscaped());
+        return;
+    }
+    QJsonObject merged = *current;
+    for (auto it = imported->begin(); it != imported->end(); ++it) merged.insert(it.key(), it.value());
+    flagsEdit_->setPlainText(format_flags(merged));
+    statusLabel_->setText(QString("Imported %1 flag(s). Save to keep them.").arg(imported->size()));
+}
+
 void SettingsWindow::loadFromDisk() {
+    {
+        QFile file(flags_path());
+        flagsEdit_->setPlainText(file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll())
+                                                                 : QString());
+    }
     stud::config::StudSettings settings;
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
@@ -288,12 +345,9 @@ void SettingsWindow::loadFromDisk() {
     if (index >= 0) {
         gpuCombo_->setCurrentIndex(index);
     }
-    frameCapSpin_->setValue(settings.frame_cap);
     vsyncCheck_->setChecked(settings.vsync);
-    select_data(presentationCombo_, settings.presentation_mode);
     select_data(titleBarCombo_, settings.title_bar);
     select_data(displayBackendCombo_, settings.display_backend);
-    controlEditKeysCheck_->setChecked(settings.control_edit_keys);
     mangohudCheck_->setChecked(settings.mangohud);
     gamemodeCheck_->setChecked(settings.gamemode);
     trayCheck_->setChecked(settings.system_tray);
@@ -462,6 +516,16 @@ void SettingsWindow::onRestartClicked() {
 }
 
 void SettingsWindow::onSaveClicked() {
+    // The flags first: a flags.json the client cannot read is refused
+    // before anything is written.
+    QString flags_error;
+    const auto flags = parse_flags(flagsEdit_->toPlainText(), &flags_error);
+    if (!flags) {
+        statusLabel_->setText(QString("Nothing was saved. The FFlags are not valid JSON: %1")
+                                  .arg(flags_error)
+                                  .toHtmlEscaped());
+        return;
+    }
     // From what is on disk: the file may hold keys this window does not
     // show. A file that cannot be read is not overwritten at all.
     stud::config::StudSettings settings;
@@ -476,15 +540,21 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
-    settings.frame_cap = frameCapSpin_->value();
     settings.vsync = vsyncCheck_->isChecked();
-    settings.presentation_mode = selected_data(presentationCombo_);
     settings.title_bar = selected_data(titleBarCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
-    settings.control_edit_keys = controlEditKeysCheck_->isChecked();
     settings.mangohud = mangohudCheck_->isChecked();
     settings.gamemode = gamemodeCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
+    QDir().mkpath(QFileInfo(flags_path()).absolutePath());
+    QSaveFile flags_file(flags_path());
+    const QByteArray flags_text = format_flags(*flags).toUtf8();
+    if (!flags_file.open(QIODevice::WriteOnly) || flags_file.write(flags_text) != flags_text.size() ||
+        !flags_file.commit()) {
+        statusLabel_->setText(QString("Could not write %1.").arg(flags_path()).toHtmlEscaped());
+        return;
+    }
+    flagsEdit_->setPlainText(QString::fromUtf8(flags_text));
     try {
         stud::config::save_settings(stud::config::default_config_path(), settings);
         statusLabel_->setText(stud_session_is_running()

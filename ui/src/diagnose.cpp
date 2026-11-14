@@ -229,12 +229,9 @@ void write_diagnostics() {
         line("settings", "unreadable: " + settings_error);
     } else {
         line("gpu", settings.gpu.device_name);
-        line("frame cap", settings.frame_cap > 0 ? std::to_string(settings.frame_cap) : "roblox's");
         line("vsync", yes_no(settings.vsync));
-        line("presentation mode", settings.presentation_mode);
         line("title bar", settings.title_bar);
         line("display backend", settings.display_backend);
-        line("ctrl edit keys", yes_no(settings.control_edit_keys));
         line("mangohud", yes_no(settings.mangohud));
         line("gamemode", yes_no(settings.gamemode));
         line("system tray", yes_no(settings.system_tray));

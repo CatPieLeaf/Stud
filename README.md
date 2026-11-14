@@ -83,7 +83,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Runs on **Wayland and X11**, with Stud's own icon and taskbar entry
  - Your desktop's own title bar, or the macOS one, with or without its menu bar
  - Ctrl for copy, cut and paste, where the macOS client expects Command
- - Frame rate limit, VSync and presentation mode in Settings
+ - An FFlags editor in Settings, with JSON import
  - `roblox://` links from a browser open straight into the experience
  - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, GPU picker, system tray
  - Export every session log as one tarball, for when you file a bug; join tickets are kept out of them

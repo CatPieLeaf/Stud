@@ -249,11 +249,13 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     // The window: Stud's own application id, so the compositor gives it
     // Stud's icon and puts it under Stud's taskbar entry, and the backend.
     env.insert(QStringLiteral("SDL_APP_ID"), QStringLiteral(STUD_APP_ID));
-    const bool wayland_available = !env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty();
-    if (settings.display_backend == "x11") {
-        env.insert(QStringLiteral("SDL_VIDEO_DRIVER"), QStringLiteral("x11"));
-    } else if (settings.display_backend == "wayland" || wayland_available) {
-        env.insert(QStringLiteral("SDL_VIDEO_DRIVER"), QStringLiteral("wayland"));
+    // Wayland wherever there is one. X11 through XWayland only when asked
+    // for, and only where XWayland is there to ask.
+    if (!env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty()) {
+        const bool xwayland = !env.value(QStringLiteral("DISPLAY")).isEmpty();
+        env.insert(QStringLiteral("SDL_VIDEO_DRIVER"),
+                   xwayland && settings.display_backend == "x11" ? QStringLiteral("x11")
+                                                                 : QStringLiteral("wayland"));
     }
     // Rosemary draws the macOS title bar itself ("client"), or leaves the
     // window to the desktop's own ("server").
@@ -263,25 +265,13 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     env.insert(QStringLiteral("ROSEMARY_MENU"), settings.title_bar == "macos"
                                                     ? QStringLiteral("titlebar")
                                                     : QStringLiteral("none"));
-    if (settings.control_edit_keys) {
-        env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
-    }
+    // Ctrl for copy, cut, paste and select-all, where the macOS client
+    // expects Command (which Linux desktops keep for themselves).
+    env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
 
-    // Frame pacing. Rosemary wakes the client's display link once per
-    // refresh of the rate the client is told, on the loop that also carries
-    // input, so that rate is a real one: the display's own, or the frame
-    // rate limit when there is one.
-    if (settings.frame_cap > 0) {
-        env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"),
-                   QString::number(settings.frame_cap));
-    }
     // VSync is the presentation mode: FIFO waits for the display, and
-    // without it Rosemary's own default (MAILBOX) does not. An explicit
-    // presentation mode wins over both.
-    if (!settings.presentation_mode.empty()) {
-        env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"),
-                   QString::fromStdString(settings.presentation_mode));
-    } else if (settings.vsync) {
+    // without it Rosemary's own default (MAILBOX) does not.
+    if (settings.vsync) {
         env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("fifo"));
     }
 
@@ -290,10 +280,10 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     return env;
 }
 
-// Hand-edited FastFlags (flags.json) and Stud's frame cap, written as the
+// The FastFlags of Settings' FFlags tab (flags.json), written as the
 // client's ClientAppSettings.json. A malformed flags.json is reported and
 // left out rather than stopping the launch.
-QJsonObject client_flags(const stud::config::StudSettings& settings) {
+QJsonObject client_flags() {
     QJsonObject flags;
     QFile file(QString::fromStdString(stud::config::default_flag_overrides_path()));
     if (file.open(QIODevice::ReadOnly)) {
@@ -304,9 +294,6 @@ QJsonObject client_flags(const stud::config::StudSettings& settings) {
             std::fprintf(stderr, "stud: %s is not a JSON object; its flags are not used\n",
                          qPrintable(file.fileName()));
         }
-    }
-    if (settings.frame_cap > 0) {
-        flags.insert(QStringLiteral("DFIntTaskSchedulerTargetFps"), settings.frame_cap);
     }
     return flags;
 }
@@ -405,7 +392,7 @@ bool launch_game(const std::optional<QString>& deep_link) {
         open_settings_for_launch_failure(error);
         return false;
     }
-    if (!stud::ui::client::write_app_settings(*build, client_flags(settings), &error)) {
+    if (!stud::ui::client::write_app_settings(*build, client_flags(), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
     }
     if (stud::ui::loading_cancelled()) return false;

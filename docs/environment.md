@@ -29,10 +29,9 @@ log.
 | `ROSEMARY_PREFIX` | always | Stud's prefix, `~/.local/share/stud/prefix`. |
 | `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
-| `ROSEMARY_CONTROL_EDIT_KEYS` | Ctrl for copy, cut and paste | `1` when on. |
-| `ROSEMARY_SCREEN_REFRESH_RATE` | Frame rate limit | The limit, when there is one: the client draws once per refresh it is told of. Unset, it is the display's own. |
-| `ROSEMARY_METAL_PRESENTATION_MODE` | Presentation mode, VSync | The chosen mode; otherwise `fifo` with VSync on, and unset (Rosemary's `mailbox`) with it off. |
-| `SDL_VIDEO_DRIVER` | Display server | `wayland` or `x11`. |
+| `ROSEMARY_CONTROL_EDIT_KEYS` | always | `1`: Ctrl for copy, cut and paste. |
+| `ROSEMARY_METAL_PRESENTATION_MODE` | VSync | `fifo` when on; unset (Rosemary's `mailbox`) when off. |
+| `SDL_VIDEO_DRIVER` | Display server | `wayland` on a Wayland desktop, or `x11` when chosen there and XWayland runs. |
 | `SDL_APP_ID` | always | Stud's application id, which gives the window Stud's icon and taskbar entry. |
 | `MANGOHUD` | MangoHud overlay | `1` when on. |
 

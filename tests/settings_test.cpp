@@ -38,12 +38,9 @@ int main(int argc, char** argv) {
     // Missing file: defaults, not an error.
     auto defaults = stud::config::load_settings(dir + "/does_not_exist.json");
     check(defaults.gpu.device_index == 0, "missing config file defaults gpu.deviceIndex to 0");
-    check(defaults.frame_cap == 0, "the frame cap defaults to Roblox's own");
     check(!defaults.vsync, "vsync defaults to off");
-    check(defaults.presentation_mode.empty(), "the presentation mode defaults to Rosemary's");
     check(defaults.title_bar == "native", "the title bar defaults to the desktop's own");
     check(defaults.display_backend == "auto", "the display backend defaults to automatic");
-    check(defaults.control_edit_keys, "Ctrl edit keys default to on");
     check(defaults.system_tray, "the tray defaults to on");
 
     const std::string path = dir + "/config.json";
@@ -54,12 +51,9 @@ int main(int argc, char** argv) {
     settings.gpu.device_index = 2;
     settings.gpu.device_name = "Test GPU 9000";
     settings.gpu.device_uuid = "00112233445566778899aabbccddeeff";
-    settings.frame_cap = 144;
     settings.vsync = true;
-    settings.presentation_mode = "mailbox";
     settings.title_bar = "macos-no-menu";
     settings.display_backend = "x11";
-    settings.control_edit_keys = false;
     settings.mangohud = true;
     settings.gamemode = true;
     settings.system_tray = false;
@@ -69,12 +63,9 @@ int main(int argc, char** argv) {
     check(loaded.gpu.device_index == 2, "gpu.deviceIndex round-trips");
     check(loaded.gpu.device_name == "Test GPU 9000", "gpu.deviceName round-trips");
     check(loaded.gpu.device_uuid == "00112233445566778899aabbccddeeff", "gpu.deviceUuid round-trips");
-    check(loaded.frame_cap == 144, "the frame cap round-trips");
     check(loaded.vsync, "vsync round-trips");
-    check(loaded.presentation_mode == "mailbox", "the presentation mode round-trips");
     check(loaded.title_bar == "macos-no-menu", "the title bar round-trips");
     check(loaded.display_backend == "x11", "the display backend round-trips");
-    check(!loaded.control_edit_keys, "Ctrl edit keys round-trip");
     check(loaded.mangohud, "mangohud round-trips");
     check(loaded.gamemode, "gamemode round-trips");
     check(!loaded.system_tray, "the system tray round-trips");
@@ -107,7 +98,6 @@ int main(int argc, char** argv) {
           "an unknown title bar value throws");
     check(throws_on(dir + "/bad_backend.json", R"({"displayBackend": "mir"})"),
           "an unknown display backend throws");
-    check(throws_on(dir + "/bad_cap.json", R"({"frameCap": -1})"), "a negative frame cap throws");
     check(throws_on(dir + "/bad_vsync.json", R"({"vsync": "yes"})"), "a non-boolean vsync throws");
 
     std::printf("all settings checks passed\n");

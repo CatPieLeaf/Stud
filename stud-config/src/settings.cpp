@@ -94,19 +94,9 @@ StudSettings load_settings(const std::string& path) {
                             "\" \"" + value + "\"");
     };
 
-    if (doc.contains("frameCap")) {
-        if (!doc.at("frameCap").is_number_integer() || doc.at("frameCap").get<int>() < 0) {
-            throw SettingsError("stud: config '" + path +
-                                "' has a \"frameCap\" that is not a non-negative integer");
-        }
-        result.frame_cap = doc.at("frameCap").get<int>();
-    }
     read_bool("vsync", result.vsync);
-    read_string("presentationMode", result.presentation_mode,
-                {"", "fifo", "fifo_relaxed", "mailbox", "immediate"});
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
     read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
-    read_bool("controlEditKeys", result.control_edit_keys);
     read_bool("mangohud", result.mangohud);
     read_bool("gamemode", result.gamemode);
     read_bool("systemTray", result.system_tray);
@@ -140,12 +130,9 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["gpu"] = {{"deviceIndex", settings.gpu.device_index},
                   {"deviceName", settings.gpu.device_name},
                   {"deviceUuid", settings.gpu.device_uuid}};
-    doc["frameCap"] = settings.frame_cap;
     doc["vsync"] = settings.vsync;
-    doc["presentationMode"] = settings.presentation_mode;
     doc["titleBar"] = settings.title_bar;
     doc["displayBackend"] = settings.display_backend;
-    doc["controlEditKeys"] = settings.control_edit_keys;
     doc["mangohud"] = settings.mangohud;
     doc["gamemode"] = settings.gamemode;
     doc["systemTray"] = settings.system_tray;
@@ -159,7 +146,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
           "backgroundFps", "discordRichPresence", "discordJoinButton", "closeOnLeave",
           "serverRegionNotification", "textureCache", "textureCacheMB", "graphicsMode",
           "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback",
-          "menuBar"}) {
+          "menuBar", "frameCap", "presentationMode", "controlEditKeys"}) {
         doc.erase(gone);
     }
 

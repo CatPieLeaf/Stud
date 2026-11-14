@@ -13,6 +13,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 
@@ -50,7 +51,8 @@ void next_line() {
 void raise() {
     Screen& s = screen();
     if (s.window == nullptr) {
-        s.window = std::make_unique<QWidget>();
+        // A dialog of a fixed size: tiling window managers float both.
+        s.window = std::make_unique<QWidget>(nullptr, Qt::Dialog);
         s.window->setWindowTitle(QStringLiteral("Stud"));
         auto* layout = new QVBoxLayout(s.window.get());
         auto* stud = new CubeView(s.window.get());
@@ -79,7 +81,11 @@ void raise() {
             });
         });
         layout->addWidget(s.cancel, 0, Qt::AlignHCenter);
-        s.window->setFixedWidth(360);
+        // Square, as large as its contents need; the cube and the button
+        // never change size, and lines wrap rather than widen it.
+        const QSize hint = s.window->sizeHint();
+        const int side = std::max(hint.width(), hint.height());
+        s.window->setFixedSize(side, side);
         s.timer = new QTimer(s.window.get());
         s.timer->setInterval(2000);
         QObject::connect(s.timer, &QTimer::timeout, s.window.get(), next_line);

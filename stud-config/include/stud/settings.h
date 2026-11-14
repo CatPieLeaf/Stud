@@ -24,30 +24,19 @@ struct GpuSelection {
 struct StudSettings {
     GpuSelection gpu;
 
-    // A frame-rate limit Stud asks Roblox for (DFIntTaskSchedulerTargetFps),
-    // 0 to leave it to Roblox's own Maximum Frame Rate setting.
-    int frame_cap = 0;
-
     // Whether frames wait for the display's refresh: FIFO presentation, or
     // Rosemary's own default (MAILBOX) when off.
     bool vsync = false;
-
-    // How frames are handed to the display: "" for Rosemary's choice, or
-    // "fifo", "fifo_relaxed", "mailbox", "immediate".
-    std::string presentation_mode;
 
     // The window's title bar: "macos" (the macOS title bar with the menu bar
     // in it), "macos-no-menu" (the macOS title bar alone) or "native" (the
     // desktop's own title bar, no menu bar).
     std::string title_bar = "native";
 
-    // Where the window goes: "auto" (Wayland when there is one), "wayland"
-    // or "x11".
+    // Where the window goes, on a Wayland desktop that also runs XWayland:
+    // "auto" or "wayland" (Wayland), or "x11" (through XWayland). Anywhere
+    // else there is only one choice and this is not read.
     std::string display_backend = "auto";
-
-    // Ctrl for copy, cut, paste and select-all, where the macOS client
-    // expects Command (which most Linux desktops keep for themselves).
-    bool control_edit_keys = true;
 
     bool mangohud = false;
     bool gamemode = false;

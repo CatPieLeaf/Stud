@@ -10,7 +10,7 @@ class QComboBox;
 class QCheckBox;
 class QLabel;
 class QPushButton;
-class QSpinBox;
+class QPlainTextEdit;
 
 namespace stud::ui {
 
@@ -65,6 +65,8 @@ public:
 private slots:
     void onSaveClicked();
     void onRestartClicked();
+    // Merges a JSON file's flags into the FFlags editor.
+    void onImportFlagsClicked();
 
 protected:
     // Right-click resets the control under the pointer; see
@@ -76,15 +78,13 @@ private:
     void installResets();
 
     QComboBox* gpuCombo_;
-    QSpinBox* frameCapSpin_;
     QCheckBox* vsyncCheck_;
-    QComboBox* presentationCombo_;
     QComboBox* titleBarCombo_;
     QComboBox* displayBackendCombo_;
-    QCheckBox* controlEditKeysCheck_;
     QCheckBox* gamemodeCheck_;
     QCheckBox* mangohudCheck_;
     QCheckBox* trayCheck_;
+    QPlainTextEdit* flagsEdit_;
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also
     // called on a palette change, hence keeping it around.
