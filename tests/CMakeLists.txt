@@ -29,6 +29,12 @@ if(STUD_BUILD_UI)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/zip_scratch)
     add_test(NAME zip_extract_test COMMAND stud_zip_extract_test
              ${CMAKE_CURRENT_BINARY_DIR}/zip_scratch)
+
+    # Mods over a client build, and the build put back as it came.
+    add_executable(stud_mods_test mods_test.cpp)
+    target_link_libraries(stud_mods_test PRIVATE stud_ui_mac_client)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/mods_scratch)
+    add_test(NAME mods_test COMMAND stud_mods_test ${CMAKE_CURRENT_BINARY_DIR}/mods_scratch)
 endif()
 
 # Settings storage.

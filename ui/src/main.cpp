@@ -22,6 +22,7 @@
 #include "loading_screen.h"
 #include "log_scrub.h"
 #include "mac_client.h"
+#include "mods.h"
 #include "notifications.h"
 #include "settings_window.h"
 #include "tray.h"
@@ -483,6 +484,10 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     if (!stud::ui::client::ensure_prefix(rosemary, progress, &error)) {
         open_settings_for_launch_failure(error);
         return false;
+    }
+    // Mods, over a build put back as it came.
+    if (!stud::ui::mods::apply(*build, product, &error)) {
+        std::fprintf(stderr, "stud: mods were not applied: %s\n", qPrintable(error));
     }
     // The FFlags tab's flags are the player's.
     if (player && !stud::ui::client::write_app_settings(*build, client_flags(settings), &error)) {

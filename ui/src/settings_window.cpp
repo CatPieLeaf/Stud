@@ -4,6 +4,7 @@
 
 #include "cube_view.h"
 #include "gpu_enum.h"
+#include "mods.h"
 #include "notifications.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -21,7 +22,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QColorDialog>
 #include <QFileDialog>
+#include <QGridLayout>
 #include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -170,6 +173,87 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     discord->addWidget(discordJoinCheck_);
     connect(discordCheck_, &QCheckBox::toggled, discordJoinCheck_, &QWidget::setEnabled);
     discord->addStretch();
+
+    // ---- Mods ----------------------------------------------------------
+    // Files over Roblox's own content, applied at every launch. A mod folder
+    // mirrors the content tree, so Bloxstrap and Froststrap mods drop in.
+    auto* modsTab = add_tab("Mods");
+    auto* folders = new QHBoxLayout();
+    for (const auto product : {client::Product::Player, client::Product::Studio}) {
+        auto* open = new QPushButton(product == client::Product::Studio ? "Open Studio mods folder"
+                                                                        : "Open mods folder",
+                                     this);
+        connect(open, &QPushButton::clicked, this, [product] {
+            QDir().mkpath(mods::folder(product));
+            QDesktopServices::openUrl(QUrl::fromLocalFile(mods::folder(product)));
+        });
+        folders->addWidget(open);
+    }
+    modsTab->addLayout(folders);
+    auto* grid = new QGridLayout();
+    struct Row {
+        mods::Part part;
+        const char* label;
+        const char* filter;  // nullptr: no file to choose
+        bool colour;
+    };
+    const Row rows[] = {
+        {mods::Part::Cursor, "Cursor", "Images (*.png)", true},
+        {mods::Part::ShiftLock, "Shift lock", "Images (*.png)", true},
+        {mods::Part::EmoteWheel, "Emote wheel", nullptr, true},
+        {mods::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
+        {mods::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
+    };
+    int row = 0;
+    for (const Row& r : rows) {
+        auto* name = new QLabel(QString::fromLatin1(r.label), this);
+        auto* state = new QLabel(this);
+        const auto refresh = [state, part = r.part] {
+            state->setText(mods::present(part) ? QStringLiteral("custom") : QStringLiteral("Roblox's"));
+        };
+        refresh();
+        grid->addWidget(name, row, 0);
+        grid->addWidget(state, row, 1);
+        int column = 2;
+        if (r.filter != nullptr) {
+            auto* choose = new QPushButton("Choose file...", this);
+            connect(choose, &QPushButton::clicked, this, [this, r, refresh] {
+                const QString file = QFileDialog::getOpenFileName(this, QString::fromLatin1(r.label),
+                                                                  QString(), QString::fromLatin1(r.filter));
+                if (file.isEmpty()) return;
+                QString error;
+                statusLabel_->setText(mods::use_file(r.part, file, &error)
+                                          ? QStringLiteral("Applied at the next launch.")
+                                          : error.toHtmlEscaped());
+                refresh();
+            });
+            grid->addWidget(choose, row, column++);
+        }
+        if (r.colour) {
+            auto* colour = new QPushButton("Colour...", this);
+            connect(colour, &QPushButton::clicked, this, [this, r, refresh] {
+                const QColor picked = QColorDialog::getColor(Qt::white, this, QString::fromLatin1(r.label));
+                if (!picked.isValid()) return;
+                QString error;
+                statusLabel_->setText(mods::recolour(r.part, picked, &error)
+                                          ? QStringLiteral("Applied at the next launch.")
+                                          : error.toHtmlEscaped());
+                refresh();
+            });
+            grid->addWidget(colour, row, column++);
+        }
+        auto* reset = new QPushButton("Roblox's", this);
+        reset->setToolTip("Go back to Roblox's own");
+        connect(reset, &QPushButton::clicked, this, [this, r, refresh] {
+            mods::remove(r.part);
+            statusLabel_->setText(QStringLiteral("Roblox's own again at the next launch."));
+            refresh();
+        });
+        grid->addWidget(reset, row, 4);
+        ++row;
+    }
+    modsTab->addLayout(grid);
+    modsTab->addStretch();
 
     // ---- FFlags --------------------------------------------------------
     // flags.json in Stud's config directory, as JSON: written into the
