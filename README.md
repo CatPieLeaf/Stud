@@ -84,7 +84,11 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Your desktop's own title bar, or the macOS one, with or without its menu bar
  - Ctrl for copy, cut and paste, where the macOS client expects Command
  - An FFlags editor in Settings, with JSON import
- - `roblox://` links from a browser open straight into the experience
+ - Roblox and **Roblox Studio**: opened on its own, Stud asks which, and keeps each up to date
+ - `roblox://` links from a browser open straight into the experience, and Studio's links reach Studio
+ - Discord Rich Presence as Roblox itself, with what the game reports through BloxstrapRPC, and an optional Join button
+ - Optional notification of which country the game server is in
+ - A frame rate limit for while Roblox is in the background
  - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, GPU picker, system tray
  - Export every session log as one tarball, for when you file a bug; join tickets are kept out of them
 

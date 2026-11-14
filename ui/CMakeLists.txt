@@ -56,13 +56,22 @@ target_include_directories(stud_ui_gpu_enum PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 # there instead of failing to start with "libvulkan.so.1: cannot open".
 target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAKE_DL_LIBS})
 
+# The client download: version check, download and unpack. Its own small
+# library so the unpacking can be tested (tests/zip_extract_test.cpp).
+add_library(stud_ui_mac_client STATIC
+    src/mac_client.cpp
+)
+target_include_directories(stud_ui_mac_client PUBLIC src)
+target_link_libraries(stud_ui_mac_client PUBLIC Qt6::Core Qt6::Network stud_config miniz)
+target_compile_definitions(stud_ui_mac_client PRIVATE STUD_VERSION="${STUD_VERSION}")
+
 add_executable(stud-ui
     src/main.cpp
     src/desktop_entry.cpp
     src/diagnose.cpp
-    src/mac_client.cpp
     src/discord_rpc.cpp
     src/game_activity.cpp
+    src/chooser.cpp
     src/settings_window.cpp
     src/cube_view.cpp
     src/cube_gl.cpp
@@ -73,7 +82,7 @@ add_executable(stud-ui
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::DBus
                                        stud_ui_gpu_enum stud_config stud_ui_notifications
-                                       stud_ui_launch_uri stud_ui_log_archive miniz)
+                                       stud_ui_launch_uri stud_ui_log_archive stud_ui_mac_client miniz)
 
 # The About tab's cube is the GL smoke test's own (tools/spinning_cube.h).
 target_include_directories(stud-ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../tools")

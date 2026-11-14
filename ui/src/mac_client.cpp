@@ -18,17 +18,21 @@
 #include <QStandardPaths>
 #include <QTimer>
 
+#include <vector>
+
 #include <miniz.h>
 #include <miniz_zip.h>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace stud::ui::client {
 namespace {
 
-constexpr const char* kVersionUrls[] = {
-    "https://clientsettingscdn.roblox.com/v2/client-version/MacPlayer",
-    "https://clientsettings.roblox.com/v2/client-version/MacPlayer",
+// Roblox's client-version API, which answers for one binary type.
+constexpr const char* kVersionHosts[] = {
+    "https://clientsettingscdn.roblox.com",
+    "https://clientsettings.roblox.com",
 };
 // Roblox's setup CDN and its two mirrors, tried in order.
 constexpr const char* kSetupHosts[] = {
@@ -36,9 +40,24 @@ constexpr const char* kSetupHosts[] = {
     "https://setup-aws.rbxcdn.com",
     "https://setup-ak.rbxcdn.com",
 };
-constexpr const char* kAppName = "RobloxPlayer.app";
+// How Roblox names each product on its CDN, and what its zip unpacks to.
+struct ProductInfo {
+    const char* binary_type;  // client-version/<this>
+    const char* zip;          // <upload>-<this>
+    const char* app;          // the bundle inside the zip
+    const char* executable;   // Contents/MacOS/<this>
+    const char* directory;    // under Stud's data directory
+};
 
-QString current_marker() { return clients_dir() + QStringLiteral("/current"); }
+const ProductInfo& info(Product product) {
+    static const ProductInfo kPlayer{"MacPlayer", "RobloxPlayer.zip", "RobloxPlayer.app",
+                                     "RobloxPlayer", "client"};
+    static const ProductInfo kStudio{"MacStudio", "RobloxStudioApp.zip", "RobloxStudio.app",
+                                     "RobloxStudio", "studio"};
+    return product == Product::Studio ? kStudio : kPlayer;
+}
+
+QString current_marker(Product product) { return clients_dir(product) + QStringLiteral("/current"); }
 
 QNetworkRequest request_for(const QString& url) {
     QNetworkRequest request{QUrl(url)};
@@ -49,10 +68,12 @@ QNetworkRequest request_for(const QString& url) {
 }
 
 // The upload and version Roblox serves for macOS now; empty when no answer.
-std::pair<QString, QString> served_build() {
+std::pair<QString, QString> served_build(Product product) {
     QNetworkAccessManager net;
-    for (const char* url : kVersionUrls) {
-        QNetworkRequest request = request_for(QString::fromLatin1(url));
+    for (const char* host : kVersionHosts) {
+        QNetworkRequest request = request_for(QStringLiteral("%1/v2/client-version/%2")
+                                                  .arg(QString::fromLatin1(host),
+                                                       QString::fromLatin1(info(product).binary_type)));
         request.setTransferTimeout(10000);
         QNetworkReply* reply = net.get(request);
         QEventLoop loop;
@@ -101,10 +122,14 @@ bool download(const QString& url, const QString& path, const Progress& progress,
     return file.commit();
 }
 
-// Unpacks the zip into `dir`. The client's archive holds files and
-// directories only; each entry is checked to stay inside `dir`, and a file
-// keeps the permission bits the archive gives it (the executables need them).
-bool extract(const QString& zip_path, const QString& dir, QString* error) {
+// Unpacks the zip into `dir`. Each entry is checked to stay inside `dir`, and
+// a file keeps the permission bits the archive gives it (the executables need
+// them). Symbolic links (Studio's frameworks have them) are made last, so no
+// file is ever written through one, and only when their target is relative
+// and stays inside `dir` too.
+}  // namespace
+
+bool extract_zip(const QString& zip_path, const QString& dir, QString* error) {
     mz_zip_archive zip{};
     const QByteArray zip_name = QFile::encodeName(zip_path);
     if (!mz_zip_reader_init_file(&zip, zip_name.constData(), 0)) {
@@ -112,6 +137,10 @@ bool extract(const QString& zip_path, const QString& dir, QString* error) {
         return false;
     }
     const QString root = QDir(dir).absolutePath() + QLatin1Char('/');
+    const auto inside = [&root](const QString& path) {
+        return (QDir::cleanPath(path) + QLatin1Char('/')).startsWith(root);
+    };
+    std::vector<std::pair<QString, QByteArray>> links;
     bool ok = true;
     const mz_uint count = mz_zip_reader_get_num_files(&zip);
     for (mz_uint i = 0; i < count && ok; ++i) {
@@ -122,13 +151,32 @@ bool extract(const QString& zip_path, const QString& dir, QString* error) {
         }
         const QString name = QString::fromUtf8(stat.m_filename);
         const QString target = QDir::cleanPath(root + name);
-        if (name.startsWith(QLatin1Char('/')) || !(target + QLatin1Char('/')).startsWith(root)) {
+        if (name.startsWith(QLatin1Char('/')) || !inside(target)) {
             *error = QStringLiteral("the download names a path outside its folder");
             ok = false;
             break;
         }
         if (mz_zip_reader_is_file_a_directory(&zip, i)) {
             ok = QDir().mkpath(target);
+            continue;
+        }
+        if (S_ISLNK(stat.m_external_attr >> 16)) {
+            size_t size = 0;
+            void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+            if (data == nullptr) {
+                ok = false;
+                break;
+            }
+            const QByteArray link_target(static_cast<const char*>(data), qsizetype(size));
+            mz_free(data);
+            const QString resolved =
+                QFileInfo(target).absolutePath() + QLatin1Char('/') + QString::fromUtf8(link_target);
+            if (link_target.isEmpty() || link_target.startsWith('/') || !inside(resolved)) {
+                *error = QStringLiteral("the download links to a path outside its folder");
+                ok = false;
+                break;
+            }
+            links.emplace_back(target, link_target);
             continue;
         }
         QDir().mkpath(QFileInfo(target).absolutePath());
@@ -142,13 +190,22 @@ bool extract(const QString& zip_path, const QString& dir, QString* error) {
         if (mode != 0) ::chmod(target_name.constData(), mode);
     }
     mz_zip_reader_end(&zip);
+    for (const auto& [path, link_target] : links) {
+        if (!ok) break;
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        const QByteArray path_name = QFile::encodeName(path);
+        ::unlink(path_name.constData());
+        ok = ::symlink(link_target.constData(), path_name.constData()) == 0;
+    }
     if (!ok && error->isEmpty()) *error = QStringLiteral("the download could not be unpacked");
     return ok;
 }
 
+namespace {
+
 // Removes every build but `keep`, and anything a failed install left.
-void remove_other_builds(const QString& keep) {
-    QDir dir(clients_dir());
+void remove_other_builds(Product product, const QString& keep) {
+    QDir dir(clients_dir(product));
     for (const QString& name : dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         if (name != keep) QDir(dir.filePath(name)).removeRecursively();
     }
@@ -156,43 +213,53 @@ void remove_other_builds(const QString& keep) {
 
 }  // namespace
 
-QString clients_dir() { return QString::fromStdString(stud::paths::data_dir()) + "/client"; }
+QString display_name(Product product) {
+    return product == Product::Studio ? QStringLiteral("Roblox Studio") : QStringLiteral("Roblox");
+}
+
+QString clients_dir(Product product) {
+    return QString::fromStdString(stud::paths::data_dir()) + "/" + info(product).directory;
+}
 
 QString prefix_dir() { return QString::fromStdString(stud::paths::data_dir()) + "/prefix"; }
 
-std::optional<Build> installed() {
-    QFile marker(current_marker());
+std::optional<Build> installed(Product product) {
+    QFile marker(current_marker(product));
     if (!marker.open(QIODevice::ReadOnly | QIODevice::Text)) return std::nullopt;
     const QStringList lines = QString::fromUtf8(marker.readAll()).split('\n', Qt::SkipEmptyParts);
     if (lines.isEmpty()) return std::nullopt;
     Build build;
     build.upload = lines.at(0).trimmed();
     build.version = lines.size() > 1 ? lines.at(1).trimmed() : QString();
-    build.app = clients_dir() + "/" + build.upload + "/" + kAppName;
-    if (!QFileInfo(build.app + "/Contents/MacOS/RobloxPlayer").isExecutable()) return std::nullopt;
+    build.app = clients_dir(product) + "/" + build.upload + "/" + info(product).app;
+    if (!QFileInfo(build.app + "/Contents/MacOS/" + info(product).executable).isExecutable()) {
+        return std::nullopt;
+    }
     return build;
 }
 
-std::optional<Build> ensure_current(const Progress& progress, QString* error) {
-    const std::optional<Build> have = installed();
-    if (progress) progress(QStringLiteral("Checking for Roblox updates"), -1);
-    const auto [upload, version] = served_build();
+std::optional<Build> ensure_current(Product product, const Progress& progress, QString* error) {
+    const QString name = display_name(product);
+    const std::optional<Build> have = installed(product);
+    if (progress) progress(QStringLiteral("Checking for %1 updates").arg(name), -1);
+    const auto [upload, version] = served_build(product);
     if (upload.isEmpty()) {
         // Offline, or Roblox's API did not answer: what is installed runs.
         if (have) return have;
-        *error = QStringLiteral("Could not reach Roblox to download the client.");
+        *error = QStringLiteral("Could not reach Roblox to download %1.").arg(name);
         return std::nullopt;
     }
     if (have && have->upload == upload) return have;
 
-    QDir().mkpath(clients_dir());
-    const QString zip_path = clients_dir() + "/" + upload + ".zip";
-    const QString what = have ? QStringLiteral("Updating Roblox to %1").arg(version)
-                              : QStringLiteral("Downloading Roblox %1").arg(version);
+    QDir().mkpath(clients_dir(product));
+    const QString zip_path = clients_dir(product) + "/" + upload + ".zip";
+    const QString what = have ? QStringLiteral("Updating %1 to %2").arg(name, version)
+                              : QStringLiteral("Downloading %1 %2").arg(name, version);
     bool fetched = false;
     for (const char* host : kSetupHosts) {
         const QString url =
-            QStringLiteral("%1/mac/%2-RobloxPlayer.zip").arg(QString::fromLatin1(host), upload);
+            QStringLiteral("%1/mac/%2-%3")
+                .arg(QString::fromLatin1(host), upload, QString::fromLatin1(info(product).zip));
         if (download(url, zip_path, progress, what)) {
             fetched = true;
             break;
@@ -201,19 +268,21 @@ std::optional<Build> ensure_current(const Progress& progress, QString* error) {
     if (!fetched) {
         QFile::remove(zip_path);
         if (have) return have;
-        *error = QStringLiteral("Could not download the Roblox client.");
+        *error = QStringLiteral("Could not download %1.").arg(name);
         return std::nullopt;
     }
 
-    if (progress) progress(QStringLiteral("Unpacking Roblox %1").arg(version), -1);
-    const QString staging = clients_dir() + "/" + upload + ".partial";
+    if (progress) progress(QStringLiteral("Unpacking %1 %2").arg(name, version), -1);
+    const QString staging = clients_dir(product) + "/" + upload + ".partial";
     QDir(staging).removeRecursively();
     QString extract_error;
-    const bool unpacked = extract(zip_path, staging, &extract_error);
+    const bool unpacked = extract_zip(zip_path, staging, &extract_error);
     QFile::remove(zip_path);
-    const QString final_dir = clients_dir() + "/" + upload;
+    const QString final_dir = clients_dir(product) + "/" + upload;
     bool in_place = unpacked &&
-                    QFileInfo(staging + "/" + kAppName + "/Contents/MacOS/RobloxPlayer").exists();
+                    QFileInfo(staging + "/" + info(product).app + "/Contents/MacOS/" +
+                              info(product).executable)
+                        .exists();
     if (in_place) {
         QDir(final_dir).removeRecursively();
         in_place = QDir().rename(staging, final_dir);
@@ -221,20 +290,21 @@ std::optional<Build> ensure_current(const Progress& progress, QString* error) {
     if (!in_place) {
         QDir(staging).removeRecursively();
         if (have) return have;
-        *error = QStringLiteral("Could not unpack the Roblox client: %1")
+        *error = QStringLiteral("Could not unpack %1: %2").arg(name)
                      .arg(extract_error.isEmpty() ? QStringLiteral("unexpected layout") : extract_error);
         return std::nullopt;
     }
 
-    QSaveFile marker(current_marker());
+    QSaveFile marker(current_marker(product));
     if (!marker.open(QIODevice::WriteOnly) ||
         marker.write((upload + "\n" + version + "\n").toUtf8()) < 0 || !marker.commit()) {
-        *error = QStringLiteral("Could not record the installed Roblox client.");
+        *error = QStringLiteral("Could not record the installed %1.").arg(name);
         return std::nullopt;
     }
-    remove_other_builds(upload);
-    std::printf("stud: Roblox %s (%s) installed\n", qPrintable(version), qPrintable(upload));
-    return installed();
+    remove_other_builds(product, upload);
+    std::printf("stud: %s %s (%s) installed\n", qPrintable(name), qPrintable(version),
+                qPrintable(upload));
+    return installed(product);
 }
 
 QString find_rosemary() {

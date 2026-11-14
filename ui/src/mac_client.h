@@ -16,6 +16,12 @@
 
 namespace stud::ui::client {
 
+// What Stud installs and runs: the Roblox player, or Roblox Studio.
+enum class Product { Player, Studio };
+
+// "Roblox" or "Roblox Studio", for the user.
+QString display_name(Product product);
+
 // One installed build: Roblox's upload name ("version-8001f8762ae44efe"), its
 // version ("0.747.0.7471481") and the bundle to run.
 struct Build {
@@ -24,12 +30,13 @@ struct Build {
     QString app;  // .../RobloxPlayer.app
 };
 
-// Where the builds live, and Stud's Rosemary prefix.
-QString clients_dir();
+// Where each product's builds live, and Stud's Rosemary prefix, which both
+// share.
+QString clients_dir(Product product = Product::Player);
 QString prefix_dir();
 
 // The build installed now, if any.
-std::optional<Build> installed();
+std::optional<Build> installed(Product product = Product::Player);
 
 // Status for the user while something slow happens: a line of text, and a
 // percentage, or -1 when there is none.
@@ -38,7 +45,7 @@ using Progress = std::function<void(const QString& text, int percent)>;
 // The build to run: the one Roblox serves now, downloaded if it is not the
 // installed one. Offline, the installed build is kept. Empty, with `error` set,
 // when there is nothing to run.
-std::optional<Build> ensure_current(const Progress& progress, QString* error);
+std::optional<Build> ensure_current(Product product, const Progress& progress, QString* error);
 
 // The Rosemary executable: STUD_ROSEMARY, then the copy installed with Stud,
 // then PATH. Empty when there is none.
@@ -51,6 +58,10 @@ bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* e
 // The bundle's executable, as its Info.plist names it (CFBundleExecutable).
 // Empty when the bundle has none.
 QString executable(const Build& build);
+
+// Unpacks a downloaded zip into `dir`, refusing any entry or symbolic link
+// that would land outside it. False, with `error` set, on failure.
+bool extract_zip(const QString& zip_path, const QString& dir, QString* error);
 
 // Writes ClientAppSettings.json inside the build: `flags` as given, an empty
 // object removing every override.

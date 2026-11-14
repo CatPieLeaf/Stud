@@ -272,7 +272,9 @@ int install_desktop_entry() {
     // xdg-mime, which is a script that reads the desktop environment out
     // of the environment it is handed, and this one may be an
     // AppImage's. The file's own format is stable and small.
-    for (const char* scheme : {"x-scheme-handler/roblox", "x-scheme-handler/roblox-player"}) {
+    for (const char* scheme : {"x-scheme-handler/roblox", "x-scheme-handler/roblox-player",
+                               "x-scheme-handler/roblox-studio",
+                               "x-scheme-handler/roblox-studio-auth"}) {
         set_default_application(QString::fromLatin1(scheme), app_id + QStringLiteral(".desktop"));
     }
 

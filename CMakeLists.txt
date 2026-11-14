@@ -126,8 +126,13 @@ if(STUD_BUILD_ROSEMARY)
                       --manifest-path <SOURCE_DIR>/Cargo.toml
                       --target-dir "${STUD_ROSEMARY_TARGET_DIR}"
         BUILD_ALWAYS ON
+        # A new file renamed over the old one, never a write into it: a
+        # session running from the build tree keeps the binary it started.
         INSTALL_COMMAND "${CMAKE_COMMAND}" -E copy
                         "${STUD_ROSEMARY_TARGET_DIR}/release/rosemary"
+                        "${CMAKE_CURRENT_BINARY_DIR}/rosemary/rosemary.new"
+                COMMAND "${CMAKE_COMMAND}" -E rename
+                        "${CMAKE_CURRENT_BINARY_DIR}/rosemary/rosemary.new"
                         "${CMAKE_CURRENT_BINARY_DIR}/rosemary/rosemary"
                 COMMAND "${CMAKE_COMMAND}" -E copy <SOURCE_DIR>/LICENSE
                         "${CMAKE_CURRENT_BINARY_DIR}/rosemary/LICENSE"

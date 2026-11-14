@@ -22,6 +22,13 @@ if(STUD_BUILD_UI)
     add_executable(stud_log_archive_test log_archive_test.cpp)
     target_link_libraries(stud_log_archive_test PRIVATE stud_ui_log_archive)
     add_test(NAME log_archive_test COMMAND stud_log_archive_test)
+
+    # Unpacking the client: symbolic links, and nothing outside the folder.
+    add_executable(stud_zip_extract_test zip_extract_test.cpp)
+    target_link_libraries(stud_zip_extract_test PRIVATE stud_ui_mac_client)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/zip_scratch)
+    add_test(NAME zip_extract_test COMMAND stud_zip_extract_test
+             ${CMAKE_CURRENT_BINARY_DIR}/zip_scratch)
 endif()
 
 # Settings storage.

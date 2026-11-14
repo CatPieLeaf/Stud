@@ -14,6 +14,7 @@
 // ClientAppSettings.json (mac_client.h).
 
 #include "desktop_entry.h"
+#include "chooser.h"
 #include "diagnose.h"
 #include "game_activity.h"
 #include "gpu_enum.h"
@@ -94,6 +95,8 @@ QByteArray g_client_output;
 QByteArray g_deep_link;
 // Discord presence and the server region notification, fed the same lines.
 stud::ui::GameActivity* g_activity = nullptr;
+// What this session runs, so a restart opens the same one.
+stud::ui::client::Product g_product = stud::ui::client::Product::Player;
 
 void forward_client_output(bool flush_partial) {
     g_client_output += g_client->readAll();
@@ -240,7 +243,8 @@ QString window_icon_file() {
 }
 
 // Everything the client is started with.
-QProcessEnvironment client_environment(const stud::config::StudSettings& settings) {
+QProcessEnvironment client_environment(const stud::config::StudSettings& settings,
+                                       stud::ui::client::Product product) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     // The variables Settings decides are Settings' alone; Rosemary's others
     // (ROSEMARY_METAL_STATS and the like) pass through, for investigating.
@@ -283,9 +287,12 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     // Stud's name and icon on the window, and no tray icons of the client's
     // own beside Stud's (the switches packaging/rosemary/stud-launcher.patch
     // adds to Rosemary).
-    env.insert(QStringLiteral("ROSEMARY_WINDOW_TITLE"), QStringLiteral("Stud"));
-    if (const QString icon = window_icon_file(); !icon.isEmpty()) {
-        env.insert(QStringLiteral("ROSEMARY_WINDOW_ICON"), icon);
+    // Studio keeps its own: its windows are documents, named by what is open.
+    if (product == stud::ui::client::Product::Player) {
+        env.insert(QStringLiteral("ROSEMARY_WINDOW_TITLE"), QStringLiteral("Stud"));
+        if (const QString icon = window_icon_file(); !icon.isEmpty()) {
+            env.insert(QStringLiteral("ROSEMARY_WINDOW_ICON"), icon);
+        }
     }
     env.insert(QStringLiteral("ROSEMARY_STATUS_ITEMS"), QStringLiteral("0"));
     if (settings.background_fps != stud::config::kBackgroundFpsNoLimit) {
@@ -370,7 +377,9 @@ void open_settings_for_launch_failure(const QString& reason) {
 
 // Starts the client. False when it could not start; the reason has been put
 // on screen.
-bool launch_game(const std::optional<QString>& deep_link) {
+bool launch_game(stud::ui::client::Product product, const std::optional<QString>& deep_link) {
+    g_product = product;
+    const bool player = product == stud::ui::client::Product::Player;
     stud::config::StudSettings settings;
     try {
         settings = stud::config::load_settings(stud::config::default_config_path());
@@ -379,6 +388,24 @@ bool launch_game(const std::optional<QString>& deep_link) {
     }
     settings.gpu.device_index = stud::ui::chosen_gpu_index(settings.gpu);
 
+    // A Studio link while Stud runs (Studio's sign-in comes back this way)
+    // goes to the running Studio: Rosemary hands a URL given with the bundle
+    // to the instance already open.
+    if (!player && deep_link && another_instance_is_running()) {
+        if (const auto studio = stud::ui::client::installed(product)) {
+            const QString rosemary = stud::ui::client::find_rosemary();
+            QProcess handoff;
+            handoff.setProgram(rosemary);
+            handoff.setArguments({QStringLiteral("run"), studio->app, *deep_link});
+            handoff.setProcessEnvironment(client_environment(settings, product));
+            handoff.setStandardOutputFile(QProcess::nullDevice());
+            handoff.setStandardErrorFile(QProcess::nullDevice());
+            if (!rosemary.isEmpty() && handoff.startDetached()) {
+                QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
+                return false;
+            }
+        }
+    }
     if (another_instance_is_running() || !take_instance_lock()) {
         QMessageBox::information(nullptr, "Stud",
                                  "Stud is already running.\n\nClose the existing window before "
@@ -410,7 +437,7 @@ bool launch_game(const std::optional<QString>& deep_link) {
     std::printf("stud: rosemary %s\n", qPrintable(rosemary));
 
     QString error;
-    const auto build = stud::ui::client::ensure_current(progress, &error);
+    const auto build = stud::ui::client::ensure_current(product, progress, &error);
     if (stud::ui::loading_cancelled()) return false;
     if (!build) {
         open_settings_for_launch_failure(error);
@@ -420,7 +447,8 @@ bool launch_game(const std::optional<QString>& deep_link) {
         open_settings_for_launch_failure(error);
         return false;
     }
-    if (!stud::ui::client::write_app_settings(*build, client_flags(), &error)) {
+    // The FFlags tab's flags are the player's.
+    if (player && !stud::ui::client::write_app_settings(*build, client_flags(), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
     }
     if (stud::ui::loading_cancelled()) return false;
@@ -437,15 +465,18 @@ bool launch_game(const std::optional<QString>& deep_link) {
         return false;
     }
     QStringList args{QStringLiteral("run"), program};
-    if (deep_link) args << QStringLiteral("-protocolString") << *deep_link;
+    if (deep_link && player) args << QStringLiteral("-protocolString") << *deep_link;
+    if (deep_link && !player) args << *deep_link;
 
-    g_activity = new stud::ui::GameActivity(settings.discord_rich_presence,
-                                            settings.discord_join_button,
-                                            settings.server_region_notification, qApp);
+    if (player) {
+        g_activity = new stud::ui::GameActivity(settings.discord_rich_presence,
+                                                settings.discord_join_button,
+                                                settings.server_region_notification, qApp);
+    }
     g_client = new QProcess(qApp);
     g_client->setProgram(rosemary);
     g_client->setArguments(args);
-    g_client->setProcessEnvironment(client_environment(settings));
+    g_client->setProcessEnvironment(client_environment(settings, product));
     g_client->setStandardInputFile(QProcess::nullDevice());
     // Through this process, scrubbed, into the session log and terminal.
     g_client->setProcessChannelMode(QProcess::MergedChannels);
@@ -483,10 +514,11 @@ bool launch_game(const std::optional<QString>& deep_link) {
 }
 
 // Every Rosemary process running Stud's copy of the client, found through
-// /proc: an executable named rosemary with an argument inside clients_dir().
+// /proc: an executable named rosemary with an argument inside the session's
+// product's directory.
 std::vector<pid_t> client_process_ids() {
     std::vector<pid_t> pids;
-    const std::string clients = stud::ui::client::clients_dir().toStdString() + "/";
+    const std::string clients = stud::ui::client::clients_dir(g_product).toStdString() + "/";
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
         const std::string name = entry.path().filename().string();
@@ -572,6 +604,9 @@ void relaunch_stud() {
         }
         QProcess next;
         next.setProgram(program);
+        next.setArguments({g_product == stud::ui::client::Product::Studio
+                               ? QStringLiteral("--studio")
+                               : QStringLiteral("--roblox")});
         next.setProcessEnvironment(env);
         if (const int passthrough = stud::logging::passthrough_stdout_fd(); passthrough >= 0) {
             next.setChildProcessModifier([passthrough] {
@@ -674,9 +709,19 @@ int main(int argc, char** argv) {
     }
 
     // A deep link, passed to the client as it came. Only its key names and
-    // sizes are logged: the game info is a single-use join ticket.
+    // sizes are logged: the game info is a single-use join ticket. Started on
+    // its own, Stud asks whether to open Roblox or Roblox Studio; --roblox
+    // and --studio answer that up front.
     std::optional<QString> deep_link;
-    if (argc > 1 && argv[1][0] != '-') {
+    std::optional<stud::ui::client::Product> product;
+    if (argc > 1 && std::string(argv[1]) == "--roblox") product = stud::ui::client::Product::Player;
+    if (argc > 1 && std::string(argv[1]) == "--studio") product = stud::ui::client::Product::Studio;
+    if (argc > 1 && std::string(argv[1]).rfind("roblox-studio", 0) == 0) {
+        product = stud::ui::client::Product::Studio;
+        deep_link = QString::fromUtf8(argv[1]);
+        std::printf("stud: Studio link of %zu bytes\n", std::strlen(argv[1]));
+    } else if (argc > 1 && argv[1][0] != '-') {
+        product = stud::ui::client::Product::Player;
         if (stud::ui::parse_launch_uri(argv[1])) {
             deep_link = QString::fromUtf8(argv[1]);
             std::printf("stud: deep link of %zu bytes\n", std::strlen(argv[1]));
@@ -693,7 +738,10 @@ int main(int argc, char** argv) {
         }
     }();
 
-    if (!launch_game(deep_link)) {
+    if (!product) product = stud::ui::choose_product();
+    if (!product) return 0;  // closed without a choice
+
+    if (!launch_game(*product, deep_link)) {
         // Settings saying why keeps Stud open; with nothing on screen, quit.
         const QWidgetList windows = QApplication::topLevelWidgets();
         if (std::none_of(windows.begin(), windows.end(),

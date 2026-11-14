@@ -17,14 +17,24 @@ Terminal=false
 StartupNotify=true
 Categories=Game;
 NoDisplay=false
-MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;
+MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;x-scheme-handler/roblox-studio;x-scheme-handler/roblox-studio-auth;
 # Both of Stud's windows report the application id as their Wayland
 # app_id: the Qt UI through QGuiApplication::setDesktopFileName(), and the
 # game window through xdg_toplevel_set_app_id(). Without a StartupWMClass
 # that matches, the compositor cannot tie either window back to this entry,
 # which is why the taskbar showed no icon even once the icon was installed.
 StartupWMClass=@STUD_APP_ID@
-Actions=Settings;
+Actions=Roblox;Studio;Settings;
+
+[Desktop Action Roblox]
+Name=Roblox
+Exec=@STUD_EXEC@ --roblox
+Icon=@STUD_APP_ID@
+
+[Desktop Action Studio]
+Name=Roblox Studio
+Exec=@STUD_EXEC@ --studio
+Icon=@STUD_APP_ID@
 
 [Desktop Action Settings]
 Name=Settings
