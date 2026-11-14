@@ -1,4 +1,4 @@
-// M8 test: real roblox-player:/roblox: launch-URI parsing
+// roblox-player: and roblox: launch link parsing
 // (ui/src/launch_uri.h). Format and field casing verified live this
 // session against multiple real Play-button clicks (both a direct
 // browser default-handler launch and Firefox's portal-activated

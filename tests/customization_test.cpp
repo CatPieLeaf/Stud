@@ -1,6 +1,6 @@
-// Mods over a client build: applied, and put back exactly as the build came.
+// Customizations over a client build: applied, and put back exactly as the build came.
 
-#include "mods.h"
+#include "customization.h"
 #include "check.h"
 
 #include <QDir>
@@ -50,38 +50,38 @@ int main(int argc, char** argv) {
     write(res + "/content/fonts/families/Arial.json",
           R"({"name":"Arial","faces":[{"name":"Regular","assetId":"rbxasset://fonts/arial.ttf"}]})");
 
-    const QString mods = stud::ui::mods::folder(stud::ui::client::Product::Player);
-    write(mods + "/content/sounds/ouch.ogg", "modded ouch");
-    write(mods + "/content/textures/new.png", "a new texture");
-    write(mods + "/content/fonts/CustomFont.ttf", "font");
+    const QString customizations = stud::ui::customization::folder(stud::ui::client::Product::Player);
+    write(customizations + "/content/sounds/ouch.ogg", "modded ouch");
+    write(customizations + "/content/textures/new.png", "a new texture");
+    write(customizations + "/content/fonts/CustomFont.ttf", "font");
     write(root + "/outside.txt", "outside");
-    QDir().mkpath(mods + "/content/linked");
+    QDir().mkpath(customizations + "/content/linked");
     ::symlink((root + "/outside.txt").toLocal8Bit().constData(),
-              (mods + "/content/linked/escape.txt").toLocal8Bit().constData());
+              (customizations + "/content/linked/escape.txt").toLocal8Bit().constData());
 
     QString error;
-    check(stud::ui::mods::apply(build, stud::ui::client::Product::Player, &error), "mods apply");
-    check(read(res + "/content/sounds/ouch.ogg") == "modded ouch", "a mod replaces a client file");
-    check(read(res + "/content/textures/new.png") == "a new texture", "a mod adds a file");
-    check(!QFileInfo::exists(res + "/content/linked/escape.txt"), "a symlink in a mod is not followed");
+    check(stud::ui::customization::apply(build, stud::ui::client::Product::Player, &error), "customizations apply");
+    check(read(res + "/content/sounds/ouch.ogg") == "modded ouch", "a customization replaces a client file");
+    check(read(res + "/content/textures/new.png") == "a new texture", "a customization adds a file");
+    check(!QFileInfo::exists(res + "/content/linked/escape.txt"), "a symlink in a customization is not followed");
     const QJsonObject family =
         QJsonDocument::fromJson(read(res + "/content/fonts/families/Arial.json")).object();
     check(family["faces"].toArray().at(0).toObject()["assetId"].toString() ==
               "rbxasset://fonts/CustomFont.ttf",
           "the custom font replaces every family's faces");
 
-    // Applying again is the same, not mods stacked on mods.
-    check(stud::ui::mods::apply(build, stud::ui::client::Product::Player, &error), "mods apply again");
+    // Applying again is the same, not customizations stacked on customizations.
+    check(stud::ui::customization::apply(build, stud::ui::client::Product::Player, &error), "customizations apply again");
     check(read(res + "/content/sounds/ouch.ogg") == "modded ouch", "a second apply is the same");
 
-    // Without mods, the build is as it came.
-    QDir(mods).removeRecursively();
-    check(stud::ui::mods::apply(build, stud::ui::client::Product::Player, &error), "no mods apply");
+    // Without customizations, the build is as it came.
+    QDir(customizations).removeRecursively();
+    check(stud::ui::customization::apply(build, stud::ui::client::Product::Player, &error), "no customizations apply");
     check(read(res + "/content/sounds/ouch.ogg") == "original ouch", "the original comes back");
     check(!QFileInfo::exists(res + "/content/textures/new.png"), "an added file goes again");
     check(read(res + "/content/fonts/families/Arial.json").contains("arial.ttf"),
           "the font families come back");
 
-    std::printf("all mods checks passed\n");
+    std::printf("all customizations checks passed\n");
     return 0;
 }

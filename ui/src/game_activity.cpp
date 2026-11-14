@@ -1,5 +1,6 @@
 #include "game_activity.h"
 
+#include "history.h"
 #include "notifications.h"
 
 #include <QDateTime>
@@ -8,6 +9,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QUrl>
 
 #include <cstdio>
@@ -32,22 +34,24 @@ QString flag_of(const QString& country_code) {
 
 }  // namespace
 
-GameActivity::GameActivity(bool discord, bool join_button, bool region, QObject* parent)
-    : QObject(parent), discord_(discord), join_button_(join_button), region_(region) {
-    if (discord_) {
+GameActivity::GameActivity(const Options& options, QObject* parent)
+    : QObject(parent), options_(options) {
+    studio_since_ = now_seconds();
+    if (options_.discord) {
         discord_rpc_start(kRobloxDiscordApplicationId);
         publish();
     }
 }
 
 GameActivity::~GameActivity() {
-    if (discord_) discord_rpc_stop();
+    if (options_.discord) discord_rpc_stop();
 }
 
 bool GameActivity::wants(const QByteArray& line) {
     static const char* const kMarks[] = {
         "! Joining game", "UDMUX Address", "doTeleport: joinScriptUrl",
         "Report game_join_loadtime:", "[BloxstrapRPC] ", "Client:Disconnect",
+        "[FLog::PlaceManager]",
     };
     for (const char* mark : kMarks) {
         if (line.contains(mark)) return true;
@@ -57,6 +61,10 @@ bool GameActivity::wants(const QByteArray& line) {
 
 void GameActivity::line(const QByteArray& raw) {
     const QString text = QString::fromUtf8(raw);
+    if (options_.studio) {
+        studio_line(text);
+        return;
+    }
     // "! Joining game '<job id>' place <place id> at <address>"
     static const QRegularExpression joining(
         QStringLiteral(R"(! Joining game '([0-9a-fA-F-]+)' place (\d+))"));
@@ -118,7 +126,7 @@ void GameActivity::joined(const QString& place, const QString& job) {
     game_details_ = game_state_ = game_start_ = game_end_ = false;
     std::printf("stud: joined place %s\n", qPrintable(place));
     publish();
-    if (!discord_) return;
+    if (!options_.discord) return;
 
     // The place's universe, then its name, creator and icon.
     const quint64 generation = generation_;
@@ -156,6 +164,7 @@ void GameActivity::joined(const QString& place, const QString& job) {
 
 void GameActivity::left() {
     if (place_.isEmpty()) return;
+    history::record(place_, name_, icon_, job_, joined_at_, now_seconds());
     ++generation_;
     place_.clear();
     job_.clear();
@@ -170,7 +179,7 @@ void GameActivity::left() {
 }
 
 void GameActivity::server(const QString& address) {
-    if (!region_) return;
+    if (!options_.region) return;
     // Over TLS, and only ever the game server's public address, never the
     // player's.
     fetch(QStringLiteral("https://ipwho.is/%1?fields=success,country,country_code,city").arg(address),
@@ -192,7 +201,7 @@ void GameActivity::server(const QString& address) {
 // largeImage ({assetId, hoverText, clear, reset}). An absent key leaves what
 // is showing.
 void GameActivity::rich_presence(const QJsonObject& data) {
-    if (!discord_ || place_.isEmpty()) return;
+    if (!options_.discord || place_.isEmpty()) return;
     const auto text = [&data](const char* key, std::string& out, bool& set) {
         const QJsonValue value = data.value(QLatin1String(key));
         if (!value.isString() || value.toString().size() > 128) return;
@@ -237,9 +246,39 @@ void GameActivity::rich_presence(const QJsonObject& data) {
     publish();
 }
 
+namespace {
+QString g_server_link;
+}  // namespace
+
+QString current_server_link() { return g_server_link; }
+
+// The link to this server, where anyone can join it: a public server, or a
+// reserved one the game has given launch data for. Never a private server's.
+QString GameActivity::server_link() const {
+    if (options_.studio || place_.isEmpty() || job_.isEmpty()) return {};
+    const bool joinable =
+        server_ == Server::Public || (server_ == Server::Reserved && !launch_data_.isEmpty());
+    if (!joinable) return {};
+    QString url = QStringLiteral("https://www.roblox.com/games/start?placeId=%1&gameInstanceId=%2")
+                      .arg(place_, job_);
+    if (!launch_data_.isEmpty()) {
+        url += QStringLiteral("&launchData=") + QString::fromLatin1(QUrl::toPercentEncoding(launch_data_));
+    }
+    return url;
+}
+
 void GameActivity::publish() {
-    if (!discord_) return;
+    g_server_link = server_link();
+    if (!options_.discord) return;
     DiscordActivity a;
+    if (options_.studio) {
+        a.details = studio_editing_ ? "Editing a place" : "In Roblox Studio";
+        a.state = "Roblox Studio";
+        a.start = studio_since_;
+        a.status_display = 2;
+        discord_rpc_set(a);
+        return;
+    }
     if (place_.isEmpty()) {
         a.details = "In the Roblox app";
         discord_rpc_set(a);
@@ -252,24 +291,26 @@ void GameActivity::publish() {
     a.large_text = !game_.large_text.empty() ? game_.large_text : name_.toStdString();
     a.small_image = game_.small_image;
     a.small_text = game_.small_text;
+    // The game's name as the short status, in place of "Playing ROBLOX".
+    a.status_display = 2;
     a.start = game_start_ ? game_.start : joined_at_;
     a.end = game_end_ ? game_.end : 0;
-    // Join only where anyone can: a public server, or a reserved one the
-    // game has given launch data for. Never a private server's.
-    const bool joinable =
-        server_ == Server::Public || (server_ == Server::Reserved && !launch_data_.isEmpty());
-    if (join_button_ && joinable) {
-        QString url = QStringLiteral("https://www.roblox.com/games/start?placeId=%1&gameInstanceId=%2")
-                          .arg(place_, job_);
-        if (!launch_data_.isEmpty()) {
-            url += QStringLiteral("&launchData=") +
-                   QString::fromLatin1(QUrl::toPercentEncoding(launch_data_));
-        }
-        a.buttons.emplace_back("Join server", url.toStdString());
+    if (options_.join_button && !g_server_link.isEmpty()) {
+        a.buttons.emplace_back("Join server", g_server_link.toStdString());
     }
     a.buttons.emplace_back("See game page",
                            QStringLiteral("https://www.roblox.com/games/%1").arg(place_).toStdString());
     discord_rpc_set(a);
+}
+
+// Studio: a place being edited, or Studio open on its start page.
+void GameActivity::studio_line(const QString& text) {
+    const bool opened = text.contains(QStringLiteral("[FLog::PlaceManager] Start to open place"));
+    const bool closed = text.contains(QStringLiteral("PlaceManager::closeCurrentPlayDoc"));
+    if (!opened && !closed) return;
+    studio_editing_ = opened;
+    studio_since_ = now_seconds();
+    publish();
 }
 
 void GameActivity::fetch(const QString& url, std::function<void(const QJsonObject&)> done) {

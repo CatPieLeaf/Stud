@@ -6,14 +6,8 @@
 #include <string>
 #include <vector>
 
-// Real GPU enumeration for the settings window's GPU picker (M8, locked
-// decision: "Settings dropdown enumerating vkEnumeratePhysicalDevices
-// output"). Stud's OWN direct Vulkan usage, unlike vulkan-wsi/ (which
-// exists specifically to intercept Roblox's dlopen of libvulkan.so.1),
-// this code is the UI process talking to the real system Vulkan loader
-// directly, so linking Vulkan::Vulkan here is correct and has nothing to
-// do with the interception concern vulkan-wsi/ solves for the runtime
-// process.
+// The GPUs the system Vulkan loader lists, for Settings' GPU picker and for
+// the launch to pick the chosen one.
 
 namespace stud::ui {
 
@@ -28,9 +22,6 @@ struct GpuInfo {
     uint32_t vendor_id = 0;
     // Whether it is a discrete GPU (VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU).
     bool discrete = false;
-    // Its largest DEVICE_LOCAL heap, in bytes: the video memory the
-    // engine is told it has (see FIntRenderForceVideoMemorySize).
-    uint64_t device_local_bytes = 0;
     // VkPhysicalDeviceIDProperties::deviceUUID in hex, which stays the same
     // when the enumeration order does not. Empty on a Vulkan 1.0 loader.
     std::string uuid;

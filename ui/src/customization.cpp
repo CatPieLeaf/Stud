@@ -1,4 +1,4 @@
-#include "mods.h"
+#include "customization.h"
 
 #include "stud/stud_paths.h"
 
@@ -13,11 +13,11 @@
 #include <QSaveFile>
 #include <QStringList>
 
-namespace stud::ui::mods {
+namespace stud::ui::customization {
 
 namespace {
 
-// Where each generated part lives in a mod folder, and the files it covers.
+// Where each generated part lives in a customization folder, and the files it covers.
 struct PartFiles {
     QString directory;
     QStringList files;
@@ -48,7 +48,7 @@ PartFiles files_of(Part part) {
 // The build's record of what this module changed, beside the bundle, and the
 // originals it replaced.
 QString state_dir(const client::Build& build) {
-    return QFileInfo(build.app).absolutePath() + QStringLiteral("/.stud-mods");
+    return QFileInfo(build.app).absolutePath() + QStringLiteral("/.stud-customizations");
 }
 QString resources(const client::Build& build) { return build.app + QStringLiteral("/Contents/Resources"); }
 
@@ -116,17 +116,17 @@ private:
 
 QString folder(client::Product product) {
     return QString::fromStdString(stud::paths::config_dir()) +
-           (product == client::Product::Studio ? QStringLiteral("/studio-mods") : QStringLiteral("/mods"));
+           (product == client::Product::Studio ? QStringLiteral("/studio-customizations") : QStringLiteral("/customizations"));
 }
 
 bool apply(const client::Build& build, client::Product product, QString* error) {
     restore(build);
-    const QDir mods(folder(product));
-    if (!mods.exists()) return true;
+    const QDir customizations(folder(product));
+    if (!customizations.exists()) return true;
 
     Applier applier(build);
-    const QString root = mods.absolutePath() + QLatin1Char('/');
-    QDirIterator it(mods.absolutePath(), QDir::Files | QDir::NoSymLinks | QDir::Hidden,
+    const QString root = customizations.absolutePath() + QLatin1Char('/');
+    QDirIterator it(customizations.absolutePath(), QDir::Files | QDir::NoSymLinks | QDir::Hidden,
                     QDirIterator::Subdirectories);
     QString font;
     while (it.hasNext()) {
@@ -140,12 +140,12 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
         if (!applier.put(relative, path)) {
             applier.record();
             restore(build);
-            *error = QStringLiteral("could not apply the mod file %1").arg(relative);
+            *error = QStringLiteral("could not apply the customization file %1").arg(relative);
             return false;
         }
     }
 
-    // Every font family the mods do not replace themselves, pointed at the
+    // Every font family the customizations do not replace themselves, pointed at the
     // custom font.
     if (!font.isEmpty()) {
         const QString asset = QStringLiteral("rbxasset://fonts/") + font;
@@ -176,7 +176,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
     }
     if (!applier.finish()) {
         restore(build);
-        *error = QStringLiteral("could not record the applied mods");
+        *error = QStringLiteral("could not record the applied customizations");
         return false;
     }
     return true;
@@ -194,7 +194,7 @@ bool use_file(Part part, const QString& file, QString* error) {
     }
     for (const QString& name : targets) {
         if (!copy_over(file, dir + QLatin1Char('/') + name)) {
-            *error = QStringLiteral("could not copy %1 into the mods folder").arg(QFileInfo(file).fileName());
+            *error = QStringLiteral("could not copy %1 into the customizations folder").arg(QFileInfo(file).fileName());
             return false;
         }
     }
@@ -211,19 +211,22 @@ bool recolour(Part part, const QColor& colour, QString* error) {
     const QString dir = folder(client::Product::Player) + QLatin1Char('/') + p.directory;
     remove(part);
     for (const QString& name : p.files) {
-        // From the copy Stud kept if a mod replaced it, else the client's own.
+        // From the copy Stud kept if a customization replaced it, else the client's own.
         const QString relative = p.directory + QLatin1Char('/') + name;
         QString source = state_dir(*build) + QStringLiteral("/originals/") + relative;
         if (!QFileInfo::exists(source)) source = resources(*build) + QLatin1Char('/') + relative;
         QImage image(source);
         if (image.isNull()) continue;
         image = image.convertToFormat(QImage::Format_ARGB32);
-        // Every visible pixel takes the colour and keeps its own alpha.
+        // Multiplied in: white becomes the colour, black outlines stay black,
+        // and greys shade between; each pixel keeps its own alpha.
         for (int y = 0; y < image.height(); ++y) {
             auto* line = reinterpret_cast<QRgb*>(image.scanLine(y));
             for (int x = 0; x < image.width(); ++x) {
                 const int alpha = qAlpha(line[x]);
-                if (alpha != 0) line[x] = qRgba(colour.red(), colour.green(), colour.blue(), alpha);
+                if (alpha == 0) continue;
+                line[x] = qRgba(qRed(line[x]) * colour.red() / 255, qGreen(line[x]) * colour.green() / 255,
+                                qBlue(line[x]) * colour.blue() / 255, alpha);
             }
         }
         QDir().mkpath(dir);
@@ -253,4 +256,4 @@ bool present(Part part) {
     return false;
 }
 
-}  // namespace stud::ui::mods
+}  // namespace stud::ui::customization

@@ -75,7 +75,7 @@ bool drain_replies() {
 
 // One write of the whole frame, never waiting: the socket is
 // non-blocking, so a Discord that has stopped reading costs this update
-// rather than the engine thread that asked for it.
+// rather than the thread that asked for it.
 bool send_frame(uint32_t opcode, const std::string& payload) {
     if (g_fd < 0 || !drain_replies()) return false;
     uint32_t header[2] = {opcode, static_cast<uint32_t>(payload.size())};
@@ -185,6 +185,10 @@ void send_presence_locked() {
         if (a.start > 0) timestamps += "\"start\":" + std::to_string(a.start);
         if (a.end > 0) timestamps += std::string(timestamps.empty() ? "" : ",") + "\"end\":" + std::to_string(a.end);
         activity += std::string(activity.size() > 1 ? "," : "") + "\"timestamps\":{" + timestamps + "}";
+    }
+    if (a.status_display >= 0) {
+        activity += std::string(activity.size() > 1 ? "," : "") + "\"status_display_type\":" +
+                    std::to_string(a.status_display);
     }
     if (!a.buttons.empty()) {
         std::string buttons;

@@ -46,7 +46,7 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # at runtime: Rosemary opens SDL3 by name, and the launcher the Vulkan
 # loader. Rosemary links libcurl, zlib and libxkbcommon.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "qt6-qtbase-gui, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit)")
+    "qt6-qtbase-gui, qt6-qtwebengine, qt6-qtwebchannel, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit)")
 # Weak: both are Settings switches, and neither stops Stud from running.
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, gamemode")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
@@ -133,6 +133,8 @@ libqt6opengl6 (>= 6.4) | libqt6opengl6t64 (>= 6.4), \
 libqt6openglwidgets6 (>= 6.4) | libqt6openglwidgets6t64 (>= 6.4), \
 libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
 libqt6dbus6 (>= 6.4) | libqt6dbus6t64 (>= 6.4), \
+libqt6webenginewidgets6 (>= 6.4) | libqt6webenginewidgets6t64 (>= 6.4), \
+libqt6webchannel6 (>= 6.4) | libqt6webchannel6t64 (>= 6.4), \
 libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, zlib1g, libxkbcommon0")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, gamemode")
 # The dependencies are the list above, not a scan.

@@ -7,11 +7,11 @@
 namespace stud::ui {
 
 // A line of the client's output, fit for the session log. The log exists to be exported
-// and sent to someone, and on a teleport an engine may log its whole join URL
+// and sent to someone, and on a teleport the client may log its whole join URL
 // with the signed ticket in it. The line stops at the value: what follows a
 // ticket in a join URL is no better, and a name in the ticket can hold a
 // space, so there is no safe place to pick the line up again.
-inline std::string scrub_engine_log_line(std::string_view line) {
+inline std::string scrub_client_log_line(std::string_view line) {
     static constexpr std::string_view kWord = "icket";  // ticket, Ticket
     for (size_t at = line.find(kWord); at != std::string_view::npos;
          at = line.find(kWord, at + 1)) {

@@ -15,6 +15,7 @@ class QPlainTextEdit;
 class QVBoxLayout;
 class QJsonObject;
 class QSlider;
+class QSpinBox;
 
 namespace stud::ui {
 
@@ -71,6 +72,7 @@ private slots:
     void onRestartClicked();
     // Merges a JSON file's flags into the FFlags editor.
     void onImportFlagsClicked();
+    void onImportBootstrapperClicked();
     void onBackgroundFpsChanged(int value);
 
 protected:
@@ -85,22 +87,27 @@ private:
 
     QComboBox* gpuCombo_;
     QCheckBox* vsyncCheck_;
+    QSpinBox* renderScaleSpin_;
+    QComboBox* upscalerCombo_;
     QComboBox* rendererCombo_;
     QComboBox* titleBarCombo_;
     QComboBox* displayBackendCombo_;
     QCheckBox* gamemodeCheck_;
     QCheckBox* mangohudCheck_;
     QCheckBox* trayCheck_;
+    QCheckBox* playerDirectlyCheck_;
     QSlider* backgroundFpsSlider_;
     QLabel* backgroundFpsLabel_;
     QCheckBox* discordCheck_;
     QCheckBox* discordJoinCheck_;
     QCheckBox* serverRegionCheck_;
+    QSpinBox* cleanerSpin_;
+    void buildHistoryTab(QVBoxLayout* tab);
     QPlainTextEdit* flagsEdit_;
     QLabel* flagsWarning_;
     // Each preset's control, set from the editor's JSON.
     std::vector<std::function<void(const QJsonObject&)>> flagRefresh_;
-    void buildFlagsTab(QVBoxLayout* tab);
+    void buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab);
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also
     // called on a palette change, hence keeping it around.

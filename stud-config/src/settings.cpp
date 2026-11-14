@@ -94,8 +94,37 @@ StudSettings load_settings(const std::string& path) {
                             "\" \"" + value + "\"");
     };
 
+    // Stud 1.x's names for the two settings that carried over to 2.0: its
+    // graphics mode is the renderer, and its upscaler choice the filter. Taken
+    // only where the file has no 2.0 value of its own, and only a value 2.0
+    // knows; the next save drops the old keys.
+    if (!doc.contains("renderer") && doc.contains("graphicsMode") && doc.at("graphicsMode").is_string()) {
+        const std::string mode = doc.at("graphicsMode").get<std::string>();
+        if (mode == "vulkan" || mode == "opengl") doc["renderer"] = mode;
+    }
+    if (!doc.contains("upscaler") && doc.contains("upscalerChoice") && doc.at("upscalerChoice").is_string()) {
+        const std::string choice = doc.at("upscalerChoice").get<std::string>();
+        for (const char* known : {"ravu-ar", "sgsr-ed", "ravu", "sgsr", "linear"}) {
+            if (choice == known) doc["upscaler"] = choice;
+        }
+    }
     read_string("renderer", result.renderer, {"vulkan", "opengl"});
     read_bool("vsync", result.vsync);
+    if (doc.contains("renderResolution")) {
+        const auto& value = doc.at("renderResolution");
+        if (!value.is_number_integer() || value.get<int>() < 1 || value.get<int>() > 100) {
+            throw SettingsError("stud: config '" + path +
+                                "' has a \"renderResolution\" that is not a percentage from 1 to 100");
+        }
+        result.render_scale = value.get<int>();
+    }
+    // The names a build before these were the two of Stud 1.x wrote.
+    if (doc.contains("upscaler") && doc.at("upscaler").is_string()) {
+        const std::string old = doc.at("upscaler").get<std::string>();
+        if (old == "ravu" || old == "linear") doc["upscaler"] = "ravu-ar";
+        if (old == "sgsr") doc["upscaler"] = "sgsr-ed";
+    }
+    read_string("upscaler", result.upscaler, {"ravu-ar", "sgsr-ed"});
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
     read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
     if (doc.contains("backgroundFps")) {
@@ -112,8 +141,16 @@ StudSettings load_settings(const std::string& path) {
     read_bool("discordRichPresence", result.discord_rich_presence);
     read_bool("discordJoinButton", result.discord_join_button);
     read_bool("serverRegionNotification", result.server_region_notification);
+    if (doc.contains("cleanerDays")) {
+        if (!doc.at("cleanerDays").is_number_integer() || doc.at("cleanerDays").get<int>() < 0) {
+            throw SettingsError("stud: config '" + path +
+                                "' has a \"cleanerDays\" that is not a non-negative integer");
+        }
+        result.cleaner_days = doc.at("cleanerDays").get<int>();
+    }
     read_bool("gamemode", result.gamemode);
     read_bool("systemTray", result.system_tray);
+    read_bool("openPlayerDirectly", result.open_player_directly);
 
     return result;
 }
@@ -146,6 +183,8 @@ void save_settings(const std::string& path, const StudSettings& settings) {
                   {"deviceUuid", settings.gpu.device_uuid}};
     doc["renderer"] = settings.renderer;
     doc["vsync"] = settings.vsync;
+    doc["renderResolution"] = settings.render_scale;
+    doc["upscaler"] = settings.upscaler;
     doc["titleBar"] = settings.title_bar;
     doc["displayBackend"] = settings.display_backend;
     doc["backgroundFps"] = settings.background_fps;
@@ -153,9 +192,12 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["discordRichPresence"] = settings.discord_rich_presence;
     doc["discordJoinButton"] = settings.discord_join_button;
     doc["serverRegionNotification"] = settings.server_region_notification;
+    doc["cleanerDays"] = settings.cleaner_days;
     doc["gamemode"] = settings.gamemode;
     doc["systemTray"] = settings.system_tray;
-    // Settings of Stud 1.x's Android engine, which Stud 2.0 does not have.
+    doc["openPlayerDirectly"] = settings.open_player_directly;
+    // Settings Stud no longer has: Stud 1.x's Android engine's, and ones 2.0
+    // dropped.
     // Erased rather than kept, so the file never lists something that does
     // nothing.
     for (const char* gone :
@@ -164,7 +206,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
           "textOverlayFontRatio", "smoothZoom", "windowsMaterials", "webLogin", "hqTextures",
           "closeOnLeave", "textureCache", "textureCacheMB", "graphicsMode",
           "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback",
-          "menuBar", "frameCap", "presentationMode", "controlEditKeys"}) {
+          "menuBar", "frameCap", "presentationMode", "controlEditKeys", "launcherStyle"}) {
         doc.erase(gone);
     }
 

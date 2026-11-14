@@ -19,7 +19,7 @@ QStringList not_allowlisted(const QJsonObject& flags);
 // Presets: each sets its flags, or removes them for Roblox's default.
 enum class Preset {
     Msaa,             // samples: 1, 2, 4
-    TextureQuality,   // 0 lowest, 1 low, 2 medium
+    TextureQuality,   // 0 lowest, 1 low, 2 medium, 3 high
     QualityLevel,     // 1-21
     MeshDetail,       // 0-9
     DisableGrass,     // on/off

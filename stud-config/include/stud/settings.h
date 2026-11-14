@@ -38,7 +38,15 @@ struct StudSettings {
 
     // Whether frames wait for the display's refresh: FIFO presentation, or
     // Rosemary's own default (MAILBOX) when off.
-    bool vsync = false;
+    bool vsync = true;
+
+    // The game drawn at this percentage of the window's size, and scaled
+    // back up as it is presented. 100 draws it at full size.
+    int render_scale = 100;
+    // What scales it back up, as in Stud 1.x: "ravu-ar" (RAVU-Zoom r2 with
+    // anti-ringing, then RCAS sharpening) or "sgsr-ed" (Snapdragon Game Super
+    // Resolution 1, edge-direction variant, which sharpens as it scales).
+    std::string upscaler = "ravu-ar";
 
     // The window's title bar: "macos" (the macOS title bar with the menu bar
     // in it), "macos-no-menu" (the macOS title bar alone) or "native" (the
@@ -56,7 +64,7 @@ struct StudSettings {
     int background_fps = 30;
 
     bool mangohud = false;
-    bool gamemode = false;
+    bool gamemode = true;
 
     // Discord Rich Presence for the game being played, and whether it offers
     // a button to join the same server.
@@ -65,6 +73,15 @@ struct StudSettings {
 
     // A notification naming the country of the game server on each join.
     bool server_region_notification = false;
+
+    // Roblox's logs and caches, and Stud's own logs, older than this many
+    // days are deleted at launch; 0 keeps them.
+    int cleaner_days = 0;
+
+
+    // Opened on its own, Stud starts Roblox Player rather than showing the
+    // welcome page.
+    bool open_player_directly = false;
 
     // A tray icon for the session: Settings, and stopping Roblox.
     bool system_tray = true;

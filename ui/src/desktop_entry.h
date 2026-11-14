@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QString>
+
 namespace stud::ui {
 
 // Registers Stud's desktop entry and icons in the user's own
@@ -18,5 +20,8 @@ namespace stud::ui {
 //
 // Returns a process exit status.
 int install_desktop_entry();
+
+// The command that starts Stud: the AppImage file, or this binary.
+QString launcher_command();
 
 }  // namespace stud::ui

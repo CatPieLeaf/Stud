@@ -214,7 +214,7 @@ void remove_other_builds(Product product, const QString& keep) {
 }  // namespace
 
 QString display_name(Product product) {
-    return product == Product::Studio ? QStringLiteral("Roblox Studio") : QStringLiteral("Roblox");
+    return product == Product::Studio ? QStringLiteral("Roblox Studio") : QStringLiteral("Roblox Player");
 }
 
 QString clients_dir(Product product) {

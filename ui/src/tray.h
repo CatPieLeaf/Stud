@@ -29,6 +29,7 @@ public:
 
 private slots:
     void openSettings();
+    void copyServerLink();
     void exportLogs();
     void showAbout();
     void quitStud();

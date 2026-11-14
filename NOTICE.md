@@ -107,10 +107,18 @@ issue at https://github.com/CatPieLeaf/Stud/issues.
 ## 9. Third-party software
 
 Stud runs the client on Rosemary (https://github.com/microlift/rosemary,
-GPL-3.0), built from its upstream source unmodified and installed beside
-Stud's launcher. AGPLv3 section 13 permits combining a covered work with a
-GPLv3 work and conveying the result; Rosemary's source is its upstream
-repository, and its licence is installed to `/usr/share/licenses/stud/`.
+GPL-3.0), built from its upstream source with Stud's patches on top and
+installed beside Stud's launcher. AGPLv3 section 13 permits combining a
+covered work with a GPLv3 work and conveying the result; Rosemary's source is
+its upstream repository plus the patches in `packaging/rosemary/`, and its
+licence is installed to `/usr/share/licenses/stud/`.
+
+Those patches carry the upscale shaders Rosemary is built with: RAVU-Zoom
+from mpv-prescalers (LGPL-3.0-or-later), SGSR (BSD-3-Clause) and FSR1's RCAS
+(MIT). LGPLv3 incorporates the terms of GPLv3, and its section 2(b) permits
+conveying a copy under the GPL with none of the LGPL's additional permissions
+applying to that copy. The hook the RAVU-Zoom shader and its weight tables
+come from ships in `packaging/rosemary/files/`, as the Corresponding Source.
 
 Two more are compiled into Stud's launcher, so their notices are installed
 there too:

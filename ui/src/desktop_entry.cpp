@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
@@ -42,13 +43,6 @@ QString share_root() {
 // file the user actually has, the mount point the executable lives on
 // disappears when Stud exits, so the executable's own path is useless in
 // an entry that has to work tomorrow.
-QString launcher_command() {
-    const QString appimage = qEnvironmentVariable("APPIMAGE");
-    if (!appimage.isEmpty() && QFileInfo::exists(appimage)) {
-        return QFileInfo(appimage).absoluteFilePath();
-    }
-    return QCoreApplication::applicationFilePath();
-}
 
 // Replaces the program in an Exec= value, keeping its arguments.
 QString rewrite_exec(const QString& value, const QString& program) {
@@ -183,6 +177,14 @@ void remove_legacy_entry(const QString& apps_dir) {
 
 }  // namespace
 
+QString launcher_command() {
+    const QString appimage = qEnvironmentVariable("APPIMAGE");
+    if (!appimage.isEmpty() && QFileInfo::exists(appimage)) {
+        return QFileInfo(appimage).absoluteFilePath();
+    }
+    return QCoreApplication::applicationFilePath();
+}
+
 int install_desktop_entry() {
     const QString app_id = QStringLiteral(STUD_APP_ID);
     const QString share = share_root();
@@ -204,17 +206,21 @@ int install_desktop_entry() {
 
     // Icons first: the entry below points Icon= at one of these by
     // absolute path, so it has to exist before anything reads the entry.
-    QString largest_icon;
-    for (int size : kIconSizes) {
-        const QString source =
-            QStringLiteral("%1/icons/hicolor/%2x%2/apps/%3.png").arg(share).arg(size).arg(app_id);
-        if (!QFileInfo::exists(source)) continue;
-        const QString target_dir = QStringLiteral("%1/%2x%2/apps").arg(icons_dir).arg(size);
-        if (!QDir().mkpath(target_dir)) continue;
-        const QString target = target_dir + "/" + app_id + ".png";
-        QFile::remove(target);
-        if (QFile::copy(source, target)) largest_icon = target;
+    // Stud's own, and the red and blue studs of the Player and Studio actions.
+    QHash<QString, QString> largest;
+    for (const QString& name : {app_id, app_id + QStringLiteral("-player"), app_id + QStringLiteral("-studio")}) {
+        for (int size : kIconSizes) {
+            const QString source =
+                QStringLiteral("%1/icons/hicolor/%2x%2/apps/%3.png").arg(share).arg(size).arg(name);
+            if (!QFileInfo::exists(source)) continue;
+            const QString target_dir = QStringLiteral("%1/%2x%2/apps").arg(icons_dir).arg(size);
+            if (!QDir().mkpath(target_dir)) continue;
+            const QString target = target_dir + "/" + name + ".png";
+            QFile::remove(target);
+            if (QFile::copy(source, target)) largest[name] = target;
+        }
     }
+    const QString largest_icon = largest.value(app_id);
     if (largest_icon.isEmpty()) {
         std::fprintf(stderr, "stud: --install-desktop-entry: no icon found under %s/icons\n",
                      qPrintable(share));
@@ -241,7 +247,7 @@ int install_desktop_entry() {
             // themed name resolves only once every consumer has noticed a
             // newly-added user icon directory, and an absolute path shows
             // up immediately.
-            line = QLatin1String("Icon=") + largest_icon;
+            line = QLatin1String("Icon=") + largest.value(line.mid(5), largest_icon);
         }
         lines << line;
     }

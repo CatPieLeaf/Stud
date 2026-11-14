@@ -1,8 +1,7 @@
 # Keeps a container build's context to what a build actually reads.
 #
-# third_party/ is deliberately NOT excluded: the NDK and bionic
-# are what Stud is built against, and an image build without them
-# silently produces no Process B.
+# third_party/ is deliberately NOT excluded: it holds the vendored code
+# the build compiles in.
 build/
 build-*/
 .git/

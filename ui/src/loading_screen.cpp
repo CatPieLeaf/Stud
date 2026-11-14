@@ -73,7 +73,7 @@ void raise() {
         s.label->setWordWrap(true);
         layout->addWidget(s.label);
         // A loading bar, not a progress bar: Stud cannot know how far along
-        // the engine is, so it only says something is happening.
+        // the client is, so it only says something is happening.
         auto* bar = new QProgressBar(s.window.get());
         bar->setRange(0, 0);
         bar->setTextVisible(false);

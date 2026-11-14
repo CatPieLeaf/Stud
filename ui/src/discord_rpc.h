@@ -26,6 +26,9 @@ struct DiscordActivity {
     std::string small_text;
     int64_t start = 0;  // Unix seconds; 0 for none
     int64_t end = 0;
+    // What the short status ("Playing ...") names: 0 the application, 1 the
+    // state, 2 the details; -1 leaves it to Discord.
+    int status_display = -1;
     // At most two, Discord's limit.
     std::vector<std::pair<std::string, std::string>> buttons;  // label, URL
 };

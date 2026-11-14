@@ -32,19 +32,19 @@ The permission
 Why it exists
 -------------
 
-Stud loads the Roblox Engine into one of its own processes, and Stud's
-own code runs in that process. Whether that makes a combined work whose
-distribution the AGPL would forbid is the old question about linking
-against proprietary code, and it is a question nobody involved should
-have to spend time on.
+Stud starts the Roblox client and works alongside it: it writes the
+client's settings and content files, and reads its output. Whether that
+makes a combined work whose distribution the AGPL would forbid is the old
+question about combining with proprietary code, and it is a question
+nobody involved should have to spend time on.
 
-In Stud's case there is a good argument that it never arises. Stud does
-not ship the engine, mirror it, or download it. The person running Stud
-supplies the application package themselves, so whatever combination
-happens, happens on their own machine and is never conveyed to anyone.
-Every binary Stud does redistribute: Android's libc, libm, libdl and
-linker, is under a permissive licence, and each ships with its own
-notice.
+In Stud's case there is a good argument that it never arises. The client
+runs as a process of its own under Rosemary, with none of Stud's code
+loaded into it. Stud does not ship the client or mirror it: it is
+downloaded from Roblox's own servers onto the machine of the person
+running Stud, so whatever combination happens, happens there and is
+never conveyed to anyone. Every binary Stud does redistribute, Rosemary
+among them, ships with its own licence and notice.
 
 This permission is here so that argument does not have to be made. A
 distribution packaging Stud, and anyone building on it, can rely on the

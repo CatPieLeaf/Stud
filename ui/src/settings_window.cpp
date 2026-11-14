@@ -4,8 +4,10 @@
 
 #include "cube_view.h"
 #include "gpu_enum.h"
-#include "mods.h"
+#include "customization.h"
 #include "fflags.h"
+#include "desktop_entry.h"
+#include "history.h"
 #include "notifications.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -27,6 +29,16 @@
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QInputDialog>
+#include <limits>
+#include <QStandardPaths>
+#include <QProcess>
+#include <QDirIterator>
+#include <QSpinBox>
+#include <QDateTime>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QTreeWidget>
+#include <QHeaderView>
 #include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -36,6 +48,9 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QTabWidget>
+#include <QListWidget>
+#include <QScrollArea>
+#include <QStackedWidget>
 #include <QPixmap>
 #include <QEvent>
 #include <QPainter>
@@ -55,6 +70,12 @@ void relaunch_stud();
 namespace stud::ui {
 
 namespace {
+// The icon theme's icon by its freedesktop name, or Qt's own where the theme
+// has none.
+QIcon themed(const char* name, QStyle::StandardPixmap fallback) {
+    return QIcon::fromTheme(QLatin1String(name), QApplication::style()->standardIcon(fallback));
+}
+
 // Selects the entry whose data is `value`, or the first one.
 void select_data(QComboBox* combo, const std::string& value) {
     const int index = combo->findData(QString::fromStdString(value));
@@ -70,25 +91,69 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     setWindowTitle("Stud Settings");
 
     auto* layout = new QVBoxLayout(this);
-    auto* tabs = new QTabWidget(this);
-    layout->addWidget(tabs);
+    // Categories on the left, each a page on the right; a category with
+    // several parts shows them as tabs along its top.
+    auto* body = new QHBoxLayout();
+    layout->addLayout(body, 1);
+    auto* categories = new QListWidget(this);
+    categories->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Expanding);
+    auto* pages = new QStackedWidget(this);
+    body->addWidget(categories);
+    body->addWidget(pages, 1);
+    connect(categories, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
 
-    // Every tab is a plain vertical list ending in a stretch, so the
-    // controls sit at the top rather than spreading to fill the tab.
-    auto add_tab = [tabs](const QString& title) {
+    // A page scrolls rather than stretching the window: controls sit at the
+    // top as a plain vertical list.
+    const auto scroll_page = [](QWidget*& area) {
+        auto* scroll = new QScrollArea();
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
         auto* page = new QWidget();
         auto* page_layout = new QVBoxLayout(page);
-        tabs->addTab(page, title);
+        scroll->setWidget(page);
+        area = scroll;
         return page_layout;
+    };
+    auto add_tab = [&](const QString& title) {
+        QWidget* area = nullptr;
+        QVBoxLayout* page = scroll_page(area);
+        categories->addItem(title);
+        pages->addWidget(area);
+        return page;
+    };
+    // A category of several parts: one scrolling page each, as tabs.
+    auto add_parts = [&](const QString& title, const QStringList& parts) {
+        auto* tabs = new QTabWidget();
+        std::vector<QVBoxLayout*> layouts;
+        for (const QString& part : parts) {
+            QWidget* area = nullptr;
+            layouts.push_back(scroll_page(area));
+            tabs->addTab(area, part);
+        }
+        categories->addItem(title);
+        pages->addWidget(tabs);
+        return layouts;
     };
 
     // ---- General -------------------------------------------------------
     auto* general = add_tab("General");
     trayCheck_ = new QCheckBox("Show in system tray", this);
     general->addWidget(trayCheck_);
+    playerDirectlyCheck_ = new QCheckBox("Open Roblox Player directly, without the welcome page", this);
+    general->addWidget(playerDirectlyCheck_);
     gamemodeCheck_ = new QCheckBox("GameMode", this);
     gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
     general->addWidget(gamemodeCheck_);
+    auto* cleanerRow = new QHBoxLayout();
+    cleanerRow->addWidget(new QLabel("Delete logs and caches older than", this));
+    cleanerSpin_ = new QSpinBox(this);
+    cleanerSpin_->setRange(0, std::numeric_limits<int>::max());
+    cleanerSpin_->setSpecialValueText("Never");
+    cleanerSpin_->setSuffix(" days");
+    cleanerRow->addWidget(cleanerSpin_);
+    cleanerRow->addStretch();
+    general->addLayout(cleanerRow);
+
     serverRegionCheck_ = new QCheckBox("Notify the server region on join", this);
     serverRegionCheck_->setToolTip("Names the country of the game server each time you join one.");
     general->addWidget(serverRegionCheck_);
@@ -144,6 +209,30 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
                             "they are ready.");
     graphics->addWidget(vsyncCheck_);
 
+    auto* scaleRow = new QHBoxLayout();
+    scaleRow->addWidget(new QLabel("Render resolution", this));
+    renderScaleSpin_ = new QSpinBox(this);
+    renderScaleSpin_->setRange(1, 100);
+    renderScaleSpin_->setSuffix("%");
+    renderScaleSpin_->setToolTip("The game is drawn at this share of the window's size and scaled "
+                                 "back up as it is shown. Lower draws fewer pixels: it helps when "
+                                 "the GPU is the limit, and softens the picture and the menus with it.\n"
+                                 "Vulkan only.");
+    scaleRow->addWidget(renderScaleSpin_);
+    upscalerCombo_ = new QComboBox(this);
+    upscalerCombo_->addItem("RAVU-Zoom AR", QStringLiteral("ravu-ar"));
+    upscalerCombo_->addItem("SGSR1 ED", QStringLiteral("sgsr-ed"));
+    upscalerCombo_->setToolTip(
+        "RAVU-Zoom AR: the better picture, and about three times the cost. Trained\n"
+        "filter weights, clamped so a hard edge cannot grow a bright or dark border.\n"
+        "\n"
+        "SGSR1 ED: the lightweight one. Reconstructs edges from the pixels alone.\n"
+        "The one to pick on a laptop or an integrated GPU.");
+    scaleRow->addWidget(upscalerCombo_);
+    graphics->addLayout(scaleRow);
+    const auto scaling = [this] { upscalerCombo_->setEnabled(renderScaleSpin_->value() < 100); };
+    connect(renderScaleSpin_, qOverload<int>(&QSpinBox::valueChanged), this, scaling);
+
     // Frame rate while Roblox is in the background: hidden (minimised,
     // another workspace, covered) or merely unfocused. One step past the top
     // reads as Unlimited.
@@ -176,42 +265,43 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     connect(discordCheck_, &QCheckBox::toggled, discordJoinCheck_, &QWidget::setEnabled);
     discord->addStretch();
 
-    // ---- Mods ----------------------------------------------------------
-    // Files over Roblox's own content, applied at every launch. A mod folder
-    // mirrors the content tree, so Bloxstrap and Froststrap mods drop in.
-    auto* modsTab = add_tab("Mods");
+    // ---- Customizations ----------------------------------------------------------
+    // Files over Roblox's own content, applied at every launch. A customization folder
+    // mirrors the content tree, so Bloxstrap and Froststrap customizations drop in.
+    auto* customizeTab = add_tab("Customize");
     auto* folders = new QHBoxLayout();
     for (const auto product : {client::Product::Player, client::Product::Studio}) {
-        auto* open = new QPushButton(product == client::Product::Studio ? "Open Studio mods folder"
-                                                                        : "Open mods folder",
+        auto* open = new QPushButton(product == client::Product::Studio ? "Open Studio customizations folder"
+                                                                        : "Open Player customizations folder",
                                      this);
+        open->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
         connect(open, &QPushButton::clicked, this, [product] {
-            QDir().mkpath(mods::folder(product));
-            QDesktopServices::openUrl(QUrl::fromLocalFile(mods::folder(product)));
+            QDir().mkpath(customization::folder(product));
+            QDesktopServices::openUrl(QUrl::fromLocalFile(customization::folder(product)));
         });
         folders->addWidget(open);
     }
-    modsTab->addLayout(folders);
+    customizeTab->addLayout(folders);
     auto* grid = new QGridLayout();
     struct Row {
-        mods::Part part;
+        customization::Part part;
         const char* label;
         const char* filter;  // nullptr: no file to choose
         bool colour;
     };
     const Row rows[] = {
-        {mods::Part::Cursor, "Cursor", "Images (*.png)", true},
-        {mods::Part::ShiftLock, "Shift lock", "Images (*.png)", true},
-        {mods::Part::EmoteWheel, "Emote wheel", nullptr, true},
-        {mods::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
-        {mods::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
+        {customization::Part::Cursor, "Cursor", "Images (*.png)", true},
+        {customization::Part::ShiftLock, "Shift lock", "Images (*.png)", true},
+        {customization::Part::EmoteWheel, "Emote wheel", nullptr, true},
+        {customization::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
+        {customization::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
     };
     int row = 0;
     for (const Row& r : rows) {
         auto* name = new QLabel(QString::fromLatin1(r.label), this);
         auto* state = new QLabel(this);
         const auto refresh = [state, part = r.part] {
-            state->setText(mods::present(part) ? QStringLiteral("custom") : QStringLiteral("Roblox's"));
+            state->setText(customization::present(part) ? QStringLiteral("Custom") : QStringLiteral("Default"));
         };
         refresh();
         grid->addWidget(name, row, 0);
@@ -219,12 +309,13 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         int column = 2;
         if (r.filter != nullptr) {
             auto* choose = new QPushButton("Choose file...", this);
+            choose->setIcon(themed("document-open", QStyle::SP_DialogOpenButton));
             connect(choose, &QPushButton::clicked, this, [this, r, refresh] {
                 const QString file = QFileDialog::getOpenFileName(this, QString::fromLatin1(r.label),
                                                                   QString(), QString::fromLatin1(r.filter));
                 if (file.isEmpty()) return;
                 QString error;
-                statusLabel_->setText(mods::use_file(r.part, file, &error)
+                statusLabel_->setText(customization::use_file(r.part, file, &error)
                                           ? QStringLiteral("Applied at the next launch.")
                                           : error.toHtmlEscaped());
                 refresh();
@@ -233,34 +324,46 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         }
         if (r.colour) {
             auto* colour = new QPushButton("Colour...", this);
+            colour->setIcon(themed("color-picker", QStyle::SP_DesktopIcon));
             connect(colour, &QPushButton::clicked, this, [this, r, refresh] {
                 const QColor picked = QColorDialog::getColor(Qt::white, this, QString::fromLatin1(r.label));
                 if (!picked.isValid()) return;
                 QString error;
-                statusLabel_->setText(mods::recolour(r.part, picked, &error)
+                statusLabel_->setText(customization::recolour(r.part, picked, &error)
                                           ? QStringLiteral("Applied at the next launch.")
                                           : error.toHtmlEscaped());
                 refresh();
             });
             grid->addWidget(colour, row, column++);
         }
-        auto* reset = new QPushButton("Roblox's", this);
-        reset->setToolTip("Go back to Roblox's own");
+        auto* reset = new QPushButton("Default", this);
+        reset->setIcon(themed("edit-undo", QStyle::SP_DialogResetButton));
+        reset->setToolTip("Go back to the default");
         connect(reset, &QPushButton::clicked, this, [this, r, refresh] {
-            mods::remove(r.part);
-            statusLabel_->setText(QStringLiteral("Roblox's own again at the next launch."));
+            customization::remove(r.part);
+            statusLabel_->setText(QStringLiteral("Back to the default at the next launch."));
             refresh();
         });
         grid->addWidget(reset, row, 4);
         ++row;
     }
-    modsTab->addLayout(grid);
-    modsTab->addStretch();
+    customizeTab->addLayout(grid);
+    auto* importOther = new QPushButton("Import from Bloxstrap, Fishstrap or Froststrap...", this);
+    importOther->setIcon(themed("document-import", QStyle::SP_DialogOpenButton));
+    importOther->setToolTip("Choose that bootstrapper's folder: its customizations are copied in, and its "
+                            "FastFlags added to the FFlags tab.");
+    connect(importOther, &QPushButton::clicked, this, &SettingsWindow::onImportBootstrapperClicked);
+    customizeTab->addWidget(importOther, 0, Qt::AlignLeft);
+    customizeTab->addStretch();
 
     // ---- FFlags --------------------------------------------------------
     // flags.json in Stud's config directory, as JSON: written into the
     // client's ClientAppSettings.json at every launch.
-    buildFlagsTab(add_tab("FFlags"));
+    buildHistoryTab(add_tab("History"));
+    {
+        const auto parts = add_parts("FFlags", {"Presets", "FFlag editor"});
+        buildFlagsTab(parts[0], parts[1]);
+    }
 
     // ---- About ---------------------------------------------------------
     auto* about = add_tab("About");
@@ -296,6 +399,10 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     about->addWidget(aboutText);
     about->addStretch();
 
+    categories->setMaximumWidth(categories->sizeHintForColumn(0) + 2 * categories->frameWidth() +
+                                categories->style()->pixelMetric(QStyle::PM_ScrollBarExtent));
+    categories->setCurrentRow(0);
+
     // ---- Save, shared by every tab -------------------------------------
     auto* buttonRow = new QHBoxLayout();
     // Restart, for comparing two settings without a trip through the tray:
@@ -318,6 +425,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     connect(restartButton_, &QPushButton::clicked, this, &SettingsWindow::onRestartClicked);
 
     auto* saveButton = new QPushButton("Save", this);
+    saveButton->setIcon(themed("document-save", QStyle::SP_DialogSaveButton));
     buttonRow->addWidget(saveButton);
     layout->addLayout(buttonRow);
     connect(saveButton, &QPushButton::clicked, this, &SettingsWindow::onSaveClicked);
@@ -366,6 +474,8 @@ void SettingsWindow::installResets() {
         gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
     add(vsyncCheck_, [this, d] { vsyncCheck_->setChecked(d.vsync); });
+    add(renderScaleSpin_, [this, d] { renderScaleSpin_->setValue(d.render_scale); });
+    add(upscalerCombo_, [this, d] { select_data(upscalerCombo_, d.upscaler); });
     add(rendererCombo_, [this, d] { select_data(rendererCombo_, d.renderer); });
     add(titleBarCombo_, [this, d] { select_data(titleBarCombo_, d.title_bar); });
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
@@ -377,6 +487,8 @@ void SettingsWindow::installResets() {
     add(serverRegionCheck_,
         [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
     add(trayCheck_, [this, d] { trayCheck_->setChecked(d.system_tray); });
+    add(playerDirectlyCheck_, [this, d] { playerDirectlyCheck_->setChecked(d.open_player_directly); });
+    add(cleanerSpin_, [this, d] { cleanerSpin_->setValue(d.cleaner_days); });
 }
 
 bool SettingsWindow::eventFilter(QObject* watched, QEvent* event) {
@@ -439,7 +551,7 @@ void SettingsWindow::onBackgroundFpsChanged(int value) {
 // Presets over the editor's JSON, profiles, and what the client ignores. The
 // editor stays the one source: a preset rewrites the JSON, and the JSON sets
 // the presets.
-void SettingsWindow::buildFlagsTab(QVBoxLayout* tab) {
+void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     flagsEdit_ = new QPlainTextEdit(this);
     flagsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     flagsEdit_->setPlaceholderText("{\n    \"FIntDebugForceMSAASamples\": \"4\"\n}");
@@ -481,20 +593,21 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* tab) {
         });
     };
     combo("Anti-aliasing (MSAA)", fflags::Preset::Msaa,
-          {{"Roblox's", -1}, {"1x", 1}, {"2x", 2}, {"4x", 4}});
+          {{"Default", -1}, {"1x", 1}, {"2x", 2}, {"4x", 4}});
     combo("Texture quality", fflags::Preset::TextureQuality,
-          {{"Roblox's", -1}, {"Lowest", 0}, {"Low", 1}, {"Medium", 2}});
-    QList<QPair<QString, int>> levels{{"Roblox's", -1}};
+          {{"Default", -1}, {"Lowest", 0}, {"Low", 1}, {"Medium", 2}, {"High", 3}});
+    QList<QPair<QString, int>> levels{{"Default", -1}};
     for (int level = 1; level <= 21; ++level) levels.append({QString::number(level), level});
     combo("Graphics quality override", fflags::Preset::QualityLevel, levels);
-    QList<QPair<QString, int>> meshes{{"Roblox's", -1}};
+    QList<QPair<QString, int>> meshes{{"Default", -1}};
     for (int level = 0; level <= 9; ++level) meshes.append({QString::number(level), level});
     combo("Mesh detail", fflags::Preset::MeshDetail, meshes);
     check_box("Disable grass", fflags::Preset::DisableGrass);
     check_box("Gray sky", fflags::Preset::GraySky);
     check_box("Pause voxelizer", fflags::Preset::PauseVoxelizer);
     check_box("Keep rendering quality with display scaling", fflags::Preset::KeepQualityWhenScaled);
-    tab->addLayout(presets);
+    presets_tab->addLayout(presets);
+    presets_tab->addStretch();
 
     // Profiles: named sets of these flags.
     auto* profiles = new QHBoxLayout();
@@ -504,6 +617,9 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* tab) {
     auto* load = new QPushButton("Load", this);
     auto* saveAs = new QPushButton("Save as...", this);
     auto* remove = new QPushButton("Delete", this);
+    load->setIcon(themed("document-open", QStyle::SP_DialogOpenButton));
+    saveAs->setIcon(themed("document-save-as", QStyle::SP_DialogSaveButton));
+    remove->setIcon(themed("edit-delete", QStyle::SP_TrashIcon));
     profiles->addWidget(new QLabel("Profile", this));
     profiles->addWidget(profileBox, 1);
     profiles->addWidget(load);
@@ -541,10 +657,12 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* tab) {
     tab->addWidget(flagsWarning_);
     auto* buttons = new QHBoxLayout();
     auto* importButton = new QPushButton("Import JSON...", this);
+    importButton->setIcon(themed("document-import", QStyle::SP_DialogOpenButton));
     importButton->setToolTip("Add the flags of a JSON file to these; a flag both have takes the "
                              "imported value.");
     connect(importButton, &QPushButton::clicked, this, &SettingsWindow::onImportFlagsClicked);
     auto* clean = new QPushButton("Clean list", this);
+    clean->setIcon(themed("edit-clear", QStyle::SP_DialogDiscardButton));
     clean->setToolTip("Remove the flags Roblox ignores: those not on its allowlist.");
     connect(clean, &QPushButton::clicked, this, [edit_flags] {
         edit_flags([](QJsonObject& f) {
@@ -571,6 +689,133 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* tab) {
                                          .arg(ignored.join(QStringLiteral(", ")))
                                          .toHtmlEscaped());
     });
+}
+
+// The games played, most recent first, with the time played in each: join
+// one again, or give it a shortcut in the application menu.
+void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
+    auto* total = new QLabel(this);
+    tab->addWidget(total);
+    auto* list = new QTreeWidget(this);
+    list->setColumnCount(3);
+    list->setHeaderLabels({"Game", "Played", "Last played"});
+    list->setRootIsDecorated(false);
+    list->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    tab->addWidget(list, 1);
+    const auto refresh = [list, total] {
+        list->clear();
+        for (const history::Entry& e : history::load()) {
+            auto* item = new QTreeWidgetItem(list);
+            item->setText(0, e.name.isEmpty() ? QStringLiteral("Place %1").arg(e.place) : e.name);
+            item->setText(1, history::duration(e.seconds_played));
+            item->setText(2, QDateTime::fromSecsSinceEpoch(e.last_played).toString(QStringLiteral("yyyy-MM-dd hh:mm")));
+            item->setData(0, Qt::UserRole, e.place);
+            item->setData(0, Qt::UserRole + 1, e.icon);
+        }
+        total->setText(QStringLiteral("Time played in all: %1").arg(history::duration(history::total_seconds())));
+    };
+    refresh();
+
+    auto* buttons = new QHBoxLayout();
+    auto* join = new QPushButton("Join", this);
+    auto* shortcut = new QPushButton("Create shortcut", this);
+    join->setIcon(themed("media-playback-start", QStyle::SP_MediaPlay));
+    shortcut->setIcon(themed("list-add", QStyle::SP_FileDialogNewFolder));
+    shortcut->setToolTip("Adds the game to the application menu; it opens straight into the game.");
+    auto* reload = new QPushButton("Refresh", this);
+    reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    buttons->addWidget(join);
+    buttons->addWidget(shortcut);
+    buttons->addStretch();
+    buttons->addWidget(reload);
+    tab->addLayout(buttons);
+    connect(reload, &QPushButton::clicked, this, refresh);
+    connect(join, &QPushButton::clicked, this, [list] {
+        if (list->currentItem() == nullptr) return;
+        const QString place = list->currentItem()->data(0, Qt::UserRole).toString();
+        QProcess::startDetached(launcher_command(),
+                                {QStringLiteral("roblox://experiences/start?placeId=%1").arg(place)});
+    });
+    connect(shortcut, &QPushButton::clicked, this, [this, list] {
+        if (list->currentItem() == nullptr) return;
+        const QString place = list->currentItem()->data(0, Qt::UserRole).toString();
+        const QString name = list->currentItem()->text(0);
+        const QString icon_url = list->currentItem()->data(0, Qt::UserRole + 1).toString();
+        const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        const QString icon = QString::fromStdString(stud::paths::data_dir()) +
+                             QStringLiteral("/icons/%1.png").arg(place);
+        const QString entry = data + QStringLiteral("/applications/stud-game-%1.desktop").arg(place);
+        QDir().mkpath(QFileInfo(icon).absolutePath());
+        QDir().mkpath(QFileInfo(entry).absolutePath());
+        QString clean_name = name;
+        clean_name.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        QFile file(entry);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            statusLabel_->setText(QStringLiteral("Could not write %1.").arg(entry).toHtmlEscaped());
+            return;
+        }
+        file.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\nComment=Play %1 with Stud\n"
+                                  "Exec=\"%2\" \"roblox://experiences/start?placeId=%3\"\nIcon=%4\n"
+                                  "Categories=Game;\nTerminal=false\n")
+                       .arg(clean_name, launcher_command(), place, icon)
+                       .toUtf8());
+        file.close();
+        statusLabel_->setText(QStringLiteral("Added %1 to the application menu.").arg(clean_name).toHtmlEscaped());
+        // The game's icon, fetched once for the shortcut.
+        if (!icon_url.isEmpty() && !QFileInfo::exists(icon)) {
+            auto* net = new QNetworkAccessManager(this);
+            QNetworkReply* reply = net->get(QNetworkRequest(QUrl(icon_url)));
+            connect(reply, &QNetworkReply::finished, this, [reply, net, icon] {
+                if (reply->error() == QNetworkReply::NoError) {
+                    QFile out(icon);
+                    if (out.open(QIODevice::WriteOnly)) out.write(reply->readAll());
+                }
+                reply->deleteLater();
+                net->deleteLater();
+            });
+        }
+    });
+}
+
+// Another bootstrapper's folder: its Modifications become Stud's customizations, and
+// the FastFlags it kept there join the FFlags tab.
+void SettingsWindow::onImportBootstrapperClicked() {
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, "Choose the Bloxstrap, Fishstrap or Froststrap folder");
+    if (dir.isEmpty()) return;
+    const QString source = dir + QStringLiteral("/Modifications");
+    if (!QDir(source).exists()) {
+        statusLabel_->setText(QStringLiteral("That folder has no Modifications folder."));
+        return;
+    }
+    int copied = 0;
+    const QString target = customization::folder(client::Product::Player);
+    QDirIterator it(source, QDir::Files | QDir::NoSymLinks | QDir::Hidden, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString file = it.next();
+        const QString relative = file.mid(source.size() + 1);
+        if (relative.startsWith(QLatin1String("ClientSettings/"))) continue;
+        const QString to = target + QLatin1Char('/') + relative;
+        QDir().mkpath(QFileInfo(to).absolutePath());
+        QFile::remove(to);
+        if (QFile::copy(file, to)) ++copied;
+    }
+    // Their FastFlags, merged over the editor's.
+    QFile flags_file(source + QStringLiteral("/ClientSettings/ClientAppSettings.json"));
+    int flags = 0;
+    if (flags_file.open(QIODevice::ReadOnly)) {
+        QString error;
+        const auto imported = parse_flags(QString::fromUtf8(flags_file.readAll()), &error);
+        auto current = parse_flags(flagsEdit_->toPlainText(), &error);
+        if (imported && current) {
+            for (auto i = imported->begin(); i != imported->end(); ++i) current->insert(i.key(), i.value());
+            flagsEdit_->setPlainText(format_flags(*current));
+            flags = int(imported->size());
+        }
+    }
+    statusLabel_->setText(QStringLiteral("Imported %1 customization file(s) and %2 flag(s). Save to keep the flags.")
+                              .arg(copied)
+                              .arg(flags));
 }
 
 void SettingsWindow::onImportFlagsClicked() {
@@ -619,6 +864,9 @@ void SettingsWindow::loadFromDisk() {
         gpuCombo_->setCurrentIndex(index);
     }
     vsyncCheck_->setChecked(settings.vsync);
+    renderScaleSpin_->setValue(settings.render_scale);
+    select_data(upscalerCombo_, settings.upscaler);
+    upscalerCombo_->setEnabled(settings.render_scale < 100);
     select_data(rendererCombo_, settings.renderer);
     select_data(titleBarCombo_, settings.title_bar);
     select_data(displayBackendCombo_, settings.display_backend);
@@ -630,6 +878,8 @@ void SettingsWindow::loadFromDisk() {
     serverRegionCheck_->setChecked(settings.server_region_notification);
     gamemodeCheck_->setChecked(settings.gamemode);
     trayCheck_->setChecked(settings.system_tray);
+    playerDirectlyCheck_->setChecked(settings.open_player_directly);
+    cleanerSpin_->setValue(settings.cleaner_days);
 }
 
 namespace {
@@ -820,6 +1070,8 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
     settings.vsync = vsyncCheck_->isChecked();
+    settings.render_scale = renderScaleSpin_->value();
+    settings.upscaler = selected_data(upscalerCombo_);
     settings.renderer = selected_data(rendererCombo_);
     settings.title_bar = selected_data(titleBarCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
@@ -832,6 +1084,8 @@ void SettingsWindow::onSaveClicked() {
     settings.server_region_notification = serverRegionCheck_->isChecked();
     settings.gamemode = gamemodeCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
+    settings.open_player_directly = playerDirectlyCheck_->isChecked();
+    settings.cleaner_days = cleanerSpin_->value();
     QDir().mkpath(QFileInfo(flags_path()).absolutePath());
     QSaveFile flags_file(flags_path());
     const QByteArray flags_text = format_flags(*flags).toUtf8();

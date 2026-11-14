@@ -12,6 +12,10 @@
 
 namespace stud::ui {
 
+// A link that joins the server the player is in, for the tray to copy:
+// empty when not in a game, or in one nobody else can join (a private server).
+QString current_server_link();
+
 // What the player is doing, read from the client's own output: the game it
 // joins and the server it reaches, and what a game sends through BloxstrapRPC
 // (SetRichPresence, SetLaunchData). Feeds Discord and the server region
@@ -20,7 +24,14 @@ class GameActivity : public QObject {
     Q_OBJECT
 
 public:
-    GameActivity(bool discord, bool join_button, bool region, QObject* parent = nullptr);
+    struct Options {
+        bool discord = false;
+        bool join_button = false;
+        bool region = false;
+        // Roblox Studio's output rather than the player's.
+        bool studio = false;
+    };
+    explicit GameActivity(const Options& options, QObject* parent = nullptr);
     ~GameActivity() override;
 
     // One line of the client's output, as it printed it.
@@ -32,20 +43,22 @@ public:
 
 private:
     enum class Server { Public, Private, Reserved };
+    void studio_line(const QString& text);
 
     void joined(const QString& place, const QString& job);
     void left();
     void server(const QString& address);
     void rich_presence(const QJsonObject& data);
     void publish();
+    QString server_link() const;
     // GETs `url` and hands the JSON object back, or nothing on failure.
     void fetch(const QString& url, std::function<void(const QJsonObject&)> done);
     // The image URL of a Roblox asset, through the thumbnails API.
     void asset_image(qint64 asset, std::function<void(const QString&)> done);
 
-    bool discord_;
-    bool join_button_;
-    bool region_;
+    Options options_;
+    bool studio_editing_ = false;
+    int64_t studio_since_ = 0;
     QNetworkAccessManager net_;
     // Bumped on every join and leave, so a lookup answering late for a game
     // already left does not show it.

@@ -7,24 +7,27 @@
 #include <type_traits>
 #include <vector>
 
+#include "mac_client.h"
 #include "spinning_cube.h"
-#include "stud/stud_paths.h"
+
+struct CubeGlState {
+    stud::tools::CubeGl gl{};
+    stud::tools::SpinningCube cube;
+};
 
 namespace {
 
-stud::tools::CubeGl g_gl{};
-stud::tools::SpinningCube g_cube;
-
-// One Roblox stud, out of the studs texture the engine ships, read from
-// the copy Stud extracted from the APK rather than carried in Stud.
+// One Roblox stud, out of the studs texture the client ships, read from the
+// installed Roblox Player rather than carried in Stud.
 //
 // The file is a strip of square tiles, one per surface type, Studs first,
 // and each tile holds two studs by two: so the top-left quarter of the
-// first tile is exactly one stud. Uncompressed 8-bit luminance; anything
-// else, or no file yet (before the first launch extracts it), and the
-// cube keeps its plain colours.
+// first tile is exactly one stud. It is DXT1; anything else, or no client
+// installed yet, and the cube keeps its plain colours.
 std::vector<unsigned char> load_one_stud(int& size) {
-    std::ifstream in(stud::paths::cache_dir() + "/assets/android/textures/studs.dds",
+    const auto build = stud::ui::client::installed(stud::ui::client::Product::Player);
+    if (!build) return {};
+    std::ifstream in((build->app + "/Contents/Resources/PlatformContent/pc/textures/studs.dds").toStdString(),
                      std::ios::binary);
     const std::vector<unsigned char> d((std::istreambuf_iterator<char>(in)),
                                        std::istreambuf_iterator<char>());
@@ -34,26 +37,60 @@ std::vector<unsigned char> load_one_stud(int& size) {
         return v;
     };
     constexpr size_t kHeader = 128;
-    constexpr uint32_t kLuminance = 0x20000;
+    constexpr uint32_t kFourCc = 0x4;
+    constexpr int kBlock = 4;
+    constexpr size_t kBlockBytes = 8;
     if (d.size() < kHeader || std::memcmp(d.data(), "DDS ", 4) != 0) return {};
     const uint32_t height = u32(12);
     const uint32_t width = u32(16);
-    if ((u32(80) & kLuminance) == 0 || u32(88) != 8 || width < 2 || height < width ||
-        d.size() < kHeader + static_cast<size_t>(width) * width) {
+    const size_t blocks_across = width / kBlock;
+    if ((u32(80) & kFourCc) == 0 || std::memcmp(d.data() + 84, "DXT1", 4) != 0 || width < 2 * kBlock ||
+        height < width || d.size() < kHeader + blocks_across * (width / kBlock) * kBlockBytes) {
         return {};
     }
     size = static_cast<int>(width / 2);
     std::vector<unsigned char> stud(static_cast<size_t>(size) * size);
-    for (int row = 0; row < size; ++row) {
-        std::memcpy(stud.data() + static_cast<size_t>(row) * size,
-                    d.data() + kHeader + static_cast<size_t>(row) * width, size);
+    // A 5:6:5 colour's luminance, at 8 bits.
+    auto luminance = [](uint16_t c, int weight_of_other = 0, uint16_t other = 0, int parts = 1) {
+        auto channel = [](uint16_t v, int shift, int bits) { return ((v >> shift) & ((1 << bits) - 1)) * 255 / ((1 << bits) - 1); };
+        auto lum = [&](uint16_t v) { return (channel(v, 11, 5) * 77 + channel(v, 5, 6) * 150 + channel(v, 0, 5) * 29) >> 8; };
+        return (lum(c) * (parts - weight_of_other) + lum(other) * weight_of_other) / parts;
+    };
+    for (int by = 0; by < size / kBlock; ++by) {
+        for (int bx = 0; bx < size / kBlock; ++bx) {
+            const unsigned char* block = d.data() + kHeader + (by * blocks_across + bx) * kBlockBytes;
+            uint16_t c0 = 0, c1 = 0;
+            uint32_t indices = 0;
+            std::memcpy(&c0, block, 2);
+            std::memcpy(&c1, block + 2, 2);
+            std::memcpy(&indices, block + 4, 4);
+            int palette[4];
+            palette[0] = luminance(c0);
+            palette[1] = luminance(c1);
+            if (c0 > c1) {
+                palette[2] = luminance(c0, 1, c1, 3);
+                palette[3] = luminance(c0, 2, c1, 3);
+            } else {
+                palette[2] = luminance(c0, 1, c1, 2);
+                palette[3] = 0;
+            }
+            for (int y = 0; y < kBlock; ++y) {
+                for (int x = 0; x < kBlock; ++x) {
+                    const int index = (indices >> (2 * (y * kBlock + x))) & 0x3;
+                    stud[static_cast<size_t>(by * kBlock + y) * size + bx * kBlock + x] =
+                        static_cast<unsigned char>(palette[index]);
+                }
+            }
+        }
     }
     return stud;
 }
 
 }  // namespace
 
-bool cube_gl_init(void* (*resolve)(const char* name, void* data), void* data) {
+CubeGlState* cube_gl_create(void* (*resolve)(const char* name, void* data), void* data) {
+    auto* state = new CubeGlState();
+    stud::tools::CubeGl& g_gl = state->gl;
     bool all = true;
     auto load = [&](auto& field, const char* name) {
         field = reinterpret_cast<std::remove_reference_t<decltype(field)>>(resolve(name, data));
@@ -83,7 +120,10 @@ bool cube_gl_init(void* (*resolve)(const char* name, void* data), void* data) {
     load(g_gl.EnableVertexAttribArray, "glEnableVertexAttribArray");
     load(g_gl.UniformMatrix4fv, "glUniformMatrix4fv");
     load(g_gl.DrawElements, "glDrawElements");
-    if (!all) return false;
+    if (!all) {
+        delete state;
+        return nullptr;
+    }
     // Optional: without them the cube is just not textured.
     auto optional = [&](auto& field, const char* name) {
         field = reinterpret_cast<std::remove_reference_t<decltype(field)>>(resolve(name, data));
@@ -95,11 +135,17 @@ bool cube_gl_init(void* (*resolve)(const char* name, void* data), void* data) {
     optional(g_gl.Uniform1i, "glUniform1i");
     int size = 0;
     const std::vector<unsigned char> stud = load_one_stud(size);
-    return g_cube.init(g_gl, stud.empty() ? nullptr : stud.data(), size);
+    if (!state->cube.init(g_gl, stud.empty() ? nullptr : stud.data(), size)) {
+        delete state;
+        return nullptr;
+    }
+    return state;
 }
 
-void cube_gl_draw(float seconds, int width, int height) {
+void cube_gl_draw(CubeGlState* state, float seconds, int width, int height) {
     // 2.1: the closest the camera can sit with no corner ever leaving the
     // drawable, measured over a full turn (90% of the half-width at most).
-    g_cube.draw(g_gl, seconds, width, height, 2.1f, /*transparent=*/true);
+    state->cube.draw(state->gl, seconds, width, height, 2.1f, /*transparent=*/true);
 }
+
+void cube_gl_destroy(CubeGlState* state) { delete state; }

@@ -11,6 +11,7 @@
 class CubeView : public QOpenGLWidget {
 public:
     explicit CubeView(QWidget* parent = nullptr);
+    ~CubeView() override;
 
     // Called on every tenth click.
     std::function<void()> on_tenth_click;
@@ -22,6 +23,6 @@ protected:
 
 private:
     QElapsedTimer clock_;
-    bool ready_ = false;
+    struct CubeGlState* state_ = nullptr;
     int clicks_ = 0;
 };

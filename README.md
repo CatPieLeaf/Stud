@@ -83,10 +83,14 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Runs on **Wayland and X11**, with Stud's own icon and taskbar entry
  - Your desktop's own title bar, or the macOS one, with or without its menu bar
  - Ctrl for copy, cut and paste, where the macOS client expects Command
- - An FFlags editor in Settings, with JSON import
+ - FastFlags: an editor with JSON import, profiles, presets (MSAA, texture quality, graphics level, mesh detail, grass, gray sky), and a warning for flags Roblox ignores, with Clean list
+ - Customizations: textures, sounds, fonts and cursors over Roblox's own content, put back when removed; generated cursor, shift lock, emote wheel, death sound and font; import from Bloxstrap, Fishstrap or Froststrap
+ - Vulkan or OpenGL, uncapped without VSync
+ - Game history with time played, and game shortcuts in the application menu
+ - Video playback in experiences
  - Roblox and **Roblox Studio**: opened on its own, Stud asks which, and keeps each up to date
  - `roblox://` links from a browser open straight into the experience, and Studio's links reach Studio
- - Discord Rich Presence as Roblox itself, with what the game reports through BloxstrapRPC, and an optional Join button
+ - Discord Rich Presence as Roblox itself, with the game's name as your status and what the game reports through BloxstrapRPC, an optional Join button, and Studio presence
  - Optional notification of which country the game server is in
  - A frame rate limit for while Roblox is in the background
  - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, GPU picker, system tray

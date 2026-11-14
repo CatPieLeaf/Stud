@@ -1,5 +1,6 @@
 #include "tray.h"
 
+#include "game_activity.h"
 #include "log_archive.h"
 
 #include "settings_window.h"
@@ -12,6 +13,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include "update_check.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusReply>
@@ -30,6 +32,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPointer>
+#include <QProcess>
 #include <QSystemTrayIcon>
 #include <QTimer>
 
@@ -91,6 +94,11 @@ bool Tray::show() {
     // check comes back saying there is one.
     menu_ = menu;
     menu->addAction(QStringLiteral("Stud settings"), this, &Tray::openSettings);
+    // Only while the player is in a server someone else can join.
+    QAction* copy_link = menu->addAction(QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
+    copy_link->setVisible(false);
+    connect(menu, &QMenu::aboutToShow, this,
+            [copy_link] { copy_link->setVisible(!current_server_link().isEmpty()); });
     menu->addAction(QStringLiteral("Export logs"), this, &Tray::exportLogs);
     menu->addSeparator();
     menu->addAction(QStringLiteral("About Stud"), this, &Tray::showAbout);
@@ -173,6 +181,38 @@ void Tray::openSettings() {
     // One window, whether the request came from here or from the desktop
     // entry's own Settings action; see SettingsWindow::showSingleton().
     SettingsWindow::showSingleton();
+}
+
+// A link to the server the player is in, for a friend to join with.
+void Tray::copyServerLink() {
+    const QString link = current_server_link();
+    if (link.isEmpty()) return;  // left the game while the menu was open
+    // On Wayland a clipboard offer is accepted only with the serial of an
+    // input event on one of the application's own surfaces, and the tray's
+    // menu is the desktop's, not a Qt surface: Qt's clipboard is ignored.
+    // wl-copy owns the selection in a process of its own, which is how a
+    // windowless program copies there. Qt's clipboard is still set for X11.
+    if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
+        QProcess copier;
+        copier.setProgram(QStringLiteral("wl-copy"));
+        copier.setArguments({QStringLiteral("--type"), QStringLiteral("text/plain")});
+        copier.setStandardOutputFile(QProcess::nullDevice());
+        copier.setStandardErrorFile(QProcess::nullDevice());
+        copier.start();
+        if (!copier.waitForStarted(2000)) {
+            icon_->showMessage(QStringLiteral("Stud"),
+                               QStringLiteral("Could not copy: this desktop needs wl-clipboard installed."),
+                               QSystemTrayIcon::Warning, 5000);
+            return;
+        }
+        copier.write(link.toUtf8());
+        copier.closeWriteChannel();
+        // wl-copy forks and keeps serving the selection.
+        copier.waitForFinished(2000);
+    }
+    QApplication::clipboard()->setText(link);
+    icon_->showMessage(QStringLiteral("Stud"), QStringLiteral("Server link copied."),
+                       QSystemTrayIcon::Information, 3000);
 }
 
 void Tray::exportLogs() {

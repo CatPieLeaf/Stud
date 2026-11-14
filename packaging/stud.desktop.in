@@ -27,14 +27,14 @@ StartupWMClass=@STUD_APP_ID@
 Actions=Roblox;Studio;Settings;
 
 [Desktop Action Roblox]
-Name=Roblox
+Name=Roblox Player
 Exec=@STUD_EXEC@ --roblox
-Icon=@STUD_APP_ID@
+Icon=@STUD_APP_ID@-player
 
 [Desktop Action Studio]
 Name=Roblox Studio
 Exec=@STUD_EXEC@ --studio
-Icon=@STUD_APP_ID@
+Icon=@STUD_APP_ID@-studio
 
 [Desktop Action Settings]
 Name=Settings

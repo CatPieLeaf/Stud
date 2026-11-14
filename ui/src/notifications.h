@@ -2,13 +2,8 @@
 
 #include <QString>
 
-// Real freedesktop.org Notifications (M8, locked decision: "Generic
-// freedesktop Notifications spec (org.freedesktop.Notifications) via
-// QtDBus: works on any DE, not just Plasma, matching AppImage's
-// run-anywhere goal"). Generic mechanism, specific features that use
-// it (the server-location indicator, real IP geolocation, opt-in) are
-// separate, not-yet-built M10-adjacent work; this is the underlying
-// send-a-notification primitive they'll call.
+// Desktop notifications through the freedesktop.org Notifications service
+// (org.freedesktop.Notifications) over D-Bus, which every desktop provides.
 
 namespace stud::ui {
 

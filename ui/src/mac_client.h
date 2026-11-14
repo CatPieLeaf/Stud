@@ -19,7 +19,7 @@ namespace stud::ui::client {
 // What Stud installs and runs: the Roblox player, or Roblox Studio.
 enum class Product { Player, Studio };
 
-// "Roblox" or "Roblox Studio", for the user.
+// "Roblox Player" or "Roblox Studio", for the user.
 QString display_name(Product product);
 
 // One installed build: Roblox's upload name ("version-8001f8762ae44efe"), its

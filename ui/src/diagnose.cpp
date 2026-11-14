@@ -130,8 +130,8 @@ void report_cpu() {
     }
     const std::string mem = proc_field("/proc/meminfo", "MemTotal");
     if (!mem.empty()) {
-        // Reported in kB; megabytes is what every other memory number
-        // in this project is in, including the one the engine is told.
+        // Reported in kB; megabytes is what every other memory number in
+        // the header is in.
         try {
             line("memory", std::to_string(std::stoll(mem) / 1024) + " MB");
         } catch (const std::exception&) {

@@ -11,10 +11,15 @@ endif()
 
 option(STUD_BUILD_TESTS "Build Stud tests" ON)
 option(STUD_BUILD_UI "Build the Qt6 launcher/auth UI" ON)
-# Rosemary, which runs the macOS client, built from upstream with cargo.
+# Rosemary, which runs the macOS client, built with cargo from Stud's fork.
 # Off for a package that takes Rosemary from elsewhere (STUD_ROSEMARY, or
 # `rosemary` on PATH).
-option(STUD_BUILD_ROSEMARY "Build Rosemary from github.com/microlift/rosemary" ON)
+option(STUD_BUILD_ROSEMARY "Build Rosemary from github.com/CatPieLeaf/rosemary-stud" ON)
+# The fork and branch: upstream (github.com/microlift/rosemary) with Stud's
+# changes on top, rebased onto upstream's newest.
+set(STUD_ROSEMARY_REPOSITORY "https://github.com/CatPieLeaf/rosemary-stud.git" CACHE STRING
+    "Git repository Rosemary is built from")
+set(STUD_ROSEMARY_BRANCH "stud" CACHE STRING "Branch of STUD_ROSEMARY_REPOSITORY to build")
 option(STUD_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 # Hardening.
 #
@@ -99,38 +104,25 @@ FetchContent_MakeAvailable(miniz)
 
 add_subdirectory(stud-config)
 
-# Rosemary, from its own repository's default branch, with cargo. Into
-# rosemary/rosemary in the build tree, where a stud-ui run from the build
-# finds it, and libexec/stud/ on install. Its licence is GPL-3.0, which
-# Stud's AGPL-3.0 combines with; its source is upstream, unmodified.
+# Rosemary, from Stud's fork, with cargo. Into rosemary/rosemary in the build
+# tree, where a stud-ui run from the build finds it, and libexec/stud/ on
+# install. Its licence is GPL-3.0, which Stud's AGPL-3.0 combines with.
 if(STUD_BUILD_ROSEMARY)
     find_program(STUD_CARGO cargo REQUIRED)
     find_package(Git REQUIRED)
-    find_program(STUD_PATCH patch REQUIRED)
     include(ExternalProject)
     set(STUD_ROSEMARY_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rosemary-target")
     ExternalProject_Add(rosemary
-        GIT_REPOSITORY https://github.com/microlift/rosemary.git
-        GIT_TAG        main
+        GIT_REPOSITORY "${STUD_ROSEMARY_REPOSITORY}"
+        GIT_TAG        "${STUD_ROSEMARY_BRANCH}"
         GIT_SHALLOW    ON
-        # Upstream's newest, every build, and Stud's patch on top of it: the
-        # switches the launcher sets for title, icon, tray and background
-        # frame rate (packaging/rosemary/stud-launcher.patch). Reset and
-        # cleaned first, so a rebuild applies the patches to a clean tree.
-        UPDATE_COMMAND "${GIT_EXECUTABLE}" fetch --depth 1 origin main
+        # The branch's newest, every build: the fork carries Stud's changes
+        # as commits, so there is nothing to patch. Reset and cleaned, so a
+        # rebuild never builds a tree something left changed.
+        UPDATE_COMMAND "${GIT_EXECUTABLE}" fetch --depth 1 origin "${STUD_ROSEMARY_BRANCH}"
                COMMAND "${GIT_EXECUTABLE}" reset --hard -q FETCH_HEAD
-        PATCH_COMMAND "${GIT_EXECUTABLE}" reset --hard -q HEAD
-              COMMAND "${GIT_EXECUTABLE}" clean -fdq
-              COMMAND "${GIT_EXECUTABLE}" apply
-                      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/stud-launcher.patch"
-              # Open upstream pull requests Ginrose ships too, merged into one:
-              # idle polling backoff (#226), cursor sync (#165), video and
-              # audio decoding (#227, with #223 and #224), drag and drop (#225).
-              COMMAND "${STUD_PATCH}" -p1 -s -i
-                      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/upstream-prs.patch"
-              # ...and the binary files a text patch cannot carry.
-              COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/files" <SOURCE_DIR>
+               COMMAND "${GIT_EXECUTABLE}" clean -fdq
+        PATCH_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND "${STUD_CARGO}" build --release --bin rosemary
                       --manifest-path <SOURCE_DIR>/Cargo.toml
@@ -205,6 +197,14 @@ foreach(icon_size 16 24 32 48 64 128 256)
             DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps"
             RENAME "${STUD_APP_ID}.png")
 endforeach()
+# The launcher's Roblox Player and Roblox Studio actions: the red and the
+# blue stud.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ui/resources/studred.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
+        RENAME "${STUD_APP_ID}-player.png")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/ui/resources/studblu.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
+        RENAME "${STUD_APP_ID}-studio.png")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.png"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
         RENAME "${STUD_APP_ID}.png")

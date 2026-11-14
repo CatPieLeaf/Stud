@@ -12,6 +12,12 @@ if(STUD_BUILD_UI)
 
     set_tests_properties(gpu_enum_test notifications_test PROPERTIES SKIP_RETURN_CODE 77)
 
+    # Stud 1.x's leftovers removed, and nothing of 2.0's or the carried-over
+    # settings touched.
+    add_executable(stud_stud1_cleanup_test stud1_cleanup_test.cpp)
+    target_link_libraries(stud_stud1_cleanup_test PRIVATE stud_ui_stud1_cleanup)
+    add_test(NAME stud1_cleanup_test COMMAND stud_stud1_cleanup_test)
+
     # roblox-player: and roblox: launch-URI parsing.
     add_executable(stud_launch_uri_test launch_uri_test.cpp)
     target_link_libraries(stud_launch_uri_test PRIVATE stud_ui_launch_uri)
@@ -35,11 +41,11 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_fflags_test PRIVATE stud_ui_mac_client)
     add_test(NAME fflags_test COMMAND stud_fflags_test)
 
-    # Mods over a client build, and the build put back as it came.
-    add_executable(stud_mods_test mods_test.cpp)
-    target_link_libraries(stud_mods_test PRIVATE stud_ui_mac_client)
-    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/mods_scratch)
-    add_test(NAME mods_test COMMAND stud_mods_test ${CMAKE_CURRENT_BINARY_DIR}/mods_scratch)
+    # Customizations over a client build, and the build put back as it came.
+    add_executable(stud_customization_test customization_test.cpp)
+    target_link_libraries(stud_customization_test PRIVATE stud_ui_mac_client)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/customization_scratch)
+    add_test(NAME customization_test COMMAND stud_customization_test ${CMAKE_CURRENT_BINARY_DIR}/customization_scratch)
 endif()
 
 # Settings storage.

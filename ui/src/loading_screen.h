@@ -3,6 +3,7 @@
 #include <QString>
 
 #include <functional>
+#include <string>
 
 namespace stud::ui {
 
