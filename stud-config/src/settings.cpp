@@ -97,7 +97,20 @@ StudSettings load_settings(const std::string& path) {
     read_bool("vsync", result.vsync);
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
     read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
+    if (doc.contains("backgroundFps")) {
+        if (!doc.at("backgroundFps").is_number_integer()) {
+            throw SettingsError("stud: config '" + path + "' has a non-integer \"backgroundFps\"");
+        }
+        // 0 means no limit, and so does anything past the top of the range,
+        // including the 241 older builds wrote.
+        const int value = doc.at("backgroundFps").get<int>();
+        result.background_fps =
+            (value <= 0 || value > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : value;
+    }
     read_bool("mangohud", result.mangohud);
+    read_bool("discordRichPresence", result.discord_rich_presence);
+    read_bool("discordJoinButton", result.discord_join_button);
+    read_bool("serverRegionNotification", result.server_region_notification);
     read_bool("gamemode", result.gamemode);
     read_bool("systemTray", result.system_tray);
 
@@ -133,7 +146,11 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["vsync"] = settings.vsync;
     doc["titleBar"] = settings.title_bar;
     doc["displayBackend"] = settings.display_backend;
+    doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
+    doc["discordRichPresence"] = settings.discord_rich_presence;
+    doc["discordJoinButton"] = settings.discord_join_button;
+    doc["serverRegionNotification"] = settings.server_region_notification;
     doc["gamemode"] = settings.gamemode;
     doc["systemTray"] = settings.system_tray;
     // Settings of Stud 1.x's Android engine, which Stud 2.0 does not have.
@@ -143,8 +160,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
          {"hidpi", "followDpi", "renderScale", "upscaling", "upscaleOutputPercent",
           "upscaleQualityPercent", "upscaleTargetPercent", "upscalerChoice",
           "textOverlayFontRatio", "smoothZoom", "windowsMaterials", "webLogin", "hqTextures",
-          "backgroundFps", "discordRichPresence", "discordJoinButton", "closeOnLeave",
-          "serverRegionNotification", "textureCache", "textureCacheMB", "graphicsMode",
+          "closeOnLeave", "textureCache", "textureCacheMB", "graphicsMode",
           "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback",
           "menuBar", "frameCap", "presentationMode", "controlEditKeys"}) {
         doc.erase(gone);

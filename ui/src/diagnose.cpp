@@ -232,7 +232,12 @@ void write_diagnostics() {
         line("vsync", yes_no(settings.vsync));
         line("title bar", settings.title_bar);
         line("display backend", settings.display_backend);
+        line("background fps", settings.background_fps == stud::config::kBackgroundFpsNoLimit
+                                   ? std::string("unlimited")
+                                   : std::to_string(settings.background_fps));
         line("mangohud", yes_no(settings.mangohud));
+        line("discord presence", yes_no(settings.discord_rich_presence));
+        line("server region", yes_no(settings.server_region_notification));
         line("gamemode", yes_no(settings.gamemode));
         line("system tray", yes_no(settings.system_tray));
     }

@@ -26,6 +26,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPlainTextEdit>
+#include <QSlider>
 #include <QSaveFile>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -83,6 +84,10 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     gamemodeCheck_ = new QCheckBox("GameMode", this);
     gamemodeCheck_->setToolTip("Ask Feral GameMode for its performance settings while Roblox runs.");
     general->addWidget(gamemodeCheck_);
+    serverRegionCheck_ = new QCheckBox("Notify the server region on join", this);
+    serverRegionCheck_->setToolTip("Names the country of the game server each time you join one.");
+    general->addWidget(serverRegionCheck_);
+
     general->addWidget(new QLabel("MacOS title bar"));
     titleBarCombo_ = new QComboBox(this);
     titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
@@ -126,11 +131,37 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
                             "they are ready.");
     graphics->addWidget(vsyncCheck_);
 
+    // Frame rate while Roblox is in the background: hidden (minimised,
+    // another workspace, covered) or merely unfocused. One step past the top
+    // reads as Unlimited.
+    backgroundFpsLabel_ = new QLabel(this);
+    graphics->addWidget(backgroundFpsLabel_);
+    backgroundFpsSlider_ = new QSlider(Qt::Horizontal, this);
+    backgroundFpsSlider_->setRange(1, stud::config::kBackgroundFpsUnlimited + 1);
+    backgroundFpsSlider_->setPageStep(10);
+    backgroundFpsSlider_->setToolTip(
+        "Frames per second while Roblox is not the window you are using: minimised,\n"
+        "on another workspace, covered, or alt-tabbed away. All the way right is Unlimited.");
+    graphics->addWidget(backgroundFpsSlider_);
+    connect(backgroundFpsSlider_, &QSlider::valueChanged, this,
+            &SettingsWindow::onBackgroundFpsChanged);
+
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
     mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Roblox.");
     graphics->addWidget(mangohudCheck_);
 
     graphics->addStretch();
+
+    // ---- Discord RPC ---------------------------------------------------
+    auto* discord = add_tab("Discord RPC");
+    discordCheck_ = new QCheckBox("Discord Rich Presence", this);
+    discordCheck_->setToolTip("Shows the game you are playing on your Discord profile, with what "
+                              "the game itself reports.");
+    discord->addWidget(discordCheck_);
+    discordJoinCheck_ = new QCheckBox("Show a Join server button", this);
+    discord->addWidget(discordJoinCheck_);
+    connect(discordCheck_, &QCheckBox::toggled, discordJoinCheck_, &QWidget::setEnabled);
+    discord->addStretch();
 
     // ---- FFlags --------------------------------------------------------
     // flags.json in Stud's config directory, as JSON: written into the
@@ -254,6 +285,11 @@ void SettingsWindow::installResets() {
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
     add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
+    add(backgroundFpsSlider_, [this, d] { setBackgroundFps(d.background_fps); });
+    add(discordCheck_, [this, d] { discordCheck_->setChecked(d.discord_rich_presence); });
+    add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
+    add(serverRegionCheck_,
+        [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
     add(trayCheck_, [this, d] { trayCheck_->setChecked(d.system_tray); });
 }
 
@@ -299,6 +335,20 @@ QString format_flags(const QJsonObject& flags) {
 }
 
 }  // namespace
+
+// Unlimited is stored as 0 and lives one step past the top of the slider.
+void SettingsWindow::setBackgroundFps(int fps) {
+    const int position =
+        fps <= stud::config::kBackgroundFpsNoLimit ? stud::config::kBackgroundFpsUnlimited + 1 : fps;
+    backgroundFpsSlider_->setValue(position);
+    onBackgroundFpsChanged(position);
+}
+
+void SettingsWindow::onBackgroundFpsChanged(int value) {
+    backgroundFpsLabel_->setText(value > stud::config::kBackgroundFpsUnlimited
+                                     ? QStringLiteral("Background frame rate: Unlimited")
+                                     : QStringLiteral("Background frame rate: %1 FPS").arg(value));
+}
 
 void SettingsWindow::onImportFlagsClicked() {
     const QString path = QFileDialog::getOpenFileName(this, "Import FFlags", QString(),
@@ -349,6 +399,11 @@ void SettingsWindow::loadFromDisk() {
     select_data(titleBarCombo_, settings.title_bar);
     select_data(displayBackendCombo_, settings.display_backend);
     mangohudCheck_->setChecked(settings.mangohud);
+    setBackgroundFps(settings.background_fps);
+    discordCheck_->setChecked(settings.discord_rich_presence);
+    discordJoinCheck_->setChecked(settings.discord_join_button);
+    discordJoinCheck_->setEnabled(settings.discord_rich_presence);
+    serverRegionCheck_->setChecked(settings.server_region_notification);
     gamemodeCheck_->setChecked(settings.gamemode);
     trayCheck_->setChecked(settings.system_tray);
 }
@@ -544,6 +599,12 @@ void SettingsWindow::onSaveClicked() {
     settings.title_bar = selected_data(titleBarCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
     settings.mangohud = mangohudCheck_->isChecked();
+    settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
+                                  ? stud::config::kBackgroundFpsNoLimit
+                                  : backgroundFpsSlider_->value();
+    settings.discord_rich_presence = discordCheck_->isChecked();
+    settings.discord_join_button = discordJoinCheck_->isChecked();
+    settings.server_region_notification = serverRegionCheck_->isChecked();
     settings.gamemode = gamemodeCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
     QDir().mkpath(QFileInfo(flags_path()).absolutePath());

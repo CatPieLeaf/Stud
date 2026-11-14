@@ -19,6 +19,8 @@ the source and is missing from this file, so this list cannot quietly go stale.
 ## What Stud sets for the client
 
 These are Rosemary's own variables, set from Settings when Roblox starts. The
+`ROSEMARY_WINDOW_*`, `ROSEMARY_STATUS_ITEMS` and `ROSEMARY_BACKGROUND_FPS`
+switches come from Stud's patch to Rosemary, `packaging/rosemary/stud-launcher.patch`. The
 ones below are always Settings' to decide: set in Stud's own environment, they
 are not passed on. Rosemary's other variables are, so `ROSEMARY_METAL_STATS=1`
 before `stud` logs Rosemary's frame statistics once a second into the session
@@ -32,6 +34,9 @@ log.
 | `ROSEMARY_CONTROL_EDIT_KEYS` | always | `1`: Ctrl for copy, cut and paste. |
 | `ROSEMARY_METAL_PRESENTATION_MODE` | VSync | `fifo` when on; unset (Rosemary's `mailbox`) when off. |
 | `SDL_VIDEO_DRIVER` | Display server | `wayland` on a Wayland desktop, or `x11` when chosen there and XWayland runs. |
+| `ROSEMARY_WINDOW_TITLE`, `ROSEMARY_WINDOW_ICON` | always | `Stud`, and Stud's icon: the window's title bar names Stud, not the client. |
+| `ROSEMARY_STATUS_ITEMS` | always | `0`: the client's menu bar extras stay out of the tray, beside Stud's own icon. |
+| `ROSEMARY_BACKGROUND_FPS` | Background frame rate | The limit while no Roblox window has focus; unset for Unlimited. |
 | `SDL_APP_ID` | always | Stud's application id, which gives the window Stud's icon and taskbar entry. |
 | `MANGOHUD` | MangoHud overlay | `1` when on. |
 

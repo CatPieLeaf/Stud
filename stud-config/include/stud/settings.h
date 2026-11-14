@@ -13,6 +13,13 @@
 
 namespace stud::config {
 
+// The top of the background-frame-rate range. A slider set above this
+// reads as unlimited rather than as a number.
+inline constexpr int kBackgroundFpsUnlimited = 240;
+
+// ...and how "unlimited" is stored: zero, no limit.
+inline constexpr int kBackgroundFpsNoLimit = 0;
+
 struct GpuSelection {
     // Index into vkEnumeratePhysicalDevices' order when it was chosen. The
     // name and UUID find the same device again if that order changes.
@@ -38,8 +45,21 @@ struct StudSettings {
     // else there is only one choice and this is not read.
     std::string display_backend = "auto";
 
+    // Frames per second while no Roblox window has focus (minimised, on
+    // another workspace, covered or just alt-tabbed away), or
+    // kBackgroundFpsNoLimit for no limit.
+    int background_fps = 30;
+
     bool mangohud = false;
     bool gamemode = false;
+
+    // Discord Rich Presence for the game being played, and whether it offers
+    // a button to join the same server.
+    bool discord_rich_presence = true;
+    bool discord_join_button = false;
+
+    // A notification naming the country of the game server on each join.
+    bool server_region_notification = false;
 
     // A tray icon for the session: Settings, and stopping Roblox.
     bool system_tray = true;

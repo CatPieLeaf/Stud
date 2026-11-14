@@ -226,6 +226,15 @@ void apply_mangohud(QProcessEnvironment& env, bool enabled) {
     if (enabled) env.insert(QStringLiteral("MANGOHUD"), QStringLiteral("1"));
 }
 
+// Stud's icon as a file Rosemary can read, written beside Stud's other
+// runtime files. Empty when it cannot be written.
+QString window_icon_file() {
+    const QString path = QString::fromStdString(stud::paths::runtime_dir()) +
+                         QStringLiteral("/window-icon.png");
+    QFile::remove(path);
+    return QFile::copy(QStringLiteral(":/stud-logo-color.png"), path) ? path : QString();
+}
+
 // Everything the client is started with.
 QProcessEnvironment client_environment(const stud::config::StudSettings& settings) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -236,7 +245,9 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         QStringLiteral("ROSEMARY_DECORATIONS"), QStringLiteral("ROSEMARY_MENU"),
         QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("ROSEMARY_SWAP_INTERVAL"),
         QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"),
-        QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"),
+        QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("ROSEMARY_WINDOW_TITLE"),
+        QStringLiteral("ROSEMARY_WINDOW_ICON"), QStringLiteral("ROSEMARY_STATUS_ITEMS"),
+        QStringLiteral("ROSEMARY_BACKGROUND_FPS"),
     };
     for (const QString& name : env.keys()) {
         if (loads_code(name) || kFromSettings.contains(name)) env.remove(name);
@@ -265,6 +276,19 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     env.insert(QStringLiteral("ROSEMARY_MENU"), settings.title_bar == "macos"
                                                     ? QStringLiteral("titlebar")
                                                     : QStringLiteral("none"));
+    // Stud's name and icon on the window, and no tray icons of the client's
+    // own beside Stud's (the switches packaging/rosemary/stud-launcher.patch
+    // adds to Rosemary).
+    env.insert(QStringLiteral("ROSEMARY_WINDOW_TITLE"), QStringLiteral("Stud"));
+    if (const QString icon = window_icon_file(); !icon.isEmpty()) {
+        env.insert(QStringLiteral("ROSEMARY_WINDOW_ICON"), icon);
+    }
+    env.insert(QStringLiteral("ROSEMARY_STATUS_ITEMS"), QStringLiteral("0"));
+    if (settings.background_fps != stud::config::kBackgroundFpsNoLimit) {
+        env.insert(QStringLiteral("ROSEMARY_BACKGROUND_FPS"),
+                   QString::number(settings.background_fps));
+    }
+
     // Ctrl for copy, cut, paste and select-all, where the macOS client
     // expects Command (which Linux desktops keep for themselves).
     env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));

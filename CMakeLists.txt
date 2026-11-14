@@ -105,12 +105,22 @@ add_subdirectory(stud-config)
 # Stud's AGPL-3.0 combines with; its source is upstream, unmodified.
 if(STUD_BUILD_ROSEMARY)
     find_program(STUD_CARGO cargo REQUIRED)
+    find_package(Git REQUIRED)
     include(ExternalProject)
     set(STUD_ROSEMARY_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rosemary-target")
     ExternalProject_Add(rosemary
         GIT_REPOSITORY https://github.com/microlift/rosemary.git
         GIT_TAG        main
         GIT_SHALLOW    ON
+        # Upstream's newest, every build, and Stud's patch on top of it: the
+        # switches the launcher sets for title, icon, tray and background
+        # frame rate (packaging/rosemary/stud-launcher.patch). Reset first,
+        # so a rebuild applies the patch to a clean tree.
+        UPDATE_COMMAND "${GIT_EXECUTABLE}" fetch --depth 1 origin main
+               COMMAND "${GIT_EXECUTABLE}" reset --hard -q FETCH_HEAD
+        PATCH_COMMAND "${GIT_EXECUTABLE}" reset --hard -q HEAD
+              COMMAND "${GIT_EXECUTABLE}" apply
+                      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/stud-launcher.patch"
         CONFIGURE_COMMAND ""
         BUILD_COMMAND "${STUD_CARGO}" build --release --bin rosemary
                       --manifest-path <SOURCE_DIR>/Cargo.toml

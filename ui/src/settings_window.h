@@ -11,6 +11,7 @@ class QCheckBox;
 class QLabel;
 class QPushButton;
 class QPlainTextEdit;
+class QSlider;
 
 namespace stud::ui {
 
@@ -67,6 +68,7 @@ private slots:
     void onRestartClicked();
     // Merges a JSON file's flags into the FFlags editor.
     void onImportFlagsClicked();
+    void onBackgroundFpsChanged(int value);
 
 protected:
     // Right-click resets the control under the pointer; see
@@ -76,6 +78,7 @@ protected:
 private:
     void loadFromDisk();
     void installResets();
+    void setBackgroundFps(int fps);
 
     QComboBox* gpuCombo_;
     QCheckBox* vsyncCheck_;
@@ -84,6 +87,11 @@ private:
     QCheckBox* gamemodeCheck_;
     QCheckBox* mangohudCheck_;
     QCheckBox* trayCheck_;
+    QSlider* backgroundFpsSlider_;
+    QLabel* backgroundFpsLabel_;
+    QCheckBox* discordCheck_;
+    QCheckBox* discordJoinCheck_;
+    QCheckBox* serverRegionCheck_;
     QPlainTextEdit* flagsEdit_;
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also

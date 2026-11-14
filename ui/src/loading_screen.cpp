@@ -13,7 +13,6 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include <algorithm>
 #include <functional>
 #include <memory>
 
@@ -81,11 +80,9 @@ void raise() {
             });
         });
         layout->addWidget(s.cancel, 0, Qt::AlignHCenter);
-        // Square, as large as its contents need; the cube and the button
-        // never change size, and lines wrap rather than widen it.
-        const QSize hint = s.window->sizeHint();
-        const int side = std::max(hint.width(), hint.height());
-        s.window->setFixedSize(side, side);
+        // Square, at the width it always had; lines wrap rather than widen it.
+        constexpr int kSide = 360;
+        s.window->setFixedSize(kSide, kSide);
         s.timer = new QTimer(s.window.get());
         s.timer->setInterval(2000);
         QObject::connect(s.timer, &QTimer::timeout, s.window.get(), next_line);

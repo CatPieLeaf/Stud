@@ -42,6 +42,8 @@ int main(int argc, char** argv) {
     check(defaults.title_bar == "native", "the title bar defaults to the desktop's own");
     check(defaults.display_backend == "auto", "the display backend defaults to automatic");
     check(defaults.system_tray, "the tray defaults to on");
+    check(defaults.background_fps == 30, "the background frame rate defaults to 30");
+    check(defaults.discord_rich_presence, "Discord presence defaults to on");
 
     const std::string path = dir + "/config.json";
 
@@ -57,6 +59,10 @@ int main(int argc, char** argv) {
     settings.mangohud = true;
     settings.gamemode = true;
     settings.system_tray = false;
+    settings.background_fps = 120;
+    settings.discord_rich_presence = false;
+    settings.discord_join_button = true;
+    settings.server_region_notification = true;
     stud::config::save_settings(path, settings);
 
     auto loaded = stud::config::load_settings(path);
@@ -69,12 +75,16 @@ int main(int argc, char** argv) {
     check(loaded.mangohud, "mangohud round-trips");
     check(loaded.gamemode, "gamemode round-trips");
     check(!loaded.system_tray, "the system tray round-trips");
+    check(loaded.background_fps == 120, "the background frame rate round-trips");
+    check(!loaded.discord_rich_presence, "Discord presence round-trips");
+    check(loaded.discord_join_button, "Discord's join button round-trips");
+    check(loaded.server_region_notification, "the region notification round-trips");
 
     // Stud 1.x's keys are removed on save rather than carried forward: a file
     // that still lists them reads as if they do something.
     std::ofstream(path, std::ios::trunc)
         << R"({"apkPath":"/home/user/Downloads/roblox.apk","hidpi":true,)"
-           R"("graphicsMode":"opengl","backgroundFps":30,"menuBar":"strip",)"
+           R"("graphicsMode":"opengl","backgroundFps":241,"menuBar":"strip",)"
            R"("someOtherKey":{"mode":"x"}})";
     stud::config::save_settings(path, stud::config::load_settings(path));
     {
@@ -83,8 +93,8 @@ int main(int argc, char** argv) {
         check(content.find("hidpi") == std::string::npos, "hidpi is not written any more");
         check(content.find("graphicsMode") == std::string::npos,
               "graphicsMode is not written any more");
-        check(content.find("backgroundFps") == std::string::npos,
-              "backgroundFps is not written any more");
+        check(content.find("\"backgroundFps\": 0") != std::string::npos,
+              "the 241 older builds wrote reads back as unlimited, stored as 0");
         check(content.find("someOtherKey") != std::string::npos,
               "save_settings preserves a key that is not Stud's");
         check(content.find("menuBar") == std::string::npos, "menuBar is not written any more");
