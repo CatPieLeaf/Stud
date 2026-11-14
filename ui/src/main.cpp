@@ -229,8 +229,17 @@ void apply_mangohud(QProcessEnvironment& env, bool enabled) {
 // Everything the client is started with.
 QProcessEnvironment client_environment(const stud::config::StudSettings& settings) {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // The variables Settings decides are Settings' alone; Rosemary's others
+    // (ROSEMARY_METAL_STATS and the like) pass through, for investigating.
+    static const QStringList kFromSettings = {
+        QStringLiteral("ROSEMARY_PREFIX"), QStringLiteral("ROSEMARY_PREFIX_SETUP"),
+        QStringLiteral("ROSEMARY_DECORATIONS"), QStringLiteral("ROSEMARY_MENU"),
+        QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("ROSEMARY_SWAP_INTERVAL"),
+        QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"),
+        QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"),
+    };
     for (const QString& name : env.keys()) {
-        if (loads_code(name) || name.startsWith(QStringLiteral("ROSEMARY_"))) env.remove(name);
+        if (loads_code(name) || kFromSettings.contains(name)) env.remove(name);
     }
     env.remove(QStringLiteral("STUD_LOG_FILE"));
 
@@ -258,16 +267,22 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
     }
 
-    // Frame pacing. The client paces itself to the refresh rate it is told,
-    // so without vsync it is told one it never reaches, and presents without
-    // waiting for the display.
-    if (!settings.vsync) {
-        env.insert(QStringLiteral("ROSEMARY_SWAP_INTERVAL"), QStringLiteral("0"));
-        env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"), QStringLiteral("9999"));
+    // Frame pacing. Rosemary wakes the client's display link once per
+    // refresh of the rate the client is told, on the loop that also carries
+    // input, so that rate is a real one: the display's own, or the frame
+    // rate limit when there is one.
+    if (settings.frame_cap > 0) {
+        env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"),
+                   QString::number(settings.frame_cap));
     }
+    // VSync is the presentation mode: FIFO waits for the display, and
+    // without it Rosemary's own default (MAILBOX) does not. An explicit
+    // presentation mode wins over both.
     if (!settings.presentation_mode.empty()) {
         env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"),
                    QString::fromStdString(settings.presentation_mode));
+    } else if (settings.vsync) {
+        env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("fifo"));
     }
 
     apply_gpu_selection(env, settings);

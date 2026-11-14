@@ -18,9 +18,11 @@ the source and is missing from this file, so this list cannot quietly go stale.
 
 ## What Stud sets for the client
 
-These are Rosemary's own variables, set from Settings when Roblox starts. A
-`ROSEMARY_*` variable in Stud's own environment is not passed on, so the client
-always runs with what Settings says.
+These are Rosemary's own variables, set from Settings when Roblox starts. The
+ones below are always Settings' to decide: set in Stud's own environment, they
+are not passed on. Rosemary's other variables are, so `ROSEMARY_METAL_STATS=1`
+before `stud` logs Rosemary's frame statistics once a second into the session
+log.
 
 | variable | from | value |
 |---|---|---|
@@ -28,8 +30,8 @@ always runs with what Settings says.
 | `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
 | `ROSEMARY_CONTROL_EDIT_KEYS` | Ctrl for copy, cut and paste | `1` when on. |
-| `ROSEMARY_SWAP_INTERVAL`, `ROSEMARY_SCREEN_REFRESH_RATE` | VSync | `0` and `9999` when off: the client paces itself to the refresh rate it is told. |
-| `ROSEMARY_METAL_PRESENTATION_MODE` | Presentation mode | `fifo`, `fifo_relaxed`, `mailbox` or `immediate`; unset for Rosemary's choice. |
+| `ROSEMARY_SCREEN_REFRESH_RATE` | Frame rate limit | The limit, when there is one: the client draws once per refresh it is told of. Unset, it is the display's own. |
+| `ROSEMARY_METAL_PRESENTATION_MODE` | Presentation mode, VSync | The chosen mode; otherwise `fifo` with VSync on, and unset (Rosemary's `mailbox`) with it off. |
 | `SDL_VIDEO_DRIVER` | Display server | `wayland` or `x11`. |
 | `SDL_APP_ID` | always | Stud's application id, which gives the window Stud's icon and taskbar entry. |
 | `MANGOHUD` | MangoHud overlay | `1` when on. |

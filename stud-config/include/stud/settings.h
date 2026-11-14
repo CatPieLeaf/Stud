@@ -28,9 +28,8 @@ struct StudSettings {
     // 0 to leave it to Roblox's own Maximum Frame Rate setting.
     int frame_cap = 0;
 
-    // Whether frames wait for the display's refresh. Off, the client is told
-    // a refresh rate it never reaches (it paces itself to the rate it is
-    // told) and presents without waiting.
+    // Whether frames wait for the display's refresh: FIFO presentation, or
+    // Rosemary's own default (MAILBOX) when off.
     bool vsync = false;
 
     // How frames are handed to the display: "" for Rosemary's choice, or
