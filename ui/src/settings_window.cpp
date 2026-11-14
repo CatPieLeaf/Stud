@@ -5,6 +5,7 @@
 #include "cube_view.h"
 #include "gpu_enum.h"
 #include "mods.h"
+#include "fflags.h"
 #include "notifications.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -25,6 +26,7 @@
 #include <QColorDialog>
 #include <QFileDialog>
 #include <QGridLayout>
+#include <QInputDialog>
 #include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -258,16 +260,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // ---- FFlags --------------------------------------------------------
     // flags.json in Stud's config directory, as JSON: written into the
     // client's ClientAppSettings.json at every launch.
-    auto* fflags = add_tab("FFlags");
-    flagsEdit_ = new QPlainTextEdit(this);
-    flagsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    flagsEdit_->setPlaceholderText("{\n    \"FFlagExample\": true\n}");
-    fflags->addWidget(flagsEdit_, 1);
-    auto* importButton = new QPushButton("Import JSON...", this);
-    importButton->setToolTip("Add the flags of a JSON file to these; a flag both have takes the "
-                             "imported value.");
-    fflags->addWidget(importButton, 0, Qt::AlignLeft);
-    connect(importButton, &QPushButton::clicked, this, &SettingsWindow::onImportFlagsClicked);
+    buildFlagsTab(add_tab("FFlags"));
 
     // ---- About ---------------------------------------------------------
     auto* about = add_tab("About");
@@ -441,6 +434,143 @@ void SettingsWindow::onBackgroundFpsChanged(int value) {
     backgroundFpsLabel_->setText(value > stud::config::kBackgroundFpsUnlimited
                                      ? QStringLiteral("Background frame rate: Unlimited")
                                      : QStringLiteral("Background frame rate: %1 FPS").arg(value));
+}
+
+// Presets over the editor's JSON, profiles, and what the client ignores. The
+// editor stays the one source: a preset rewrites the JSON, and the JSON sets
+// the presets.
+void SettingsWindow::buildFlagsTab(QVBoxLayout* tab) {
+    flagsEdit_ = new QPlainTextEdit(this);
+    flagsEdit_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    flagsEdit_->setPlaceholderText("{\n    \"FIntDebugForceMSAASamples\": \"4\"\n}");
+
+    auto* presets = new QGridLayout();
+    int row = 0;
+    const auto edit_flags = [this](const std::function<void(QJsonObject&)>& change) {
+        QString error;
+        auto flags = parse_flags(flagsEdit_->toPlainText(), &error);
+        if (!flags) {
+            statusLabel_->setText(QString("Fix the flags first: %1").arg(error).toHtmlEscaped());
+            return;
+        }
+        change(*flags);
+        flagsEdit_->setPlainText(format_flags(*flags));
+    };
+    const auto combo = [&](const char* label, fflags::Preset preset,
+                           const QList<QPair<QString, int>>& choices) {
+        auto* box = new QComboBox(this);
+        for (const auto& [text, value] : choices) box->addItem(text, value);
+        presets->addWidget(new QLabel(QString::fromLatin1(label), this), row, 0);
+        presets->addWidget(box, row++, 1);
+        connect(box, &QComboBox::activated, this, [box, preset, edit_flags] {
+            edit_flags([&](QJsonObject& f) { fflags::set(f, preset, box->currentData().toInt()); });
+        });
+        flagRefresh_.push_back([box, preset](const QJsonObject& f) {
+            const int index = box->findData(fflags::get(f, preset));
+            box->setCurrentIndex(index >= 0 ? index : 0);
+        });
+    };
+    const auto check_box = [&](const char* label, fflags::Preset preset) {
+        auto* box = new QCheckBox(QString::fromLatin1(label), this);
+        presets->addWidget(box, row++, 0, 1, 2);
+        connect(box, &QCheckBox::clicked, this, [box, preset, edit_flags] {
+            edit_flags([&](QJsonObject& f) { fflags::set(f, preset, box->isChecked() ? 1 : 0); });
+        });
+        flagRefresh_.push_back([box, preset](const QJsonObject& f) {
+            box->setChecked(fflags::get(f, preset) == 1);
+        });
+    };
+    combo("Anti-aliasing (MSAA)", fflags::Preset::Msaa,
+          {{"Roblox's", -1}, {"1x", 1}, {"2x", 2}, {"4x", 4}});
+    combo("Texture quality", fflags::Preset::TextureQuality,
+          {{"Roblox's", -1}, {"Lowest", 0}, {"Low", 1}, {"Medium", 2}});
+    QList<QPair<QString, int>> levels{{"Roblox's", -1}};
+    for (int level = 1; level <= 21; ++level) levels.append({QString::number(level), level});
+    combo("Graphics quality override", fflags::Preset::QualityLevel, levels);
+    QList<QPair<QString, int>> meshes{{"Roblox's", -1}};
+    for (int level = 0; level <= 9; ++level) meshes.append({QString::number(level), level});
+    combo("Mesh detail", fflags::Preset::MeshDetail, meshes);
+    check_box("Disable grass", fflags::Preset::DisableGrass);
+    check_box("Gray sky", fflags::Preset::GraySky);
+    check_box("Pause voxelizer", fflags::Preset::PauseVoxelizer);
+    check_box("Keep rendering quality with display scaling", fflags::Preset::KeepQualityWhenScaled);
+    tab->addLayout(presets);
+
+    // Profiles: named sets of these flags.
+    auto* profiles = new QHBoxLayout();
+    auto* profileBox = new QComboBox(this);
+    profileBox->addItems(fflags::profiles());
+    profileBox->setMinimumContentsLength(12);
+    auto* load = new QPushButton("Load", this);
+    auto* saveAs = new QPushButton("Save as...", this);
+    auto* remove = new QPushButton("Delete", this);
+    profiles->addWidget(new QLabel("Profile", this));
+    profiles->addWidget(profileBox, 1);
+    profiles->addWidget(load);
+    profiles->addWidget(saveAs);
+    profiles->addWidget(remove);
+    tab->addLayout(profiles);
+    connect(load, &QPushButton::clicked, this, [this, profileBox] {
+        if (profileBox->currentText().isEmpty()) return;
+        flagsEdit_->setPlainText(format_flags(fflags::load_profile(profileBox->currentText())));
+        statusLabel_->setText(QStringLiteral("Profile loaded. Save to use it."));
+    });
+    connect(saveAs, &QPushButton::clicked, this, [this, profileBox] {
+        QString error;
+        const auto flags = parse_flags(flagsEdit_->toPlainText(), &error);
+        if (!flags) {
+            statusLabel_->setText(QString("Fix the flags first: %1").arg(error).toHtmlEscaped());
+            return;
+        }
+        const QString name = QInputDialog::getText(this, "Save FFlag profile", "Name");
+        if (name.trimmed().isEmpty() || !fflags::save_profile(name.trimmed(), *flags)) return;
+        profileBox->clear();
+        profileBox->addItems(fflags::profiles());
+        profileBox->setCurrentText(name.trimmed());
+    });
+    connect(remove, &QPushButton::clicked, this, [profileBox] {
+        if (profileBox->currentText().isEmpty()) return;
+        fflags::delete_profile(profileBox->currentText());
+        profileBox->removeItem(profileBox->currentIndex());
+    });
+
+    tab->addWidget(flagsEdit_, 1);
+
+    flagsWarning_ = new QLabel(this);
+    flagsWarning_->setWordWrap(true);
+    tab->addWidget(flagsWarning_);
+    auto* buttons = new QHBoxLayout();
+    auto* importButton = new QPushButton("Import JSON...", this);
+    importButton->setToolTip("Add the flags of a JSON file to these; a flag both have takes the "
+                             "imported value.");
+    connect(importButton, &QPushButton::clicked, this, &SettingsWindow::onImportFlagsClicked);
+    auto* clean = new QPushButton("Clean list", this);
+    clean->setToolTip("Remove the flags Roblox ignores: those not on its allowlist.");
+    connect(clean, &QPushButton::clicked, this, [edit_flags] {
+        edit_flags([](QJsonObject& f) {
+            for (const QString& name : fflags::not_allowlisted(f)) f.remove(name);
+        });
+    });
+    buttons->addWidget(importButton);
+    buttons->addWidget(clean);
+    buttons->addStretch();
+    tab->addLayout(buttons);
+
+    connect(flagsEdit_, &QPlainTextEdit::textChanged, this, [this] {
+        QString error;
+        const auto flags = parse_flags(flagsEdit_->toPlainText(), &error);
+        if (!flags) {
+            flagsWarning_->setText(QString("Not valid JSON: %1").arg(error).toHtmlEscaped());
+            return;
+        }
+        for (const auto& refresh : flagRefresh_) refresh(*flags);
+        const QStringList ignored = fflags::not_allowlisted(*flags);
+        flagsWarning_->setText(ignored.isEmpty()
+                                   ? QString()
+                                   : QString("Roblox ignores flags not on its allowlist: %1")
+                                         .arg(ignored.join(QStringLiteral(", ")))
+                                         .toHtmlEscaped());
+    });
 }
 
 void SettingsWindow::onImportFlagsClicked() {

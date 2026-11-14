@@ -61,6 +61,7 @@ target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAK
 add_library(stud_ui_mac_client STATIC
     src/mac_client.cpp
     src/mods.cpp
+    src/fflags.cpp
 )
 target_include_directories(stud_ui_mac_client PUBLIC src)
 target_link_libraries(stud_ui_mac_client PUBLIC Qt6::Core Qt6::Gui Qt6::Network stud_config miniz)

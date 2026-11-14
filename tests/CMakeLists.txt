@@ -30,6 +30,11 @@ if(STUD_BUILD_UI)
     add_test(NAME zip_extract_test COMMAND stud_zip_extract_test
              ${CMAKE_CURRENT_BINARY_DIR}/zip_scratch)
 
+    # FastFlag presets and the allowlist.
+    add_executable(stud_fflags_test fflags_test.cpp)
+    target_link_libraries(stud_fflags_test PRIVATE stud_ui_mac_client)
+    add_test(NAME fflags_test COMMAND stud_fflags_test)
+
     # Mods over a client build, and the build put back as it came.
     add_executable(stud_mods_test mods_test.cpp)
     target_link_libraries(stud_mods_test PRIVATE stud_ui_mac_client)

@@ -5,12 +5,15 @@
 #include <functional>
 
 #include <string>
+#include <vector>
 
 class QComboBox;
 class QCheckBox;
 class QLabel;
 class QPushButton;
 class QPlainTextEdit;
+class QVBoxLayout;
+class QJsonObject;
 class QSlider;
 
 namespace stud::ui {
@@ -94,6 +97,10 @@ private:
     QCheckBox* discordJoinCheck_;
     QCheckBox* serverRegionCheck_;
     QPlainTextEdit* flagsEdit_;
+    QLabel* flagsWarning_;
+    // Each preset's control, set from the editor's JSON.
+    std::vector<std::function<void(const QJsonObject&)>> flagRefresh_;
+    void buildFlagsTab(QVBoxLayout* tab);
     QPushButton* restartButton_;
     // Applies the palette's button-text colour to the restart glyph. Also
     // called on a palette change, hence keeping it around.
