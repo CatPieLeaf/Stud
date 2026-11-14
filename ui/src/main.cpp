@@ -334,9 +334,11 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     // expects Command (which Linux desktops keep for themselves).
     env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
 
-    // VSync is the presentation mode: FIFO waits for the display, and
-    // without it Rosemary's own default (MAILBOX) does not.
-    if (settings.vsync) {
+    // VSync: on Vulkan the presentation mode, FIFO waiting for the display
+    // and Rosemary's default (MAILBOX) not; on OpenGL the swap interval.
+    if (settings.renderer == "opengl") {
+        if (!settings.vsync) env.insert(QStringLiteral("ROSEMARY_SWAP_INTERVAL"), QStringLiteral("0"));
+    } else if (settings.vsync) {
         env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("fifo"));
     }
 
@@ -348,7 +350,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
 // The FastFlags of Settings' FFlags tab (flags.json), written as the
 // client's ClientAppSettings.json. A malformed flags.json is reported and
 // left out rather than stopping the launch.
-QJsonObject client_flags() {
+QJsonObject client_flags(const stud::config::StudSettings& settings) {
     QJsonObject flags;
     QFile file(QString::fromStdString(stud::config::default_flag_overrides_path()));
     if (file.open(QIODevice::ReadOnly)) {
@@ -359,6 +361,11 @@ QJsonObject client_flags() {
             std::fprintf(stderr, "stud: %s is not a JSON object; its flags are not used\n",
                          qPrintable(file.fileName()));
         }
+    }
+    // The renderer is Settings' choice, over anything flags.json says about it.
+    flags.remove(QStringLiteral("FFlagDebugGraphicsPreferOpenGL"));
+    if (settings.renderer == "opengl") {
+        flags.insert(QStringLiteral("FFlagDebugGraphicsPreferOpenGL"), true);
     }
     return flags;
 }
@@ -478,7 +485,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         return false;
     }
     // The FFlags tab's flags are the player's.
-    if (player && !stud::ui::client::write_app_settings(*build, client_flags(), &error)) {
+    if (player && !stud::ui::client::write_app_settings(*build, client_flags(settings), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
     }
     if (stud::ui::loading_cancelled()) return false;

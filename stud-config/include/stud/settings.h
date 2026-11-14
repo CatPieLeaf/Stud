@@ -31,6 +31,11 @@ struct GpuSelection {
 struct StudSettings {
     GpuSelection gpu;
 
+    // The client's renderer: "vulkan" (its Metal renderer, which Rosemary
+    // runs on Vulkan) or "opengl" (its OpenGL renderer, chosen with the
+    // allowlisted FFlagDebugGraphicsPreferOpenGL).
+    std::string renderer = "vulkan";
+
     // Whether frames wait for the display's refresh: FIFO presentation, or
     // Rosemary's own default (MAILBOX) when off.
     bool vsync = false;

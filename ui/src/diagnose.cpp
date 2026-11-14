@@ -229,6 +229,7 @@ void write_diagnostics() {
         line("settings", "unreadable: " + settings_error);
     } else {
         line("gpu", settings.gpu.device_name);
+        line("renderer", settings.renderer);
         line("vsync", yes_no(settings.vsync));
         line("title bar", settings.title_bar);
         line("display backend", settings.display_backend);

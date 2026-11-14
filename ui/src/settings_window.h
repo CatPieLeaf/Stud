@@ -82,6 +82,7 @@ private:
 
     QComboBox* gpuCombo_;
     QCheckBox* vsyncCheck_;
+    QComboBox* rendererCombo_;
     QComboBox* titleBarCombo_;
     QComboBox* displayBackendCombo_;
     QCheckBox* gamemodeCheck_;

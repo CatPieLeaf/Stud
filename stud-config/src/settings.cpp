@@ -94,6 +94,7 @@ StudSettings load_settings(const std::string& path) {
                             "\" \"" + value + "\"");
     };
 
+    read_string("renderer", result.renderer, {"vulkan", "opengl"});
     read_bool("vsync", result.vsync);
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
     read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
@@ -143,6 +144,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["gpu"] = {{"deviceIndex", settings.gpu.device_index},
                   {"deviceName", settings.gpu.device_name},
                   {"deviceUuid", settings.gpu.device_uuid}};
+    doc["renderer"] = settings.renderer;
     doc["vsync"] = settings.vsync;
     doc["titleBar"] = settings.title_bar;
     doc["displayBackend"] = settings.display_backend;

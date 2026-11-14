@@ -126,6 +126,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     }
     graphics->addWidget(gpuCombo_);
 
+    graphics->addWidget(new QLabel("Renderer"));
+    rendererCombo_ = new QComboBox(this);
+    rendererCombo_->addItem("Vulkan", QStringLiteral("vulkan"));
+    rendererCombo_->addItem("OpenGL", QStringLiteral("opengl"));
+    rendererCombo_->setToolTip("Vulkan: Roblox's Metal renderer, run on Vulkan.\n"
+                               "OpenGL: Roblox's OpenGL renderer, for hardware Vulkan does not run on.");
+    graphics->addWidget(rendererCombo_);
+
     vsyncCheck_ = new QCheckBox("VSync", this);
     vsyncCheck_->setToolTip("Wait for the display's refresh. Off presents frames as soon as "
                             "they are ready.");
@@ -281,6 +289,7 @@ void SettingsWindow::installResets() {
         gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
     add(vsyncCheck_, [this, d] { vsyncCheck_->setChecked(d.vsync); });
+    add(rendererCombo_, [this, d] { select_data(rendererCombo_, d.renderer); });
     add(titleBarCombo_, [this, d] { select_data(titleBarCombo_, d.title_bar); });
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
@@ -396,6 +405,7 @@ void SettingsWindow::loadFromDisk() {
         gpuCombo_->setCurrentIndex(index);
     }
     vsyncCheck_->setChecked(settings.vsync);
+    select_data(rendererCombo_, settings.renderer);
     select_data(titleBarCombo_, settings.title_bar);
     select_data(displayBackendCombo_, settings.display_backend);
     mangohudCheck_->setChecked(settings.mangohud);
@@ -596,6 +606,7 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
     settings.vsync = vsyncCheck_->isChecked();
+    settings.renderer = selected_data(rendererCombo_);
     settings.title_bar = selected_data(titleBarCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
     settings.mangohud = mangohudCheck_->isChecked();

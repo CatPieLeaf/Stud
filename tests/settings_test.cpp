@@ -39,6 +39,7 @@ int main(int argc, char** argv) {
     auto defaults = stud::config::load_settings(dir + "/does_not_exist.json");
     check(defaults.gpu.device_index == 0, "missing config file defaults gpu.deviceIndex to 0");
     check(!defaults.vsync, "vsync defaults to off");
+    check(defaults.renderer == "vulkan", "the renderer defaults to Vulkan");
     check(defaults.title_bar == "native", "the title bar defaults to the desktop's own");
     check(defaults.display_backend == "auto", "the display backend defaults to automatic");
     check(defaults.system_tray, "the tray defaults to on");
@@ -54,6 +55,7 @@ int main(int argc, char** argv) {
     settings.gpu.device_name = "Test GPU 9000";
     settings.gpu.device_uuid = "00112233445566778899aabbccddeeff";
     settings.vsync = true;
+    settings.renderer = "opengl";
     settings.title_bar = "macos-no-menu";
     settings.display_backend = "x11";
     settings.mangohud = true;
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
     check(loaded.gpu.device_name == "Test GPU 9000", "gpu.deviceName round-trips");
     check(loaded.gpu.device_uuid == "00112233445566778899aabbccddeeff", "gpu.deviceUuid round-trips");
     check(loaded.vsync, "vsync round-trips");
+    check(loaded.renderer == "opengl", "the renderer round-trips");
     check(loaded.title_bar == "macos-no-menu", "the title bar round-trips");
     check(loaded.display_backend == "x11", "the display backend round-trips");
     check(loaded.mangohud, "mangohud round-trips");

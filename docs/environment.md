@@ -32,7 +32,8 @@ log.
 | `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
 | `ROSEMARY_CONTROL_EDIT_KEYS` | always | `1`: Ctrl for copy, cut and paste. |
-| `ROSEMARY_METAL_PRESENTATION_MODE` | VSync | `fifo` when on; unset (Rosemary's `mailbox`) when off. |
+| `ROSEMARY_METAL_PRESENTATION_MODE` | VSync, on Vulkan | `fifo` when on; unset (Rosemary's `mailbox`) when off. |
+| `ROSEMARY_SWAP_INTERVAL` | VSync, on OpenGL | `0` when off. |
 | `SDL_VIDEO_DRIVER` | Display server | `wayland` on a Wayland desktop, or `x11` when chosen there and XWayland runs. |
 | `ROSEMARY_WINDOW_TITLE`, `ROSEMARY_WINDOW_ICON` | always | `Stud`, and Stud's icon: the window's title bar names Stud, not the client. |
 | `ROSEMARY_STATUS_ITEMS` | always | `0`: the client's menu bar extras stay out of the tray, beside Stud's own icon. |
