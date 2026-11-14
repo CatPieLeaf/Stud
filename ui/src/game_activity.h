@@ -13,8 +13,8 @@
 namespace stud::ui {
 
 // What the player is doing, read from the client's own output: the game it
-// joins and the server it reaches, and the Rich Presence a game sends through
-// the BloxstrapRPC convention. Feeds Discord and the server region
+// joins and the server it reaches, and what a game sends through BloxstrapRPC
+// (SetRichPresence, SetLaunchData). Feeds Discord and the server region
 // notification. Nothing is sent anywhere unless its setting is on.
 class GameActivity : public QObject {
     Q_OBJECT
@@ -27,6 +27,8 @@ public:
     void line(const QByteArray& text);
 
 private:
+    enum class Server { Public, Private, Reserved };
+
     void joined(const QString& place, const QString& job);
     void left();
     void server(const QString& address);
@@ -51,11 +53,18 @@ private:
     QString creator_;
     QString icon_;
     int64_t joined_at_ = 0;
-    // What the game itself set through BloxstrapRPC, over the defaults.
+    Server server_ = Server::Public;
+    // The teleport just started goes to a reserved server.
+    bool teleport_reserved_ = false;
+    // What the game gave SetLaunchData, carried in the join link.
+    QString launch_data_;
+
+    // What the game itself set through SetRichPresence, over the defaults.
     DiscordActivity game_;
     bool game_details_ = false;
     bool game_state_ = false;
-    bool game_times_ = false;
+    bool game_start_ = false;
+    bool game_end_ = false;
 };
 
 }  // namespace stud::ui

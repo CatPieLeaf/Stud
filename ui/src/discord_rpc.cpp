@@ -186,9 +186,14 @@ void send_presence_locked() {
         if (a.end > 0) timestamps += std::string(timestamps.empty() ? "" : ",") + "\"end\":" + std::to_string(a.end);
         activity += std::string(activity.size() > 1 ? "," : "") + "\"timestamps\":{" + timestamps + "}";
     }
-    if (!a.button_url.empty()) {
-        activity += std::string(activity.size() > 1 ? "," : "") + "\"buttons\":[{\"label\":\"" +
-                    escape(a.button_label) + "\",\"url\":\"" + escape(a.button_url) + "\"}]";
+    if (!a.buttons.empty()) {
+        std::string buttons;
+        for (size_t i = 0; i < a.buttons.size() && i < 2; ++i) {
+            if (i > 0) buttons += ",";
+            buttons += "{\"label\":\"" + escape(a.buttons[i].first) + "\",\"url\":\"" +
+                       escape(a.buttons[i].second) + "\"}";
+        }
+        activity += std::string(activity.size() > 1 ? "," : "") + "\"buttons\":[" + buttons + "]";
     }
     activity += "}";
 

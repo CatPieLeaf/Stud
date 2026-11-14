@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 // Discord Rich Presence over Discord's local IPC socket. No library: the
 // protocol is a handshake and JSON frames. Discord not running is an ordinary
@@ -24,8 +26,8 @@ struct DiscordActivity {
     std::string small_text;
     int64_t start = 0;  // Unix seconds; 0 for none
     int64_t end = 0;
-    std::string button_label;
-    std::string button_url;
+    // At most two, Discord's limit.
+    std::vector<std::pair<std::string, std::string>> buttons;  // label, URL
 };
 
 void discord_rpc_start(const std::string& application_id);

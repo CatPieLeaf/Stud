@@ -51,17 +51,40 @@ void GameActivity::line(const QByteArray& raw) {
         QStringLiteral(R"(! Joining game '([0-9a-fA-F-]+)' place (\d+))"));
     // "UDMUX Address = <public address>, Port = ..."
     static const QRegularExpression udmux(QStringLiteral(R"(UDMUX Address = ([0-9.]+))"));
+    // A teleport's join type: 4 and 6 are the private-game ones, which is
+    // what a reserved server is (the line also holds the join ticket, which
+    // is not kept).
+    static const QRegularExpression join_type(QStringLiteral(R"(JoinTypeId"%3a(\d+)%2c)"));
+    // The page the join came from: a private server's invite or its page.
+    static const QRegularExpression referral(QStringLiteral(R"(referral_page:([^,]+))"));
     if (const auto m = joining.match(text); m.hasMatch()) {
         joined(m.captured(2), m.captured(1));
     } else if (const auto m = udmux.match(text); m.hasMatch()) {
         server(m.captured(1));
+    } else if (text.contains(QStringLiteral("UgcExperienceController: doTeleport: joinScriptUrl"))) {
+        const int type = join_type.match(text).captured(1).toInt();
+        teleport_reserved_ = type == 4 || type == 6;
+    } else if (text.contains(QStringLiteral("[FLog::GameJoinLoadTime] Report game_join_loadtime:"))) {
+        const QString page = referral.match(text).captured(1);
+        if (page.contains(QStringLiteral("RequestPrivateGame")) ||
+            page.contains(QStringLiteral("GameDetailPageJSHybridEvent"))) {
+            server_ = Server::Private;
+            publish();
+        }
     } else if (text.startsWith(QStringLiteral("[BloxstrapRPC] "))) {
         // The client prints each one twice, once in its log format and once
         // bare; the bare one is taken.
         const QJsonObject message =
             QJsonDocument::fromJson(raw.mid(qsizetype(sizeof("[BloxstrapRPC] ")) - 1)).object();
-        if (message.value(QStringLiteral("command")).toString() == QStringLiteral("SetRichPresence")) {
+        const QString command = message.value(QStringLiteral("command")).toString();
+        if (command == QStringLiteral("SetRichPresence")) {
             rich_presence(message.value(QStringLiteral("data")).toObject());
+        } else if (command == QStringLiteral("SetLaunchData") && !place_.isEmpty()) {
+            const QString data = message.value(QStringLiteral("data")).toString();
+            if (data.size() <= 200) {
+                launch_data_ = data;
+                publish();
+            }
         }
     } else if (text.contains(QStringLiteral("[DFLog::NetworkClient] Client:Disconnect"))) {
         left();
@@ -77,8 +100,11 @@ void GameActivity::joined(const QString& place, const QString& job) {
     creator_.clear();
     icon_.clear();
     joined_at_ = now_seconds();
+    server_ = teleport_reserved_ ? Server::Reserved : Server::Public;
+    teleport_reserved_ = false;
+    launch_data_.clear();
     game_ = {};
-    game_details_ = game_state_ = game_times_ = false;
+    game_details_ = game_state_ = game_start_ = game_end_ = false;
     std::printf("stud: joined place %s\n", qPrintable(place));
     publish();
     if (!discord_) return;
@@ -125,8 +151,10 @@ void GameActivity::left() {
     name_.clear();
     creator_.clear();
     icon_.clear();
+    launch_data_.clear();
+    server_ = Server::Public;
     game_ = {};
-    game_details_ = game_state_ = game_times_ = false;
+    game_details_ = game_state_ = game_start_ = game_end_ = false;
     publish();
 }
 
@@ -147,25 +175,30 @@ void GameActivity::server(const QString& address) {
           });
 }
 
-// BloxstrapRPC's SetRichPresence: details, state, timeStart, timeEnd,
-// smallImage and largeImage ({assetId, hoverText, clear, reset}). A key that
-// is absent leaves what is showing; "<reset>" goes back to Stud's own.
+// BloxstrapRPC's SetRichPresence, as Froststrap and Bloxstrap read it:
+// details and state (at most 128 characters; "<reset>" goes back to Stud's),
+// timeStart and timeEnd (Unix seconds; 0 clears one), and smallImage and
+// largeImage ({assetId, hoverText, clear, reset}). An absent key leaves what
+// is showing.
 void GameActivity::rich_presence(const QJsonObject& data) {
     if (!discord_ || place_.isEmpty()) return;
     const auto text = [&data](const char* key, std::string& out, bool& set) {
         const QJsonValue value = data.value(QLatin1String(key));
-        if (!value.isString()) return;
+        if (!value.isString() || value.toString().size() > 128) return;
         const QString s = value.toString();
         set = s != QStringLiteral("<reset>");
         out = set ? s.toStdString() : std::string();
     };
     text("details", game_.details, game_details_);
     text("state", game_.state, game_state_);
-    if (data.contains(QStringLiteral("timeStart")) || data.contains(QStringLiteral("timeEnd"))) {
-        game_times_ = true;
-        game_.start = data.value(QStringLiteral("timeStart")).toInteger();
-        game_.end = data.value(QStringLiteral("timeEnd")).toInteger();
-    }
+    const auto time = [&data](const char* key, int64_t& out, bool& set) {
+        const QJsonValue value = data.value(QLatin1String(key));
+        if (!value.isDouble()) return;
+        out = value.toInteger();
+        set = true;  // 0 is set too: it clears the time
+    };
+    time("timeStart", game_.start, game_start_);
+    time("timeEnd", game_.end, game_end_);
     const quint64 generation = generation_;
     const auto image = [&, generation](const char* key, std::string DiscordActivity::*url,
                                        std::string DiscordActivity::*hover) {
@@ -208,18 +241,23 @@ void GameActivity::publish() {
     a.large_text = !game_.large_text.empty() ? game_.large_text : name_.toStdString();
     a.small_image = game_.small_image;
     a.small_text = game_.small_text;
-    if (game_times_) {
-        a.start = game_.start;
-        a.end = game_.end;
-    } else {
-        a.start = joined_at_;
+    a.start = game_start_ ? game_.start : joined_at_;
+    a.end = game_end_ ? game_.end : 0;
+    // Join only where anyone can: a public server, or a reserved one the
+    // game has given launch data for. Never a private server's.
+    const bool joinable =
+        server_ == Server::Public || (server_ == Server::Reserved && !launch_data_.isEmpty());
+    if (join_button_ && joinable) {
+        QString url = QStringLiteral("https://www.roblox.com/games/start?placeId=%1&gameInstanceId=%2")
+                          .arg(place_, job_);
+        if (!launch_data_.isEmpty()) {
+            url += QStringLiteral("&launchData=") +
+                   QString::fromLatin1(QUrl::toPercentEncoding(launch_data_));
+        }
+        a.buttons.emplace_back("Join server", url.toStdString());
     }
-    if (join_button_) {
-        a.button_label = "Join server";
-        a.button_url = QStringLiteral("https://www.roblox.com/games/start?placeId=%1&gameInstanceId=%2")
-                           .arg(place_, job_)
-                           .toStdString();
-    }
+    a.buttons.emplace_back("See game page",
+                           QStringLiteral("https://www.roblox.com/games/%1").arg(place_).toStdString());
     discord_rpc_set(a);
 }
 
