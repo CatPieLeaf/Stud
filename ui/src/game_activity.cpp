@@ -44,6 +44,17 @@ GameActivity::~GameActivity() {
     if (discord_) discord_rpc_stop();
 }
 
+bool GameActivity::wants(const QByteArray& line) {
+    static const char* const kMarks[] = {
+        "! Joining game", "UDMUX Address", "doTeleport: joinScriptUrl",
+        "Report game_join_loadtime:", "[BloxstrapRPC] ", "Client:Disconnect",
+    };
+    for (const char* mark : kMarks) {
+        if (line.contains(mark)) return true;
+    }
+    return false;
+}
+
 void GameActivity::line(const QByteArray& raw) {
     const QString text = QString::fromUtf8(raw);
     // "! Joining game '<job id>' place <place id> at <address>"

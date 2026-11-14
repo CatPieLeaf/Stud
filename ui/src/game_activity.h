@@ -26,6 +26,10 @@ public:
     // One line of the client's output, as it printed it.
     void line(const QByteArray& text);
 
+    // Whether `line` is one line() reads: a plain search, cheap enough for
+    // the thread that drains the client's output to ask about every line.
+    static bool wants(const QByteArray& line);
+
 private:
     enum class Server { Public, Private, Reserved };
 

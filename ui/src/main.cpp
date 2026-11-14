@@ -50,6 +50,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -91,34 +92,63 @@ bool g_relaunch_pending = false;
 // The client's output on its way to the session log, a line at a time. The
 // deep link is a single-use join ticket and the log is made to be shared, so
 // neither it nor a ticket the client prints gets written.
-QByteArray g_client_output;
 QByteArray g_deep_link;
-// Discord presence and the server region notification, fed the same lines.
+// Discord presence and the server region notification, fed the lines they
+// need.
 stud::ui::GameActivity* g_activity = nullptr;
 // What this session runs, so a restart opens the same one.
 stud::ui::client::Product g_product = stud::ui::client::Product::Player;
+// The write end of the client's output pipe, handed to it as stdout and
+// stderr; closed here once it has started.
+int g_output_write = -1;
 
-void forward_client_output(bool flush_partial) {
-    g_client_output += g_client->readAll();
-    qsizetype start = 0;
-    for (;;) {
-        const qsizetype end = g_client_output.indexOf('\n', start);
-        if (end < 0 && !(flush_partial && start < g_client_output.size())) break;
-        QByteArray line = g_client_output.mid(start, end < 0 ? -1 : end - start);
-        if (g_activity != nullptr) g_activity->line(line);
-        if (!g_deep_link.isEmpty()) line.replace(g_deep_link, "<deep link>");
-        const std::string scrubbed =
-            stud::ui::scrub_engine_log_line(std::string_view(line.constData(), line.size()));
-        std::fwrite(scrubbed.data(), 1, scrubbed.size(), stdout);
-        std::fputc('\n', stdout);
-        if (end < 0) {
-            start = g_client_output.size();
-            break;
-        }
-        start = end + 1;
+void forward_line(QByteArray line) {
+    if (g_activity != nullptr && stud::ui::GameActivity::wants(line)) {
+        QMetaObject::invokeMethod(qApp, [line] {
+            if (g_activity != nullptr) g_activity->line(line);
+        }, Qt::QueuedConnection);
     }
-    g_client_output.remove(0, start);
-    std::fflush(stdout);
+    if (!g_deep_link.isEmpty()) line.replace(g_deep_link, "<deep link>");
+    const std::string scrubbed =
+        stud::ui::scrub_engine_log_line(std::string_view(line.constData(), line.size()));
+    std::fwrite(scrubbed.data(), 1, scrubbed.size(), stdout);
+    std::fputc('\n', stdout);
+}
+
+// The client writes its log as it runs, from whichever of its threads has
+// something to say, and a write into a full pipe waits. So the pipe is as
+// large as the system allows, and a thread of its own drains it: the
+// interface thread being busy never holds up a frame of the client's.
+// False when the pipe cannot be made; the client then writes to this
+// process's own stdout, unscrubbed by nothing but that.
+bool start_output_reader() {
+    int fds[2];
+    if (::pipe2(fds, O_CLOEXEC) != 0) return false;
+    if (std::ifstream max_size{"/proc/sys/fs/pipe-max-size"}) {
+        int bytes = 0;
+        if (max_size >> bytes && bytes > 0) ::fcntl(fds[0], F_SETPIPE_SZ, bytes);
+    }
+    g_output_write = fds[1];
+    std::thread([read_fd = fds[0]] {
+        QByteArray pending;
+        char buffer[1 << 16];
+        for (;;) {
+            const ssize_t got = ::read(read_fd, buffer, sizeof(buffer));
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) break;
+            pending.append(buffer, got);
+            qsizetype start = 0;
+            for (qsizetype end; (end = pending.indexOf('\n', start)) >= 0; start = end + 1) {
+                forward_line(pending.mid(start, end - start));
+            }
+            pending.remove(0, start);
+            std::fflush(stdout);
+        }
+        if (!pending.isEmpty()) forward_line(pending);
+        std::fflush(stdout);
+        ::close(read_fd);
+    }).detach();
+    return true;
 }
 
 // One Stud at a time, by a lock this process holds for the whole session.
@@ -479,12 +509,15 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     g_client->setProcessEnvironment(client_environment(settings, product));
     g_client->setStandardInputFile(QProcess::nullDevice());
     // Through this process, scrubbed, into the session log and terminal.
-    g_client->setProcessChannelMode(QProcess::MergedChannels);
     if (deep_link) g_deep_link = deep_link->toUtf8();
-    QObject::connect(g_client, &QProcess::readyReadStandardOutput, qApp,
-                     [] { forward_client_output(false); });
+    g_client->setProcessChannelMode(QProcess::ForwardedChannels);
+    if (start_output_reader()) {
+        g_client->setChildProcessModifier([fd = g_output_write] {
+            ::dup2(fd, STDOUT_FILENO);
+            ::dup2(fd, STDERR_FILENO);
+        });
+    }
     QObject::connect(g_client, &QProcess::finished, qApp, [](int code, QProcess::ExitStatus status) {
-        forward_client_output(true);
         const bool crashed =
             !g_stop_requested && (status == QProcess::CrashExit || code != 0);
         std::printf("stud: Roblox exited (%s %d)\n",
@@ -501,6 +534,12 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
                 qPrintable(build->upload), deep_link ? " with a deep link" : "");
     std::fflush(stdout);
     g_client->start();
+    // The client holds the pipe's write end now; with this copy closed, the
+    // reader sees the end of its output when it and its children are gone.
+    if (g_output_write >= 0) {
+        ::close(g_output_write);
+        g_output_write = -1;
+    }
     if (!g_client->waitForStarted(10000)) {
         open_settings_for_launch_failure(
             QStringLiteral("Roblox didn't start: %1").arg(g_client->errorString()));
