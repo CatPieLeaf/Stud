@@ -106,6 +106,7 @@ add_subdirectory(stud-config)
 if(STUD_BUILD_ROSEMARY)
     find_program(STUD_CARGO cargo REQUIRED)
     find_package(Git REQUIRED)
+    find_program(STUD_PATCH patch REQUIRED)
     include(ExternalProject)
     set(STUD_ROSEMARY_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rosemary-target")
     ExternalProject_Add(rosemary
@@ -114,13 +115,22 @@ if(STUD_BUILD_ROSEMARY)
         GIT_SHALLOW    ON
         # Upstream's newest, every build, and Stud's patch on top of it: the
         # switches the launcher sets for title, icon, tray and background
-        # frame rate (packaging/rosemary/stud-launcher.patch). Reset first,
-        # so a rebuild applies the patch to a clean tree.
+        # frame rate (packaging/rosemary/stud-launcher.patch). Reset and
+        # cleaned first, so a rebuild applies the patches to a clean tree.
         UPDATE_COMMAND "${GIT_EXECUTABLE}" fetch --depth 1 origin main
                COMMAND "${GIT_EXECUTABLE}" reset --hard -q FETCH_HEAD
         PATCH_COMMAND "${GIT_EXECUTABLE}" reset --hard -q HEAD
+              COMMAND "${GIT_EXECUTABLE}" clean -fdq
               COMMAND "${GIT_EXECUTABLE}" apply
                       "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/stud-launcher.patch"
+              # Open upstream pull requests Ginrose ships too, merged into one:
+              # idle polling backoff (#226), cursor sync (#165), video and
+              # audio decoding (#227, with #223 and #224), drag and drop (#225).
+              COMMAND "${STUD_PATCH}" -p1 -s -i
+                      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/upstream-prs.patch"
+              # ...and the binary files a text patch cannot carry.
+              COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/rosemary/files" <SOURCE_DIR>
         CONFIGURE_COMMAND ""
         BUILD_COMMAND "${STUD_CARGO}" build --release --bin rosemary
                       --manifest-path <SOURCE_DIR>/Cargo.toml
