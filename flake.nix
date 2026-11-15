@@ -27,7 +27,7 @@
 
           src = pkgs.fetchurl {
             url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.0.tar.gz";
-            sha256 = "a10ed5340e5879ab961b5bdf0db235320abb8ae45675407ebf42669f9bb73e45";
+            sha256 = "dfd24b324c06b3fc6bea9e0c285e923a4b0d8a7e12d81b970d808021f9ba37db";
           };
 
           nlohmann_json = pkgs.fetchFromGitHub {
