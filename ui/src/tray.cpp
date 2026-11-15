@@ -172,7 +172,7 @@ void Tray::showUpdateAvailable(const QString& latestVersion) {
     if (icon_ == nullptr || menu_ == nullptr || updateAction_ != nullptr) return;
     updateAction_ = new QAction(QStringLiteral("\u26a0\ufe0f Update Stud"), menu_);
     connect(updateAction_, &QAction::triggered, this, [] {
-        QDesktopServices::openUrl(QUrl(UpdateCheck::releasesUrl()));
+        UpdateCheck::open();
     });
     addUpdateEntry(updateAction_, QStringLiteral("Stud: version %1 is available").arg(latestVersion));
 }

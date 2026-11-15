@@ -33,6 +33,13 @@ public:
     static bool updateAvailable();
     static QString latestVersion();
 
+    // Gets the newest Stud. An AppImage updates itself in place: it
+    // downloads the release's AppImage, checks it against the SHA-1 its
+    // .zsync records, and puts it where the running one is, for the next
+    // start. Any other package opens the release page, its package manager
+    // being what updates it.
+    static void open();
+
     // The one instance, so both the tray and Settings can connect.
     static UpdateCheck* instance();
 

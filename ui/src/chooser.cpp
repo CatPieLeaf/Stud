@@ -330,7 +330,8 @@ std::optional<client::Product> choose_product() {
     // latest release.
     const auto mark_outdated = [version] {
         version->setTextFormat(Qt::RichText);
-        version->setOpenExternalLinks(true);
+        version->setOpenExternalLinks(false);
+        QObject::connect(version, &QLabel::linkActivated, version, [](const QString&) { UpdateCheck::open(); });
         version->setText(QStringLiteral("<a href=\"%1\" style=\"color:#d62f2f; text-decoration:underline;\">"
                                         "Version %2</a>")
                              .arg(UpdateCheck::releasesUrl(), QStringLiteral(STUD_VERSION)));

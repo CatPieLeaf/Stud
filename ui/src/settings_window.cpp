@@ -455,7 +455,14 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // so it has to render a link and open it.
     statusLabel_->setTextFormat(Qt::RichText);
     statusLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    statusLabel_->setOpenExternalLinks(true);
+    statusLabel_->setOpenExternalLinks(false);
+    connect(statusLabel_, &QLabel::linkActivated, this, [](const QString& link) {
+        if (link == UpdateCheck::releasesUrl()) {
+            UpdateCheck::open();
+        } else {
+            QDesktopServices::openUrl(QUrl(link));
+        }
+    });
     layout->addWidget(statusLabel_);
 
     // Ask GitHub whether there is a newer Stud. The tray may have asked already, in which
