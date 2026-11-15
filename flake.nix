@@ -123,7 +123,7 @@
           meta = {
             description = "An Unofficial Roblox Launcher for Linux";
             homepage = "https://github.com/CatPieLeaf/Stud";
-            license = lib.licenses.agpl3Only;
+            license = lib.licenses.agpl3Plus;
             sourceProvenance = with lib.sourceTypes; [
               fromSource
               binaryNativeCode

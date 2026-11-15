@@ -37,7 +37,7 @@ set(CPACK_RPM_PACKAGE_DESCRIPTION
 "Stud runs the real Roblox macOS client on a Linux desktop, on
 Rosemary. It downloads the client from Roblox's own servers and runs it
 unmodified. Roblox is not included in this package.")
-set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later AND GPL-3.0-only AND LGPL-3.0-or-later AND MIT AND BSD-3-Clause")
+set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # Autoreqprov is off below, so every library is named here, by SONAME where

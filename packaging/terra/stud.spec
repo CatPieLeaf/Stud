@@ -9,7 +9,7 @@ Version:        1.2.14
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
-License:        AGPL-3.0-or-later AND GPL-3.0-only AND LGPL-3.0-or-later AND MIT AND BSD-3-Clause
+License:        AGPL-3.0-or-later
 URL:            https://github.com/CatPieLeaf/Stud
 Source0:        %{url}/releases/download/%{version}/stud-%{version}-x86_64.tar.zst
 Packager:       CatPieLeaf <catpieleaf@proton.me>

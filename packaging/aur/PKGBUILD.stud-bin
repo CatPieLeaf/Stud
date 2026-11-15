@@ -31,7 +31,7 @@ pkgrel=1
 pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
-license=('AGPL-3.0-or-later' 'GPL-3.0-only' 'LGPL-3.0-or-later' 'MIT' 'BSD-3-Clause')
+license=('AGPL-3.0-or-later')
 provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname")
 # The same list as the source PKGBUILD, and it has to stay that way: a
