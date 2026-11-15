@@ -3,7 +3,9 @@
 #include "stud/stud_paths.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -58,6 +60,22 @@ const ProductInfo& info(Product product) {
 }
 
 QString current_marker(Product product) { return clients_dir(product) + QStringLiteral("/current"); }
+
+// The manifest of a build's code, written when it is unpacked; beside the
+// bundle, not in it.
+QString integrity_file(Product product, const QString& upload) {
+    return clients_dir(product) + "/" + upload + QStringLiteral("/.stud-integrity");
+}
+
+enum class Integrity { Intact, Changed, Unknown };
+
+// Whether the installed build's code is still what was unpacked. Unknown for
+// a build installed before Stud kept a manifest.
+Integrity check_integrity(Product product, const Build& build) {
+    QFile recorded(integrity_file(product, build.upload));
+    if (!recorded.open(QIODevice::ReadOnly)) return Integrity::Unknown;
+    return recorded.readAll() == code_manifest(build.app) ? Integrity::Intact : Integrity::Changed;
+}
 
 QNetworkRequest request_for(const QString& url) {
     QNetworkRequest request{QUrl(url)};
@@ -241,15 +259,26 @@ std::optional<Build> installed(Product product) {
 std::optional<Build> ensure_current(Product product, const Progress& progress, QString* error) {
     const QString name = display_name(product);
     const std::optional<Build> have = installed(product);
+    // Only a client as Roblox shipped it runs. A changed one is downloaded
+    // again; so is one from before Stud kept a record, when Roblox can be
+    // reached, since nothing says what it should be.
+    const Integrity integrity = have ? check_integrity(product, *have) : Integrity::Intact;
+    if (integrity == Integrity::Changed) {
+        std::fprintf(stderr, "stud: %s %s was changed since it was installed\n", qPrintable(name),
+                     qPrintable(have->upload));
+    }
     if (progress) progress(QStringLiteral("Checking for %1 updates").arg(name), -1);
     const auto [upload, version] = served_build(product);
     if (upload.isEmpty()) {
-        // Offline, or Roblox's API did not answer: what is installed runs.
-        if (have) return have;
-        *error = QStringLiteral("Could not reach Roblox to download %1.").arg(name);
+        // Offline, or Roblox's API did not answer: what is installed runs,
+        // unless it was changed.
+        if (have && integrity != Integrity::Changed) return have;
+        *error = have ? QStringLiteral("%1 was changed since it was installed, and Roblox could not "
+                                       "be reached to download it again.").arg(name)
+                      : QStringLiteral("Could not reach Roblox to download %1.").arg(name);
         return std::nullopt;
     }
-    if (have && have->upload == upload) return have;
+    if (have && have->upload == upload && integrity == Integrity::Intact) return have;
 
     QDir().mkpath(clients_dir(product));
     const QString zip_path = clients_dir(product) + "/" + upload + ".zip";
@@ -267,7 +296,7 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     }
     if (!fetched) {
         QFile::remove(zip_path);
-        if (have) return have;
+        if (have && integrity != Integrity::Changed) return have;
         *error = QStringLiteral("Could not download %1.").arg(name);
         return std::nullopt;
     }
@@ -289,12 +318,18 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     }
     if (!in_place) {
         QDir(staging).removeRecursively();
-        if (have) return have;
+        if (have && integrity != Integrity::Changed) return have;
         *error = QStringLiteral("Could not unpack %1: %2").arg(name)
                      .arg(extract_error.isEmpty() ? QStringLiteral("unexpected layout") : extract_error);
         return std::nullopt;
     }
 
+    QSaveFile record(integrity_file(product, upload));
+    if (!record.open(QIODevice::WriteOnly) ||
+        record.write(code_manifest(final_dir + "/" + info(product).app)) < 0 || !record.commit()) {
+        *error = QStringLiteral("Could not record the installed %1.").arg(name);
+        return std::nullopt;
+    }
     QSaveFile marker(current_marker(product));
     if (!marker.open(QIODevice::WriteOnly) ||
         marker.write((upload + "\n" + version + "\n").toUtf8()) < 0 || !marker.commit()) {
@@ -305,6 +340,34 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     std::printf("stud: %s %s (%s) installed\n", qPrintable(name), qPrintable(version),
                 qPrintable(upload));
     return installed(product);
+}
+
+QByteArray code_manifest(const QString& app) {
+    const QString contents = app + QStringLiteral("/Contents");
+    QStringList files;
+    for (const QString& root : {contents + QStringLiteral("/MacOS"), contents + QStringLiteral("/_CodeSignature")}) {
+        QDirIterator it(root, QDir::Files | QDir::System | QDir::Hidden, QDirIterator::Subdirectories);
+        while (it.hasNext()) files << it.next();
+    }
+    if (files.isEmpty()) return {};
+    files << contents + QStringLiteral("/Info.plist");
+    const QString settings = contents + QStringLiteral("/MacOS/ClientSettings/");
+    QStringList lines;
+    for (const QString& file : files) {
+        if (file.startsWith(settings)) continue;
+        const QFileInfo fi(file);
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        if (fi.isSymLink()) {
+            hash.addData(QFile::encodeName(fi.symLinkTarget()));
+        } else {
+            QFile in(file);
+            if (!in.open(QIODevice::ReadOnly) || !hash.addData(&in)) continue;
+        }
+        lines << QString::fromLatin1(hash.result().toHex()) + QStringLiteral("  ") +
+                     file.mid(app.size() + 1);
+    }
+    lines.sort();
+    return (lines.join('\n') + '\n').toUtf8();
 }
 
 QString find_rosemary() {

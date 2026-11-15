@@ -63,6 +63,13 @@ QString executable(const Build& build);
 // that would land outside it. False, with `error` set, on failure.
 bool extract_zip(const QString& zip_path, const QString& dir, QString* error);
 
+// The client's code, as Roblox shipped it: one "<sha256>  <path>" line per
+// file of the bundle's Contents/MacOS, Contents/_CodeSignature and its
+// Info.plist, sorted, paths relative to the bundle. What Stud itself writes
+// inside the bundle is left out: ClientSettings (the FFlags), and Resources,
+// which customizations change on purpose. Empty when the bundle has no code.
+QByteArray code_manifest(const QString& app);
+
 // Writes ClientAppSettings.json inside the build: `flags` as given, an empty
 // object removing every override.
 bool write_app_settings(const Build& build, const QJsonObject& flags, QString* error);

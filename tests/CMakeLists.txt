@@ -35,6 +35,12 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_log_archive_test PRIVATE stud_ui_log_archive)
     add_test(NAME log_archive_test COMMAND stud_log_archive_test)
 
+    # The client's code manifest: changed code noticed, FFlags and
+    # customizations ignored.
+    add_executable(stud_client_integrity_test client_integrity_test.cpp)
+    target_link_libraries(stud_client_integrity_test PRIVATE stud_ui_mac_client)
+    add_test(NAME client_integrity_test COMMAND stud_client_integrity_test)
+
     # Unpacking the client: symbolic links, and nothing outside the folder.
     add_executable(stud_zip_extract_test zip_extract_test.cpp)
     target_link_libraries(stud_zip_extract_test PRIVATE stud_ui_mac_client)
