@@ -1,8 +1,8 @@
 {
   "lock_version": "1.0",
   "root": {
-    "origin": "local.cpak/package/fbe035521a4897d2",
-    "manifest_sha256": "fbe035521a4897d28f872df7311778d641607de7a49b5c25fa34d8b1835ffe04",
+    "origin": "local.cpak/package/9a78496caa4a8ce8",
+    "manifest_sha256": "9a78496caa4a8ce895256bc71b2cf0959b1ddbcdbd816c388c63e3330057ca37",
     "image": "ghcr.io/catpieleaf/stud@sha256:60f98a9d5045fcb384d28ae51c09c9b766f0610fc661fc643db23fbc3885b8bc",
     "resolved_image": "ghcr.io/catpieleaf/stud@sha256:60f98a9d5045fcb384d28ae51c09c9b766f0610fc661fc643db23fbc3885b8bc",
     "manifest": {
@@ -58,25 +58,6 @@
         "sessionBus": {
           "talk": [
             {
-              "name": "org.kde.kwalletd6",
-              "path": "/modules/kwalletd6",
-              "interface": "org.kde.KWallet",
-              "members": [
-                "close",
-                "createFolder",
-                "entryType",
-                "hasEntry",
-                "hasFolder",
-                "networkWallet",
-                "open",
-                "readEntry",
-                "readPassword",
-                "removeEntry",
-                "writeEntry",
-                "writePassword"
-              ]
-            },
-            {
               "name": "org.kde.StatusNotifierWatcher",
               "path": "/StatusNotifierWatcher",
               "interface": "org.kde.StatusNotifierWatcher",
@@ -120,7 +101,7 @@
         ],
         "network": true,
         "process": false,
-        "userNamespaces": true,
+        "userNamespaces": false,
         "memoryMaxMB": 0,
         "cpuQuota": 0,
         "pidsMax": 0,
