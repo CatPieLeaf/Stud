@@ -16,10 +16,12 @@ The permission
   convey the resulting work.
 
   "The Roblox Engine" means the software contained in the Roblox
-  application package published by Roblox Corporation, and any library
-  loaded from it, software under terms incompatible with the GNU
-  Affero General Public License, which Stud neither includes nor
-  distributes, and which the person running Stud supplies themselves.
+  application packages published by Roblox Corporation, among them the
+  Roblox player and Roblox Studio, and any library loaded from them:
+  software under terms incompatible with the GNU Affero General Public
+  License, which Stud neither includes nor distributes, and which is
+  downloaded from Roblox Corporation's own servers onto the machine of
+  the person running Stud.
 
   You must still comply with the GNU Affero General Public License in
   all respects for all of the code used other than the Roblox Engine.

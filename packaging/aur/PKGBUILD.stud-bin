@@ -50,9 +50,9 @@ depends=(
   'glibc'
   'gcc-libs'
   'hicolor-icon-theme'
+  'ffmpeg'
 )
 optdepends=(
-  'ffmpeg: video playback inside games (FFmpeg 8 or newer, loaded at runtime)'
   'gamemode: the CPU in its performance mode while Roblox runs'
   'mangohud: the performance overlay Stud can switch on in Settings'
 )

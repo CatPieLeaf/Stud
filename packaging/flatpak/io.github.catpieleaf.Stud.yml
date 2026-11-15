@@ -49,9 +49,17 @@ finish-args:
   # No filesystem access: customizations and FFlag imports are picked
   # through the file chooser portal.
 
-# No FFmpeg extension: Rosemary needs FFmpeg 8 or newer, and neither the
-# runtime nor the ffmpeg-full extension for its freedesktop base carries one
-# yet, so the client plays no video in the Flatpak until they do.
+# FFmpeg with H.264, for video in experiences: the runtime's own leaves the
+# patented codecs out. Rosemary opens whichever release is there. `version`
+# must match the freedesktop base under the KDE runtime above: check both
+# when either is bumped.
+add-extensions:
+  org.freedesktop.Platform.ffmpeg-full:
+    directory: lib/ffmpeg
+    version: '25.08'
+    add-ld-path: .
+    autodownload: true
+    autodelete: false
 
 modules:
   # Rosemary needs SDL 3.4 or newer; the runtime's SDL3 is older. It opens

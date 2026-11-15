@@ -160,7 +160,7 @@ sudo apt install cmake ninja-build build-essential git glslc \
 Ubuntu's cargo is older than Rosemary needs; install Rust with [rustup](https://rustup.rs) instead.
 </details>
 
-Rosemary needs Rust 1.99 or newer, and SDL 3.4 at runtime; FFmpeg 8 or newer, if present, plays in-game video. See [its README](https://github.com/microlift/rosemary#building).
+Rosemary needs Rust 1.99 or newer, and SDL 3.4 and FFmpeg at runtime. See [its README](https://github.com/microlift/rosemary#building).
 
 ### 2 - Build and run
 

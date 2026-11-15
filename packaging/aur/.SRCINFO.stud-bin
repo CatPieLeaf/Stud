@@ -25,7 +25,7 @@ pkgbase = stud-bin
 	depends = glibc
 	depends = gcc-libs
 	depends = hicolor-icon-theme
-	optdepends = ffmpeg: video playback inside games (FFmpeg 8 or newer, loaded at runtime)
+	depends = ffmpeg
 	optdepends = gamemode: the CPU in its performance mode while Roblox runs
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	provides = stud=1.2.14

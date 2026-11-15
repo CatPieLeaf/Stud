@@ -25,9 +25,9 @@ possible; it is a much larger manifest.
 - **wl-clipboard**, for copying a server link from the tray menu.
 - **The launcher**, with `STUD_BUILD_ROSEMARY=OFF`.
 
-There is no FFmpeg: Rosemary needs FFmpeg 8 or newer, and neither the
-runtime nor the `ffmpeg-full` extension for its freedesktop base carries
-one yet, so the client plays no video in the Flatpak until they do.
+FFmpeg comes from the `org.freedesktop.Platform.ffmpeg-full` extension,
+mounted at `/app/lib/ffmpeg`, because the runtime's own leaves H.264 out.
+Its `version` follows the freedesktop base under the KDE runtime.
 
 ## The one placeholder
 

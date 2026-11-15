@@ -28,6 +28,7 @@ BULLET = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])\s+(.*)")
 
 def plain(text: str) -> str:
     text = re.sub(r"<!--.*?-->", "", text)
+    text = re.sub(r"<[^>]*>", "", text)  # inline HTML, such as an image table
     text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)  # [text](url) -> text
     text = re.sub(r"\*\*|__|`", "", text)
     return " ".join(text.split())

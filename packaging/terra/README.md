@@ -45,6 +45,6 @@ during a build. `packaging/aur/README.md` explains this at length for the
 same reason.
 
 Rosemary opens SDL3 and FFmpeg by name rather than linking them, so rpm's
-scan of the binaries cannot see either: the spec names them itself, SDL3 3.4
-as required and FFmpeg 8 or newer as recommended, since without it the client only
-plays no video.
+scan of the binaries cannot see either: the spec requires both itself, SDL3
+3.4 or newer and FFmpeg by the `libavcodec-free` and `libavutil-free` names
+Fedora's build and RPM Fusion's both provide.
