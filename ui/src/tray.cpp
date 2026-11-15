@@ -1,3 +1,4 @@
+#include "project_links.h"
 #include "tray.h"
 
 #include "game_activity.h"
@@ -28,6 +29,11 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QIcon>
 #include <QAction>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QVBoxLayout>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
@@ -270,27 +276,34 @@ void Tray::showAbout() {
     // One card, however many times the entry is clicked. QMessageBox::about
     // builds a new dialog every call, so a few clicks left a stack of
     // identical windows, the same reason Settings is a singleton.
-    static QPointer<QMessageBox> about;
+    static QPointer<QDialog> about;
     if (about.isNull()) {
-        about = new QMessageBox(QMessageBox::NoIcon, QStringLiteral("About Stud"),
-                                QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
-                                               "Runs Roblox's real, unmodified macOS "
-                                               "client on Linux.<br><br>"
-                                               "<a href=\"https://github.com/CatPieLeaf/Stud\">"
-                                               "CatPieLeaf/Stud</a>"),
-                                QMessageBox::Ok);
+        about = new QDialog();
+        about->setWindowTitle(QStringLiteral("About Stud"));
         about->setAttribute(Qt::WA_DeleteOnClose);
-        about->setTextFormat(Qt::RichText);
-        about->setTextInteractionFlags(Qt::TextBrowserInteraction);
-        // The ICON, not the wordmark. A dialog's icon slot is square, and a
-        // wordmark is wide: fitting one into 96 square leaves a sliver a
-        // few pixels tall. stud-logo-color.png is
-        // the square one, and is already what the tray and the window use.
-        const QPixmap icon(QStringLiteral(":/stud-logo-color.png"));
-        if (!icon.isNull()) {
-            about->setIconPixmap(
-                icon.scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        }
+        auto* layout = new QVBoxLayout(about);
+        auto* top = new QHBoxLayout();
+        // The ICON, not the wordmark: the square one the tray and the window
+        // use, where a wide wordmark would shrink to a sliver.
+        auto* icon = new QLabel(about);
+        const QPixmap logo(QStringLiteral(":/stud-logo-color.png"));
+        if (!logo.isNull()) icon->setPixmap(logo.scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        top->addWidget(icon, 0, Qt::AlignTop);
+        auto* text = new QLabel(QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
+                                               "Runs Roblox's real, unmodified macOS "
+                                               "client on Linux."),
+                                about);
+        text->setTextFormat(Qt::RichText);
+        top->addWidget(text, 1);
+        layout->addLayout(top);
+        auto* bottom = new QHBoxLayout();
+        bottom->addWidget(github_button(about));
+        bottom->addWidget(discord_button(about));
+        bottom->addStretch();
+        auto* ok = new QDialogButtonBox(QDialogButtonBox::Ok, about);
+        QObject::connect(ok, &QDialogButtonBox::accepted, about, &QDialog::accept);
+        bottom->addWidget(ok);
+        layout->addLayout(bottom);
     }
     about->show();
     about->raise();

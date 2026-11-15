@@ -35,9 +35,13 @@ what it is not, and what you should know before you use it.
 
 Roblox is a trademark of Roblox Corporation. Apple and macOS are
 trademarks of Apple Inc. Vulkan is a trademark of the Khronos Group.
+GitHub is a trademark of GitHub, Inc., and Discord of Discord Inc.
 Other names are the property of their owners. They are used here only to
-say truthfully what Stud works with. No endorsement is claimed or implied,
-and Stud uses no logo, artwork or branding belonging to any of them.
+say truthfully what Stud works with. No endorsement is claimed or implied.
+
+The only logos Stud shows that are not its own are GitHub's and Discord's,
+on the buttons that link to Stud's own repository and Discord server. The
+drawings are from Simple Icons (CC0 1.0), shown in one colour.
 
 ## 3. Your Roblox account
 

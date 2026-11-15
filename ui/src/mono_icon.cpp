@@ -64,4 +64,10 @@ QIcon mono_icon(const char* name, QStyle::StandardPixmap fallback) {
     return QIcon(new MonoIconEngine(source));
 }
 
+QIcon mono_resource_icon(const QString& path) {
+    const QIcon source(path);
+    if (source.isNull()) return {};
+    return QIcon(new MonoIconEngine(source));
+}
+
 }  // namespace stud::ui

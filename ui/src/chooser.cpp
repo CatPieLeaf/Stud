@@ -1,3 +1,4 @@
+#include "project_links.h"
 #include "mono_icon.h"
 #include "chooser.h"
 
@@ -341,10 +342,20 @@ std::optional<client::Product> choose_product() {
     UpdateCheck::start();
     about->addWidget(by, 0, Qt::AlignRight);
     about->addWidget(version, 0, Qt::AlignRight);
-    auto* notes = new QPushButton(QStringLiteral("Release notes"), &dialog);
+    auto* notes = new QPushButton(&dialog);
     notes->setIcon(mono_icon("help-about", QStyle::SP_MessageBoxInformation));
+    notes->setToolTip(QStringLiteral("Release notes"));
     QObject::connect(notes, &QPushButton::clicked, &dialog, [&dialog] { show_release_notes(&dialog); });
-    about->addWidget(notes, 0, Qt::AlignRight);
+    auto* discord = discord_button(&dialog, /*labelled=*/false);
+    // Two icon buttons side by side, square and the same size.
+    const int side = notes->sizeHint().height();
+    notes->setFixedSize(side, side);
+    discord->setFixedSize(side, side);
+    auto* links = new QHBoxLayout();
+    links->addStretch();
+    links->addWidget(discord);
+    links->addWidget(notes);
+    about->addLayout(links);
     about->addStretch();
 
     auto* top = new QHBoxLayout();

@@ -1,3 +1,4 @@
+#include "project_links.h"
 #include "mono_icon.h"
 #include "settings_window.h"
 
@@ -387,14 +388,17 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         "<p><b>Version " STUD_VERSION "</b></p>"
         "<p>Runs Roblox's real, unmodified macOS client<br>"
         "on Linux.</p>"
-        "<p><a href=\"https://github.com/CatPieLeaf/Stud\">"
-        "CatPieLeaf/Stud</a></p>"
         "</div>",
         this);
-    aboutText->setOpenExternalLinks(true);
     aboutText->setTextFormat(Qt::RichText);
     aboutText->setAlignment(Qt::AlignCenter);
     about->addWidget(aboutText);
+    auto* links = new QHBoxLayout();
+    links->addStretch();
+    links->addWidget(github_button(this));
+    links->addWidget(discord_button(this));
+    links->addStretch();
+    about->addLayout(links);
     about->addStretch();
 
     categories->setMaximumWidth(categories->sizeHintForColumn(0) + 2 * categories->frameWidth() +

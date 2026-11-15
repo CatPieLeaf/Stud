@@ -17,4 +17,9 @@ namespace stud::ui {
 // whichever is found is repainted in one colour, keeping only its shape.
 QIcon mono_icon(const char* name, QStyle::StandardPixmap fallback);
 
+// Stud's own picture at `path` (a resource), drawn the same way: only its
+// shape is kept, in the palette's button-text colour. For logos no icon
+// theme has, such as GitHub's and Discord's.
+QIcon mono_resource_icon(const QString& path);
+
 }  // namespace stud::ui
