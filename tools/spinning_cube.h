@@ -232,25 +232,33 @@ class SpinningCube {
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
         gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof indices, indices, GL_STATIC_DRAW);
 
-        textured_ = face != nullptr && face_size > 0 && gl.GenTextures != nullptr &&
-                    gl.BindTexture != nullptr && gl.TexImage2D != nullptr &&
-                    gl.TexParameteri != nullptr && gl.Uniform1i != nullptr;
-        if (textured_) {
-            gl.GenTextures(1, &texture_);
-            gl.BindTexture(GL_TEXTURE_2D, texture_);
-            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, face_size, face_size, 0, GL_LUMINANCE,
-                          GL_UNSIGNED_BYTE, face);
-            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            gl.UseProgram(program_);
-            gl.Uniform1i(gl.GetUniformLocation(program_, "face"), 0);
-            gl.Uniform1i(uniform_textured_, 1);
-        }
+        set_face(gl, face, face_size);
 
         gl.Enable(GL_DEPTH_TEST);
         return true;
+    }
+
+    // The texture on every face, `face_size` square, one byte per texel; null
+    // for plain colours. Callable again at any time, with the cube's context
+    // current, to put a texture on or replace it.
+    void set_face(const CubeGl& gl, const unsigned char* face, int face_size) {
+        const bool can = gl.GenTextures != nullptr && gl.BindTexture != nullptr &&
+                         gl.TexImage2D != nullptr && gl.TexParameteri != nullptr &&
+                         gl.Uniform1i != nullptr;
+        if (!can) return;
+        textured_ = face != nullptr && face_size > 0;
+        gl.UseProgram(program_);
+        gl.Uniform1i(uniform_textured_, textured_ ? 1 : 0);
+        if (!textured_) return;
+        if (texture_ == 0) gl.GenTextures(1, &texture_);
+        gl.BindTexture(GL_TEXTURE_2D, texture_);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, face_size, face_size, 0, GL_LUMINANCE,
+                      GL_UNSIGNED_BYTE, face);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gl.Uniform1i(gl.GetUniformLocation(program_, "face"), 0);
     }
 
     // seconds drives the spin; one turn every four seconds, as in the

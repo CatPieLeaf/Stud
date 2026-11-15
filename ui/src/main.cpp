@@ -15,6 +15,7 @@
 
 #include "desktop_entry.h"
 #include "chooser.h"
+#include "cube_gl.h"
 #include "cpu_cores.h"
 #include "diagnose.h"
 #include "game_activity.h"
@@ -650,12 +651,17 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     std::printf("stud: rosemary %s\n", qPrintable(rosemary));
 
     QString error;
+    const auto had = stud::ui::client::installed(stud::ui::client::Product::Player);
     const auto build = stud::ui::client::ensure_current(product, progress, &error);
     if (stud::ui::loading_cancelled()) return false;
     if (!build) {
         open_settings_for_launch_failure(error);
         return false;
     }
+    // The cubes' stud comes from the installed Player: a new one means
+    // every cube on screen takes it again.
+    const auto has = stud::ui::client::installed(stud::ui::client::Product::Player);
+    if (has && (!had || had->upload != has->upload)) cube_gl_client_changed();
     if (!stud::ui::client::ensure_prefix(rosemary, progress, &error)) {
         open_settings_for_launch_failure(error);
         return false;

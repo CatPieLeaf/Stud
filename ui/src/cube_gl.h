@@ -18,3 +18,8 @@ void cube_gl_draw(CubeGlState* state, float seconds, int width, int height);
 
 // Frees the state; the GL objects go with their context.
 void cube_gl_destroy(CubeGlState* state);
+
+// Every cube takes its stud from the one place, the installed Roblox Player's
+// studs texture, read once and shared. Called when a download has finished:
+// every cube on screen picks the stud up again on its next frame.
+void cube_gl_client_changed();

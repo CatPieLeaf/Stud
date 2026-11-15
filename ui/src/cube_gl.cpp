@@ -1,6 +1,7 @@
 #include "cube_gl.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -13,6 +14,8 @@
 struct CubeGlState {
     stud::tools::CubeGl gl{};
     stud::tools::SpinningCube cube;
+    // Which stud this cube's texture holds; see shared_stud().
+    unsigned generation = 0;
 };
 
 namespace {
@@ -26,9 +29,14 @@ namespace {
 // installed yet, and the cube keeps its plain colours.
 std::vector<unsigned char> load_one_stud(int& size) {
     const auto build = stud::ui::client::installed(stud::ui::client::Product::Player);
-    if (!build) return {};
-    std::ifstream in((build->app + "/Contents/Resources/PlatformContent/pc/textures/studs.dds").toStdString(),
-                     std::ios::binary);
+    if (!build) {
+        std::printf("stud: no Roblox Player installed yet, the cube has no stud\n");
+        return {};
+    }
+    const QString path = build->app + "/Contents/Resources/PlatformContent/pc/textures/studs.dds";
+    std::printf("stud: the cube's stud is from Roblox Player %s, %s\n", qPrintable(build->version),
+                qPrintable(path));
+    std::ifstream in(path.toStdString(), std::ios::binary);
     const std::vector<unsigned char> d((std::istreambuf_iterator<char>(in)),
                                        std::istreambuf_iterator<char>());
     auto u32 = [&d](size_t at) {
@@ -86,6 +94,27 @@ std::vector<unsigned char> load_one_stud(int& size) {
     return stud;
 }
 
+// The one stud every cube draws: read from disk the first time a cube asks,
+// and again only after cube_gl_client_changed(). All on the GUI thread, where
+// the cubes draw and the download reports.
+unsigned g_client_generation = 1;
+
+struct SharedStud {
+    unsigned generation = 0;
+    std::vector<unsigned char> pixels;
+    int size = 0;
+};
+
+const SharedStud& shared_stud() {
+    static SharedStud stud;
+    if (stud.generation != g_client_generation) {
+        stud.size = 0;
+        stud.pixels = load_one_stud(stud.size);
+        stud.generation = g_client_generation;
+    }
+    return stud;
+}
+
 }  // namespace
 
 CubeGlState* cube_gl_create(void* (*resolve)(const char* name, void* data), void* data) {
@@ -133,9 +162,9 @@ CubeGlState* cube_gl_create(void* (*resolve)(const char* name, void* data), void
     optional(g_gl.TexImage2D, "glTexImage2D");
     optional(g_gl.TexParameteri, "glTexParameteri");
     optional(g_gl.Uniform1i, "glUniform1i");
-    int size = 0;
-    const std::vector<unsigned char> stud = load_one_stud(size);
-    if (!state->cube.init(g_gl, stud.empty() ? nullptr : stud.data(), size)) {
+    const SharedStud& stud = shared_stud();
+    state->generation = stud.generation;
+    if (!state->cube.init(g_gl, stud.pixels.empty() ? nullptr : stud.pixels.data(), stud.size)) {
         delete state;
         return nullptr;
     }
@@ -143,9 +172,17 @@ CubeGlState* cube_gl_create(void* (*resolve)(const char* name, void* data), void
 }
 
 void cube_gl_draw(CubeGlState* state, float seconds, int width, int height) {
+    // A download finished since this cube took its stud: take it again.
+    if (state->generation != g_client_generation) {
+        const SharedStud& stud = shared_stud();
+        state->cube.set_face(state->gl, stud.pixels.empty() ? nullptr : stud.pixels.data(), stud.size);
+        state->generation = stud.generation;
+    }
     // 2.1: the closest the camera can sit with no corner ever leaving the
     // drawable, measured over a full turn (90% of the half-width at most).
     state->cube.draw(state->gl, seconds, width, height, 2.1f, /*transparent=*/true);
 }
 
 void cube_gl_destroy(CubeGlState* state) { delete state; }
+
+void cube_gl_client_changed() { ++g_client_generation; }
