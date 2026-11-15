@@ -342,7 +342,7 @@ jobs:
           cat > /tmp/srcinfo.sh <<'SCRIPT'
           #!/bin/bash
           set -eu
-          pacman -Sy --noconfirm --needed base-devel python binutils >/dev/null
+          pacman -Syu --noconfirm --needed base-devel python binutils >/dev/null
           useradd -m builder
           status=0
           # All three PKGBUILDs describe one package, and PKGBUILD.bin --
@@ -390,7 +390,7 @@ jobs:
           #!/bin/bash
           set -eux
           # git because the build fetches nlohmann/json and miniz.
-          pacman -Sy --noconfirm --needed base-devel cmake ninja git \
+          pacman -Syu --noconfirm --needed base-devel cmake ninja git \
               qt6-base qt6-webengine qt6-webchannel vulkan-headers vulkan-icd-loader
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_ROSEMARY=OFF -DSTUD_BUILD_TESTS=OFF \
@@ -418,7 +418,7 @@ jobs:
           # went unnoticed because the step never ran this far before;
           # podman was missing from the container entirely.
           set -eux
-          pacman -Sy --noconfirm --needed base-devel zstd
+          pacman -Syu --noconfirm --needed base-devel zstd
           useradd -m builder
           cp /work/PKGBUILD /home/builder/
           chown -R builder:builder /home/builder
@@ -440,7 +440,7 @@ jobs:
           cat > /tmp/namcap.sh <<'SCRIPT'
           #!/bin/bash
           set -eu
-          pacman -Sy --noconfirm --needed namcap >/dev/null
+          pacman -Syu --noconfirm --needed namcap >/dev/null
           pkg=$(find /work -maxdepth 1 -name '*.pkg.tar.zst' | head -1)
           [ -n "$pkg" ] || { echo "::error::no package for namcap to check"; exit 1; }
           namcap "$pkg" | tee /tmp/namcap.out || true

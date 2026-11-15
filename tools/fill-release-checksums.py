@@ -115,7 +115,7 @@ def regenerate_srcinfo() -> bool:
         return True
     if shutil.which("podman"):
         script = (
-            "pacman -Sy --noconfirm --needed base-devel >/dev/null 2>&1; useradd -m b; "
+            "pacman -Syu --noconfirm --needed base-devel >/dev/null 2>&1; useradd -m b; "
             'for p in "PKGBUILD:.SRCINFO" "PKGBUILD.stud-bin:.SRCINFO.stud-bin"; do '
             'install -o b -m644 /work/packaging/aur/${p%%:*} /home/b/PKGBUILD; '
             'su b -c "cd /home/b && makepkg --printsrcinfo" > /work/packaging/aur/${p##*:}; done')
