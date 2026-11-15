@@ -78,9 +78,15 @@ foreach(stud_icon_size 16 24 32 48 64 128 256 512)
         "/usr/share/icons/hicolor/${stud_icon_size}x${stud_icon_size}"
         "/usr/share/icons/hicolor/${stud_icon_size}x${stud_icon_size}/apps")
 endforeach()
-# No debuginfo subpackage: the binaries ship with their symbols, so a crash
-# report carries function names.
-set(CPACK_RPM_SPEC_MORE_DEFINE "%global debug_package %{nil}")
+# The binaries ship exactly as built, with their symbols, so a crash report
+# carries function names: no debuginfo subpackage, and none of rpmbuild's
+# post-install processing, which strips them and rewrites their build-ids.
+# It also keeps the rpm byte-identical to the install tree every other
+# package is made from, which the release checks.
+set(CPACK_RPM_SPEC_MORE_DEFINE "%global __os_install_post %{nil}
+%global debug_package %{nil}
+%global __brp_strip %{nil}
+%global __brp_strip_static_archive %{nil}")
 
 # ---------------------------------------------------------------- DEB
 #
