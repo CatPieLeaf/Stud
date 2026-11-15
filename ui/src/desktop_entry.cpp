@@ -228,43 +228,49 @@ int install_desktop_entry() {
     }
     write_index_theme(icons_dir);
 
-    QFile source_entry(share + "/applications/" + app_id + ".desktop");
-    if (!source_entry.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        std::fprintf(stderr, "stud: --install-desktop-entry: could not read %s\n",
-                     qPrintable(source_entry.fileName()));
-        return 1;
-    }
+    // Stud's entry, and those of the Roblox and Roblox Studio windows
+    // (<id>.Player, <id>.Studio), each with Exec and Icon made this install's.
     const QString program = launcher_command();
-    QStringList lines;
-    while (!source_entry.atEnd()) {
-        QString line = QString::fromUtf8(source_entry.readLine());
-        while (line.endsWith(QLatin1Char('\n')) || line.endsWith(QLatin1Char('\r'))) line.chop(1);
-        if (line.startsWith(QLatin1String("Exec="))) {
-            line = QLatin1String("Exec=") + rewrite_exec(line.mid(5), program);
-        } else if (line.startsWith(QLatin1String("Icon="))) {
-            // An absolute path rather than the theme name, for the same
-            // reason packaging/install-desktop-entry.sh uses one: the
-            // themed name resolves only once every consumer has noticed a
-            // newly-added user icon directory, and an absolute path shows
-            // up immediately.
-            line = QLatin1String("Icon=") + largest.value(line.mid(5), largest_icon);
+    const auto install_entry = [&](const QString& name) {
+        QFile source_entry(share + "/applications/" + name + ".desktop");
+        if (!source_entry.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            std::fprintf(stderr, "stud: --install-desktop-entry: could not read %s\n",
+                         qPrintable(source_entry.fileName()));
+            return false;
         }
-        lines << line;
-    }
-    source_entry.close();
-
+        QStringList lines;
+        while (!source_entry.atEnd()) {
+            QString line = QString::fromUtf8(source_entry.readLine());
+            while (line.endsWith(QLatin1Char('\n')) || line.endsWith(QLatin1Char('\r'))) line.chop(1);
+            if (line.startsWith(QLatin1String("Exec="))) {
+                line = QLatin1String("Exec=") + rewrite_exec(line.mid(5), program);
+            } else if (line.startsWith(QLatin1String("Icon="))) {
+                // An absolute path rather than the theme name, for the same
+                // reason packaging/install-desktop-entry.sh uses one: the
+                // themed name resolves only once every consumer has noticed a
+                // newly-added user icon directory, and an absolute path shows
+                // up immediately.
+                line = QLatin1String("Icon=") + largest.value(line.mid(5), largest_icon);
+            }
+            lines << line;
+        }
+        const QString entry_path = apps_dir + "/" + name + ".desktop";
+        QFile entry(entry_path);
+        if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            std::fprintf(stderr, "stud: --install-desktop-entry: could not write %s\n",
+                         qPrintable(entry_path));
+            return false;
+        }
+        entry.write((lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
+        entry.close();
+        QFile::setPermissions(entry_path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                              QFileDevice::ReadGroup | QFileDevice::ReadOther);
+        return true;
+    };
+    if (!install_entry(app_id)) return 1;
+    install_entry(app_id + QStringLiteral(".Player"));
+    install_entry(app_id + QStringLiteral(".Studio"));
     const QString entry_path = apps_dir + "/" + app_id + ".desktop";
-    QFile entry(entry_path);
-    if (!entry.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        std::fprintf(stderr, "stud: --install-desktop-entry: could not write %s\n",
-                     qPrintable(entry_path));
-        return 1;
-    }
-    const QByteArray body = (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8();
-    entry.write(body);
-    entry.close();
-    QFile::setPermissions(entry_path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                          QFileDevice::ReadGroup | QFileDevice::ReadOther);
 
     // Register as the handler for Stud's own URL schemes.
     //

@@ -376,9 +376,12 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     env.insert(QStringLiteral("ROSEMARY_PREFIX"), stud::ui::client::prefix_dir());
     env.insert(QStringLiteral("ROSEMARY_PREFIX_SETUP"), QStringLiteral("download"));
 
-    // The window: Stud's own application id, so the compositor gives it
-    // Stud's icon and puts it under Stud's taskbar entry, and the backend.
-    env.insert(QStringLiteral("SDL_APP_ID"), QStringLiteral(STUD_APP_ID));
+    // The window: its own application id, <Stud's>.Player or .Studio, whose
+    // desktop entry gives the taskbar the red stud for Roblox and the blue
+    // one for Studio.
+    const bool studio = product == stud::ui::client::Product::Studio;
+    env.insert(QStringLiteral("SDL_APP_ID"),
+               QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral(".Studio") : QStringLiteral(".Player")));
     // The sound, in a mixer: Stud with Stud's icon. Plasma's applet leaves out
     // a stream name with "audio" in it, so it reads just Stud; its settings
     // page, "Stud: Roblox audio". On either of SDL's sound servers; Rosemary
@@ -396,7 +399,9 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         env.insert(QStringLiteral("ROSEMARY_UPSCALER"), QString::fromStdString(settings.upscaler));
     }
     env.insert(QStringLiteral("SDL_AUDIO_DEVICE_STREAM_NAME"), QStringLiteral("Roblox audio"));
-    env.insert(QStringLiteral("SDL_AUDIO_DEVICE_APP_ICON_NAME"), QStringLiteral(STUD_APP_ID));
+    // The same stud in the mixer.
+    env.insert(QStringLiteral("SDL_AUDIO_DEVICE_APP_ICON_NAME"),
+               QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral("-studio") : QStringLiteral("-player")));
     // Wayland wherever there is one. X11 through XWayland only when asked
     // for, and only where XWayland is there to ask.
     if (!env.value(QStringLiteral("WAYLAND_DISPLAY")).isEmpty()) {
