@@ -192,6 +192,19 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud.metainfo.xml.in"
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.desktop"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+# The windows of Roblox and Roblox Studio, each under its own entry and stud.
+foreach(client "Player;Roblox Player;--roblox;player" "Studio;Roblox Studio;--studio;studio")
+    list(GET client 0 suffix)
+    list(GET client 1 STUD_CLIENT_NAME)
+    list(GET client 2 STUD_CLIENT_FLAG)
+    list(GET client 3 icon)
+    set(STUD_CLIENT_ID "${STUD_APP_ID}.${suffix}")
+    set(STUD_CLIENT_ICON "${STUD_APP_ID}-${icon}")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud-client.desktop.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_CLIENT_ID}.desktop" @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_CLIENT_ID}.desktop"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+endforeach()
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.metainfo.xml"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
 # The .rbxl and .rbxlx types the desktop entry opens in Studio.

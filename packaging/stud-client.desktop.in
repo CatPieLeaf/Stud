@@ -1,0 +1,12 @@
+[Desktop Entry]
+# The window of Roblox or Roblox Studio while it runs: the client reports
+# this entry's name as its Wayland app_id, so the taskbar and the sound
+# mixer show its own stud rather than Stud's. Hidden from menus; Stud's
+# own entry is the one to start from.
+Type=Application
+Name=@STUD_CLIENT_NAME@
+Exec=@STUD_EXEC@ @STUD_CLIENT_FLAG@
+Icon=@STUD_CLIENT_ICON@
+Terminal=false
+NoDisplay=true
+StartupWMClass=@STUD_CLIENT_ID@

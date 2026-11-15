@@ -139,7 +139,8 @@ ln -f "$appdir/sharun" "$appdir/libexec/stud/rosemary"
 # Stud's own share/ files: the desktop entry and icons it installs for
 # the user, and the licences of everything it redistributes.
 (cd /usr/share && cp -a --parents \
-    "applications/$app_id.desktop" "metainfo/$app_id.metainfo.xml" "mime/packages/$app_id.xml" \
+    "applications/$app_id.desktop" "applications/$app_id.Player.desktop" \
+    "applications/$app_id.Studio.desktop" "metainfo/$app_id.metainfo.xml" "mime/packages/$app_id.xml" \
     icons/hicolor/*/apps/"$app_id"*.png licenses/stud doc/stud \
     "$appdir/share/")
 # AppImageHub reads the AppStream metainfo only from usr/share/metainfo.

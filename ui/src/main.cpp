@@ -376,10 +376,13 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     env.insert(QStringLiteral("ROSEMARY_PREFIX"), stud::ui::client::prefix_dir());
     env.insert(QStringLiteral("ROSEMARY_PREFIX_SETUP"), QStringLiteral("download"));
 
-    // The window: Stud's own application id, so the compositor puts it under
-    // Stud's taskbar entry, and the backend.
-    env.insert(QStringLiteral("SDL_APP_ID"), QStringLiteral(STUD_APP_ID));
+    // The window: an application id of its own under Stud's, <id>.Player or
+    // <id>.Studio, whose hidden desktop entry gives the taskbar the red stud
+    // for Roblox and the blue one for Studio. A Flatpak's compositor accepts
+    // it, being an extension of the sandbox's own id.
     const bool studio = product == stud::ui::client::Product::Studio;
+    env.insert(QStringLiteral("SDL_APP_ID"),
+               QStringLiteral(STUD_APP_ID) + (studio ? QStringLiteral(".Studio") : QStringLiteral(".Player")));
     // The sound, in a mixer: Stud with Stud's icon. Plasma's applet leaves out
     // a stream name with "audio" in it, so it reads just Stud; its settings
     // page, "Stud: Roblox audio". On either of SDL's sound servers; Rosemary
