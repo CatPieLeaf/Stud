@@ -105,13 +105,25 @@ void GameActivity::line(const QByteArray& raw) {
                 publish();
             }
         }
-    } else if (text.contains(QStringLiteral("[DFLog::NetworkClient] Client:Disconnect"))) {
+    } else if (text.contains(QStringLiteral("[FLog::SingleSurfaceApp] leaveUGCGameInternal"))) {
+        // Back to the app. Not Client:Disconnect: a teleport (a lobby's
+        // reserved server, another place, another game) disconnects too, and
+        // the old connection can finish closing after the new join's line,
+        // which ended the game just joined. A teleport logs its own
+        // "Joining game", which replaces the place instead.
         left();
     }
 }
 
 void GameActivity::joined(const QString& place, const QString& job) {
     if (place == place_ && job == job_) return;
+    // A teleport (to a lobby, another place, another game) ends the server
+    // it leaves as leaving would: kept in the history, its location dropped.
+    if (!place_.isEmpty() && options_.history_games) {
+        history::record(place_, name_, icon_, job_, joined_at_, now_seconds(), location_,
+                        options_.history_servers);
+    }
+    location_.clear();
     ++generation_;
     place_ = place;
     job_ = job;
