@@ -17,7 +17,7 @@ Terminal=false
 StartupNotify=true
 Categories=Game;
 NoDisplay=false
-MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;x-scheme-handler/roblox-studio;x-scheme-handler/roblox-studio-auth;
+MimeType=x-scheme-handler/roblox-player;x-scheme-handler/roblox;x-scheme-handler/roblox-studio;x-scheme-handler/roblox-studio-auth;application/x-roblox-rbxl;application/x-roblox-rbxlx;
 # Both of Stud's windows report the application id as their Wayland
 # app_id: the Qt UI through QGuiApplication::setDesktopFileName(), and the
 # game window through xdg_toplevel_set_app_id(). Without a StartupWMClass

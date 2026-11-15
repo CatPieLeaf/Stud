@@ -44,6 +44,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QUrl>
 #include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -578,7 +579,10 @@ bool hand_link_to_client(stud::ui::client::Product product, const QString& link,
     if (!build || rosemary.isEmpty()) return false;
     QProcess handoff;
     handoff.setProgram(rosemary);
-    handoff.setArguments({QStringLiteral("run"), build->app, link});
+    // A place file goes as a file:// URL, which Rosemary delivers as a
+    // document to open.
+    handoff.setArguments({QStringLiteral("run"), build->app,
+                          link.startsWith(QLatin1Char('/')) ? QUrl::fromLocalFile(link).toString() : link});
     handoff.setProcessEnvironment(client_environment(settings, product));
     handoff.setStandardOutputFile(QProcess::nullDevice());
     handoff.setStandardErrorFile(QProcess::nullDevice());
@@ -606,6 +610,19 @@ void clean_old_files(int days) {
         }
     }
     if (removed > 0) std::printf("stud: cleaner removed %d old file(s)\n", removed);
+}
+
+// A place file (.rbxl, .rbxlx) opened from the file manager, as a path or a
+// file:// URL, as the path Studio's guest sees it by. Nothing for anything
+// else.
+std::optional<QString> place_file(const char* argument) {
+    const QString given = QString::fromLocal8Bit(argument);
+    const QFileInfo info(given.startsWith(QLatin1String("file:")) ? QUrl(given).toLocalFile() : given);
+    const QString suffix = info.suffix().toLower();
+    if ((suffix != QLatin1String("rbxl") && suffix != QLatin1String("rbxlx")) || !info.isFile()) {
+        return std::nullopt;
+    }
+    return QStringLiteral("/Volumes/Host") + info.absoluteFilePath();
 }
 
 // Starts the client. False when it could not start; the reason has been put
@@ -1040,7 +1057,13 @@ int main(int argc, char** argv) {
     std::optional<stud::ui::client::Product> product;
     if (argc > 1 && std::string(argv[1]) == "--roblox") product = stud::ui::client::Product::Player;
     if (argc > 1 && std::string(argv[1]) == "--studio") product = stud::ui::client::Product::Studio;
-    if (argc > 1 && std::string(argv[1]).rfind("roblox-studio", 0) == 0) {
+    const std::optional<QString> place = argc > 1 ? place_file(argv[1]) : std::nullopt;
+    if (place) {
+        // Studio opens it, the way a Mac opens a document it was given.
+        product = stud::ui::client::Product::Studio;
+        deep_link = place;
+        std::printf("stud: opening a place file in Studio\n");
+    } else if (argc > 1 && std::string(argv[1]).rfind("roblox-studio", 0) == 0) {
         product = stud::ui::client::Product::Studio;
         deep_link = QString::fromUtf8(argv[1]);
         std::printf("stud: Studio link of %zu bytes\n", std::strlen(argv[1]));

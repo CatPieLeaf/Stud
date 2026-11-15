@@ -194,6 +194,10 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.desktop"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${STUD_APP_ID}.metainfo.xml"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
+# The .rbxl and .rbxlx types the desktop entry opens in Studio.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/stud-mime.xml"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages"
+        RENAME "${STUD_APP_ID}.xml")
 # Every size, not just the master.
 #
 # A single 512x512 icon is what a desktop scales down when it has nothing

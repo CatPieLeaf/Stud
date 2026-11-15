@@ -77,6 +77,11 @@ sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_APP_ID@|$app_id|g" \
     -e "s|^Icon=$app_id$|Icon=$icon_path|" \
     "$here/stud.desktop.in" | grep -v '^#' > "$apps/$app_id.desktop"
 chmod 644 "$apps/$app_id.desktop"
+# The place file types the entry opens in Studio.
+mime="$HOME/.local/share/mime"
+mkdir -p "$mime/packages"
+cp "$here/stud-mime.xml" "$mime/packages/$app_id.xml"
+command -v update-mime-database >/dev/null 2>&1 && update-mime-database "$mime" || true
 
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f -t "$icons" || true
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$apps" || true

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Roblox place files, which Stud opens in Roblox Studio. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-roblox-rbxl">
+    <comment>Roblox place</comment>
+    <glob pattern="*.rbxl"/>
+  </mime-type>
+  <mime-type type="application/x-roblox-rbxlx">
+    <comment>Roblox XML place</comment>
+    <sub-class-of type="application/xml"/>
+    <glob pattern="*.rbxlx"/>
+  </mime-type>
+</mime-info>

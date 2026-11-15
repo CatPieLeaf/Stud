@@ -284,6 +284,15 @@ int install_desktop_entry() {
         set_default_application(QString::fromLatin1(scheme), app_id + QStringLiteral(".desktop"));
     }
 
+    // The place file types the entry opens in Studio.
+    const QString mime_dir = data_home + QStringLiteral("/mime");
+    const QString mime_file = mime_dir + QStringLiteral("/packages/") + app_id + QStringLiteral(".xml");
+    QDir().mkpath(mime_dir + QStringLiteral("/packages"));
+    QFile::remove(mime_file);
+    if (QFile::copy(share + QStringLiteral("/mime/packages/") + app_id + QStringLiteral(".xml"), mime_file)) {
+        run_best_effort(QStringLiteral("update-mime-database"), {mime_dir});
+    }
+
     // Best-effort index refreshes. KDE in particular keeps its own
     // service index, and a new entry is invisible to the launcher, and
     // to window-to-icon matching, until that is rebuilt.
