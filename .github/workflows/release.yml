@@ -704,9 +704,6 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
       options: --privileged
     steps:
-      - name: Install what the Rosemary sources step needs
-        run: dnf install -y --setopt=install_weak_deps=False git curl python3
-
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG || 'main' }}
@@ -717,6 +714,8 @@ jobs:
           rosemary: "false"
 
       - name: Rosemary at the head of the fork's branch
+        # The image is the freedesktop SDK itself, which has git, curl and
+        # python3's venv, all this needs.
         # The same commit every other package builds, and offline Cargo
         # sources generated from its Cargo.lock. The checkout is kept for
         # the shader check below.
