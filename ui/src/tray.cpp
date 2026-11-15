@@ -323,10 +323,10 @@ void Tray::showAbout() {
         lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
         auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
         text->setWordWrap(true);
-        // Three quarters of its one-line width: it wraps, and the window stays
+        // Seven eighths of its one-line width: it wraps, and the window stays
         // a little narrower than the sentence on one line would make it.
         const QFontMetrics metrics(text->font());
-        text->setMaximumWidth(metrics.horizontalAdvance(text->text()) * 3 / 4);
+        text->setMaximumWidth(metrics.horizontalAdvance(text->text()) * 7 / 8);
         lead->addWidget(text);
         lead->addStretch();
         header->addLayout(lead, 1);
