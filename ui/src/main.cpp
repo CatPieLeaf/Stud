@@ -714,6 +714,12 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         open_settings_for_launch_failure(error);
         return false;
     }
+    const QStringList channels =
+        stud::ui::client::reset_release_channels(stud::ui::client::prefix_dir() + QStringLiteral("/root"));
+    if (!channels.isEmpty()) {
+        std::printf("stud: Roblox's saved channel %s set back to production\n",
+                    qPrintable(channels.join(QStringLiteral(", "))));
+    }
     if (player && !settings.vsync) lift_roblox_frame_cap();
     if (has_nvidia_card() && nvidia_vulkan_driver().isEmpty()) {
         std::printf("stud: an NVIDIA card without NVIDIA's Vulkan driver\n");

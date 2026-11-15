@@ -436,4 +436,36 @@ bool write_app_settings(const Build& build, const QJsonObject& flags, QString* e
     return true;
 }
 
+QStringList reset_release_channels(const QString& root) {
+    static const QRegularExpression channel(QStringLiteral("<string>([^<]*)</string>"));
+    QStringList reset;
+    const QDir users(root + QStringLiteral("/Users"));
+    for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QDir prefs(users.filePath(user) + QStringLiteral("/Library/Preferences"));
+        for (const QString& name :
+             prefs.entryList({QStringLiteral("com.roblox.*Channel.plist")}, QDir::Files)) {
+            QFile in(prefs.filePath(name));
+            if (!in.open(QIODevice::ReadOnly)) continue;
+            const QString text = QString::fromUtf8(in.readAll());
+            in.close();
+            QStringList others;
+            for (const QRegularExpressionMatch& m : channel.globalMatch(text)) {
+                const QString value = m.captured(1).trimmed();
+                if (!value.isEmpty() && value.compare(QLatin1String("production"), Qt::CaseInsensitive) != 0) {
+                    others << value;
+                }
+            }
+            if (others.isEmpty()) continue;
+            QSaveFile out(prefs.filePath(name));
+            if (!out.open(QIODevice::WriteOnly)) continue;
+            out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                      "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                      "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+                      "<plist version=\"1.0\">\n<dict/>\n</plist>\n");
+            if (out.commit()) reset << others;
+        }
+    }
+    return reset;
+}
+
 }  // namespace stud::ui::client

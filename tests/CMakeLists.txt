@@ -45,6 +45,11 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_roblox_settings_test PRIVATE stud_ui_mac_client)
     add_test(NAME roblox_settings_test COMMAND stud_roblox_settings_test)
 
+    # The release-channel guard: a test channel emptied, production kept.
+    add_executable(stud_release_channel_test release_channel_test.cpp)
+    target_link_libraries(stud_release_channel_test PRIVATE stud_ui_mac_client)
+    add_test(NAME release_channel_test COMMAND stud_release_channel_test)
+
     # The Flatpak permission check: overrides and revocations honoured.
     add_executable(stud_flatpak_permissions_test flatpak_permissions_test.cpp)
     target_link_libraries(stud_flatpak_permissions_test PRIVATE stud_ui_mac_client)

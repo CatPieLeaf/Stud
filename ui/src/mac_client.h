@@ -55,6 +55,14 @@ QString find_rosemary();
 // downloads the Darwin base system). False, with `error` set, on failure.
 bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* error);
 
+// Puts Roblox back on the production channel, the one whose build Stud
+// installs. Roblox can move a player to a test channel and saves it in
+// com.roblox.<product>Channel.plist; seeing the installed build is not of that
+// channel, the client would start Roblox's own installer in the prefix. A
+// file naming any other channel is emptied, which Roblox reads as production.
+// `root` is the prefix's root directory. Returns the channels taken back.
+QStringList reset_release_channels(const QString& root);
+
 // The bundle's executable, as its Info.plist names it (CFBundleExecutable).
 // Empty when the bundle has none.
 QString executable(const Build& build);
