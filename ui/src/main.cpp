@@ -678,6 +678,8 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     if (!stud::ui::customization::apply(*build, product, &error)) {
         std::fprintf(stderr, "stud: customizations were not applied: %s\n", qPrintable(error));
     }
+    // A changed set of customizations is on trial until this run ends.
+    stud::ui::customization::begin_run(product);
     // The FFlags tab's flags are the player's.
     if (player && !stud::ui::client::write_app_settings(*build, client_flags(settings), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
@@ -733,11 +735,21 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         }
         if (restrict) ::sched_setaffinity(0, sizeof(cores), &cores);
     });
-    QObject::connect(g_client, &QProcess::finished, qApp, [](int code, QProcess::ExitStatus status) {
+    QObject::connect(g_client, &QProcess::finished, qApp, [product](int code, QProcess::ExitStatus status) {
         const bool crashed =
             !g_stop_requested && (status == QProcess::CrashExit || code != 0);
         std::printf("stud: Roblox exited (%s %d)\n",
                     status == QProcess::CrashExit ? "signal" : "code", code);
+        const QStringList set_aside = stud::ui::customization::end_run(product, crashed);
+        if (!set_aside.isEmpty()) {
+            std::printf("stud: Roblox crashed on its first run with changed customizations; "
+                        "%lld set aside\n", static_cast<long long>(set_aside.size()));
+            stud::ui::send_notification(
+                QStringLiteral("Customizations turned off"),
+                QStringLiteral("Roblox crashed the first time it ran with your new customizations, "
+                               "so Stud put back the last set that worked. The new ones are in %1.")
+                    .arg(stud::ui::customization::disabled_folder(product)));
+        }
         g_session_end = crashed ? SessionEnd::Crashed : SessionEnd::Clean;
         stud::ui::close_loading_screen();
         if (crashed) {

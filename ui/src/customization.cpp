@@ -2,6 +2,7 @@
 
 #include "stud/stud_paths.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -10,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QSaveFile>
 #include <QStringList>
 
@@ -111,6 +113,44 @@ private:
     QString state_;
     QStringList changed_;
 };
+
+}  // namespace
+
+namespace {
+
+// The crash guard's own files: the last good set, and the mark of a trial.
+QString guard_dir(client::Product product) {
+    return QString::fromStdString(stud::paths::data_dir()) +
+           (product == client::Product::Studio ? QStringLiteral("/customization-guard/studio")
+                                               : QStringLiteral("/customization-guard/player"));
+}
+QString last_good_dir(client::Product product) { return guard_dir(product) + QStringLiteral("/last-good"); }
+QString trial_mark(client::Product product) { return guard_dir(product) + QStringLiteral("/trial"); }
+
+// Every file under `root`, relative to it, with its bytes' hash.
+QMap<QString, QByteArray> fingerprint(const QString& root) {
+    QMap<QString, QByteArray> files;
+    QDirIterator it(root, QDir::Files | QDir::NoSymLinks | QDir::Hidden, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        QFile in(path);
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        if (in.open(QIODevice::ReadOnly) && hash.addData(&in)) {
+            files.insert(path.mid(root.size() + 1), hash.result());
+        }
+    }
+    return files;
+}
+
+// `to` made an exact copy of `from`, or emptied when `from` does not exist.
+void mirror(const QString& from, const QString& to) {
+    QDir(to).removeRecursively();
+    QDirIterator it(from, QDir::Files | QDir::NoSymLinks | QDir::Hidden, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        copy_over(path, to + QLatin1Char('/') + path.mid(from.size() + 1));
+    }
+}
 
 }  // namespace
 
@@ -254,6 +294,51 @@ bool present(Part part) {
         }
     }
     return false;
+}
+
+QString disabled_folder(client::Product product) { return folder(product) + QStringLiteral("-disabled"); }
+
+void begin_run(client::Product product) {
+    const QString last_good = last_good_dir(product);
+    if (!QFileInfo::exists(guard_dir(product))) {
+        // The first run with the guard: what is there already counts as good.
+        mirror(folder(product), last_good);
+        return;
+    }
+    QFile::remove(trial_mark(product));
+    if (fingerprint(folder(product)) != fingerprint(last_good)) {
+        QFile mark(trial_mark(product));
+        if (mark.open(QIODevice::WriteOnly)) mark.close();
+    }
+}
+
+QStringList end_run(client::Product product, bool crashed) {
+    if (!QFile::remove(trial_mark(product))) return {};
+    const QString current = folder(product);
+    const QString last_good = last_good_dir(product);
+    if (!crashed) {
+        mirror(current, last_good);
+        return {};
+    }
+    // The run with the changed set crashed: what is new or different since the
+    // last good set goes aside, and the last good set comes back.
+    const QMap<QString, QByteArray> now = fingerprint(current);
+    const QMap<QString, QByteArray> good = fingerprint(last_good);
+    QStringList set_aside;
+    for (auto it = now.cbegin(); it != now.cend(); ++it) {
+        if (good.value(it.key()) == it.value()) continue;
+        const QString from = current + QLatin1Char('/') + it.key();
+        if (copy_over(from, disabled_folder(product) + QLatin1Char('/') + it.key())) {
+            QFile::remove(from);
+            set_aside << it.key();
+        }
+    }
+    for (auto it = good.cbegin(); it != good.cend(); ++it) {
+        if (now.value(it.key()) != it.value()) {
+            copy_over(last_good + QLatin1Char('/') + it.key(), current + QLatin1Char('/') + it.key());
+        }
+    }
+    return set_aside;
 }
 
 }  // namespace stud::ui::customization

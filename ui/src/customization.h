@@ -40,4 +40,20 @@ void remove(Part part);
 // Whether the customization folder holds `part` now.
 bool present(Part part);
 
+// The crash guard, per run. The last set of customizations that ran without a
+// crash is kept. A run whose set differs from it is a trial: if that run
+// crashes, every file that is new or changed since moves to
+// disabled_folder() and the last good set is put back; if it ends cleanly, it
+// becomes the last good set. With no last good set yet, the folder as it is
+// counts as one.
+//
+// begin_run() goes after apply(), end_run() when the client exits; end_run()
+// returns the files it set aside, relative to the folder, empty when none.
+void begin_run(client::Product product);
+QStringList end_run(client::Product product, bool crashed);
+
+// Where end_run() sets a crashing run's new customizations aside, beside the
+// customization folder: ~/.config/stud/customizations-disabled.
+QString disabled_folder(client::Product product);
+
 }  // namespace stud::ui::customization
