@@ -75,8 +75,8 @@ source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$
 # one is worse than an obvious gap: this carried the digest of a release
 # that was later deleted, which would have failed every install with a
 # corruption error rather than a missing-file one.
-sha256sums=('5062211a6341eb15e300f6783540053097c9c629f3fe0c484bf8e8a5b38b9186'
-            'dfd24b324c06b3fc6bea9e0c285e923a4b0d8a7e12d81b970d808021f9ba37db')
+sha256sums=('487f42d946501d8074ab70561e921cfd2e3eb99c6773433d5abb69e5b0082948'
+            'd3f883f299fe14c23a4242cf08ea29feec93775191ed4c99d0ce2de60f15537b')
 
 build() {
   # Just the launcher: Rosemary, which the archive already supplies, is
