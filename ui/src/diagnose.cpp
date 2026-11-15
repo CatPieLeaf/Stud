@@ -1,6 +1,7 @@
 #include "diagnose.h"
 
 #include <QtCore/QFileInfo>
+#include <QtCore/QProcess>
 #include <QtCore/QString>
 
 #include <array>
@@ -20,6 +21,7 @@
 #include <unistd.h>
 
 #include "mac_client.h"
+#include "stud_commit.h"
 #include "gpu_enum.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -189,8 +191,36 @@ void report_gpus(const stud::config::StudSettings& settings) {
 
 }  // namespace
 
+// Rosemary's own version and commit, as `rosemary --version` reports them:
+// "0.5.0, e5a57fc". Empty when it does not answer.
+static std::string rosemary_version(const QString& rosemary) {
+    if (rosemary.isEmpty()) return {};
+    QProcess process;
+    process.start(rosemary, {QStringLiteral("--version")});
+    if (!process.waitForFinished(5000)) {
+        process.kill();
+        process.waitForFinished();
+        return {};
+    }
+    QString version;
+    QString commit;
+    for (const QString& raw : QString::fromUtf8(process.readAllStandardOutput()).split(QLatin1Char('\n'))) {
+        const QString line = raw.trimmed();
+        if (line.startsWith(QLatin1String("rosemary "))) version = line.mid(9);
+        if (line.startsWith(QLatin1String("commit:"))) commit = line.mid(7).trimmed();
+    }
+    if (version.isEmpty()) return {};
+    return (commit.isEmpty() ? version : version + QStringLiteral(", ") + commit).toStdString();
+}
+
 void write_diagnostics() {
-    std::printf("=== Stud %s ===\n\n", STUD_VERSION);
+    // The commit too: every build of a release is called by the release's
+    // version, and only the commit says which code ran.
+    if (std::string(STUD_COMMIT).empty()) {
+        std::printf("=== Stud %s ===\n\n", STUD_VERSION);
+    } else {
+        std::printf("=== Stud %s (%s) ===\n\n", STUD_VERSION, STUD_COMMIT);
+    }
 
     utsname uts{};
     ::uname(&uts);
@@ -251,7 +281,12 @@ void write_diagnostics() {
     std::printf("client\n");
     const auto build = stud::ui::client::installed();
     line("roblox", build ? (build->version + " (" + build->upload + ")").toStdString() : "");
-    line("rosemary", stud::ui::client::find_rosemary().toStdString());
+    {
+        const QString rosemary = stud::ui::client::find_rosemary();
+        const std::string version = rosemary_version(rosemary);
+        line("rosemary", version.empty() ? rosemary.toStdString()
+                                         : rosemary.toStdString() + " (" + version + ")");
+    }
     line("prefix", exists_size(stud::ui::client::prefix_dir().toStdString() + "/root"));
     std::printf("\n");
 

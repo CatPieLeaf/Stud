@@ -122,6 +122,19 @@ set_target_properties(stud-ui PROPERTIES
 
 target_compile_definitions(stud-ui PRIVATE STUD_APP_ID="${STUD_APP_ID}" STUD_VERSION="${STUD_VERSION}")
 
+# The commit Stud was built from, for the session log's header, so a report
+# says exactly which code ran. Looked up on every build; a build from an
+# archive with no .git can pass -DSTUD_COMMIT=<commit>.
+set(STUD_COMMIT "" CACHE STRING "Commit the source tree is, when it has no .git to ask")
+add_custom_target(stud_commit
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${CMAKE_SOURCE_DIR} -DCOMMIT=${STUD_COMMIT}
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/generated/stud_commit.h
+            -P "${CMAKE_SOURCE_DIR}/cmake/stud_commit.cmake"
+    BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/stud_commit.h"
+    VERBATIM)
+add_dependencies(stud-ui stud_commit)
+target_include_directories(stud-ui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 # The launcher is the only binary a user runs, so it is the only one on
 # PATH. Rosemary lives in libexec and is found relative to it.
 install(PROGRAMS "$<TARGET_FILE:stud-ui>"
