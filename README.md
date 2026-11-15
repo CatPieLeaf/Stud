@@ -79,21 +79,24 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 </div>
 
  - Runs the **real** Roblox macOS client, unpatched: the desktop client, with desktop graphics
- - Downloads and updates the client from Roblox's own servers before each launch, so there is nothing to fetch by hand
+ - Downloads and updates the client from Roblox's own servers before each launch, so there is nothing to fetch by hand, and checks its code is still what Roblox shipped
  - Two processes: Stud's launcher, and the client on Rosemary
  - Runs on **Wayland and X11**, with Stud's own icon and taskbar entry
  - Your desktop's own title bar, or the macOS one, with or without its menu bar
  - FastFlags: an editor with JSON import, profiles, presets (MSAA, texture quality, graphics level, mesh detail, grass, gray sky), and a warning for flags Roblox ignores, with Clean list
- - Customizations: textures, sounds, fonts and cursors over Roblox's own content, put back when removed; generated cursor, shift lock, emote wheel, death sound and font; import from Bloxstrap, Fishstrap or Froststrap
+ - Customizations: textures, sounds, fonts and cursors over Roblox's own content, put back when removed; generated cursor, shift lock, emote wheel, death sound and font; import from Bloxstrap, Fishstrap or Froststrap. A new set that crashes Roblox's next start is set aside, and the last set that worked comes back
+ - Roblox's own settings (volume, sensitivity, camera, fullscreen and more) editable from Stud
  - Vulkan or OpenGL, uncapped without VSync
  - **Upscaling** on Vulkan: lower the render resolution and the frame is rebuilt at your window's size. **RAVU-Zoom AR**, with FidelityFX RCAS sharpening after it, is the better picture; **SGSR1 ED** is the lightweight one, for laptops and integrated GPUs
- - Game history with time played, and game shortcuts in the application menu
+ - Game history with time played, the servers you joined and where they are, rejoining a server, and game shortcuts in the application menu; either kind of history can be turned off
  - Roblox and **Roblox Studio**: opened on its own, Stud asks which, and keeps each up to date
- - `roblox://` links from a browser open straight into the experience, and Studio's links reach Studio
+ - `roblox://` links from a browser open straight into the experience, Studio's links reach Studio, and `.rbxl`/`.rbxlx` place files open in Studio
  - Discord Rich Presence as Roblox itself, with the game's name as your status and what the game reports through BloxstrapRPC, an optional Join button, and Studio presence
  - Optional notification of which country the game server is in
  - A frame rate limit for while Roblox is in the background
  - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, GPU picker, system tray
+ - A launch wrapper (gamescope, prime-run, ...) and your own environment variables for Roblox
+ - The AppImage updates itself; the Flatpak names the `flatpak override` command for any permission taken from it
  - Export every session log as one tarball, for when you file a bug; join tickets are kept out of them
 
 <br>
