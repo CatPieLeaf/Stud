@@ -15,11 +15,6 @@
 #
 # It runs in a container built from packaging/Containerfile.appimage,
 # needs podman or docker, and writes build-appimage/packages/.
-#
-# bubblewrap is deliberately NOT bundled. It needs the AppArmor or SELinux
-# policy a distribution ships with its own build to create a user
-# namespace at all, so a copied-in binary would be refused on the
-# distributions that matter. Stud checks for it and says so.
 
 set -euo pipefail
 
@@ -34,21 +29,12 @@ if [ "${STUD_APPIMAGE_IN_CONTAINER:-0}" != 1 ]; then
     printf '\033[1mappimage:\033[0m building the image with %s\n' "$engine" >&2
     "$engine" build -f "$repo_root/packaging/Containerfile.appimage" \
         -t stud-appimage-build "$repo_root" >&2
-    # tools/setup.sh can link third_party/ entries out of the repository;
-    # mount each target at its own path so the link resolves inside too.
-    link_mounts=()
-    for entry in "$repo_root"/third_party/*; do
-        [ -L "$entry" ] || continue
-        target="$(readlink -f "$entry")" || continue
-        case "$target" in "$repo_root"/*) continue;; esac
-        [ -e "$target" ] && link_mounts+=(-v "$target:$target:ro,z")
-    done
     printf '\033[1mappimage:\033[0m building in the container\n' >&2
     exec "$engine" run --rm \
         -v "$repo_root:/src:z" \
-        "${link_mounts[@]+"${link_mounts[@]}"}" \
         -e STUD_APPIMAGE_IN_CONTAINER=1 \
         -e STUD_CMAKE_ARGS="${STUD_CMAKE_ARGS:-}" \
+        -e STUD_ROSEMARY_TARGET_DIR="${STUD_ROSEMARY_TARGET_DIR:-}" \
         stud-appimage-build \
         /src/packaging/build-appimage.sh "${@:-}"
 fi
@@ -64,9 +50,7 @@ arch="$(uname -m)"
 app_id="$(grep -m1 '^set(STUD_APP_ID' "$repo_root/CMakeLists.txt" | cut -d'"' -f2)"
 [ -n "$app_id" ] || die "could not read STUD_APP_ID out of CMakeLists.txt"
 
-# Configured every time: whether Process B and bionic are built at
-# all is decided at configure time from what third_party/ holds.
-# STUD_CMAKE_ARGS passes anything else through; release automation sets
+# STUD_CMAKE_ARGS passes anything through; release automation sets
 # -DSTUD_VERSION with it.
 say "building"
 # shellcheck disable=SC2086
@@ -79,17 +63,10 @@ cmake --build "$build_dir" -j"$(nproc)" >&2
 say "installing into /usr"
 cmake --install "$build_dir" >/dev/null
 
-# A build with third_party/ missing still succeeds, it just has no
-# Process B and no bionic: a window that cannot run Roblox.
-for required in \
-    /usr/bin/stud \
-    /usr/libexec/stud/stud-render-host \
-    /usr/libexec/stud/stud-runtime-bionic \
-    /usr/lib/stud/android-bionic/linker64 \
-    /usr/lib/stud/android-bionic/libc.so
-do
-    [ -e "$required" ] || die "the install produced no $required, run tools/setup.sh first"
-done
+# Stud, Rosemary, and Rosemary's upscaler shaders: one built without glslc
+# scales plainly, and the upscalers in Settings would do nothing.
+python3 "$repo_root/tools/validate-payload.py" / --label "installed tree" \
+    --rosemary-source "$build_dir/rosemary-prefix/src/rosemary" >&2 || die "the install is incomplete"
 
 # Anylinux's tools, pinned to one commit and checked, since what they
 # download ends up inside the image.
@@ -116,77 +93,54 @@ export APPDIR="$appdir"
 export DESKTOP="/usr/share/applications/$app_id.desktop"
 export ICON="/usr/share/icons/hicolor/512x512/apps/$app_id.png"
 export DEPLOY_QT=1 DEPLOY_VULKAN=1 DEPLOY_OPENGL=1 DEPLOY_PULSE=1
-# Only the UI can be traced: render-host and the web view exit at once
-# without the session stud-ui hands them.
+# Only the UI can be traced: Rosemary exits at once without the client
+# stud-ui hands it.
 export STRACE_BINARY=stud
 
-# Everything Stud loads by name at runtime and so no tracer would see:
-# render-host's window system, Vulkan and GL, the present layer's DRI3
-# and Present on X11, miniaudio's backends, and the KF6 plugin Breeze asks
-# the compositor through.
+# Everything loaded by name at runtime, which no tracer of the UI sees:
+# Rosemary's SDL3 and, through it, the window system, sound and input
+# libraries SDL opens itself; its Vulkan, EGL and GBM; FFmpeg for video;
+# and the KF6 plugin Breeze asks the compositor through.
 qt_plugins="$(qmake6 -query QT_INSTALL_PLUGINS)"
+# FFmpeg by the name Rosemary opens, whichever release the image carries.
+soname() { objdump -p "$1" | awk '/SONAME/ { print $2 }'; }
 dlopened=(
-    /usr/lib/libvulkan.so.1
-    /usr/lib/libEGL.so.1 /usr/lib/libGLESv2.so.2
-    /usr/lib/libxcb-dri3.so.0 /usr/lib/libxcb-present.so.0
-    /usr/lib/libX11-xcb.so.1 /usr/lib/libXext.so.6 /usr/lib/libXi.so.6 /usr/lib/libXrender.so.1
-    /usr/lib/libXrandr.so.2
-    /usr/lib/libxkbcommon-x11.so.0 /usr/lib/libdecor-0.so.0
-    /usr/lib/libasound.so.2 /usr/lib/libpulse.so.0
+    /usr/lib/libSDL3.so.0
+    /usr/lib/libvulkan.so.1 /usr/lib/libEGL.so.1 /usr/lib/libgbm.so.1
+    /usr/lib/libwayland-client.so.0 /usr/lib/libwayland-egl.so.1 /usr/lib/libwayland-cursor.so.0
+    /usr/lib/libdecor-0.so.0 /usr/lib/libxkbcommon.so.0
+    /usr/lib/libX11.so.6 /usr/lib/libXext.so.6 /usr/lib/libXi.so.6 /usr/lib/libXrandr.so.2
+    /usr/lib/libXcursor.so.1 /usr/lib/libXfixes.so.3 /usr/lib/libXss.so.1
+    /usr/lib/libpipewire-0.3.so.0 /usr/lib/libpulse.so.0 /usr/lib/libasound.so.2
+    "/usr/lib/$(soname /usr/lib/libavcodec.so)" "/usr/lib/$(soname /usr/lib/libavutil.so)"
+    /usr/lib/libxkbcommon-x11.so.0
     "$qt_plugins"/kf6/kwindowsystem/*.so
 )
 
 say "bundling"
 "$tools/quick-sharun.sh" \
     /usr/bin/stud \
-    /usr/libexec/stud/stud-render-host \
-    /usr/libexec/stud/stud-webview \
-    /usr/libexec/stud/libstud_present_layer.so \
+    /usr/libexec/stud/rosemary \
     "${dlopened[@]}"
 
 # quick-sharun rewrites every /usr/lib and /usr/share it finds in an
 # executable to point into the bundle. Stud's are not its own files: the
-# host's MangoHud, and paths inside Process B's Android sandbox
-# (/system/usr/share/i18n). Its executables go back in unrewritten.
-for exe in /usr/bin/stud /usr/libexec/stud/stud-render-host /usr/libexec/stud/stud-webview; do
+# host's MangoHud, and the macOS paths Rosemary hands the client
+# (/usr/lib/libSystem.B.dylib is the guest's, not the bundle's). Both
+# executables go back in unrewritten.
+for exe in /usr/bin/stud /usr/libexec/stud/rosemary; do
     strip -o "$appdir/shared/bin/${exe##*/}" "$exe"
 done
-# Bundling glycin adds a bwrap wrapper to bin/, which AppRun puts first on
-# PATH. Process B's sandbox must be the host's own bwrap, untouched.
-rm -f "$appdir/bin/bwrap"
 
-# stud-ui starts its siblings by path, from libexec/stud beside bin/.
-# A hardlink to sharun there runs the same shared/bin binary.
+# stud-ui starts Rosemary by path, from libexec/stud beside bin/. A
+# hardlink to sharun there runs the same shared/bin binary.
 mkdir -p "$appdir/libexec/stud"
-for exe in stud-render-host stud-webview; do
-    ln -f "$appdir/sharun" "$appdir/libexec/stud/$exe"
-done
-# Stud's present layer: stud-ui points the Vulkan loader at the manifest
-# beside render-host, and the library itself was bundled above with its
-# dependencies, so the manifest's path is rewritten to that copy. Where
-# under lib/ it lands follows the source's path (/usr/libexec/stud went to
-# lib/exec/stud), so it is looked up rather than assumed.
-layer="$(find "$appdir/lib" -name libstud_present_layer.so -print -quit)"
-[ -n "$layer" ] || die "quick-sharun did not bundle the present layer"
-layer="$(realpath --relative-to="$appdir/libexec/stud" "$layer")"
-sed "s|\"library_path\": \"[^\"]*\"|\"library_path\": \"$layer\"|" \
-    /usr/libexec/stud/VK_LAYER_STUD_present.json > "$appdir/libexec/stud/VK_LAYER_STUD_present.json"
-
-# Stud's own files that are not host libraries, copied as they are:
-# bionic and Process B are Android ELF that no host tool may patch, strip
-# or resolve.
-say "adding bionic and Process B"
-# Into lib/stud, not as it: quick-sharun has already made lib/stud for
-# gfxstream's host library, and copying the directory onto an existing one
-# nests it at lib/stud/stud, where nothing looks.
-mkdir -p "$appdir/lib/stud"
-cp -a /usr/lib/stud/. "$appdir/lib/stud/"
-cp -a /usr/libexec/stud/stud-runtime-bionic /usr/libexec/stud/lib64 "$appdir/libexec/stud/"
+ln -f "$appdir/sharun" "$appdir/libexec/stud/rosemary"
 # Stud's own share/ files: the desktop entry and icons it installs for
 # the user, and the licences of everything it redistributes.
 (cd /usr/share && cp -a --parents \
     "applications/$app_id.desktop" "metainfo/$app_id.metainfo.xml" \
-    icons/hicolor/*/apps/"$app_id.png" licenses/stud doc/stud \
+    icons/hicolor/*/apps/"$app_id"*.png licenses/stud doc/stud \
     "$appdir/share/")
 # AppImageHub reads the AppStream metainfo only from usr/share/metainfo.
 mkdir -p "$appdir/usr/share"
@@ -200,8 +154,8 @@ cat > "$appdir/bin/stud.hook" <<'HOOK'
 export STUD_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 
 # AppRun.lib moves XDG_CACHE_HOME to ~/.cache/AppImage-Cache. Stud's cache
-# (the extracted APK, the engine's state) stays where every other package
-# of Stud keeps it; CACHEDIR is the value from before the move.
+# (the web views') stays where every other package of Stud keeps it;
+# CACHEDIR is the value from before the move.
 export XDG_CACHE_HOME="$CACHEDIR"
 
 # The host's own platform theme is a plugin built against the host's Qt
@@ -218,8 +172,7 @@ HOOK
 # QtWebEngine, for the login page: its helper process, its resources and
 # its locales are all bundled, but Qt looks for them under share/qt6 and
 # beside the executable, finds none of them, and aborts the web view at
-# start -- live-reported as stud-webview dumping core on login. The
-# Flatpak sets the same three for the same reason. Looked up, since where
+# start. The Flatpak sets the same three for the same reason. Looked up, since where
 # quick-sharun puts each follows the source's layout.
 webengine_process="$(find "$appdir/bin" -maxdepth 1 -name QtWebEngineProcess -print -quit)"
 webengine_resources="$(find "$appdir" -name qtwebengine_resources.pak -printf '%h\n' -quit)"

@@ -22,7 +22,8 @@ the build shares.
   `--check` reports what is still a placeholder.
 
 - **`validate-payload.py`**, **`compare-package-contents.py`**,
-  **`check-aur-depends.py`**, **`check-cpak-runtime.py`** and
-  **`dependency-id.sh`**: the release's package checks.
+  **`check-aur-depends.py`** and **`check-cpak-runtime.py`**: the
+  release's package checks. `validate-payload.py --rosemary-source` also
+  checks Rosemary embeds every upscaler shader it was built from.
 
 Nothing here inspects or unpacks the Roblox client.

@@ -3,27 +3,25 @@
 One install tree, six formats: the rpm, the deb, the Arch package, the
 AppImage, the Flatpak and the cpak image. `cmake --install` lays down a
 relocatable layout. The deb and the rpm are that tree packaged. The AppImage
-is that
-tree plus its dependencies.
+is that tree plus its dependencies.
 
 ```
 <prefix>/bin/stud                     the launcher, the only thing on PATH
-<prefix>/libexec/stud/                the other two processes, the web-view
-                                      viewer, and Process B's lib64/ overlay
-<prefix>/lib/stud/android-bionic/     the real linker64 and libc
+<prefix>/libexec/stud/rosemary        Rosemary, which runs the macOS client
 <prefix>/share/applications/...       desktop entry
 <prefix>/share/metainfo/...           AppStream component
 <prefix>/share/icons/hicolor/...      icon
+<prefix>/share/licenses/stud/...      Stud's licence, and Rosemary's
 ```
 
-Every binary finds bionic and its sibling processes **relative to
-its own path**, which is what lets the same tree work when installed at
-`/usr` and when mounted at a random path by an AppImage.
+The launcher finds Rosemary **relative to its own path**, which is what lets
+the same tree work when installed at `/usr` and when mounted at a random path
+by an AppImage. No package contains Roblox: the launcher downloads the macOS
+client from Roblox's own servers at the first start.
 
 ## Building the packages
 
 ```sh
-tools/setup.sh
 cmake -S . -B build -G Ninja
 cmake --build build
 
@@ -31,6 +29,11 @@ cpack -G RPM -B build/packages --config build/CPackConfig.cmake   # Fedora
 cpack -G DEB -B build/packages --config build/CPackConfig.cmake   # Debian/Ubuntu
 packaging/build-appimage.sh                                       # anywhere
 ```
+
+The build compiles Rosemary with cargo, from Stud's fork,
+[rosemary-stud](https://github.com/CatPieLeaf/rosemary-stud), branch `stud`.
+It needs Rust 1.99 or newer, git (Rosemary's Microlift dependencies are git
+dependencies), and `glslc` for the upscalers' shaders.
 
 The AppImage builds in an Arch container with [quick-sharun] from the
 [Anylinux AppImages] project. It bundles every library, glibc and mesa
@@ -42,18 +45,18 @@ included, and packs a SquashFS image behind [uruntime].
 
 ## What is bundled, and what is depended on
 
-Stud ships the bionic set in every format. It is not our code. Nothing
-starts without it, and it is redistributable: Apache-2.0 and BSD from AOSP.
+**SDL3 is a runtime dependency, and it must be 3.4 or newer.** Rosemary
+opens it by name rather than linking it, so a package names it in its
+dependencies itself; nothing finds it by scanning the binaries. The same
+goes for the Vulkan loader, which the launcher opens to list the GPUs.
 
-**bubblewrap is a dependency, never bundled.** Process B runs inside it
-and Stud refuses to launch without it. A distribution's own build carries
-the AppArmor or SELinux policy that lets it create a user namespace;
-a binary copied into a package would be refused on exactly the
-distributions that matter.
+The deb and the rpm depend on Qt 6.10 or newer, with QtWebEngine and
+QtWebChannel: the launcher shows Roblox's sign-in and web pages itself. The
+AppImage bundles all of it, down to glibc. That is the ordinary split: a
+system package should use the system Qt.
 
-The deb and the rpm depend on Qt. The AppImage bundles it, along with
-everything else down to glibc. That is the ordinary split: a system
-package should use the system Qt.
+GameMode and MangoHud are suggested, not required: both are Settings
+switches, and neither stops Stud from running.
 
 ## Appearing in a software centre
 
@@ -66,7 +69,7 @@ entry, summary, description, licence, URL, OARS content rating.
 
 Three identifiers must agree or the entry does not resolve: the AppStream
 `<id>`, the desktop file's name, and the Wayland `app_id` both of Stud's
-windows report. They all come from `STUD_APP_ID` in the top-level
+window reports. They all come from `STUD_APP_ID` in the top-level
 `CMakeLists.txt`.
 
 Validate before trusting a package:

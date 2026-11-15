@@ -5,7 +5,7 @@ Three PKGBUILDs describe one package: PKGBUILD builds from source,
 PKGBUILD.stud-bin is what the AUR serves, and PKGBUILD.bin is what CI turns
 an install tree into. A dependency named by only some of them is a broken
 package for whoever installs the other one, and PKGBUILD.bin drifted exactly
-that way: it shipped 1.1.1 without libglvnd or libxext.
+that way: it shipped Stud 1.1.1 without libglvnd or libxext.
 
 Two checks:
 
@@ -76,10 +76,6 @@ def needed_sonames(tree: Path) -> tuple[set[str], set[str]]:
             if handle.read(4) != b"\x7fELF":
                 continue
         provided.add(path.name)
-        # Anything under android-bionic or lib64 is Android's own, resolved by
-        # Stud's linker64 inside the sandbox and never by the host loader.
-        if {"android-bionic", "lib64"} & set(path.parts):
-            continue
         out = subprocess.run(["readelf", "-d", str(path)],
                              capture_output=True, text=True).stdout
         needed |= set(re.findall(r"Shared library: \[([^\]]+)\]", out))

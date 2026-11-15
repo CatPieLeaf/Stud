@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/license-AGPLv3-white?logo=gnu&logoColor=000000&style=for-the-badge&color=4c8bf5&labelColor=D6E3FC" alt="License">
   <img src="https://img.shields.io/badge/platform-linux-white?logo=linux&logoColor=000000&style=for-the-badge&color=f5bd20&labelColor=FDEFC7" alt="Platform">
   <img src="https://img.shields.io/github/downloads/CatPieLeaf/Stud/total?label=Downloads&logo=github&logoColor=000000&style=for-the-badge&color=179299&labelColor=D3F6F8" alt="Downloads">
+  <a href="https://discord.gg/6dmBTA4cJw"><img src="https://img.shields.io/discord/1568340222557687828?label=discord&logo=discord&style=for-the-badge&color=5965f1&labelColor=D6D9FC" alt="Discord"></a>
 </p>
 
   <p align="center">Play Roblox on Linux: the real macOS client, running on your desktop.</p>
@@ -67,7 +68,7 @@
 
 I wanted to play Roblox on Linux without it falling over. Sober kept crashing on my NVIDIA machine, and I wanted more control than it gave me: picking my own APK, deciding when Roblox updates, and no OTAs I can't see or turn off.
 
-So I made Stud. The Android runtime (bionic) and the rendering side (glibc) are separate processes, so the graphics driver's threads stay out of the Android code, which is what fixed the NVIDIA crashes for me. You provide the APK yourself, and it's Vulkan first.
+So I made Stud. The first version ran Roblox's Android client; Stud 2.0 runs the real macOS desktop client instead, on [Rosemary](https://github.com/microlift/rosemary), so it's the full desktop Roblox rather than a phone app on a big screen. Stud fetches the client from Roblox's own servers, keeps it up to date, and gets out of the way.
 
 It's a one-person project, built because I wanted a launcher that stays out of the way. It works for me, and I hope it works for you too.
 
@@ -141,20 +142,25 @@ The launcher stays for the whole session as the client's parent, so there is alw
 ### 1 - Install the system packages
 
 ```bash
-sudo dnf install cmake ninja-build gcc-c++ cargo qt6-qtbase-devel vulkan-headers \
-  libcurl-devel libxkbcommon-devel SDL3
+sudo dnf install cmake ninja-build gcc-c++ git cargo glslc \
+  qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
+  vulkan-headers vulkan-loader-devel libcurl-devel zlib-devel systemd-devel \
+  libxkbcommon-devel SDL3
 ```
 
 <details>
 <summary>Debian / Ubuntu</summary>
 
 ```bash
-sudo apt install cmake ninja-build build-essential cargo qt6-base-dev libqt6opengl6-dev \
-  libvulkan-dev libcurl4-openssl-dev libxkbcommon-dev libsdl3-0
+sudo apt install cmake ninja-build build-essential git glslc \
+  qt6-base-dev qt6-webengine-dev qt6-webchannel-dev \
+  libvulkan-dev libgles-dev libcurl4-openssl-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0
 ```
+
+Ubuntu's cargo is older than Rosemary needs; install Rust with [rustup](https://rustup.rs) instead.
 </details>
 
-Rosemary needs Rust 1.99 or newer and SDL 3.4.0 at runtime; see [its README](https://github.com/microlift/rosemary#building).
+Rosemary needs Rust 1.99 or newer, and SDL 3.4 at runtime; FFmpeg 8 or newer, if present, plays in-game video. See [its README](https://github.com/microlift/rosemary#building).
 
 ### 2 - Build and run
 
@@ -164,7 +170,7 @@ cmake --build build
 ./build/ui/stud-ui
 ```
 
-The build fetches Rosemary's source from its repository and compiles it. To use a Rosemary you already have, configure with `-DSTUD_BUILD_ROSEMARY=OFF` and put it on `PATH` or in `STUD_ROSEMARY`.
+The build fetches Rosemary's source from Stud's fork, [rosemary-stud](https://github.com/CatPieLeaf/rosemary-stud) (branch `stud`: upstream Rosemary with Stud's changes on top), and compiles it. To use a Rosemary you already have, configure with `-DSTUD_BUILD_ROSEMARY=OFF` and put it on `PATH` or in `STUD_ROSEMARY`.
 
 The first launch downloads the macOS client and Rosemary's base system, a few hundred megabytes, then goes straight to Roblox.
 
@@ -206,6 +212,9 @@ Every debugging switch is listed in [`docs/environment.md`](docs/environment.md)
 
 Pre-built packages are on the [Releases](https://github.com/CatPieLeaf/Stud/releases) page.
 
+> [!NOTE]
+> **Updating from Stud 1.x:** install 2.0 over it as usual. At its first start Stud removes 1.x's Android engine, APK and caches, which run to gigabytes, and keeps your settings (the ones 2.0 still has), FFlags, customizations and logs. You'll log in to Roblox again, in the new client.
+
 ## 🔵 R P M  ( F E D O R A )
 
 Stud is in [Terra](https://terra.fyralabs.com), so it installs and updates like any other package. Add the Terra repository once:
@@ -232,7 +241,7 @@ sudo dnf install ./stud-*.x86_64.rpm
 sudo apt install ./stud_*_amd64.deb
 ```
 
-Installs and starts on Ubuntu 24.04, Debian 13, Ubuntu 26.04 and the Mint releases built on them.
+Installs and starts on Ubuntu 26.04, Debian 14 and newer, and the Mint releases built on them. On Ubuntu 24.04, Mint 22 or Debian 13, use the AppImage or the Flatpak: Stud 2.0 needs Qt 6.9 and SDL 3.4, which those do not have.
 
 ## 🔷 A R C H  ( P A C M A N )
 
@@ -336,9 +345,10 @@ chmod +x Stud-x86_64.AppImage
 
 | path | what |
 |---|---|
-| `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides; Stud writes them into the client's `ClientAppSettings.json` at launch |
+| `~/.config/stud/` | `config.json`, and `flags.json` if you hand-write FFlag overrides; Stud writes them into the client's `ClientAppSettings.json` at launch. `flag-profiles/` holds saved FFlag profiles, and `customizations/` (`studio-customizations/` for Studio) the files laid over Roblox's own content |
 | `~/.local/share/stud/client/` | the macOS client, as Roblox's servers ship it |
 | `~/.local/share/stud/prefix/` | Rosemary's prefix: Roblox's own settings, login and data |
+| `~/.local/share/stud/webview/`, `~/.cache/stud/webview/` | the sign-in and web pages Stud shows for the client: their cookies, and their cache |
 | `~/.local/state/stud/logs/` | one log per session, Stud's and the client's. This is the file to read when something goes wrong, and the one to attach to a bug report |
 
 In a Flatpak these live under the sandbox's own home, so `~/.config/stud/` becomes `~/.var/app/io.github.catpieleaf.Stud/config/stud/` and the rest follow.
@@ -351,7 +361,7 @@ In a Flatpak these live under the sandbox's own home, so `~/.config/stud/` becom
 
 Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commercial project and is not affiliated with, endorsed by or supported by them.
 
- - [Rosemary](https://github.com/microlift/rosemary): runs the macOS client on Linux (GPL-3.0)
+ - [Rosemary](https://github.com/microlift/rosemary): runs the macOS client on Linux (GPL-3.0), built from Stud's fork, [rosemary-stud](https://github.com/CatPieLeaf/rosemary-stud)
  - [volk](https://github.com/zeux/volk): Vulkan entry points, for the GPU picker (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json) and [miniz](https://github.com/richgel999/miniz) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)

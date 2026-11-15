@@ -1,12 +1,12 @@
 # What every job needs before it builds anything: which version it is
-# building, and the third-party dependencies, restored from the cache or
-# fetched. Run after actions/checkout, which is what puts this file there.
+# building, and what Rosemary's build fetches, restored from the cache.
+# Run after actions/checkout, which is what puts this file there.
 name: Stud setup
-description: Version to build, plus the NDK and bionic from cache or tools/setup.sh
+description: Version to build, plus Rust and Rosemary's Cargo downloads
 
 inputs:
-  dependencies:
-    description: Restore or fetch the NDK and bionic
+  rosemary:
+    description: Set up Rust and restore Rosemary's Cargo downloads
     default: "true"
 
 runs:
@@ -23,34 +23,44 @@ runs:
         echo "TAG=$tag" >> "$GITHUB_ENV"
         echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
 
-    - name: Work out the dependency cache keys
-      # Hashes what the dependencies are, not the script that fetches
-      # them; see tools/dependency-id.sh.
-      if: inputs.dependencies == 'true'
-      id: deps
+    - name: Rust
+      # The distribution's own when the job installed one: Fedora's and
+      # Arch's are new enough for Rosemary. Ubuntu's is older than
+      # Rosemary's edition needs, so that job installs none and gets
+      # rustup's stable here.
+      if: inputs.rosemary == 'true'
       shell: bash
       run: |
-        echo "id=$(sh tools/dependency-id.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+        if ! command -v cargo >/dev/null; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        fi
 
-    - name: Cache Android NDK
-      # Its own key: it is a plain download, and every job wants it.
-      if: inputs.dependencies == 'true'
-      uses: actions/cache@v6
-      with:
-        path: third_party/android-ndk-r28c
-        key: ndk-${{ steps.deps.outputs.id }}
-
-    - name: Cache bionic
-      # One key, no container in it, shared by every job: bionic is
-      # extracted from an Android system image, not built here.
-      if: inputs.dependencies == 'true'
-      uses: actions/cache@v6
-      with:
-        path: third_party/android-bionic
-        key: deps-${{ steps.deps.outputs.id }}
-
-    - name: Fetch dependencies
-      # tools/setup.sh skips whatever the caches restored.
-      if: inputs.dependencies == 'true'
+    - name: Work out the Cargo cache key
+      # The commit of the Rosemary branch the build fetches, read from the
+      # repository and branch CMakeLists.txt names. A new commit restores
+      # the previous key's downloads and fetches only what changed.
+      if: inputs.rosemary == 'true'
+      id: rosemary
       shell: bash
-      run: tools/setup.sh
+      run: |
+        repo="$(sed -n 's/^set(STUD_ROSEMARY_REPOSITORY "\([^"]*\)".*/\1/p' CMakeLists.txt)"
+        branch="$(sed -n 's/^set(STUD_ROSEMARY_BRANCH "\([^"]*\)".*/\1/p' CMakeLists.txt)"
+        sha="$(git ls-remote "$repo" "refs/heads/$branch" | cut -f1)"
+        [ -n "$sha" ] || { echo "::error::cannot read $branch of $repo"; exit 1; }
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Rosemary's Cargo downloads
+      # One cache for every job: crates and git checkouts are the same in
+      # every container. What is compiled from them is not, so the target
+      # directory is not cached.
+      if: inputs.rosemary == 'true'
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: cargo-${{ steps.rosemary.outputs.sha }}
+        restore-keys: cargo-

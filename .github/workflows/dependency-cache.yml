@@ -1,22 +1,19 @@
-# Fetches Stud's third-party dependencies and caches them. Nothing else.
+# Fetches what Rosemary's build downloads and caches it. Nothing else.
 #
 # It exists because of how GitHub scopes caches. The release workflow only
 # ever runs on a tag, and a cache created for one tag is not visible to
 # another, GitHub's own words: "a run cannot restore caches from
 # arbitrary sibling branches, child branches, or a different tag". So
-# every release was fetching the NDK and bionic again, and the caches it
-# wrote could only ever help a re-run of that same release.
+# every release would fetch Rosemary's crates and git dependencies again,
+# and the cache it wrote could only ever help a re-run of that release.
 #
 # A run on the DEFAULT BRANCH is the exception: those caches are visible to
 # every ref, tags included. So this workflow does one job, populate them.
 #
-# It is deliberately not part of the release pipeline and builds no
-# packages. Run it after changing tools/setup.sh, or whenever a release
-# reports a cold cache.
-#
-# ONE copy, shared by every release job: neither piece is
-# container-specific. The NDK is downloaded, and bionic is extracted from
-# an Android system image.
+# It is deliberately not part of the release pipeline and builds nothing.
+# Run it after the Rosemary branch moves, or whenever a release reports a
+# cold cache. One copy, shared by every release job: downloads are the
+# same in every container.
 
 name: Dependency cache
 
@@ -29,18 +26,13 @@ on:
   # to every other ref. Run this from a tag or a side branch and the caches
   # it writes cannot be read by anything else, which is the exact problem
   # it exists to solve.
-  #
-  # Deliberately NOT triggered by a release: the release workflow already
-  # fetches these dependencies itself, so a release trigger here would
-  # fetch the same thing twice at once, and it would do it on a tag ref,
-  # where the resulting caches help nothing.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # One at a time, and a newer push wins: two of these racing would just
+  # One at a time, and a newer run wins: two of these racing would just
   # fetch the same thing twice.
   group: dependency-cache
   cancel-in-progress: true
@@ -49,20 +41,19 @@ jobs:
   dependencies:
     name: Dependencies
     runs-on: ubuntu-latest
-    container: ubuntu:26.04
     steps:
-      - name: Install build dependencies
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            g++ cmake ninja-build meson git pkg-config \
-            curl unzip tar xz-utils zstd python3 e2fsprogs findutils ca-certificates
-
       - uses: actions/checkout@v7
 
-      - name: Version and dependencies
+      - name: Version, Rust and the Cargo cache
         uses: ./.github/actions/setup
 
-      - name: Report what was cached
-        # So a run says plainly what it restored or fetched.
-        run: ls -la third_party/android-bionic | head
+      - name: Fetch Rosemary's dependencies
+        # Into ~/.cargo, which the setup step's cache saves when the job
+        # ends. Cargo.lock decides what is fetched, the same set the
+        # release's builds resolve.
+        run: |
+          repo="$(sed -n 's/^set(STUD_ROSEMARY_REPOSITORY "\([^"]*\)".*/\1/p' CMakeLists.txt)"
+          branch="$(sed -n 's/^set(STUD_ROSEMARY_BRANCH "\([^"]*\)".*/\1/p' CMakeLists.txt)"
+          git clone --depth 1 --branch "$branch" "$repo" "$RUNNER_TEMP/rosemary"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/rosemary/Cargo.toml"
+          du -sh ~/.cargo/registry ~/.cargo/git

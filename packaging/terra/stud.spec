@@ -1,108 +1,74 @@
 %global appid io.github.catpieleaf.Stud
 
-# Installs the release archive Stud's CI builds, prebuilt bionic
-# included.
+# Installs the release archive Stud's CI builds: the launcher and Rosemary,
+# already compiled.
 %global debug_package %{nil}
-
-# Stripping a bionic ELF is neither useful nor safe, and these are
-# already-built binaries: there is nothing to strip that upstream did not mean.
-%global __brp_strip %{nil}
-%global __brp_strip_comment_note %{nil}
-%global __brp_strip_static_archive %{nil}
-
-# Android's own libraries are resolved by Stud's own linker64 inside bwrap,
-# never by the system loader. Left alone, rpm reads their NEEDED entries and
-# demands libc.so, libdl.so, liblog.so and ld-android.so from the
-# distribution, which no package can satisfy.
-%global __requires_exclude_from ^%{_prefix}/lib/stud/android-bionic/.*|^%{_prefix}/lib/stud/gfxstream-guest/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/stud-runtime-bionic$
-# ...and none of Stud's own Android libraries, nor its present layer or
-# gfxstream's host library, may be
-# advertised as system provides: they are Stud's private copies, loaded by
-# path.
-%global __provides_exclude_from ^%{_prefix}/lib/stud/.*|^%{_libexecdir}/stud/lib64/.*|^%{_libexecdir}/stud/libstud_present_layer\.so$
 
 Name:           stud
 Version:        1.2.14
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
-License:        AGPL-3.0-or-later
+License:        AGPL-3.0-or-later AND GPL-3.0-only AND LGPL-3.0-or-later AND MIT AND BSD-3-Clause
 URL:            https://github.com/CatPieLeaf/Stud
 Source0:        %{url}/releases/download/%{version}/stud-%{version}-x86_64.tar.zst
 Packager:       CatPieLeaf <catpieleaf@proton.me>
 
-# The archive is built for x86_64 only, and the Roblox app ships no other
-# architecture Stud could host.
+# The archive is built for x86_64 only, and the macOS client Stud runs is an
+# x86_64 program Rosemary runs directly.
 ExclusiveArch:  x86_64
 
 BuildRequires:  anda-srpm-macros
 BuildRequires:  zstd
 
-# bubblewrap is not optional: the Android process runs inside it and Stud
-# refuses to start without one. It is a package rather than a bundled binary
-# on purpose, since a distribution's own build carries the SELinux policy
-# that lets it create a user namespace at all.
-Requires:       bubblewrap
-# Audio requires no package: miniaudio is compiled into render-host and
-# opens whichever of libasound, libpulse or libjack the host has, by name.
 Requires:       hicolor-icon-theme
-# FFmpeg is loaded at runtime, not linked, so rpm finds no dependency on it.
-# It is what the engine's video playback and screen recording use; without
-# it Stud runs and simply offers the engine no video codecs. Either
-# Fedora's own build or RPM Fusion's full one.
-Recommends:     (libavcodec-free or ffmpeg-libs)
-# The Vulkan loader, for the default render path, is opened at runtime by
-# volk, and the system GLES the OpenGL render path uses is opened by SONAME
-# too, so rpm cannot see either.
+# Rosemary opens SDL3 by name rather than linking it, so rpm cannot see it,
+# and it needs 3.4 or newer.
+Requires:       SDL3 >= 3.4.0
+# The Vulkan loader, opened at runtime by the launcher to list the GPUs and
+# by Rosemary to draw.
 Requires:       libvulkan.so.1()(64bit)
-Requires:       libEGL.so.1()(64bit)
-Requires:       libGLESv2.so.2()(64bit)
-# The X11 keyboard layout is read from the server through these, opened at
-# runtime too. Weak: without them Stud falls back to the layout names the
-# server publishes.
-Recommends:     libxkbcommon-x11.so.0()(64bit)
-Recommends:     libX11-xcb.so.1()(64bit)
-Recommends:     libXrandr.so.2()(64bit)
-# Everything else Stud links is found by rpm itself from the ELFs: Qt, Wayland,
-# libxkbcommon, freetype, OpenSSL, libX11 and libXext.
+# FFmpeg 8 or newer is loaded at runtime for video in experiences; without
+# it Stud runs and the client simply plays no video. Either Fedora's own
+# build or RPM Fusion's full one.
+Recommends:     (libavcodec.so.63()(64bit) or libavcodec.so.62()(64bit))
+Recommends:     (libavutil.so.61()(64bit) or libavutil.so.60()(64bit))
+# Both are Settings switches, and neither stops Stud from running.
+Recommends:     gamemode
+Suggests:       mangohud
+# Everything else is found by rpm itself from the ELFs: Qt with QtWebEngine
+# and QtWebChannel, libcurl, zlib, libxkbcommon and libudev.
 
-Provides:       bundled(bionic)
-Provides:       bundled(gfxstream)
-Provides:       bundled(mesa)
+Provides:       bundled(rosemary)
 Provides:       bundled(fidelityfx-fsr1)
 Provides:       bundled(snapdragon-gsr)
 Provides:       bundled(mpv-prescalers)
 Provides:       bundled(volk)
-Provides:       bundled(xxhash)
-Provides:       bundled(miniaudio)
 Provides:       bundled(miniz)
 Provides:       bundled(json)
-Provides:       bundled(libjnivm)
-Provides:       bundled(zydis)
-Provides:       bundled(zycore)
 
 %description
-Stud runs the real, unmodified Roblox app on your Linux desktop, in its own
-window, with your mouse and keyboard. No browser, no emulator, no virtual
-machine.
+Stud runs the real, unmodified Roblox macOS client on your Linux desktop, in
+its own window, with your mouse and keyboard, through Rosemary. No virtual
+machine, no emulator.
 
-Links from a browser open straight into the experience, and the mouse and
-keyboard behave the way they do in the desktop client. The game can render
-below your screen's resolution and still fill it. Discord Rich
-Presence carries a button friends can join through, and a tray menu names
-the country a server is in when you join one.
+It downloads and updates the client from Roblox's own servers before each
+launch, and runs Roblox Studio too. Links from a browser open straight into
+the experience. FastFlags, customizations, Discord Rich Presence with a join
+button, game history and an optional note of the server's country come with
+it.
 
-Roblox is not included. You supply the Android application package yourself,
-and Roblox remains subject to its own terms. Stud is an independent project,
-not affiliated with, endorsed by or approved by Roblox Corporation.
+Roblox is not included: Stud downloads it from Roblox's own servers, and
+Roblox remains subject to its own terms. Stud is an independent project, not
+affiliated with, endorsed by or approved by Roblox Corporation.
 
 %prep
 %autosetup -c -n %{name}-%{version}
 
 %build
 # Deliberately empty: this package installs the release archive, which CI
-# already built from the tag. The bionic set is extracted from an Android
-# system image rather than compiled, so there is nothing to build here.
+# already built from the tag. Rosemary's build fetches its git dependencies,
+# which a build without network cannot, so it is not rebuilt here.
 
 %install
 cp -a usr %{buildroot}/
@@ -115,11 +81,10 @@ cp -a usr %{buildroot}/
 %doc %{_datadir}/doc/%{name}/README.md
 %doc %{_datadir}/doc/%{name}/copyright
 %{_bindir}/%{name}
-%{_prefix}/lib/%{name}/
 %{_libexecdir}/%{name}/
 %{_datadir}/applications/%{appid}.desktop
 %{_metainfodir}/%{appid}.metainfo.xml
-%{_datadir}/icons/hicolor/*/apps/%{appid}.png
+%{_datadir}/icons/hicolor/*/apps/%{appid}*.png
 %{_mandir}/man1/%{name}.1*
 
 %changelog

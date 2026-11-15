@@ -4,14 +4,13 @@
 Every package Stud ships wraps the same install tree, and
 compare-package-contents.py proves a package carries that tree faithfully.
 This answers the other half: whether the tree is any good in the first
-place. A package can be a perfect copy of something broken, FSR shipped
-that way, the upscaler present in Settings with an empty shader behind it,
-because nothing ever looked inside the binary.
+place. A package can be a perfect copy of something broken, the upscalers
+present in Settings with no shader behind them, because nothing ever looked
+inside the binary.
 
 Runs against any Stud root: the install tree, an extracted rpm/deb/Arch
-package, an AppImage's squashfs-root, or a Flatpak /app. The private
-directory moves between layouts (libexec/stud on most distributions,
-lib/stud on Arch, both in an AppImage) so it is discovered, not assumed.
+package, an AppImage's squashfs-root, or a Flatpak /app. Rosemary's
+directory moves between layouts, so it is discovered, not assumed.
 """
 
 import argparse
@@ -26,7 +25,7 @@ def count_spirv_modules(blob):
     """How many embedded SPIR-V modules a binary really carries.
 
     Not a count of the magic number. That sequence turns up in compiled
-    code by coincidence -- it does in stud-render-host, once, in .text --
+    code by coincidence -- it did in Stud 1's render host, once, in .text --
     so counting it said four where three were embedded, and "at least
     three" would then have passed a build that had lost a shader and kept
     the accident. That is the exact regression this file exists to catch.
@@ -48,27 +47,6 @@ def count_spirv_modules(blob):
                 found += 1
         at = blob.find(SPIRV_MAGIC, at + 1)
     return found
-
-# The engine's own overlay libraries, bound over /system/lib64 in the
-# sandbox. Process B dlopen()s these by name; a missing one is a failure
-# at load with no useful message.
-BIONIC_OVERLAY = [
-    "libaaudio.so", "libandroid.so",
-    "libmediandk.so", "libnativewindow.so", "libOpenMAXAL.so",
-    "libOpenSLES.so", "libvulkan.so.1",
-]
-
-# The engine's libEGL and libGLESv2: gfxstream's guest libraries, bound over
-# /system/lib64 the same way, from beside bionic. The engine links both in
-# either graphics mode, so a missing one stops it loading at all.
-GFXSTREAM_GUEST = ["libEGL.so", "libGLESv2.so"]
-
-# The real bionic, extracted from an Android system image. linker64 is
-# Process B's PT_INTERP, without it nothing bionic runs at all.
-BIONIC_RUNTIME = [
-    "ld-android.so", "libc++.so", "libc.so", "libdl.so", "libdl_android.so",
-    "liblog.so", "libm.so", "linker64",
-]
 
 ICON_SIZES = ["16x16", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512"]
 
@@ -93,26 +71,6 @@ def is_elf(path: Path) -> bool:
             return f.read(4) == b"\x7fELF"
     except OSError:
         return False
-
-
-def elf_interpreter(path: Path) -> str | None:
-    """PT_INTERP of a 64-bit little-endian ELF, or None."""
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    if data[:4] != b"\x7fELF" or data[4] != 2:
-        return None
-    e_phoff, = struct.unpack_from("<Q", data, 0x20)
-    e_phentsize, e_phnum = struct.unpack_from("<HH", data, 0x36)
-    for i in range(e_phnum):
-        off = e_phoff + i * e_phentsize
-        p_type, = struct.unpack_from("<I", data, off)
-        if p_type == 3:  # PT_INTERP
-            p_offset, = struct.unpack_from("<Q", data, off + 0x08)
-            p_filesz, = struct.unpack_from("<Q", data, off + 0x20)
-            return data[p_offset:p_offset + p_filesz].rstrip(b"\0").decode(errors="replace")
-    return None
 
 
 def elf_has_dynamic_deps(path: Path) -> bool:
@@ -147,12 +105,13 @@ def elf_has_dynamic_deps(path: Path) -> bool:
     return False
 
 
-def find_private_dir(root: Path) -> Path | None:
-    """Where this layout keeps Stud's own executables."""
+def find_rosemary(root: Path) -> Path | None:
+    """Rosemary moves between layouts: libexec/stud on most distributions,
+    lib/stud on Arch, and either under a Flatpak's /app or an AppImage."""
     for candidate in ("usr/libexec/stud", "usr/lib/stud", "libexec/stud", "lib/stud"):
-        d = root / candidate
-        if (d / "stud-render-host").exists():
-            return d
+        p = root / candidate / "rosemary"
+        if p.exists():
+            return p
     return None
 
 
@@ -181,24 +140,13 @@ def real_binary(sharun_dir: Path | None, p: Path) -> Path:
     return real if real.exists() else p
 
 
-def find_data_dir(root: Path) -> Path | None:
-    """Where the bionic runtime lives, which is not always beside the executables."""
-    for candidate in ("usr/lib/stud", "usr/libexec/stud", "lib/stud", "libexec/stud"):
-        d = root / candidate
-        if (d / "android-bionic").is_dir():
-            return d
-    return None
-
-
-def validate(root: Path, expect_desktop_files: bool) -> Report:
+def validate(root: Path, expect_desktop_files: bool, rosemary_source: Path | None) -> Report:
     r = Report()
 
-    private = find_private_dir(root)
-    if not r.check(private is not None, "no directory holding stud-render-host"):
+    rosemary = find_rosemary(root)
+    if not r.check(rosemary is not None, "no libexec/stud/rosemary or lib/stud/rosemary"):
         return r
-    data = find_data_dir(root) or private
-    r.note(f"executables: {private.relative_to(root)}")
-    r.note(f"bionic: {data.relative_to(root)}")
+    r.note(f"rosemary: {rosemary.relative_to(root)}")
 
     # ---- the AppImage's own glibc, when it carries one -------------------
     sharun_dir = find_sharun_dir(root)
@@ -209,8 +157,7 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
             r.check((shared_lib / name).exists(),
                     f"the bundled runtime is missing {name}; every executable would fail to start")
         sharun_bytes = (sharun_dir / "sharun").read_bytes()
-        for launcher_path in [sharun_dir / "bin" / "stud"] + [
-                private / n for n in ("stud-render-host", "stud-webview")]:
+        for launcher_path in (sharun_dir / "bin" / "stud", rosemary):
             if launcher_path.exists():
                 r.check(launcher_path.read_bytes() == sharun_bytes,
                         f"{launcher_path.relative_to(root)} is not sharun, so it would run "
@@ -224,58 +171,35 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
     for candidate in ("usr/bin/stud", "bin/stud"):
         if (root / candidate).exists():
             launcher = root / candidate
-    r.check(launcher is not None, "no usr/bin/stud")
-    if launcher:
-        r.check(is_elf(launcher), "usr/bin/stud is not an ELF executable")
+    if r.check(launcher is not None, "no usr/bin/stud"):
+        launcher = real_binary(sharun_dir, launcher)
+        r.check(is_elf(launcher), "stud is not an ELF executable")
+        r.check(elf_has_dynamic_deps(launcher), "stud links no libraries, not a real build")
 
-    for name in ("stud-render-host", "stud-runtime-bionic", "stud-webview"):
-        p = real_binary(sharun_dir, private / name)
-        if r.check(p.exists(), f"{name} is missing"):
-            r.check(is_elf(p), f"{name} is not an ELF executable")
-            # Guards against a truncated or stub file, not against a small
-            # one: stud-webview is legitimately ~70 KB, because it is a
-            # thin wrapper and its weight is all in shared libraries.
-            r.check(p.stat().st_size > 16_384, f"{name} is truncated ({p.stat().st_size} bytes)")
-            r.check(elf_has_dynamic_deps(p), f"{name} links no libraries, not a real build")
-
-    # ---- Process B really is a bionic binary ----------------------------
-    runtime = private / "stud-runtime-bionic"
-    if runtime.exists():
-        interp = elf_interpreter(runtime)
-        r.check(interp is not None and "linker64" in interp,
-                f"stud-runtime-bionic's interpreter is {interp!r}, not a bionic linker64")
+    rosemary = real_binary(sharun_dir, rosemary)
+    r.check(is_elf(rosemary), "rosemary is not an ELF executable")
+    r.check(elf_has_dynamic_deps(rosemary), "rosemary links no libraries, not a real build")
 
     # ---- the upscalers' shaders -----------------------------------------
-    # Compiled to SPIR-V at build time and embedded. Without glslc the
-    # build silently emits an empty array, and the upscaler then does
-    # nothing at all while still being offered in Settings. A correct
-    # build carries exactly four: RAVU-Zoom anti-ringing, SGSR
-    # edge-direction, RCAS, which sharpens after RAVU, and the ETC2/EAC
-    # texture decoder.
-    host = real_binary(sharun_dir, private / "stud-render-host")
-    if host.exists():
-        modules = count_spirv_modules(host.read_bytes())
-        r.check(modules == 4,
-                f"stud-render-host carries {modules} SPIR-V module(s), not the 4 a build "
-                f"with both upscalers, the sharpening pass and the texture decoder has; "
-                f"upscaling would be offered in Settings and do nothing")
-        r.note(f"embedded SPIR-V modules: {modules}")
-
-    # ---- the libraries Stud brings with it ------------------------------
-    for name in BIONIC_RUNTIME:
-        r.check((data / "android-bionic" / name).exists(), f"bionic: {name} is missing")
-    for name in BIONIC_OVERLAY:
-        r.check((private / "lib64" / name).exists(), f"the /system/lib64 overlay: {name} is missing")
-    for name in GFXSTREAM_GUEST:
-        r.check((data / "gfxstream-guest" / name).exists(), f"gfxstream's guest: {name} is missing")
-    r.check((data / "libgfxstream_backend.so.0").exists() or sharun_dir is not None,
-            "gfxstream's host library libgfxstream_backend.so.0 is missing; render-host links it")
+    # Rosemary's build compiles crates/metal/upscale/*.comp with glslc and
+    # embeds them. Without glslc the build still succeeds and the upscalers
+    # in Settings do nothing, so the binary is counted against the sources
+    # it was built from.
+    modules = count_spirv_modules(rosemary.read_bytes())
+    r.note(f"embedded SPIR-V modules: {modules}")
+    if rosemary_source is not None:
+        sources = sorted((rosemary_source / "crates" / "metal" / "upscale").glob("*.comp"))
+        if r.check(bool(sources), f"no shader sources under {rosemary_source}/crates/metal/upscale"):
+            r.check(modules == len(sources),
+                    f"rosemary embeds {modules} SPIR-V module(s) and was built from "
+                    f"{len(sources)} shader source(s); glslc (shaderc) was missing from the build, "
+                    f"and upscaling would be offered in Settings and do nothing")
 
     # ---- what a desktop needs to show Stud at all -----------------------
     if expect_desktop_files:
         share = root / "usr" / "share"
         if not (share / "applications").is_dir():
-            share = root / "share"  # the AppImage's flat layout
+            share = root / "share"  # the AppImage's and Flatpak's flat layout
         r.check((share / "applications" / "io.github.catpieleaf.Stud.desktop").exists(),
                 "no .desktop entry")
         r.check((share / "metainfo" / "io.github.catpieleaf.Stud.metainfo.xml").exists(),
@@ -288,8 +212,9 @@ def validate(root: Path, expect_desktop_files: bool) -> Report:
         # Shipping someone else's binary without its licence is the one
         # failure here that is a legal problem rather than a bug.
         licenses = share / "licenses" / "stud"
-        r.check((licenses / "LICENSE").exists(), "Stud's own licence is missing")
-        for component in ("android-bionic", "fidelityfx-fsr1"):
+        for name in ("LICENSE", "LICENSE.exception", "NOTICE.md"):
+            r.check((licenses / name).exists(), f"Stud's {name} is missing")
+        for component in ("rosemary", "volk", "miniz"):
             d = licenses / component
             r.check(d.is_dir() and any(d.iterdir()),
                     f"no licence text for {component}, which this package redistributes")
@@ -303,6 +228,9 @@ def main() -> int:
     ap.add_argument("--label", default=None)
     ap.add_argument("--no-desktop-files", action="store_true",
                     help="skip the .desktop/metainfo/icon/licence checks")
+    ap.add_argument("--rosemary-source", type=Path, default=None,
+                    help="the Rosemary source tree the binary was built from; its upscaler "
+                         "shader count is what the binary must embed")
     args = ap.parse_args()
 
     label = args.label or str(args.root)
@@ -310,7 +238,8 @@ def main() -> int:
         print(f"::error::{label}: {args.root} is not a directory")
         return 1
 
-    r = validate(args.root, expect_desktop_files=not args.no_desktop_files)
+    r = validate(args.root, expect_desktop_files=not args.no_desktop_files,
+                 rosemary_source=args.rosemary_source)
     print(f"{label}:")
     for n in r.notes:
         print(f"  {n}")

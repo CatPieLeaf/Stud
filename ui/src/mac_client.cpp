@@ -315,7 +315,9 @@ QString find_rosemary() {
     const QString here = QCoreApplication::applicationDirPath();
     for (const QString& candidate :
          {appdir.isEmpty() ? QString() : appdir + "/libexec/stud/rosemary",
-          here + "/../libexec/stud/rosemary", here + "/../rosemary/rosemary"}) {
+          // /usr/lib/stud is where an Arch package keeps it, Arch having no libexec.
+          here + "/../libexec/stud/rosemary", here + "/../lib/stud/rosemary",
+          here + "/../rosemary/rosemary"}) {
         if (!candidate.isEmpty() && QFileInfo(candidate).isExecutable()) {
             return QFileInfo(candidate).absoluteFilePath();
         }

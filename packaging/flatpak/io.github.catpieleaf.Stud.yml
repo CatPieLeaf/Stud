@@ -1,6 +1,6 @@
 app-id: io.github.catpieleaf.Stud
-# QtWebEngine, which org.kde.Platform does not ship. Needed for the login
-# and the in-app web panels.
+# QtWebEngine, which org.kde.Platform does not ship. Needed for the sign-in
+# and web pages Stud shows for the client.
 base: io.qt.qtwebengine.BaseApp
 base-version: '6.11'
 runtime: org.kde.Platform
@@ -10,9 +10,9 @@ command: stud
 separate-locales: false
 
 finish-args:
-  # Rendering. Stud runs the GPU driver in its own process and still needs the device.
+  # Rendering: Rosemary draws the client through Vulkan.
   - --device=dri
-  # The engine expects a shared IPC namespace for X11 shared memory.
+  # X11 shared memory, for the fallback X11 socket.
   - --share=ipc
   # Roblox is an online game and the login is a real HTTPS session.
   - --share=network
@@ -38,9 +38,6 @@ finish-args:
   # A Flatpak Discord keeps its sockets in its own directory instead.
   - --filesystem=xdg-run/app/com.discordapp.Discord:create
   - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
-  # The key the stored login is encrypted with. The login itself never leaves
-  # Stud's own data directory.
-  - --talk-name=org.freedesktop.secrets
   # QtWebEngine comes from the base app under /app, and the runtime's Qt only
   # looks beside its own prefix.
   - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
@@ -49,40 +46,36 @@ finish-args:
   # Tray icon, and the notification on joining a game.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-  # No filesystem access: the APK is picked through the file chooser portal.
-  # Screenshots and screen recordings are the exception: they are saved
-  # into a Stud folder inside the user's own Pictures and Videos.
-  - --filesystem=xdg-pictures/Stud:create
-  - --filesystem=xdg-videos/Stud:create
+  # No filesystem access: customizations and FFlag imports are picked
+  # through the file chooser portal.
 
-# FFmpeg for the engine's video playback and screen recording. The runtime's
-# own FFmpeg is cut down; the render host loads libavcodec at runtime, by the
-# major version it was built against in CI (Fedora), so this extension's
-# FFmpeg has to carry that same major. `version` must match the freedesktop
-# base under the KDE runtime above: check both when either is bumped.
-add-extensions:
-  org.freedesktop.Platform.ffmpeg-full:
-    directory: lib/ffmpeg
-    version: '25.08'
-    add-ld-path: .
-    autodownload: true
-    autodelete: false
+# No FFmpeg extension: Rosemary needs FFmpeg 8 or newer, and neither the
+# runtime nor the ffmpeg-full extension for its freedesktop base carries one
+# yet, so the client plays no video in the Flatpak until they do.
 
 modules:
-  # Stud launches its engine process inside bwrap. The runtime has none.
-  - name: bubblewrap
-    buildsystem: meson
+  # Rosemary needs SDL 3.4 or newer; the runtime's SDL3 is older. It opens
+  # SDL3 by name, and /app/lib is searched before the runtime's.
+  - name: sdl3
+    buildsystem: cmake-ninja
     config-opts:
-      - -Dprogram_prefix=
-      - -Dman=disabled
-      - -Dtests=false
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DSDL_TESTS=OFF
+      - -DSDL_EXAMPLES=OFF
+      - -DSDL_STATIC=OFF
+      - -DSDL_WAYLAND=ON
+      - -DSDL_X11=ON
+      - -DSDL_PIPEWIRE=ON
+      - -DSDL_PULSEAUDIO=ON
     sources:
       - type: archive
-        url: https://github.com/containers/bubblewrap/releases/download/v0.11.0/bubblewrap-0.11.0.tar.xz
-        sha256: 988fd6b232dafa04b8b8198723efeaccdb3c6aa9c1c7936219d5791a8b7a8646
+        url: https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz
+        sha256: f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f
     cleanup:
-      - /share/bash-completion
-      - /share/zsh
+      - /include
+      - /lib/cmake
+      - /lib/pkgconfig
+      - /share
 
   # wl-copy, for copying a server link from the tray menu.
   - name: wl-clipboard
@@ -99,36 +92,12 @@ modules:
       - /share/man
       - /share/bash-completion
 
-  - name: qtkeychain
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DBUILD_WITH_QT6=ON
-      - -DQTKEYCHAIN_STATIC=OFF
-      - -DBUILD_TRANSLATIONS=OFF
-    sources:
-      - type: archive
-        url: https://github.com/frankosterfeld/qtkeychain/archive/refs/tags/0.14.3.tar.gz
-        sha256: a22c708f351431d8736a0ac5c562414f2b7bb919a6292cbca1ff7ac0849cb0a7
-
-  # The Android runtime libraries and the two non-Qt helper processes, from
-  # the release built by this project's CI for the tag below. The bionic set
-  # is fetched from AOSP there, which a Flathub build cannot do.
+  # Rosemary, from the release built by this project's CI for the tag below.
+  # Its cargo build fetches git dependencies, which a Flathub build cannot.
   - name: stud-prebuilt
     buildsystem: simple
     build-commands:
-      # Where the ffmpeg-full extension is mounted; see add-extensions.
-      - mkdir -p /app/lib/ffmpeg
-      - mkdir -p /app/lib/stud /app/libexec/stud
-      - cp -a usr/lib/stud/. /app/lib/stud/
-      - cp -a usr/libexec/stud/lib64 /app/libexec/stud/lib64
-      - install -Dm755 usr/libexec/stud/stud-render-host -t /app/libexec/stud/
-      - install -Dm755 usr/libexec/stud/stud-runtime-bionic -t /app/libexec/stud/
-      # Stud's own swapchain: the layer and its manifest sit beside
-      # render-host, which is where Stud looks for them. Without them the
-      # game presents through the driver's swapchain, a black window on
-      # some compositors (niri).
-      - install -Dm755 usr/libexec/stud/libstud_present_layer.so -t /app/libexec/stud/
-      - install -Dm644 usr/libexec/stud/VK_LAYER_STUD_present.json -t /app/libexec/stud/
+      - install -Dm755 usr/libexec/stud/rosemary -t /app/libexec/stud/
       # A distribution package looks in share/licenses/<package>; Flathub
       # asks for share/licenses/<app id>. The archive is built for the
       # former, so the licences move on the way in.
@@ -143,18 +112,17 @@ modules:
         only-arches:
           - x86_64
 
-  # The Qt half, built here against the runtime's own Qt.
+  # The launcher, built here against the runtime's own Qt.
   - name: stud
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
-      - -DSTUD_BUILD_QT_ONLY=ON
+      - -DSTUD_BUILD_ROSEMARY=OFF
       - -DSTUD_BUILD_TESTS=OFF
       - -DSTUD_VERSION=1.2.14
       # No network during the build, so these are supplied as sources.
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
-      - -DFETCHCONTENT_SOURCE_DIR_LIBJNIVM=/run/build/stud/deps/libjnivm
       - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
     sources:
       - type: archive
@@ -168,8 +136,3 @@ modules:
         url: https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz
         sha256: 0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406
         dest: deps/json
-      - type: git
-        url: https://github.com/ChristopherHX/libjnivm.git
-        # Upstream declares GIT_TAG main, which a package cannot follow.
-        commit: f24b98c198fcc5c59a68d1efadd3f5791eb01c2e
-        dest: deps/libjnivm

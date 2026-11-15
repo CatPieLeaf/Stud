@@ -26,7 +26,6 @@
     "notification": true,
     "openURI": true,
     "network": true,
-    "userNamespaces": true,
     "filePicker": {
       "openFile": true,
       "persistent": true
@@ -43,25 +42,6 @@
     ],
     "sessionBus": {
       "talk": [
-        {
-          "name": "org.kde.kwalletd6",
-          "path": "/modules/kwalletd6",
-          "interface": "org.kde.KWallet",
-          "members": [
-            "close",
-            "createFolder",
-            "entryType",
-            "hasEntry",
-            "hasFolder",
-            "networkWallet",
-            "open",
-            "readEntry",
-            "readPassword",
-            "removeEntry",
-            "writeEntry",
-            "writePassword"
-          ]
-        },
         {
           "name": "org.kde.StatusNotifierWatcher",
           "path": "/StatusNotifierWatcher",

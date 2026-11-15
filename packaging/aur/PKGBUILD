@@ -3,8 +3,8 @@
 # Builds Stud from the release source.
 #
 # NOT THE PACKAGE PUBLISHED TO THE AUR; `stud-bin` is (PKGBUILD.stud-bin
-# beside this file). prepare() below runs tools/setup.sh, which downloads
-# Google's NDK and a bionic image from AOSP. makepkg
+# beside this file). build() compiles Rosemary with cargo, which fetches its
+# git dependencies (Microlift and its wasmtime) while it builds. makepkg
 # only fetches what is listed in source=(), and a clean chroot has no
 # network once the build starts, so this PKGBUILD cannot build there.
 #
@@ -17,69 +17,41 @@ pkgrel=1
 pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
-license=('AGPL-3.0-or-later')
-# bubblewrap is not optional: Process B is launched inside it, and Stud
-# refuses to start without it. It is a package rather than a bundled
-# binary on purpose, a distribution's own build carries the AppArmor and
-# SELinux policy that lets it create a user namespace at all.
-#
-# Audio is not listed: miniaudio is compiled into render-host and opens
-# whichever of libasound, libpulse or libjack the machine has, by name at
-# runtime, so there is no package to depend on.
+license=('AGPL-3.0-or-later' 'GPL-3.0-only' 'LGPL-3.0-or-later' 'MIT' 'BSD-3-Clause')
+# Rosemary opens SDL3 by name rather than linking it, so it is named here;
+# it needs 3.4 or newer, which Arch has. The rest are what the launcher and
+# Rosemary link.
 depends=(
-  'bubblewrap'
   'qt6-base'
   'qt6-webengine'
-  'qtkeychain-qt6'
+  'qt6-webchannel'
+  'sdl3'
   'vulkan-icd-loader'
-  'libglvnd'
-  'libdrm'
-  'libx11'
-  'libxext'
-  'libxi'
-  'freetype2'
-  'wayland'
+  'curl'
+  'zlib'
   'libxkbcommon'
+  'systemd-libs'
   'glibc'
   'gcc-libs'
-  'openssl'
   'hicolor-icon-theme'
 )
 makedepends=(
   'cmake'
   'ninja'
-  'meson'
   'git'
-  'python'
-  'curl'
-  'unzip'
-  'zstd'
-  'e2fsprogs'
-  'wayland-protocols'
+  'rust'
+  'shaderc'
   'vulkan-headers'
-  'pkgconf'
-  'ffmpeg'
 )
 optdepends=(
-  'ffmpeg: video playback and screen recording inside games (loaded at runtime)'
+  'ffmpeg: video playback inside games (FFmpeg 8 or newer, loaded at runtime)'
+  'gamemode: the CPU in its performance mode while Roblox runs'
   'mangohud: the performance overlay Stud can switch on in Settings'
-  'wl-clipboard: copying a server link from the tray menu on Wayland'
-  'libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME'
-  'libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)'
-  'libxrandr: the refresh rate and monitor size under X11 (loaded at runtime)'
 )
 # The tag carries no leading "v", match what is actually published.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Replaced by CI at release time, from the tarball GitHub actually serves.
 sha256sums=('a10ed5340e5879ab961b5bdf0db235320abb8ae45675407ebf42669f9bb73e45')
-
-prepare() {
-  cd "Stud-$pkgver"
-  # The NDK and bionic. This is the long part, and it is skipped
-  # for anything already present, so an interrupted build resumes
-  # rather than starting over.
-  tools/setup.sh
-}
 
 build() {
   cd "Stud-$pkgver"
@@ -101,8 +73,8 @@ package() {
 
   # Arch does not use /usr/libexec, a package's own executables belong
   # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
-  # misplaced (12 errors on this package before this moved). stud-ui
-  # probes both layouts, so the binaries need no rebuild for this.
+  # misplaced. stud-ui looks for Rosemary in both, so the binaries need
+  # no rebuild for this.
   if [ -d "$pkgdir/usr/libexec/stud" ]; then
     mkdir -p "$pkgdir/usr/lib"
     cp -a "$pkgdir/usr/libexec/stud" "$pkgdir/usr/lib/stud-helpers"

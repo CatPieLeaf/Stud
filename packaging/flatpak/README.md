@@ -5,39 +5,37 @@ own repository (`flathub/io.github.catpieleaf.Stud`), so this copy is the
 source of truth and that repository carries a copy, the same arrangement
 as `packaging/aur`.
 
-## It installs a prebuilt archive, and it has to
+## Rosemary comes prebuilt, and it has to
 
-Process B is a real bionic ELF, built with Google's NDK against a bionic
-set taken from AOSP. Both are fetched by `tools/setup.sh`, and **Flathub
-builds have no network**, so a from-source manifest cannot be written
-today.
-
-[Sober](https://github.com/flathub/org.vinegarhq.Sober), the same kind of
-application, resolves this the same way, shipping a prebuilt archive from
-its own server with a `sha256`. Every permission in the manifest follows
-theirs, with a comment saying why.
+Rosemary is built with cargo, and its Microlift dependencies (and
+Microlift's wasmtime) are git dependencies cargo fetches while it builds.
+**Flathub builds have no network**, so the manifest installs the Rosemary
+that CI built for the release, from the release archive, with a `sha256`.
+The launcher is the one part built here, against the runtime's own Qt.
 
 If a from-source build is ever required, the way to provide one is to
-pin the NDK and the AOSP bionic pieces as source bundles. It is possible;
-it is a much larger manifest.
+vendor Rosemary's crates (`cargo vendor`) as a source bundle. It is
+possible; it is a much larger manifest.
 
-## The one thing to check before submitting
+## What the manifest builds
 
-`--allow=devel`. Process B runs inside its own `bwrap`, with its own user
-namespace. That is Stud's architecture, and it is why the GPU driver
-never shares a process with the engine. A nested sandbox needs this
-permission. Sober is granted it (for ptrace), so the precedent exists, but
-expect a reviewer to ask, and the answer is the architecture rather than
-convenience.
+- **SDL3.** Rosemary needs SDL 3.4 or newer, and the KDE runtime's SDL3
+  is older, so the manifest builds it. Rosemary opens SDL3 by name, and
+  `/app/lib` is searched before the runtime's.
+- **wl-clipboard**, for copying a server link from the tray menu.
+- **The launcher**, with `STUD_BUILD_ROSEMARY=OFF`.
+
+There is no FFmpeg: Rosemary needs FFmpeg 8 or newer, and neither the
+runtime nor the `ffmpeg-full` extension for its freedesktop base carries
+one yet, so the client plays no video in the Flatpak until they do.
 
 ## The one placeholder
 
-`PLACEHOLDER_STUD_SHA256` is Stud's own release archive, and it is the
-only value CI fills in: that archive does not exist until the release it
-belongs to is published. Every dependency checksum is real and committed,
-because Flathub builds the manifest exactly as it stands in the tree, a
-manifest that only works once CI has rewritten it is one they cannot
-build at all.
+Stud's own release archive is the only value CI fills in: that archive
+does not exist until the release it belongs to is published. Every
+dependency checksum is real and committed, because Flathub builds the
+manifest exactly as it stands in the tree, a manifest that only works once
+CI has rewritten it is one they cannot build at all.
 
 Changing a dependency's version means changing its checksum in the same
 commit. `flatpak-builder` refuses a mismatch, so a stale one fails the
@@ -45,17 +43,15 @@ build rather than installing the wrong thing.
 
 ## Filesystem access
 
-None is requested. The APK is chosen through a `QFileDialog`, which Qt
-routes to the file chooser portal inside a sandbox; the portal returns a
-path under `/run/user/<uid>/doc/` that stays readable afterwards. Confirm
-that on the first real build: pick an APK, relaunch, and check it is
-still readable. If it is not, the fix is `--filesystem=xdg-download:ro`,
-never a wider grant.
+None is requested. Customizations and FFlag imports are chosen through a
+`QFileDialog`, which Qt routes to the file chooser portal inside a sandbox;
+the portal returns a path under `/run/user/<uid>/doc/` that stays readable
+afterwards.
 
 ## Testing it locally
 
 ```sh
-flatpak install -y flathub org.kde.Sdk//6.10 org.kde.Platform//6.10
+flatpak install -y flathub org.kde.Sdk//6.11 org.kde.Platform//6.11 io.qt.qtwebengine.BaseApp//6.11
 flatpak-builder --force-clean --user --install build-flatpak \
   packaging/flatpak/io.github.catpieleaf.Stud.yml
 flatpak run io.github.catpieleaf.Stud

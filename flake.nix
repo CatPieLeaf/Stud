@@ -21,18 +21,13 @@
             sha256 = "a10ed5340e5879ab961b5bdf0db235320abb8ae45675407ebf42669f9bb73e45";
           };
 
-          # The Android runtime and render-host, which need the NDK and AOSP to build.
+          # Rosemary, which CI builds: its cargo build fetches git
+          # dependencies, which a Nix build cannot.
           prebuilt = pkgs.fetchurl {
             url = "https://github.com/CatPieLeaf/Stud/releases/download/1.2.14/stud-1.2.14-x86_64.tar.zst";
             sha256 = "13163081982513b3ab83063b194eb5bc8f4f5424915e2375bc87d3ca95e09b1a";
           };
 
-          libjnivm = pkgs.fetchFromGitHub {
-            owner = "ChristopherHX";
-            repo = "libjnivm";
-            rev = "f24b98c198fcc5c59a68d1efadd3f5791eb01c2e";
-            hash = "sha256-K4+1Zo7AJIouIqnHn2ZE4GyrNrYOczmWYblLAnGYA5w=";
-          };
           nlohmann_json = pkgs.fetchFromGitHub {
             owner = "nlohmann";
             repo = "json";
@@ -49,13 +44,8 @@
           nativeBuildInputs = with pkgs; [
             cmake
             ninja
-            meson
             pkg-config
-            python3
-            wayland-scanner
             zstd
-            # render-host's layout (code before .interp) needs patchelf 0.18.
-            patchelfUnstable
             autoPatchelfHook
             qt6.wrapQtAppsHook
           ];
@@ -64,66 +54,58 @@
             qt6.qtbase
             qt6.qtwayland
             qt6.qtwebengine
-            kdePackages.qtkeychain
+            qt6.qtwebchannel
             vulkan-headers
-            openssl
-            wayland
-            wayland-protocols
+            # What Rosemary links.
+            curl
+            zlib
             libxkbcommon
-            freetype
-            libdrm
-            libGL
+            systemd
           ];
 
           cmakeFlags = [
-            "-DSTUD_BUILD_QT_ONLY=ON"
+            "-DSTUD_BUILD_ROSEMARY=OFF"
             "-DSTUD_BUILD_TESTS=OFF"
             "-DSTUD_VERSION=${version}"
             "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
-            "-DFETCHCONTENT_SOURCE_DIR_LIBJNIVM=${libjnivm}"
             "-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=${nlohmann_json}"
             "-DFETCHCONTENT_SOURCE_DIR_MINIZ=${miniz}"
           ];
 
-          # Libraries render-host and the present layer open at runtime.
+          # What Rosemary and the launcher open by name at runtime: SDL3 and,
+          # through it, the window system and sound; Vulkan, EGL and GBM;
+          # FFmpeg for video.
           runtimeDependencies = with pkgs; [
+            sdl3
             vulkan-loader
             libGL
+            mesa
+            ffmpeg
+            wayland
             libdecor
             libxkbcommon
+            pipewire
             libpulseaudio
             alsa-lib
-            libjack2
             xorg.libX11
             xorg.libXext
             xorg.libXi
             xorg.libXrandr
-            xorg.libXrender
-            xorg.libxcb
+            xorg.libXcursor
           ];
 
-          # The Android binaries must keep their bionic linker and libraries.
-          dontAutoPatchelf = true;
-          dontPatchELF = true;
           dontWrapQtApps = true;
-          stripDebugList = [ "bin" ];
 
           postInstall = ''
             mkdir prebuilt
             tar --zstd -xf ${prebuilt} -C prebuilt
-            mkdir -p $out/lib $out/libexec/stud
-            cp -a prebuilt/usr/lib/stud $out/lib/
-            cp -a prebuilt/usr/libexec/stud/{lib64,stud-render-host,stud-runtime-bionic,libstud_present_layer.so,VK_LAYER_STUD_present.json} $out/libexec/stud/
+            install -Dm755 prebuilt/usr/libexec/stud/rosemary $out/libexec/stud/rosemary
             cp -an prebuilt/usr/share/licenses/stud/. $out/share/licenses/stud/
             patchelf --add-rpath ${lib.makeLibraryPath [ pkgs.vulkan-loader ]} $out/bin/stud
           '';
 
           postFixup = ''
-            # gfxstream's host library, which render-host links, beside bionic.
-            addAutoPatchelfSearchPath $out/lib/stud
-            autoPatchelf $out/libexec/stud/stud-render-host $out/libexec/stud/libstud_present_layer.so
             wrapQtApp $out/bin/stud
-            wrapQtApp $out/libexec/stud/stud-webview
           '';
 
           qtWrapperArgs = [
@@ -131,7 +113,6 @@
               lib.makeBinPath (
                 with pkgs;
                 [
-                  bubblewrap
                   wl-clipboard
                   xdg-utils
                 ]

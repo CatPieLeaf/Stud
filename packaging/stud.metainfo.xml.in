@@ -4,28 +4,29 @@
   <launchable type="desktop-id">@STUD_APP_ID@.desktop</launchable>
   <icon type="local" width="512" height="512">@CMAKE_INSTALL_FULL_DATADIR@/icons/hicolor/512x512/apps/@STUD_APP_ID@.png</icon>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>AGPL-3.0-or-later</project_license>
+  <project_license>AGPL-3.0-or-later AND GPL-3.0-only AND LGPL-3.0-or-later AND MIT AND BSD-3-Clause</project_license>
 
   <name>Stud</name>
   <summary>An Unofficial Open-Source Roblox Launcher for Linux</summary>
 
   <description>
     <p>
-      Stud runs the real, unmodified Roblox app on your Linux desktop, in its
-      own window, with your mouse and keyboard. No browser, no emulator, no
-      virtual machine.
+      Stud runs the real, unmodified Roblox macOS client on your Linux
+      desktop, in its own window, with your mouse and keyboard. No emulator,
+      no virtual machine: the full desktop Roblox, and Roblox Studio too.
     </p>
     <p>Features:</p>
     <ul>
-      <li>Links from your browser open straight into the experience</li>
-      <li>Mouse and keyboard behave the way they do in the desktop client</li>
+      <li>Downloads and updates the client from Roblox's own servers before each launch</li>
+      <li>Links from your browser open straight into the experience, and Studio's links reach Studio</li>
+      <li>FastFlags with profiles and presets, and customizations over Roblox's own content</li>
       <li>Upscaling, so the game can render below your screen's resolution and still fill it</li>
       <li>Discord Rich Presence, with a button friends can join through</li>
-      <li>A system tray menu, and the country a server is in when you join</li>
+      <li>Game history with time played, a system tray, and the country a server is in when you join</li>
     </ul>
     <p>
-      Roblox is not included. You supply the Android application package
-      yourself, and Roblox remains subject to its own terms.
+      Roblox is not included: Stud downloads it from Roblox's own servers,
+      and Roblox remains subject to its own terms.
     </p>
     <p>
       Stud is an independent project and is not affiliated with, endorsed by

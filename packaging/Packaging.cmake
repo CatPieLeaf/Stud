@@ -37,16 +37,16 @@ set(CPACK_RPM_PACKAGE_DESCRIPTION
 "Stud runs the real Roblox macOS client on a Linux desktop, on
 Rosemary. It downloads the client from Roblox's own servers and runs it
 unmodified. Roblox is not included in this package.")
-set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later")
+set(CPACK_RPM_PACKAGE_LICENSE "AGPL-3.0-or-later AND GPL-3.0-only AND LGPL-3.0-or-later AND MIT AND BSD-3-Clause")
 set(CPACK_RPM_PACKAGE_GROUP "Amusements/Games")
 set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # Autoreqprov is off below, so every library is named here, by SONAME where
 # it is linked (the dependency rpm would have generated itself, without
 # assuming a distribution's package name) and by package where it is opened
 # at runtime: Rosemary opens SDL3 by name, and the launcher the Vulkan
-# loader. Rosemary links libcurl, zlib and libxkbcommon.
+# loader. Rosemary links libcurl, zlib, libxkbcommon and libudev.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "qt6-qtbase-gui, qt6-qtwebengine, qt6-qtwebchannel, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit)")
+    "qt6-qtbase-gui, qt6-qtwebengine, qt6-qtwebchannel, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit)")
 # Weak: both are Settings switches, and neither stops Stud from running.
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud, gamemode")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
@@ -116,26 +116,27 @@ set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
 # with `version 'Qt_6.10' not found`. Qt exports a symbol version per
 # release and the loader checks it, so a build runs on the Qt it was
 # linked against and everything newer, and on nothing older. The release
-# workflow builds the deb on ubuntu:24.04 now, the oldest distribution
-# this package targets, and checks the resulting binary's own Qt floor.
+# workflow builds the deb on ubuntu:26.04, the oldest distribution Stud 2.0
+# can target: its web views need Qt 6.9 and Rosemary SDL 3.4, neither of
+# which Ubuntu 24.04 has. The workflow checks the binary's own Qt floor
+# against the 6.10 named here.
 #
-# Two names for each of three libraries, because Ubuntu 24.04 renamed
-# them for the 64-bit time_t transition and 26.04 renamed them back:
-# 24.04 has only libqt6gui6t64, 26.04 has only libqt6gui6 (checked in
-# both images, not assumed). An alternative satisfies whichever one the
-# distribution actually carries. The version floor is the Qt the build
-# is made against, so apt refuses the package on a distribution too old
-# to run it instead of dpkg accepting it and the loader failing later.
+# Two names for each library, because Ubuntu 24.04 renamed them for the
+# 64-bit time_t transition and 26.04 renamed them back. An alternative
+# satisfies whichever one the distribution actually carries. The version
+# floor is the Qt the build is made against, so apt refuses the package on
+# a distribution too old to run it instead of dpkg accepting it and the
+# loader failing later.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-    "libqt6gui6 (>= 6.4) | libqt6gui6t64 (>= 6.4), \
-libqt6widgets6 (>= 6.4) | libqt6widgets6t64 (>= 6.4), \
-libqt6opengl6 (>= 6.4) | libqt6opengl6t64 (>= 6.4), \
-libqt6openglwidgets6 (>= 6.4) | libqt6openglwidgets6t64 (>= 6.4), \
-libqt6network6 (>= 6.4) | libqt6network6t64 (>= 6.4), \
-libqt6dbus6 (>= 6.4) | libqt6dbus6t64 (>= 6.4), \
-libqt6webenginewidgets6 (>= 6.4) | libqt6webenginewidgets6t64 (>= 6.4), \
-libqt6webchannel6 (>= 6.4) | libqt6webchannel6t64 (>= 6.4), \
-libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, zlib1g, libxkbcommon0")
+    "libqt6gui6 (>= 6.10) | libqt6gui6t64 (>= 6.10), \
+libqt6widgets6 (>= 6.10) | libqt6widgets6t64 (>= 6.10), \
+libqt6opengl6 (>= 6.10) | libqt6opengl6t64 (>= 6.10), \
+libqt6openglwidgets6 (>= 6.10) | libqt6openglwidgets6t64 (>= 6.10), \
+libqt6network6 (>= 6.10) | libqt6network6t64 (>= 6.10), \
+libqt6dbus6 (>= 6.10) | libqt6dbus6t64 (>= 6.10), \
+libqt6webenginewidgets6 (>= 6.10) | libqt6webenginewidgets6t64 (>= 6.10), \
+libqt6webchannel6 (>= 6.10) | libqt6webchannel6t64 (>= 6.10), \
+libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, zlib1g, libxkbcommon0, libudev1")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud, gamemode")
 # The dependencies are the list above, not a scan.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)

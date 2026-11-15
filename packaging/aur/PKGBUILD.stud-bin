@@ -1,27 +1,27 @@
 # Maintainer: CatPieLeaf <catpieleaf@proton.me>
 #
 # The mostly-prebuilt package. It installs the release archive CI built
-# from the tag, so no network beyond the two files
-# makepkg fetches itself before build() runs, and compiles ONLY the two
-# executables that link Qt.
+# from the tag, so no network beyond the two files makepkg fetches itself
+# before build() runs, and compiles ONLY the launcher, the one executable
+# that links Qt.
 #
-# Those two cannot be shipped prebuilt. A Qt program built against one
+# The launcher cannot be shipped prebuilt. A Qt program built against one
 # distribution's Qt does not run on another's, and this archive is built
 # on Fedora: installed as-is on Arch, /usr/bin/stud dies at the loader
 # with `copy relocation against non-copyable protected symbol
 # QLocalServer::staticMetaObject ... GNU_PROPERTY_1_NEEDED_INDIRECT_
 # EXTERN_ACCESS`, because Arch builds Qt with indirect external access.
-# Measured, not assumed. Nothing else in the archive has that problem:
-# render-host, Process B and the bionic set link no Qt at all.
+# Measured, not assumed. Rosemary links no Qt and runs as the archive
+# has it.
 #
-# So STUD_BUILD_QT_ONLY rebuilds `stud` and `stud-webview` here, against
-# the Qt this machine has, exactly as the Flatpak and the release
-# workflow's own Arch package do.
+# So the build below turns Rosemary off (STUD_BUILD_ROSEMARY=OFF) and
+# rebuilds `stud` against the Qt this machine has, exactly as the release
+# workflow's own Arch package does.
 #
 # This is the one that belongs in the AUR. The source PKGBUILD beside it
-# fetches Google's NDK and a bionic image from inside
-# prepare(), and makepkg only downloads what is in source=(): in a clean
-# chroot there is no network at that point, so it cannot build there.
+# compiles Rosemary, whose cargo build fetches git dependencies while it
+# runs, and makepkg only downloads what is in source=(): in a clean chroot
+# there is no network at that point, so it cannot build there.
 # packaging/aur/README.md has the whole of that reasoning.
 
 pkgname=stud-bin
@@ -31,52 +31,42 @@ pkgrel=1
 pkgdesc="An Unofficial Open-Source Roblox Launcher for Linux"
 arch=('x86_64')
 url="https://github.com/CatPieLeaf/Stud"
-license=('AGPL-3.0-or-later')
+license=('AGPL-3.0-or-later' 'GPL-3.0-only' 'LGPL-3.0-or-later' 'MIT' 'BSD-3-Clause')
 provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname")
 # The same list as the source PKGBUILD, and it has to stay that way: a
 # dependency that only one of them names is a broken package for half the
 # people who install it.
 depends=(
-  'bubblewrap'
   'qt6-base'
   'qt6-webengine'
-  'qtkeychain-qt6'
+  'qt6-webchannel'
+  'sdl3'
   'vulkan-icd-loader'
-  'libglvnd'
-  'libdrm'
-  'libx11'
-  'libxext'
-  'libxi'
-  'freetype2'
-  'wayland'
+  'curl'
+  'zlib'
   'libxkbcommon'
+  'systemd-libs'
   'glibc'
   'gcc-libs'
-  'openssl'
   'hicolor-icon-theme'
 )
 optdepends=(
+  'ffmpeg: video playback inside games (FFmpeg 8 or newer, loaded at runtime)'
+  'gamemode: the CPU in its performance mode while Roblox runs'
   'mangohud: the performance overlay Stud can switch on in Settings'
-  'wl-clipboard: copying a server link from the tray menu on Wayland'
-  'libdecor: a titlebar on a Wayland compositor that draws none itself, such as GNOME'
-  'libxkbcommon-x11: the exact keyboard layout under X11 (loaded at runtime)'
-  'libxrandr: the refresh rate and monitor size under X11 (loaded at runtime)'
-  'ffmpeg: video playback and screen recording inside games (loaded at runtime)'
 )
-# Stripping a bionic ELF is neither useful nor safe, the same
-# reason the rpm turns it off. These are also already-built binaries, so
-# there is nothing here for makepkg to strip that upstream did not mean.
+# Already-built binaries: there is nothing here for makepkg to strip that
+# upstream did not mean.
 options=(!strip !debug emptydirs)
 makedepends=(
   'cmake'
   'ninja'
   'git'
   'vulkan-headers'
-  'wayland-protocols'
 )
 # The tag carries no leading "v", match what is actually published. The
-# source tarball is here for the Qt half above, not for a full build.
+# source tarball is here for the launcher, not for a full build.
 source=("$pkgname-$pkgver.tar.zst::$url/releases/download/$pkgver/stud-$pkgver-$CARCH.tar.zst"
         "$_pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
 # Filled in at publish time from the archive the release actually
@@ -89,12 +79,12 @@ sha256sums=('13163081982513b3ab83063b194eb5bc8f4f5424915e2375bc87d3ca95e09b1a'
             'a10ed5340e5879ab961b5bdf0db235320abb8ae45675407ebf42669f9bb73e45')
 
 build() {
-  # Just the Qt half: STUD_BUILD_QT_ONLY skips the render host and the
-  # bionic runtime, which the archive already supplies.
+  # Just the launcher: Rosemary, which the archive already supplies, is
+  # not built.
   cmake -S "Stud-$pkgver" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DSTUD_BUILD_QT_ONLY=ON \
+    -DSTUD_BUILD_ROSEMARY=OFF \
     -DSTUD_BUILD_TESTS=OFF \
     -DSTUD_VERSION="$pkgver"
   cmake --build build
@@ -107,8 +97,8 @@ package() {
 
   # Arch does not use /usr/libexec, a package's own executables belong
   # in /usr/lib/<pkg>/, and namcap reports anything under libexec as
-  # misplaced (12 errors on this package before this moved). stud-ui
-  # probes both layouts, so the binaries need no rebuild for this.
+  # misplaced. stud-ui looks for Rosemary in both, so the binaries need
+  # no rebuild for this.
   if [ -d "$pkgdir/usr/libexec/stud" ]; then
     mkdir -p "$pkgdir/usr/lib"
     cp -a "$pkgdir/usr/libexec/stud" "$pkgdir/usr/lib/stud-helpers"
@@ -116,9 +106,8 @@ package() {
     rm -rf "$pkgdir/usr/lib/stud-helpers" "$pkgdir/usr/libexec"
   fi
 
-  # ...and the two Qt executables built above replace the archive's own,
-  # which were compiled against a different distribution's Qt. See the
-  # header for what happens without this.
+  # ...and the launcher built above replaces the archive's own, which was
+  # compiled against a different distribution's Qt. See the header for
+  # what happens without this.
   install -Dm755 build/ui/stud-ui "$pkgdir/usr/bin/stud"
-  install -Dm755 build/webview/stud-webview "$pkgdir/usr/lib/stud/stud-webview"
 }

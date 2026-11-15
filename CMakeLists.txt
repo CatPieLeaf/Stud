@@ -111,7 +111,16 @@ if(STUD_BUILD_ROSEMARY)
     find_program(STUD_CARGO cargo REQUIRED)
     find_package(Git REQUIRED)
     include(ExternalProject)
-    set(STUD_ROSEMARY_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/rosemary-target")
+    # Cargo's target directory, settable so one can be kept between builds.
+    # The environment's STUD_ROSEMARY_TARGET_DIR, if set and not empty, is the
+    # default, so build-appimage.sh can hand its container a shared one.
+    if(NOT "$ENV{STUD_ROSEMARY_TARGET_DIR}" STREQUAL "")
+        set(stud_rosemary_target_default "$ENV{STUD_ROSEMARY_TARGET_DIR}")
+    else()
+        set(stud_rosemary_target_default "${CMAKE_CURRENT_BINARY_DIR}/rosemary-target")
+    endif()
+    set(STUD_ROSEMARY_TARGET_DIR "${stud_rosemary_target_default}" CACHE PATH
+        "Cargo target directory Rosemary is built in")
     ExternalProject_Add(rosemary
         GIT_REPOSITORY "${STUD_ROSEMARY_REPOSITORY}"
         GIT_TAG        "${STUD_ROSEMARY_BRANCH}"

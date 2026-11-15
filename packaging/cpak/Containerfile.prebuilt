@@ -12,39 +12,28 @@
 
 FROM fedora:44
 
-# bubblewrap is a real runtime dependency, not a packaging detail:
-# Process B is a bionic ELF that runs inside its own mount, PID and IPC
-# namespaces, and Stud creates them with bwrap. cpak's own sandbox does
-# not replace it, the manifest grants userNamespaces so this one can
-# nest inside it.
+# What the launcher and Rosemary need at run time. SDL3, the Vulkan loader
+# and FFmpeg are opened by name, so nothing would pull them in by itself.
 RUN dnf install -y --setopt=install_weak_deps=False \
-        bubblewrap \
-        qt6-qtbase-gui qt6-qtwebengine qtkeychain-qt6 \
-        vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libGLES \
-        pulseaudio-libs alsa-lib freetype \
-        libavcodec-free libavutil-free libswscale-free \
+        qt6-qtbase-gui qt6-qtwebengine qt6-qtwebchannel \
+        SDL3 vulkan-loader mesa-vulkan-drivers mesa-libEGL mesa-libgbm \
+        libcurl zlib libxkbcommon libxkbcommon-x11 systemd-libs \
+        libX11 libXext libdecor \
+        pipewire-libs pulseaudio-libs alsa-lib \
+        libavcodec-free libavutil-free \
         dbus-libs libnotify \
-        wl-clipboard libxkbcommon-x11 libX11-xcb libXrandr \
         plasma-breeze-qt6 \
     && dnf clean all
-
-# Nothing to bridge. This used to install alsa-plugins-pulseaudio and
-# point ALSA's default pcm at it, back when Stud reached the sound server
-# through ALSA only: inside a sandbox with no /dev/snd and nothing but the
-# server's socket, ALSA found no device at all and every stream opened
-# silent ("could not open a device (Device unavailable)"). miniaudio has a
-# PulseAudio backend of its own and is asked for it first, so libpulse
-# above is the whole of it.
 
 # What the application looks like, and where its file dialog can reach.
 #
 # Both were wrong in the first image anyone ran: Stud came up in bare Qt
-# colours instead of the desktop's, and the APK picker could only see
+# colours instead of the desktop's, and its file picker could only see
 # Downloads, because Qt used its own dialog and its own default palette.
 #
 # The portal platform theme fixes both at once. It takes colours, fonts
 # and icons from the host through the portal, and routes QFileDialog to
-# the portal's file chooser, which lets the user pick an APK from anywhere
+# the portal's file chooser, which lets the user pick a file from anywhere
 # without the sandbox mounting their home. qt6-qtbase-gui already ships
 # the plugin; nothing was selecting it.
 #

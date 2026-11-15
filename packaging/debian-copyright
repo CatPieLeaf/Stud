@@ -3,128 +3,53 @@ Upstream-Name: Stud
 Upstream-Contact: CatPieLeaf <catpieleaf@proton.me>
 Source: https://github.com/CatPieLeaf/Stud
 Comment:
- Stud contains no Roblox code and distributes none. The Roblox application
- package is supplied by the person running Stud, from a source of their own
- choosing, and is not part of this package.
+ Stud contains no Roblox code and distributes none. It downloads Roblox's
+ macOS client from Roblox's own servers onto the machine it runs on, and
+ that client is not part of this package.
  .
  The full text of every licence named here ships in the binary package
- under /usr/share/licenses/stud/, one directory per component, each with a
- README mapping the files it covers. Where a licence is long and already on
- the system, this file names that path rather than repeating it.
+ under /usr/share/licenses/stud/, one directory per component. Where a
+ licence is long and already on the system, this file names that path
+ rather than repeating it.
 
 Files: *
 Copyright: 2026 CatPieLeaf <catpieleaf@proton.me>
 License: AGPL-3.0-or-later with Roblox-Engine exception
 
-Files: third_party/fidelityfx-fsr1/*
-Copyright: 2021 Advanced Micro Devices, Inc.
-License: MIT
-Comment:
- The upscaler in render-host/shaders/ is EASU and RCAS ported from these
- reference headers, so the notice covers the built shaders too.
-
-Files: third_party/snapdragon-gsr/*
-Copyright: 2023 Qualcomm Innovation Center, Inc.
-License: BSD-3-Clause
-Comment:
- render-host/shaders/sgsr.comp is ported from this reference, so the
- notice covers the built shader too.
-
-Files: third_party/mpv-prescalers/*
-Copyright: 2017 Bin Jin
-License: LGPL-3.0-or-later
-Comment:
- RAVU-Zoom. The shader and its weight tables are generated from these
- hooks, which ship with the package as the Corresponding Source.
-
 Files: third_party/volk/*
 Copyright: 2018-2026 Arseny Kapoulkine
 License: MIT
 Comment:
- Resolves the render host's Vulkan entry points.
-
-Files: third_party/xxhash/*
-Copyright: 2012-2021 Yann Collet
-License: BSD-2-Clause
-Comment:
- Keys the texture cache.
-
-Files: third_party/miniaudio/*
-Copyright: 2026 David Reid
-License: MIT-0
-Comment:
- The render host's audio device. Offered as the Unlicense or MIT-0;
- taken as MIT-0.
-
-Files: third_party/SDL_GameControllerDB/*
-Copyright: 1997-2025 Sam Lantinga <slouken@libsdl.org>
-License: Zlib
-Comment:
- SDL's controller database: which button and axis is which on several
- hundred controllers. Compiled into the render host.
-
-Files: third_party/libdecor/*
-Copyright: 2017-2018 Red Hat Inc., 2018 Jonas Adahl, 2019 Christian Rauch
-License: MIT
-Comment:
- The header only, for types. libdecor itself is opened by name at
- runtime and is not redistributed.
-
-Files: third_party/wayland-protocols/*
-Copyright: 2023 the wayland-protocols contributors
-License: MIT
-Comment:
- One staging protocol, used when the host's own copy is too old. The
- present layer's linux-dmabuf-v1 and linux-drm-syncobj-v1 bindings are
- generated from the host's copy at build time, under the same licence.
-
-Files: third_party/android-bionic/*
-Copyright: 2005-2026 The Android Open Source Project
-  and the many holders named in the NOTICE files
-License: Apache-2.0 and BSD-3-Clause
-Comment:
- Prebuilt, taken unmodified from AOSP's Runtime APEX: libc.so, libm.so,
- libdl.so, libdl_android.so, linker64, ld-android.so, liblog.so. bionic is
- largely inherited BSD libc code, so each component's NOTICE runs to
- several hundred separate copyright holders; those NOTICE files are the
- authoritative statement and ship with the package.
- .
- libc++.so is Apache-2.0 WITH LLVM-exception, from the LLVM project.
- tzdata is the IANA time zone database, which is in the public domain.
+ The Vulkan entry-point loader the launcher lists GPUs with.
 
 Files: (fetched at build time, not in this source tree)
-Copyright: see each project
+Copyright: 2013-2025 Niels Lohmann
+           2013-2025 Rich Geldreich, RAD Game Tools and Valve Software
 License: MIT
 Comment:
- Built into Stud's own binaries rather than shipped as separate files:
- .
-   libjnivm      Christopher Homberger
-   nlohmann/json Niels Lohmann
-   miniz         Rich Geldreich and contributors
-   Zydis         Florian Bernd, Joel Höner
-   Zycore        Florian Bernd, Joel Höner
-   detex         Hans-Kristian Lemmens
-   PVRTDecompress  Imagination Technologies (PowerVR Native SDK)
+ Compiled into the launcher: nlohmann/json and miniz.
 
-Files: (fetched at build time, not in this source tree: gfxstream)
-Copyright: 2011-2025 The Android Open Source Project
-           2011-2023 Google LLC
-License: Apache-2.0
+Files: (fetched at build time, not in this source tree: Rosemary)
+Copyright: The Rosemary contributors
+License: GPL-3.0-only
 Comment:
- gfxstream's ETC2 and EAC block decoders, compiled into stud-render-host's
- texture decode shader, and its shared-memory ring, compiled into
- stud-render-host and Stud's Vulkan library. OpenGL mode runs on gfxstream
- itself, patched with third_party/gfxstream/stud.patch: its host library,
- /usr/lib/stud/libgfxstream_backend.so.0, and its guest libraries in
- /usr/lib/stud/gfxstream-guest/.
+ /usr/libexec/stud/rosemary, which runs the macOS client. Built from
+ https://github.com/CatPieLeaf/rosemary-stud, branch stud: upstream
+ Rosemary (https://github.com/microlift/rosemary) with Stud's changes on
+ top. That branch is its Corresponding Source. AGPLv3 section 13 permits
+ combining it with Stud and conveying the result.
 
-Files: (fetched at build time, not in this source tree: Mesa's gfxstream guest ring stream)
-Copyright: 2011-2023 Google LLC
-           2014-2015 Red Hat
-License: MIT
+Files: (fetched at build time, not in this source tree: Rosemary's upscaler shaders)
+Copyright: 2017-2021 Advanced Micro Devices, Inc.
+           2023 Qualcomm Technologies, Inc.
+           2017-2023 bjin
+License: MIT and BSD-3-Clause and LGPL-3.0-or-later
 Comment:
- Compiled into the gfxstream guest libraries in /usr/lib/stud/gfxstream-guest/.
- Mesa's licence is in /usr/share/licenses/stud/mesa/.
+ Compiled into Rosemary: FSR1's RCAS (MIT), Snapdragon Game Super
+ Resolution (BSD-3-Clause), and RAVU-Zoom from mpv-prescalers
+ (LGPL-3.0-or-later), conveyed under the GPL as LGPLv3 section 2(b)
+ permits. The RAVU-Zoom hook its shader and weight tables come from is in
+ the fork above, crates/metal/upscale/.
 
 License: AGPL-3.0-or-later with Roblox-Engine exception
  This program is free software: you can redistribute it and/or modify it
@@ -150,11 +75,33 @@ License: AGPL-3.0-or-later with Roblox-Engine exception
  respects for all of the code used other than the Roblox Engine. The full
  statement is in /usr/share/licenses/stud/LICENSE.exception.
 
-License: Apache-2.0
- Licensed under the Apache License, Version 2.0. You may obtain a copy of
- the License at <https://www.apache.org/licenses/LICENSE-2.0>, in
- /usr/share/common-licenses/Apache-2.0 on a Debian system, and in
- /usr/share/licenses/stud/ beside the components it covers.
+License: GPL-3.0-only
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the
+ Free Software Foundation, version 3.
+ .
+ On Debian systems the full text is at /usr/share/common-licenses/GPL-3,
+ and Rosemary's own copy is in /usr/share/licenses/stud/rosemary/.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the
+ "Software"), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so, subject to
+ the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included
+ in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 License: BSD-3-Clause
  Redistribution and use in source and binary forms, with or without
@@ -182,65 +129,6 @@ License: BSD-3-Clause
  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-License: MIT
- Permission is hereby granted, free of charge, to any person obtaining a
- copy of this software and associated documentation files (the
- "Software"), to deal in the Software without restriction, including
- without limitation the rights to use, copy, modify, merge, publish,
- distribute, sublicense, and/or sell copies of the Software, and to
- permit persons to whom the Software is furnished to do so, subject to
- the following conditions:
- .
- The above copyright notice and this permission notice shall be included
- in all copies or substantial portions of the Software.
- .
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
- CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
- SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-License: BSD-2-Clause
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are
- met:
- .
- * Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in the
-   documentation and/or other materials provided with the distribution.
- .
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
- IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
- PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-License: MIT-0
- Permission is hereby granted, free of charge, to any person obtaining a
- copy of this software and associated documentation files (the
- "Software"), to deal in the Software without restriction, including
- without limitation the rights to use, copy, modify, merge, publish,
- distribute, sublicense, and/or sell copies of the Software, and to
- permit persons to whom the Software is furnished to do so.
- .
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
- CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
- SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 License: LGPL-3.0-or-later
  This library is free software: you can redistribute it and/or modify it
  under the terms of the GNU Lesser General Public License as published
@@ -249,20 +137,3 @@ License: LGPL-3.0-or-later
  .
  On Debian systems the full text is at
  /usr/share/common-licenses/LGPL-3.
-
-License: Zlib
- This software is provided 'as-is', without any express or implied
- warranty.  In no event will the authors be held liable for any damages
- arising from the use of this software.
- .
- Permission is granted to anyone to use this software for any purpose,
- including commercial applications, and to alter it and redistribute it
- freely, subject to the following restrictions:
- .
- 1. The origin of this software must not be misrepresented; you must not
-    claim that you wrote the original software. If you use this software
-    in a product, an acknowledgment in the product documentation would be
-    appreciated but is not required.
- 2. Altered source versions must be plainly marked as such, and must not be
-    misrepresented as being the original software.
- 3. This notice may not be removed or altered from any source distribution.
