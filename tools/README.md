@@ -21,6 +21,11 @@ the build shares.
   the cpak image, regenerates `cpak.lock.json` and both `.SRCINFO` files.
   `--check` reports what is still a placeholder.
 
+- **`update-flatpak-rosemary.sh`**: points the Flatpak manifest's Rosemary
+  module at the head of the fork's branch and regenerates its offline Cargo
+  sources (`packaging/flatpak/rosemary-cargo-sources.json`). The release
+  workflow runs it before every Flatpak build and after each release.
+
 - **`validate-payload.py`**, **`compare-package-contents.py`**,
   **`check-aur-depends.py`** and **`check-cpak-runtime.py`**: the
   release's package checks. `validate-payload.py --rosemary-source` also

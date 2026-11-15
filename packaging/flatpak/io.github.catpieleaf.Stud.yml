@@ -6,6 +6,9 @@ base-version: '6.11'
 runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
+# Rust, for building Rosemary below.
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
 command: stud
 separate-locales: false
 
@@ -100,25 +103,27 @@ modules:
       - /share/man
       - /share/bash-completion
 
-  # Rosemary, from the release built by this project's CI for the tag below.
-  # Its cargo build fetches git dependencies, which a Flathub build cannot.
-  - name: stud-prebuilt
+  # Rosemary, built here against the runtime's own glibc and libraries, from
+  # Stud's fork. The build has no network, so its Cargo dependencies, the git
+  # ones included, come from rosemary-cargo-sources.json, which
+  # tools/update-flatpak-rosemary.sh generates from the commit's Cargo.lock.
+  # glslc, for the upscalers' shaders, is in the SDK.
+  - name: rosemary
     buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/rosemary/cargo
+        CARGO_NET_OFFLINE: 'true'
     build-commands:
-      - install -Dm755 usr/libexec/stud/rosemary -t /app/libexec/stud/
-      # A distribution package looks in share/licenses/<package>; Flathub
-      # asks for share/licenses/<app id>. The archive is built for the
-      # former, so the licences move on the way in.
-      - mkdir -p /app/share/licenses/io.github.catpieleaf.Stud
-      - cp -a usr/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
+      - cargo --offline build --release --locked --package rosemary --bin rosemary
+      - install -Dm755 target/release/rosemary -t /app/libexec/stud/
+      - install -Dm644 LICENSE /app/share/licenses/io.github.catpieleaf.Stud/rosemary/LICENSE-Rosemary.txt
     sources:
-      - type: archive
-        url: https://github.com/CatPieLeaf/Stud/releases/download/1.2.14/stud-1.2.14-x86_64.tar.zst
-        sha256: 13163081982513b3ab83063b194eb5bc8f4f5424915e2375bc87d3ca95e09b1a
-        # The archive is the install tree, rooted at usr/.
-        strip-components: 0
-        only-arches:
-          - x86_64
+      - type: git
+        url: https://github.com/CatPieLeaf/rosemary-stud.git
+        commit: 2445c2223cf789e71567f2ee40cece459c40c8aa
+      - rosemary-cargo-sources.json
 
   # The launcher, built here against the runtime's own Qt.
   - name: stud
@@ -132,6 +137,12 @@ modules:
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
       - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
+    # A distribution package looks in share/licenses/<package>; Flathub asks
+    # for share/licenses/<app id>.
+    post-install:
+      - mkdir -p /app/share/licenses/io.github.catpieleaf.Stud
+      - cp -a /app/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
+      - rm -rf /app/share/licenses/stud
     sources:
       - type: archive
         url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.14.tar.gz

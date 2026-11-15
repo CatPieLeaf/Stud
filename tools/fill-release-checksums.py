@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Put a release's real checksums into the AUR and Flatpak recipes.
 
-Four files name something by URL and carry a digest for it: the two AUR
-PKGBUILDs, the Flathub manifest, and the cpak manifest (whose image must
+Five files name something by URL and carry a digest for it: the two AUR
+PKGBUILDs, the Flathub manifest, the flake, and the cpak manifest (whose image must
 be pinned to a digest, not a tag, before `cpak lock` will accept it). The checksums cannot live in the
 tree, because they belong to one specific release, re-cutting a tag
 changes both, so they sit as placeholders until a release exists, and
@@ -193,12 +193,11 @@ def main() -> int:
     # most needs rewriting, and skipping it silently left AUR and Flathub
     # advertising sums no published file has.
 
-    # The Flathub manifest: the sha256 under each of Stud's own two urls.
-    # Only those; every other source in the file is a third-party pin.
+    # The Flathub manifest: the sha256 under Stud's own source tarball. Only
+    # that; Rosemary's commit and sources are tools/update-flatpak-rosemary.sh's.
     text = MANIFEST.read_text()
     for url_marker, value in (
-            (f"/releases/download/{args.tag}/stud-{args.tag}-x86_64.tar.zst", archive_sha),
-            (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha)):
+            (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha),):
         pattern = re.compile(
             r"(url:\s*\S*" + re.escape(url_marker) + r"\s*\n\s*sha256:\s*)(\S+)")
         match = pattern.search(text)
@@ -209,11 +208,11 @@ def main() -> int:
         text = pattern.sub(lambda m: m.group(1) + value, text, count=1)
     MANIFEST.write_text(text)
 
-    # The flake: the same two urls, as Nix writes them.
+    # The flake: the same tarball, as Nix writes it. Rosemary is a flake
+    # input, which `nix flake update rosemary` moves.
     text = FLAKE.read_text()
     for url_marker, value in (
-            (f"/releases/download/{args.tag}/stud-{args.tag}-x86_64.tar.zst", archive_sha),
-            (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha)):
+            (f"/archive/refs/tags/{args.tag}.tar.gz", source_sha),):
         pattern = re.compile(
             r'(url = "\S*' + re.escape(url_marker) + r'";\s*\n\s*sha256 = ")([0-9a-f]+)')
         match = pattern.search(text)

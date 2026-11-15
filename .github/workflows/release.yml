@@ -692,18 +692,21 @@ jobs:
           if-no-files-found: error
 
   flatpak:
-    # Needs `packages` for the archive it installs, and the manifest lint
-    # because a manifest Flathub would reject is not worth spending a
-    # twenty-minute build on.
+    # Builds everything it ships itself, Rosemary included, against the
+    # runtime's own glibc; it needs only the manifest lint, because a
+    # manifest Flathub would reject is not worth spending a long build on.
     name: Flatpak bundle
     permissions:
       contents: read
-    needs: [packages, flatpak-manifest]
+    needs: flatpak-manifest
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
       options: --privileged
     steps:
+      - name: Install what the Rosemary sources step needs
+        run: dnf install -y --setopt=install_weak_deps=False git curl python3
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG || 'main' }}
@@ -713,57 +716,36 @@ jobs:
         with:
           rosemary: "false"
 
-      - uses: actions/download-artifact@v8
-        with:
-          name: packages
-          path: artifacts
+      - name: Rosemary at the head of the fork's branch
+        # The same commit every other package builds, and offline Cargo
+        # sources generated from its Cargo.lock. The checkout is kept for
+        # the shader check below.
+        run: tools/update-flatpak-rosemary.sh "$RUNNER_TEMP/rosemary-flatpak"
 
       - name: Prepare manifest for local sources
-        # The manifest in the tree names the release URL, which does not
-        # exist until this release is published, so for the bundle it is
-        # rewritten to the local file. Same archive either way; only where
-        # flatpak-builder reads it from differs.
+        # The manifest names Stud's release tarball so Flathub can build it
+        # as committed, but that digest belongs to one specific tag:
+        # re-cutting the tag changed it and the build died with "Wrong
+        # sha256 checksum for 1.1.0.tar.gz". Building the checkout is also
+        # the only way this job tests the code it was run against.
+        #
+        # A plain directory copy, not "type: git". Git needs a commit to
+        # resolve, and `git rev-parse HEAD` returns nothing inside this
+        # container (git refuses a repository it considers to be owned
+        # by someone else), which left an empty commit in the manifest
+        # and killed the build in git-lfs on an empty ref. A directory
+        # has nothing to resolve.
         run: |
-          archive="$(find artifacts -name 'stud-*-x86_64.tar.zst' | head -1)"
-          [ -n "$archive" ] || { echo "no flatpak archive in the artifacts" >&2; exit 1; }
-          cp "$archive" stud-archive.tar.zst
           python3 - <<'PY'
-          import os, re, sys
+          import re, sys
           p = "packaging/flatpak/io.github.catpieleaf.Stud.yml"
           s = open(p).read()
-          # Matches whatever checksum the manifest carries, not one literal
-          # placeholder. The manifest holds the REAL sha256 of the published
-          # archive so Flathub can build it as committed, keying this on a
-          # placeholder meant that the moment the real value went in, the
-          # substitution silently stopped matching and the build fetched the
-          # release URL instead of the archive this run just produced.
-          s, n = re.subn(r"        url: https://github\.com/CatPieLeaf/Stud/releases/[^\n]*\n"
-                         r"        sha256: \S+\n",
-                         "        path: ../../stud-archive.tar.zst\n", s)
-          if n != 1:
-              print(f"::error::expected one archive source to rewrite, rewrote {n}")
-              sys.exit(1)
-          # ...and Stud's own source, to the checkout this job already
-          # has. The manifest names a release tarball so Flathub can build
-          # it as committed, but that digest belongs to one specific tag:
-          # re-cutting the tag changed it and the build died with "Wrong
-          # sha256 checksum for 1.1.0.tar.gz". Building the checkout is
-          # also the only way this job tests the code it was run against.
-          #
-          # A plain directory copy, not "type: git". Git needs a commit to
-          # resolve, and `git rev-parse HEAD` returns nothing inside this
-          # container (git refuses a repository it considers to be owned
-          # by someone else), which left an empty commit in the manifest
-          # and killed the build in git-lfs on an empty ref. A directory
-          # has nothing to resolve.
           s, n = re.subn(r"      - type: archive\n"
                          r"        url: https://github\.com/CatPieLeaf/Stud/archive/[^\n]*\n"
                          r"        sha256: \S+\n",
                          "      - type: dir\n"
                          "        path: ../..\n"
                          "        skip:\n"
-                         "          - artifacts\n"
-                         "          - stud-archive.tar.zst\n"
                          "          - .git\n"
                          "          - .flatpak-builder\n"
                          "          - build-dir\n"
@@ -773,7 +755,7 @@ jobs:
               sys.exit(1)
           open(p, "w").write(s)
           PY
-          grep -n "path: \|url: " packaging/flatpak/io.github.catpieleaf.Stud.yml
+          grep -n "path: \|url: \|commit: " packaging/flatpak/io.github.catpieleaf.Stud.yml
 
       - name: Verify no placeholders remain
         # The dependency checksums are real in the tree, Flathub builds
@@ -801,14 +783,15 @@ jobs:
             "stud-${VERSION}-x86_64.flatpak" io.github.catpieleaf.Stud
 
       - name: Validate Flatpak contents
-        # Half of this one is compiled here and half is copied from the
-        # release archive, so "did both halves land" is a real question
-        # that no other package has to answer. The layout is /app rather
-        # than /usr and it carries no .desktop-level files of its own in
-        # that tree, so those checks are skipped.
+        # Everything in it is compiled here, Rosemary with the SDK's glslc,
+        # so its shaders are counted against the sources it was built from.
+        # The layout is /app rather than /usr and it carries no
+        # .desktop-level files of its own in that tree, so those checks are
+        # skipped.
         run: |
           python3 tools/validate-payload.py build-dir/files \
-            --label "Flatpak /app" --no-desktop-files
+            --label "Flatpak /app" --no-desktop-files \
+            --rosemary-source "$RUNNER_TEMP/rosemary-flatpak/rosemary"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -931,6 +914,17 @@ jobs:
           rm -rf artifacts
           python3 tools/fill-release-checksums.py "$TAG" \
             --archive-sha "$archive_sha" --image-digest "$digest"
+          git status --short
+
+      - name: Rosemary in the Flatpak manifest and the flake
+        # The fork's branch head, which this release built: the manifest's
+        # commit and offline Cargo sources, and the flake's locked input,
+        # so Flathub and Nix build the same Rosemary.
+        run: |
+          tools/update-flatpak-rosemary.sh "$RUNNER_TEMP/rosemary-flatpak"
+          podman run --rm -v "$PWD":/work:z -w /work \
+            -e NIX_CONFIG="experimental-features = nix-command flakes" \
+            docker.io/nixos/nix:latest nix flake update rosemary
           git status --short
 
       - name: Commit to main

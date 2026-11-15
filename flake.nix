@@ -1,14 +1,23 @@
 {
   description = "An Unofficial Roblox Launcher for Linux";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Rosemary, built from source by its own flake: Stud's fork, branch stud.
+    # On the same nixpkgs, so Stud and Rosemary share one glibc.
+    rosemary = {
+      url = "github:CatPieLeaf/rosemary-stud/stud";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, rosemary }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       inherit (pkgs) lib;
+      rosemaryPackage = rosemary.packages.${system}.default;
     in
     {
       packages.${system} = rec {
@@ -19,13 +28,6 @@
           src = pkgs.fetchurl {
             url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.14.tar.gz";
             sha256 = "a10ed5340e5879ab961b5bdf0db235320abb8ae45675407ebf42669f9bb73e45";
-          };
-
-          # Rosemary, which CI builds: its cargo build fetches git
-          # dependencies, which a Nix build cannot.
-          prebuilt = pkgs.fetchurl {
-            url = "https://github.com/CatPieLeaf/Stud/releases/download/1.2.14/stud-1.2.14-x86_64.tar.zst";
-            sha256 = "13163081982513b3ab83063b194eb5bc8f4f5424915e2375bc87d3ca95e09b1a";
           };
 
           nlohmann_json = pkgs.fetchFromGitHub {
@@ -45,8 +47,6 @@
             cmake
             ninja
             pkg-config
-            zstd
-            autoPatchelfHook
             qt6.wrapQtAppsHook
           ];
 
@@ -56,11 +56,6 @@
             qt6.qtwebengine
             qt6.qtwebchannel
             vulkan-headers
-            # What Rosemary links.
-            curl
-            zlib
-            libxkbcommon
-            systemd
           ];
 
           cmakeFlags = [
@@ -72,35 +67,15 @@
             "-DFETCHCONTENT_SOURCE_DIR_MINIZ=${miniz}"
           ];
 
-          # What Rosemary and the launcher open by name at runtime: SDL3 and,
-          # through it, the window system and sound; Vulkan, EGL and GBM;
-          # FFmpeg for video.
-          runtimeDependencies = with pkgs; [
-            sdl3
-            vulkan-loader
-            libGL
-            mesa
-            ffmpeg
-            wayland
-            libdecor
-            libxkbcommon
-            pipewire
-            libpulseaudio
-            alsa-lib
-            xorg.libX11
-            xorg.libXext
-            xorg.libXi
-            xorg.libXrandr
-            xorg.libXcursor
-          ];
-
           dontWrapQtApps = true;
 
+          # Rosemary where Stud looks for it, beside its own binary. Its
+          # package carries what it opens at runtime: SDL3, Vulkan, EGL,
+          # FFmpeg and the rest.
           postInstall = ''
-            mkdir prebuilt
-            tar --zstd -xf ${prebuilt} -C prebuilt
-            install -Dm755 prebuilt/usr/libexec/stud/rosemary $out/libexec/stud/rosemary
-            cp -an prebuilt/usr/share/licenses/stud/. $out/share/licenses/stud/
+            mkdir -p $out/libexec/stud
+            ln -s ${lib.getExe rosemaryPackage} $out/libexec/stud/rosemary
+            install -Dm644 ${rosemary}/LICENSE $out/share/licenses/stud/rosemary/LICENSE-Rosemary.txt
             patchelf --add-rpath ${lib.makeLibraryPath [ pkgs.vulkan-loader ]} $out/bin/stud
           '';
 
@@ -124,10 +99,7 @@
             description = "An Unofficial Roblox Launcher for Linux";
             homepage = "https://github.com/CatPieLeaf/Stud";
             license = lib.licenses.agpl3Plus;
-            sourceProvenance = with lib.sourceTypes; [
-              fromSource
-              binaryNativeCode
-            ];
+            sourceProvenance = [ lib.sourceTypes.fromSource ];
             platforms = [ "x86_64-linux" ];
             mainProgram = "stud";
           };
