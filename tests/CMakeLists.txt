@@ -40,6 +40,11 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_customization_guard_test PRIVATE stud_ui_mac_client)
     add_test(NAME customization_guard_test COMMAND stud_customization_guard_test)
 
+    # Roblox's settings file: one element changed, the rest untouched.
+    add_executable(stud_roblox_settings_test roblox_settings_test.cpp)
+    target_link_libraries(stud_roblox_settings_test PRIVATE stud_ui_mac_client)
+    add_test(NAME roblox_settings_test COMMAND stud_roblox_settings_test)
+
     # The Flatpak permission check: overrides and revocations honoured.
     add_executable(stud_flatpak_permissions_test flatpak_permissions_test.cpp)
     target_link_libraries(stud_flatpak_permissions_test PRIVATE stud_ui_mac_client)

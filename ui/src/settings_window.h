@@ -107,6 +107,7 @@ private:
     QCheckBox* historyServersCheck_;
     QSpinBox* cleanerSpin_;
     void buildHistoryTab(QVBoxLayout* tab);
+    void buildRobloxTab(QVBoxLayout* tab);
     QPlainTextEdit* flagsEdit_;
     QLabel* flagsWarning_;
     // Each preset's control, set from the editor's JSON.

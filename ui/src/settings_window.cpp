@@ -10,6 +10,7 @@
 #include "fflags.h"
 #include "desktop_entry.h"
 #include "history.h"
+#include "roblox_settings.h"
 #include "notifications.h"
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
@@ -37,6 +38,10 @@
 #include <QProcess>
 #include <QDirIterator>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QHBoxLayout>
+#include <functional>
+#include <memory>
 #include <QDateTime>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -376,6 +381,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     // ---- FFlags --------------------------------------------------------
     // flags.json in Stud's config directory, as JSON: written into the
     // client's ClientAppSettings.json at every launch.
+    buildRobloxTab(add_tab("Roblox"));
     buildHistoryTab(add_tab("History"));
     {
         const auto parts = add_parts("FFlags", {"Presets", "FFlag editor"});
@@ -725,6 +731,129 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
 
 // The games played, most recent first, with the time played in each: join
 // one again, or give it a shortcut in the application menu.
+// Roblox's own settings, the ones its in-game menu saves, edited in its file
+// in the prefix. Graphics quality is not among them: Stud leaves it to Roblox.
+void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
+    enum class Kind { Toggle, Fraction, Number };
+    struct Row {
+        const char* name;
+        const char* label;
+        Kind kind;
+    };
+    static const Row rows[] = {
+        {"MasterVolume", "Volume", Kind::Fraction},
+        {"VoiceChatVolume", "Voice chat volume", Kind::Fraction},
+        {"PartyVoiceVolume", "Party voice volume", Kind::Fraction},
+        {"MouseSensitivity", "Mouse sensitivity", Kind::Number},
+        {"GamepadCameraSensitivity", "Gamepad camera sensitivity", Kind::Number},
+        {"HapticStrength", "Controller vibration", Kind::Fraction},
+        {"CameraYInverted", "Invert the camera", Kind::Toggle},
+        {"Fullscreen", "Fullscreen", Kind::Toggle},
+        {"PerformanceStatsVisible", "Performance stats", Kind::Toggle},
+        {"ReducedMotion", "Reduce motion", Kind::Toggle},
+        {"PreferredTransparency", "Background transparency", Kind::Fraction},
+    };
+
+    auto* note = new QLabel("Roblox's own settings, as its menu saves them. Roblox writes them when it "
+                            "closes, so change them while it is closed.", this);
+    note->setWordWrap(true);
+    tab->addWidget(note);
+    auto* grid = new QGridLayout();
+    tab->addLayout(grid);
+    // Each row's control: filled from the file's text, and read back as it.
+    struct Control {
+        const char* name;
+        QWidget* widget;
+        std::function<void(const QString&)> set;
+        std::function<QString()> get;
+    };
+    auto controls = std::make_shared<std::vector<Control>>();
+    int line = 0;
+    for (const Row& row : rows) {
+        Control c{row.name, nullptr, {}, {}};
+        if (row.kind == Kind::Toggle) {
+            auto* box = new QCheckBox(QString::fromLatin1(row.label), this);
+            c.widget = box;
+            c.set = [box](const QString& v) { box->setChecked(v == QLatin1String("true")); };
+            c.get = [box] { return box->isChecked() ? QStringLiteral("true") : QStringLiteral("false"); };
+            grid->addWidget(box, line, 0, 1, 2);
+        } else if (row.kind == Kind::Fraction) {
+            // Stored as 0 to 1; shown as a percentage.
+            auto* slider = new QSlider(Qt::Horizontal, this);
+            slider->setRange(0, 100);
+            auto* value = new QLabel(this);
+            connect(slider, &QSlider::valueChanged, value,
+                    [value](int v) { value->setText(QStringLiteral("%1%").arg(v)); });
+            c.widget = slider;
+            c.set = [slider](const QString& v) { slider->setValue(qRound(v.toDouble() * 100)); };
+            c.get = [slider] { return QString::number(slider->value() / 100.0); };
+            grid->addWidget(new QLabel(QString::fromLatin1(row.label), this), line, 0);
+            grid->addWidget(slider, line, 1);
+            grid->addWidget(value, line, 2);
+        } else {
+            auto* spin = new QDoubleSpinBox(this);
+            spin->setRange(0, std::numeric_limits<float>::max());
+            spin->setDecimals(2);
+            spin->setSingleStep(0.1);
+            c.widget = spin;
+            c.set = [spin](const QString& v) { spin->setValue(v.toDouble()); };
+            c.get = [spin] { return QString::number(spin->value()); };
+            grid->addWidget(new QLabel(QString::fromLatin1(row.label), this), line, 0);
+            grid->addWidget(spin, line, 1);
+        }
+        controls->push_back(std::move(c));
+        ++line;
+    }
+
+    auto* status = new QLabel(this);
+    status->setWordWrap(true);
+    tab->addWidget(status);
+    auto* buttons = new QHBoxLayout();
+    auto* save = new QPushButton("Save to Roblox", this);
+    save->setIcon(themed("document-save", QStyle::SP_DialogSaveButton));
+    auto* reload = new QPushButton("Reload", this);
+    reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    buttons->addWidget(save);
+    buttons->addWidget(reload);
+    buttons->addStretch();
+    tab->addLayout(buttons);
+    tab->addStretch();
+
+    // A key the file lacks stays disabled: only what Roblox wrote is changed.
+    const auto load = [controls, status, save] {
+        const QString path = roblox_settings::player_file();
+        QFile in(path);
+        const bool found = !path.isEmpty() && in.open(QIODevice::ReadOnly);
+        const QString xml = found ? QString::fromUtf8(in.readAll()) : QString();
+        for (Control& c : *controls) {
+            const auto value = roblox_settings::read(xml, QString::fromLatin1(c.name));
+            c.widget->setEnabled(value.has_value());
+            if (value) c.set(value->second);
+        }
+        save->setEnabled(found);
+        status->setText(found ? QString() : QStringLiteral("Roblox has not saved its settings yet: start it once."));
+    };
+    load();
+    connect(reload, &QPushButton::clicked, this, load);
+    connect(save, &QPushButton::clicked, this, [controls, status] {
+        const QString path = roblox_settings::player_file();
+        QFile in(path);
+        if (path.isEmpty() || !in.open(QIODevice::ReadOnly)) {
+            status->setText(QStringLiteral("Roblox's settings file is gone."));
+            return;
+        }
+        QString xml = QString::fromUtf8(in.readAll());
+        in.close();
+        for (const Control& c : *controls) {
+            if (c.widget->isEnabled()) xml = roblox_settings::write(xml, QString::fromLatin1(c.name), c.get());
+        }
+        QSaveFile out(path);
+        const bool saved = out.open(QIODevice::WriteOnly) && out.write(xml.toUtf8()) >= 0 && out.commit();
+        status->setText(saved ? QStringLiteral("Saved. Roblox uses them the next time it starts.")
+                              : QStringLiteral("%1 could not be written.").arg(path));
+    });
+}
+
 void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     historyGamesCheck_ = new QCheckBox("Record the games I play", this);
     historyGamesCheck_->setToolTip("Keeps each game you play here, with the time played.");
