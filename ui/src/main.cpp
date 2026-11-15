@@ -741,11 +741,9 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         open_settings_for_launch_failure(error);
         return false;
     }
-    const QStringList channels =
-        stud::ui::client::reset_release_channels(stud::ui::client::prefix_dir() + QStringLiteral("/root"));
-    if (!channels.isEmpty()) {
-        std::printf("stud: Roblox's saved channel %s set back to production\n",
-                    qPrintable(channels.join(QStringLiteral(", "))));
+    for (const QString& leftover : stud::ui::client::remove_installer_leftovers(
+             stud::ui::client::prefix_dir() + QStringLiteral("/root"))) {
+        std::printf("stud: removed what Roblox's own installer left: %s\n", qPrintable(leftover));
     }
     if (player && !settings.vsync) lift_roblox_frame_cap();
     if (has_nvidia_card() && nvidia_vulkan_driver().isEmpty()) {

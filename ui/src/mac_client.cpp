@@ -92,13 +92,14 @@ QNetworkRequest request_for(const QString& url) {
 }
 
 // The upload and version Roblox serves for macOS now; empty when no answer.
-std::pair<QString, QString> served_build(Product product) {
+std::pair<QString, QString> served_build(Product product, const QString& channel) {
     QNetworkAccessManager net;
     for (const char* host : kVersionHosts) {
         if (g_cancelled) break;
-        QNetworkRequest request = request_for(QStringLiteral("%1/v2/client-version/%2")
-                                                  .arg(QString::fromLatin1(host),
-                                                       QString::fromLatin1(info(product).binary_type)));
+        QString url = QStringLiteral("%1/v2/client-version/%2")
+                          .arg(QString::fromLatin1(host), QString::fromLatin1(info(product).binary_type));
+        if (!channel.isEmpty()) url += QStringLiteral("/channel/") + channel;
+        QNetworkRequest request = request_for(url);
         request.setTransferTimeout(10000);
         QNetworkReply* reply = net.get(request);
         g_reply = reply;
@@ -292,7 +293,13 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
                      qPrintable(have->upload));
     }
     if (progress) progress(QStringLiteral("Checking for %1 updates").arg(name), -1);
-    const auto [upload, version] = served_build(product);
+    // The build of the channel Roblox has this account on; production's when
+    // it has none.
+    const QString channel = assigned_channel(prefix_dir() + QStringLiteral("/root"), product);
+    if (!channel.isEmpty()) {
+        std::printf("stud: Roblox has this account on the %s channel\n", qPrintable(channel));
+    }
+    const auto [upload, version] = served_build(product, channel);
     if (g_cancelled) {
         *error = QStringLiteral("Cancelled.");
         return std::nullopt;
@@ -324,8 +331,10 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     bool fetched = false;
     for (const char* host : kSetupHosts) {
         const QString url =
-            QStringLiteral("%1/mac/%2-%3")
-                .arg(QString::fromLatin1(host), upload, QString::fromLatin1(info(product).zip));
+            // A channel's builds are under channel/common, production's at the top.
+            QStringLiteral("%1/%4mac/%2-%3")
+                .arg(QString::fromLatin1(host), upload, QString::fromLatin1(info(product).zip),
+                     channel.isEmpty() ? QString() : QStringLiteral("channel/common/"));
         if (download(url, zip_path, progress, what)) {
             fetched = true;
             break;
@@ -505,36 +514,38 @@ void cancel() {
 
 bool cancelled() { return g_cancelled; }
 
-QStringList reset_release_channels(const QString& root) {
-    static const QRegularExpression channel(QStringLiteral("<string>([^<]*)</string>"));
-    QStringList reset;
+QString assigned_channel(const QString& root, Product product) {
+    static const QRegularExpression saved(
+        QStringLiteral(R"(<key>www\.roblox\.com</key>\s*<string>([^<]*)</string>)"));
+    const QString plist = QStringLiteral("/Library/Preferences/com.roblox.%1Channel.plist")
+                              .arg(product == Product::Studio ? QStringLiteral("RobloxStudio")
+                                                              : QStringLiteral("RobloxPlayer"));
     const QDir users(root + QStringLiteral("/Users"));
     for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-        const QDir prefs(users.filePath(user) + QStringLiteral("/Library/Preferences"));
-        for (const QString& name :
-             prefs.entryList({QStringLiteral("com.roblox.*Channel.plist")}, QDir::Files)) {
-            QFile in(prefs.filePath(name));
-            if (!in.open(QIODevice::ReadOnly)) continue;
-            const QString text = QString::fromUtf8(in.readAll());
-            in.close();
-            QStringList others;
-            for (const QRegularExpressionMatch& m : channel.globalMatch(text)) {
-                const QString value = m.captured(1).trimmed();
-                if (!value.isEmpty() && value.compare(QLatin1String("production"), Qt::CaseInsensitive) != 0) {
-                    others << value;
-                }
-            }
-            if (others.isEmpty()) continue;
-            QSaveFile out(prefs.filePath(name));
-            if (!out.open(QIODevice::WriteOnly)) continue;
-            out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                      "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
-                      "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
-                      "<plist version=\"1.0\">\n<dict/>\n</plist>\n");
-            if (out.commit()) reset << others;
+        QFile in(users.filePath(user) + plist);
+        if (!in.open(QIODevice::ReadOnly)) continue;
+        const QString channel = saved.match(QString::fromUtf8(in.readAll())).captured(1).trimmed();
+        if (channel.isEmpty() || channel.compare(QLatin1String("production"), Qt::CaseInsensitive) == 0) {
+            continue;
+        }
+        return channel;
+    }
+    return {};
+}
+
+QStringList remove_installer_leftovers(const QString& root) {
+    QStringList removed;
+    const QDir users(root + QStringLiteral("/Users"));
+    for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        QDir roblox(users.filePath(user) + QStringLiteral("/Library/Roblox"));
+        for (const QString& zip : roblox.entryList({QStringLiteral("*.zip")}, QDir::Files)) {
+            if (roblox.remove(zip)) removed << roblox.filePath(zip);
+        }
+        for (const QString& app : roblox.entryList({QStringLiteral("*.app")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+            if (QDir(roblox.filePath(app)).removeRecursively()) removed << roblox.filePath(app);
         }
     }
-    return reset;
+    return removed;
 }
 
 }  // namespace stud::ui::client

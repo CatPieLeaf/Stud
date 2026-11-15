@@ -79,7 +79,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
 </div>
 
  - Runs the **real** Roblox macOS client, unpatched: the desktop client, with desktop graphics
- - Downloads and updates the client from Roblox's own servers before each launch, so there is nothing to fetch by hand, and checks its code is still what Roblox shipped
+ - Downloads and updates the client from Roblox's own servers before each launch, so there is nothing to fetch by hand, and checks its code is still what Roblox shipped. When Roblox puts your account on a test channel, Stud installs that channel's build
  - Two processes: Stud's launcher, and the client on Rosemary
  - Runs on **Wayland and X11**, with Stud's own icon and taskbar entry
  - Your desktop's own title bar, or the macOS one, with or without its menu bar

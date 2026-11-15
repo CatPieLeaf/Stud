@@ -45,7 +45,7 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_roblox_settings_test PRIVATE stud_ui_mac_client)
     add_test(NAME roblox_settings_test COMMAND stud_roblox_settings_test)
 
-    # The release-channel guard: a test channel emptied, production kept.
+    # The assigned channel read, and Roblox's own installer's leftovers removed.
     add_executable(stud_release_channel_test release_channel_test.cpp)
     target_link_libraries(stud_release_channel_test PRIVATE stud_ui_mac_client)
     add_test(NAME release_channel_test COMMAND stud_release_channel_test)

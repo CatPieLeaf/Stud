@@ -1,5 +1,6 @@
-// The release-channel guard: a saved test channel is emptied, so Roblox reads
-// production; a production one and Roblox's other preferences are left alone.
+// The channel Roblox assigned is read from its saved plist, production being
+// none; and what Roblox's own installer left in Library/Roblox is removed,
+// with nothing else there touched.
 
 #include "mac_client.h"
 
@@ -19,41 +20,46 @@ void expect(bool ok, const char* what) {
     }
 }
 
+void write(const QString& path, const QByteArray& bytes) {
+    QDir().mkpath(path.left(path.lastIndexOf('/')));
+    QFile out(path);
+    if (out.open(QIODevice::WriteOnly)) out.write(bytes);
+}
+
 QByteArray plist(const char* value) {
     return QByteArray("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n"
                       "\t<key>www.roblox.com</key>\n\t<string>") +
            value + "</string>\n</dict>\n</plist>\n";
 }
 
-void write(const QString& path, const QByteArray& bytes) {
-    QFile out(path);
-    if (out.open(QIODevice::WriteOnly)) out.write(bytes);
-}
-
-QByteArray read(const QString& path) {
-    QFile in(path);
-    return in.open(QIODevice::ReadOnly) ? in.readAll() : QByteArray();
-}
-
 }  // namespace
 
 int main() {
+    using stud::ui::client::Product;
     QTemporaryDir root;
-    const QString prefs = root.path() + QStringLiteral("/Users/me/Library/Preferences");
-    QDir().mkpath(prefs);
-    const QString player = prefs + QStringLiteral("/com.roblox.RobloxPlayerChannel.plist");
-    const QString studio = prefs + QStringLiteral("/com.roblox.RobloxStudioChannel.plist");
-    const QString other = prefs + QStringLiteral("/com.roblox.RobloxPlayer.plist");
-    write(player, plist("zaflag"));
-    write(studio, plist("production"));
-    write(other, plist("zaflag"));
+    const QString home = root.path() + QStringLiteral("/Users/me/Library");
 
-    const QStringList reset = stud::ui::client::reset_release_channels(root.path());
-    expect(reset == QStringList{QStringLiteral("zaflag")}, "the test channel is reported");
-    expect(!read(player).contains("zaflag") && read(player).contains("<dict/>"), "the test channel is emptied");
-    expect(read(studio) == plist("production"), "production is left as it is");
-    expect(read(other) == plist("zaflag"), "other preferences are not touched");
-    expect(stud::ui::client::reset_release_channels(root.path()).isEmpty(), "a second pass finds nothing");
+    expect(stud::ui::client::assigned_channel(root.path(), Product::Player).isEmpty(),
+           "no plist is production");
+    write(home + QStringLiteral("/Preferences/com.roblox.RobloxPlayerChannel.plist"), plist("zbisect006"));
+    write(home + QStringLiteral("/Preferences/com.roblox.RobloxStudioChannel.plist"), plist("production"));
+    expect(stud::ui::client::assigned_channel(root.path(), Product::Player) == QStringLiteral("zbisect006"),
+           "the Player's assigned channel is read");
+    expect(stud::ui::client::assigned_channel(root.path(), Product::Studio).isEmpty(),
+           "production reads as none");
+
+    write(home + QStringLiteral("/Roblox/RobloxPlayer.zip"), "zip");
+    write(home + QStringLiteral("/Roblox/RobloxPlayer.app/Contents/Info.plist"), "plist");
+    write(home + QStringLiteral("/Roblox/GlobalBasicSettings_13.xml"), "settings");
+    write(home + QStringLiteral("/Roblox/LocalStorage/appStorage.json"), "{}");
+    const QStringList removed = stud::ui::client::remove_installer_leftovers(root.path());
+    expect(removed.size() == 2, "the zip and the unpacked bundle are removed");
+    expect(!QFile::exists(home + QStringLiteral("/Roblox/RobloxPlayer.zip")), "the zip is gone");
+    expect(!QFile::exists(home + QStringLiteral("/Roblox/RobloxPlayer.app")), "the bundle is gone");
+    expect(QFile::exists(home + QStringLiteral("/Roblox/GlobalBasicSettings_13.xml")) &&
+               QFile::exists(home + QStringLiteral("/Roblox/LocalStorage/appStorage.json")),
+           "Roblox's settings and storage stay");
+    expect(stud::ui::client::remove_installer_leftovers(root.path()).isEmpty(), "a second pass finds nothing");
 
     if (failures == 0) std::printf("release_channel_test: ok\n");
     return failures == 0 ? 0 : 1;
