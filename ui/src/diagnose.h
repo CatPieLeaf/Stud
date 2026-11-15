@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // The diagnostic header every session log opens with.
 //
 // A bug report needs a distribution, a GPU, a driver, which session type
@@ -14,5 +16,8 @@
 namespace stud::ui {
 
 void write_diagnostics();
+
+// The same text, for copying into a report.
+std::string diagnostics_text();
 
 }  // namespace stud::ui

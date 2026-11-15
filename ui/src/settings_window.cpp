@@ -11,6 +11,8 @@
 #include "desktop_entry.h"
 #include "history.h"
 #include "log_export.h"
+#include "diagnose.h"
+#include "mac_client.h"
 #include "roblox_settings.h"
 #include "notifications.h"
 #include "stud/settings.h"
@@ -19,7 +21,9 @@
 #include <QStyle>
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QDesktopServices>
+#include <QGuiApplication>
 #include <QUrl>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -893,10 +897,21 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     auto* exportLatest = new QPushButton("Export the latest log", this);
     exportLatest->setIcon(themed("text-x-generic", QStyle::SP_FileIcon));
     exportLatest->setToolTip("Only the newest session's log, as a .log file.");
+    auto* openLogs = new QPushButton("Open the logs folder", this);
+    openLogs->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+    auto* copyInfo = new QPushButton("Copy system info", this);
+    copyInfo->setIcon(themed("edit-copy", QStyle::SP_FileDialogDetailedView));
+    copyInfo->setToolTip("Stud's and Rosemary's versions, the system, GPU and settings: the top of every "
+                         "session log, ready to paste into a report. Nothing secret is in it.");
     logs->addWidget(exportAll);
     logs->addWidget(exportLatest);
     logs->addStretch();
     tab->addLayout(logs);
+    auto* logs2 = new QHBoxLayout();
+    logs2->addWidget(openLogs);
+    logs2->addWidget(copyInfo);
+    logs2->addStretch();
+    tab->addLayout(logs2);
 
     tab->addSpacing(fontMetrics().height());
     tab->addWidget(new QLabel("<b>Storage</b>", this));
@@ -915,6 +930,30 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     storage->addWidget(clearData);
     storage->addStretch();
     tab->addLayout(storage);
+    auto* repair = new QHBoxLayout();
+    auto* repairRoblox = new QPushButton("Repair Roblox", this);
+    repairRoblox->setIcon(themed("tools-wizard", QStyle::SP_BrowserReload));
+    repairRoblox->setToolTip("Removes the installed Roblox and Studio, so the next launch downloads them "
+                             "fresh. Your Roblox login and the macOS environment stay.");
+    auto* resetPrefix = new QPushButton("Reset the macOS environment", this);
+    resetPrefix->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    resetPrefix->setToolTip("Removes the macOS environment Roblox runs in, which the next launch sets up "
+                            "again. Roblox itself stays; your Roblox login and Roblox's own settings go.");
+    auto* openData = new QPushButton("Open the data folder", this);
+    openData->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+    repair->addWidget(repairRoblox);
+    repair->addWidget(resetPrefix);
+    repair->addWidget(openData);
+    repair->addStretch();
+    tab->addLayout(repair);
+
+    tab->addSpacing(fontMetrics().height());
+    tab->addWidget(new QLabel("<b>Settings</b>", this));
+    auto* resetAll = new QPushButton("Reset all settings", this);
+    resetAll->setIcon(themed("edit-undo", QStyle::SP_DialogResetButton));
+    resetAll->setToolTip("Every setting here back to its default, as right-clicking each one does. "
+                         "Nothing changes until you save.");
+    tab->addWidget(resetAll, 0, Qt::AlignLeft);
 
     auto* status = new QLabel(this);
     status->setWordWrap(true);
@@ -938,7 +977,25 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
         const QString saved = export_latest_log(this);
         if (!saved.isEmpty()) status->setText(saved);
     });
-    // Neither while Roblox runs: its client, prefix and web views are in use.
+    connect(openLogs, &QPushButton::clicked, this, [] {
+        const QString dir = QString::fromStdString(stud::paths::log_dir());
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    connect(openData, &QPushButton::clicked, this, [] {
+        const QString dir = QString::fromStdString(stud::paths::data_dir());
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    connect(copyInfo, &QPushButton::clicked, this, [status] {
+        QGuiApplication::clipboard()->setText(QString::fromStdString(diagnostics_text()));
+        status->setText(QStringLiteral("System info copied."));
+    });
+    connect(resetAll, &QPushButton::clicked, this, [this, status] {
+        for (const auto& reset : resets_) reset();
+        status->setText(QStringLiteral("Every setting is back to its default. Save to keep them."));
+    });
+    // None of these while Roblox runs: its client, prefix and web views are in use.
     const auto refuse_while_running = [this] {
         if (!stud_session_running()) return false;
         QMessageBox::information(this, QStringLiteral("Stud"),
@@ -966,6 +1023,36 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
         label_sizes();
         status->setText(cleared ? QStringLiteral("Stud's data is cleared.")
                                 : QStringLiteral("Some of Stud's data could not be removed."));
+    });
+    connect(repairRoblox, &QPushButton::clicked, this, [this, status, label_sizes, refuse_while_running] {
+        if (refuse_while_running()) return;
+        if (QMessageBox::question(this, QStringLiteral("Repair Roblox"),
+                                  QStringLiteral("Remove the installed Roblox and Studio? The next launch "
+                                                 "downloads them again. Your Roblox login stays.")) !=
+            QMessageBox::Yes) {
+            return;
+        }
+        bool cleared = true;
+        for (const auto product : {client::Product::Player, client::Product::Studio}) {
+            cleared = QDir(client::clients_dir(product)).removeRecursively() && cleared;
+        }
+        label_sizes();
+        status->setText(cleared ? QStringLiteral("Roblox will be downloaded again at the next launch.")
+                                : QStringLiteral("Some of Roblox could not be removed."));
+    });
+    connect(resetPrefix, &QPushButton::clicked, this, [this, status, label_sizes, refuse_while_running] {
+        if (refuse_while_running()) return;
+        if (QMessageBox::question(
+                this, QStringLiteral("Reset the macOS environment"),
+                QStringLiteral("Remove the macOS environment Roblox runs in? The next launch sets it up "
+                               "again. You sign in to Roblox again, and Roblox's own settings (volume, "
+                               "sensitivity and the like) go back to its defaults.")) != QMessageBox::Yes) {
+            return;
+        }
+        const bool cleared = QDir(client::prefix_dir()).removeRecursively();
+        label_sizes();
+        status->setText(cleared ? QStringLiteral("The macOS environment will be set up again at the next launch.")
+                                : QStringLiteral("Some of the macOS environment could not be removed."));
     });
 }
 

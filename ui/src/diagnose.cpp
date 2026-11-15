@@ -5,6 +5,7 @@
 #include <QtCore/QString>
 
 #include <array>
+#include <cstdarg>
 #include <cstdio>
 #include <fstream>
 #include <initializer_list>
@@ -30,8 +31,28 @@ namespace stud::ui {
 
 namespace {
 
+// What is being written: the log's header, or the text Settings copies.
+std::string g_text;
+
+void out(const char* format, ...) __attribute__((format(printf, 1, 2)));
+void out(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    va_list again;
+    va_copy(again, args);
+    const int size = std::vsnprintf(nullptr, 0, format, args);
+    va_end(args);
+    if (size > 0) {
+        std::string piece(static_cast<size_t>(size) + 1, '\0');
+        std::vsnprintf(piece.data(), piece.size(), format, again);
+        piece.resize(static_cast<size_t>(size));
+        g_text += piece;
+    }
+    va_end(again);
+}
+
 void line(const char* label, const std::string& value) {
-    std::printf("  %-22s %s\n", label, value.empty() ? "(none)" : value.c_str());
+    out("  %-22s %s\n", label, value.empty() ? "(none)" : value.c_str());
 }
 
 std::string yes_no(bool value) { return value ? "yes" : "no"; }
@@ -74,7 +95,7 @@ void report_controllers() {
             ::ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
             const bool rumble = ::ioctl(fd, EVIOCGBIT(EV_FF, sizeof(ff)), ff.data()) >= 0 &&
                                 bit(ff, FF_RUMBLE);
-            std::printf("  %-22s %s (%s, rumble %s)\n", found == 0 ? "controllers" : "",
+            out("  %-22s %s (%s, rumble %s)\n", found == 0 ? "controllers" : "",
                         name[0] != '\0' ? name : "unnamed", path.c_str(), yes_no(rumble).c_str());
             ++found;
         }
@@ -169,7 +190,7 @@ void report_gpus(const stud::config::StudSettings& settings) {
         bool first = true;
         for (const auto& gpu : gpus) {
             if (gpu.device_index == settings.gpu.device_index) continue;  // named above
-            std::printf("  %-22s [%u] %s\n", first ? "also present" : "", gpu.device_index,
+            out("  %-22s [%u] %s\n", first ? "also present" : "", gpu.device_index,
                         gpu.name.c_str());
             first = false;
         }
@@ -213,19 +234,19 @@ static std::string rosemary_version(const QString& rosemary) {
     return (commit.isEmpty() ? version : version + QStringLiteral(", ") + commit).toStdString();
 }
 
-void write_diagnostics() {
+void build_diagnostics() {
     // The commit too: every build of a release is called by the release's
     // version, and only the commit says which code ran.
     if (std::string(STUD_COMMIT).empty()) {
-        std::printf("=== Stud %s ===\n\n", STUD_VERSION);
+        out("=== Stud %s ===\n\n", STUD_VERSION);
     } else {
-        std::printf("=== Stud %s (%s) ===\n\n", STUD_VERSION, STUD_COMMIT);
+        out("=== Stud %s (%s) ===\n\n", STUD_VERSION, STUD_COMMIT);
     }
 
     utsname uts{};
     ::uname(&uts);
 
-    std::printf("system\n");
+    out("system\n");
     line("kernel", std::string(uts.sysname) + " " + uts.release + " " + uts.machine);
     line("glibc", ::gnu_get_libc_version());
     line("session", qEnvironmentVariable("XDG_SESSION_TYPE").toStdString());
@@ -234,18 +255,18 @@ void write_diagnostics() {
     line("x11 display", qEnvironmentVariable("DISPLAY").toStdString());
     report_cpu();
     line("appimage", qEnvironmentVariable("APPIMAGE").toStdString());
-    std::printf("\n");
+    out("\n");
 
-    std::printf("paths\n");
+    out("paths\n");
     line("config", stud::paths::config_dir());
     line("data", stud::paths::data_dir());
     line("cache", stud::paths::cache_dir());
     line("logs", stud::paths::log_dir());
     line("config file", exists_size(stud::config::default_config_path()));
     line("flag overrides", exists_size(stud::config::default_flag_overrides_path()));
-    std::printf("\n");
+    out("\n");
 
-    std::printf("configuration\n");
+    out("configuration\n");
     stud::config::StudSettings settings;
     std::string settings_error;
     try {
@@ -272,13 +293,13 @@ void write_diagnostics() {
         line("gamemode", yes_no(settings.gamemode));
         line("system tray", yes_no(settings.system_tray));
     }
-    std::printf("\n");
+    out("\n");
 
-    std::printf("graphics\n");
+    out("graphics\n");
     report_gpus(settings);
-    std::printf("\n");
+    out("\n");
 
-    std::printf("client\n");
+    out("client\n");
     const auto build = stud::ui::client::installed();
     line("roblox", build ? (build->version + " (" + build->upload + ")").toStdString() : "");
     {
@@ -288,17 +309,30 @@ void write_diagnostics() {
                                          : rosemary.toStdString() + " (" + version + ")");
     }
     line("prefix", exists_size(stud::ui::client::prefix_dir().toStdString() + "/root"));
-    std::printf("\n");
+    out("\n");
 
-    std::printf("input\n");
+    out("input\n");
     report_controllers();
-    std::printf("\n");
+    out("\n");
 
-    std::printf("Logs from the last few sessions are in %s, the Settings window's\n"
+    out("Logs from the last few sessions are in %s, the Settings window's\n"
                 "\"Export logs\" entry packs them into a single archive.\n",
                 stud::paths::log_dir().c_str());
-    std::printf("\n=== end of diagnostics ===\n\n");
+    out("\n=== end of diagnostics ===\n\n");
     std::fflush(stdout);
+}
+
+void write_diagnostics() {
+    g_text.clear();
+    build_diagnostics();
+    std::fputs(g_text.c_str(), stdout);
+    std::fflush(stdout);
+}
+
+std::string diagnostics_text() {
+    g_text.clear();
+    build_diagnostics();
+    return std::move(g_text);
 }
 
 }  // namespace stud::ui
