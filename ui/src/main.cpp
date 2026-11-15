@@ -458,6 +458,13 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
 
     apply_gpu_selection(env, settings);
     apply_mangohud(env, settings.mangohud);
+    // Settings' own variables, last, so each wins over Stud's.
+    for (const QString& line : QString::fromStdString(settings.environment).split(QLatin1Char('\n'))) {
+        const QString entry = line.trimmed();
+        const qsizetype equals = entry.indexOf(QLatin1Char('='));
+        if (entry.isEmpty() || entry.startsWith(QLatin1Char('#')) || equals <= 0) continue;
+        env.insert(entry.left(equals).trimmed(), entry.mid(equals + 1));
+    }
     return env;
 }
 
@@ -710,8 +717,16 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     activity.history_servers = settings.record_server_history;
     g_activity = new stud::ui::GameActivity(activity, qApp);
     g_client = new QProcess(qApp);
-    g_client->setProgram(rosemary);
-    g_client->setArguments(args);
+    // Through the wrapper Settings names, if any: it runs Rosemary in turn.
+    QStringList wrapper = QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper));
+    if (wrapper.isEmpty()) {
+        g_client->setProgram(rosemary);
+        g_client->setArguments(args);
+    } else {
+        std::printf("stud: Roblox starts through %s\n", qPrintable(wrapper.join(QLatin1Char(' '))));
+        g_client->setProgram(wrapper.takeFirst());
+        g_client->setArguments(wrapper + QStringList{rosemary} + args);
+    }
     g_client->setProcessEnvironment(client_environment(settings, product));
     g_client->setStandardInputFile(QProcess::nullDevice());
     // Through this process, scrubbed, into the session log and terminal.

@@ -72,6 +72,8 @@ int main(int argc, char** argv) {
     settings.server_region_notification = true;
     settings.record_game_history = false;
     settings.record_server_history = false;
+    settings.launch_wrapper = "gamescope -f --";
+    settings.environment = "A=1\nB=two words";
     settings.cleaner_days = 7;
     stud::config::save_settings(path, settings);
 
@@ -94,6 +96,8 @@ int main(int argc, char** argv) {
     check(loaded.server_region_notification, "the region notification round-trips");
     check(!loaded.record_game_history, "recording games round-trips");
     check(!loaded.record_server_history, "recording servers round-trips");
+    check(loaded.launch_wrapper == "gamescope -f --", "the launch wrapper round-trips");
+    check(loaded.environment == "A=1\nB=two words", "the environment round-trips");
     check(stud::config::StudSettings{}.record_game_history && stud::config::StudSettings{}.record_server_history,
           "games and servers are recorded by default");
     check(loaded.cleaner_days == 7, "the cleaner's age round-trips");

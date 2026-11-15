@@ -45,6 +45,7 @@
 #include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QSlider>
 #include <QSaveFile>
@@ -251,6 +252,22 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
     mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Roblox.");
     graphics->addWidget(mangohudCheck_);
+
+    graphics->addWidget(new QLabel("Launch Roblox through", this));
+    wrapperEdit_ = new QLineEdit(this);
+    wrapperEdit_->setPlaceholderText("gamescope -f --");
+    wrapperEdit_->setToolTip("A command Roblox starts through, such as gamescope or prime-run. "
+                             "Quotes work as in a shell. Empty for none.");
+    graphics->addWidget(wrapperEdit_);
+    graphics->addWidget(new QLabel("Environment variables", this));
+    environmentEdit_ = new QPlainTextEdit(this);
+    environmentEdit_->setPlaceholderText("NAME=value, one a line");
+    environmentEdit_->setToolTip("Set for Roblox when it starts, after Stud's own, so one here wins "
+                                 "over Stud's value for the same name. Lines starting with # are "
+                                 "skipped.");
+    environmentEdit_->setTabChangesFocus(true);
+    environmentEdit_->setMaximumHeight(environmentEdit_->fontMetrics().lineSpacing() * 5);
+    graphics->addWidget(environmentEdit_);
 
     graphics->addStretch();
 
@@ -484,6 +501,9 @@ void SettingsWindow::installResets() {
     add(displayBackendCombo_, [this, d] { select_data(displayBackendCombo_, d.display_backend); });
     add(gamemodeCheck_, [this, d] { gamemodeCheck_->setChecked(d.gamemode); });
     add(mangohudCheck_, [this, d] { mangohudCheck_->setChecked(d.mangohud); });
+    add(wrapperEdit_, [this, d] { wrapperEdit_->setText(QString::fromStdString(d.launch_wrapper)); });
+    add(environmentEdit_,
+        [this, d] { environmentEdit_->setPlainText(QString::fromStdString(d.environment)); });
     add(backgroundFpsSlider_, [this, d] { setBackgroundFps(d.background_fps); });
     add(discordCheck_, [this, d] { discordCheck_->setChecked(d.discord_rich_presence); });
     add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
@@ -920,6 +940,8 @@ void SettingsWindow::loadFromDisk() {
     select_data(titleBarCombo_, settings.title_bar);
     select_data(displayBackendCombo_, settings.display_backend);
     mangohudCheck_->setChecked(settings.mangohud);
+    wrapperEdit_->setText(QString::fromStdString(settings.launch_wrapper));
+    environmentEdit_->setPlainText(QString::fromStdString(settings.environment));
     setBackgroundFps(settings.background_fps);
     discordCheck_->setChecked(settings.discord_rich_presence);
     discordJoinCheck_->setChecked(settings.discord_join_button);
@@ -1083,6 +1105,8 @@ void SettingsWindow::onSaveClicked() {
     settings.title_bar = selected_data(titleBarCombo_);
     settings.display_backend = selected_data(displayBackendCombo_);
     settings.mangohud = mangohudCheck_->isChecked();
+    settings.launch_wrapper = wrapperEdit_->text().trimmed().toStdString();
+    settings.environment = environmentEdit_->toPlainText().toStdString();
     settings.background_fps = backgroundFpsSlider_->value() > stud::config::kBackgroundFpsUnlimited
                                   ? stud::config::kBackgroundFpsNoLimit
                                   : backgroundFpsSlider_->value();

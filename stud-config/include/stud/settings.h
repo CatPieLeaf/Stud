@@ -66,6 +66,13 @@ struct StudSettings {
     bool mangohud = false;
     bool gamemode = true;
 
+    // A command Roblox starts through (gamescope -f --, prime-run, ...), split
+    // the way a shell splits a line; empty for none.
+    std::string launch_wrapper;
+    // Extra environment for the client, one NAME=value a line. They are set
+    // last, so one of them wins over Stud's own value for the same name.
+    std::string environment;
+
     // Discord Rich Presence for the game being played, and whether it offers
     // a button to join the same server.
     bool discord_rich_presence = true;

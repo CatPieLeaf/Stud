@@ -10,6 +10,7 @@
 class QComboBox;
 class QCheckBox;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QPlainTextEdit;
 class QVBoxLayout;
@@ -93,6 +94,8 @@ private:
     QComboBox* displayBackendCombo_;
     QCheckBox* gamemodeCheck_;
     QCheckBox* mangohudCheck_;
+    QLineEdit* wrapperEdit_;
+    QPlainTextEdit* environmentEdit_;
     QCheckBox* trayCheck_;
     QCheckBox* playerDirectlyCheck_;
     QSlider* backgroundFpsSlider_;

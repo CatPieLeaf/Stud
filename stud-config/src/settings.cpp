@@ -77,6 +77,13 @@ StudSettings load_settings(const std::string& path) {
         }
         out = doc.at(key).get<bool>();
     };
+    const auto read_text = [&](const char* key, std::string& out) {
+        if (!doc.contains(key)) return;
+        if (!doc.at(key).is_string()) {
+            throw SettingsError("stud: config '" + path + "' has a non-string \"" + key + "\"");
+        }
+        out = doc.at(key).get<std::string>();
+    };
     const auto read_string = [&](const char* key, std::string& out,
                                  std::initializer_list<const char*> allowed) {
         if (!doc.contains(key)) return;
@@ -138,6 +145,8 @@ StudSettings load_settings(const std::string& path) {
             (value <= 0 || value > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : value;
     }
     read_bool("mangohud", result.mangohud);
+    read_text("launchWrapper", result.launch_wrapper);
+    read_text("environment", result.environment);
     read_bool("discordRichPresence", result.discord_rich_presence);
     read_bool("discordJoinButton", result.discord_join_button);
     read_bool("serverRegionNotification", result.server_region_notification);
@@ -191,6 +200,8 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["displayBackend"] = settings.display_backend;
     doc["backgroundFps"] = settings.background_fps;
     doc["mangohud"] = settings.mangohud;
+    doc["launchWrapper"] = settings.launch_wrapper;
+    doc["environment"] = settings.environment;
     doc["discordRichPresence"] = settings.discord_rich_presence;
     doc["discordJoinButton"] = settings.discord_join_button;
     doc["serverRegionNotification"] = settings.server_region_notification;
