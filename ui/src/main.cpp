@@ -18,6 +18,7 @@
 #include "cube_gl.h"
 #include "cpu_cores.h"
 #include "diagnose.h"
+#include "flatpak_permissions.h"
 #include "game_activity.h"
 #include "gpu_enum.h"
 #include "launch_uri.h"
@@ -35,6 +36,7 @@
 #include "stud/stud_paths.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -625,6 +627,28 @@ std::optional<QString> place_file(const char* argument) {
     return QStringLiteral("/Volumes/Host") + info.absoluteFilePath();
 }
 
+// In a Flatpak whose permissions were taken away (Flatseal, flatpak
+// override), names what is missing and the command that grants it back,
+// which runs on the host: nothing inside the sandbox can widen it.
+void check_flatpak_permissions() {
+    QFile info(QStringLiteral("/.flatpak-info"));
+    if (!info.open(QIODevice::ReadOnly)) return;
+    const QStringList missing = stud::ui::missing_flatpak_permissions(QString::fromUtf8(info.readAll()));
+    if (missing.isEmpty()) return;
+    const QString command = QStringLiteral("flatpak override --user %1 %2")
+                                .arg(missing.join(QLatin1Char(' ')), qEnvironmentVariable("FLATPAK_ID"));
+    std::fprintf(stderr, "stud: the Flatpak is missing %s\n", qPrintable(missing.join(QLatin1Char(' '))));
+    QMessageBox box(QMessageBox::Warning, QStringLiteral("Stud"),
+                    QStringLiteral("Stud's Flatpak is missing permissions Roblox needs: %1.")
+                        .arg(missing.join(QStringLiteral(", "))));
+    box.setInformativeText(QStringLiteral("Run this in a terminal, then start Stud again:\n\n") + command);
+    box.setTextInteractionFlags(Qt::TextSelectableByMouse);
+    QPushButton* copy = box.addButton(QStringLiteral("Copy command"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    if (box.clickedButton() == copy) QGuiApplication::clipboard()->setText(command);
+}
+
 // Starts the client. False when it could not start; the reason has been put
 // on screen.
 bool launch_game(stud::ui::client::Product product, const std::optional<QString>& deep_link) {
@@ -1039,6 +1063,8 @@ int main(int argc, char** argv) {
                         qPrintable(qEnvironmentVariable("APPIMAGE")));
         }
     }
+
+    check_flatpak_permissions();
 
     // Settings, from the desktop entry's action or the tray. A running Stud
     // owns the window; this hands the request over.

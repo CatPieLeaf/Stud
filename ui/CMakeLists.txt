@@ -79,6 +79,7 @@ add_library(stud_ui_mac_client STATIC
     src/customization.cpp
     src/fflags.cpp
     src/cpu_cores.cpp
+    src/flatpak_permissions.cpp
 )
 target_include_directories(stud_ui_mac_client PUBLIC src)
 target_link_libraries(stud_ui_mac_client PUBLIC Qt6::Core Qt6::Gui Qt6::Network stud_config miniz)

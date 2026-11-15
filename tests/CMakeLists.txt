@@ -40,6 +40,11 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_customization_guard_test PRIVATE stud_ui_mac_client)
     add_test(NAME customization_guard_test COMMAND stud_customization_guard_test)
 
+    # The Flatpak permission check: overrides and revocations honoured.
+    add_executable(stud_flatpak_permissions_test flatpak_permissions_test.cpp)
+    target_link_libraries(stud_flatpak_permissions_test PRIVATE stud_ui_mac_client)
+    add_test(NAME flatpak_permissions_test COMMAND stud_flatpak_permissions_test)
+
     # The client's code manifest: changed code noticed, FFlags and
     # customizations ignored.
     add_executable(stud_client_integrity_test client_integrity_test.cpp)
