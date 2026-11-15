@@ -1,6 +1,6 @@
 pkgbase = stud
 	pkgdesc = An Unofficial Open-Source Roblox Launcher for Linux
-	pkgver = 1.2.14
+	pkgver = 2.0.0
 	pkgrel = 1
 	url = https://github.com/CatPieLeaf/Stud
 	arch = x86_64
@@ -26,7 +26,7 @@ pkgbase = stud
 	depends = ffmpeg
 	optdepends = gamemode: the CPU in its performance mode while Roblox runs
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
-	source = stud-1.2.14.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/1.2.14.tar.gz
+	source = stud-2.0.0.tar.gz::https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.0.tar.gz
 	sha256sums = a10ed5340e5879ab961b5bdf0db235320abb8ae45675407ebf42669f9bb73e45
 
 pkgname = stud

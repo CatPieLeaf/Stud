@@ -99,6 +99,23 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="2.0.0" date="2026-11-15">
+      <description>
+        <ul>
+          <li>Stud now runs the real Roblox macOS desktop client on Rosemary, instead of the Android app</li>
+          <li>No more APKs: Stud downloads Roblox from Roblox's own servers and keeps it up to date before every launch</li>
+          <li>Stud now has a welcome screen, offering to choose between Roblox Studio and Roblox Player</li>
+          <li>.rbxl and .rbxlx place files open straight in Studio</li>
+          <li>Customizations: textures, sounds, fonts and cursors, plus import from Bloxstrap, Fishstrap and Froststrap</li>
+          <li>FastFlags: profiles, presets, and a warning for non whitelisted fflags.</li>
+          <li>Roblox's own settings (volume, sensitivity, camera...) editable from Stud</li>
+          <li>Server history: see where each server was, and rejoin it</li>
+          <li>Launch wrapper and environment variables, for gamescope, prime-run and the like</li>
+          <li>The AppImage now updates itself</li>
+          <li>Updating from 1.x frees gigabytes: the Android engine, APK and caches are removed, and your settings, FFlags, customizations and logs are kept</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.14" date="2026-11-08">
       <description>
         <ul>

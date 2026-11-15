@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        1.2.14
+Version:        2.0.0
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -90,6 +90,19 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Sun Nov 15 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.0-1
+- Stud now runs the real Roblox macOS desktop client on Rosemary, instead of the Android app
+- No more APKs: Stud downloads Roblox from Roblox's own servers and keeps it up to date before every launch
+- Stud now has a welcome screen, offering to choose between Roblox Studio and Roblox Player
+- .rbxl and .rbxlx place files open straight in Studio
+- Customizations: textures, sounds, fonts and cursors, plus import from Bloxstrap, Fishstrap and Froststrap
+- FastFlags: profiles, presets, and a warning for non whitelisted fflags.
+- Roblox's own settings (volume, sensitivity, camera...) editable from Stud
+- Server history: see where each server was, and rejoin it
+- Launch wrapper and environment variables, for gamescope, prime-run and the like
+- The AppImage now updates itself
+- Updating from 1.x frees gigabytes: the Android engine, APK and caches are removed, and your settings, FFlags, customizations and logs are kept
+
 * Sun Nov 08 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.14-1
 - Fixed: Stud froze for about 8 seconds at every launch, on every GPU
 - Fixed: voice chat stayed on "connecting" forever, or timed out saying it couldn't use the microphone
