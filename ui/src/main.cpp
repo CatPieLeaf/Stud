@@ -115,8 +115,15 @@ stud::ui::client::Product g_product = stud::ui::client::Product::Player;
 // The write end of the client's output pipe, handed to it as stdout and
 // stderr; closed here once it has started.
 int g_output_write = -1;
+// The Player got as far as starting its app. One that exits, even with 0,
+// before it did never opened its window: that is a failed start, not a quit.
+std::atomic<bool> g_client_app_started{false};
 
 void forward_line(QByteArray line) {
+    if (!g_client_app_started.load(std::memory_order_relaxed) &&
+        line.contains("[FLog::SingleSurfaceApp] initializeWithAppStarter")) {
+        g_client_app_started.store(true, std::memory_order_relaxed);
+    }
     if (g_activity != nullptr && stud::ui::GameActivity::wants(line)) {
         QMetaObject::invokeMethod(qApp, [line] {
             if (g_activity != nullptr) g_activity->line(line);
@@ -367,6 +374,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         QStringLiteral("ROSEMARY_BACKGROUND_FPS"), QStringLiteral("ROSEMARY_RENDER_SCALE"),
         QStringLiteral("ROSEMARY_UPSCALER"), QStringLiteral("ROSEMARY_WINDOW_STATE"),
         QStringLiteral("ROSEMARY_SWAPCHAIN_MAIN_WINDOW_ONLY"), QStringLiteral("ROSEMARY_PROC_TRANSLATED"),
+        QStringLiteral("ROSEMARY_REFUSED_PROGRAMS"),
     };
     for (const QString& name : env.keys()) {
         if (loads_code(name) || kFromSettings.contains(name)) env.remove(name);
@@ -392,6 +400,12 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     // process on Apple silicon. Rosemary says Rosetta for Roblox's installer,
     // which picks its download by it; Stud downloads the client itself.
     env.insert(QStringLiteral("ROSEMARY_PROC_TRANSLATED"), QStringLiteral("0"));
+    // Stud installs and updates the client; Roblox's own installer never runs
+    // in the prefix. Started by the client or its menu bar helper, it would
+    // download and unpack another build (a test channel's) over the one Stud
+    // checked. Rosemary refuses it, and the client sees its update fail.
+    env.insert(QStringLiteral("ROSEMARY_REFUSED_PROGRAMS"),
+               QStringLiteral("RobloxPlayerInstaller:RobloxStudioInstaller"));
     // A smaller render, and what scales it back up as it is presented. Metal
     // only: an OpenGL surface stays the window's size whatever the guest is
     // told, so it would draw into a corner of it.
@@ -485,10 +499,11 @@ QJsonObject client_flags(const stud::config::StudSettings& settings) {
     QJsonObject flags;
     QFile file(QString::fromStdString(stud::config::default_flag_overrides_path()));
     if (file.open(QIODevice::ReadOnly)) {
-        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        const QByteArray text = file.readAll();
+        const QJsonDocument doc = QJsonDocument::fromJson(text);
         if (doc.isObject()) {
             flags = doc.object();
-        } else {
+        } else if (!text.trimmed().isEmpty()) {  // an empty file is no flags
             std::fprintf(stderr, "stud: %s is not a JSON object; its flags are not used\n",
                          qPrintable(file.fileName()));
         }
@@ -812,8 +827,15 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         if (restrict) ::sched_setaffinity(0, sizeof(cores), &cores);
     });
     QObject::connect(g_client, &QProcess::finished, qApp, [product](int code, QProcess::ExitStatus status) {
+        // The Player gone before its app started closed without its window
+        // ever showing, whatever code it gave.
+        const bool never_started = product == stud::ui::client::Product::Player &&
+                                   !g_client_app_started.load(std::memory_order_relaxed);
         const bool crashed =
-            !g_stop_requested && (status == QProcess::CrashExit || code != 0);
+            !g_stop_requested && (status == QProcess::CrashExit || code != 0 || never_started);
+        if (crashed && never_started && status != QProcess::CrashExit && code == 0) {
+            std::printf("stud: Roblox closed before its window opened\n");
+        }
         std::printf("stud: Roblox exited (%s %d)\n",
                     status == QProcess::CrashExit ? "signal" : "code", code);
         const QStringList set_aside = stud::ui::customization::end_run(product, crashed);
@@ -834,6 +856,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
             QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
         }
     });
+    g_client_app_started.store(false, std::memory_order_relaxed);
     std::printf("stud: starting Roblox %s (%s)%s\n", qPrintable(build->version),
                 qPrintable(build->upload), deep_link ? " with a deep link" : "");
     std::fflush(stdout);

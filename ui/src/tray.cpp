@@ -1,6 +1,8 @@
 #include "project_links.h"
 #include "tray.h"
 
+#include "mac_client.h"
+
 #include "game_activity.h"
 #include "log_archive.h"
 
@@ -245,6 +247,20 @@ void Tray::exportLogs() {
     QStringList files;
     files.reserve(sessions.size());
     for (const QString& name : sessions) files << log_dir.filePath(name);
+    // Roblox's own logs from the same span: complete, where the session log
+    // can lose what the client had not written out when it stopped.
+    const QDateTime since = QFileInfo(files.last()).birthTime().isValid()
+                                ? QFileInfo(files.last()).birthTime()
+                                : QFileInfo(files.last()).lastModified();
+    QStringList client_logs;
+    const QDir users(client::prefix_dir() + QStringLiteral("/root/Users"));
+    for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QDir roblox(users.filePath(user) + QStringLiteral("/Library/Logs/Roblox"));
+        for (const QFileInfo& log :
+             roblox.entryInfoList({QStringLiteral("*.log")}, QDir::Files | QDir::NoSymLinks)) {
+            if (log.lastModified() >= since) client_logs << log.absoluteFilePath();
+        }
+    }
 
     const QString name = QStringLiteral("stud-logs-%1.tar.gz")
                              .arg(QDateTime::currentDateTime().toString(
@@ -262,7 +278,7 @@ void Tray::exportLogs() {
     }
 
     QString error;
-    if (!write_log_tarball(target, files, &error)) {
+    if (!write_log_tarball(target, files, &error, client_logs)) {
         QMessageBox::warning(nullptr, QStringLiteral("Stud"),
                               QStringLiteral("Could not export the logs: %1").arg(error));
         return;

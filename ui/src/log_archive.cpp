@@ -1,5 +1,7 @@
 #include "log_archive.h"
 
+#include "log_scrub.h"
+
 #include <QFile>
 #include <QFileInfo>
 
@@ -119,7 +121,8 @@ bool gzip_to_file(const QString& target, const std::vector<char>& payload, QStri
 
 }  // namespace
 
-bool write_log_tarball(const QString& target, const QStringList& files, QString* error) {
+bool write_log_tarball(const QString& target, const QStringList& files, QString* error,
+                       const QStringList& client_logs) {
     if (files.isEmpty()) {
         if (error != nullptr) *error = QStringLiteral("there are no logs to export");
         return false;
@@ -149,6 +152,27 @@ bool write_log_tarball(const QString& target, const QStringList& files, QString*
         // prefix field; Stud's own log names are nowhere near it, so such
         // a file is skipped rather than written as a silently truncated
         // name.
+        if (name.size() > 100) continue;
+        append_header(tar, name, static_cast<std::size_t>(contents.size()),
+                      QFileInfo(path).lastModified().toSecsSinceEpoch(), '0');
+        append_padded(tar, contents);
+    }
+
+    if (!client_logs.isEmpty()) {
+        append_header(tar, (root + QStringLiteral("/roblox/")).toStdString(), 0, now, '5');
+    }
+    for (const QString& path : client_logs) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        QByteArray contents;
+        for (const QByteArray& line : file.readAll().split('\n')) {
+            const std::string scrubbed =
+                scrub_client_log_line(std::string_view(line.constData(), line.size()));
+            contents.append(scrubbed.data(), static_cast<qsizetype>(scrubbed.size()));
+            contents.append('\n');
+        }
+        const std::string name =
+            (root + QStringLiteral("/roblox/") + QFileInfo(path).fileName()).toStdString();
         if (name.size() > 100) continue;
         append_header(tar, name, static_cast<std::size_t>(contents.size()),
                       QFileInfo(path).lastModified().toSecsSinceEpoch(), '0');
