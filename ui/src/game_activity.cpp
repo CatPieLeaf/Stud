@@ -164,7 +164,11 @@ void GameActivity::joined(const QString& place, const QString& job) {
 
 void GameActivity::left() {
     if (place_.isEmpty()) return;
-    history::record(place_, name_, icon_, job_, joined_at_, now_seconds());
+    if (options_.history_games) {
+        history::record(place_, name_, icon_, job_, joined_at_, now_seconds(), location_,
+                        options_.history_servers);
+    }
+    location_.clear();
     ++generation_;
     place_.clear();
     job_.clear();
@@ -179,15 +183,20 @@ void GameActivity::left() {
 }
 
 void GameActivity::server(const QString& address) {
-    if (!options_.region) return;
+    // Looked up for the notification, or for the server history.
+    const bool for_history = options_.history_games && options_.history_servers;
+    if (!options_.region && !for_history) return;
     // Over TLS, and only ever the game server's public address, never the
     // player's.
+    const quint64 generation = generation_;
     fetch(QStringLiteral("https://ipwho.is/%1?fields=success,country,country_code,city").arg(address),
-          [](const QJsonObject& json) {
+          [this, generation](const QJsonObject& json) {
               if (!json.value(QStringLiteral("success")).toBool()) return;
               const QString country = json.value(QStringLiteral("country")).toString();
               const QString city = json.value(QStringLiteral("city")).toString();
               const QString where = city.isEmpty() ? country : city + QStringLiteral(", ") + country;
+              if (generation == generation_) location_ = where;
+              if (!options_.region) return;
               const QString flag = flag_of(json.value(QStringLiteral("country_code")).toString());
               send_notification(QStringLiteral("Server region"),
                                 flag.isEmpty() ? where : flag + QStringLiteral(" ") + where,

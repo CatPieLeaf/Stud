@@ -70,6 +70,8 @@ int main(int argc, char** argv) {
     settings.discord_rich_presence = false;
     settings.discord_join_button = true;
     settings.server_region_notification = true;
+    settings.record_game_history = false;
+    settings.record_server_history = false;
     settings.cleaner_days = 7;
     stud::config::save_settings(path, settings);
 
@@ -90,6 +92,10 @@ int main(int argc, char** argv) {
     check(!loaded.discord_rich_presence, "Discord presence round-trips");
     check(loaded.discord_join_button, "Discord's join button round-trips");
     check(loaded.server_region_notification, "the region notification round-trips");
+    check(!loaded.record_game_history, "recording games round-trips");
+    check(!loaded.record_server_history, "recording servers round-trips");
+    check(stud::config::StudSettings{}.record_game_history && stud::config::StudSettings{}.record_server_history,
+          "games and servers are recorded by default");
     check(loaded.cleaner_days == 7, "the cleaner's age round-trips");
 
     // Stud 1.x's keys are removed on save rather than carried forward: a file

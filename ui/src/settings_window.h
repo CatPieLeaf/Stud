@@ -100,6 +100,8 @@ private:
     QCheckBox* discordCheck_;
     QCheckBox* discordJoinCheck_;
     QCheckBox* serverRegionCheck_;
+    QCheckBox* historyGamesCheck_;
+    QCheckBox* historyServersCheck_;
     QSpinBox* cleanerSpin_;
     void buildHistoryTab(QVBoxLayout* tab);
     QPlainTextEdit* flagsEdit_;

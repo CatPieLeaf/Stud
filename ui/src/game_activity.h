@@ -28,6 +28,9 @@ public:
         bool discord = false;
         bool join_button = false;
         bool region = false;
+        // The History tab's records; servers only with games.
+        bool history_games = true;
+        bool history_servers = true;
         // Roblox Studio's output rather than the player's.
         bool studio = false;
     };
@@ -63,6 +66,8 @@ private:
     // Bumped on every join and leave, so a lookup answering late for a game
     // already left does not show it.
     quint64 generation_ = 0;
+    // Where the current game server is, once looked up.
+    QString location_;
 
     QString place_;
     QString job_;

@@ -74,6 +74,11 @@ struct StudSettings {
     // A notification naming the country of the game server on each join.
     bool server_region_notification = false;
 
+    // The History tab's records: the games played, and the servers joined in
+    // each (with where they are). No servers are kept without games.
+    bool record_game_history = true;
+    bool record_server_history = true;
+
     // Roblox's logs and caches, and Stud's own logs, older than this many
     // days are deleted at launch; 0 keeps them.
     int cleaner_days = 0;

@@ -706,6 +706,8 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     activity.join_button = settings.discord_join_button;
     activity.region = settings.server_region_notification;
     activity.studio = !player;
+    activity.history_games = settings.record_game_history;
+    activity.history_servers = settings.record_server_history;
     g_activity = new stud::ui::GameActivity(activity, qApp);
     g_client = new QProcess(qApp);
     g_client->setProgram(rosemary);

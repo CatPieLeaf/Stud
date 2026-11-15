@@ -27,6 +27,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QMessageBox>
 #include <QColorDialog>
 #include <QFileDialog>
 #include <QGridLayout>
@@ -488,6 +489,8 @@ void SettingsWindow::installResets() {
     add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
     add(serverRegionCheck_,
         [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
+    add(historyGamesCheck_, [this, d] { historyGamesCheck_->setChecked(d.record_game_history); });
+    add(historyServersCheck_, [this, d] { historyServersCheck_->setChecked(d.record_server_history); });
     add(trayCheck_, [this, d] { trayCheck_->setChecked(d.system_tray); });
     add(playerDirectlyCheck_, [this, d] { playerDirectlyCheck_->setChecked(d.open_player_directly); });
     add(cleanerSpin_, [this, d] { cleanerSpin_->setValue(d.cleaner_days); });
@@ -696,23 +699,44 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
 // The games played, most recent first, with the time played in each: join
 // one again, or give it a shortcut in the application menu.
 void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
+    historyGamesCheck_ = new QCheckBox("Record the games I play", this);
+    historyGamesCheck_->setToolTip("Keeps each game you play here, with the time played.");
+    historyServersCheck_ = new QCheckBox("Record the servers I join", this);
+    historyServersCheck_->setToolTip(
+        "Keeps each server you join in a game, with where it is, so you can rejoin it.\n"
+        "Finding where a server is asks ipwho.is about the server's address, never yours.");
+    connect(historyGamesCheck_, &QCheckBox::toggled, historyServersCheck_, &QWidget::setEnabled);
+    tab->addWidget(historyGamesCheck_);
+    tab->addWidget(historyServersCheck_);
+
     auto* total = new QLabel(this);
     tab->addWidget(total);
     auto* list = new QTreeWidget(this);
     list->setColumnCount(3);
     list->setHeaderLabels({"Game", "Played", "Last played"});
-    list->setRootIsDecorated(false);
     list->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tab->addWidget(list, 1);
-    const auto refresh = [list, total] {
+    const QString when = QStringLiteral("yyyy-MM-dd hh:mm");
+    const auto refresh = [list, total, when] {
         list->clear();
         for (const history::Entry& e : history::load()) {
             auto* item = new QTreeWidgetItem(list);
             item->setText(0, e.name.isEmpty() ? QStringLiteral("Place %1").arg(e.place) : e.name);
             item->setText(1, history::duration(e.seconds_played));
-            item->setText(2, QDateTime::fromSecsSinceEpoch(e.last_played).toString(QStringLiteral("yyyy-MM-dd hh:mm")));
+            item->setText(2, QDateTime::fromSecsSinceEpoch(e.last_played).toString(when));
             item->setData(0, Qt::UserRole, e.place);
             item->setData(0, Qt::UserRole + 1, e.icon);
+            // Each server joined in it, most recent first; Join rejoins it.
+            for (const history::Server& s : e.servers) {
+                auto* server = new QTreeWidgetItem(item);
+                server->setText(0, s.location.isEmpty() ? QStringLiteral("Server %1").arg(s.job.left(8))
+                                                        : s.location);
+                server->setToolTip(0, s.job);
+                server->setText(1, history::duration(s.seconds));
+                server->setText(2, QDateTime::fromSecsSinceEpoch(s.joined).toString(when));
+                server->setData(0, Qt::UserRole, e.place);
+                server->setData(0, Qt::UserRole + 2, s.job);
+            }
         }
         total->setText(QStringLiteral("Time played in all: %1").arg(history::duration(history::total_seconds())));
     };
@@ -726,20 +750,43 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     shortcut->setToolTip("Adds the game to the application menu; it opens straight into the game.");
     auto* reload = new QPushButton("Refresh", this);
     reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
+    auto* forget = new QPushButton("Clear history", this);
+    forget->setIcon(themed("edit-clear-history", QStyle::SP_DialogDiscardButton));
+    forget->setToolTip("Forgets every game and server here, and the time played.");
     buttons->addWidget(join);
     buttons->addWidget(shortcut);
     buttons->addStretch();
+    buttons->addWidget(forget);
     buttons->addWidget(reload);
     tab->addLayout(buttons);
     connect(reload, &QPushButton::clicked, this, refresh);
+    connect(forget, &QPushButton::clicked, this, [this, refresh] {
+        if (QMessageBox::question(this, QStringLiteral("Clear history"),
+                                  QStringLiteral("Forget every game and server, and the time played?")) !=
+            QMessageBox::Yes) {
+            return;
+        }
+        history::clear();
+        refresh();
+    });
+    // A game opens the game; a server under it rejoins that server.
+    const auto update_join = [list, join] {
+        const QTreeWidgetItem* item = list->currentItem();
+        const bool server = item != nullptr && item->parent() != nullptr;
+        join->setText(server ? QStringLiteral("Rejoin server") : QStringLiteral("Join"));
+    };
+    connect(list, &QTreeWidget::currentItemChanged, this, update_join);
     connect(join, &QPushButton::clicked, this, [list] {
         if (list->currentItem() == nullptr) return;
         const QString place = list->currentItem()->data(0, Qt::UserRole).toString();
-        QProcess::startDetached(launcher_command(),
-                                {QStringLiteral("roblox://experiences/start?placeId=%1").arg(place)});
+        const QString job = list->currentItem()->data(0, Qt::UserRole + 2).toString();
+        QString link = QStringLiteral("roblox://experiences/start?placeId=%1").arg(place);
+        if (!job.isEmpty()) link += QStringLiteral("&gameInstanceId=%1").arg(job);
+        QProcess::startDetached(launcher_command(), {link});
     });
     connect(shortcut, &QPushButton::clicked, this, [this, list] {
         if (list->currentItem() == nullptr) return;
+        if (list->currentItem()->parent() != nullptr) list->setCurrentItem(list->currentItem()->parent());
         const QString place = list->currentItem()->data(0, Qt::UserRole).toString();
         const QString name = list->currentItem()->text(0);
         const QString icon_url = list->currentItem()->data(0, Qt::UserRole + 1).toString();
@@ -878,6 +925,9 @@ void SettingsWindow::loadFromDisk() {
     discordJoinCheck_->setChecked(settings.discord_join_button);
     discordJoinCheck_->setEnabled(settings.discord_rich_presence);
     serverRegionCheck_->setChecked(settings.server_region_notification);
+    historyGamesCheck_->setChecked(settings.record_game_history);
+    historyServersCheck_->setChecked(settings.record_server_history);
+    historyServersCheck_->setEnabled(settings.record_game_history);
     gamemodeCheck_->setChecked(settings.gamemode);
     trayCheck_->setChecked(settings.system_tray);
     playerDirectlyCheck_->setChecked(settings.open_player_directly);
@@ -1039,6 +1089,8 @@ void SettingsWindow::onSaveClicked() {
     settings.discord_rich_presence = discordCheck_->isChecked();
     settings.discord_join_button = discordJoinCheck_->isChecked();
     settings.server_region_notification = serverRegionCheck_->isChecked();
+    settings.record_game_history = historyGamesCheck_->isChecked();
+    settings.record_server_history = historyServersCheck_->isChecked();
     settings.gamemode = gamemodeCheck_->isChecked();
     settings.system_tray = trayCheck_->isChecked();
     settings.open_player_directly = playerDirectlyCheck_->isChecked();

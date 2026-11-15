@@ -141,6 +141,8 @@ StudSettings load_settings(const std::string& path) {
     read_bool("discordRichPresence", result.discord_rich_presence);
     read_bool("discordJoinButton", result.discord_join_button);
     read_bool("serverRegionNotification", result.server_region_notification);
+    read_bool("recordGameHistory", result.record_game_history);
+    read_bool("recordServerHistory", result.record_server_history);
     if (doc.contains("cleanerDays")) {
         if (!doc.at("cleanerDays").is_number_integer() || doc.at("cleanerDays").get<int>() < 0) {
             throw SettingsError("stud: config '" + path +
@@ -192,6 +194,8 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc["discordRichPresence"] = settings.discord_rich_presence;
     doc["discordJoinButton"] = settings.discord_join_button;
     doc["serverRegionNotification"] = settings.server_region_notification;
+    doc["recordGameHistory"] = settings.record_game_history;
+    doc["recordServerHistory"] = settings.record_server_history;
     doc["cleanerDays"] = settings.cleaner_days;
     doc["gamemode"] = settings.gamemode;
     doc["systemTray"] = settings.system_tray;

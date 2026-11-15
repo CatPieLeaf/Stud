@@ -21,7 +21,15 @@ QString path() { return QString::fromStdString(stud::paths::data_dir()) + QStrin
 void save(const std::vector<Entry>& entries) {
     QJsonArray array;
     for (const Entry& e : entries) {
-        array.append(QJsonObject{{"place", e.place},
+        QJsonArray servers;
+        for (const Server& s : e.servers) {
+            servers.append(QJsonObject{{"job", s.job},
+                                       {"location", s.location},
+                                       {"joined", qint64(s.joined)},
+                                       {"seconds", qint64(s.seconds)}});
+        }
+        array.append(QJsonObject{{"servers", servers},
+                                 {"place", e.place},
                                  {"name", e.name},
                                  {"icon", e.icon},
                                  {"lastJob", e.last_job},
@@ -44,9 +52,15 @@ std::vector<Entry> load() {
     if (!in.open(QIODevice::ReadOnly)) return entries;
     for (const QJsonValue& v : QJsonDocument::fromJson(in.readAll()).array()) {
         const QJsonObject o = v.toObject();
-        entries.push_back({o["place"].toString(), o["name"].toString(), o["icon"].toString(),
-                           o["lastJob"].toString(), o["lastPlayed"].toInteger(),
-                           o["secondsPlayed"].toInteger()});
+        Entry e{o["place"].toString(), o["name"].toString(), o["icon"].toString(),
+                o["lastJob"].toString(), o["lastPlayed"].toInteger(),
+                o["secondsPlayed"].toInteger(), {}};
+        for (const QJsonValue& s : o["servers"].toArray()) {
+            const QJsonObject so = s.toObject();
+            e.servers.push_back({so["job"].toString(), so["location"].toString(),
+                                 so["joined"].toInteger(), so["seconds"].toInteger()});
+        }
+        entries.push_back(std::move(e));
     }
     std::sort(entries.begin(), entries.end(),
               [](const Entry& a, const Entry& b) { return a.last_played > b.last_played; });
@@ -54,12 +68,12 @@ std::vector<Entry> load() {
 }
 
 void record(const QString& place, const QString& name, const QString& icon, const QString& job,
-            int64_t start, int64_t end) {
+            int64_t start, int64_t end, const QString& location, bool keep_server) {
     if (place.isEmpty() || end <= start) return;
     std::vector<Entry> entries = load();
     auto it = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.place == place; });
     if (it == entries.end()) {
-        entries.push_back({place, {}, {}, {}, 0, 0});
+        entries.push_back({place, {}, {}, {}, 0, 0, {}});
         it = entries.end() - 1;
     }
     if (!name.isEmpty()) it->name = name;
@@ -67,8 +81,13 @@ void record(const QString& place, const QString& name, const QString& icon, cons
     it->last_job = job;
     it->last_played = end;
     it->seconds_played += end - start;
+    if (keep_server && !job.isEmpty()) {
+        it->servers.insert(it->servers.begin(), Server{job, location, start, end - start});
+    }
     save(entries);
 }
+
+void clear() { QFile::remove(path()); }
 
 int64_t total_seconds() {
     int64_t total = 0;
