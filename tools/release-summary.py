@@ -39,21 +39,34 @@ def summary(body: str) -> tuple[list[str], list[str]]:
     paragraphs: list[str] = []
     items: list[str] = []
     inside = False
+    # An HTML block (the image tables a release puts under its bullets) runs
+    # to the next blank line, as in Markdown, and is no part of the summary.
+    in_html = False
+    # Only a line straight after a bullet can be that bullet wrapped.
+    after_bullet = False
     for line in body.splitlines():
         if HEADING.match(line):
             if inside:
                 break
             inside = SUMMARY.match(line) is not None
             continue
-        if not inside or not line.strip():
+        if not line.strip():
+            in_html = after_bullet = False
+            continue
+        if not inside:
+            continue
+        if in_html or line.lstrip().startswith("<"):
+            in_html, after_bullet = True, False
             continue
         bullet = BULLET.match(line)
         if bullet:
             items.append(plain(bullet.group(1)))
-        elif items and line[:1] in (" ", "\t"):
+            after_bullet = True
+        elif after_bullet and line[:1] in (" ", "\t"):
             items[-1] = plain(items[-1] + " " + line)  # a wrapped bullet
         else:
             paragraphs.append(plain(line))
+            after_bullet = False
     return [p for p in paragraphs if p], [i for i in items if i]
 
 

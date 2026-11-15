@@ -63,6 +63,14 @@ add_executable(stud_env_documented_test env_documented_test.cpp)
 add_test(NAME env_documented_test
          COMMAND stud_env_documented_test "${CMAKE_SOURCE_DIR}")
 
+# The release workflow's release notes: the SUMMARY section only, no HTML.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME release_summary_test
+             COMMAND Python3::Interpreter -I "${CMAKE_CURRENT_SOURCE_DIR}/release_summary_test.py"
+                     "${CMAKE_SOURCE_DIR}")
+endif()
+
 # What of the client's output may reach the session log.
 add_executable(stud_log_scrub_test log_scrub_test.cpp)
 target_include_directories(stud_log_scrub_test PRIVATE ${CMAKE_SOURCE_DIR}/ui/src)

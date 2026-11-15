@@ -89,8 +89,6 @@ cp -a usr %{buildroot}/
 
 %changelog
 * Sun Nov 08 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.14-1
-- <details>
-- <summary>Full changelog</summary>
 - Fixed: Stud froze for about 8 seconds at every launch, on every GPU
 - Fixed: voice chat stayed on "connecting" forever, or timed out saying it couldn't use the microphone
 - Fixed: Roblox could make every other application's sound crackle or clip
@@ -98,14 +96,10 @@ cp -a usr %{buildroot}/
 - Improved: many more controllers are recognised and mapped correctly
 
 * Fri Nov 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.13-1
-- <details>
-- <summary>Full changelog</summary>
 - Fixed: Windows Graphical Parity turned off without saying so when your APK was older than the Windows client
 - Changed: the README now points to Uptodown and APKMirror for getting an APK
 
 * Fri Nov 06 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.12-1
-- <details>
-- <summary>Full changelog</summary>
 - Fixed: Plastic surfaces in Windows Graphical Parity could break up into big flat triangles, and looked wrong up close
 - New: Stud reopens the way you left it: windowed, maximized or fullscreen, at the same size
 - New: Roblox's own Fullscreen option in the in-game menu now works
@@ -156,23 +150,11 @@ cp -a usr %{buildroot}/
 - Building from source now needs meson
 
 * Sat Oct 24 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.6-1
-- <table align="center">
-- </table>
-- <table align="center">
-- </table>
-- <table align="center">
-- </table>
 - New setting, on by default: Windows Graphical Parity (Beta), in Settings > Graphics
 - Parts get the Windows client's materials: reflections, the shine of sunlight on them, and their normal maps
 - Highlight outlines are drawn with High quality MSAA, as they are on Windows
 
 * Sat Oct 24 2026 CatPieLeaf <catpieleaf@proton.me> - 1.2.5-1
-- <table align="center">
-- </table>
-- <table align="center">
-- </table>
-- <table align="center">
-- </table>
 - New setting, on by default: Windows Graphical Parity (Beta), in Settings > Graphics
 - Parts get the Windows client's materials: reflections, the shine of sunlight on them, and their normal maps
 - Highlight outlines are drawn with High quality MSAA, as they are on Windows
