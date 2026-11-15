@@ -36,7 +36,7 @@ optdepends=(
   'gamemode: the CPU in its performance mode while Roblox runs'
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
-options=(!debug emptydirs)
+options=(!strip !debug emptydirs)
 
 package() {
   cp -a "${STUD_DESTDIR:?set STUD_DESTDIR to the install tree}"/. "$pkgdir"/
