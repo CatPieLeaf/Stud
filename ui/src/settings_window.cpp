@@ -1,3 +1,4 @@
+#include "mono_icon.h"
 #include "settings_window.h"
 
 #include "update_check.h"
@@ -70,11 +71,8 @@ void relaunch_stud();
 namespace stud::ui {
 
 namespace {
-// The icon theme's icon by its freedesktop name, or Qt's own where the theme
-// has none.
-QIcon themed(const char* name, QStyle::StandardPixmap fallback) {
-    return QIcon::fromTheme(QLatin1String(name), QApplication::style()->standardIcon(fallback));
-}
+// A button's icon, by its freedesktop name: one colour, following the scheme.
+QIcon themed(const char* name, QStyle::StandardPixmap fallback) { return mono_icon(name, fallback); }
 
 // Selects the entry whose data is `value`, or the first one.
 void select_data(QComboBox* combo, const std::string& value) {
@@ -974,54 +972,9 @@ void SettingsWindow::showIdleStatus() {
 // restarting without saving would relaunch the old ones and look like the
 // change did nothing.
 void SettingsWindow::paintRestartIcon() {
-    // Draws the restart glyph in the palette's own button-text colour.
-    //
-    // Neither source of that glyph gets the colour right by itself. A Breeze
-    // monochrome icon is a fixed dark glyph, measured at rgb(35,37,40): KDE's
-    // own applications recolour it at runtime through KIconTheme, and a plain
-    // Qt application does not, so a dark colour scheme draws it dark on dark.
-    // Where no icon theme is installed, Qt falls back to SP_BrowserReload, a
-    // fixed blue-grey bitmap at rgb(59,107,146) whatever the scheme.
-    //
-    // Each is a single-colour glyph. Repainting every opaque pixel in the
-    // palette colour keeps the shape and settles the colour, and the button
-    // then follows an accent or a light/dark switch.
-    QIcon source = QIcon::fromTheme(QStringLiteral("view-refresh"),
-                                    QIcon::fromTheme(QStringLiteral("system-reboot")));
-    if (source.isNull()) {
-        source = style()->standardIcon(QStyle::SP_BrowserReload);
-    }
-    if (source.isNull()) {
-        // Nothing to draw anywhere: a word beats an empty button.
-        restartButton_->setIcon(QIcon());
-        restartButton_->setText(QStringLiteral("Restart"));
-        return;
-    }
-
-    const QColor colour = restartButton_->palette().buttonText().color();
-    QIcon painted;
-    // Several sizes, so a HiDPI screen picks a real one instead of scaling
-    // a small pixmap up.
-    for (const int size : {16, 22, 24, 32, 48}) {
-        QPixmap pixmap = source.pixmap(QSize(size, size));
-        if (pixmap.isNull()) continue;
-        QPainter painter(&pixmap);
-        // Keeps the glyph's own alpha, replaces its colour.
-        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        painter.fillRect(pixmap.rect(), colour);
-        painter.end();
-        painted.addPixmap(pixmap);
-    }
-    restartButton_->setIcon(painted.isNull() ? source : painted);
-}
-
-void SettingsWindow::changeEvent(QEvent* event) {
-    QWidget::changeEvent(event);
-    // A colour-scheme switch while this window is open changes the colour
-    // the glyph belongs in.
-    if (event->type() == QEvent::PaletteChange && restartButton_ != nullptr) {
-        paintRestartIcon();
-    }
+    restartButton_->setIcon(mono_icon("view-refresh", QStyle::SP_BrowserReload));
+    // Nothing to draw anywhere: a word beats an empty button.
+    if (restartButton_->icon().isNull()) restartButton_->setText(QStringLiteral("Restart"));
 }
 
 void SettingsWindow::onRestartClicked() {

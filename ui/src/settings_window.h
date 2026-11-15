@@ -39,7 +39,6 @@ protected:
     // The desktop can switch between light and dark while this window is
     // open. The restart icon is drawn in the palette's own colour, so it
     // has to be drawn again when that colour changes.
-    void changeEvent(QEvent* event) override;
 
 public:
 

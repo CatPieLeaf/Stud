@@ -18,6 +18,12 @@ if(STUD_BUILD_UI)
     target_link_libraries(stud_stud1_cleanup_test PRIVATE stud_ui_stud1_cleanup)
     add_test(NAME stud1_cleanup_test COMMAND stud_stud1_cleanup_test)
 
+    # Button icons: one colour, the palette's, in a dark and a light scheme.
+    add_executable(stud_mono_icon_test mono_icon_test.cpp)
+    target_link_libraries(stud_mono_icon_test PRIVATE stud_ui_mono_icon)
+    add_test(NAME mono_icon_test COMMAND stud_mono_icon_test)
+    set_tests_properties(mono_icon_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # roblox-player: and roblox: launch-URI parsing.
     add_executable(stud_launch_uri_test launch_uri_test.cpp)
     target_link_libraries(stud_launch_uri_test PRIVATE stud_ui_launch_uri)

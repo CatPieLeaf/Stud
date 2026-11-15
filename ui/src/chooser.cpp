@@ -1,3 +1,4 @@
+#include "mono_icon.h"
 #include "chooser.h"
 
 #include "cube_gl.h"
@@ -341,8 +342,7 @@ std::optional<client::Product> choose_product() {
     about->addWidget(by, 0, Qt::AlignRight);
     about->addWidget(version, 0, Qt::AlignRight);
     auto* notes = new QPushButton(QStringLiteral("Release notes"), &dialog);
-    notes->setIcon(QIcon::fromTheme(QStringLiteral("help-about"),
-                                    dialog.style()->standardIcon(QStyle::SP_MessageBoxInformation)));
+    notes->setIcon(mono_icon("help-about", QStyle::SP_MessageBoxInformation));
     QObject::connect(notes, &QPushButton::clicked, &dialog, [&dialog] { show_release_notes(&dialog); });
     about->addWidget(notes, 0, Qt::AlignRight);
     about->addStretch();
@@ -414,8 +414,7 @@ std::optional<client::Product> choose_product() {
     layout->addLayout(buttons);
 
     auto* settings = new QPushButton(QStringLiteral("Settings"), &dialog);
-    settings->setIcon(QIcon::fromTheme(QStringLiteral("configure"),
-                                       dialog.style()->standardIcon(QStyle::SP_FileDialogDetailedView)));
+    settings->setIcon(mono_icon("configure", QStyle::SP_FileDialogDetailedView));
     QObject::connect(settings, &QPushButton::clicked, &dialog, [] { SettingsWindow::showSingleton(); });
     layout->addWidget(settings, 0, Qt::AlignHCenter);
 

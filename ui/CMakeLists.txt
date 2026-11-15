@@ -44,6 +44,13 @@ add_library(stud_ui_stud1_cleanup STATIC
 target_include_directories(stud_ui_stud1_cleanup PUBLIC src)
 target_link_libraries(stud_ui_stud1_cleanup PUBLIC Qt6::Core)
 
+# Every button icon: one colour, the palette's, following the scheme.
+add_library(stud_ui_mono_icon STATIC
+    src/mono_icon.cpp
+)
+target_include_directories(stud_ui_mono_icon PUBLIC src)
+target_link_libraries(stud_ui_mono_icon PUBLIC Qt6::Widgets)
+
 add_library(stud_ui_launch_uri STATIC
     src/launch_uri.cpp
 )
@@ -96,7 +103,7 @@ add_executable(stud-ui
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Network Qt6::DBus
                                        Qt6::WebEngineWidgets Qt6::WebChannel
-                                       stud_ui_gpu_enum stud_config stud_ui_notifications
+                                       stud_ui_gpu_enum stud_config stud_ui_notifications stud_ui_mono_icon
                                        stud_ui_launch_uri stud_ui_log_archive stud_ui_mac_client
                                        stud_ui_stud1_cleanup miniz)
 
