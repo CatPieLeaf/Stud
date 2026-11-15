@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        2.0.0
+Version:        2.0.1
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -90,6 +90,13 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Sun Nov 15 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.1-1
+- Fixed: Roblox could close on its own every time you launched it after logging in
+- Fixed: Discord Rich Presence switched to "In the Roblox app" after a game teleported you, for example into a lobby
+- New: a Debug page in Settings, to export logs, copy system info, repair Roblox and clear Stud's data
+- When Roblox puts your account on a test channel, Stud now installs that channel's build
+- When Roblox closes before its window opens, Stud now says so instead of closing silently
+
 * Sun Nov 15 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.0-1
 - Stud now runs the real Roblox macOS desktop client on Rosemary, instead of the Android app
 - No more APKs: Stud downloads Roblox from Roblox's own servers and keeps it up to date before every launch

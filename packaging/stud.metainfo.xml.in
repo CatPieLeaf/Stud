@@ -99,6 +99,17 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="2.0.1" date="2026-11-15">
+      <description>
+        <ul>
+          <li>Fixed: Roblox could close on its own every time you launched it after logging in</li>
+          <li>Fixed: Discord Rich Presence switched to "In the Roblox app" after a game teleported you, for example into a lobby</li>
+          <li>New: a Debug page in Settings, to export logs, copy system info, repair Roblox and clear Stud's data</li>
+          <li>When Roblox puts your account on a test channel, Stud now installs that channel's build</li>
+          <li>When Roblox closes before its window opens, Stud now says so instead of closing silently</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-11-15">
       <description>
         <ul>

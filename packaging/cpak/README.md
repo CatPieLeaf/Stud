@@ -13,8 +13,8 @@ file: it builds `Containerfile.prebuilt` from the install tree every other
 package is made from.
 
 ```sh
-podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:2.0.0 .
-podman push ghcr.io/catpieleaf/stud:2.0.0
+podman build -f packaging/cpak/Containerfile -t ghcr.io/catpieleaf/stud:2.0.1 .
+podman push ghcr.io/catpieleaf/stud:2.0.1
 ```
 
 ## Where the manifest lives

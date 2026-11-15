@@ -23,10 +23,10 @@
       packages.${system} = rec {
         stud = pkgs.stdenv.mkDerivation rec {
           pname = "stud";
-          version = "2.0.0";
+          version = "2.0.1";
 
           src = pkgs.fetchurl {
-            url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.0.tar.gz";
+            url = "https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.1.tar.gz";
             sha256 = "dfd24b324c06b3fc6bea9e0c285e923a4b0d8a7e12d81b970d808021f9ba37db";
           };
 
