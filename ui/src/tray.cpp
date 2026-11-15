@@ -323,10 +323,12 @@ void Tray::showAbout() {
         lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
         auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
         text->setWordWrap(true);
-        // Seven eighths of its one-line width: it wraps, and the window stays
-        // a little narrower than the sentence on one line would make it.
+        // Two lines, the second ending about halfway: each line two thirds of
+        // the sentence's one-line width. Fixed, not a maximum: a wrapping
+        // label asks for a narrower width of its own, and the dialog, sized to
+        // its contents, would take it and wrap onto three short lines.
         const QFontMetrics metrics(text->font());
-        text->setMaximumWidth(metrics.horizontalAdvance(text->text()) * 7 / 8);
+        text->setFixedWidth(metrics.horizontalAdvance(text->text()) * 2 / 3);
         lead->addWidget(text);
         lead->addStretch();
         header->addLayout(lead, 1);
