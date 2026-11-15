@@ -37,6 +37,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QStyle>
 #include <QMenu>
 #include <QMessageBox>
+#include <QFontMetrics>
 #include <QImage>
 #include <QPixmap>
 #include <QPointer>
@@ -322,6 +323,11 @@ void Tray::showAbout() {
         lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
         auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
         text->setWordWrap(true);
+        // About half its one-line width, so it wraps onto two lines and the
+        // window stays narrow; a character's slack keeps a word from
+        // spilling onto a third.
+        const QFontMetrics metrics(text->font());
+        text->setMaximumWidth(metrics.horizontalAdvance(text->text()) / 2 + metrics.averageCharWidth() * 2);
         lead->addWidget(text);
         lead->addStretch();
         header->addLayout(lead, 1);
