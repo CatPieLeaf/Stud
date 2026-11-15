@@ -13,6 +13,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -30,6 +31,11 @@
 
 namespace stud::ui::client {
 namespace {
+
+// What cancel() stops: the request in flight, or the prefix being made.
+bool g_cancelled = false;
+QPointer<QNetworkReply> g_reply;
+QPointer<QProcess> g_process;
 
 // Roblox's client-version API, which answers for one binary type.
 constexpr const char* kVersionHosts[] = {
@@ -89,11 +95,13 @@ QNetworkRequest request_for(const QString& url) {
 std::pair<QString, QString> served_build(Product product) {
     QNetworkAccessManager net;
     for (const char* host : kVersionHosts) {
+        if (g_cancelled) break;
         QNetworkRequest request = request_for(QStringLiteral("%1/v2/client-version/%2")
                                                   .arg(QString::fromLatin1(host),
                                                        QString::fromLatin1(info(product).binary_type)));
         request.setTransferTimeout(10000);
         QNetworkReply* reply = net.get(request);
+        g_reply = reply;
         QEventLoop loop;
         QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
         loop.exec();
@@ -110,6 +118,7 @@ std::pair<QString, QString> served_build(Product product) {
 // Downloads `url` to `path`, reporting progress. False on any failure.
 bool download(const QString& url, const QString& path, const Progress& progress,
               const QString& what) {
+    if (g_cancelled) return false;
     QNetworkAccessManager net;
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) return false;
@@ -117,6 +126,7 @@ bool download(const QString& url, const QString& path, const Progress& progress,
     // A stall, not the whole transfer: a slow connection still gets there.
     request.setTransferTimeout(30000);
     QNetworkReply* reply = net.get(request);
+    g_reply = reply;
     bool write_failed = false;
     QObject::connect(reply, &QNetworkReply::readyRead, reply, [&]() {
         if (file.write(reply->readAll()) < 0) write_failed = true;
@@ -130,7 +140,8 @@ bool download(const QString& url, const QString& path, const Progress& progress,
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     loop.exec();
     reply->deleteLater();
-    if (reply->error() != QNetworkReply::NoError || write_failed) {
+    if (g_cancelled || reply->error() != QNetworkReply::NoError || write_failed) {
+        // Nothing of it is kept: QSaveFile drops its temporary file.
         file.cancelWriting();
         std::fprintf(stderr, "stud: download of %s failed: %s\n", qPrintable(url),
                      qPrintable(reply->errorString()));
@@ -147,7 +158,8 @@ bool download(const QString& url, const QString& path, const Progress& progress,
 // and stays inside `dir` too.
 }  // namespace
 
-bool extract_zip(const QString& zip_path, const QString& dir, QString* error) {
+bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
+                 const std::function<void(int percent)>& step) {
     mz_zip_archive zip{};
     const QByteArray zip_name = QFile::encodeName(zip_path);
     if (!mz_zip_reader_init_file(&zip, zip_name.constData(), 0)) {
@@ -161,7 +173,19 @@ bool extract_zip(const QString& zip_path, const QString& dir, QString* error) {
     std::vector<std::pair<QString, QByteArray>> links;
     bool ok = true;
     const mz_uint count = mz_zip_reader_get_num_files(&zip);
+    int shown = -1;
     for (mz_uint i = 0; i < count && ok; ++i) {
+        // The window stays live, so Cancel can be pressed mid-unpack.
+        QCoreApplication::processEvents();
+        if (g_cancelled) {
+            *error = QStringLiteral("cancelled");
+            ok = false;
+            break;
+        }
+        if (const int percent = static_cast<int>(qint64(i) * 100 / count); step && percent != shown) {
+            shown = percent;
+            step(percent);
+        }
         mz_zip_archive_file_stat stat;
         if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
             ok = false;
@@ -269,6 +293,10 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     }
     if (progress) progress(QStringLiteral("Checking for %1 updates").arg(name), -1);
     const auto [upload, version] = served_build(product);
+    if (g_cancelled) {
+        *error = QStringLiteral("Cancelled.");
+        return std::nullopt;
+    }
     if (upload.isEmpty()) {
         // Offline, or Roblox's API did not answer: what is installed runs,
         // unless it was changed.
@@ -281,6 +309,15 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     if (have && have->upload == upload && integrity == Integrity::Intact) return have;
 
     QDir().mkpath(clients_dir(product));
+    // What an earlier download left when Stud was stopped mid-way: a zip or
+    // its temporary file, and a half-unpacked build.
+    QDir clients(clients_dir(product));
+    for (const QString& stale : clients.entryList({QStringLiteral("*.zip*")}, QDir::Files | QDir::Hidden)) {
+        clients.remove(stale);
+    }
+    for (const QString& stale : clients.entryList({QStringLiteral("*.partial")}, QDir::Dirs)) {
+        QDir(clients.filePath(stale)).removeRecursively();
+    }
     const QString zip_path = clients_dir(product) + "/" + upload + ".zip";
     const QString what = have ? QStringLiteral("Updating %1 to %2").arg(name, version)
                               : QStringLiteral("Downloading %1 %2").arg(name, version);
@@ -293,19 +330,27 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
             fetched = true;
             break;
         }
+        if (g_cancelled) break;
     }
     if (!fetched) {
         QFile::remove(zip_path);
+        if (g_cancelled) {
+            *error = QStringLiteral("Cancelled.");
+            return std::nullopt;
+        }
         if (have && integrity != Integrity::Changed) return have;
         *error = QStringLiteral("Could not download %1.").arg(name);
         return std::nullopt;
     }
 
-    if (progress) progress(QStringLiteral("Unpacking %1 %2").arg(name, version), -1);
+    const QString unpacking = QStringLiteral("Unpacking %1 %2").arg(name, version);
+    if (progress) progress(unpacking, 0);
     const QString staging = clients_dir(product) + "/" + upload + ".partial";
     QDir(staging).removeRecursively();
     QString extract_error;
-    const bool unpacked = extract_zip(zip_path, staging, &extract_error);
+    const bool unpacked = extract_zip(zip_path, staging, &extract_error, [&](int percent) {
+        if (progress) progress(unpacking, percent);
+    });
     QFile::remove(zip_path);
     const QString final_dir = clients_dir(product) + "/" + upload;
     bool in_place = unpacked &&
@@ -318,6 +363,10 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
     }
     if (!in_place) {
         QDir(staging).removeRecursively();
+        if (g_cancelled) {
+            *error = QStringLiteral("Cancelled.");
+            return std::nullopt;
+        }
         if (have && integrity != Integrity::Changed) return have;
         *error = QStringLiteral("Could not unpack %1: %2").arg(name)
                      .arg(extract_error.isEmpty() ? QStringLiteral("unexpected layout") : extract_error);
@@ -390,8 +439,13 @@ QString find_rosemary() {
 
 bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* error) {
     if (QFileInfo(prefix_dir() + "/root").isDir()) return true;
+    if (g_cancelled) {
+        *error = QStringLiteral("Cancelled.");
+        return false;
+    }
     if (progress) progress(QStringLiteral("Setting up the macOS environment"), -1);
     QProcess create;
+    g_process = &create;
     create.setProgram(rosemary);
     create.setArguments({QStringLiteral("prefix"), QStringLiteral("create"), prefix_dir()});
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -404,6 +458,13 @@ bool ensure_prefix(const QString& rosemary, const Progress& progress, QString* e
     QObject::connect(&create, &QProcess::errorOccurred, &loop, &QEventLoop::quit);
     create.start();
     loop.exec();
+    if (g_cancelled) {
+        // Half a prefix would pass for a whole one at the next start.
+        create.waitForFinished();
+        QDir(prefix_dir()).removeRecursively();
+        *error = QStringLiteral("Cancelled.");
+        return false;
+    }
     if (create.exitStatus() != QProcess::NormalExit || create.exitCode() != 0 ||
         !QFileInfo(prefix_dir() + "/root").isDir()) {
         *error = QStringLiteral("Could not set up the macOS environment (rosemary prefix create "
@@ -435,6 +496,14 @@ bool write_app_settings(const Build& build, const QJsonObject& flags, QString* e
     }
     return true;
 }
+
+void cancel() {
+    g_cancelled = true;
+    if (g_reply) g_reply->abort();
+    if (g_process) g_process->kill();
+}
+
+bool cancelled() { return g_cancelled; }
 
 QStringList reset_release_channels(const QString& root) {
     static const QRegularExpression channel(QStringLiteral("<string>([^<]*)</string>"));

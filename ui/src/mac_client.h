@@ -68,8 +68,16 @@ QStringList reset_release_channels(const QString& root);
 QString executable(const Build& build);
 
 // Unpacks a downloaded zip into `dir`, refusing any entry or symbolic link
-// that would land outside it. False, with `error` set, on failure.
-bool extract_zip(const QString& zip_path, const QString& dir, QString* error);
+// that would land outside it. `step` hears the percentage unpacked. False,
+// with `error` set, on failure or when cancel() stopped it.
+bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
+                 const std::function<void(int percent)>& step = {});
+
+// Stops what ensure_current() or ensure_prefix() is doing (checking, the
+// download, the unpacking, making the prefix) and removes what it left
+// half-done. They then return as failed. For the rest of the process.
+void cancel();
+bool cancelled();
 
 // The client's code, as Roblox shipped it: one "<sha256>  <path>" line per
 // file of the bundle's Contents/MacOS, Contents/_CodeSignature and its

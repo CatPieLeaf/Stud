@@ -23,6 +23,7 @@ struct Screen {
     std::unique_ptr<QWidget> window;
     QLabel* label = nullptr;
     QPushButton* cancel = nullptr;
+    QProgressBar* bar = nullptr;
     QTimer* timer = nullptr;
     QStringList lines;
     qsizetype last = -1;
@@ -72,12 +73,12 @@ void raise() {
         s.label->setAlignment(Qt::AlignCenter);
         s.label->setWordWrap(true);
         layout->addWidget(s.label);
-        // A loading bar, not a progress bar: Stud cannot know how far along
-        // the client is, so it only says something is happening.
-        auto* bar = new QProgressBar(s.window.get());
-        bar->setRange(0, 0);
-        bar->setTextVisible(false);
-        layout->addWidget(bar);
+        // A moving bar while nobody knows how far along it is; a progress bar
+        // while something says (a download, the unpacking).
+        s.bar = new QProgressBar(s.window.get());
+        s.bar->setRange(0, 0);
+        s.bar->setTextVisible(false);
+        layout->addWidget(s.bar);
         s.cancel = new QPushButton(QStringLiteral("Cancel"), s.window.get());
         s.cancel->hide();
         QObject::connect(s.cancel, &QPushButton::clicked, s.window.get(), []() {
@@ -135,8 +136,20 @@ void show_loading_text(const QString& text) {
     QCoreApplication::processEvents();
 }
 
+void set_loading_progress(int percent) {
+    Screen& s = screen();
+    if (s.bar == nullptr) return;
+    if (percent < 0) {
+        s.bar->setRange(0, 0);
+    } else {
+        s.bar->setRange(0, 100);
+        s.bar->setValue(percent);
+    }
+}
+
 void clear_loading_text() {
     Screen& s = screen();
+    set_loading_progress(-1);
     if (!s.text_on) return;
     s.text_on = false;
     if (s.lines_on) {
@@ -153,6 +166,7 @@ void close_loading_screen() {
     s.window.reset();
     s.label = nullptr;
     s.cancel = nullptr;
+    s.bar = nullptr;
     s.timer = nullptr;
 }
 

@@ -680,12 +680,16 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
 
     // Cancel stops opening Stud.
     stud::ui::show_loading_lines([]() {
+        // Stops a download, unpacking or prefix setup under way, and clears
+        // what it left.
+        stud::ui::client::cancel();
         stud::ui::terminate_stud_session();
         QMetaObject::invokeMethod(qApp, &QApplication::quit, Qt::QueuedConnection);
     });
     const auto progress = [](const QString& text, int percent) {
-        stud::ui::show_loading_text(percent >= 0 ? QStringLiteral("%1 (%2%)").arg(text).arg(percent)
-                                                 : text);
+        if (stud::ui::loading_cancelled()) return;
+        stud::ui::show_loading_text(text);
+        stud::ui::set_loading_progress(percent);
         QCoreApplication::processEvents();
     };
 
@@ -711,6 +715,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     const auto has = stud::ui::client::installed(stud::ui::client::Product::Player);
     if (has && (!had || had->upload != has->upload)) cube_gl_client_changed();
     if (!stud::ui::client::ensure_prefix(rosemary, progress, &error)) {
+        if (stud::ui::loading_cancelled()) return false;
         open_settings_for_launch_failure(error);
         return false;
     }

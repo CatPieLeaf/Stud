@@ -121,6 +121,12 @@ int main(int argc, char** argv) {
     check(!QFileInfo::exists(QString::fromStdString(dir + "/escaped-file")),
           "the refused entry is not written");
 
+    // Last: a cancel holds for the rest of the process.
+    stud::ui::client::cancel();
+    check(!unpacks(dir, "cancelled", {{"App.app/file", "data", file}}), "a cancelled unpack fails");
+    check(!QFileInfo::exists(QString::fromStdString(dir + "/cancelled/App.app/file")),
+          "a cancelled unpack writes nothing");
+
     std::printf("all zip extract checks passed\n");
     return 0;
 }

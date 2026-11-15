@@ -22,6 +22,9 @@ bool loading_cancelled();
 // ones (and showing the window if it is not up) until clear_loading_text().
 void show_loading_text(const QString& text);
 
+// The bar: how far along, 0 to 100, or -1 for a moving bar when nobody knows.
+void set_loading_progress(int percent);
+
 // Back to the random lines if they were showing; otherwise the window goes.
 void clear_loading_text();
 
