@@ -33,4 +33,23 @@ curl -fsSL -o "$work/flatpak-cargo-generator.py" \
 # The commit sits on the line after the fork's url.
 sed -i "\#url: $repo\$#{n;s/^\( *commit: \).*/\1$commit/}" "$manifest"
 grep -q "commit: $commit" "$manifest" || { echo "no Rosemary commit line in $manifest" >&2; exit 1; }
+
+# The Rust that builds it: the current stable release, from Rust's own
+# channel listing. Flathub's Rust extension can trail the release Rosemary
+# needs, so the manifest carries Rust's official archive, used only to build.
+python3 - "$manifest" <<'PY'
+import re, sys, tomllib, urllib.request
+manifest = sys.argv[1]
+with urllib.request.urlopen("https://static.rust-lang.org/dist/channel-rust-stable.toml") as r:
+    channel = tomllib.loads(r.read().decode())
+target = channel["pkg"]["rust"]["target"]["x86_64-unknown-linux-gnu"]
+url, sha = target["xz_url"], target["xz_hash"]
+text = open(manifest).read()
+text, n = re.subn(r"(url: )https://static\.rust-lang\.org/dist/\S+(\n *sha256: )\S+",
+                  lambda m: m.group(1) + url + m.group(2) + sha, text)
+if n != 1:
+    sys.exit(f"no Rust archive source in {manifest}")
+open(manifest, "w").write(text)
+print(f"rust: {channel['pkg']['rust']['version']}", file=sys.stderr)
+PY
 echo "$commit"

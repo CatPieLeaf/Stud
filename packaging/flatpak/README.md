@@ -10,15 +10,18 @@ as `packaging/aur`.
 Rosemary has to be built against the runtime it runs in: a binary built on
 a newer distribution needs that distribution's glibc, and the runtime's is
 older (Stud 2.0's first Flatpak failed with `GLIBC_2.43 not found`).
-So the manifest builds it from Stud's fork with the SDK's Rust extension,
-at the commit it names.
+So the manifest builds it from Stud's fork, at the commit it names, with
+the current stable Rust: Rust's own release archive, installed into the
+build directory and never shipped, because Flathub's Rust extension can
+trail the release Rosemary needs (it was 1.98 when Rosemary needed 1.99).
 
 **Flathub builds have no network**, and Rosemary's Microlift dependencies
 (and Microlift's wasmtime) are git dependencies cargo would fetch. So every
 crate and git checkout it needs is listed in `rosemary-cargo-sources.json`,
 generated from that commit's `Cargo.lock` by flatpak-builder-tools'
 `flatpak-cargo-generator.py`. `tools/update-flatpak-rosemary.sh` moves the
-commit to the head of the fork's branch and regenerates the file; CI runs
+commit to the head of the fork's branch, regenerates the file, and writes
+in the current stable Rust from Rust's channel listing; CI runs
 it before every Flatpak build, and after a release so main carries the
 Rosemary that release built.
 
@@ -58,8 +61,7 @@ afterwards.
 ## Testing it locally
 
 ```sh
-flatpak install -y flathub org.kde.Sdk//6.11 org.kde.Platform//6.11 io.qt.qtwebengine.BaseApp//6.11 \
-  org.freedesktop.Sdk.Extension.rust-stable//25.08
+flatpak install -y flathub org.kde.Sdk//6.11 org.kde.Platform//6.11 io.qt.qtwebengine.BaseApp//6.11
 flatpak-builder --force-clean --user --install build-flatpak \
   packaging/flatpak/io.github.catpieleaf.Stud.yml
 flatpak run io.github.catpieleaf.Stud

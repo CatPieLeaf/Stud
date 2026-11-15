@@ -6,9 +6,6 @@ base-version: '6.11'
 runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
-# Rust, for building Rosemary below.
-sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
 command: stud
 separate-locales: false
 
@@ -108,14 +105,20 @@ modules:
   # ones included, come from rosemary-cargo-sources.json, which
   # tools/update-flatpak-rosemary.sh generates from the commit's Cargo.lock.
   # glslc, for the upscalers' shaders, is in the SDK.
+  #
+  # Rust is the current stable release's official archive, which the same
+  # script writes in: Flathub's Rust extension can trail the release Rosemary
+  # needs. It is installed into the build directory, used, and never shipped.
   - name: rosemary
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/rust-stable/bin
+      append-path: /run/build/rosemary/toolchain/bin
       env:
         CARGO_HOME: /run/build/rosemary/cargo
         CARGO_NET_OFFLINE: 'true'
     build-commands:
+      - rust/install.sh --prefix=/run/build/rosemary/toolchain --disable-ldconfig
+        --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu
       - cargo --offline build --release --locked --package rosemary --bin rosemary
       - install -Dm755 target/release/rosemary -t /app/libexec/stud/
       - install -Dm644 LICENSE /app/share/licenses/io.github.catpieleaf.Stud/rosemary/LICENSE-Rosemary.txt
@@ -123,6 +126,12 @@ modules:
       - type: git
         url: https://github.com/CatPieLeaf/rosemary-stud.git
         commit: 2445c2223cf789e71567f2ee40cece459c40c8aa
+      - type: archive
+        url: https://static.rust-lang.org/dist/2026-11-12/rust-1.100.0-x86_64-unknown-linux-gnu.tar.xz
+        sha256: 98ee6bec240e1cfe944f17e7092412dc5ef6e008484bb668c6936d35a7d15acd
+        dest: rust
+        only-arches:
+          - x86_64
       - rosemary-cargo-sources.json
 
   # The launcher, built here against the runtime's own Qt.
