@@ -4,7 +4,7 @@
 #include "mac_client.h"
 
 #include "game_activity.h"
-#include "log_archive.h"
+#include "log_export.h"
 
 #include "settings_window.h"
 
@@ -227,68 +227,10 @@ void Tray::copyServerLink() {
 }
 
 void Tray::exportLogs() {
-    // Every session, not just this one.
-    //
-    // A problem worth reporting is often visible in the run BEFORE the
-    // one the user noticed it in: a crash, a setting that did not take,
-    // a launch that went to the home screen. Exporting only the current
-    // session made the user pick which run mattered, from a directory
-    // they have no reason to know exists, before they knew.
-    const QDir log_dir(QString::fromStdString(stud::paths::log_dir()));
-    // No symlinks: the sandbox can write this directory, and this archive is
-    // made to be shared.
-    const QStringList sessions = log_dir.entryList({QStringLiteral("session-*.log")},
-                                                   QDir::Files | QDir::NoSymLinks, QDir::Time);
-    if (sessions.isEmpty()) {
-        QMessageBox::information(nullptr, QStringLiteral("Stud"),
-                                  QStringLiteral("There are no logs to export yet."));
-        return;
+    const QString saved = export_all_logs(nullptr);
+    if (!saved.isEmpty()) {
+        icon_->showMessage(QStringLiteral("Stud"), saved, QSystemTrayIcon::Information, 4000);
     }
-    QStringList files;
-    files.reserve(sessions.size());
-    for (const QString& name : sessions) files << log_dir.filePath(name);
-    // Roblox's own logs from the same span: complete, where the session log
-    // can lose what the client had not written out when it stopped.
-    const QDateTime since = QFileInfo(files.last()).birthTime().isValid()
-                                ? QFileInfo(files.last()).birthTime()
-                                : QFileInfo(files.last()).lastModified();
-    QStringList client_logs;
-    const QDir users(client::prefix_dir() + QStringLiteral("/root/Users"));
-    for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-        const QDir roblox(users.filePath(user) + QStringLiteral("/Library/Logs/Roblox"));
-        for (const QFileInfo& log :
-             roblox.entryInfoList({QStringLiteral("*.log")}, QDir::Files | QDir::NoSymLinks)) {
-            if (log.lastModified() >= since) client_logs << log.absoluteFilePath();
-        }
-    }
-
-    const QString name = QStringLiteral("stud-logs-%1.tar.gz")
-                             .arg(QDateTime::currentDateTime().toString(
-                                 QStringLiteral("yyyyMMdd-HHmmss")));
-    const QString suggested =
-        QDir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation)).filePath(name);
-    QString target = QFileDialog::getSaveFileName(
-        nullptr, QStringLiteral("Export Stud's logs"), suggested,
-        QStringLiteral("Archives (*.tar.gz);;All files (*)"));
-    if (target.isEmpty()) return;
-    // A user who types a bare name in the dialog means the archive, not a
-    // file with no type.
-    if (!target.endsWith(QStringLiteral(".tar.gz")) && !target.endsWith(QStringLiteral(".tgz"))) {
-        target += QStringLiteral(".tar.gz");
-    }
-
-    QString error;
-    if (!write_log_tarball(target, files, &error, client_logs)) {
-        QMessageBox::warning(nullptr, QStringLiteral("Stud"),
-                              QStringLiteral("Could not export the logs: %1").arg(error));
-        return;
-    }
-    icon_->showMessage(
-        QStringLiteral("Stud"),
-        QStringLiteral("%1 log%2 saved to %3")
-            .arg(files.size())
-            .arg(files.size() == 1 ? QString() : QStringLiteral("s"), target),
-        QSystemTrayIcon::Information, 4000);
 }
 
 void Tray::showAbout() {

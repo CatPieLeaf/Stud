@@ -10,6 +10,7 @@
 #include "fflags.h"
 #include "desktop_entry.h"
 #include "history.h"
+#include "log_export.h"
 #include "roblox_settings.h"
 #include "notifications.h"
 #include "stud/settings.h"
@@ -37,6 +38,7 @@
 #include <QStandardPaths>
 #include <QProcess>
 #include <QDirIterator>
+#include <QLocale>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
@@ -387,6 +389,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         const auto parts = add_parts("FFlags", {"Presets", "FFlag editor"});
         buildFlagsTab(parts[0], parts[1]);
     }
+
+    buildDebugTab(add_tab("Debug"));
 
     // ---- About ---------------------------------------------------------
     auto* about = add_tab("About");
@@ -851,6 +855,117 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
         const bool saved = out.open(QIODevice::WriteOnly) && out.write(xml.toUtf8()) >= 0 && out.commit();
         status->setText(saved ? QStringLiteral("Saved. Roblox uses them the next time it starts.")
                               : QStringLiteral("%1 could not be written.").arg(path));
+    });
+}
+
+// A Stud session is running, in this process (Settings from its tray) or
+// another one. See main.cpp.
+bool stud_session_running();
+
+namespace {
+
+// How much a folder holds, for the clear buttons.
+qint64 folder_size(const QString& path) {
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
+
+}  // namespace
+
+// Logs for a bug report, and clearing what Stud keeps.
+void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
+    auto* logsLabel = new QLabel("<b>Logs</b>", this);
+    tab->addWidget(logsLabel);
+    auto* logsNote = new QLabel("For a bug report: every session's log and Roblox's own, or only the "
+                                "newest session's. Join tickets are kept out of them.", this);
+    logsNote->setWordWrap(true);
+    tab->addWidget(logsNote);
+    auto* logs = new QHBoxLayout();
+    auto* exportAll = new QPushButton("Export logs", this);
+    exportAll->setIcon(themed("document-export", QStyle::SP_DialogSaveButton));
+    exportAll->setToolTip("Every session log, and Roblox's own logs from the same days, as one .tar.gz.");
+    auto* exportLatest = new QPushButton("Export the latest log", this);
+    exportLatest->setIcon(themed("text-x-generic", QStyle::SP_FileIcon));
+    exportLatest->setToolTip("Only the newest session's log, as a .log file.");
+    logs->addWidget(exportAll);
+    logs->addWidget(exportLatest);
+    logs->addStretch();
+    tab->addLayout(logs);
+
+    tab->addSpacing(fontMetrics().height());
+    tab->addWidget(new QLabel("<b>Storage</b>", this));
+    auto* storageNote = new QLabel("Settings, FastFlags, customizations and logs are kept either way.", this);
+    storageNote->setWordWrap(true);
+    tab->addWidget(storageNote);
+    auto* storage = new QHBoxLayout();
+    auto* clearCache = new QPushButton(this);
+    clearCache->setIcon(themed("edit-clear", QStyle::SP_DialogResetButton));
+    clearCache->setToolTip("The web pages' cache. Nothing in it is needed; it fills up again as pages load.");
+    auto* clearData = new QPushButton(this);
+    clearData->setIcon(themed("edit-delete", QStyle::SP_TrashIcon));
+    clearData->setToolTip("The Roblox client and Studio, the macOS environment, your Roblox login and your "
+                          "game history. The next launch downloads and sets up everything again.");
+    storage->addWidget(clearCache);
+    storage->addWidget(clearData);
+    storage->addStretch();
+    tab->addLayout(storage);
+
+    auto* status = new QLabel(this);
+    status->setWordWrap(true);
+    tab->addWidget(status);
+    tab->addStretch();
+
+    const QString cache = QString::fromStdString(stud::paths::cache_dir());
+    const QString data = QString::fromStdString(stud::paths::data_dir());
+    const auto label_sizes = [this, clearCache, clearData, cache, data] {
+        const QLocale here;
+        clearCache->setText(QStringLiteral("Clear Stud's cache (%1)").arg(here.formattedDataSize(folder_size(cache))));
+        clearData->setText(QStringLiteral("Clear Stud's data (%1)").arg(here.formattedDataSize(folder_size(data))));
+    };
+    label_sizes();
+
+    connect(exportAll, &QPushButton::clicked, this, [this, status] {
+        const QString saved = export_all_logs(this);
+        if (!saved.isEmpty()) status->setText(saved);
+    });
+    connect(exportLatest, &QPushButton::clicked, this, [this, status] {
+        const QString saved = export_latest_log(this);
+        if (!saved.isEmpty()) status->setText(saved);
+    });
+    // Neither while Roblox runs: its client, prefix and web views are in use.
+    const auto refuse_while_running = [this] {
+        if (!stud_session_running()) return false;
+        QMessageBox::information(this, QStringLiteral("Stud"),
+                                 QStringLiteral("Close Roblox first: Stud is using these files while it runs."));
+        return true;
+    };
+    connect(clearCache, &QPushButton::clicked, this, [status, cache, label_sizes, refuse_while_running] {
+        if (refuse_while_running()) return;
+        const bool cleared = QDir(cache).removeRecursively();
+        label_sizes();
+        status->setText(cleared ? QStringLiteral("Stud's cache is cleared.")
+                                : QStringLiteral("Some of Stud's cache could not be removed."));
+    });
+    connect(clearData, &QPushButton::clicked, this, [this, status, data, label_sizes, refuse_while_running] {
+        if (refuse_while_running()) return;
+        if (QMessageBox::question(
+                this, QStringLiteral("Clear Stud's data"),
+                QStringLiteral("Remove the Roblox client and Studio, the macOS environment, your Roblox login "
+                               "and your game history?\n\nThe next launch downloads and sets up everything "
+                               "again, and you sign in to Roblox again. Settings, FastFlags, customizations "
+                               "and logs are kept.")) != QMessageBox::Yes) {
+            return;
+        }
+        const bool cleared = QDir(data).removeRecursively();
+        label_sizes();
+        status->setText(cleared ? QStringLiteral("Stud's data is cleared.")
+                                : QStringLiteral("Some of Stud's data could not be removed."));
     });
 }
 

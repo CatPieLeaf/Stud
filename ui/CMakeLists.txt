@@ -102,6 +102,7 @@ add_executable(stud-ui
     src/tray.cpp
     src/loading_screen.cpp
     src/webview_host.cpp
+    src/log_export.cpp
     resources/resources.qrc
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Network Qt6::DBus

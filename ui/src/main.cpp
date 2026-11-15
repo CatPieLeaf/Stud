@@ -908,6 +908,8 @@ namespace stud::ui {
 
 // Ends a running session: the tray's Exit, and Settings before it starts
 // Roblox again.
+bool stud_session_running() { return g_lock_fd >= 0 || another_instance_is_running(); }
+
 void terminate_stud_session() {
     if (g_client == nullptr) return;
     g_stop_requested = true;
