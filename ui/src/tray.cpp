@@ -34,6 +34,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QStyle>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPixmap>
@@ -282,27 +283,45 @@ void Tray::showAbout() {
         about->setWindowTitle(QStringLiteral("About Stud"));
         about->setAttribute(Qt::WA_DeleteOnClose);
         auto* layout = new QVBoxLayout(about);
+        // As big as its contents and no bigger: the window cannot be resized.
+        layout->setSizeConstraint(QLayout::SetFixedSize);
         auto* top = new QHBoxLayout();
         // The ICON, not the wordmark: the square one the tray and the window
         // use, where a wide wordmark would shrink to a sliver.
+        constexpr int kIcon = 96;
         auto* icon = new QLabel(about);
         const QPixmap logo(QStringLiteral(":/stud-logo-color.png"));
-        if (!logo.isNull()) icon->setPixmap(logo.scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        if (!logo.isNull()) {
+            icon->setPixmap(logo.scaled(kIcon, kIcon, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
         top->addWidget(icon, 0, Qt::AlignTop);
-        auto* text = new QLabel(QStringLiteral("<b>Stud</b> " STUD_VERSION "<br><br>"
+        // Beside it the wordmark, a little under half the icon's height,
+        // then the version and what Stud is.
+        auto* side = new QVBoxLayout();
+        auto* title = new QLabel(about);
+        const QPixmap wordmark(QStringLiteral(":/stud-title.png"));
+        if (!wordmark.isNull()) {
+            title->setPixmap(wordmark.scaledToHeight(kIcon * 45 / 100, Qt::SmoothTransformation));
+        }
+        side->addWidget(title, 0, Qt::AlignLeft);
+        auto* text = new QLabel(QStringLiteral("Version " STUD_VERSION "<br><br>"
                                                "Runs Roblox's real, unmodified macOS "
                                                "client on Linux."),
                                 about);
         text->setTextFormat(Qt::RichText);
-        top->addWidget(text, 1);
+        side->addWidget(text);
+        side->addStretch();
+        top->addLayout(side, 1);
         layout->addLayout(top);
+        // Room between the icon and the buttons.
+        layout->addSpacing(2 * about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
         auto* bottom = new QHBoxLayout();
         bottom->addWidget(github_button(about));
         bottom->addWidget(discord_button(about));
         bottom->addStretch();
-        auto* ok = new QDialogButtonBox(QDialogButtonBox::Ok, about);
-        QObject::connect(ok, &QDialogButtonBox::accepted, about, &QDialog::accept);
-        bottom->addWidget(ok);
+        auto* close = new QDialogButtonBox(QDialogButtonBox::Close, about);
+        QObject::connect(close, &QDialogButtonBox::rejected, about, &QDialog::reject);
+        bottom->addWidget(close);
         layout->addLayout(bottom);
     }
     about->show();
