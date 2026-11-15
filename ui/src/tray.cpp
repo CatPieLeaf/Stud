@@ -37,6 +37,7 @@ namespace stud::ui { void terminate_stud_session(); }
 #include <QStyle>
 #include <QMenu>
 #include <QMessageBox>
+#include <QImage>
 #include <QPixmap>
 #include <QPointer>
 #include <QProcess>
@@ -295,20 +296,35 @@ void Tray::showAbout() {
             icon->setPixmap(logo.scaled(kIcon, kIcon, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         }
         top->addWidget(icon, 0, Qt::AlignTop);
-        // Beside it the wordmark, a little under half the icon's height,
-        // then the version and what Stud is.
+        // Beside it: the wordmark, with the version and the author at the top
+        // right as on the welcome page, and what Stud is below.
         auto* side = new QVBoxLayout();
+        auto* header = new QHBoxLayout();
         auto* title = new QLabel(about);
-        const QPixmap wordmark(QStringLiteral(":/stud-title.png"));
-        if (!wordmark.isNull()) {
-            title->setPixmap(wordmark.scaledToHeight(kIcon * 45 / 100, Qt::SmoothTransformation));
+        // The drawing sits inside a transparent margin; cropped to what is
+        // drawn, its left edge lines up with the text below it.
+        QImage wordmark = QImage(QStringLiteral(":/stud-title.png")).convertToFormat(QImage::Format_ARGB32);
+        QRect drawn;
+        for (int y = 0; y < wordmark.height(); ++y) {
+            const auto* row = reinterpret_cast<const QRgb*>(wordmark.constScanLine(y));
+            for (int x = 0; x < wordmark.width(); ++x) {
+                if (qAlpha(row[x]) != 0) drawn |= QRect(x, y, 1, 1);
+            }
         }
-        side->addWidget(title, 0, Qt::AlignLeft);
-        auto* text = new QLabel(QStringLiteral("Version " STUD_VERSION "<br><br>"
-                                               "Runs Roblox's real, unmodified macOS "
-                                               "client on Linux."),
-                                about);
-        text->setTextFormat(Qt::RichText);
+        if (!drawn.isEmpty()) {
+            title->setPixmap(QPixmap::fromImage(wordmark.copy(drawn))
+                                 .scaledToHeight(kIcon * 42 / 100, Qt::SmoothTransformation));
+        }
+        header->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
+        header->addStretch();
+        auto* credits = new QVBoxLayout();
+        auto* version = new QLabel(QStringLiteral("Version " STUD_VERSION), about);
+        auto* by = new QLabel(QStringLiteral("By CatPieLeaf"), about);
+        credits->addWidget(version, 0, Qt::AlignRight);
+        credits->addWidget(by, 0, Qt::AlignRight);
+        header->addLayout(credits);
+        side->addLayout(header);
+        auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
         side->addWidget(text);
         side->addStretch();
         top->addLayout(side, 1);
