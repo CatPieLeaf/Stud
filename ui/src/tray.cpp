@@ -315,17 +315,24 @@ void Tray::showAbout() {
             title->setPixmap(QPixmap::fromImage(wordmark.copy(drawn))
                                  .scaledToHeight(kIcon * 42 / 100, Qt::SmoothTransformation));
         }
-        header->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
-        header->addStretch();
+        // The wordmark with the description under it, a gap between them; the
+        // description wraps short of the version and author on the right.
+        auto* lead = new QVBoxLayout();
+        lead->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
+        lead->addSpacing(about->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing));
+        auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
+        text->setWordWrap(true);
+        lead->addWidget(text);
+        lead->addStretch();
+        header->addLayout(lead, 1);
         auto* credits = new QVBoxLayout();
         auto* version = new QLabel(QStringLiteral("Version " STUD_VERSION), about);
         auto* by = new QLabel(QStringLiteral("By CatPieLeaf"), about);
         credits->addWidget(version, 0, Qt::AlignRight);
         credits->addWidget(by, 0, Qt::AlignRight);
+        credits->addStretch();
         header->addLayout(credits);
         side->addLayout(header);
-        auto* text = new QLabel(QStringLiteral("Runs Roblox's real, unmodified macOS client on Linux."), about);
-        side->addWidget(text);
         side->addStretch();
         top->addLayout(side, 1);
         layout->addLayout(top);
