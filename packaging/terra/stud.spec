@@ -82,8 +82,10 @@ cp -a usr %{buildroot}/
 %doc %{_datadir}/doc/%{name}/copyright
 %{_bindir}/%{name}
 %{_libexecdir}/%{name}/
-%{_datadir}/applications/%{appid}.desktop
+# Stud's entry, and the hidden ones of the Roblox and Studio windows.
+%{_datadir}/applications/%{appid}*.desktop
 %{_metainfodir}/%{appid}.metainfo.xml
+%{_datadir}/mime/packages/%{appid}.xml
 %{_datadir}/icons/hicolor/*/apps/%{appid}*.png
 %{_mandir}/man1/%{name}.1*
 
