@@ -77,15 +77,6 @@ sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_APP_ID@|$app_id|g" \
     -e "s|^Icon=$app_id$|Icon=$icon_path|" \
     "$here/stud.desktop.in" | grep -v '^#' > "$apps/$app_id.desktop"
 chmod 644 "$apps/$app_id.desktop"
-# The windows of Roblox and Roblox Studio, each under its own entry and stud.
-for client in "Player|Roblox Player|--roblox|player" "Studio|Roblox Studio|--studio|studio"; do
-    IFS='|' read -r suffix name flag icon <<< "$client"
-    sed -e "s|@STUD_EXEC@|$stud_ui|g" -e "s|@STUD_CLIENT_ID@|$app_id.$suffix|g" \
-        -e "s|@STUD_CLIENT_NAME@|$name|g" -e "s|@STUD_CLIENT_FLAG@|$flag|g" \
-        -e "s|@STUD_CLIENT_ICON@|$icons/512x512/apps/$app_id-$icon.png|g" \
-        "$here/stud-client.desktop.in" | grep -v '^#' > "$apps/$app_id.$suffix.desktop"
-    chmod 644 "$apps/$app_id.$suffix.desktop"
-done
 # The place file types the entry opens in Studio.
 mime="$HOME/.local/share/mime"
 mkdir -p "$mime/packages"
