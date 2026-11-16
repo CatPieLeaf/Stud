@@ -48,9 +48,11 @@ GameActivity::~GameActivity() {
 }
 
 bool GameActivity::wants(const QByteArray& line) {
+    // Every line line() reacts to: one it reads that is missing here never
+    // reaches it.
     static const char* const kMarks[] = {
         "! Joining game", "UDMUX Address", "doTeleport: joinScriptUrl",
-        "Report game_join_loadtime:", "[BloxstrapRPC] ", "Client:Disconnect",
+        "Report game_join_loadtime:", "[BloxstrapRPC] ", "[FLog::SingleSurfaceApp] leaveUGCGameInternal",
         "[FLog::PlaceManager]",
     };
     for (const char* mark : kMarks) {
