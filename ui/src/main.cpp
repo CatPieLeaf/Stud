@@ -492,19 +492,6 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
         if (entry.isEmpty() || entry.startsWith(QLatin1Char('#')) || equals <= 0) continue;
         env.insert(entry.left(equals).trimmed(), entry.mid(equals + 1));
     }
-    // After Settings' own variables, so the switch works from there too.
-    // `STUD_INPUT_LOG=1 stud`: Rosemary logs every input step, for a report
-    // of keys that stall or stay held, into Stud's logs, where Export logs
-    // finds it. It records every key pressed, typing included.
-    if (const QString input_log = env.value(QStringLiteral("STUD_INPUT_LOG"));
-        !input_log.isEmpty() && input_log != QStringLiteral("0")) {
-        const QString path = QDir(QString::fromStdString(stud::paths::log_dir()))
-                                 .filePath(QStringLiteral("input-%1.log")
-                                               .arg(QDateTime::currentDateTime().toString(
-                                                   QStringLiteral("yyyyMMdd-hhmmss"))));
-        env.insert(QStringLiteral("STUD_INPUT_LOG"), path);
-        std::printf("stud: logging input to %s\n", qPrintable(path));
-    }
     return env;
 }
 
