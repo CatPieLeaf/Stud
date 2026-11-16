@@ -49,6 +49,13 @@ QString export_all_logs(QWidget* parent) {
     // can lose what the client had not written out when it stopped.
     const QFileInfo oldest(files.last());
     const QDateTime since = oldest.birthTime().isValid() ? oldest.birthTime() : oldest.lastModified();
+    // The input logs of sessions started with STUD_INPUT_LOG=1.
+    QStringList with_input = files;
+    const QDir log_dir(QString::fromStdString(stud::paths::log_dir()));
+    for (const QString& name :
+         log_dir.entryList({QStringLiteral("input-*.log")}, QDir::Files | QDir::NoSymLinks, QDir::Time)) {
+        with_input << log_dir.filePath(name);
+    }
     QStringList client_logs;
     const QDir users(client::prefix_dir() + QStringLiteral("/root/Users"));
     for (const QString& user : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
@@ -69,7 +76,7 @@ QString export_all_logs(QWidget* parent) {
         target += QStringLiteral(".tar.gz");
     }
     QString error;
-    if (!write_log_tarball(target, files, &error, client_logs)) {
+    if (!write_log_tarball(target, with_input, &error, client_logs)) {
         QMessageBox::warning(parent, QStringLiteral("Stud"), QStringLiteral("Could not export the logs: %1").arg(error));
         return {};
     }

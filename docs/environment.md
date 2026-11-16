@@ -14,6 +14,7 @@ the source and is missing from this file, so this list cannot quietly go stale.
 |---|---|---|
 | `STUD_ROSEMARY` | unset | The Rosemary executable to run the client with, instead of the one installed with Stud or found on `PATH`. |
 | `STUD_LOG_FILE` | unset | The session log. Stud sets it at launch and writes its own output and the client's there; set beforehand, Stud uses that file instead of making one under `~/.local/state/stud/logs`. |
+| `STUD_INPUT_LOG` | unset | `1`: Rosemary logs every input step (keys, mouse buttons, focus, pointer warps and locks) with timestamps to `input-<time>.log` under `~/.local/state/stud/logs`, which Settings > Debug > Export logs includes. For reports of keys that stall or stay held. It records every key pressed, typing included, so use it for a test session only. |
 | `STUD_HOST_LD_LIBRARY_PATH` | unset | The host's `LD_LIBRARY_PATH`, restored for programs Stud starts on the desktop's behalf. A bundle sets this. |
 
 ## What Stud sets for the client
