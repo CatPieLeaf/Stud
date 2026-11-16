@@ -29,6 +29,7 @@ depends=(
   'sdl3'
   'vulkan-icd-loader'
   'curl'
+  'openssl'
   'zlib'
   'libxkbcommon'
   'systemd-libs'

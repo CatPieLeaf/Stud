@@ -1,5 +1,7 @@
 #include "mac_client.h"
 
+#include "code_signature.h"
+
 #include "stud/stud_paths.h"
 
 #include <QCoreApplication>
@@ -55,13 +57,14 @@ struct ProductInfo {
     const char* app;          // the bundle inside the zip
     const char* executable;   // Contents/MacOS/<this>
     const char* directory;    // under Stud's data directory
+    const char* identifier;   // what Roblox signs its executable as
 };
 
 const ProductInfo& info(Product product) {
     static const ProductInfo kPlayer{"MacPlayer", "RobloxPlayer.zip", "RobloxPlayer.app",
-                                     "RobloxPlayer", "client"};
+                                     "RobloxPlayer", "client", "com.roblox.RobloxPlayer"};
     static const ProductInfo kStudio{"MacStudio", "RobloxStudioApp.zip", "RobloxStudio.app",
-                                     "RobloxStudio", "studio"};
+                                     "RobloxStudio", "studio", "com.Roblox.RobloxStudio"};
     return product == Product::Studio ? kStudio : kPlayer;
 }
 
@@ -366,6 +369,19 @@ std::optional<Build> ensure_current(Product product, const Progress& progress, Q
                     QFileInfo(staging + "/" + info(product).app + "/Contents/MacOS/" +
                               info(product).executable)
                         .exists();
+    // Signed by Roblox, and every file as Roblox sealed it, before it
+    // replaces anything: the download is the one moment the whole bundle is
+    // Roblox's own, before FFlags and customizations go into it.
+    if (in_place) {
+        const QString unsigned_reason =
+            codesign::verify_app(staging + "/" + info(product).app, QString::fromLatin1(info(product).identifier));
+        if (!unsigned_reason.isEmpty()) {
+            std::printf("stud: the downloaded %s failed Roblox's signature check: %s\n", qPrintable(name),
+                        qPrintable(unsigned_reason));
+            extract_error = QStringLiteral("it failed Roblox's signature check (%1)").arg(unsigned_reason);
+            in_place = false;
+        }
+    }
     if (in_place) {
         QDir(final_dir).removeRecursively();
         in_place = QDir().rename(staging, final_dir);

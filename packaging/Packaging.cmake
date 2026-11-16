@@ -46,9 +46,10 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # at runtime: Rosemary opens SDL3 by name, and the launcher the Vulkan
 # loader, and FFmpeg for video: libavcodec-free and libavutil-free are what
 # Fedora's build and RPM Fusion's full one both provide, whatever the release.
-# Rosemary links libcurl, zlib, libxkbcommon and libudev.
+# Rosemary links libcurl, zlib, libxkbcommon and libudev; the launcher
+# links OpenSSL's libcrypto, for the client's code signature.
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "qt6-qtbase-gui, qt6-qtwebengine, qt6-qtwebchannel, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
+    "qt6-qtbase-gui, qt6-qtwebengine, qt6-qtwebchannel, vulkan-loader, SDL3 >= 3.4.0, libcurl.so.4()(64bit), libcrypto.so.3()(64bit), libz.so.1()(64bit), libxkbcommon.so.0()(64bit), libudev.so.1()(64bit), libavcodec-free, libavutil-free, gamemode")
 # Weak: a Settings switch, which does not stop Stud from running.
 set(CPACK_RPM_PACKAGE_SUGGESTS "mangohud")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
@@ -144,7 +145,7 @@ libqt6network6 (>= 6.10) | libqt6network6t64 (>= 6.10), \
 libqt6dbus6 (>= 6.10) | libqt6dbus6t64 (>= 6.10), \
 libqt6webenginewidgets6 (>= 6.10) | libqt6webenginewidgets6t64 (>= 6.10), \
 libqt6webchannel6 (>= 6.10) | libqt6webchannel6t64 (>= 6.10), \
-libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, zlib1g, libxkbcommon0, libudev1, ffmpeg, gamemode")
+libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, libssl3t64 | libssl3, zlib1g, libxkbcommon0, libudev1, ffmpeg, gamemode")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud")
 # The dependencies are the list above, not a scan.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)

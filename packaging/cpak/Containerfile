@@ -16,7 +16,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         gcc-c++ cmake ninja-build git pkgconf-pkg-config gzip \
         qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
         vulkan-headers vulkan-loader-devel \
-        rust cargo glslc libcurl-devel zlib-devel systemd-devel libxkbcommon-devel \
+        rust cargo glslc libcurl-devel openssl-devel zlib-devel systemd-devel libxkbcommon-devel \
     && dnf clean all
 
 COPY . /src

@@ -28,6 +28,8 @@ Requires:       SDL3 >= 3.4.0
 # The Vulkan loader, opened at runtime by the launcher to list the GPUs and
 # by Rosemary to draw.
 Requires:       libvulkan.so.1()(64bit)
+# The launcher checks Roblox's code signature with OpenSSL.
+Requires:       libcrypto.so.3()(64bit)
 # FFmpeg, opened at runtime for video in experiences. Either Fedora's own
 # build or RPM Fusion's full one: both provide these names, whatever the
 # release.

@@ -126,7 +126,7 @@ jobs:
             gcc-c++ cmake ninja-build git pkgconf-pkg-config rpm-build gzip \
             qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
             vulkan-headers vulkan-loader-devel \
-            rust cargo glslc libcurl-devel zlib-devel systemd-devel libxkbcommon-devel \
+            rust cargo glslc libcurl-devel openssl-devel zlib-devel systemd-devel libxkbcommon-devel \
             curl tar xz zstd python3 findutils cpio
 
       - uses: actions/checkout@v7
@@ -421,7 +421,7 @@ jobs:
           set -eux
           # git because the build fetches nlohmann/json and miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
-              qt6-base qt6-webengine qt6-webchannel vulkan-headers vulkan-icd-loader
+              qt6-base qt6-webengine qt6-webchannel vulkan-headers vulkan-icd-loader openssl
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
               -DCMAKE_INSTALL_PREFIX=/usr -DSTUD_BUILD_ROSEMARY=OFF -DSTUD_BUILD_TESTS=OFF \
               -DSTUD_VERSION="$STUD_VERSION"
@@ -537,7 +537,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel cmake ninja git python curl zstd \
             rust shaderc sdl3 ffmpeg \
-            qt6-base qt6-webengine qt6-webchannel qt6-wayland breeze \
+            qt6-base qt6-webengine qt6-webchannel qt6-wayland breeze openssl \
             vulkan-headers vulkan-icd-loader libglvnd mesa libx11 libxext libxi libxrandr \
             libxcursor libxfixes libxss wayland libxkbcommon libxkbcommon-x11 libdecor \
             systemd-libs pipewire libpulse alsa-lib \
@@ -630,7 +630,7 @@ jobs:
             file dpkg-dev tar xz-utils zstd python3 \
             qt6-base-dev qt6-base-dev-tools qt6-webengine-dev qt6-webengine-dev-tools \
             qt6-webchannel-dev libvulkan-dev libgles-dev \
-            glslc libcurl4-openssl-dev zlib1g-dev libudev-dev libxkbcommon-dev
+            glslc libcurl4-openssl-dev libssl-dev zlib1g-dev libudev-dev libxkbcommon-dev
 
       - uses: actions/checkout@v7
         with:

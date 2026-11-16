@@ -74,8 +74,21 @@ target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAK
 
 # The client download: version check, download and unpack. Its own small
 # library so the unpacking can be tested (tests/zip_extract_test.cpp).
+# Apple's root, which Roblox's code signature is checked against
+# (src/code_signature.cpp), compiled in from its published certificate.
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/apple_root_ca.h"
+    COMMAND "${CMAKE_COMMAND}" -DIN=${CMAKE_CURRENT_SOURCE_DIR}/resources/apple-root-ca.cer -DNAME=kAppleRootCa
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/generated/apple_root_ca.h
+            -P "${CMAKE_SOURCE_DIR}/cmake/embed_file.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/apple-root-ca.cer" "${CMAKE_SOURCE_DIR}/cmake/embed_file.cmake"
+    VERBATIM)
+
 add_library(stud_ui_mac_client STATIC
     src/mac_client.cpp
+    src/code_signature.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/apple_root_ca.h"
     src/customization.cpp
     src/fflags.cpp
     src/cpu_cores.cpp
@@ -83,7 +96,9 @@ add_library(stud_ui_mac_client STATIC
     src/roblox_settings.cpp
 )
 target_include_directories(stud_ui_mac_client PUBLIC src)
-target_link_libraries(stud_ui_mac_client PUBLIC Qt6::Core Qt6::Gui Qt6::Network stud_config miniz)
+target_include_directories(stud_ui_mac_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(stud_ui_mac_client PUBLIC Qt6::Core Qt6::Gui Qt6::Network stud_config miniz
+                                         PRIVATE OpenSSL::Crypto)
 target_compile_definitions(stud_ui_mac_client PRIVATE STUD_VERSION="${STUD_VERSION}")
 
 add_executable(stud-ui
