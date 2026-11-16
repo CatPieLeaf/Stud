@@ -39,6 +39,7 @@
 #include <QClipboard>
 #include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMessage>
 #include <QDBusReply>
 #include <QDBusUnixFileDescriptor>
 #include <QDateTime>
@@ -574,6 +575,36 @@ QDBusReply<int> register_through_portal(qint64 pid) {
     return reply;
 }
 
+// The client's main thread, raised as far as RealtimeKit lets a user process:
+// it runs Roblox's frame and sets the frame rate, while the same process's
+// workers and Rosemary's own threads would otherwise get an equal share of a
+// busy core. RealtimeKit (on the system bus), or in the Flatpak the desktop
+// portal's Realtime interface, does it without root; the level is the one
+// they report, MinNiceLevel. The main thread is the process's first, so its
+// thread id is the process id.
+void raise_main_thread_priority(qint64 pid) {
+    const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
+    QDBusInterface realtime(
+        sandboxed ? QStringLiteral("org.freedesktop.portal.Desktop") : QStringLiteral("org.freedesktop.RealtimeKit1"),
+        sandboxed ? QStringLiteral("/org/freedesktop/portal/desktop") : QStringLiteral("/org/freedesktop/RealtimeKit1"),
+        sandboxed ? QStringLiteral("org.freedesktop.portal.Realtime") : QStringLiteral("org.freedesktop.RealtimeKit1"),
+        sandboxed ? QDBusConnection::sessionBus() : QDBusConnection::systemBus());
+    const QVariant floor = realtime.property("MinNiceLevel");
+    if (!floor.isValid()) {
+        std::printf("stud: RealtimeKit is not available; Roblox's main thread keeps its priority\n");
+        return;
+    }
+    const QDBusMessage reply = realtime.call(QStringLiteral("MakeThreadHighPriorityWithPID"),
+                                             static_cast<qulonglong>(pid), static_cast<qulonglong>(pid),
+                                             floor.toInt());
+    if (reply.type() == QDBusMessage::ErrorMessage) {
+        std::printf("stud: RealtimeKit refused Roblox's main thread: %s\n",
+                    reply.errorMessage().toLocal8Bit().constData());
+    } else {
+        std::printf("stud: Roblox's main thread runs at priority %d\n", floor.toInt());
+    }
+}
+
 // Hands the client to Feral GameMode, which lets go when it exits.
 void register_with_gamemode(qint64 pid) {
     const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
@@ -904,6 +935,13 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         return false;
     }
     if (settings.gamemode) register_with_gamemode(g_client->processId());
+    if (QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper)).isEmpty()) {
+        raise_main_thread_priority(g_client->processId());
+    } else {
+        // The process started is the wrapper, not Roblox: its first thread is
+        // not the client's main thread.
+        std::printf("stud: Roblox starts through a wrapper; its main thread keeps its priority\n");
+    }
     // The client puts up its own window within seconds; the loading screen has
     // done its part.
     QTimer::singleShot(3000, qApp, [] { stud::ui::close_loading_screen(); });
