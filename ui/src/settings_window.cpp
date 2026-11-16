@@ -216,10 +216,18 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
                                "OpenGL: Roblox's OpenGL renderer, for hardware Vulkan does not run on.");
     graphics->addWidget(rendererCombo_);
 
-    vsyncCheck_ = new QCheckBox("VSync", this);
-    vsyncCheck_->setToolTip("Wait for the display's refresh. Off presents frames as soon as "
-                            "they are ready.");
-    graphics->addWidget(vsyncCheck_);
+    graphics->addWidget(new QLabel("Presentation"));
+    presentationCombo_ = new QComboBox(this);
+    presentationCombo_->addItem("VSync", QStringLiteral("vsync"));
+    presentationCombo_->addItem("Adaptive VSync", QStringLiteral("adaptive"));
+    presentationCombo_->addItem("No VSync, no tearing", QStringLiteral("mailbox"));
+    presentationCombo_->addItem("No VSync", QStringLiteral("immediate"));
+    presentationCombo_->setToolTip(
+        "VSync: every frame waits for the display's refresh. Smooth, and the frame rate follows the display.\n"
+        "Adaptive VSync: waits, unless a frame is already late; then it tears instead of halving the frame rate.\n"
+        "No VSync, no tearing: uncapped, and the newest frame is shown at each refresh. On OpenGL, the same as No VSync.\n"
+        "No VSync: uncapped, and frames are shown at once, so they may tear. The lowest latency.");
+    graphics->addWidget(presentationCombo_);
 
     auto* scaleRow = new QHBoxLayout();
     scaleRow->addWidget(new QLabel("Render resolution", this));
@@ -514,7 +522,7 @@ void SettingsWindow::installResets() {
         const int index = gpuCombo_->findData(default_gpu_index());
         gpuCombo_->setCurrentIndex(index >= 0 ? index : 0);
     });
-    add(vsyncCheck_, [this, d] { vsyncCheck_->setChecked(d.vsync); });
+    add(presentationCombo_, [this, d] { select_data(presentationCombo_, d.presentation); });
     add(renderScaleSpin_, [this, d] { renderScaleSpin_->setValue(d.render_scale); });
     add(upscalerCombo_, [this, d] { select_data(upscalerCombo_, d.upscaler); });
     add(rendererCombo_, [this, d] { select_data(rendererCombo_, d.renderer); });
@@ -1270,7 +1278,7 @@ void SettingsWindow::loadFromDisk() {
     if (index >= 0) {
         gpuCombo_->setCurrentIndex(index);
     }
-    vsyncCheck_->setChecked(settings.vsync);
+    select_data(presentationCombo_, settings.presentation);
     renderScaleSpin_->setValue(settings.render_scale);
     select_data(upscalerCombo_, settings.upscaler);
     upscalerCombo_->setEnabled(settings.render_scale < 100);
@@ -1436,7 +1444,7 @@ void SettingsWindow::onSaveClicked() {
     settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
     settings.gpu.device_uuid = gpuCombo_->currentData(Qt::UserRole + 2).toString().toStdString();
-    settings.vsync = vsyncCheck_->isChecked();
+    settings.presentation = selected_data(presentationCombo_);
     settings.render_scale = renderScaleSpin_->value();
     settings.upscaler = selected_data(upscalerCombo_);
     settings.renderer = selected_data(rendererCombo_);

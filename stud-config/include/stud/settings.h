@@ -28,6 +28,11 @@ struct GpuSelection {
     std::string device_uuid;
 };
 
+// Whether frames wait for the display's refresh, so the client's own frame
+// rate follows it.
+struct StudSettings;
+bool waits_for_refresh(const StudSettings& settings);
+
 struct StudSettings {
     GpuSelection gpu;
 
@@ -36,9 +41,14 @@ struct StudSettings {
     // allowlisted FFlagDebugGraphicsPreferOpenGL).
     std::string renderer = "vulkan";
 
-    // Whether frames wait for the display's refresh: FIFO presentation, or
-    // Rosemary's own default (MAILBOX) when off.
-    bool vsync = true;
+    // How frames reach the display:
+    //   "vsync"     each waits for a refresh (Vulkan FIFO, OpenGL interval 1)
+    //   "adaptive"  waits, unless it is already late, so a slow frame tears
+    //               instead of halving the rate (FIFO relaxed, interval -1)
+    //   "mailbox"   no wait and no tearing: the newest frame is shown at each
+    //               refresh (Rosemary's own default; on OpenGL, "immediate")
+    //   "immediate" no wait, and frames may tear (IMMEDIATE, interval 0)
+    std::string presentation = "vsync";
 
     // The game drawn at this percentage of the window's size, and scaled
     // back up as it is presented. 100 draws it at full size.

@@ -86,7 +86,7 @@ private:
     void setBackgroundFps(int fps);
 
     QComboBox* gpuCombo_;
-    QCheckBox* vsyncCheck_;
+    QComboBox* presentationCombo_;
     QSpinBox* renderScaleSpin_;
     QComboBox* upscalerCombo_;
     QComboBox* rendererCombo_;

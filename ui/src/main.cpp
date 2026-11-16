@@ -370,7 +370,8 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
     static const QStringList kFromSettings = {
         QStringLiteral("ROSEMARY_PREFIX"), QStringLiteral("ROSEMARY_PREFIX_SETUP"),
         QStringLiteral("ROSEMARY_DECORATIONS"), QStringLiteral("ROSEMARY_MENU"),
-        QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("ROSEMARY_SWAP_INTERVAL"),
+        QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("ROSEMARY_COMMAND_KEY"),
+        QStringLiteral("ROSEMARY_SWAP_INTERVAL"),
         QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"),
         QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("ROSEMARY_WINDOW_TITLE"),
         QStringLiteral("ROSEMARY_WINDOW_ICON"), QStringLiteral("ROSEMARY_STATUS_ITEMS"),
@@ -466,21 +467,35 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
                    QString::number(settings.background_fps));
     }
 
-    // Ctrl for copy, cut, paste and select-all, where the macOS client
-    // expects Command (which Linux desktops keep for themselves).
-    env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
+    // Ctrl where the macOS client expects Command, which Linux desktops keep
+    // for themselves. The Player only for copy, cut, paste and select-all, so
+    // Ctrl stays Ctrl in games; Studio in every shortcut, as Studio on Windows
+    // has it (Ctrl+S saves, Ctrl+1 to 4 pick tools, Ctrl-click adds to a
+    // selection), with Super taking Control's place.
+    if (product == stud::ui::client::Product::Studio) {
+        env.insert(QStringLiteral("ROSEMARY_COMMAND_KEY"), QStringLiteral("ctrl"));
+    } else {
+        env.insert(QStringLiteral("ROSEMARY_CONTROL_EDIT_KEYS"), QStringLiteral("1"));
+    }
 
-    // VSync: on Vulkan the presentation mode, FIFO waiting for the display
-    // and Rosemary's default (MAILBOX) not; on OpenGL the swap interval.
-    // Without VSync, uncapped: the client paces itself to the refresh rate it
-    // is told, so it is told one no display has.
-    if (!settings.vsync) {
+    // Presentation: on Vulkan the presentation mode, on OpenGL the swap
+    // interval (mailbox has no OpenGL equivalent, and is immediate there).
+    // Not waiting for the display means uncapped: the client paces itself to
+    // the refresh rate it is told, so it is told one no display has.
+    if (!stud::config::waits_for_refresh(settings)) {
         env.insert(QStringLiteral("ROSEMARY_SCREEN_REFRESH_RATE"), QStringLiteral("9999"));
     }
     if (settings.renderer == "opengl") {
-        if (!settings.vsync) env.insert(QStringLiteral("ROSEMARY_SWAP_INTERVAL"), QStringLiteral("0"));
-    } else if (settings.vsync) {
-        env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), QStringLiteral("fifo"));
+        if (settings.presentation == "adaptive") {
+            env.insert(QStringLiteral("ROSEMARY_SWAP_INTERVAL"), QStringLiteral("-1"));
+        } else if (!stud::config::waits_for_refresh(settings)) {
+            env.insert(QStringLiteral("ROSEMARY_SWAP_INTERVAL"), QStringLiteral("0"));
+        }
+    } else {
+        const QString mode = settings.presentation == "vsync"      ? QStringLiteral("fifo")
+                             : settings.presentation == "adaptive" ? QStringLiteral("fifo_relaxed")
+                                                                   : QString::fromStdString(settings.presentation);
+        env.insert(QStringLiteral("ROSEMARY_METAL_PRESENTATION_MODE"), mode);
     }
 
     apply_gpu_selection(env, settings);
@@ -603,6 +618,32 @@ void raise_main_thread_priority(qint64 pid) {
     } else {
         std::printf("stud: Roblox's main thread runs at priority %d\n", floor.toInt());
     }
+}
+
+// Whether the kernel offers this system a GPU: a DRM render node, or NVIDIA's
+// own device where its DRM module is not loaded.
+bool kernel_has_gpu() {
+    return !QDir(QStringLiteral("/dev/dri")).entryList({QStringLiteral("renderD*")}, QDir::System).isEmpty() ||
+           QFileInfo::exists(QStringLiteral("/dev/nvidiactl"));
+}
+
+// What to tell someone whose system has no GPU for Roblox to draw with.
+QString no_gpu_reason() {
+    QString reason = QStringLiteral(
+        "Roblox needs a graphics card, and this Linux system has none it can use: Vulkan finds no "
+        "device, and there is nothing in /dev/dri. Without one, Roblox only shows an empty window.");
+    // ChromeOS's Linux container, which gets the GPU only when asked to.
+    if (QFileInfo::exists(QStringLiteral("/opt/google/cros-containers"))) {
+        reason += QStringLiteral(
+            "\n\nOn a Chromebook, turn on GPU acceleration for Linux: open "
+            "chrome://flags/#crostini-gpu-support in Chrome, enable it, restart the Chromebook, "
+            "and start Stud again.");
+    } else {
+        reason += QStringLiteral(
+            "\n\nCheck that your graphics driver is installed. In a virtual machine, turn on its 3D "
+            "acceleration.");
+    }
+    return reason;
 }
 
 // Hands the client to Feral GameMode, which lets go when it exits.
@@ -764,6 +805,20 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     start_session_log();
     stud::ui::write_diagnostics();
 
+    // Roblox draws on the GPU. With no Vulkan device its Metal renderer cannot
+    // start; with no GPU at all, Mesa's software fallback cannot compile
+    // Roblox's shaders, and its window stays empty with nothing to say why.
+    if (stud::ui::enumerate_gpus().empty()) {
+        if (!kernel_has_gpu()) {
+            open_settings_for_launch_failure(no_gpu_reason());
+            return false;
+        }
+        if (settings.renderer != "opengl") {
+            settings.renderer = "opengl";
+            std::printf("stud: no Vulkan device; Roblox runs on OpenGL this time\n");
+        }
+    }
+
     // Cancel stops opening Stud.
     stud::ui::show_loading_lines([]() {
         // Stops a download, unpacking or prefix setup under way, and clears
@@ -809,7 +864,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
              stud::ui::client::prefix_dir() + QStringLiteral("/root"))) {
         std::printf("stud: removed what Roblox's own installer left: %s\n", qPrintable(leftover));
     }
-    if (player && !settings.vsync) lift_roblox_frame_cap();
+    if (player && !stud::config::waits_for_refresh(settings)) lift_roblox_frame_cap();
     if (has_nvidia_card() && nvidia_vulkan_driver().isEmpty()) {
         std::printf("stud: an NVIDIA card without NVIDIA's Vulkan driver\n");
         stud::ui::send_notification(

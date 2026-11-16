@@ -33,6 +33,10 @@ void make_directories(const std::string& path) {
 
 namespace stud::config {
 
+bool waits_for_refresh(const StudSettings& settings) {
+    return settings.presentation == "vsync" || settings.presentation == "adaptive";
+}
+
 StudSettings load_settings(const std::string& path) {
     StudSettings result;
 
@@ -116,7 +120,13 @@ StudSettings load_settings(const std::string& path) {
         }
     }
     read_string("renderer", result.renderer, {"vulkan", "opengl"});
-    read_bool("vsync", result.vsync);
+    // Before 2.0.2, VSync was on or off; off was Rosemary's mailbox.
+    if (!doc.contains("presentation") && doc.contains("vsync")) {
+        bool vsync = true;
+        read_bool("vsync", vsync);
+        result.presentation = vsync ? "vsync" : "mailbox";
+    }
+    read_string("presentation", result.presentation, {"vsync", "adaptive", "mailbox", "immediate"});
     if (doc.contains("renderResolution")) {
         const auto& value = doc.at("renderResolution");
         if (!value.is_number_integer() || value.get<int>() < 1 || value.get<int>() > 100) {
@@ -193,7 +203,8 @@ void save_settings(const std::string& path, const StudSettings& settings) {
                   {"deviceName", settings.gpu.device_name},
                   {"deviceUuid", settings.gpu.device_uuid}};
     doc["renderer"] = settings.renderer;
-    doc["vsync"] = settings.vsync;
+    doc["presentation"] = settings.presentation;
+    doc.erase("vsync");
     doc["renderResolution"] = settings.render_scale;
     doc["upscaler"] = settings.upscaler;
     doc["titleBar"] = settings.title_bar;

@@ -281,7 +281,7 @@ void build_diagnostics() {
     } else {
         line("gpu", settings.gpu.device_name);
         line("renderer", settings.renderer);
-        line("vsync", yes_no(settings.vsync));
+        line("presentation", settings.presentation);
         line("title bar", settings.title_bar);
         line("display backend", settings.display_backend);
         line("background fps", settings.background_fps == stud::config::kBackgroundFpsNoLimit

@@ -14,6 +14,8 @@ the source and is missing from this file, so this list cannot quietly go stale.
 |---|---|---|
 | `STUD_ROSEMARY` | unset | The Rosemary executable to run the client with, instead of the one installed with Stud or found on `PATH`. |
 | `STUD_LOG_FILE` | unset | The session log. Stud sets it at launch and writes its own output and the client's there; set beforehand, Stud uses that file instead of making one under `~/.local/state/stud/logs`. |
+| `STUD_TEST_CLIENT` | unset | Tests only: the Roblox `.app` `code_signature_test` checks, instead of the Player Stud installed. |
+| `STUD_TEST_IDENTIFIER` | unset | Tests only: the code identifier that client is signed as, `com.Roblox.RobloxStudio` for Studio; the Player's when unset. |
 | `STUD_HOST_LD_LIBRARY_PATH` | unset | The host's `LD_LIBRARY_PATH`, restored for programs Stud starts on the desktop's behalf. A bundle sets this. |
 
 ## What Stud sets for the client
@@ -31,11 +33,12 @@ log.
 | `ROSEMARY_PREFIX` | always | Stud's prefix, `~/.local/share/stud/prefix`. |
 | `ROSEMARY_DECORATIONS` | MacOS title bar | `client` for the macOS title bar, `server` for the desktop's own. |
 | `ROSEMARY_MENU` | MacOS title bar | `titlebar` with the menu bar, `none` without. |
-| `ROSEMARY_CONTROL_EDIT_KEYS` | always | `1`: Ctrl for copy, cut and paste. |
-| `ROSEMARY_SCREEN_REFRESH_RATE` | VSync | `9999` when off: the client paces itself to the refresh rate it is told, so off is uncapped. Roblox's own `FramerateCap` is lifted to match. |
+| `ROSEMARY_CONTROL_EDIT_KEYS` | the Player | `1`: Ctrl for copy, cut and paste. |
+| `ROSEMARY_COMMAND_KEY` | Studio | `ctrl`: Ctrl as Command in every shortcut, as Studio on Windows has it (Ctrl+S saves, Ctrl+1 to 4 pick tools, Ctrl-click adds to a selection); Super takes Control's place. |
+| `ROSEMARY_SCREEN_REFRESH_RATE` | Presentation | `9999` for the two without VSync: the client paces itself to the refresh rate it is told, so they are uncapped. Roblox's own `FramerateCap` is lifted to match. |
 | `VK_DRIVER_FILES`, `__GL_SHADER_DISK_CACHE_SKIP_CLEANUP` | an NVIDIA GPU | Only NVIDIA's Vulkan driver, and its shader cache never cleaned up. |
-| `ROSEMARY_METAL_PRESENTATION_MODE` | VSync, on Vulkan | `fifo` when on; unset (Rosemary's `mailbox`) when off. |
-| `ROSEMARY_SWAP_INTERVAL` | VSync, on OpenGL | `0` when off. |
+| `ROSEMARY_METAL_PRESENTATION_MODE` | Presentation, on Vulkan | `fifo` (VSync), `fifo_relaxed` (adaptive VSync), `mailbox` (no VSync, no tearing) or `immediate` (no VSync). |
+| `ROSEMARY_SWAP_INTERVAL` | Presentation, on OpenGL | `-1` for adaptive VSync, `0` for the two without VSync; unset for VSync. |
 | `SDL_VIDEO_DRIVER` | Display server | `wayland` on a Wayland desktop, or `x11` when chosen there and XWayland runs. |
 | `ROSEMARY_WINDOW_TITLE`, `ROSEMARY_WINDOW_ICON` | always | `Stud` (Roblox only) and Stud's icon, the red stud for Roblox and the blue one for Studio: the window's title bar names Stud, not the client. |
 | `ROSEMARY_STATUS_ITEMS` | always | `0`: the client's menu bar extras stay out of the tray, beside Stud's own icon. |

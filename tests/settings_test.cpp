@@ -38,7 +38,8 @@ int main(int argc, char** argv) {
     // Missing file: defaults, not an error.
     auto defaults = stud::config::load_settings(dir + "/does_not_exist.json");
     check(defaults.gpu.device_index == 0, "missing config file defaults gpu.deviceIndex to 0");
-    check(defaults.vsync, "vsync defaults to on");
+    check(defaults.presentation == "vsync" && stud::config::waits_for_refresh(defaults),
+          "presentation defaults to VSync");
     check(defaults.render_scale == 100 && defaults.upscaler == "ravu-ar",
           "the game renders at full size, with RAVU-Zoom ready");
     check(defaults.renderer == "vulkan", "the renderer defaults to Vulkan");
@@ -56,7 +57,7 @@ int main(int argc, char** argv) {
     settings.gpu.device_index = 2;
     settings.gpu.device_name = "Test GPU 9000";
     settings.gpu.device_uuid = "00112233445566778899aabbccddeeff";
-    settings.vsync = false;
+    settings.presentation = "adaptive";
     settings.render_scale = 67;
     settings.upscaler = "sgsr-ed";
     settings.renderer = "opengl";
@@ -81,7 +82,8 @@ int main(int argc, char** argv) {
     check(loaded.gpu.device_index == 2, "gpu.deviceIndex round-trips");
     check(loaded.gpu.device_name == "Test GPU 9000", "gpu.deviceName round-trips");
     check(loaded.gpu.device_uuid == "00112233445566778899aabbccddeeff", "gpu.deviceUuid round-trips");
-    check(!loaded.vsync, "vsync round-trips");
+    check(loaded.presentation == "adaptive" && stud::config::waits_for_refresh(loaded),
+          "presentation round-trips");
     check(loaded.render_scale == 67 && loaded.upscaler == "sgsr-ed", "render scale and upscaler round-trip");
     check(loaded.renderer == "opengl", "the renderer round-trips");
     check(loaded.title_bar == "macos-no-menu", "the title bar round-trips");
@@ -158,6 +160,16 @@ int main(int argc, char** argv) {
     check(throws_on(dir + "/bad_backend.json", R"({"displayBackend": "mir"})"),
           "an unknown display backend throws");
     check(throws_on(dir + "/bad_vsync.json", R"({"vsync": "yes"})"), "a non-boolean vsync throws");
+    check(throws_on(dir + "/bad_presentation.json", R"({"presentation": "triple"})"),
+          "an unknown presentation throws");
+    {
+        // A file from before presentation modes: VSync off was mailbox.
+        std::ofstream old(dir + "/old_vsync.json");
+        old << R"({"vsync": false})";
+    }
+    const auto migrated = stud::config::load_settings(dir + "/old_vsync.json");
+    check(migrated.presentation == "mailbox" && !stud::config::waits_for_refresh(migrated),
+          "an old VSync-off setting becomes mailbox");
 
     std::printf("all settings checks passed\n");
     return 0;

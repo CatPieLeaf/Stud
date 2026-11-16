@@ -86,7 +86,7 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - FastFlags: an editor with JSON import, profiles, presets (MSAA, texture quality, graphics level, mesh detail, grass, gray sky), and a warning for flags Roblox ignores, with Clean list
  - Customizations: textures, sounds, fonts and cursors over Roblox's own content, put back when removed; generated cursor, shift lock, emote wheel, death sound and font; import from Bloxstrap, Fishstrap or Froststrap. A new set that crashes Roblox's next start is set aside, and the last set that worked comes back
  - Roblox's own settings (volume, sensitivity, camera, fullscreen and more) editable from Stud
- - Vulkan or OpenGL, uncapped without VSync
+ - Vulkan or OpenGL, with VSync, adaptive VSync, or uncapped with or without tearing
  - **Upscaling** on Vulkan: lower the render resolution and the frame is rebuilt at your window's size. **RAVU-Zoom AR**, with FidelityFX RCAS sharpening after it, is the better picture; **SGSR1 ED** is the lightweight one, for laptops and integrated GPUs
  - Game history with time played, the servers you joined and where they are, rejoining a server, and game shortcuts in the application menu; either kind of history can be turned off
  - Roblox and **Roblox Studio**: opened on its own, Stud asks which, and keeps each up to date
@@ -146,7 +146,7 @@ The launcher stays for the whole session as the client's parent, so there is alw
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ git cargo glslc \
   qt6-qtbase-devel qt6-qtwebengine-devel qt6-qtwebchannel-devel \
-  vulkan-headers vulkan-loader-devel libcurl-devel zlib-devel systemd-devel \
+  vulkan-headers vulkan-loader-devel libcurl-devel openssl-devel zlib-devel systemd-devel \
   libxkbcommon-devel SDL3
 ```
 
@@ -156,7 +156,7 @@ sudo dnf install cmake ninja-build gcc-c++ git cargo glslc \
 ```bash
 sudo apt install cmake ninja-build build-essential git glslc \
   qt6-base-dev qt6-webengine-dev qt6-webchannel-dev \
-  libvulkan-dev libgles-dev libcurl4-openssl-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0
+  libvulkan-dev libgles-dev libcurl4-openssl-dev libssl-dev zlib1g-dev libudev-dev libxkbcommon-dev libsdl3-0
 ```
 
 Ubuntu's cargo is older than Rosemary needs; install Rust with [rustup](https://rustup.rs) instead.
