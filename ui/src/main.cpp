@@ -40,6 +40,7 @@
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
+#include <QDBusUnixFileDescriptor>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
@@ -76,6 +77,7 @@
 #include <vector>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/syscall.h>
 #include <sched.h>
 #include <unistd.h>
 
@@ -548,19 +550,50 @@ void warn_if_gamemode_cannot_raise_cpu() {
                   QStringLiteral("--process"), QString::number(QCoreApplication::applicationPid())});
 }
 
+// GameMode as the Flatpak sandbox reaches it: through the desktop portal,
+// which needs no permission and hands the request to GameMode on the host.
+// Calling GameMode's own name from inside the sandbox fails (ServiceUnknown),
+// and the session went without it. The process is named by pidfds, which
+// stay right across the sandbox's pid namespace; RegisterGame with a bare pid
+// only where pidfds are unavailable.
+QDBusReply<int> register_through_portal(qint64 pid) {
+    QDBusInterface portal("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                          "org.freedesktop.portal.GameMode", QDBusConnection::sessionBus());
+    const int target = static_cast<int>(::syscall(SYS_pidfd_open, static_cast<pid_t>(pid), 0));
+    const int self = static_cast<int>(::syscall(SYS_pidfd_open, ::getpid(), 0));
+    QDBusReply<int> reply;
+    if (target >= 0 && self >= 0) {
+        // QDBusUnixFileDescriptor keeps a duplicate, so these are closed here.
+        reply = portal.call("RegisterGameByPIDFd", QVariant::fromValue(QDBusUnixFileDescriptor(target)),
+                            QVariant::fromValue(QDBusUnixFileDescriptor(self)));
+    } else {
+        reply = portal.call("RegisterGame", static_cast<int>(pid));
+    }
+    if (target >= 0) ::close(target);
+    if (self >= 0) ::close(self);
+    return reply;
+}
+
 // Hands the client to Feral GameMode, which lets go when it exits.
 void register_with_gamemode(qint64 pid) {
-    QDBusInterface gamemode("com.feralinteractive.GameMode", "/com/feralinteractive/GameMode",
-                            "com.feralinteractive.GameMode", QDBusConnection::sessionBus());
-    const QDBusReply<int> reply = gamemode.call("RegisterGame", static_cast<int>(pid));
+    const bool sandboxed = QFileInfo::exists(QStringLiteral("/.flatpak-info"));
+    QDBusReply<int> reply;
+    if (sandboxed) {
+        reply = register_through_portal(pid);
+    } else {
+        QDBusInterface gamemode("com.feralinteractive.GameMode", "/com/feralinteractive/GameMode",
+                                "com.feralinteractive.GameMode", QDBusConnection::sessionBus());
+        reply = gamemode.call("RegisterGame", static_cast<int>(pid));
+    }
     if (!reply.isValid()) {
         std::printf("stud: GameMode is not available: %s\n",
                     reply.error().message().toLocal8Bit().constData());
     } else if (reply.value() != 0) {
         std::printf("stud: GameMode refused the session (%d)\n", reply.value());
     } else {
-        std::printf("stud: GameMode is on for this session\n");
-        warn_if_gamemode_cannot_raise_cpu();
+        std::printf("stud: GameMode is on for this session%s\n", sandboxed ? " (through the portal)" : "");
+        // Polkit is the host's: pkcheck cannot ask it from inside the sandbox.
+        if (!sandboxed) warn_if_gamemode_cannot_raise_cpu();
     }
 }
 
