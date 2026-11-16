@@ -9,6 +9,7 @@ pkgbase = stud-bin
 	makedepends = ninja
 	makedepends = git
 	makedepends = vulkan-headers
+	depends = gamemode
 	depends = qt6-base
 	depends = qt6-webengine
 	depends = qt6-webchannel
@@ -22,7 +23,6 @@ pkgbase = stud-bin
 	depends = gcc-libs
 	depends = hicolor-icon-theme
 	depends = ffmpeg
-	optdepends = gamemode: the CPU in its performance mode while Roblox runs
 	optdepends = mangohud: the performance overlay Stud can switch on in Settings
 	provides = stud=2.0.1
 	conflicts = stud

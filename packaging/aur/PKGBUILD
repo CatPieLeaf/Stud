@@ -22,6 +22,7 @@ license=('AGPL-3.0-or-later')
 # it needs 3.4 or newer, which Arch has. The rest are what the launcher and
 # Rosemary link.
 depends=(
+  'gamemode'
   'qt6-base'
   'qt6-webengine'
   'qt6-webchannel'
@@ -45,7 +46,6 @@ makedepends=(
   'vulkan-headers'
 )
 optdepends=(
-  'gamemode: the CPU in its performance mode while Roblox runs'
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
 # The tag carries no leading "v", match what is actually published.

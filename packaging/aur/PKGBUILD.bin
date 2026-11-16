@@ -18,6 +18,7 @@ license=('AGPL-3.0-or-later')
 # dependency that only one of them names is a broken package for half the
 # people who install it.
 depends=(
+  'gamemode'
   'qt6-base'
   'qt6-webengine'
   'qt6-webchannel'
@@ -33,7 +34,6 @@ depends=(
   'ffmpeg'
 )
 optdepends=(
-  'gamemode: the CPU in its performance mode while Roblox runs'
   'mangohud: the performance overlay Stud can switch on in Settings'
 )
 options=(!strip !debug emptydirs)

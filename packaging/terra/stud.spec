@@ -33,8 +33,10 @@ Requires:       libvulkan.so.1()(64bit)
 # release.
 Requires:       libavcodec-free
 Requires:       libavutil-free
-# Both are Settings switches, and neither stops Stud from running.
-Recommends:     gamemode
+# GameMode holds the CPU in its performance mode while Roblox runs; Stud
+# turns it on by default.
+Requires:       gamemode
+# A Settings switch, which does not stop Stud from running.
 Suggests:       mangohud
 # Everything else is found by rpm itself from the ELFs: Qt with QtWebEngine
 # and QtWebChannel, libcurl, zlib, libxkbcommon and libudev.
