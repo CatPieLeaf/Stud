@@ -333,6 +333,36 @@ jobs:
           tar -C install-tree -xf "$archive"
           test -d install-tree/usr
 
+      - name: Build the cpak image, and publish it for a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          version="${VERSION}"
+          # Only this file is ever built, so anything added to the
+          # from-source Containerfile instead reaches nobody.
+          #
+          # Before the step that rebuilds bin/stud against Arch's Qt: that
+          # one replaces it in this same tree, and the image is Fedora 44.
+          # Built after it, the image carried a launcher that needs Arch's
+          # newer Qt and would not start (issue #34).
+          python3 tools/check-cpak-runtime.py
+          podman build -f packaging/cpak/Containerfile.prebuilt \
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" \
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest" .
+          # A manual run builds the image, which is the test, and stops:
+          # :latest belongs to the newest release.
+          [ "$EVENT" = release ] || exit 0
+          echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          # The digest the registry stores, from the push itself. The local
+          # image's own digest is not it: podman re-encodes the image as it
+          # pushes, and a pin to the local one named a manifest the registry
+          # did not have.
+          podman push --digestfile cpak-image-digest.txt \
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
+          podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
+          cat cpak-image-digest.txt
+
       - name: Verify the Arch recipes agree with each other and with the tree
         # The AUR serves .SRCINFO, not the PKGBUILD, so a stale one
         # advertises dependencies the package does not actually declare.
@@ -468,31 +498,6 @@ jobs:
           python3 tools/compare-package-contents.py \
             --tree install-tree --package "$pkg" --kind arch --work /tmp/arch-payload
           python3 tools/validate-payload.py /tmp/arch-payload --label "Arch package"
-
-      - name: Build the cpak image, and publish it for a release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          version="${VERSION}"
-          # Only this file is ever built, so anything added to the
-          # from-source Containerfile instead reaches nobody.
-          python3 tools/check-cpak-runtime.py
-          podman build -f packaging/cpak/Containerfile.prebuilt \
-            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}" \
-            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest" .
-          # A manual run builds the image, which is the test, and stops:
-          # :latest belongs to the newest release.
-          [ "$EVENT" = release ] || exit 0
-          echo "$GH_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          # The digest the registry stores, from the push itself. The local
-          # image's own digest is not it: podman re-encodes the image as it
-          # pushes, and a pin to the local one named a manifest the registry
-          # did not have.
-          podman push --digestfile cpak-image-digest.txt \
-            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:${version}"
-          podman push "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stud:latest"
-          cat cpak-image-digest.txt
 
       # On its own under an obvious name: a manual run's artifacts are what
       # testers install from, and `packages` holds a look-alike tar.zst that
