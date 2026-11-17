@@ -10,6 +10,7 @@
 #include "fflags.h"
 #include "desktop_entry.h"
 #include "history.h"
+#include "launcher_portal.h"
 #include "log_export.h"
 #include "diagnose.h"
 #include "mac_client.h"
@@ -1180,9 +1181,6 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     join->setIcon(themed("media-playback-start", QStyle::SP_MediaPlay));
     shortcut->setIcon(themed("list-add", QStyle::SP_FileDialogNewFolder));
     shortcut->setToolTip("Adds the game to the application menu; it opens straight into the game.");
-    // The Flatpak sandbox cannot write the desktop's application menu: a
-    // shortcut made there would land in its own folder and show nowhere.
-    shortcut->setVisible(!QFileInfo::exists(QStringLiteral("/.flatpak-info")));
     auto* reload = new QPushButton("Refresh", this);
     reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
     auto* forget = new QPushButton("Clear history", this);
@@ -1225,6 +1223,43 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
         const QString place = list->currentItem()->data(0, Qt::UserRole).toString();
         const QString name = list->currentItem()->text(0);
         const QString icon_url = list->currentItem()->data(0, Qt::UserRole + 1).toString();
+        // The Flatpak sandbox cannot write the desktop's application menu,
+        // and its own path to Stud means nothing outside it: the desktop
+        // portal adds the launcher instead, once the user confirms.
+        if (QFileInfo::exists(QStringLiteral("/.flatpak-info"))) {
+            QPointer<QLabel> status = statusLabel_;
+            const auto ask = [status, place, name](const QByteArray& image_file) {
+                QByteArray png = launcher_portal::icon_png(image_file);
+                if (png.isEmpty()) {
+                    QFile logo(QStringLiteral(":/stud-logo-color.png"));
+                    if (logo.open(QIODevice::ReadOnly)) png = launcher_portal::icon_png(logo.readAll());
+                }
+                launcher_portal::install(
+                    QStringLiteral("game%1").arg(place), name,
+                    QStringLiteral("stud \"roblox://experiences/start?placeId=%1\"").arg(place), png,
+                    [status](bool added, const QString& what) {
+                        if (status.isNull() || (!added && what.isEmpty())) return;
+                        status->setText((added ? QStringLiteral("Added %1 to the application menu.").arg(what)
+                                               : QStringLiteral("Could not add the shortcut: %1").arg(what))
+                                            .toHtmlEscaped());
+                    });
+            };
+            if (icon_url.isEmpty()) {
+                ask({});
+                return;
+            }
+            // The game's icon first: the portal shows it as it asks.
+            auto* net = new QNetworkAccessManager(this);
+            QNetworkRequest request{QUrl(icon_url)};
+            request.setTransferTimeout(10000);
+            QNetworkReply* reply = net->get(request);
+            connect(reply, &QNetworkReply::finished, this, [reply, net, ask] {
+                ask(reply->error() == QNetworkReply::NoError ? reply->readAll() : QByteArray());
+                reply->deleteLater();
+                net->deleteLater();
+            });
+            return;
+        }
         const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
         const QString icon = QString::fromStdString(stud::paths::data_dir()) +
                              QStringLiteral("/icons/%1.png").arg(place);
