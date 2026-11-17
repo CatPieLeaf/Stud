@@ -174,9 +174,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     general->addWidget(new QLabel("MacOS title bar"));
     titleBarCombo_ = new QComboBox(this);
-    titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
-    titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
     titleBarCombo_->addItem("MacOS title bar only", QStringLiteral("macos-no-menu"));
+    titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
+    titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
     general->addWidget(titleBarCombo_);
 
     // A choice only on a Wayland desktop that also runs XWayland: anywhere

@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     check(defaults.render_scale == 100 && defaults.upscaler == "ravu-ar",
           "the game renders at full size, with RAVU-Zoom ready");
     check(defaults.renderer == "vulkan", "the renderer defaults to Vulkan");
-    check(defaults.title_bar == "native", "the title bar defaults to the desktop's own");
+    check(defaults.title_bar == "macos-no-menu", "the title bar defaults to the macOS one, without the menu bar");
     check(defaults.display_backend == "auto", "the display backend defaults to automatic");
     check(defaults.system_tray, "the tray defaults to on");
     check(defaults.background_fps == 30, "the background frame rate defaults to 30");
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     settings.render_scale = 67;
     settings.upscaler = "sgsr-ed";
     settings.renderer = "opengl";
-    settings.title_bar = "macos-no-menu";
+    settings.title_bar = "native";
     settings.display_backend = "x11";
     settings.mangohud = true;
     settings.gamemode = false;
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
           "presentation round-trips");
     check(loaded.render_scale == 67 && loaded.upscaler == "sgsr-ed", "render scale and upscaler round-trip");
     check(loaded.renderer == "opengl", "the renderer round-trips");
-    check(loaded.title_bar == "macos-no-menu", "the title bar round-trips");
+    check(loaded.title_bar == "native", "the title bar round-trips");
     check(loaded.display_backend == "x11", "the display backend round-trips");
     check(loaded.mangohud, "mangohud round-trips");
     check(!loaded.gamemode, "gamemode round-trips");
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
         check(content.find("someOtherKey") != std::string::npos,
               "save_settings preserves a key that is not Stud's");
         check(content.find("menuBar") == std::string::npos, "menuBar is not written any more");
-        check(content.find("\"titleBar\": \"native\"") != std::string::npos,
+        check(content.find("\"titleBar\": \"macos-no-menu\"") != std::string::npos,
               "save_settings writes its own keys into the same file");
     }
 

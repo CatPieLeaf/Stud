@@ -61,7 +61,7 @@ struct StudSettings {
     // The window's title bar: "macos" (the macOS title bar with the menu bar
     // in it), "macos-no-menu" (the macOS title bar alone) or "native" (the
     // desktop's own title bar, no menu bar).
-    std::string title_bar = "native";
+    std::string title_bar = "macos-no-menu";
 
     // Where the window goes, on a Wayland desktop that also runs XWayland:
     // "auto" or "wayland" (Wayland), or "x11" (through XWayland). Anywhere
