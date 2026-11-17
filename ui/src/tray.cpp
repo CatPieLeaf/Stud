@@ -104,17 +104,21 @@ bool Tray::show() {
     // Kept so the update entry can be added to it later, when and if the
     // check comes back saying there is one.
     menu_ = menu;
-    menu->addAction(QStringLiteral("Stud settings"), this, &Tray::openSettings);
+    menu->addAction(QIcon::fromTheme(QStringLiteral("configure"), QIcon::fromTheme(QStringLiteral("preferences-system"))),
+                    QStringLiteral("Stud settings"), this, &Tray::openSettings);
     // Only while the player is in a server someone else can join.
-    QAction* copy_link = menu->addAction(QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
+    QAction* copy_link = menu->addAction(QIcon::fromTheme(QStringLiteral("edit-copy")),
+                                         QStringLiteral("Copy server link"), this, &Tray::copyServerLink);
     copy_link->setVisible(false);
     connect(menu, &QMenu::aboutToShow, this,
             [copy_link] { copy_link->setVisible(!current_server_link().isEmpty()); });
-    menu->addAction(QStringLiteral("Export logs"), this, &Tray::exportLogs);
+    menu->addAction(QIcon::fromTheme(QStringLiteral("document-save")), QStringLiteral("Export logs"), this,
+                    &Tray::exportLogs);
     menu->addSeparator();
-    menu->addAction(QStringLiteral("About Stud"), this, &Tray::showAbout);
+    menu->addAction(QIcon::fromTheme(QStringLiteral("help-about")), QStringLiteral("About Stud"), this, &Tray::showAbout);
     menu->addSeparator();
-    menu->addAction(QStringLiteral("Exit Stud"), this, &Tray::quitStud);
+    menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), QStringLiteral("Exit Stud"), this,
+                    &Tray::quitStud);
     icon_->setContextMenu(menu);
     icon_->show();
 
