@@ -174,9 +174,9 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
 
     general->addWidget(new QLabel("MacOS title bar"));
     titleBarCombo_ = new QComboBox(this);
+    titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
     titleBarCombo_->addItem("MacOS title bar and menu bar", QStringLiteral("macos"));
     titleBarCombo_->addItem("MacOS title bar only", QStringLiteral("macos-no-menu"));
-    titleBarCombo_->addItem("Linux native title bar", QStringLiteral("native"));
     general->addWidget(titleBarCombo_);
 
     // A choice only on a Wayland desktop that also runs XWayland: anywhere
@@ -191,6 +191,22 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
                                 !qEnvironmentVariableIsEmpty("DISPLAY");
     displayBackendLabel->setVisible(backend_choice);
     displayBackendCombo_->setVisible(backend_choice);
+
+    general->addWidget(new QLabel("Launch Roblox through", this));
+    wrapperEdit_ = new QLineEdit(this);
+    wrapperEdit_->setPlaceholderText("gamescope -f --");
+    wrapperEdit_->setToolTip("A command Roblox starts through, such as gamescope or prime-run. "
+                             "Quotes work as in a shell. Empty for none.");
+    general->addWidget(wrapperEdit_);
+    general->addWidget(new QLabel("Environment variables", this));
+    environmentEdit_ = new QPlainTextEdit(this);
+    environmentEdit_->setPlaceholderText("NAME=value, one a line");
+    environmentEdit_->setToolTip("Set for Roblox when it starts, after Stud's own, so one here wins "
+                                 "over Stud's value for the same name. Lines starting with # are "
+                                 "skipped.");
+    environmentEdit_->setTabChangesFocus(true);
+    environmentEdit_->setMaximumHeight(environmentEdit_->fontMetrics().lineSpacing() * 5);
+    general->addWidget(environmentEdit_);
 
     general->addStretch();
 
@@ -273,22 +289,6 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     mangohudCheck_ = new QCheckBox("MangoHud overlay", this);
     mangohudCheck_->setToolTip("Shows MangoHud's performance overlay over Roblox.");
     graphics->addWidget(mangohudCheck_);
-
-    graphics->addWidget(new QLabel("Launch Roblox through", this));
-    wrapperEdit_ = new QLineEdit(this);
-    wrapperEdit_->setPlaceholderText("gamescope -f --");
-    wrapperEdit_->setToolTip("A command Roblox starts through, such as gamescope or prime-run. "
-                             "Quotes work as in a shell. Empty for none.");
-    graphics->addWidget(wrapperEdit_);
-    graphics->addWidget(new QLabel("Environment variables", this));
-    environmentEdit_ = new QPlainTextEdit(this);
-    environmentEdit_->setPlaceholderText("NAME=value, one a line");
-    environmentEdit_->setToolTip("Set for Roblox when it starts, after Stud's own, so one here wins "
-                                 "over Stud's value for the same name. Lines starting with # are "
-                                 "skipped.");
-    environmentEdit_->setTabChangesFocus(true);
-    environmentEdit_->setMaximumHeight(environmentEdit_->fontMetrics().lineSpacing() * 5);
-    graphics->addWidget(environmentEdit_);
 
     graphics->addStretch();
 
@@ -767,8 +767,8 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
         {"PreferredTransparency", "Background transparency", Kind::Fraction},
     };
 
-    auto* note = new QLabel("Roblox's own settings, as its menu saves them. Roblox writes them when it "
-                            "closes, so change them while it is closed.", this);
+    auto* note = new QLabel("The settings from Roblox's in-game menu. Close Roblox before changing them, "
+                            "or it will overwrite them when it exits.", this);
     note->setWordWrap(true);
     tab->addWidget(note);
     auto* grid = new QGridLayout();
@@ -960,7 +960,7 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     auto* logsLabel = new QLabel("<b>Logs</b>", this);
     tab->addWidget(logsLabel);
     auto* logsNote = new QLabel("For a bug report: every session's log and Roblox's own, or only the "
-                                "newest session's. Join tickets are kept out of them.", this);
+                                "newest session's.", this);
     logsNote->setWordWrap(true);
     tab->addWidget(logsNote);
     auto* logs = new QHBoxLayout();
@@ -988,7 +988,7 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
 
     tab->addSpacing(fontMetrics().height());
     tab->addWidget(new QLabel("<b>Storage</b>", this));
-    auto* storageNote = new QLabel("Settings, FastFlags, customizations and logs are kept either way.", this);
+    auto* storageNote = new QLabel("Settings, FastFlags, customizations and logs will not be erased.", this);
     storageNote->setWordWrap(true);
     tab->addWidget(storageNote);
     auto* storage = new QHBoxLayout();
@@ -1132,15 +1132,18 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
 // The games played, most recent first, with the time played in each: join
 // one again, or give it a shortcut in the application menu.
 void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
-    historyGamesCheck_ = new QCheckBox("Record the games I play", this);
+    historyGamesCheck_ = new QCheckBox("Track games", this);
     historyGamesCheck_->setToolTip("Keeps each game you play here, with the time played.");
-    historyServersCheck_ = new QCheckBox("Record the servers I join", this);
+    historyServersCheck_ = new QCheckBox("Track servers", this);
     historyServersCheck_->setToolTip(
         "Keeps each server you join in a game, with where it is, so you can rejoin it.\n"
         "Finding where a server is asks ipwho.is about the server's address, never yours.");
     connect(historyGamesCheck_, &QCheckBox::toggled, historyServersCheck_, &QWidget::setEnabled);
-    tab->addWidget(historyGamesCheck_);
-    tab->addWidget(historyServersCheck_);
+    auto* tracking = new QHBoxLayout();
+    tracking->addWidget(historyGamesCheck_);
+    tracking->addWidget(historyServersCheck_);
+    tracking->addStretch();
+    tab->addLayout(tracking);
 
     auto* total = new QLabel(this);
     tab->addWidget(total);
