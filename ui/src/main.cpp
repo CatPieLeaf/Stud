@@ -961,7 +961,15 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     QStringList args{QStringLiteral("run"), program};
     if (deep_link && player) args << QStringLiteral("-protocolString") << *deep_link;
-    if (deep_link && !player) args << *deep_link;
+    // A place file as the task Studio gives the process that edits one: given
+    // as a document instead, the Studio started opens a second one for it and
+    // stays on its start page beside it.
+    if (deep_link && !player && deep_link->startsWith(QLatin1Char('/'))) {
+        args << QStringLiteral("-task") << QStringLiteral("EditFile") << QStringLiteral("-localPlaceFile")
+             << *deep_link;
+    } else if (deep_link && !player) {
+        args << *deep_link;
+    }
 
     stud::ui::GameActivity::Options activity;
     activity.discord = settings.discord_rich_presence;
