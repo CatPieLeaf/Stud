@@ -1,4 +1,7 @@
 #include "game_activity.h"
+#include <QFileInfo>
+#include <QFile>
+#include <QDir>
 
 #include "history.h"
 #include "notifications.h"
@@ -40,6 +43,46 @@ GameActivity::GameActivity(const Options& options, QObject* parent)
     if (options_.discord) {
         discord_rpc_start(kRobloxDiscordApplicationId);
         publish();
+    }
+    if (options_.studio && !options_.studio_logs.isEmpty()) follow_studio_logs();
+}
+
+void GameActivity::follow_studio_logs() {
+    studio_started_ = QDateTime::currentDateTime();
+    QDir().mkpath(options_.studio_logs);
+    studio_watcher_.addPath(options_.studio_logs);
+    // A new log: Studio starting, or a second Studio opening a place.
+    const auto scan = [this] {
+        const QDir dir(options_.studio_logs);
+        for (const QFileInfo& log : dir.entryInfoList({QStringLiteral("*_Studio_*_last.log")}, QDir::Files)) {
+            const QString path = log.absoluteFilePath();
+            if (studio_read_.contains(path) || log.fileName().contains(QStringLiteral("CrashHandler"))) continue;
+            const QDateTime born = log.birthTime().isValid() ? log.birthTime() : log.lastModified();
+            if (born < studio_started_) continue;
+            studio_read_.insert(path, {0, {}});
+            studio_watcher_.addPath(path);
+            read_studio_log(path);
+        }
+    };
+    connect(&studio_watcher_, &QFileSystemWatcher::directoryChanged, this, scan);
+    connect(&studio_watcher_, &QFileSystemWatcher::fileChanged, this, &GameActivity::read_studio_log);
+    scan();
+}
+
+void GameActivity::read_studio_log(const QString& path) {
+    auto it = studio_read_.find(path);
+    if (it == studio_read_.end()) return;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return;
+    if (file.size() < it->first) it->first = 0;  // written afresh
+    file.seek(it->first);
+    QByteArray text = it->second + file.readAll();
+    it->first = file.pos();
+    const qsizetype end = text.lastIndexOf('\n');
+    it->second = end < 0 ? text : text.mid(end + 1);
+    if (end < 0) return;
+    for (const QByteArray& raw : text.left(end).split('\n')) {
+        if (wants(raw)) line(raw);
     }
 }
 
@@ -352,6 +395,7 @@ void GameActivity::studio_line(const QString& text) {
         if (place == place_) return;
         ++generation_;
         place_ = place == QLatin1String("0") ? QString() : place;
+        if (!place_.isEmpty()) std::printf("stud: Studio opened place %s\n", qPrintable(place_));
         name_.clear();
         icon_.clear();
         creator_.clear();
@@ -371,6 +415,7 @@ void GameActivity::studio_line(const QString& text) {
             icon_.clear();
         }
         studio_doc_ = type;
+        std::printf("stud: Studio shows %s\n", type == -1 ? "its start page" : type == 2 ? "a script" : "a place");
         publish();
         return;
     }

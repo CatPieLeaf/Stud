@@ -3,6 +3,9 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QHash>
+#include <QDateTime>
+#include <QFileSystemWatcher>
 #include <QString>
 
 #include <cstdint>
@@ -33,6 +36,10 @@ public:
         bool history_servers = true;
         // Roblox Studio's output rather than the player's.
         bool studio = false;
+        // Where Studio writes its logs. Studio stops copying its log to its
+        // output once started, and opens a place file in a second Studio,
+        // so its presence follows these files instead.
+        QString studio_logs;
     };
     explicit GameActivity(const Options& options, QObject* parent = nullptr);
     ~GameActivity() override;
@@ -47,6 +54,10 @@ public:
 private:
     enum class Server { Public, Private, Reserved };
     void studio_line(const QString& text);
+    // Studio's log files written since this session began, followed as they
+    // grow.
+    void follow_studio_logs();
+    void read_studio_log(const QString& path);
     // The place's name, creator and icon, looked up for presence.
     void look_up(const QString& place);
 
@@ -67,6 +78,10 @@ private:
     // 2 a script; -2 before Studio has said.
     int studio_doc_ = -2;
     int64_t studio_since_ = 0;
+    QFileSystemWatcher studio_watcher_;
+    QDateTime studio_started_;
+    // How far each followed log has been read, and its unfinished last line.
+    QHash<QString, std::pair<qint64, QByteArray>> studio_read_;
     QNetworkAccessManager net_;
     // Bumped on every join and leave, so a lookup answering late for a game
     // already left does not show it.

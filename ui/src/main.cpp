@@ -129,7 +129,9 @@ void forward_line(QByteArray line) {
         line.contains("[FLog::SingleSurfaceApp] initializeWithAppStarter")) {
         g_client_app_started.store(true, std::memory_order_relaxed);
     }
-    if (g_activity != nullptr && stud::ui::GameActivity::wants(line)) {
+    // Studio's presence follows its log files (GameActivity::Options::studio_logs).
+    if (g_activity != nullptr && g_product == stud::ui::client::Product::Player &&
+        stud::ui::GameActivity::wants(line)) {
         QMetaObject::invokeMethod(qApp, [line] {
             if (g_activity != nullptr) g_activity->line(line);
         }, Qt::QueuedConnection);
@@ -952,6 +954,12 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     activity.join_button = settings.discord_join_button;
     activity.region = settings.server_region_notification;
     activity.studio = !player;
+    if (!player) {
+        const QDir users(stud::ui::client::prefix_dir() + QStringLiteral("/root/Users"));
+        const QString self = qEnvironmentVariable("USER");
+        const QString user = !self.isEmpty() && users.exists(self) ? self : QString();
+        if (!user.isEmpty()) activity.studio_logs = users.filePath(user) + QStringLiteral("/Library/Logs/Roblox");
+    }
     activity.history_games = settings.record_game_history;
     activity.history_servers = settings.record_server_history;
     g_activity = new stud::ui::GameActivity(activity, qApp);
