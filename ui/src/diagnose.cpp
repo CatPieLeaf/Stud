@@ -14,6 +14,10 @@
 #include <vector>
 
 #include <dirent.h>
+#include <cstring>
+#include <cerrno>
+#include <sys/stat.h>
+#include <grp.h>
 #include <fcntl.h>
 #include <gnu/libc-version.h>
 #include <linux/input.h>
@@ -204,6 +208,21 @@ void report_gpus(const stud::config::StudSettings& settings) {
             if (name.rfind("render", 0) != 0 && name.rfind("card", 0) != 0) continue;
             if (!nodes.empty()) nodes += ", ";
             nodes += name;
+            // A render node that exists is no use if this account cannot open
+            // it: Mesa then falls back to drawing in software.
+            if (name.rfind("render", 0) == 0) {
+                const std::string path = "/dev/dri/" + name;
+                const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+                if (fd >= 0) {
+                    ::close(fd);
+                } else {
+                    const int why = errno;
+                    struct stat st {};
+                    const group* owner = ::stat(path.c_str(), &st) == 0 ? ::getgrgid(st.st_gid) : nullptr;
+                    nodes += std::string(" (cannot open: ") + std::strerror(why) +
+                             (owner ? std::string(", group ") + owner->gr_name : std::string()) + ")";
+                }
+            }
         }
         ::closedir(dir);
     }

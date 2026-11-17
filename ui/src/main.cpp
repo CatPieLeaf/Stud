@@ -80,6 +80,8 @@
 #include <sys/file.h>
 #include <sys/syscall.h>
 #include <sched.h>
+#include <sys/stat.h>
+#include <grp.h>
 #include <unistd.h>
 
 namespace stud::ui {
@@ -620,11 +622,53 @@ void raise_main_thread_priority(qint64 pid) {
     }
 }
 
-// Whether the kernel offers this system a GPU: a DRM render node, or NVIDIA's
-// own device where its DRM module is not loaded.
-bool kernel_has_gpu() {
-    return !QDir(QStringLiteral("/dev/dri")).entryList({QStringLiteral("renderD*")}, QDir::System).isEmpty() ||
-           QFileInfo::exists(QStringLiteral("/dev/nvidiactl"));
+// What the kernel offers this account to draw with.
+struct KernelGpu {
+    bool usable = false;  // a render node it can open, or NVIDIA's own device
+    QString blocked;      // otherwise, a render node it cannot open
+    QString group;        // and the group that owns it
+};
+
+KernelGpu kernel_gpu() {
+    KernelGpu gpu;
+    if (QFileInfo::exists(QStringLiteral("/dev/nvidiactl"))) {
+        gpu.usable = true;
+        return gpu;
+    }
+    const QDir dri(QStringLiteral("/dev/dri"));
+    for (const QString& name : dri.entryList({QStringLiteral("renderD*")}, QDir::System)) {
+        const QByteArray path = QFile::encodeName(dri.filePath(name));
+        const int fd = ::open(path.constData(), O_RDWR | O_CLOEXEC);
+        if (fd >= 0) {
+            ::close(fd);
+            gpu.usable = true;
+            return gpu;
+        }
+        if (errno == EACCES && gpu.blocked.isEmpty()) {
+            gpu.blocked = dri.filePath(name);
+            struct stat st {};
+            if (::stat(path.constData(), &st) == 0) {
+                if (const group* owner = ::getgrgid(st.st_gid)) gpu.group = QString::fromLocal8Bit(owner->gr_name);
+            }
+        }
+    }
+    return gpu;
+}
+
+// What to tell someone whose account cannot open the GPU it has.
+QString no_gpu_access_reason(const KernelGpu& gpu) {
+    QString reason = QStringLiteral("Roblox needs the graphics card at %1, and your account cannot open it")
+                         .arg(gpu.blocked);
+    if (gpu.group.isEmpty()) return reason + QStringLiteral(". Without it, Roblox only shows an empty window.");
+    reason += QStringLiteral(": it belongs to the group \"%1\", which you are not in. Without it, Roblox only "
+                             "shows an empty window.\n\nJoin the group with\n\n    sudo usermod -aG %1 $USER\n\n"
+                             "then sign out and back in")
+                  .arg(gpu.group);
+    if (QFileInfo::exists(QStringLiteral("/opt/google/cros-containers"))) {
+        reason += QStringLiteral(" (on a Chromebook, restart Linux: right-click the Terminal app and choose "
+                                 "Shut down Linux)");
+    }
+    return reason + QStringLiteral(", and start Stud again.");
 }
 
 // What to tell someone whose system has no GPU for Roblox to draw with.
@@ -809,8 +853,8 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     // start; with no GPU at all, Mesa's software fallback cannot compile
     // Roblox's shaders, and its window stays empty with nothing to say why.
     if (stud::ui::enumerate_gpus().empty()) {
-        if (!kernel_has_gpu()) {
-            open_settings_for_launch_failure(no_gpu_reason());
+        if (const KernelGpu gpu = kernel_gpu(); !gpu.usable) {
+            open_settings_for_launch_failure(gpu.blocked.isEmpty() ? no_gpu_reason() : no_gpu_access_reason(gpu));
             return false;
         }
         if (settings.renderer != "opengl") {
