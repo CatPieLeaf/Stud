@@ -381,12 +381,9 @@ std::optional<client::Product> choose_product() {
         } catch (const stud::config::SettingsError&) {
         }
         const auto chosen = chosen_gpu_index(settings.gpu);
-        constexpr uint32_t kNvidia = 0x10DE;
         for (const auto& gpu : enumerate_gpus()) {
-            if (gpu.device_index == chosen && gpu.vendor_id == kNvidia) {
-                quotes.append(QStringLiteral("This GPU model may experience stability due to a decent Vulkan "
-                                             "memory allocator in its driver. It's recommended you use Vulkan "
-                                             "if you experience stability."));
+            if (gpu.device_index == chosen && gpu.vendor_id == kVendorNvidia) {
+                quotes.append(QString::fromLatin1(kNvidiaNote));
             }
         }
     }

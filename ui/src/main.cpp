@@ -309,8 +309,7 @@ void apply_gpu_selection(QProcessEnvironment& env, const stud::config::StudSetti
         if (gpu.device_index == settings.gpu.device_index) chosen = &gpu;
     }
     if (chosen == nullptr || !chosen->discrete) return;
-    constexpr uint32_t kVendorNvidia = 0x10de;
-    if (chosen->vendor_id == kVendorNvidia) {
+    if (chosen->vendor_id == stud::ui::kVendorNvidia) {
         env.insert(QStringLiteral("__NV_PRIME_RENDER_OFFLOAD"), QStringLiteral("1"));
         env.insert(QStringLiteral("__GLX_VENDOR_LIBRARY_NAME"), QStringLiteral("nvidia"));
         env.insert(QStringLiteral("__VK_LAYER_NV_optimus"), QStringLiteral("NVIDIA_only"));
@@ -976,10 +975,9 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     activity.region = settings.server_region_notification;
     activity.studio = !player;
     if (!player) {
-        const QDir users(stud::ui::client::prefix_dir() + QStringLiteral("/root/Users"));
-        const QString self = qEnvironmentVariable("USER");
-        const QString user = !self.isEmpty() && users.exists(self) ? self : QString();
-        if (!user.isEmpty()) activity.studio_logs = users.filePath(user) + QStringLiteral("/Library/Logs/Roblox");
+        if (const QString home = stud::ui::client::prefix_home(); !home.isEmpty()) {
+            activity.studio_logs = home + QStringLiteral("/Library/Logs/Roblox");
+        }
     }
     activity.history_games = settings.record_game_history;
     activity.history_servers = settings.record_server_history;
@@ -1369,7 +1367,15 @@ int main(int argc, char** argv) {
         }();
         product = directly ? std::optional(stud::ui::client::Product::Player) : stud::ui::choose_product();
     }
-    if (!product) return 0;  // closed without a choice
+    if (!product) {
+        // Closed without a choice. Settings opened from it stays until it
+        // is closed too, with whatever it holds unsaved.
+        const QWidgetList windows = QApplication::topLevelWidgets();
+        if (std::any_of(windows.begin(), windows.end(), [](const QWidget* w) { return w->isVisible(); })) {
+            return app.exec();
+        }
+        return 0;
+    }
 
     if (!launch_game(*product, deep_link)) {
         // Settings saying why keeps Stud open; with nothing on screen, quit.

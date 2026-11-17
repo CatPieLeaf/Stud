@@ -1,4 +1,5 @@
 #include "stud/settings.h"
+#include "stud/stud_paths.h"
 
 #include <nlohmann/json.hpp>
 
@@ -260,19 +261,10 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     }
 }
 
-// Stud's directory under XDG_CONFIG_HOME, which counts only when it is an
-// absolute path, as the XDG spec has it; ~/.config otherwise.
-static std::string stud_config_dir() {
-    const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
-    if (xdg_config_home != nullptr && xdg_config_home[0] == '/') return std::string(xdg_config_home) + "/stud";
-    const char* home = std::getenv("HOME");
-    return std::string(home ? home : "") + "/.config/stud";
-}
+std::string default_config_path() { return stud::paths::config_dir() + "/config.json"; }
 
-std::string default_config_path() { return stud_config_dir() + "/config.json"; }
+std::string default_flag_overrides_path() { return stud::paths::config_dir() + "/flags.json"; }
 
-std::string default_flag_overrides_path() { return stud_config_dir() + "/flags.json"; }
-
-std::string default_studio_flags_path() { return stud_config_dir() + "/studio-flags.json"; }
+std::string default_studio_flags_path() { return stud::paths::config_dir() + "/studio-flags.json"; }
 
 }  // namespace stud::config

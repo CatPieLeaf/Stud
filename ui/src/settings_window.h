@@ -36,13 +36,6 @@ public:
     // processes too.
     static SettingsWindow* showSingleton(const QString& status = QString());
 
-protected:
-    // The desktop can switch between light and dark while this window is
-    // open. The restart icon is drawn in the palette's own colour, so it
-    // has to be drawn again when that colour changes.
-
-public:
-
     // The desktop entry's Settings action starts a new stud-ui, which
     // knows nothing about the one already running the session. If that
     // one is listening, hand the request over and let it raise its own
@@ -64,8 +57,6 @@ public:
 private:
     // The status line at rest: empty, or the update notice.
     void showIdleStatus();
-
-public:
 
 private slots:
     bool onSaveClicked();

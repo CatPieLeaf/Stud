@@ -412,12 +412,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     cube->setFixedSize(128, 128);
     // Ten clicks on the cube, on the GPU picked above being NVIDIA's.
     cube->on_tenth_click = [this] {
-        constexpr uint32_t kNvidia = 0x10DE;
-        if (gpuCombo_->currentData(Qt::UserRole + 1).toUInt() != kNvidia) return;
-        send_notification(QStringLiteral("Stud"),
-                          QStringLiteral("This GPU model may experience stability due to a decent "
-                                         "Vulkan memory allocator in its driver. It's recommended "
-                                         "you use Vulkan if you experience stability."));
+        if (gpuCombo_->currentData(Qt::UserRole + 1).toUInt() != kVendorNvidia) return;
+        send_notification(QStringLiteral("Stud"), QString::fromLatin1(kNvidiaNote));
     };
     about->addWidget(cube, 0, Qt::AlignHCenter);
     auto* logo = new QLabel(this);
@@ -747,8 +743,6 @@ void SettingsWindow::buildFlagsTab(QVBoxLayout* presets_tab, QVBoxLayout* tab) {
     });
 }
 
-// The games played, most recent first, with the time played in each: join
-// one again, or give it a shortcut in the application menu.
 // Roblox's own settings, the ones its in-game menu saves, edited in its file
 // in the prefix. Graphics quality is not among them: Stud leaves it to Roblox.
 void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
@@ -889,17 +883,6 @@ qint64 folder_size(const QString& path) {
 }  // namespace
 
 // Logs for a bug report, and clearing what Stud keeps.
-// The user folder inside Rosemary's prefix: Studio's ~ on the Mac side.
-static QString prefix_home() {
-    const QDir users(client::prefix_dir() + QStringLiteral("/root/Users"));
-    const QString self = qEnvironmentVariable("USER");
-    if (!self.isEmpty() && users.exists(self)) return users.filePath(self);
-    for (const QString& name : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-        if (name != QLatin1String("Shared")) return users.filePath(name);
-    }
-    return {};
-}
-
 void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     tab->addWidget(new QLabel("<b>FastFlags</b>", this));
     auto* note = new QLabel(
@@ -958,7 +941,7 @@ void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
     folders->addStretch();
     tab->addLayout(folders);
     const auto open = [this](const QString& relative) {
-        const QString home = prefix_home();
+        const QString home = client::prefix_home();
         if (home.isEmpty()) {
             QMessageBox::information(this, QStringLiteral("Stud"),
                                      QStringLiteral("Start Roblox or Studio once first: the folder is made then."));
@@ -1145,6 +1128,8 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     });
 }
 
+// The games played, most recent first, with the time played in each: join
+// one again, or give it a shortcut in the application menu.
 void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     historyGamesCheck_ = new QCheckBox("Record the games I play", this);
     historyGamesCheck_->setToolTip("Keeps each game you play here, with the time played.");
@@ -1195,6 +1180,9 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
     join->setIcon(themed("media-playback-start", QStyle::SP_MediaPlay));
     shortcut->setIcon(themed("list-add", QStyle::SP_FileDialogNewFolder));
     shortcut->setToolTip("Adds the game to the application menu; it opens straight into the game.");
+    // The Flatpak sandbox cannot write the desktop's application menu: a
+    // shortcut made there would land in its own folder and show nowhere.
+    shortcut->setVisible(!QFileInfo::exists(QStringLiteral("/.flatpak-info")));
     auto* reload = new QPushButton("Refresh", this);
     reload->setIcon(themed("view-refresh", QStyle::SP_BrowserReload));
     auto* forget = new QPushButton("Clear history", this);
@@ -1251,9 +1239,9 @@ void SettingsWindow::buildHistoryTab(QVBoxLayout* tab) {
             return;
         }
         file.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\nComment=Play %1 with Stud\n"
-                                  "Exec=\"%2\" \"roblox://experiences/start?placeId=%3\"\nIcon=%4\n"
+                                  "Exec=%2 \"roblox://experiences/start?placeId=%3\"\nIcon=%4\n"
                                   "Categories=Game;\nTerminal=false\n")
-                       .arg(clean_name, launcher_command(), place, icon)
+                       .arg(clean_name, desktop_exec_quote(launcher_command()), place, icon)
                        .toUtf8());
         file.close();
         statusLabel_->setText(QStringLiteral("Added %1 to the application menu.").arg(clean_name).toHtmlEscaped());

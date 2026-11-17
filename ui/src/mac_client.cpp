@@ -272,6 +272,16 @@ QString clients_dir(Product product) {
 
 QString prefix_dir() { return QString::fromStdString(stud::paths::data_dir()) + "/prefix"; }
 
+QString prefix_home() {
+    const QDir users(prefix_dir() + QStringLiteral("/root/Users"));
+    const QString self = qEnvironmentVariable("USER");
+    if (!self.isEmpty() && users.exists(self)) return users.filePath(self);
+    for (const QString& name : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (name != QLatin1String("Shared")) return users.filePath(name);
+    }
+    return {};
+}
+
 std::optional<Build> installed(Product product) {
     QFile marker(current_marker(product));
     if (!marker.open(QIODevice::ReadOnly | QIODevice::Text)) return std::nullopt;

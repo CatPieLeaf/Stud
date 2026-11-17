@@ -33,7 +33,15 @@ struct GpuInfo {
 // instance/devices are available, the settings window should show
 // "no GPUs found" rather than crash, matching this project's established
 // honest-degradation pattern.
+// The GPUs Vulkan reports, read once per process: each read creates an
+// instance, which loads every driver on the machine.
 std::vector<GpuInfo> enumerate_gpus();
+
+inline constexpr uint32_t kVendorNvidia = 0x10de;
+// The About cube's tenth click and the welcome page's line, on NVIDIA.
+inline constexpr const char* kNvidiaNote =
+    "This GPU model may experience stability due to a decent Vulkan memory allocator in its driver. "
+    "It's recommended you use Vulkan if you experience stability.";
 
 // Which device a machine that has never been asked should use.
 //

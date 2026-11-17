@@ -27,8 +27,9 @@ inline std::string home_dir() {
 }
 
 namespace detail {
+// A relative value counts as unset, as the XDG spec has it.
 inline std::string xdg_dir(const char* env_var, const char* home_relative) {
-    if (const char* value = std::getenv(env_var); value != nullptr && *value != '\0') {
+    if (const char* value = std::getenv(env_var); value != nullptr && value[0] == '/') {
         return std::string(value) + "/stud";
     }
     return home_dir() + home_relative;
@@ -52,7 +53,7 @@ inline std::string log_dir() { return state_dir() + "/logs"; }
 // a name any other local user could create first and own. The fallback is now under the user's own home, made private
 // here, so it never depends on who got to a shared directory first.
 inline std::string runtime_dir() {
-    if (const char* xdg = std::getenv("XDG_RUNTIME_DIR"); xdg != nullptr && *xdg != '\0') {
+    if (const char* xdg = std::getenv("XDG_RUNTIME_DIR"); xdg != nullptr && xdg[0] == '/') {
         return std::string(xdg) + "/stud";
     }
     const std::string dir = state_dir() + "/run";

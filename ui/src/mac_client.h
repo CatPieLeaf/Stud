@@ -34,6 +34,10 @@ struct Build {
 // share.
 QString clients_dir(Product product = Product::Player);
 QString prefix_dir();
+// The user folder inside the prefix, the client's ~: the one named after
+// this user, else the first that is not Shared. Empty before the prefix has
+// one.
+QString prefix_home();
 
 // The build installed now, if any.
 std::optional<Build> installed(Product product = Product::Player);

@@ -24,4 +24,8 @@ int install_desktop_entry();
 // The command that starts Stud: the AppImage file, or this binary.
 QString launcher_command();
 
+// `program` as one quoted Exec= argument, escaped as the desktop entry spec
+// has it.
+QString desktop_exec_quote(const QString& program);
+
 }  // namespace stud::ui

@@ -29,9 +29,7 @@ VolkInstanceTable instance_table(VkInstance instance) {
     return table;
 }
 
-}  // namespace
-
-std::vector<GpuInfo> enumerate_gpus() {
+std::vector<GpuInfo> read_gpus() {
     std::vector<GpuInfo> result;
 
     VkApplicationInfo app_info{};
@@ -133,6 +131,13 @@ std::vector<GpuInfo> enumerate_gpus() {
 
     vk.vkDestroyInstance(instance, nullptr);
     return result;
+}
+
+}  // namespace
+
+std::vector<GpuInfo> enumerate_gpus() {
+    static const std::vector<GpuInfo> gpus = read_gpus();
+    return gpus;
 }
 
 uint32_t default_gpu_index() {

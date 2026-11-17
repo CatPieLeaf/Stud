@@ -48,10 +48,16 @@ QString share_root() {
 QString rewrite_exec(const QString& value, const QString& program) {
     const int space = value.indexOf(QLatin1Char(' '));
     const QString args = space < 0 ? QString() : value.mid(space);
-    // Quoted because an AppImage commonly sits somewhere with a space in
-    // the path (a Downloads folder, an external drive). Inside the quotes
-    // ", `, $ and \ take a backslash, and the file's own string escaping
-    // doubles every backslash; % is the field code character, doubled.
+    return desktop_exec_quote(program) + args;
+}
+
+}  // namespace
+
+// Quoted because an AppImage commonly sits somewhere with a space in the
+// path (a Downloads folder, an external drive). Inside the quotes ", `, $
+// and \ take a backslash, and the file's own string escaping doubles every
+// backslash; % is the field code character, doubled.
+QString desktop_exec_quote(const QString& program) {
     QString quoted;
     for (const QChar c : program) {
         if (c == QLatin1Char('\\')) {
@@ -64,8 +70,10 @@ QString rewrite_exec(const QString& value, const QString& program) {
             quoted += c;
         }
     }
-    return QLatin1Char('"') + quoted + QLatin1Char('"') + args;
+    return QLatin1Char('"') + quoted + QLatin1Char('"');
 }
+
+namespace {
 
 bool write_index_theme(const QString& icons_dir) {
     const QString path = icons_dir + "/index.theme";
