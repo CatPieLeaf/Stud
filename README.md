@@ -89,9 +89,9 @@ It's a one-person project, built because I wanted a launcher that stays out of t
  - Vulkan or OpenGL, with VSync, adaptive VSync, or uncapped with or without tearing
  - **Upscaling** on Vulkan: lower the render resolution and the frame is rebuilt at your window's size. **RAVU-Zoom AR**, with FidelityFX RCAS sharpening after it, is the better picture; **SGSR1 ED** is the lightweight one, for laptops and integrated GPUs
  - Game history with time played, the servers you joined and where they are, rejoining a server, and game shortcuts in the application menu; either kind of history can be turned off
- - Roblox and **Roblox Studio**: opened on its own, Stud asks which, and keeps each up to date
+ - Roblox and **Roblox Studio**: opened on its own, Stud asks which, and keeps each up to date. Studio gets its own FastFlags, Ctrl in place of Command in every shortcut, and its Plugins folder one click away
  - `roblox://` links from a browser open straight into the experience, Studio's links reach Studio, and `.rbxl`/`.rbxlx` place files open in Studio
- - Discord Rich Presence as Roblox itself, with the game's name as your status and what the game reports through BloxstrapRPC, an optional Join button, and Studio presence
+ - Discord Rich Presence as Roblox itself, with the game's name as your status and what the game reports through BloxstrapRPC, an optional Join button, and Studio presence with the place you are developing and whether you are in a script
  - Optional notification of which country the game server is in
  - A frame rate limit for while Roblox is in the background
  - MangoHud and [GameMode](https://github.com/FeralInteractive/gamemode) switches, GPU picker, system tray

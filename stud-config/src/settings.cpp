@@ -276,4 +276,12 @@ std::string default_flag_overrides_path() {
     return std::string(home ? home : "") + "/.config/stud/flags.json";
 }
 
+std::string default_studio_flags_path() {
+    if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME")) {
+        return std::string(xdg_config_home) + "/stud/studio-flags.json";
+    }
+    const char* home = std::getenv("HOME");
+    return std::string(home ? home : "") + "/.config/stud/studio-flags.json";
+}
+
 }  // namespace stud::config

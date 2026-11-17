@@ -41,6 +41,7 @@
 #include <limits>
 #include <QStandardPaths>
 #include <QProcess>
+#include <QJsonParseError>
 #include <QDirIterator>
 #include <QLocale>
 #include <QSpinBox>
@@ -402,6 +403,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         buildFlagsTab(parts[0], parts[1]);
     }
 
+    buildStudioTab(add_tab("Studio"));
     buildDebugTab(add_tab("Debug"));
 
     // ---- About ---------------------------------------------------------
@@ -891,6 +893,89 @@ qint64 folder_size(const QString& path) {
 }  // namespace
 
 // Logs for a bug report, and clearing what Stud keeps.
+// The user folder inside Rosemary's prefix: Studio's ~ on the Mac side.
+static QString prefix_home() {
+    const QDir users(client::prefix_dir() + QStringLiteral("/root/Users"));
+    const QString self = qEnvironmentVariable("USER");
+    if (!self.isEmpty() && users.exists(self)) return users.filePath(self);
+    for (const QString& name : users.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (name != QLatin1String("Shared")) return users.filePath(name);
+    }
+    return {};
+}
+
+void SettingsWindow::buildStudioTab(QVBoxLayout* tab) {
+    tab->addWidget(new QLabel("<b>FastFlags</b>", this));
+    auto* note = new QLabel(
+        "Studio's own, separate from the Player's: a JSON object, written into Studio's "
+        "ClientAppSettings.json each time it starts.", this);
+    note->setWordWrap(true);
+    tab->addWidget(note);
+    auto* editor = new QPlainTextEdit(this);
+    editor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    editor->setPlaceholderText(QStringLiteral("{\n    \"FFlagExample\": true\n}"));
+    const QString path = QString::fromStdString(stud::config::default_studio_flags_path());
+    {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly)) editor->setPlainText(QString::fromUtf8(file.readAll()));
+    }
+    tab->addWidget(editor, 1);
+    auto* row = new QHBoxLayout();
+    auto* save = new QPushButton("Save Studio's flags", this);
+    save->setIcon(themed("document-save", QStyle::SP_DialogSaveButton));
+    auto* status = new QLabel(this);
+    status->setWordWrap(true);
+    row->addWidget(save);
+    row->addWidget(status, 1);
+    tab->addLayout(row);
+    connect(save, &QPushButton::clicked, this, [editor, status, path] {
+        const QByteArray text = editor->toPlainText().toUtf8();
+        QJsonParseError error{};
+        const QJsonDocument doc = QJsonDocument::fromJson(text, &error);
+        if (!text.trimmed().isEmpty() && !doc.isObject()) {
+            status->setText(error.error != QJsonParseError::NoError
+                                ? QStringLiteral("Not saved: %1, at character %2.").arg(error.errorString()).arg(error.offset)
+                                : QStringLiteral("Not saved: the flags must be one JSON object, {...}."));
+            return;
+        }
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QSaveFile out(path);
+        if (!out.open(QIODevice::WriteOnly) || out.write(text) < 0 || !out.commit()) {
+            status->setText(QStringLiteral("Not saved: %1 could not be written.").arg(path));
+            return;
+        }
+        status->setText(QStringLiteral("Saved. Studio uses them the next time it starts."));
+    });
+
+    tab->addSpacing(fontMetrics().height());
+    tab->addWidget(new QLabel("<b>Folders</b>", this));
+    auto* folders = new QHBoxLayout();
+    auto* plugins = new QPushButton("Open the Plugins folder", this);
+    plugins->setIcon(themed("folder-open", QStyle::SP_DirOpenIcon));
+    plugins->setToolTip("Where Studio loads local plugins from, such as Rojo's: Documents/Roblox/Plugins "
+                        "inside Stud's macOS environment.");
+    auto* documents = new QPushButton("Open Documents", this);
+    documents->setIcon(themed("folder-documents", QStyle::SP_DirOpenIcon));
+    documents->setToolTip("Studio's Documents folder inside Stud's macOS environment.");
+    folders->addWidget(plugins);
+    folders->addWidget(documents);
+    folders->addStretch();
+    tab->addLayout(folders);
+    const auto open = [this](const QString& relative) {
+        const QString home = prefix_home();
+        if (home.isEmpty()) {
+            QMessageBox::information(this, QStringLiteral("Stud"),
+                                     QStringLiteral("Start Roblox or Studio once first: the folder is made then."));
+            return;
+        }
+        const QString dir = home + QLatin1Char('/') + relative;
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    };
+    connect(plugins, &QPushButton::clicked, this, [open] { open(QStringLiteral("Documents/Roblox/Plugins")); });
+    connect(documents, &QPushButton::clicked, this, [open] { open(QStringLiteral("Documents")); });
+}
+
 void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     auto* logsLabel = new QLabel("<b>Logs</b>", this);
     tab->addWidget(logsLabel);

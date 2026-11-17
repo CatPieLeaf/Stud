@@ -515,9 +515,13 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
 // The FastFlags of Settings' FFlags tab (flags.json), written as the
 // client's ClientAppSettings.json. A malformed flags.json is reported and
 // left out rather than stopping the launch.
-QJsonObject client_flags(const stud::config::StudSettings& settings) {
+QJsonObject client_flags(const stud::config::StudSettings& settings,
+                         stud::ui::client::Product product = stud::ui::client::Product::Player) {
     QJsonObject flags;
-    QFile file(QString::fromStdString(stud::config::default_flag_overrides_path()));
+    // The Player's from the FFlags tab, Studio's from the Studio tab.
+    QFile file(QString::fromStdString(product == stud::ui::client::Product::Studio
+                                          ? stud::config::default_studio_flags_path()
+                                          : stud::config::default_flag_overrides_path()));
     if (file.open(QIODevice::ReadOnly)) {
         const QByteArray text = file.readAll();
         const QJsonDocument doc = QJsonDocument::fromJson(text);
@@ -923,7 +927,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     // A changed set of customizations is on trial until this run ends.
     stud::ui::customization::begin_run(product);
     // The FFlags tab's flags are the player's.
-    if (player && !stud::ui::client::write_app_settings(*build, client_flags(settings), &error)) {
+    if (!stud::ui::client::write_app_settings(*build, client_flags(settings, product), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
     }
     if (stud::ui::loading_cancelled()) return false;

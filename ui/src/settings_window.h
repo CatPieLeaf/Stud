@@ -109,6 +109,7 @@ private:
     void buildHistoryTab(QVBoxLayout* tab);
     void buildRobloxTab(QVBoxLayout* tab);
     void buildDebugTab(QVBoxLayout* tab);
+    void buildStudioTab(QVBoxLayout* tab);
     QPlainTextEdit* flagsEdit_;
     QLabel* flagsWarning_;
     // Each preset's control, set from the editor's JSON.

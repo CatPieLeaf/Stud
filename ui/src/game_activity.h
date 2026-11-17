@@ -47,6 +47,8 @@ public:
 private:
     enum class Server { Public, Private, Reserved };
     void studio_line(const QString& text);
+    // The place's name, creator and icon, looked up for presence.
+    void look_up(const QString& place);
 
     void joined(const QString& place, const QString& job);
     void left();
@@ -61,6 +63,9 @@ private:
 
     Options options_;
     bool studio_editing_ = false;
+    // What Studio's main view shows: -1 nothing (its start page), 0 a place,
+    // 2 a script; -2 before Studio has said.
+    int studio_doc_ = -2;
     int64_t studio_since_ = 0;
     QNetworkAccessManager net_;
     // Bumped on every join and leave, so a lookup answering late for a game

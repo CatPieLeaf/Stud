@@ -53,7 +53,8 @@ bool GameActivity::wants(const QByteArray& line) {
     static const char* const kMarks[] = {
         "! Joining game", "UDMUX Address", "doTeleport: joinScriptUrl",
         "Report game_join_loadtime:", "[BloxstrapRPC] ", "[FLog::SingleSurfaceApp] leaveUGCGameInternal",
-        "[FLog::PlaceManager]",
+        "[FLog::PlaceManager]", "[FLog::RobloxDocManager] Setting current doc to type ",
+        "[FLog::CloseDataModel] Setting place ID ",
     };
     for (const char* mark : kMarks) {
         if (line.contains(mark)) return true;
@@ -140,8 +141,11 @@ void GameActivity::joined(const QString& place, const QString& job) {
     game_details_ = game_state_ = game_start_ = game_end_ = false;
     std::printf("stud: joined place %s\n", qPrintable(place));
     publish();
-    if (!options_.discord) return;
+    look_up(place);
+}
 
+void GameActivity::look_up(const QString& place) {
+    if (!options_.discord) return;
     // The place's universe, then its name, creator and icon.
     const quint64 generation = generation_;
     fetch(QStringLiteral("https://apis.roblox.com/universes/v1/places/%1/universe").arg(place),
@@ -295,8 +299,18 @@ void GameActivity::publish() {
     if (!options_.discord) return;
     DiscordActivity a;
     if (options_.studio) {
-        a.details = studio_editing_ ? "Editing a place" : "In Roblox Studio";
-        a.state = "Roblox Studio";
+        // A published place by its name and icon, which Roblox's public
+        // lookups give without signing in; a local file as "a place".
+        if (studio_doc_ == -2) {
+            a.details = studio_editing_ ? "Developing a place" : "In Roblox Studio";
+        } else if (studio_doc_ == -1) {
+            a.details = "Idling";
+        } else {
+            a.details = name_.isEmpty() ? "Developing a place" : "Developing " + name_.toStdString();
+            a.large_image = icon_.toStdString();
+            a.large_text = name_.toStdString();
+        }
+        a.state = studio_doc_ == 2 ? "Editing a script" : "Roblox Studio";
         a.start = studio_since_;
         a.status_display = 2;
         discord_rpc_set(a);
@@ -326,8 +340,40 @@ void GameActivity::publish() {
     discord_rpc_set(a);
 }
 
-// Studio: a place being edited, or Studio open on its start page.
+// Studio: a place being edited, a script open, or Studio on its start page.
 void GameActivity::studio_line(const QString& text) {
+    // "[FLog::CloseDataModel] Setting place ID <id>": a published place.
+    static const QRegularExpression place_id(QStringLiteral(R"(\[FLog::CloseDataModel\] Setting place ID (\d+))"));
+    // "[FLog::RobloxDocManager] Setting current doc to type <type>".
+    static const QRegularExpression doc_type(
+        QStringLiteral(R"(\[FLog::RobloxDocManager\] Setting current doc to type (-?\d+))"));
+    if (const auto match = place_id.match(text); match.hasMatch()) {
+        const QString place = match.captured(1);
+        if (place == place_) return;
+        ++generation_;
+        place_ = place == QLatin1String("0") ? QString() : place;
+        name_.clear();
+        icon_.clear();
+        creator_.clear();
+        publish();
+        if (!place_.isEmpty()) look_up(place_);
+        return;
+    }
+    if (const auto match = doc_type.match(text); match.hasMatch()) {
+        const int type = match.captured(1).toInt();
+        if (type == studio_doc_) return;
+        // The start page again: whatever place was open is closed.
+        if (type == -1 || studio_doc_ == -1 || studio_doc_ == -2) studio_since_ = now_seconds();
+        if (type == -1) {
+            ++generation_;
+            place_.clear();
+            name_.clear();
+            icon_.clear();
+        }
+        studio_doc_ = type;
+        publish();
+        return;
+    }
     const bool opened = text.contains(QStringLiteral("[FLog::PlaceManager] Start to open place"));
     const bool closed = text.contains(QStringLiteral("PlaceManager::closeCurrentPlayDoc"));
     if (!opened && !closed) return;

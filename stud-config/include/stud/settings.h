@@ -127,4 +127,8 @@ std::string default_config_path();
 // Hand-edited FastFlags, merged into ClientAppSettings.json at launch.
 std::string default_flag_overrides_path();
 
+// Studio's FastFlags, as a JSON object: written into Studio's own
+// ClientAppSettings.json at every launch.
+std::string default_studio_flags_path();
+
 }  // namespace stud::config
