@@ -51,6 +51,10 @@ public:
     // the thread that drains the client's output to ask about every line.
     static bool wants(const QByteArray& line);
 
+    // Back to the app, or the client gone: the game in progress, if any, is
+    // recorded.
+    void left();
+
 private:
     enum class Server { Public, Private, Reserved };
     void studio_line(const QString& text);
@@ -62,7 +66,6 @@ private:
     void look_up(const QString& place);
 
     void joined(const QString& place, const QString& job);
-    void left();
     void server(const QString& address);
     void rich_presence(const QJsonObject& data);
     void publish();

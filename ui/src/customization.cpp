@@ -105,9 +105,6 @@ public:
                manifest.write(changed_.join(QLatin1Char('\n')).toUtf8()) >= 0 && manifest.commit();
     }
 
-    // Recorded as each file changes, so a failure part way can be undone.
-    bool record() { return finish(); }
-
 private:
     const client::Build& build_;
     QString state_;
@@ -178,7 +175,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
             font = QFileInfo(relative).fileName();
         }
         if (!applier.put(relative, path)) {
-            applier.record();
+            applier.finish();
             restore(build);
             *error = QStringLiteral("could not apply the customization file %1").arg(relative);
             return false;
@@ -207,7 +204,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
             family.insert(QStringLiteral("faces"), faces);
             const QByteArray data = QJsonDocument(family).toJson(QJsonDocument::Compact);
             if (!applier.put(relative, QString(), &data)) {
-                applier.record();
+                applier.finish();
                 restore(build);
                 *error = QStringLiteral("could not point %1 at the custom font").arg(name);
                 return false;

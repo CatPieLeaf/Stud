@@ -443,8 +443,7 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
                                                     ? QStringLiteral("titlebar")
                                                     : QStringLiteral("none"));
     // Stud's name and icon on the window, and no tray icons of the client's
-    // own beside Stud's (the switches packaging/rosemary/stud-launcher.patch
-    // adds to Rosemary).
+    // own beside Stud's (switches of Stud's Rosemary fork).
     // Studio keeps its own titles: its windows are documents, named by what
     // is open.
     if (product == stud::ui::client::Product::Player) {
@@ -1033,6 +1032,8 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         }
         std::printf("stud: Roblox exited (%s %d)\n",
                     status == QProcess::CrashExit ? "signal" : "code", code);
+        // Closed or crashed in a game: that game is history too.
+        if (g_activity != nullptr) g_activity->left();
         const QStringList set_aside = stud::ui::customization::end_run(product, crashed);
         if (!set_aside.isEmpty()) {
             std::printf("stud: Roblox crashed on its first run with changed customizations; "
@@ -1110,10 +1111,6 @@ std::vector<pid_t> client_process_ids() {
 
 namespace stud::ui {
 
-// Ends a running session: the tray's Exit, and Settings before it starts
-// Roblox again.
-bool stud_session_running() { return g_lock_fd >= 0 || another_instance_is_running(); }
-
 void terminate_stud_session() {
     if (g_client == nullptr) return;
     g_stop_requested = true;
@@ -1139,7 +1136,9 @@ void terminate_stud_session() {
            (g_client->state() != QProcess::NotRunning || !all_gone())) {
         g_client->waitForFinished(100);
     }
-    for (const pid_t pid : pids) ::kill(pid, SIGKILL);
+    // Looked up again: a process that ended in the wait may have left its
+    // number to one that is not Stud's.
+    for (const pid_t pid : client_process_ids()) ::kill(pid, SIGKILL);
     if (g_client->state() != QProcess::NotRunning) {
         g_client->kill();
         g_client->waitForFinished(2000);

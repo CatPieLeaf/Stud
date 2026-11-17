@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace stud::ui::codesign {
 namespace {
@@ -146,6 +147,7 @@ std::optional<Code> read_code(const QByteArray& slice, QString* error) {
         *error = why;
         return std::nullopt;
     };
+    if (slice.size() < 32) return fail(QStringLiteral("not an executable"));
     const uint32_t ncmds = le32(slice, 16);
     qsizetype at = 32;
     std::optional<std::pair<uint32_t, uint32_t>> signature;
@@ -162,11 +164,13 @@ std::optional<Code> read_code(const QByteArray& slice, QString* error) {
     if (be32(super, 0) != kSuperblob) return fail(QStringLiteral("bad signature"));
     Code code;
     const uint32_t count = be32(super, 8);
-    for (uint32_t i = 0; i < count && 12 + i * 8 + 8 <= uint32_t(super.size()); ++i) {
-        const uint32_t type = be32(super, 12 + i * 8), blob_at = be32(super, 16 + i * 8);
-        if (blob_at + 8 > uint32_t(super.size())) return fail(QStringLiteral("bad signature"));
+    // In 64 bits: an offset near the top of 32 would wrap past the checks.
+    const quint64 super_size = quint64(super.size());
+    for (quint64 i = 0; i < count && 12 + i * 8 + 8 <= super_size; ++i) {
+        const uint32_t type = be32(super, qsizetype(12 + i * 8)), blob_at = be32(super, qsizetype(16 + i * 8));
+        if (quint64(blob_at) + 8 > super_size) return fail(QStringLiteral("bad signature"));
         const uint32_t length = be32(super, blob_at + 4);
-        if (length < 8 || blob_at + length > uint32_t(super.size())) return fail(QStringLiteral("bad signature"));
+        if (length < 8 || quint64(blob_at) + length > super_size) return fail(QStringLiteral("bad signature"));
         code.blobs[type] = super.mid(blob_at, length);
     }
     const auto directory = code.blobs.find(0);
@@ -323,33 +327,57 @@ QString signed_by_roblox(const QByteArray& directory, const QByteArray& wrapped)
 }
 
 // An XML property list: dictionaries, arrays, strings, data, booleans and
-// numbers, as CodeResources and Info.plist hold them.
+// numbers, as CodeResources and Info.plist hold them. Without recursion:
+// Info.plist is read before anything says it is Roblox's, and nesting as
+// deep as a file can make would otherwise run the stack out.
 QVariant read_plist_value(QXmlStreamReader& xml) {
-    const QStringView name = xml.name();
-    if (name == u"dict") {
-        QVariantHash dict;
-        QString key;
-        while (xml.readNextStartElement()) {
-            if (xml.name() == u"key") {
-                key = xml.readElementText();
-            } else {
-                dict.insert(key, read_plist_value(xml));
-            }
-        }
-        return dict;
-    }
-    if (name == u"array") {
+    struct Container {
+        bool dict;
+        QVariantHash hash;
         QVariantList list;
-        while (xml.readNextStartElement()) list << read_plist_value(xml);
-        return list;
+        QString key;
+    };
+    std::vector<Container> open;
+    for (;;) {
+        // At the start of a value: a container opens, or a leaf is read whole.
+        const QStringView name = xml.name();
+        std::optional<QVariant> value;
+        if (name == u"dict" || name == u"array") {
+            open.push_back({name == u"dict", {}, {}, {}});
+        } else if (name == u"true" || name == u"false") {
+            value = name == u"true";
+            xml.skipCurrentElement();
+        } else if (name == u"data") {
+            value = QByteArray::fromBase64(xml.readElementText().toLatin1());
+        } else {
+            value = xml.readElementText();
+        }
+        // Each finished value goes into its container, and each container
+        // that ends is a finished value of the one around it.
+        for (;;) {
+            if (value) {
+                if (open.empty()) return *value;
+                Container& top = open.back();
+                if (top.dict) {
+                    top.hash.insert(top.key, *value);
+                } else {
+                    top.list << *value;
+                }
+                value.reset();
+            }
+            if (xml.readNextStartElement()) {
+                if (open.back().dict && xml.name() == u"key") {
+                    open.back().key = xml.readElementText();
+                    continue;
+                }
+                break;
+            }
+            if (xml.hasError()) return {};
+            Container done = std::move(open.back());
+            open.pop_back();
+            value = done.dict ? QVariant(done.hash) : QVariant(done.list);
+        }
     }
-    if (name == u"true" || name == u"false") {
-        const bool value = name == u"true";
-        xml.skipCurrentElement();
-        return value;
-    }
-    if (name == u"data") return QByteArray::fromBase64(xml.readElementText().toLatin1());
-    return xml.readElementText();
 }
 
 std::optional<QVariantHash> read_plist(const QString& path) {

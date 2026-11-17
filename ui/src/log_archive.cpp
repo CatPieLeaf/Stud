@@ -26,6 +26,17 @@ constexpr int kBlock = 512;
 // environment may be an AppImage's, to produce a file it could equally
 // well write itself. The format is fixed-width, forty lines, and has not
 // changed since 1988.
+// Where `name` splits into ustar's prefix and name fields: npos when it fits
+// the name field whole, or the slash that leaves at most 155 bytes before it
+// and 100 after. 0 when no slash does (and the name cannot be written).
+std::size_t tar_split(const std::string& name) {
+    if (name.size() <= 100) return std::string::npos;
+    for (std::size_t slash = name.find('/'); slash != std::string::npos; slash = name.find('/', slash + 1)) {
+        if (slash <= 155 && slash > 0 && name.size() - slash - 1 <= 100 && name.size() - slash - 1 > 0) return slash;
+    }
+    return 0;
+}
+
 void append_header(std::vector<char>& out, const std::string& name, std::size_t size,
                    std::time_t mtime, char type) {
     const std::size_t start = out.size();
@@ -43,7 +54,15 @@ void append_header(std::vector<char>& out, const std::string& name, std::size_t 
         return std::string(buf);
     };
 
-    put(0, name, 100);
+    // ustar's name field, and the prefix field before it for a longer path,
+    // split at a slash (tar_name).
+    const std::size_t split = tar_split(name);
+    if (split == std::string::npos) {
+        put(0, name, 100);
+    } else {
+        put(0, name.substr(split + 1), 100);
+        put(345, name.substr(0, split), 155);
+    }
     put(100, octal(type == '5' ? 0755 : 0644, 8), 8);
     put(108, octal(0, 8), 8);
     put(116, octal(0, 8), 8);
@@ -148,11 +167,9 @@ bool write_log_tarball(const QString& target, const QStringList& files, QString*
         file.close();
         const std::string name =
             (root + QStringLiteral("/") + QFileInfo(path).fileName()).toStdString();
-        // A name that does not fit ustar's 100 bytes would need the
-        // prefix field; Stud's own log names are nowhere near it, so such
-        // a file is skipped rather than written as a silently truncated
-        // name.
-        if (name.size() > 100) continue;
+        // A path ustar cannot hold even with its prefix field is left out
+        // rather than written under a truncated name.
+        if (tar_split(name) == 0) continue;
         append_header(tar, name, static_cast<std::size_t>(contents.size()),
                       QFileInfo(path).lastModified().toSecsSinceEpoch(), '0');
         append_padded(tar, contents);
@@ -173,7 +190,7 @@ bool write_log_tarball(const QString& target, const QStringList& files, QString*
         }
         const std::string name =
             (root + QStringLiteral("/roblox/") + QFileInfo(path).fileName()).toStdString();
-        if (name.size() > 100) continue;
+        if (tar_split(name) == 0) continue;
         append_header(tar, name, static_cast<std::size_t>(contents.size()),
                       QFileInfo(path).lastModified().toSecsSinceEpoch(), '0');
         append_padded(tar, contents);

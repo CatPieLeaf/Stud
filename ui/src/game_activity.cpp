@@ -188,7 +188,8 @@ void GameActivity::joined(const QString& place, const QString& job) {
 }
 
 void GameActivity::look_up(const QString& place) {
-    if (!options_.discord) return;
+    // For presence, and for the History tab's names and icons.
+    if (!options_.discord && !options_.history_games) return;
     // The place's universe, then its name, creator and icon.
     const quint64 generation = generation_;
     fetch(QStringLiteral("https://apis.roblox.com/universes/v1/places/%1/universe").arg(place),

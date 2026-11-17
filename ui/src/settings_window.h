@@ -68,7 +68,7 @@ private:
 public:
 
 private slots:
-    void onSaveClicked();
+    bool onSaveClicked();
     void onRestartClicked();
     // Merges a JSON file's flags into the FFlags editor.
     void onImportFlagsClicked();

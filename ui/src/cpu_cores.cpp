@@ -79,31 +79,63 @@ std::vector<int> highest_capacity(const std::vector<int>& all) {
     return cores.size() < all.size() ? cores : std::vector<int>{};
 }
 
-// Anything else with kinds of core on caches of their own, AMD's compact
-// cores among them: the last-level cache group whose cores run fastest.
+// A cache's size as the kernel writes it ("32768K", "96M"), in bytes; -1
+// when unreadable.
+long long cache_bytes(const std::string& text) {
+    try {
+        std::size_t used = 0;
+        const long long value = std::stoll(text, &used);
+        const char unit = used < text.size() ? text[used] : '\0';
+        return unit == 'K' ? value << 10 : unit == 'M' ? value << 20 : unit == 'G' ? value << 30 : value;
+    } catch (const std::exception&) {
+        return -1;
+    }
+}
+
+// Anything else with kinds of core on caches of their own: the last-level
+// cache group with the most cache, as AMD's X3D parts have one with 3D
+// V-Cache, which a game runs faster on even at its lower clock; and where
+// the caches are alike (AMD's compact cores), the group whose cores run
+// fastest.
 std::vector<int> fastest_cache_group(const std::vector<int>& all) {
     std::map<std::string, std::vector<int>> groups;
+    std::map<std::string, long long> cache;
     for (const int cpu : all) {
         // The highest cache level the kernel lists for this processor.
         std::string shared;
+        std::string size;
         for (int index = 0;; ++index) {
-            const std::string level = read(cpu_dir(cpu) + "/cache/index" + std::to_string(index) + "/shared_cpu_list");
+            const std::string dir = cpu_dir(cpu) + "/cache/index" + std::to_string(index);
+            const std::string level = read(dir + "/shared_cpu_list");
             if (level.empty()) break;
             shared = level;
+            size = read(dir + "/size");
         }
         if (shared.empty()) return {};
         groups[shared].push_back(cpu);
+        cache[shared] = cache_bytes(size);
     }
     if (groups.size() < 2) return {};
-    // Each group's fastest core, and the groups that reach it.
+    // Each group's measure, and the groups that reach the best of it: the
+    // cache size where the groups differ in it, else the fastest core.
+    long long least_cache = -1, most_cache = -1;
+    for (const auto& [key, bytes] : cache) {
+        least_cache = least_cache < 0 ? bytes : std::min(least_cache, bytes);
+        most_cache = std::max(most_cache, bytes);
+    }
+    const bool by_cache = least_cache > 0 && least_cache != most_cache;
     std::map<std::string, long long> peak;
     for (const auto& [key, cpus] : groups) {
+        if (by_cache) {
+            peak[key] = cache[key];
+            continue;
+        }
         for (const int cpu : cpus) {
             peak[key] = std::max(peak[key], number(cpu_dir(cpu) + "/cpufreq/cpuinfo_max_freq"));
         }
     }
     long long best = 0;
-    for (const auto& [key, frequency] : peak) best = std::max(best, frequency);
+    for (const auto& [key, measure] : peak) best = std::max(best, measure);
     if (best <= 0) return {};
     std::vector<int> cores;
     for (const auto& [key, cpus] : groups) {

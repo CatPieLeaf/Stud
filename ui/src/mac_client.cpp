@@ -114,7 +114,10 @@ std::pair<QString, QString> served_build(Product product, const QString& channel
         const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object();
         const QString upload = json.value(QStringLiteral("clientVersionUpload")).toString();
         const QString version = json.value(QStringLiteral("version")).toString();
-        if (upload.startsWith(QStringLiteral("version-"))) return {upload, version};
+        // It names a folder Stud replaces and deletes: nothing but the shape
+        // Roblox gives it.
+        static const QRegularExpression upload_name(QStringLiteral("^version-[0-9a-fA-F]+$"));
+        if (upload_name.match(upload).hasMatch()) return {upload, version};
     }
     return {};
 }
@@ -155,13 +158,13 @@ bool download(const QString& url, const QString& path, const Progress& progress,
     return file.commit();
 }
 
+}  // namespace
+
 // Unpacks the zip into `dir`. Each entry is checked to stay inside `dir`, and
 // a file keeps the permission bits the archive gives it (the executables need
 // them). Symbolic links (Studio's frameworks have them) are made last, so no
 // file is ever written through one, and only when their target is relative
 // and stays inside `dir` too.
-}  // namespace
-
 bool extract_zip(const QString& zip_path, const QString& dir, QString* error,
                  const std::function<void(int percent)>& step) {
     mz_zip_archive zip{};
@@ -544,6 +547,10 @@ QString assigned_channel(const QString& root, Product product) {
         if (channel.isEmpty() || channel.compare(QLatin1String("production"), Qt::CaseInsensitive) == 0) {
             continue;
         }
+        // Written inside the prefix, and it goes into a download URL: a
+        // channel's name and nothing else.
+        static const QRegularExpression channel_name(QStringLiteral("^[A-Za-z0-9_-]+$"));
+        if (!channel_name.match(channel).hasMatch()) continue;
         return channel;
     }
     return {};

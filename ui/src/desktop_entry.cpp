@@ -49,8 +49,22 @@ QString rewrite_exec(const QString& value, const QString& program) {
     const int space = value.indexOf(QLatin1Char(' '));
     const QString args = space < 0 ? QString() : value.mid(space);
     // Quoted because an AppImage commonly sits somewhere with a space in
-    // the path (a Downloads folder, an external drive).
-    return QLatin1Char('"') + program + QLatin1Char('"') + args;
+    // the path (a Downloads folder, an external drive). Inside the quotes
+    // ", `, $ and \ take a backslash, and the file's own string escaping
+    // doubles every backslash; % is the field code character, doubled.
+    QString quoted;
+    for (const QChar c : program) {
+        if (c == QLatin1Char('\\')) {
+            quoted += QStringLiteral("\\\\\\\\");
+        } else if (c == QLatin1Char('"') || c == QLatin1Char('`') || c == QLatin1Char('$')) {
+            quoted += QStringLiteral("\\\\") + c;
+        } else if (c == QLatin1Char('%')) {
+            quoted += QStringLiteral("%%");
+        } else {
+            quoted += c;
+        }
+    }
+    return QLatin1Char('"') + quoted + QLatin1Char('"') + args;
 }
 
 bool write_index_theme(const QString& icons_dir) {

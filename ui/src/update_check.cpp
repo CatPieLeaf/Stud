@@ -60,6 +60,8 @@ bool g_updating = false;
 QNetworkRequest release_request(const QString& url) {
     QNetworkRequest request((QUrl(url)));
     request.setRawHeader("User-Agent", "Stud/" STUD_VERSION);
+    // A stall, not the whole transfer, as the client's own downloads.
+    request.setTransferTimeout(30000);
     return request;
 }
 
@@ -99,20 +101,23 @@ void update_appimage(const QString& target) {
         }
         send_notification(QStringLiteral("Updating Stud"),
                           QStringLiteral("Downloading Stud %1.").arg(UpdateCheck::latestVersion()));
+        // Hashed as written: a chunk the disk did not take (a full disk)
+        // fails the update instead of leaving a short AppImage that matches.
         auto* hash = new QCryptographicHash(QCryptographicHash::Sha1);
-        QNetworkReply* image = manager->get(release_request(QString::fromLatin1(kAppImage)));
-        QObject::connect(image, &QNetworkReply::readyRead, image, [image, out, hash] {
-            const QByteArray chunk = image->readAll();
+        auto* write_failed = new bool(false);
+        const auto take = [out, hash, write_failed](const QByteArray& chunk) {
+            if (out->write(chunk) != chunk.size()) *write_failed = true;
             hash->addData(chunk);
-            out->write(chunk);
-        });
+        };
+        QNetworkReply* image = manager->get(release_request(QString::fromLatin1(kAppImage)));
+        QObject::connect(image, &QNetworkReply::readyRead, image, [image, take] { take(image->readAll()); });
         QObject::connect(image, &QNetworkReply::finished, UpdateCheck::instance(),
-                         [image, out, hash, manager, target, partial, sha1] {
-            const QByteArray rest = image->readAll();
-            hash->addData(rest);
-            out->write(rest);
-            const bool written = out->flush() && image->error() == QNetworkReply::NoError;
+                         [image, out, hash, write_failed, take, manager, target, partial, sha1] {
+            take(image->readAll());
+            bool written = !*write_failed && out->flush() && image->error() == QNetworkReply::NoError;
+            delete write_failed;
             out->close();
+            written = written && out->error() == QFileDevice::NoError;
             const QByteArray got = hash->result().toHex();
             delete out;
             delete hash;

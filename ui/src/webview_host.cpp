@@ -610,6 +610,11 @@ void Connection::handle(const QStringList& m) {
         return;
     }
     if (kind == QLatin1String("create")) {
+        if (View* old = view(m.value(1))) {
+            old->dead = true;
+            old->hide();
+            if (old->busy == 0) old->deleteLater();
+        }
         views_[m.value(1)] = new View(this, m.value(1), m.value(2), m.value(3) == QLatin1String("1"));
         return;
     }

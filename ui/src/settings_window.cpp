@@ -872,10 +872,6 @@ void SettingsWindow::buildRobloxTab(QVBoxLayout* tab) {
     });
 }
 
-// A Stud session is running, in this process (Settings from its tray) or
-// another one. See main.cpp.
-bool stud_session_running();
-
 namespace {
 
 // How much a folder holds, for the clear buttons.
@@ -1090,7 +1086,7 @@ void SettingsWindow::buildDebugTab(QVBoxLayout* tab) {
     });
     // None of these while Roblox runs: its client, prefix and web views are in use.
     const auto refuse_while_running = [this] {
-        if (!stud_session_running()) return false;
+        if (!stud_session_is_running()) return false;
         QMessageBox::information(this, QStringLiteral("Stud"),
                                  QStringLiteral("Close Roblox first: Stud is using these files while it runs."));
         return true;
@@ -1488,7 +1484,8 @@ void SettingsWindow::onRestartClicked() {
     // Save first, through the ordinary path, settings are read when a
     // session STARTS, so restarting without saving would relaunch the old
     // ones and look like the change did nothing.
-    onSaveClicked();
+    // A save that failed says why, and nothing restarts on the old settings.
+    if (!onSaveClicked()) return;
     if (!stud_session_is_running()) {
         // Nothing running: the next launch reads what was saved.
         statusLabel_->setText("Settings saved.");
@@ -1504,7 +1501,7 @@ void SettingsWindow::onRestartClicked() {
     relaunch_stud();
 }
 
-void SettingsWindow::onSaveClicked() {
+bool SettingsWindow::onSaveClicked() {
     // The flags first: a flags.json the client cannot read is refused
     // before anything is written.
     QString flags_error;
@@ -1513,7 +1510,7 @@ void SettingsWindow::onSaveClicked() {
         statusLabel_->setText(QString("Nothing was saved. The FFlags are not valid JSON: %1")
                                   .arg(flags_error)
                                   .toHtmlEscaped());
-        return;
+        return false;
     }
     // From what is on disk: the file may hold keys this window does not
     // show. A file that cannot be read is not overwritten at all.
@@ -1524,7 +1521,7 @@ void SettingsWindow::onSaveClicked() {
         statusLabel_->setText(
             QString("Nothing was saved. Fix or delete the settings file first: %1")
                 .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
-        return;
+        return false;
     }
     settings.gpu.device_index = static_cast<uint32_t>(gpuCombo_->currentData().toUInt());
     settings.gpu.device_name = gpuCombo_->currentText().toStdString();
@@ -1556,7 +1553,7 @@ void SettingsWindow::onSaveClicked() {
     if (!flags_file.open(QIODevice::WriteOnly) || flags_file.write(flags_text) != flags_text.size() ||
         !flags_file.commit()) {
         statusLabel_->setText(QString("Could not write %1.").arg(flags_path()).toHtmlEscaped());
-        return;
+        return false;
     }
     flagsEdit_->setPlainText(QString::fromUtf8(flags_text));
     try {
@@ -1564,8 +1561,10 @@ void SettingsWindow::onSaveClicked() {
         statusLabel_->setText(stud_session_is_running()
                                   ? "Settings saved. They apply the next time Roblox starts."
                                   : "Settings saved.");
+        return true;
     } catch (const stud::config::SettingsError& e) {
         statusLabel_->setText(QString("Failed to save settings: %1").arg(e.what()));
+        return false;
     }
 }
 

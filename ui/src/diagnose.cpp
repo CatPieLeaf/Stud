@@ -319,8 +319,11 @@ void build_diagnostics() {
     out("\n");
 
     out("client\n");
-    const auto build = stud::ui::client::installed();
-    line("roblox", build ? (build->version + " (" + build->upload + ")").toStdString() : "");
+    for (const auto product : {stud::ui::client::Product::Player, stud::ui::client::Product::Studio}) {
+        const auto build = stud::ui::client::installed(product);
+        line(product == stud::ui::client::Product::Studio ? "studio" : "roblox",
+             build ? (build->version + " (" + build->upload + ")").toStdString() : "");
+    }
     {
         const QString rosemary = stud::ui::client::find_rosemary();
         const std::string version = rosemary_version(rosemary);
