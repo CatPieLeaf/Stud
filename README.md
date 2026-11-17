@@ -381,5 +381,5 @@ Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LIC
 <br>
 
 <div align="center">
-  <img src=".github/icon.png" width="140"></img>
+  <img src=".github/stud-cube.gif" width="140" alt="Stud's stud, spinning"></img>
 </div>
