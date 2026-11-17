@@ -141,7 +141,7 @@ modules:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - -DSTUD_BUILD_ROSEMARY=OFF
       - -DSTUD_BUILD_TESTS=OFF
-      - -DSTUD_VERSION=2.0.1
+      - -DSTUD_VERSION=2.0.2
       # No network during the build, so these are supplied as sources.
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
@@ -154,7 +154,7 @@ modules:
       - rm -rf /app/share/licenses/stud
     sources:
       - type: archive
-        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.1.tar.gz
+        url: https://github.com/CatPieLeaf/Stud/archive/refs/tags/2.0.2.tar.gz
         sha256: d3f883f299fe14c23a4242cf08ea29feec93775191ed4c99d0ce2de60f15537b
       - type: archive
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz

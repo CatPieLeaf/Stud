@@ -99,6 +99,24 @@
 
   <!-- Written by the release workflow (tools/bump-version.py), newest first. -->
   <releases>
+    <release version="2.0.2" date="2026-11-17">
+      <description>
+        <ul>
+          <li>Fixed: Stud didn't start at all on X11 (#36)</li>
+          <li>Fixed: a Roblox window behind other windows took over the cursor, and the home screen reacted, just from the mouse passing over it</li>
+          <li>Fixed: closing Roblox from the Linux title bar froze it and skipped Roblox's own leave screen</li>
+          <li>Fixed: a PlayStation controller pressed every button twice</li>
+          <li>Fixed: Roblox could freeze when leaving a game</li>
+          <li>New: Roblox's sign-in and Studio's web panels now open inside the Roblox window</li>
+          <li>New: a Studio tab in Settings, with Studio's own FastFlags and buttons for its Plugins and Documents folders</li>
+          <li>New: Discord Rich Presence for Studio</li>
+          <li>New: a Presentation setting with VSync, Adaptive VSync, No VSync without tearing, and No VSync</li>
+          <li>New: Ctrl works as Command in Studio, like Studio on Windows</li>
+          <li>Faster: Roblox's main thread gets a higher priority, and its memory uses huge pages</li>
+          <li>Faster: on AMD X3D CPUs, Roblox runs on the cores with the large cache</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.1" date="2026-11-15">
       <description>
         <ul>

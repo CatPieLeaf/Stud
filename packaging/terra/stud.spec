@@ -5,7 +5,7 @@
 %global debug_package %{nil}
 
 Name:           stud
-Version:        2.0.1
+Version:        2.0.2
 Release:        1%{?dist}
 Summary:        An Unofficial Open-Source Roblox Launcher for Linux
 
@@ -94,6 +94,20 @@ cp -a usr %{buildroot}/
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Tue Nov 17 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.2-1
+- Fixed: Stud didn't start at all on X11 (#36)
+- Fixed: a Roblox window behind other windows took over the cursor, and the home screen reacted, just from the mouse passing over it
+- Fixed: closing Roblox from the Linux title bar froze it and skipped Roblox's own leave screen
+- Fixed: a PlayStation controller pressed every button twice
+- Fixed: Roblox could freeze when leaving a game
+- New: Roblox's sign-in and Studio's web panels now open inside the Roblox window
+- New: a Studio tab in Settings, with Studio's own FastFlags and buttons for its Plugins and Documents folders
+- New: Discord Rich Presence for Studio
+- New: a Presentation setting with VSync, Adaptive VSync, No VSync without tearing, and No VSync
+- New: Ctrl works as Command in Studio, like Studio on Windows
+- Faster: Roblox's main thread gets a higher priority, and its memory uses huge pages
+- Faster: on AMD X3D CPUs, Roblox runs on the cores with the large cache
+
 * Sun Nov 15 2026 CatPieLeaf <catpieleaf@proton.me> - 2.0.1-1
 - Fixed: Roblox could close on its own every time you launched it after logging in
 - Fixed: Discord Rich Presence switched to "In the Roblox app" after a game teleported you, for example into a lobby

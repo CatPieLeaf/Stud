@@ -3,7 +3,7 @@
   "manifest_version": "3.0",
   "name": "Stud",
   "description": "An Unofficial Open-Source Roblox Launcher for Linux",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "image": "ghcr.io/catpieleaf/stud@sha256:2b89a1078223f83b01757a7dbbd58c8864344b1343515f3c9d0297472a868b41",
   "binaries": [
     "/usr/bin/stud"
