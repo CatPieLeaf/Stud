@@ -18,4 +18,11 @@ namespace stud::ui::webview {
 // client's environment, or empty if no socket could be opened.
 QString listen();
 
+// `stud --webview-helper`, which Rosemary starts when Stud names it in
+// STUD_WEBVIEW_HELPER: the same host, for one client, over the socket
+// Rosemary hands it (STUD_WEBVIEW_FD), and its windows in the compositor
+// Rosemary runs (WAYLAND_DISPLAY), which draws them inside the client's own
+// window. Returns the exit code.
+int run_helper(int argc, char** argv);
+
 }  // namespace stud::ui::webview

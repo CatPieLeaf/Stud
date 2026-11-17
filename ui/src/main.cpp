@@ -462,9 +462,23 @@ QProcessEnvironment client_environment(const stud::config::StudSettings& setting
                    state + (product == stud::ui::client::Product::Studio ? QStringLiteral("/window-studio")
                                                                          : QStringLiteral("/window")));
     }
-    // The client's web views are QtWebEngine windows of this process.
-    if (const QString socket = stud::ui::webview::listen(); !socket.isEmpty()) {
-        env.insert(QStringLiteral("STUD_WEBVIEW_SOCKET"), socket);
+    // The client's web views are QtWebEngine pages drawn inside its own
+    // window: Rosemary starts this program again as the web view helper, in
+    // a compositor of its own. STUD_WEBVIEW_WINDOWS=1 shows them as windows of
+    // this process on the desktop instead, as before.
+    if (env.value(QStringLiteral("STUD_WEBVIEW_WINDOWS")) == QLatin1String("1")) {
+        if (const QString socket = stud::ui::webview::listen(); !socket.isEmpty()) {
+            env.insert(QStringLiteral("STUD_WEBVIEW_SOCKET"), socket);
+        }
+    } else {
+        // In the AppImage, its launcher: the bare binary finds none of the
+        // libraries the AppImage carries.
+        const QString appdir = qEnvironmentVariable("APPDIR");
+        const QString launcher = appdir + QStringLiteral("/bin/stud");
+        env.insert(QStringLiteral("STUD_WEBVIEW_HELPER"),
+                   !appdir.isEmpty() && QFileInfo(launcher).isExecutable() ? launcher
+                                                                          : QCoreApplication::applicationFilePath());
+        env.remove(QStringLiteral("STUD_WEBVIEW_SOCKET"));
     }
     if (settings.background_fps != stud::config::kBackgroundFpsNoLimit) {
         env.insert(QStringLiteral("ROSEMARY_BACKGROUND_FPS"),
@@ -1244,6 +1258,10 @@ int main(int argc, char** argv) {
     QSurfaceFormat::setDefaultFormat(format);
     // QtWebEngine shares its GL contexts with the widgets that show pages.
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    // Rosemary starting the web view helper for the client it runs.
+    if (argc > 1 && std::string(argv[1]) == "--webview-helper") {
+        return stud::ui::webview::run_helper(argc, argv);
+    }
 
     QApplication app(argc, argv);
     app.setWindowIcon(QIcon(":/stud-logo-color.png"));

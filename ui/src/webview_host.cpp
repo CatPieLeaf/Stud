@@ -42,6 +42,10 @@ namespace {
 
 class Connection;
 
+// Whether this process is the helper: its windows are drawn inside the
+// client's, not shown on the desktop.
+bool g_embedded = false;
+
 // One profile for every page, kept on disk, so a login lasts as it does in
 // the client's own WebKit data store.
 QWebEngineProfile* profile() {
@@ -415,6 +419,12 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
     : connection(connection_), id(id_), agent(agent_) {
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowTitle(QStringLiteral("Stud"));
+    if (g_embedded) {
+        // No frame of its own: the client's window is the frame. The title is
+        // how Rosemary's compositor knows which view this window is for.
+        setWindowFlag(Qt::FramelessWindowHint);
+        setWindowTitle(QStringLiteral("stud-view-") + id);
+    }
     QWebEngineProfile* shared = profile();
     // The first view's agent is the profile's; a view that sends another
     // sends it through its interceptor.
@@ -437,7 +447,7 @@ View::View(Connection* connection_, const QString& id_, const QString& agent_, b
     rebuild_scripts();
 
     connect(page_, &QWebEnginePage::titleChanged, this, [this](const QString& title) {
-        setWindowTitle(title.isEmpty() ? QStringLiteral("Stud") : title);
+        if (!g_embedded) setWindowTitle(title.isEmpty() ? QStringLiteral("Stud") : title);
         send_state();
     });
     connect(page_, &QWebEnginePage::urlChanged, this, [this] { send_state(); });
@@ -664,6 +674,14 @@ void Connection::handle(const QStringList& m) {
             target->agent == profile()->httpUserAgent() ? QByteArray() : target->agent.toUtf8();
         target->rebuild_scripts();
     } else if (kind == QLatin1String("show")) {
+        if (g_embedded) {
+            // At the view's size; Rosemary's compositor keeps it there.
+            const int width = m.value(2).toInt();
+            const int height = m.value(3).toInt();
+            if (width > 0 && height > 0) target->resize(width, height);
+            target->show();
+            return;
+        }
         // Sized as Qt sizes any new window, not as the view: the view fills
         // the client's whole window. After that the window is the person's.
         target->show();
@@ -710,6 +728,23 @@ void Connection::handle(const QStringList& m) {
 QLocalServer* g_server = nullptr;
 
 }  // namespace
+
+int run_helper(int argc, char** argv) {
+    g_embedded = true;
+    QApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
+    bool ok = false;
+    const int fd = qEnvironmentVariable("STUD_WEBVIEW_FD").toInt(&ok);
+    auto* socket = new QLocalSocket(&app);
+    if (!ok || !socket->setSocketDescriptor(fd)) {
+        std::fprintf(stderr, "stud: webview helper: no socket from Rosemary\n");
+        return 2;
+    }
+    new Connection(socket);
+    // Rosemary gone, nothing is left to show.
+    QObject::connect(socket, &QLocalSocket::disconnected, &app, &QCoreApplication::quit);
+    return app.exec();
+}
 
 QString listen() {
     if (g_server != nullptr) return g_server->fullServerName();
