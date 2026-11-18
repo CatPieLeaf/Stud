@@ -39,24 +39,15 @@
 </div>
 
 <div align="center">
-  <img src="packaging/screenshots/home.png" width="700"></img>
-  <p><i>The real Roblox home screen, on a Linux desktop.</i></p>
+  <img src="packaging/screenshots/settings.png"></img>
 </div>
 
 <table align="center">
   <tr>
+    <td><a href="packaging/screenshots/home.png"><img src="packaging/screenshots/home.png" width="260"></a></td>
     <td><a href="packaging/screenshots/game1.png"><img src="packaging/screenshots/game1.png" width="260"></a></td>
     <td><a href="packaging/screenshots/game2.png"><img src="packaging/screenshots/game2.png" width="260"></a></td>
     <td><a href="packaging/screenshots/game3.png"><img src="packaging/screenshots/game3.png" width="260"></a></td>
-  </tr>
-</table>
-
-<table align="center">
-  <tr>
-    <td><a href="packaging/screenshots/settings1.png"><img src="packaging/screenshots/settings1.png" width="195"></a></td>
-    <td><a href="packaging/screenshots/settings2.png"><img src="packaging/screenshots/settings2.png" width="195"></a></td>
-    <td><a href="packaging/screenshots/settings3.png"><img src="packaging/screenshots/settings3.png" width="195"></a></td>
-    <td><a href="packaging/screenshots/settings4.png"><img src="packaging/screenshots/settings4.png" width="195"></a></td>
   </tr>
 </table>
 
@@ -378,8 +369,7 @@ Stud itself is **AGPLv3**, with one additional permission under section 7 ([`LIC
 [`NOTICE.md`](NOTICE.md) covers the rest: every third-party licence, trademarks, your Roblox account, and what does and does not leave your machine. A package installs each licence to `/usr/share/licenses/stud/`.
 
 ---
-<br>
 
 <div align="center">
-  <img src=".github/stud-cube.gif" width="140" alt="Stud's stud, spinning"></img>
+  <img src=".github/stud-cube.gif" width="196" alt="Stud's stud, spinning"></img>
 </div>

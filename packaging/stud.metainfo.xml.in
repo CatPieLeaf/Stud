@@ -55,6 +55,10 @@
   -->
   <screenshots>
     <screenshot type="default">
+      <caption>Stud's settings</caption>
+      <image type="source" width="1388" height="657">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/settings.png</image>
+    </screenshot>
+    <screenshot>
       <caption>The Roblox home screen, running on a Linux desktop</caption>
       <image type="source" width="1013" height="783">https://raw.githubusercontent.com/CatPieLeaf/Stud/main/packaging/screenshots/home.png</image>
     </screenshot>
