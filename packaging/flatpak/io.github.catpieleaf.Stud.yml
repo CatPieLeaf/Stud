@@ -1,6 +1,4 @@
 app-id: io.github.catpieleaf.Stud
-# QtWebEngine, which org.kde.Platform does not ship. Needed for the sign-in
-# and web pages Stud shows for the client.
 base: io.qt.qtwebengine.BaseApp
 base-version: '6.11'
 runtime: org.kde.Platform
@@ -10,32 +8,18 @@ command: stud
 separate-locales: false
 
 finish-args:
-  # Rendering: Rosemary draws the client through Vulkan.
   - --device=dri
-  # X11 shared memory, for the fallback X11 socket.
   - --share=ipc
-  # Roblox is an online game and the login is a real HTTPS session.
   - --share=network
   - --socket=wayland
   - --socket=fallback-x11
-  # Audio out, and microphone in for voice chat.
   - --socket=pulseaudio
-  # Discord Rich Presence (--filesystem=xdg-run/discord-ipc-0) and game
-  # controllers (--device=input) are opt-in: Settings shows the override.
-  # QtWebEngine comes from the base app under /app, and the runtime's Qt only
-  # looks beside its own prefix.
   - --env=QTWEBENGINEPROCESS_PATH=/app/bin/QtWebEngineProcess
   - --env=QTWEBENGINE_RESOURCES_PATH=/app/resources
   - --env=QTWEBENGINE_LOCALES_PATH=/app/translations/qtwebengine_locales
-  # Tray icon, and the notification on joining a game.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-  # No filesystem access: files are picked through the portal.
 
-# FFmpeg with H.264, for video in experiences: the runtime's own leaves the
-# patented codecs out. Rosemary opens whichever release is there. `version`
-# must match the freedesktop base under the KDE runtime above: check both
-# when either is bumped.
 add-extensions:
   org.freedesktop.Platform.ffmpeg-full:
     directory: lib/ffmpeg
@@ -45,8 +29,6 @@ add-extensions:
     autodelete: false
 
 modules:
-  # Rosemary needs SDL 3.4 or newer; the runtime's SDL3 is older. It opens
-  # SDL3 by name, and /app/lib is searched before the runtime's.
   - name: sdl3
     buildsystem: cmake-ninja
     config-opts:
@@ -68,11 +50,9 @@ modules:
       - /lib/pkgconfig
       - /share
 
-  # wl-copy, for copying a server link from the tray menu.
   - name: wl-clipboard
     buildsystem: meson
     config-opts:
-      # Its fish and zsh completions install outside the prefix.
       - -Dfishcompletiondir=no
       - -Dzshcompletiondir=no
     sources:
@@ -83,15 +63,6 @@ modules:
       - /share/man
       - /share/bash-completion
 
-  # Rosemary, built here against the runtime's own glibc and libraries, from
-  # Stud's fork. The build has no network, so its Cargo dependencies, the git
-  # ones included, come from rosemary-cargo-sources.json, which
-  # tools/update-flatpak-rosemary.sh generates from the commit's Cargo.lock.
-  # glslc, for the upscalers' shaders, is in the SDK.
-  #
-  # Rust is the current stable release's official archive, which the same
-  # script writes in: Flathub's Rust extension can trail the release Rosemary
-  # needs. It is installed into the build directory, used, and never shipped.
   - name: rosemary
     buildsystem: simple
     build-options:
@@ -117,7 +88,6 @@ modules:
           - x86_64
       - rosemary-cargo-sources.json
 
-  # The launcher, built here against the runtime's own Qt.
   - name: stud
     buildsystem: cmake-ninja
     config-opts:
@@ -125,12 +95,9 @@ modules:
       - -DSTUD_BUILD_ROSEMARY=OFF
       - -DSTUD_BUILD_TESTS=OFF
       - -DSTUD_VERSION=2.0.2
-      # No network during the build, so these are supplied as sources.
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
       - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
-    # A distribution package looks in share/licenses/<package>; Flathub asks
-    # for share/licenses/<app id>.
     post-install:
       - mkdir -p /app/share/licenses/io.github.catpieleaf.Stud
       - cp -a /app/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
