@@ -87,6 +87,5 @@ CMakeUserPresets.json
 # belongs to another project and stays out of this one.
 README-ref.md
 CLAUDE.md
-AGENTS.md
 .claude/
 nohup.out
