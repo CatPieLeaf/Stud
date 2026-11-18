@@ -97,7 +97,6 @@ modules:
       - -DSTUD_VERSION=2.0.2
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_SOURCE_DIR_MINIZ=/run/build/stud/deps/miniz
-      - -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/run/build/stud/deps/json
     post-install:
       - mkdir -p /app/share/licenses/io.github.catpieleaf.Stud
       - cp -a /app/share/licenses/stud/. /app/share/licenses/io.github.catpieleaf.Stud/
@@ -110,7 +109,3 @@ modules:
         url: https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.tar.gz
         sha256: 98468f8924934b723276680f85238b6c78bf1f8b49b4459cc9b7214a20e2e9fb
         dest: deps/miniz
-      - type: archive
-        url: https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz
-        sha256: 0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406
-        dest: deps/json
