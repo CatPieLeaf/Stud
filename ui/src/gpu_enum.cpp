@@ -1,7 +1,10 @@
 #include "gpu_enum.h"
 
-// volk opens the loader at run time, so Settings works without Vulkan and lists no GPUs.
-#include "volk.h"
+// The loader is opened at run time, so Settings works without Vulkan and lists no GPUs.
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+
+#include <dlfcn.h>
 
 #include <algorithm>
 #include <array>
@@ -12,16 +15,19 @@ namespace stud::ui {
 
 namespace {
 
-bool loader_available() {
-    static const bool available = volkInitialize() == VK_SUCCESS;
-    return available;
+PFN_vkGetInstanceProcAddr loader() {
+    static const auto get = [] {
+        void* lib = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (lib == nullptr) lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+        return lib == nullptr ? nullptr
+                              : reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(lib, "vkGetInstanceProcAddr"));
+    }();
+    return get;
 }
 
-// Per instance, so two enumerations never share function pointers.
-VolkInstanceTable instance_table(VkInstance instance) {
-    VolkInstanceTable table{};
-    volkLoadInstanceTable(&table, instance);
-    return table;
+template <typename Fn>
+Fn load(VkInstance instance, const char* name) {
+    return reinterpret_cast<Fn>(loader()(instance, name));
 }
 
 std::vector<GpuInfo> read_gpus() {
@@ -40,7 +46,9 @@ std::vector<GpuInfo> read_gpus() {
     instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instance_info.pApplicationInfo = &app_info;
 
-    if (!loader_available()) return result;
+    if (loader() == nullptr) return result;
+    const auto vkCreateInstance = load<PFN_vkCreateInstance>(VK_NULL_HANDLE, "vkCreateInstance");
+    if (vkCreateInstance == nullptr) return result;
 
     bool have_device_uuid = true;
     VkInstance instance = VK_NULL_HANDLE;
@@ -51,13 +59,20 @@ std::vector<GpuInfo> read_gpus() {
             return result;
         }
     }
-    const VolkInstanceTable vk = instance_table(instance);
+    const auto vkEnumeratePhysicalDevices =
+        load<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
+    const auto vkGetPhysicalDeviceProperties =
+        load<PFN_vkGetPhysicalDeviceProperties>(instance, "vkGetPhysicalDeviceProperties");
+    const auto vkGetPhysicalDeviceProperties2 =
+        load<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
+    const auto vkDestroyInstance = load<PFN_vkDestroyInstance>(instance, "vkDestroyInstance");
+    if (vkGetPhysicalDeviceProperties2 == nullptr) have_device_uuid = false;
 
     uint32_t device_count = 0;
-    vk.vkEnumeratePhysicalDevices(instance, &device_count, nullptr);
+    vkEnumeratePhysicalDevices(instance, &device_count, nullptr);
     if (device_count > 0) {
         std::vector<VkPhysicalDevice> devices(device_count);
-        vk.vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
+        vkEnumeratePhysicalDevices(instance, &device_count, devices.data());
 
         // One entry per GPU: Flatpak's runtime reads each ICD twice, which listed
         // every device in pairs. Keyed by UUID, since two identical cards differ
@@ -66,7 +81,7 @@ std::vector<GpuInfo> read_gpus() {
         std::vector<std::string> seen_keys;
         for (uint32_t i = 0; i < device_count; ++i) {
             VkPhysicalDeviceProperties props{};
-            vk.vkGetPhysicalDeviceProperties(devices[i], &props);
+            vkGetPhysicalDeviceProperties(devices[i], &props);
 
             bool duplicate = false;
             std::string uuid_hex;
@@ -76,7 +91,7 @@ std::vector<GpuInfo> read_gpus() {
                 VkPhysicalDeviceProperties2 props2{};
                 props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
                 props2.pNext = &id_props;
-                vk.vkGetPhysicalDeviceProperties2(devices[i], &props2);
+                vkGetPhysicalDeviceProperties2(devices[i], &props2);
                 std::array<uint8_t, VK_UUID_SIZE> uuid{};
                 std::memcpy(uuid.data(), id_props.deviceUUID, VK_UUID_SIZE);
                 duplicate = std::find(seen_uuids.begin(), seen_uuids.end(), uuid) !=
@@ -105,7 +120,7 @@ std::vector<GpuInfo> read_gpus() {
         }
     }
 
-    vk.vkDestroyInstance(instance, nullptr);
+    vkDestroyInstance(instance, nullptr);
     return result;
 }
 

@@ -47,7 +47,6 @@ Provides:       bundled(rosemary)
 Provides:       bundled(fidelityfx-fsr1)
 Provides:       bundled(snapdragon-gsr)
 Provides:       bundled(mpv-prescalers)
-Provides:       bundled(volk)
 Provides:       bundled(miniz)
 Provides:       bundled(json)
 

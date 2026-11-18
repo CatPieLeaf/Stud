@@ -358,7 +358,6 @@ Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commerc
  - [mpv-prescalers](https://github.com/bjin/mpv-prescalers): the RAVU-Zoom upscaler, compiled into Rosemary (LGPL-3.0-or-later)
  - [Snapdragon Game Super Resolution](https://github.com/SnapdragonStudios/snapdragon-gsr): the SGSR upscaler, compiled into Rosemary (BSD-3-Clause)
  - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): RCAS, the sharpening pass after RAVU, compiled into Rosemary (MIT)
- - [volk](https://github.com/zeux/volk): Vulkan entry points, for the GPU picker (MIT)
  - [nlohmann/json](https://github.com/nlohmann/json) and [miniz](https://github.com/richgel999/miniz) (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Anylinux AppImages](https://github.com/pkgforge-dev/Anylinux-AppImages), [uruntime](https://github.com/VHSgunzo/uruntime) and [sharun](https://github.com/VHSgunzo/sharun): how the AppImage is built and run (MIT)

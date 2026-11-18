@@ -44,12 +44,9 @@ target_link_libraries(stud_ui_launch_uri PUBLIC Qt6::Core)
 
 add_library(stud_ui_gpu_enum STATIC
     src/gpu_enum.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk/volk.c"
 )
 target_include_directories(stud_ui_gpu_enum PUBLIC src)
-target_include_directories(stud_ui_gpu_enum PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/volk")
-# Headers only: volk loads libvulkan at run time, so Stud starts without Vulkan
-# and simply lists no GPUs.
+# Headers only: libvulkan is opened at run time, so Stud starts without Vulkan.
 target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAKE_DL_LIBS})
 
 # Apple's root certificate for checking Roblox's code signature (code_signature.cpp).

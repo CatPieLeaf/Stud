@@ -16,12 +16,6 @@ Files: *
 Copyright: 2026 CatPieLeaf <catpieleaf@proton.me>
 License: AGPL-3.0-or-later with Roblox-Engine exception
 
-Files: third_party/volk/*
-Copyright: 2018-2026 Arseny Kapoulkine
-License: MIT
-Comment:
- The Vulkan entry-point loader the launcher lists GPUs with.
-
 Files: (fetched at build time, not in this source tree)
 Copyright: 2013-2025 Niels Lohmann
            2013-2025 Rich Geldreich, RAD Game Tools and Valve Software

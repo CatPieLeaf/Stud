@@ -126,10 +126,9 @@ applying to that copy. The hook the RAVU-Zoom shader and its weight tables
 come from is in the fork, `crates/metal/upscale/`, as the Corresponding
 Source.
 
-Two more are compiled into Stud's launcher, so their notices are installed
-there too:
+One more is compiled into Stud's launcher, so its notice is installed there
+too:
 
- - volk, the Vulkan entry-point loader that lists the GPUs (MIT)
  - miniz, which unpacks the client and writes the log export (MIT)
 
 The full credits are in the README.

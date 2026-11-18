@@ -218,9 +218,6 @@ else()
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/stud.1"
             DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 endif()
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/volk/LICENSE"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/volk"
-        RENAME "LICENSE-volk.txt")
 install(FILES "${miniz_SOURCE_DIR}/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/stud/miniz"
         RENAME "LICENSE-miniz.txt")

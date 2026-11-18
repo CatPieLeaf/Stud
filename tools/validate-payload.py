@@ -210,7 +210,7 @@ def validate(root: Path, expect_desktop_files: bool, rosemary_source: Path | Non
         licenses = share / "licenses" / "stud"
         for name in ("LICENSE", "LICENSE.exception", "NOTICE.md"):
             r.check((licenses / name).exists(), f"Stud's {name} is missing")
-        for component in ("rosemary", "volk", "miniz"):
+        for component in ("rosemary", "miniz"):
             d = licenses / component
             r.check(d.is_dir() and any(d.iterdir()),
                     f"no licence text for {component}, which this package redistributes")

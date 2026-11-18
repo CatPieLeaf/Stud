@@ -33,13 +33,8 @@ __pycache__/
 *.pyc
 .venv/
 
-# Third-party code is fetched at build time, never committed, except what
-# is vendored below.
+# Third-party code is fetched at build time, never committed.
 third_party/*
-# volk is the exception: the Vulkan meta-loader the GPU list goes through,
-# so a misspelt entry point fails to compile instead of resolving to null
-# at runtime. MIT, two files.
-!third_party/volk/
 
 # The Roblox client is downloaded from Roblox at run time and never
 # distributed from here.
