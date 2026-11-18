@@ -55,8 +55,7 @@ namespace stud::ui {
 namespace {
 
 // Qt asks the bus whether org.kde.StatusNotifierWatcher has an owner. A sandbox
-// that refuses that question (cpak did) gets no tray icon at all, and Stud
-// can't work around it: the sandbox has to allow it.
+// that refuses that question (cpak before #78) gets no tray icon at all.
 bool system_tray_exists() {
     if (QSystemTrayIcon::isSystemTrayAvailable()) return true;
     std::fprintf(stderr,

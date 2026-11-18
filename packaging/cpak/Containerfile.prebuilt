@@ -21,7 +21,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         libX11 libXext libdecor \
         pipewire-libs pulseaudio-libs alsa-lib \
         libavcodec-free libavutil-free \
-        dbus-libs libnotify \
+        dbus-libs libnotify wl-clipboard \
         plasma-breeze-qt6 \
     && dnf clean all
 

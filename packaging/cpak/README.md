@@ -69,15 +69,8 @@ demonstrably does:
 - **`filePicker` + `xdg-download` read-only**; customizations and FFlag
   imports are picked from the user's files, and Downloads is where a
   downloaded one lands. Nothing else of the host's home is visible.
-- **`sessionBus.talk`**, the system tray's watcher only.
-
-  The system tray IS a gap, and it is cpak's to fix. Qt decides whether a
-  tray exists by asking the BUS DAEMON whether org.kde.StatusNotifierWatcher
-  has an owner, and cpak rejects a policy that names org.freedesktop.DBus
-  ("session bus policy cannot call org.freedesktop.DBus"); it mediates
-  the daemon itself. Granting talk to the watcher and its properties, and
-  own of org.kde.StatusNotifierItem-, is not enough: the question is asked
-  before any of that, so Qt answers "no tray" and Stud logs `no system
-  tray available, exiting after launch`. Verified from the host: no Stud
-  item ever appears in the watcher's RegisteredStatusNotifierItems while a
-  cpak session runs.
+- **`sessionBus.talk`** to the system tray's watcher, and **`own`** of
+  `org.kde.StatusNotifierItem-`, for the tray icon. It needs a cpak release
+  with [Containerpak/cpak#78](https://github.com/Containerpak/cpak/pull/78),
+  which lets Qt ask whether the watcher exists and lets the tray host read
+  the icon and menu back; older cpak shows no tray icon.
