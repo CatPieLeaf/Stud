@@ -87,8 +87,12 @@ and no crash reporting of any kind.
   not the one installed. Neither request carries your login.
 - On first use, Rosemary downloads its MiniDarwin base system from
   `github.com/microlift/minidarwin`'s releases.
-- Your login is kept by Roblox's own client, inside Stud's Rosemary prefix
-  (`~/.local/share/stud/prefix`). Stud never reads it.
+- When you choose a classic cursor, character sounds or avatar background in
+  Settings, Stud downloads those files from Bloxstrap's repository on
+  `raw.githubusercontent.com`. Nothing about you is sent.
+- Your login is Roblox's own cookie file, inside Stud's Rosemary prefix
+  (`~/.local/share/stud/prefix`). Between sessions Stud keeps it in your
+  system keyring and removes the file; it is never sent anywhere by Stud.
 - Logs are written under `~/.local/state/stud/logs/` and stay on your
   machine. Nothing uploads them. Join tickets are removed from them.
 

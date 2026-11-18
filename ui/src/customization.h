@@ -9,6 +9,8 @@
 #include <QColor>
 #include <QString>
 
+#include <functional>
+
 namespace stud::ui::customization {
 
 QString folder(client::Product product);
@@ -19,7 +21,7 @@ QString folder(client::Product product);
 bool apply(const client::Build& build, client::Product product, QString* error);
 
 // Generated customizations offered in Settings.
-enum class Part { Cursor, ShiftLock, EmoteWheel, DeathSound, Font, MonoFont };
+enum class Part { Cursor, ShiftLock, EmoteWheel, DeathSound, Font, MonoFont, AvatarBackground, CharacterSounds };
 
 // An image for cursor or shift lock, .ogg for the death sound, .ttf/.otf for the fonts.
 bool use_file(Part part, const QString& file, QString* error);
@@ -28,6 +30,12 @@ bool use_file(Part part, const QString& file, QString* error);
 bool recolour(Part part, const QColor& colour, QString* error);
 
 void remove(Part part);
+
+// Bloxstrap's classic files, downloaded from its repository into the customizations
+// folder: the old avatar editor background, the old character sounds, or the 2006 or
+// 2013 cursor (`variant`). Nothing is written unless every file arrives; `done` gets
+// an empty string or what failed.
+void download_classic(Part part, const QString& variant, std::function<void(const QString& error)> done);
 
 bool present(Part part);
 

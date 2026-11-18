@@ -370,12 +370,18 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         const char* label;
         const char* filter;  // nullptr when there is no file to choose
         bool colour;
+        // Bloxstrap's classic versions, downloaded from its repository: "" for one
+        // "Classic" button, or the variants each with its own button.
+        QStringList classic = {};
+        bool has_classic = false;
     };
     const Row rows[] = {
-        {customization::Part::Cursor, "Cursor", "Images (*.png)", true},
+        {customization::Part::Cursor, "Cursor", "Images (*.png)", true, {"2006", "2013"}, true},
         {customization::Part::ShiftLock, "Shift lock", "Images (*.png)", true},
         {customization::Part::EmoteWheel, "Emote wheel", nullptr, true},
         {customization::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
+        {customization::Part::CharacterSounds, "Character sounds", nullptr, false, {""}, true},
+        {customization::Part::AvatarBackground, "Avatar background", nullptr, false, {""}, true},
         {customization::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
         {customization::Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false},
     };
@@ -428,6 +434,28 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
             refresh();
         });
         grid->addWidget(reset, row, 4);
+        if (r.has_classic) {
+            auto* classics = new QHBoxLayout();
+            for (const QString& variant : r.classic) {
+                auto* button = new QPushButton(variant.isEmpty() ? QStringLiteral("Classic") : variant, this);
+                button->setIcon(themed("download", QStyle::SP_ArrowDown));
+                button->setToolTip("Downloads Bloxstrap's classic version from its GitHub repository.");
+                connect(button, &QPushButton::clicked, this, [this, r, refresh, variant, button] {
+                    button->setEnabled(false);
+                    statusLabel_->setText(QStringLiteral("Downloading from Bloxstrap..."));
+                    QPointer<QPushButton> guard = button;
+                    QPointer<QLabel> status = statusLabel_;
+                    customization::download_classic(r.part, variant, [guard, status, refresh](const QString& error) {
+                        if (guard) guard->setEnabled(true);
+                        if (!status) return;
+                        status->setText(error.isEmpty() ? QStringLiteral("Applied at the next launch.") : error.toHtmlEscaped());
+                        refresh();
+                    });
+                });
+                classics->addWidget(button);
+            }
+            grid->addLayout(classics, row, 5);
+        }
         ++row;
     }
     customizeTab->addLayout(grid);

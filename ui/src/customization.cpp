@@ -12,7 +12,11 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QSaveFile>
+#include <QUrl>
 #include <QStringList>
 
 namespace stud::ui::customization {
@@ -45,6 +49,14 @@ PartFiles files_of(Part part) {
         case Part::MonoFont:
             return {QStringLiteral("content/fonts"),
                     {QStringLiteral("CustomMonoFont.ttf"), QStringLiteral("CustomMonoFont.otf")}};
+        case Part::AvatarBackground:
+            return {QStringLiteral("ExtraContent/places"), {QStringLiteral("Mobile.rbxl")}};
+        case Part::CharacterSounds:
+            return {QStringLiteral("content/sounds"),
+                    {QStringLiteral("action_footsteps_plastic.mp3"), QStringLiteral("action_jump.mp3"),
+                     QStringLiteral("action_get_up.mp3"), QStringLiteral("action_falling.mp3"),
+                     QStringLiteral("action_jump_land.mp3"), QStringLiteral("action_swim.mp3"),
+                     QStringLiteral("impact_water.mp3")}};
     }
     return {};
 }
@@ -288,6 +300,64 @@ void remove(Part part) {
     const PartFiles p = files_of(part);
     for (const QString& name : p.files) {
         QFile::remove(folder(client::Product::Player) + QLatin1Char('/') + p.directory + QLatin1Char('/') + name);
+    }
+}
+
+void download_classic(Part part, const QString& variant, std::function<void(const QString& error)> done) {
+    static const QString kMods =
+        QStringLiteral("https://raw.githubusercontent.com/bloxstraplabs/bloxstrap/main/Bloxstrap/Resources/Mods/");
+    const PartFiles p = files_of(part);
+    // Each target file and its source in Bloxstrap's Mods folder, as Bloxstrap maps them.
+    QStringList sources;
+    if (part == Part::AvatarBackground) {
+        sources = {QStringLiteral("OldAvatarBackground.rbxl")};
+    } else if (part == Part::CharacterSounds) {
+        sources = {QStringLiteral("Sounds/OldWalk.mp3"), QStringLiteral("Sounds/OldJump.mp3"),
+                   QStringLiteral("Sounds/OldGetUp.mp3"), QStringLiteral("Sounds/Empty.mp3"),
+                   QStringLiteral("Sounds/Empty.mp3"), QStringLiteral("Sounds/Empty.mp3"),
+                   QStringLiteral("Sounds/Empty.mp3")};
+    } else if (part == Part::Cursor) {
+        sources = {QStringLiteral("Cursor/From%1/ArrowCursor.png").arg(variant),
+                   QStringLiteral("Cursor/From%1/ArrowFarCursor.png").arg(variant)};
+    }
+    if (sources.isEmpty()) {
+        done(QStringLiteral("nothing to download for this customization"));
+        return;
+    }
+
+    auto* net = new QNetworkAccessManager();
+    struct Pending {
+        QVector<QByteArray> data;
+        int left;
+        QString error;
+    };
+    auto pending = std::make_shared<Pending>(Pending{QVector<QByteArray>(sources.size()), int(sources.size()), {}});
+    const QString dir = folder(client::Product::Player) + QLatin1Char('/') + p.directory;
+    for (int i = 0; i < sources.size(); ++i) {
+        QNetworkRequest request{QUrl(kMods + sources.at(i))};
+        request.setTransferTimeout(30000);
+        QNetworkReply* reply = net->get(request);
+        QObject::connect(reply, &QNetworkReply::finished, net, [=] {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                pending->error = QStringLiteral("could not download %1 from Bloxstrap: %2")
+                                     .arg(sources.at(i), reply->errorString());
+            } else {
+                pending->data[i] = reply->readAll();
+            }
+            if (--pending->left > 0) return;
+            net->deleteLater();
+            if (!pending->error.isEmpty()) return done(pending->error);
+            if (part == Part::Cursor) remove(Part::Cursor);
+            for (int k = 0; k < sources.size(); ++k) {
+                QDir().mkpath(dir);
+                QSaveFile out(dir + QLatin1Char('/') + p.files.at(k));
+                if (!out.open(QIODevice::WriteOnly) || out.write(pending->data[k]) < 0 || !out.commit()) {
+                    return done(QStringLiteral("could not save %1 into the customizations folder").arg(p.files.at(k)));
+                }
+            }
+            done(QString());
+        });
     }
 }
 

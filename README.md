@@ -359,6 +359,7 @@ Roblox is a trademark of Roblox Corporation. Stud is an independent, non-commerc
  - [Snapdragon Game Super Resolution](https://github.com/SnapdragonStudios/snapdragon-gsr): the SGSR upscaler, compiled into Rosemary (BSD-3-Clause)
  - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR): RCAS, the sharpening pass after RAVU, compiled into Rosemary (MIT)
  - [miniz](https://github.com/richgel999/miniz) (MIT)
+ - [Bloxstrap](https://github.com/bloxstraplabs/bloxstrap): the classic cursors, character sounds and avatar background, downloaded from its repository when you choose them (MIT)
  - Qt, and on the AppImage the Breeze widget style (LGPL)
  - [Anylinux AppImages](https://github.com/pkgforge-dev/Anylinux-AppImages), [uruntime](https://github.com/VHSgunzo/uruntime) and [sharun](https://github.com/VHSgunzo/sharun): how the AppImage is built and run (MIT)
  - [Boblox Classic](https://www.deviantart.com/ripoof/art/Roblox-Classic-FONT-880246616): the typeface in Stud's logo, by ripoof. The font itself is not shipped
