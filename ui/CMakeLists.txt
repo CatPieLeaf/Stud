@@ -49,6 +49,10 @@ target_include_directories(stud_ui_gpu_enum PUBLIC src)
 # Headers only: libvulkan is opened at run time, so Stud starts without Vulkan.
 target_link_libraries(stud_ui_gpu_enum PUBLIC Vulkan::Headers stud_config ${CMAKE_DL_LIBS})
 
+# The login cookies kept in the system keyring (login_keyring.cpp).
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+
 # Apple's root certificate for checking Roblox's code signature (code_signature.cpp).
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 add_custom_command(
@@ -93,13 +97,14 @@ add_executable(stud-ui
     src/webview_host.cpp
     src/log_export.cpp
     src/launcher_portal.cpp
+    src/login_keyring.cpp
     resources/resources.qrc
 )
 target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network Qt6::DBus
                                        Qt6::WebEngineWidgets Qt6::WebChannel
                                        stud_ui_gpu_enum stud_config stud_ui_notifications stud_ui_mono_icon
                                        stud_ui_launch_uri stud_ui_log_archive stud_ui_mac_client
-                                       stud_ui_stud1_cleanup miniz)
+                                       stud_ui_stud1_cleanup miniz PkgConfig::LIBSECRET)
 
 
 set_target_properties(stud-ui PROPERTIES

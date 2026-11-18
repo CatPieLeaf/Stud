@@ -30,6 +30,8 @@ Requires:       SDL3 >= 3.4.0
 Requires:       libvulkan.so.1()(64bit)
 # The launcher checks Roblox's code signature with OpenSSL.
 Requires:       libcrypto.so.3()(64bit)
+# The launcher keeps Roblox's login in the system keyring.
+Requires:       libsecret-1.so.0()(64bit)
 # FFmpeg, opened at runtime for video in experiences. Either Fedora's own
 # build or RPM Fusion's full one: both provide these names, whatever the
 # release.

@@ -156,6 +156,7 @@ StudSettings load_settings(const std::string& path) {
     read_bool("discordJoinButton", result.discord_join_button);
     read_bool("gameControllers", result.game_controllers);
     read_bool("serverRegionNotification", result.server_region_notification);
+    read_bool("closeOnLeave", result.close_on_leave);
     read_bool("recordGameHistory", result.record_game_history);
     read_bool("recordServerHistory", result.record_server_history);
     int days = 0;
@@ -202,6 +203,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
     doc.insert(QStringLiteral("discordJoinButton"), settings.discord_join_button);
     doc.insert(QStringLiteral("gameControllers"), settings.game_controllers);
     doc.insert(QStringLiteral("serverRegionNotification"), settings.server_region_notification);
+    doc.insert(QStringLiteral("closeOnLeave"), settings.close_on_leave);
     doc.insert(QStringLiteral("recordGameHistory"), settings.record_game_history);
     doc.insert(QStringLiteral("recordServerHistory"), settings.record_server_history);
     doc.insert(QStringLiteral("cleanerDays"), settings.cleaner_days);
@@ -213,7 +215,7 @@ void save_settings(const std::string& path, const StudSettings& settings) {
          {"vsync", "hidpi", "followDpi", "renderScale", "upscaling", "upscaleOutputPercent",
           "upscaleQualityPercent", "upscaleTargetPercent", "upscalerChoice",
           "textOverlayFontRatio", "smoothZoom", "windowsMaterials", "webLogin", "hqTextures",
-          "closeOnLeave", "textureCache", "textureCacheMB", "graphicsMode",
+          "textureCache", "textureCacheMB", "graphicsMode",
           "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback",
           "menuBar", "frameCap", "presentationMode", "controlEditKeys", "launcherStyle"}) {
         doc.remove(key_of(gone));

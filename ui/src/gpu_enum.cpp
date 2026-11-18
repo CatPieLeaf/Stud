@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -125,6 +126,36 @@ std::vector<GpuInfo> read_gpus() {
     return result;
 }
 
+// The model from the PCI ID database, its [marketing name] when it has one; empty
+// without a database. Flatpak sees the host's under /run/host.
+std::string pci_model(uint32_t vendor, uint32_t device) {
+    for (const char* path : {"/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids",
+                             "/run/host/usr/share/hwdata/pci.ids"}) {
+        std::ifstream file(path);
+        if (!file) continue;
+        char vendor_hex[5], device_hex[6];
+        std::snprintf(vendor_hex, sizeof vendor_hex, "%04x", vendor);
+        std::snprintf(device_hex, sizeof device_hex, "\t%04x", device);
+        bool in_vendor = false;
+        for (std::string line; std::getline(file, line);) {
+            if (line.empty() || line[0] == '#') continue;
+            if (line[0] != '\t') {
+                if (in_vendor) break;
+                in_vendor = line.rfind(vendor_hex, 0) == 0;
+            } else if (in_vendor && line.rfind(device_hex, 0) == 0) {
+                std::string model = line.substr(7);
+                const size_t open = model.find('['), close = model.rfind(']');
+                if (open != std::string::npos && close != std::string::npos && open < close) {
+                    model = model.substr(open + 1, close - open - 1);
+                }
+                return model;
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
 // Without Vulkan (OpenGL only), the kernel's GPUs: the one that didn't boot the
 // display is the offload GPU on a hybrid laptop.
 std::vector<GpuInfo> read_drm_gpus() {
@@ -142,9 +173,14 @@ std::vector<GpuInfo> read_drm_gpus() {
         const uint32_t vendor_id = std::stoul(vendor, nullptr, 16);
         const char* maker = vendor_id == kVendorNvidia ? "NVIDIA" : vendor_id == 0x1002 ? "AMD"
                           : vendor_id == 0x8086 ? "Intel" : "GPU";
-        std::string id = read(device + "device");
-        if (id.rfind("0x", 0) == 0) id.erase(0, 2);
-        result.push_back(GpuInfo{card, std::string(maker) + " " + id, vendor_id,
+        const uint32_t device_id = std::stoul(read(device + "device"), nullptr, 16);
+        std::string model = pci_model(vendor_id, device_id);
+        if (model.empty()) {
+            char id[8];
+            std::snprintf(id, sizeof id, "%04x", device_id);
+            model = std::string("GPU ") + id;
+        }
+        result.push_back(GpuInfo{card, std::string(maker) + " " + model, vendor_id,
                                  read(device + "boot_vga") == "0", std::string()});
     }
     return result;

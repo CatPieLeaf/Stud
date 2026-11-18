@@ -19,6 +19,7 @@ pkgbase = stud
 	depends = vulkan-icd-loader
 	depends = curl
 	depends = openssl
+	depends = libsecret
 	depends = zlib
 	depends = libxkbcommon
 	depends = systemd-libs

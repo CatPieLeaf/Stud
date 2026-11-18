@@ -5,6 +5,7 @@
 
 #include "history.h"
 #include "notifications.h"
+#include "stud/stud_paths.h"
 
 #include <QDateTime>
 #include <QJsonArray>
@@ -12,6 +13,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QTimer>
 #include <QUrl>
 
@@ -42,6 +44,9 @@ GameActivity::GameActivity(const Options& options, QObject* parent)
     if (options_.discord) {
         discord_rpc_start(kRobloxDiscordApplicationId);
         publish();
+        // The account seen last time, so the avatar shows before the first join.
+        QFile saved(user_id_file());
+        if (!options_.studio && saved.open(QIODevice::ReadOnly)) signed_in(QString::fromLatin1(saved.readAll()).trimmed());
     }
     if (options_.studio && !options_.studio_logs.isEmpty()) follow_studio_logs();
 }
@@ -117,6 +122,7 @@ void GameActivity::line(const QByteArray& raw) {
     // Join types 4 and 6 are reserved servers. The ticket on this line isn't kept.
     static const QRegularExpression join_type(QStringLiteral(R"(JoinTypeId"%3a(\d+)%2c)"));
     static const QRegularExpression referral(QStringLiteral(R"(referral_page:([^,]+))"));
+    static const QRegularExpression user_id(QStringLiteral(R"(userid:(\d+))"));
     if (const auto m = joining.match(text); m.hasMatch()) {
         joined(m.captured(2), m.captured(1));
     } else if (const auto m = udmux.match(text); m.hasMatch()) {
@@ -125,6 +131,7 @@ void GameActivity::line(const QByteArray& raw) {
         const int type = join_type.match(text).captured(1).toInt();
         teleport_reserved_ = type == 4 || type == 6;
     } else if (text.contains(QStringLiteral("[FLog::GameJoinLoadTime] Report game_join_loadtime:"))) {
+        if (const auto m = user_id.match(text); m.hasMatch()) signed_in(m.captured(1));
         const QString page = referral.match(text).captured(1);
         if (page.contains(QStringLiteral("RequestPrivateGame")) ||
             page.contains(QStringLiteral("GameDetailPageJSHybridEvent"))) {
@@ -148,8 +155,33 @@ void GameActivity::line(const QByteArray& raw) {
     } else if (text.contains(QStringLiteral("[FLog::SingleSurfaceApp] leaveUGCGameInternal"))) {
         // Not on Client:Disconnect: a teleport disconnects too, and its close can
         // land after the new join. A teleport logs its own "Joining game".
+        const bool was_in_game = !place_.isEmpty();
         left();
+        if (was_in_game && options_.close_on_leave) Q_EMIT leftGame();
     }
+}
+
+QString GameActivity::user_id_file() {
+    return QString::fromStdString(stud::paths::data_dir()) + QStringLiteral("/user-id");
+}
+
+// The signed-in account's avatar head, as Discord's small image.
+void GameActivity::signed_in(const QString& user) {
+    if (!options_.discord || user.isEmpty() || user == user_id_) return;
+    user_id_ = user;
+    QSaveFile saved(user_id_file());
+    if (saved.open(QIODevice::WriteOnly)) {
+        saved.write(user.toLatin1());
+        saved.commit();
+    }
+    fetch(QStringLiteral("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%1"
+                         "&size=150x150&format=Png&isCircular=true").arg(user),
+          [this, user](const QJsonObject& reply) {
+              if (user != user_id_) return;
+              avatar_ = reply.value(QStringLiteral("data")).toArray().at(0).toObject()
+                            .value(QStringLiteral("imageUrl")).toString();
+              publish();
+          });
 }
 
 void GameActivity::joined(const QString& place, const QString& job) {
@@ -344,6 +376,7 @@ void GameActivity::publish() {
     }
     if (place_.isEmpty()) {
         a.details = "In the Roblox app";
+        a.small_image = avatar_.toStdString();
         discord_rpc_set(a);
         return;
     }
@@ -352,7 +385,7 @@ void GameActivity::publish() {
                           : (creator_.isEmpty() ? std::string() : "by " + creator_.toStdString());
     a.large_image = !game_.large_image.empty() ? game_.large_image : icon_.toStdString();
     a.large_text = !game_.large_text.empty() ? game_.large_text : name_.toStdString();
-    a.small_image = game_.small_image;
+    a.small_image = !game_.small_image.empty() ? game_.small_image : avatar_.toStdString();
     a.small_text = game_.small_text;
     // The game's name as the short status instead of "Playing ROBLOX".
     a.status_display = 2;

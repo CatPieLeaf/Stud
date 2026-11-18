@@ -211,6 +211,8 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
     cleanerRow->addStretch();
     general->addLayout(cleanerRow);
 
+    closeOnLeaveCheck_ = new QCheckBox("Close Roblox when leaving a game", this);
+    general->addWidget(closeOnLeaveCheck_);
     serverRegionCheck_ = new QCheckBox("Notify the server region on join", this);
     serverRegionCheck_->setToolTip("Names the country of the game server each time you join one.");
     general->addWidget(serverRegionCheck_);
@@ -375,6 +377,7 @@ SettingsWindow::SettingsWindow(QWidget* parent) : QWidget(parent) {
         {customization::Part::EmoteWheel, "Emote wheel", nullptr, true},
         {customization::Part::DeathSound, "Death sound", "Sounds (*.ogg)", false},
         {customization::Part::Font, "Game font", "Fonts (*.ttf *.otf)", false},
+        {customization::Part::MonoFont, "Code font", "Fonts (*.ttf *.otf)", false},
     };
     int row = 0;
     for (const Row& r : rows) {
@@ -558,6 +561,7 @@ void SettingsWindow::installResets() {
     add(discordCheck_, [this, d] { discordCheck_->setChecked(d.discord_rich_presence); });
     add(discordJoinCheck_, [this, d] { discordJoinCheck_->setChecked(d.discord_join_button); });
     add(controllersCheck_, [this, d] { controllersCheck_->setChecked(d.game_controllers); });
+    add(closeOnLeaveCheck_, [this, d] { closeOnLeaveCheck_->setChecked(d.close_on_leave); });
     add(serverRegionCheck_,
         [this, d] { serverRegionCheck_->setChecked(d.server_region_notification); });
     add(historyGamesCheck_, [this, d] { historyGamesCheck_->setChecked(d.record_game_history); });
@@ -1406,6 +1410,7 @@ void SettingsWindow::loadFromDisk() {
     discordJoinCheck_->setChecked(settings.discord_join_button);
     discordJoinCheck_->setEnabled(settings.discord_rich_presence);
     controllersCheck_->setChecked(settings.game_controllers);
+    closeOnLeaveCheck_->setChecked(settings.close_on_leave);
     serverRegionCheck_->setChecked(settings.server_region_notification);
     historyGamesCheck_->setChecked(settings.record_game_history);
     historyServersCheck_->setChecked(settings.record_server_history);
@@ -1546,6 +1551,7 @@ bool SettingsWindow::onSaveClicked() {
     settings.discord_rich_presence = discordCheck_->isChecked();
     settings.discord_join_button = discordJoinCheck_->isChecked();
     settings.game_controllers = controllersCheck_->isChecked();
+    settings.close_on_leave = closeOnLeaveCheck_->isChecked();
     settings.server_region_notification = serverRegionCheck_->isChecked();
     settings.record_game_history = historyGamesCheck_->isChecked();
     settings.record_server_history = historyServersCheck_->isChecked();

@@ -51,6 +51,7 @@
             qt6.qtwebchannel
             vulkan-headers
             openssl
+            libsecret
           ];
 
           cmakeFlags = [

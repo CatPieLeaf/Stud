@@ -42,6 +42,9 @@ PartFiles files_of(Part part) {
         case Part::Font:
             return {QStringLiteral("content/fonts"),
                     {QStringLiteral("CustomFont.ttf"), QStringLiteral("CustomFont.otf")}};
+        case Part::MonoFont:
+            return {QStringLiteral("content/fonts"),
+                    {QStringLiteral("CustomMonoFont.ttf"), QStringLiteral("CustomMonoFont.otf")}};
     }
     return {};
 }
@@ -162,6 +165,7 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
     QDirIterator it(customizations.absolutePath(), QDir::Files | QDir::NoSymLinks | QDir::Hidden,
                     QDirIterator::Subdirectories);
     QString font;
+    QString mono_font;
     while (it.hasNext()) {
         const QString path = it.next();
         const QString relative = path.mid(root.size());
@@ -169,6 +173,10 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
         if (relative == QLatin1String("content/fonts/CustomFont.ttf") ||
             relative == QLatin1String("content/fonts/CustomFont.otf")) {
             font = QFileInfo(relative).fileName();
+        }
+        if (relative == QLatin1String("content/fonts/CustomMonoFont.ttf") ||
+            relative == QLatin1String("content/fonts/CustomMonoFont.otf")) {
+            mono_font = QFileInfo(relative).fileName();
         }
         if (!applier.put(relative, path)) {
             applier.finish();
@@ -178,13 +186,20 @@ bool apply(const client::Build& build, client::Product product, QString* error) 
         }
     }
 
-    // Every font family the customizations don't replace points at the custom font.
-    if (!font.isEmpty()) {
-        const QString asset = QStringLiteral("rbxasset://fonts/") + font;
+    // Font families the customizations don't replace point at the custom fonts: code
+    // fonts at the code font, the rest at the text font. Script fallbacks (Noto) and
+    // emoji keep Roblox's, or their text would turn into empty boxes.
+    if (!font.isEmpty() || !mono_font.isEmpty()) {
         const QDir families(resources(build) + QStringLiteral("/content/fonts/families"));
         for (const QString& name : families.entryList({QStringLiteral("*.json")}, QDir::Files)) {
             const QString relative = QStringLiteral("content/fonts/families/") + name;
             if (QFileInfo::exists(root + relative)) continue;
+            const QString lower = name.toLower();
+            if (lower.startsWith(QLatin1String("noto")) || lower.contains(QLatin1String("emoji"))) continue;
+            const bool mono = lower.contains(QLatin1String("mono")) || lower == QLatin1String("inconsolata.json");
+            const QString chosen = mono ? mono_font : font;
+            if (chosen.isEmpty()) continue;
+            const QString asset = QStringLiteral("rbxasset://fonts/") + chosen;
             QFile in(families.filePath(name));
             if (!in.open(QIODevice::ReadOnly)) continue;
             QJsonObject family = QJsonDocument::fromJson(in.readAll()).object();
@@ -219,7 +234,7 @@ bool use_file(Part part, const QString& file, QString* error) {
     const QString dir = folder(client::Product::Player) + QLatin1Char('/') + p.directory;
     remove(part);
     QStringList targets = p.files;
-    if (part == Part::Font) {
+    if (part == Part::Font || part == Part::MonoFont) {
         targets = {file.endsWith(QLatin1String(".otf"), Qt::CaseInsensitive) ? p.files.at(1) : p.files.at(0)};
     } else if (part == Part::Cursor) {
         targets = {p.files.at(0), p.files.at(1)};  // the text cursor stays Roblox's

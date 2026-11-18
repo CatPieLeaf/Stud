@@ -14,13 +14,14 @@ namespace stud::ui::customization {
 QString folder(client::Product product);
 
 // Restores the build, then copies the customization folder over it. A custom font
-// becomes every font family, as in Froststrap. On failure the build stays restored.
+// becomes every text font family and a custom code font every monospace one; script
+// fallbacks (Noto) and emoji keep Roblox's. On failure the build stays restored.
 bool apply(const client::Build& build, client::Product product, QString* error);
 
 // Generated customizations offered in Settings.
-enum class Part { Cursor, ShiftLock, EmoteWheel, DeathSound, Font };
+enum class Part { Cursor, ShiftLock, EmoteWheel, DeathSound, Font, MonoFont };
 
-// An image for cursor or shift lock, .ogg for the death sound, .ttf/.otf for the font.
+// An image for cursor or shift lock, .ogg for the death sound, .ttf/.otf for the fonts.
 bool use_file(Part part, const QString& file, QString* error);
 
 // Recolours the installed client's own images, keeping their shapes.

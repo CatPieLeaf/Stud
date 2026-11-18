@@ -76,6 +76,9 @@ struct StudSettings {
 
     bool server_region_notification = false;
 
+    // End the session when the player leaves a game, instead of returning home.
+    bool close_on_leave = false;
+
     // History tab records. Servers are only kept with their games.
     bool record_game_history = true;
     bool record_server_history = true;

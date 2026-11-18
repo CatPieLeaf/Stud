@@ -33,6 +33,8 @@ public:
         bool history_games = true;
         bool history_servers = true;
         bool studio = false;
+        // Emits leftGame() when the player leaves a game for the home screen.
+        bool close_on_leave = false;
         // Studio stops copying its log to stdout once started and opens place files
         // in a second Studio, so its presence follows the log files instead.
         QString studio_logs;
@@ -41,6 +43,11 @@ public:
     ~GameActivity() override;
 
     void line(const QByteArray& text);
+
+Q_SIGNALS:
+    void leftGame();
+
+public:
 
     // A plain search, cheap enough to call on every line from the reader thread.
     static bool wants(const QByteArray& line);
@@ -61,6 +68,8 @@ private:
     void publish();
     QString server_link() const;
     void fetch(const QString& url, std::function<void(const QJsonObject&)> done);
+    void signed_in(const QString& user);
+    static QString user_id_file();
     void asset_image(qint64 asset, std::function<void(const QString&)> done);
 
     Options options_;
@@ -75,6 +84,8 @@ private:
     // Bumped on every join and leave, so a late lookup for a game already left is dropped.
     quint64 generation_ = 0;
     QString location_;
+    QString user_id_;
+    QString avatar_;
 
     QString place_;
     QString job_;

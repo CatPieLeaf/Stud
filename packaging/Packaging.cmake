@@ -94,7 +94,7 @@ libqt6network6 (>= 6.10) | libqt6network6t64 (>= 6.10), \
 libqt6dbus6 (>= 6.10) | libqt6dbus6t64 (>= 6.10), \
 libqt6webenginewidgets6 (>= 6.10) | libqt6webenginewidgets6t64 (>= 6.10), \
 libqt6webchannel6 (>= 6.10) | libqt6webchannel6t64 (>= 6.10), \
-libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, libssl3t64 | libssl3, zlib1g, libxkbcommon0, libudev1, ffmpeg, gamemode")
+libvulkan1, libsdl3-0 (>= 3.4.0), libcurl4t64 | libcurl4, libssl3t64 | libssl3, libsecret-1-0, zlib1g, libxkbcommon0, libudev1, ffmpeg, gamemode")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mangohud")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 set(CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS OFF)

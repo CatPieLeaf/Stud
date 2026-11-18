@@ -21,6 +21,7 @@
 #include "settings_window.h"
 #include "stud1_cleanup.h"
 #include "tray.h"
+#include "login_keyring.h"
 #include "webview_host.h"
 #include "stud/session_log.h"
 #include "stud/settings.h"
@@ -831,6 +832,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     // New customizations are on trial until this run ends (crash guard).
     stud::ui::customization::begin_run(product);
+    stud::ui::login::restore(product);
     if (!stud::ui::client::write_app_settings(*build, client_flags(settings, product), &error)) {
         std::fprintf(stderr, "stud: %s\n", qPrintable(error));
     }
@@ -868,7 +870,10 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     activity.history_games = settings.record_game_history;
     activity.history_servers = settings.record_server_history;
+    activity.close_on_leave = settings.close_on_leave;
     g_activity = new stud::ui::GameActivity(activity, qApp);
+    QObject::connect(g_activity, &stud::ui::GameActivity::leftGame, qApp,
+                     [] { stud::ui::terminate_stud_session(); }, Qt::QueuedConnection);
     g_client = new QProcess(qApp);
     QStringList wrapper = QProcess::splitCommand(QString::fromStdString(settings.launch_wrapper));
     if (wrapper.isEmpty()) {
@@ -912,6 +917,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
         std::printf("stud: Roblox exited (%s %d)\n",
                     status == QProcess::CrashExit ? "signal" : "code", code);
         if (g_activity != nullptr) g_activity->left();
+        stud::ui::login::seal(product);
         const QStringList set_aside = stud::ui::customization::end_run(product, crashed);
         if (!set_aside.isEmpty()) {
             std::printf("stud: Roblox crashed on its first run with changed customizations; "
