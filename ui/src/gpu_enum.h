@@ -10,7 +10,7 @@
 namespace stud::ui {
 
 struct GpuInfo {
-    uint32_t device_index = 0;  // vkEnumeratePhysicalDevices order
+    uint32_t device_index = 0;  // vkEnumeratePhysicalDevices order, or the DRM card number without Vulkan
     std::string name;
     // Picks the GPU selection variable: PRIME offload for NVIDIA, DRI_PRIME for Mesa.
     uint32_t vendor_id = 0;
@@ -19,8 +19,8 @@ struct GpuInfo {
     std::string uuid;
 };
 
-// Read once per process, since each read loads every driver. Empty when there's
-// no Vulkan.
+// Read once per process, since each read loads every driver. Without Vulkan, the
+// kernel's GPUs instead, so OpenGL players can still choose.
 std::vector<GpuInfo> enumerate_gpus();
 
 inline constexpr uint32_t kVendorNvidia = 0x10de;

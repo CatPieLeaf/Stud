@@ -303,7 +303,7 @@ jobs:
           cat > /tmp/qtbuild.sh <<'SCRIPT'
           #!/bin/bash
           set -eux
-          # git for fetching nlohmann/json and miniz.
+          # git for fetching miniz.
           pacman -Syu --noconfirm --needed base-devel cmake ninja git \
               qt6-base qt6-webengine qt6-webchannel vulkan-headers vulkan-icd-loader openssl
           cmake -S /work -B /tmp/qtonly -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \

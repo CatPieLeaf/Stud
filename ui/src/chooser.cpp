@@ -2,7 +2,7 @@
 #include "mono_icon.h"
 #include "chooser.h"
 
-#include "cube_gl.h"
+#include "cube.h"
 #include "cube_view.h"
 #include "gpu_enum.h"
 #include "settings_window.h"
@@ -24,10 +24,6 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPainter>
-#include <QSurfaceFormat>
-#include <QOpenGLFramebufferObject>
-#include <QOpenGLContext>
-#include <QOffscreenSurface>
 #include <QPushButton>
 #include <QHash>
 #include <QScrollBar>
@@ -53,7 +49,6 @@ QIcon icon_of(client::Product product) {
 }
 
 // The title swaying with the spinning stud fixed in front and an occasional shine.
-// The stud renders offscreen in its own GL context so it moves without pixel steps.
 class Emblem : public QWidget {
 public:
     Emblem(int cube, int title, int overlap, QWidget* parent) : QWidget(parent), cube_size_(cube) {
@@ -77,36 +72,12 @@ public:
         setFixedSize(width, height);
         pivot_ = QPointF(width - title_w / 2.0 - 1, height / 2.0);
 
-        QSurfaceFormat format;
-        format.setAlphaBufferSize(8);
-        format.setDepthBufferSize(24);
-        surface_.setFormat(format);
-        surface_.create();
-        context_.setFormat(format);
-        if (context_.create() && context_.makeCurrent(&surface_)) {
-            fbo_ = std::make_unique<QOpenGLFramebufferObject>(
-                QSize(int(cube * ratio), int(cube * ratio)), QOpenGLFramebufferObject::CombinedDepthStencil);
-            cube_state_ = cube_gl_create([](const char* name, void* ctx) {
-                return reinterpret_cast<void*>(static_cast<QOpenGLContext*>(ctx)->getProcAddress(name));
-            }, &context_);
-            context_.doneCurrent();
-        }
-
         clock_.start();
         next_shine_ = next_shine_after(0);
         auto* timer = new QTimer(this);
         connect(timer, &QTimer::timeout, this, [this] { step(); });
         timer->start(16);
         step();
-    }
-
-public:
-    ~Emblem() override {
-        if (cube_state_ != nullptr && context_.makeCurrent(&surface_)) {
-            cube_gl_destroy(cube_state_);
-            fbo_.reset();
-            context_.doneCurrent();
-        }
     }
 
 protected:
@@ -145,10 +116,9 @@ protected:
         painter.rotate(angle_);
         const QSizeF size = logo_.deviceIndependentSize();
         painter.drawImage(QPointF(-size.width() / 2.0, -size.height() / 2.0), frame);
-        if (!cube_image_.isNull()) {
-            painter.drawImage(QPointF(anchor_.x() - cube_size_ / 2.0, anchor_.y() - cube_size_ / 2.0),
-                              cube_image_);
-        }
+        draw_cube(painter, QRectF(anchor_.x() - cube_size_ / 2.0, anchor_.y() - cube_size_ / 2.0, cube_size_,
+                                  cube_size_),
+                  seconds());
     }
 
 private:
@@ -175,23 +145,10 @@ private:
             shining_ = false;
             next_shine_ = next_shine_after(now);
         }
-        if (cube_state_ != nullptr && context_.makeCurrent(&surface_)) {
-            fbo_->bind();
-            cube_gl_draw(cube_state_, float(now), fbo_->width(), fbo_->height());
-            cube_image_ = fbo_->toImage();
-            cube_image_.setDevicePixelRatio(ratio_);
-            fbo_->release();
-            context_.doneCurrent();
-        }
         update();
     }
 
     QImage logo_;
-    QOffscreenSurface surface_;
-    QOpenGLContext context_;
-    std::unique_ptr<QOpenGLFramebufferObject> fbo_;
-    CubeGlState* cube_state_ = nullptr;
-    QImage cube_image_;
     qreal ratio_ = 1.0;
     int cube_size_;
     QPointF anchor_;

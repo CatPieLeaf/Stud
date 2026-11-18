@@ -17,11 +17,10 @@ Copyright: 2026 CatPieLeaf <catpieleaf@proton.me>
 License: AGPL-3.0-or-later with Roblox-Engine exception
 
 Files: (fetched at build time, not in this source tree)
-Copyright: 2013-2025 Niels Lohmann
-           2013-2025 Rich Geldreich, RAD Game Tools and Valve Software
+Copyright: 2013-2025 Rich Geldreich, RAD Game Tools and Valve Software
 License: MIT
 Comment:
- Compiled into the launcher: nlohmann/json and miniz.
+ Compiled into the launcher: miniz.
 
 Files: (fetched at build time, not in this source tree: Rosemary)
 Copyright: The Rosemary contributors

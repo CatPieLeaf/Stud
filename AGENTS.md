@@ -9,5 +9,4 @@ There are some things to know before making changes:
 - Avoid hardcoded values, constants, floors, ceilings or fractions as much as possible; derive values from what the system or application reports.
 - Diagnostics, secrets and experiments stay local and are never committed.
 - Every `STUD_*` environment variable the source reads goes in `docs/environment.md`.
-- The launcher (`ui/`) and its settings (`stud-config/`) are separate: settings stay plain C++ with no Qt.
 - Be as version-agnostic as possible, we don't want code that only works for a specific version of Roblox or a specific library version.

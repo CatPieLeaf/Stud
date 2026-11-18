@@ -90,7 +90,6 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
     "libqt6gui6 (>= 6.10) | libqt6gui6t64 (>= 6.10), \
 libqt6widgets6 (>= 6.10) | libqt6widgets6t64 (>= 6.10), \
 libqt6opengl6 (>= 6.10) | libqt6opengl6t64 (>= 6.10), \
-libqt6openglwidgets6 (>= 6.10) | libqt6openglwidgets6t64 (>= 6.10), \
 libqt6network6 (>= 6.10) | libqt6network6t64 (>= 6.10), \
 libqt6dbus6 (>= 6.10) | libqt6dbus6t64 (>= 6.10), \
 libqt6webenginewidgets6 (>= 6.10) | libqt6webenginewidgets6t64 (>= 6.10), \

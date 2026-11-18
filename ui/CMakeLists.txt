@@ -1,5 +1,5 @@
 # WebEngineWidgets and WebChannel show the client's web views.
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets DBus Network WebEngineWidgets WebChannel)
+find_package(Qt6 REQUIRED COMPONENTS Widgets DBus Network WebEngineWidgets WebChannel)
 # Headers only: FindVulkan, the fallback, would also require the loader's
 # development library.
 find_package(VulkanHeaders CONFIG QUIET)
@@ -86,7 +86,7 @@ add_executable(stud-ui
     src/settings_window.cpp
     src/project_links.cpp
     src/cube_view.cpp
-    src/cube_gl.cpp
+    src/cube.cpp
     src/update_check.cpp
     src/tray.cpp
     src/loading_screen.cpp
@@ -95,14 +95,12 @@ add_executable(stud-ui
     src/launcher_portal.cpp
     resources/resources.qrc
 )
-target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Network Qt6::DBus
+target_link_libraries(stud-ui PRIVATE Qt6::Widgets Qt6::Network Qt6::DBus
                                        Qt6::WebEngineWidgets Qt6::WebChannel
                                        stud_ui_gpu_enum stud_config stud_ui_notifications stud_ui_mono_icon
                                        stud_ui_launch_uri stud_ui_log_archive stud_ui_mac_client
                                        stud_ui_stud1_cleanup miniz)
 
-# The About tab's cube comes from tools/spinning_cube.h.
-target_include_directories(stud-ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../tools")
 
 set_target_properties(stud-ui PROPERTIES
     AUTOMOC ON

@@ -30,12 +30,6 @@
             sha256 = "f5402fd159f9dbd1b2f2c6d2ce472c1134a5b4b42d64a58b9c76ed0601f181d1";
           };
 
-          nlohmann_json = pkgs.fetchFromGitHub {
-            owner = "nlohmann";
-            repo = "json";
-            rev = "v3.11.3";
-            hash = "sha256-7F0Jon+1oWL7uqet5i1IgHX0fUw/+z0QwEcA3zs5xHg=";
-          };
           miniz = pkgs.fetchFromGitHub {
             owner = "richgel999";
             repo = "miniz";
@@ -64,7 +58,6 @@
             "-DSTUD_BUILD_TESTS=OFF"
             "-DSTUD_VERSION=${version}"
             "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
-            "-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=${nlohmann_json}"
             "-DFETCHCONTENT_SOURCE_DIR_MINIZ=${miniz}"
           ];
 

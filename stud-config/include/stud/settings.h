@@ -5,8 +5,8 @@
 #include <stdexcept>
 #include <string>
 
-// Stud's settings in ~/.config/stud/config.json. Plain C++, no Qt. Roblox's own
-// settings stay in Roblox's menu.
+// Stud's settings in ~/.config/stud/config.json. Roblox's own settings stay in
+// Roblox's menu.
 
 namespace stud::config {
 

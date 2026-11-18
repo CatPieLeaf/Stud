@@ -48,7 +48,6 @@ Provides:       bundled(fidelityfx-fsr1)
 Provides:       bundled(snapdragon-gsr)
 Provides:       bundled(mpv-prescalers)
 Provides:       bundled(miniz)
-Provides:       bundled(json)
 
 %description
 Stud runs the real, unmodified Roblox macOS client on your Linux desktop, in

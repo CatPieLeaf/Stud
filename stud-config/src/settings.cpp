@@ -1,34 +1,25 @@
 #include "stud/settings.h"
 #include "stud/stud_paths.h"
 
-#include <nlohmann/json.hpp>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 
-#include <sys/stat.h>
-
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
+#include <cmath>
 #include <initializer_list>
 
 namespace {
 
-std::string parent_directory(const std::string& path) {
-    size_t pos = path.find_last_of('/');
-    return pos == std::string::npos ? std::string() : path.substr(0, pos);
+bool is_integer(const QJsonValue& v) {
+    return v.isDouble() && std::floor(v.toDouble()) == v.toDouble();
 }
 
-void make_directories(const std::string& path) {
-    std::string current;
-    for (char c : path) {
-        if (c == '/' && !current.empty()) {
-            ::mkdir(current.c_str(), 0755);
-        }
-        current += c;
-    }
-    if (!current.empty()) {
-        ::mkdir(current.c_str(), 0755);
-    }
-}
+QString key_of(const char* key) { return QString::fromLatin1(key); }
+
+QString text(const std::string& s) { return QString::fromStdString(s); }
 
 }  // namespace
 
@@ -41,60 +32,60 @@ bool waits_for_refresh(const StudSettings& settings) {
 StudSettings load_settings(const std::string& path) {
     StudSettings result;
 
-    std::ifstream file(path);
-    if (!file.is_open()) {
+    QFile file(text(path));
+    if (!file.open(QIODevice::ReadOnly)) {
         return result;
     }
 
-    nlohmann::json doc;
-    try {
-        file >> doc;
-    } catch (const nlohmann::json::parse_error& e) {
-        throw SettingsError("stud: malformed config file '" + path + "': " + e.what());
+    QJsonParseError error;
+    const QJsonDocument parsed = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        throw SettingsError("stud: malformed config file '" + path + "': " + error.errorString().toStdString());
     }
-
-    if (!doc.is_object()) {
+    if (!parsed.isObject()) {
         throw SettingsError("stud: config file '" + path + "' must be a JSON object");
     }
+    QJsonObject doc = parsed.object();
+    const auto has = [&](const char* key) { return doc.contains(key_of(key)); };
+    const auto at = [&](const char* key) { return doc.value(key_of(key)); };
 
-    if (doc.contains("gpu")) {
-        const auto& gpu = doc.at("gpu");
-        if (!gpu.is_object() || !gpu.contains("deviceIndex") || !gpu.at("deviceIndex").is_number_unsigned()) {
+    if (has("gpu")) {
+        const QJsonObject gpu = at("gpu").toObject();
+        const QJsonValue index = gpu.value(QStringLiteral("deviceIndex"));
+        if (!at("gpu").isObject() || !is_integer(index) || index.toDouble() < 0) {
             throw SettingsError("stud: config '" + path +
-                                 "' has an invalid \"gpu\" (expected an object with an unsigned "
-                                 "\"deviceIndex\")");
+                                "' has an invalid \"gpu\" (expected an object with an unsigned "
+                                "\"deviceIndex\")");
         }
-        result.gpu.device_index = gpu.at("deviceIndex").get<uint32_t>();
-        if (gpu.contains("deviceName") && gpu.at("deviceName").is_string()) {
-            result.gpu.device_name = gpu.at("deviceName").get<std::string>();
+        result.gpu.device_index = static_cast<uint32_t>(index.toDouble());
+        if (gpu.value(QStringLiteral("deviceName")).isString()) {
+            result.gpu.device_name = gpu.value(QStringLiteral("deviceName")).toString().toStdString();
         }
-        if (gpu.contains("deviceUuid") && gpu.at("deviceUuid").is_string()) {
-            result.gpu.device_uuid = gpu.at("deviceUuid").get<std::string>();
+        if (gpu.value(QStringLiteral("deviceUuid")).isString()) {
+            result.gpu.device_uuid = gpu.value(QStringLiteral("deviceUuid")).toString().toStdString();
         }
     }
 
     // A wrongly typed key is an error; a missing one keeps its default.
     const auto read_bool = [&](const char* key, bool& out) {
-        if (!doc.contains(key)) return;
-        if (!doc.at(key).is_boolean()) {
+        if (!has(key)) return;
+        if (!at(key).isBool()) {
             throw SettingsError("stud: config '" + path + "' has a non-boolean \"" + key + "\"");
         }
-        out = doc.at(key).get<bool>();
+        out = at(key).toBool();
     };
     const auto read_text = [&](const char* key, std::string& out) {
-        if (!doc.contains(key)) return;
-        if (!doc.at(key).is_string()) {
+        if (!has(key)) return false;
+        if (!at(key).isString()) {
             throw SettingsError("stud: config '" + path + "' has a non-string \"" + key + "\"");
         }
-        out = doc.at(key).get<std::string>();
+        out = at(key).toString().toStdString();
+        return true;
     };
     const auto read_string = [&](const char* key, std::string& out,
                                  std::initializer_list<const char*> allowed) {
-        if (!doc.contains(key)) return;
-        if (!doc.at(key).is_string()) {
-            throw SettingsError("stud: config '" + path + "' has a non-string \"" + key + "\"");
-        }
-        const std::string value = doc.at(key).get<std::string>();
+        std::string value;
+        if (!read_text(key, value)) return;
         for (const char* option : allowed) {
             if (value == option) {
                 out = value;
@@ -104,51 +95,59 @@ StudSettings load_settings(const std::string& path) {
         throw SettingsError("stud: config '" + path + "' has an unrecognized \"" + key +
                             "\" \"" + value + "\"");
     };
+    const auto read_int = [&](const char* key, int& out, const char* what) {
+        if (!has(key)) return false;
+        if (!is_integer(at(key))) {
+            throw SettingsError("stud: config '" + path + "' has a \"" + key + "\" that is not " + what);
+        }
+        out = at(key).toInt();
+        return true;
+    };
 
     // Stud 1.x's names for the two settings 2.0 kept, read only when the 2.0 key is
     // missing; the next save drops them.
-    if (!doc.contains("renderer") && doc.contains("graphicsMode") && doc.at("graphicsMode").is_string()) {
-        const std::string mode = doc.at("graphicsMode").get<std::string>();
-        if (mode == "vulkan" || mode == "opengl") doc["renderer"] = mode;
+    if (!has("renderer") && at("graphicsMode").isString()) {
+        const QString mode = at("graphicsMode").toString();
+        if (mode == QLatin1String("vulkan") || mode == QLatin1String("opengl")) {
+            doc.insert(QStringLiteral("renderer"), mode);
+        }
     }
-    if (!doc.contains("upscaler") && doc.contains("upscalerChoice") && doc.at("upscalerChoice").is_string()) {
-        const std::string choice = doc.at("upscalerChoice").get<std::string>();
+    if (!has("upscaler") && at("upscalerChoice").isString()) {
+        const QString choice = at("upscalerChoice").toString();
         for (const char* known : {"ravu-ar", "sgsr-ed", "ravu", "sgsr", "linear"}) {
-            if (choice == known) doc["upscaler"] = choice;
+            if (choice == QLatin1String(known)) doc.insert(QStringLiteral("upscaler"), choice);
         }
     }
     read_string("renderer", result.renderer, {"vulkan", "opengl"});
     // Before 2.0.2, VSync was a bool; off meant mailbox.
-    if (!doc.contains("presentation") && doc.contains("vsync")) {
+    if (!has("presentation") && has("vsync")) {
         bool vsync = true;
         read_bool("vsync", vsync);
         result.presentation = vsync ? "vsync" : "mailbox";
     }
     read_string("presentation", result.presentation, {"vsync", "adaptive", "mailbox", "immediate"});
-    if (doc.contains("renderResolution")) {
-        const auto& value = doc.at("renderResolution");
-        if (!value.is_number_integer() || value.get<int>() < 1 || value.get<int>() > 100) {
+    int scale = 0;
+    if (read_int("renderResolution", scale, "a percentage from 1 to 100")) {
+        if (scale < 1 || scale > 100) {
             throw SettingsError("stud: config '" + path +
                                 "' has a \"renderResolution\" that is not a percentage from 1 to 100");
         }
-        result.render_scale = value.get<int>();
+        result.render_scale = scale;
     }
-    if (doc.contains("upscaler") && doc.at("upscaler").is_string()) {
-        const std::string old = doc.at("upscaler").get<std::string>();
-        if (old == "ravu" || old == "linear") doc["upscaler"] = "ravu-ar";
-        if (old == "sgsr") doc["upscaler"] = "sgsr-ed";
+    if (at("upscaler").isString()) {
+        const QString old = at("upscaler").toString();
+        if (old == QLatin1String("ravu") || old == QLatin1String("linear")) {
+            doc.insert(QStringLiteral("upscaler"), QStringLiteral("ravu-ar"));
+        }
+        if (old == QLatin1String("sgsr")) doc.insert(QStringLiteral("upscaler"), QStringLiteral("sgsr-ed"));
     }
     read_string("upscaler", result.upscaler, {"ravu-ar", "sgsr-ed"});
     read_string("titleBar", result.title_bar, {"macos", "macos-no-menu", "native"});
     read_string("displayBackend", result.display_backend, {"auto", "wayland", "x11"});
-    if (doc.contains("backgroundFps")) {
-        if (!doc.at("backgroundFps").is_number_integer()) {
-            throw SettingsError("stud: config '" + path + "' has a non-integer \"backgroundFps\"");
-        }
+    int fps = 0;
+    if (read_int("backgroundFps", fps, "an integer")) {
         // 0 or anything past the range (older builds wrote 241) means no limit.
-        const int value = doc.at("backgroundFps").get<int>();
-        result.background_fps =
-            (value <= 0 || value > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : value;
+        result.background_fps = (fps <= 0 || fps > kBackgroundFpsUnlimited) ? kBackgroundFpsNoLimit : fps;
     }
     read_bool("mangohud", result.mangohud);
     read_text("launchWrapper", result.launch_wrapper);
@@ -159,12 +158,13 @@ StudSettings load_settings(const std::string& path) {
     read_bool("serverRegionNotification", result.server_region_notification);
     read_bool("recordGameHistory", result.record_game_history);
     read_bool("recordServerHistory", result.record_server_history);
-    if (doc.contains("cleanerDays")) {
-        if (!doc.at("cleanerDays").is_number_integer() || doc.at("cleanerDays").get<int>() < 0) {
+    int days = 0;
+    if (read_int("cleanerDays", days, "a non-negative integer")) {
+        if (days < 0) {
             throw SettingsError("stud: config '" + path +
                                 "' has a \"cleanerDays\" that is not a non-negative integer");
         }
-        result.cleaner_days = doc.at("cleanerDays").get<int>();
+        result.cleaner_days = days;
     }
     read_bool("gamemode", result.gamemode);
     read_bool("systemTray", result.system_tray);
@@ -174,77 +174,61 @@ StudSettings load_settings(const std::string& path) {
 }
 
 void save_settings(const std::string& path, const StudSettings& settings) {
-    nlohmann::json doc = nlohmann::json::object();
+    const QString file_path = text(path);
 
     // Keep the file's other keys; a missing or malformed file starts fresh.
-    {
-        std::ifstream existing(path);
-        if (existing.is_open()) {
-            try {
-                nlohmann::json existing_doc;
-                existing >> existing_doc;
-                if (existing_doc.is_object()) {
-                    doc = existing_doc;
-                }
-            } catch (const nlohmann::json::parse_error&) {
-            }
-        }
+    QJsonObject doc;
+    QFile existing(file_path);
+    if (existing.open(QIODevice::ReadOnly)) {
+        doc = QJsonDocument::fromJson(existing.readAll()).object();
+        existing.close();
     }
 
-    doc["gpu"] = {{"deviceIndex", settings.gpu.device_index},
-                  {"deviceName", settings.gpu.device_name},
-                  {"deviceUuid", settings.gpu.device_uuid}};
-    doc["renderer"] = settings.renderer;
-    doc["presentation"] = settings.presentation;
-    doc.erase("vsync");
-    doc["renderResolution"] = settings.render_scale;
-    doc["upscaler"] = settings.upscaler;
-    doc["titleBar"] = settings.title_bar;
-    doc["displayBackend"] = settings.display_backend;
-    doc["backgroundFps"] = settings.background_fps;
-    doc["mangohud"] = settings.mangohud;
-    doc["launchWrapper"] = settings.launch_wrapper;
-    doc["environment"] = settings.environment;
-    doc["discordRichPresence"] = settings.discord_rich_presence;
-    doc["discordJoinButton"] = settings.discord_join_button;
-    doc["gameControllers"] = settings.game_controllers;
-    doc["serverRegionNotification"] = settings.server_region_notification;
-    doc["recordGameHistory"] = settings.record_game_history;
-    doc["recordServerHistory"] = settings.record_server_history;
-    doc["cleanerDays"] = settings.cleaner_days;
-    doc["gamemode"] = settings.gamemode;
-    doc["systemTray"] = settings.system_tray;
-    doc["openPlayerDirectly"] = settings.open_player_directly;
+    doc.insert(QStringLiteral("gpu"),
+               QJsonObject{{QStringLiteral("deviceIndex"), static_cast<qint64>(settings.gpu.device_index)},
+                           {QStringLiteral("deviceName"), text(settings.gpu.device_name)},
+                           {QStringLiteral("deviceUuid"), text(settings.gpu.device_uuid)}});
+    doc.insert(QStringLiteral("renderer"), text(settings.renderer));
+    doc.insert(QStringLiteral("presentation"), text(settings.presentation));
+    doc.insert(QStringLiteral("renderResolution"), settings.render_scale);
+    doc.insert(QStringLiteral("upscaler"), text(settings.upscaler));
+    doc.insert(QStringLiteral("titleBar"), text(settings.title_bar));
+    doc.insert(QStringLiteral("displayBackend"), text(settings.display_backend));
+    doc.insert(QStringLiteral("backgroundFps"), settings.background_fps);
+    doc.insert(QStringLiteral("mangohud"), settings.mangohud);
+    doc.insert(QStringLiteral("launchWrapper"), text(settings.launch_wrapper));
+    doc.insert(QStringLiteral("environment"), text(settings.environment));
+    doc.insert(QStringLiteral("discordRichPresence"), settings.discord_rich_presence);
+    doc.insert(QStringLiteral("discordJoinButton"), settings.discord_join_button);
+    doc.insert(QStringLiteral("gameControllers"), settings.game_controllers);
+    doc.insert(QStringLiteral("serverRegionNotification"), settings.server_region_notification);
+    doc.insert(QStringLiteral("recordGameHistory"), settings.record_game_history);
+    doc.insert(QStringLiteral("recordServerHistory"), settings.record_server_history);
+    doc.insert(QStringLiteral("cleanerDays"), settings.cleaner_days);
+    doc.insert(QStringLiteral("gamemode"), settings.gamemode);
+    doc.insert(QStringLiteral("systemTray"), settings.system_tray);
+    doc.insert(QStringLiteral("openPlayerDirectly"), settings.open_player_directly);
     // Settings Stud no longer has (1.x's engine and some 2.0 ones), so the file only lists live ones.
     for (const char* gone :
-         {"hidpi", "followDpi", "renderScale", "upscaling", "upscaleOutputPercent",
+         {"vsync", "hidpi", "followDpi", "renderScale", "upscaling", "upscaleOutputPercent",
           "upscaleQualityPercent", "upscaleTargetPercent", "upscalerChoice",
           "textOverlayFontRatio", "smoothZoom", "windowsMaterials", "webLogin", "hqTextures",
           "closeOnLeave", "textureCache", "textureCacheMB", "graphicsMode",
           "devRenderBackend", "apkPath", "apkName", "uiScale", "needsBionicFallback",
           "menuBar", "frameCap", "presentationMode", "controlEditKeys", "launcherStyle"}) {
-        doc.erase(gone);
+        doc.remove(key_of(gone));
     }
 
-    make_directories(parent_directory(path));
+    QDir().mkpath(QFileInfo(file_path).absolutePath());
 
     // Written beside and renamed over, so a crash or full disk can't leave it half-written.
-    const std::string temp = path + ".new";
-    {
-        std::ofstream out(temp);
-        if (!out.is_open()) {
-            throw SettingsError("stud: failed to open '" + temp + "' for writing");
-        }
-        out << doc.dump(2);
-        out.close();
-        if (out.fail()) {
-            std::remove(temp.c_str());
-            throw SettingsError("stud: failed to write '" + temp + "'");
-        }
+    QSaveFile out(file_path);
+    if (!out.open(QIODevice::WriteOnly)) {
+        throw SettingsError("stud: failed to open '" + path + "' for writing");
     }
-    if (std::rename(temp.c_str(), path.c_str()) != 0) {
-        std::remove(temp.c_str());
-        throw SettingsError("stud: failed to replace '" + path + "'");
+    out.write(QJsonDocument(doc).toJson(QJsonDocument::Indented));
+    if (!out.commit()) {
+        throw SettingsError("stud: failed to write '" + path + "'");
     }
 }
 

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <fstream>
 #include <string>
 
 namespace stud::ui {
@@ -124,10 +125,38 @@ std::vector<GpuInfo> read_gpus() {
     return result;
 }
 
+// Without Vulkan (OpenGL only), the kernel's GPUs: the one that didn't boot the
+// display is the offload GPU on a hybrid laptop.
+std::vector<GpuInfo> read_drm_gpus() {
+    std::vector<GpuInfo> result;
+    const auto read = [](const std::string& path) {
+        std::ifstream file(path);
+        std::string value;
+        file >> value;
+        return value;
+    };
+    for (uint32_t card = 0;; ++card) {
+        const std::string device = "/sys/class/drm/card" + std::to_string(card) + "/device/";
+        const std::string vendor = read(device + "vendor");
+        if (vendor.empty()) break;
+        const uint32_t vendor_id = std::stoul(vendor, nullptr, 16);
+        const char* maker = vendor_id == kVendorNvidia ? "NVIDIA" : vendor_id == 0x1002 ? "AMD"
+                          : vendor_id == 0x8086 ? "Intel" : "GPU";
+        std::string id = read(device + "device");
+        if (id.rfind("0x", 0) == 0) id.erase(0, 2);
+        result.push_back(GpuInfo{card, std::string(maker) + " " + id, vendor_id,
+                                 read(device + "boot_vga") == "0", std::string()});
+    }
+    return result;
+}
+
 }  // namespace
 
 std::vector<GpuInfo> enumerate_gpus() {
-    static const std::vector<GpuInfo> gpus = read_gpus();
+    static const std::vector<GpuInfo> gpus = [] {
+        std::vector<GpuInfo> found = read_gpus();
+        return found.empty() ? read_drm_gpus() : found;
+    }();
     return gpus;
 }
 

@@ -3,9 +3,6 @@
 Two kinds of thing live here: the release pipeline's own scripts, and code
 the build shares.
 
-- **`spinning_cube.h`**: the spinning stud on the welcome page and in
-  Settings' About tab, drawn with plain OpenGL.
-
 - **`bump-version.py`**: writes a new version into every file that names
   it, and writes the release's entry in the metainfo and the Terra spec's
   changelog. The release workflow runs it with the tag's version and commits

@@ -1,37 +1,16 @@
 #include "cube_view.h"
 
 #include <QMouseEvent>
-#include <QOpenGLContext>
-#include <QSurfaceFormat>
+#include <QPainter>
 #include <QTimer>
 
-#include "cube_gl.h"
+#include "cube.h"
 
-CubeView::CubeView(QWidget* parent) : QOpenGLWidget(parent) {
-    // Drawn over the window with alpha, the only way Qt shows what's behind a GL widget.
-    QSurfaceFormat format = this->format();
-    format.setAlphaBufferSize(8);
-    setFormat(format);
-    setAttribute(Qt::WA_AlwaysStackOnTop);
-    // Timer-paced: windows don't wait on the display, so draw-when-shown would spin.
+CubeView::CubeView(QWidget* parent) : QWidget(parent) {
+    setAttribute(Qt::WA_TranslucentBackground);
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
     timer->start(16);
-}
-
-CubeView::~CubeView() {
-    makeCurrent();
-    cube_gl_destroy(state_);
-    doneCurrent();
-}
-
-void CubeView::initializeGL() {
-    QOpenGLContext* context = QOpenGLContext::currentContext();
-    cube_gl_destroy(state_);
-    state_ = context == nullptr ? nullptr : cube_gl_create([](const char* name, void* ctx) {
-                 return reinterpret_cast<void*>(
-                     static_cast<QOpenGLContext*>(ctx)->getProcAddress(name));
-             }, context);
     clock_.start();
 }
 
@@ -40,12 +19,11 @@ void CubeView::mousePressEvent(QMouseEvent* event) {
         clicks_ = 0;
         if (on_tenth_click) on_tenth_click();
     }
-    QOpenGLWidget::mousePressEvent(event);
+    QWidget::mousePressEvent(event);
 }
 
-void CubeView::paintGL() {
-    if (state_ == nullptr) return;
-    const qreal ratio = devicePixelRatioF();
-    cube_gl_draw(state_, static_cast<float>(clock_.elapsed()) / 1000.0f,
-                 static_cast<int>(width() * ratio), static_cast<int>(height() * ratio));
+void CubeView::paintEvent(QPaintEvent*) {
+    // Timer-driven, so it stops whenever the widget isn't visible.
+    QPainter painter(this);
+    draw_cube(painter, rect(), clock_.elapsed() / 1000.0);
 }

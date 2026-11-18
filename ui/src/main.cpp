@@ -6,7 +6,7 @@
 
 #include "desktop_entry.h"
 #include "chooser.h"
-#include "cube_gl.h"
+#include "cube.h"
 #include "cpu_cores.h"
 #include "diagnose.h"
 #include "flatpak_permissions.h"
@@ -808,7 +808,7 @@ bool launch_game(stud::ui::client::Product product, const std::optional<QString>
     }
     // The loading cubes use the installed Player's stud texture.
     const auto has = stud::ui::client::installed(stud::ui::client::Product::Player);
-    if (has && (!had || had->upload != has->upload)) cube_gl_client_changed();
+    if (has && (!had || had->upload != has->upload)) cube_client_changed();
     if (!stud::ui::client::ensure_prefix(rosemary, progress, &error)) {
         if (stud::ui::loading_cancelled()) return false;
         open_settings_for_launch_failure(error);
